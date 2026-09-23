@@ -35,8 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Fragments, Grid, Launcher, Levels, Monoid,
-    Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
+    Accumulate, AccumulateArg, AccumulateArgLaunch, AccumulateExpand, Axis, Grid, Launcher, Levels,
+    Monoid, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
     TileArgLaunch, TileSpec,
 };
 
@@ -93,13 +93,8 @@ fn atomic_matmul<E: Numeric>(
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc = c_cube.block_accumulator::<E, E, E>(
-            &a_cube,
-            &b_cube,
-            comptime!(Fragments::below(&c_cube, &a_cube)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc =
+            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
         acc.mm(&a_cube, &b_cube, Semiring::SUM_PROD);
         c_cube.copy_cast_from(&acc);
     }
@@ -122,13 +117,8 @@ fn atomic_matmul_lanes<E: Numeric>(
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let mut acc = c_cube.block_accumulator::<E, E, E>(
-            &a_cube,
-            &b_cube,
-            comptime!(Fragments::below(&c_cube, &a_cube)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc =
+            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for lane in cube {
             let mut acc_lane = acc.at(&lane);

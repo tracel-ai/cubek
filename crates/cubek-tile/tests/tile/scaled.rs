@@ -100,17 +100,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        REGISTER_BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -198,15 +188,7 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone())).with_landing();
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -1242,17 +1224,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        REGISTER_BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -1709,15 +1681,7 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
         comptime!(None),
     )
     .with_landing();
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
         stage.copy_from(&b.at(&region));
@@ -1869,7 +1833,6 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] instruction: Instruction,
     #[comptime] chunks: Level,
     #[comptime] reach: Reach,
-    #[comptime] cells: Option<Level>,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     // Both factors land where the instruction reads a window as it lies, and neither does where
@@ -1896,13 +1859,8 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(StageStorage::Lanes { reach }),
                 comptime!(None),
             );
-            let mut sum = c_plane.accumulator::<E, E, E>(
-                &a_plane,
-                &b_plane,
-                comptime!(Fragments::below(&c_plane, &a_plane)),
-                instruction,
-                Monoid::Sum,
-            );
+            let mut sum =
+                c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Monoid::Sum);
             sum.zero();
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
@@ -1917,7 +1875,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                     }
                 }
             }
-            sum.drained_into(&c_plane, comptime!(cells.clone()));
+            sum.drained_into(&c_plane);
         }
     }
 }
@@ -2213,10 +2171,6 @@ fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
             .build(),
     };
     let chunks_level = levels[2].clone();
-    let cells = match arm {
-        Arm::Registers => Some(levels[4].clone()),
-        Arm::Landing => None,
-    };
     let instruction = match arm {
         Arm::Registers => Instruction::Registers {
             config: REGISTER_BLOCK,
@@ -2238,7 +2192,6 @@ fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
         instruction,
         chunks_level,
         reach,
-        cells,
         [dtype, dtype, stored],
     );
     w.check(&client, c, &format!("{arm:?} {scales:?}"));
@@ -2291,7 +2244,6 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     space: Partitioning,
     #[comptime] chunks: Level,
     #[comptime] reach: Reach,
-    #[comptime] grid: Level,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     let a = a.tile(comptime!(space.clone())).with_landing();
@@ -2315,11 +2267,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(StageStorage::Lanes { reach }),
                 comptime!(None),
             );
-            let mut sum = c_plane.cmma_accumulator::<E, E>(
-                &a_plane,
-                comptime!(Fragments::below(&c_plane, &a_plane)),
-                Monoid::Sum,
-            );
+            let mut sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Monoid::Sum);
             sum.zero();
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
@@ -2345,7 +2293,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                     }
                 }
             }
-            sum.drained_into(&c_plane, comptime!(Some(grid.clone())));
+            sum.drained_into(&c_plane);
         }
     }
 }
@@ -2379,7 +2327,6 @@ fn check_partitioned(scales: TileScales, reach: Reach) {
         .cubes(&[NB])
         .build();
     let chunks_level = levels[2].clone();
-    let grid = levels[6].clone();
     let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
     let (s_op, stored) = w.s_op(&client, &launcher, scales);
 
@@ -2394,7 +2341,6 @@ fn check_partitioned(scales: TileScales, reach: Reach) {
         launcher.partitioning_arg(),
         chunks_level,
         reach,
-        grid,
         [dtype, dtype, stored],
     );
     w.check(&client, c, &format!("partition {scales:?}"));

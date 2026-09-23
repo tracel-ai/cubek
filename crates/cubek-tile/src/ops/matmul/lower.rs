@@ -198,7 +198,7 @@ impl<E: Numeric> PlaneTile<E> {
                 hardware_semiring(semiring);
                 d.mma(&lhs_values, &rhs_values)
             }
-            PlaneTile::Register(d) => {
+            PlaneTile::Registers(d) => {
                 let folded = comptime!(d.fold > 1);
                 strided_2d(&lhs_values, &rhs_values, comptime!(out.clone()), folded);
                 d.mma(lhs, rhs, out, semiring)
@@ -263,7 +263,7 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
     match &rhs.kind {
         TileKind::PlaneTile(t) => match t {
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
-            PlaneTile::Mma(_) | PlaneTile::Register(_) => comptime!(false),
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
         },
         // The contracted axis is the lhs's trailing one, as the leaf reads it: an axis the output
         // lacks is not always contracted (a spanned leading axis is not).

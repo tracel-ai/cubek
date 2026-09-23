@@ -9,8 +9,8 @@
 //! launch ([`Launcher`]) reads the grid off those levels and binds the tensors to the same extents.
 //!
 //! The rest is the kernel's: operand storage ([`Ring::smem`], [`pipelined`]), accumulator
-//! ([`Fragments`], [`Tile::block_accumulator`], [`Tile::cmma_accumulator`]), loaded fragments
-//! ([`PlanePartition::cmma_fragments`]), leaf instruction ([`Tile::mm_with`], [`Tile::mma`]).
+//! ([`Accumulate`]), loaded fragments ([`PlanePartition::cmma_fragments`]), leaf instruction
+//! ([`Tile::mm_with`], [`Tile::mma`]).
 //!
 //! A fragment's store to its output window is [`Tile::copy_cast_from`]. Where data decides what
 //! a loop reaches, [`Walk::routed`] gives an axis a table's coordinate (an expert per token,

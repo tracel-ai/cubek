@@ -7,7 +7,7 @@ use crate::{
         CubeDimResource, TileSize,
         definition::BatchMatmulBlueprint,
         stage::SwizzleModes,
-        tile::{MmaIOConfig, Plane, TileScope},
+        tile::{MmaIo, Plane, TileScope},
     },
 };
 
@@ -18,7 +18,7 @@ pub struct MmaMatmul {
     pub tile_size: TileSize,
     pub plane_dim: u32,
     pub swizzle_modes: SwizzleModes,
-    pub mma_io_config: MmaIOConfig,
+    pub mma_io_config: MmaIo,
 }
 
 impl TileVariant for MmaMatmul {
@@ -72,7 +72,7 @@ impl TileVariant for MmaMatmul {
             tile_size: blueprint.tiling_scheme.tile_size,
             plane_dim: blueprint.plane_dim,
             swizzle_modes: blueprint.swizzle_modes,
-            mma_io_config: MmaIOConfig::new(
+            mma_io_config: MmaIo::new(
                 device_props,
                 dtypes.lhs_stage,
                 dtypes.rhs_stage,

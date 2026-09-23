@@ -572,17 +572,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        config,
-        comptime!(semiring.add()),
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, config, comptime!(semiring.add()));
     acc.init(Monoid::identity::<EA>(comptime!(semiring.add())));
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -614,13 +604,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let mut acc = c_p.block_accumulator::<EA, E, E>(
-                &a_p,
-                &b_p,
-                comptime!(Fragments::below(&c_p, &a_p)),
-                config,
-                Monoid::Sum,
-            );
+            let mut acc = c_p.block_accumulator::<EA, E, E>(&a_p, &b_p, config, Monoid::Sum);
             acc.zero();
             for step in plane {
                 let mut acc_s = acc.at(&step);
@@ -650,17 +634,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            &[outer.clone(), inner.clone()]
-        )),
-        REGISTER_BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for outer in space.over(&outer) {
         let acc_o = acc.at(&outer);
@@ -702,15 +676,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
@@ -742,15 +708,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
     let mut ring = Ring::smem(
@@ -788,22 +746,13 @@ fn mma_matmul_k_walk<E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] io: MmaIo,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.mma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        io,
-        Monoid::Sum,
-    );
+    let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
@@ -828,23 +777,14 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] io: MmaIo,
     #[define(I)] _idtype: ElemType,
     #[define(E)] _edtype: ElemType,
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.mma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        io,
-        Monoid::Sum,
-    );
+    let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
@@ -877,15 +817,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            &[outer.clone(), inner.clone()]
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&outer);
     let mut ring = Ring::smem(
@@ -937,15 +869,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            &[stage.clone(), plane.clone(), fragment.clone()]
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&stage);
     let mut ring = Ring::smem(
@@ -1006,21 +930,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &a,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            &[
-                stage.clone(),
-                plane.clone(),
-                step.clone(),
-                col.clone(),
-                row.clone()
-            ]
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&stage);
     let mut ring = Ring::smem(
@@ -1209,17 +1119,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        config,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, config, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -3135,13 +3035,7 @@ fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let mut acc = c_p.accumulator::<EA, E, E>(
-                &a_p,
-                &b_p,
-                comptime!(Fragments::below(&c_p, &a_p)),
-                instruction,
-                Monoid::Sum,
-            );
+            let mut acc = c_p.accumulator::<EA, E, E>(&a_p, &b_p, instruction, Monoid::Sum);
             acc.zero();
             for step in plane {
                 let mut acc_s = acc.at(&step);
@@ -4299,17 +4193,7 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        instruction,
-        Monoid::Sum,
-    );
+    let mut acc = c.accumulator::<E, E, E>(&a, &b, instruction, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
@@ -4394,7 +4278,7 @@ fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
 /// the cooperative `cmma::execute`.
 ///
 /// Gated on the backend exposing the manual-mma feature (`features.matmul.mma`); uses the
-/// universal manual transport (`MmaIOConfig::manual()`), so no `ldmatrix`/`stmatrix` path is
+/// universal manual transport (`MmaIo::manual()`), so no `ldmatrix`/`stmatrix` path is
 /// taken. Run with `cargo test-metal` / `test-cuda` on a backend that advertises manual mma.
 #[test]
 fn mma_matmul_8x8x8() {
@@ -4435,7 +4319,7 @@ fn mma_matmul_8x8x8() {
         c.arg(),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        MmaIOConfig::manual(),
+        MmaIo::manual(),
         f32::elem_type_native(),
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -4819,7 +4703,7 @@ fn mma_matmul_quant_until_read() {
         c.arg(),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        MmaIOConfig::manual(),
+        MmaIo::manual(),
         a_dtype,
         f32::elem_type_native(),
     );

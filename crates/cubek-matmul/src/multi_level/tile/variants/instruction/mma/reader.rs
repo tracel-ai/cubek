@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::multi_level::tile::{
     StridedTile,
-    variants::{LoadMethod, MmaIOConfig},
+    variants::{LoadMethod, MmaIo},
 };
 use cubek_std::{MatrixLayout, as_cmma_layout};
 
@@ -25,7 +25,7 @@ pub fn mma_load_strided<
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaIOConfig,
+    #[comptime] config: MmaIo,
 ) {
     let vector_layout = def.vector_layout(ident);
 

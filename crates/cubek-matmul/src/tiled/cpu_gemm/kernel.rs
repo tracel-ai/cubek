@@ -2,7 +2,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Fragments, Level, Levels, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, RegisterBlock,
+    Semiring, Space, TileArg,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -76,7 +77,6 @@ pub fn cpu_gemm_kernel<
     b: &TileArg<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
     space: Partitioning,
-    #[comptime] bp: CpuGemmBlueprint,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
     #[define(E)] _acc_dtype: ElemType,
@@ -86,23 +86,13 @@ pub fn cpu_gemm_kernel<
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
 
-    // One block per plane, the instruction's shape.
-    let leaf = comptime!(bp.instruction);
-    let fragments = comptime!(Fragments {
-        m_tiles: 1,
-        n_tiles: 1,
-        m: leaf.m,
-        n: leaf.n,
-        k: leaf.k,
-    });
-
     for cube in space {
         for plane in cube {
             let a = a.at(&plane);
             let b = b.at(&plane);
             let mut c = c.at(&plane);
-            let mut acc =
-                c.block_accumulator::<EA, EL, ER>(&a, &b, fragments, REGISTER_BLOCK, Monoid::Sum);
+            // One block per plane, the instruction's shape, read off the levels below the plane.
+            let mut acc = c.block_accumulator::<EA, EL, ER>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
             acc.zero();
             for step in plane {
                 let mut acc_step = acc.at(&step);

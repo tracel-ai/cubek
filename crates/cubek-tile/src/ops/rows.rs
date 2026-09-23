@@ -65,13 +65,13 @@ impl<EA: Float> Tile<EA> {
         match &self.kind {
             TileKind::Memory(_) => self.rescale_rows_in_memory(corr, state),
             TileKind::PlanePartition(p) => {
-                let lanes = comptime!(match share {
-                    RowShare::Plane { rows: _, lanes } => lanes,
+                comptime!(match share {
+                    RowShare::Plane { .. } => {}
                     RowShare::Unit { rows: _ } => {
                         panic!("rescale_rows: a plane-resident accumulator is owned by its plane")
                     }
                 });
-                p.rescale_rows(corr, lanes)
+                p.rescale_rows(corr)
             }
             TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)

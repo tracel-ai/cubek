@@ -75,7 +75,7 @@ fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
     #[comptime] monoid: Monoid,
 ) {
     match tile {
-        PlaneTile::Register(d) => {
+        PlaneTile::Registers(d) => {
             reduce::register_data(d, input, acc_space, monoid);
         }
         PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {

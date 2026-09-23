@@ -25,9 +25,6 @@ pub struct CmmaData<T: Numeric> {
     /// where its intrinsic cannot do the work (a row-wise op, a drain into a folding store). Opened
     /// on the accumulator ([`with_scratch`](Tile::with_scratch)) and carried by every fragment.
     pub scratch: ComptimeOption<Shared<[T]>>,
-    /// Units in one plane, stated with the scratch: what a bounce deals the tile's cells across.
-    #[cube(comptime)]
-    pub lanes: usize,
 }
 
 #[cube]
@@ -49,23 +46,17 @@ impl<T: Numeric> CmmaData<T> {
             layout,
             shape: comptime!((m, n)),
             scratch: ComptimeOption::new_None(),
-            lanes: 0usize,
         }
     }
 
-    /// This fragment carrying `scratch`, one tile of shared memory for its plane of `lanes`.
-    pub(crate) fn with_scratch(
-        self,
-        scratch: Shared<[T]>,
-        #[comptime] lanes: usize,
-    ) -> CmmaData<T> {
+    /// This fragment carrying `scratch`, one tile of shared memory for its plane.
+    pub(crate) fn with_scratch(self, scratch: Shared<[T]>) -> CmmaData<T> {
         CmmaData::<T> {
             matrix: self.matrix,
             ident: comptime!(self.ident),
             layout: comptime!(self.layout),
             shape: comptime!(self.shape),
             scratch: ComptimeOption::new_Some(scratch),
-            lanes,
         }
     }
 
@@ -171,24 +162,23 @@ impl<T: Numeric> CmmaData<T> {
         let size!(W) = width;
         let lines_per_row = comptime!(n / width);
         let lines = comptime!(m * lines_per_row);
-        let lanes = comptime!(self.lanes);
-        let lane = UNIT_POS_X as usize % lanes;
         let axes = comptime!(MatrixAxes::trailing(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
-        #[unroll]
-        for t in 0..comptime!(lines.div_ceil(lanes)) {
-            let line = lane + t * lanes;
-            if comptime!(lines.is_multiple_of(lanes)) || line < lines {
-                let mut value = Vector::<Out, W>::empty();
-                #[unroll]
-                for e in 0..width {
-                    value.insert(e, Out::cast_from(scratch[line * width + e]));
-                }
-                sink.write(
-                    ((line / lines_per_row) as u32, (line % lines_per_row) as u32),
-                    value,
-                );
+        // The plane's width is the launch's (`cube_dim = (plane_size, planes)`), so the lanes
+        // deal the lines between them at runtime.
+        let lanes = CUBE_DIM_X as usize;
+        let mut line = UNIT_POS_X as usize;
+        while line < lines {
+            let mut value = Vector::<Out, W>::empty();
+            #[unroll]
+            for e in 0..width {
+                value.insert(e, Out::cast_from(scratch[line * width + e]));
             }
+            sink.write(
+                ((line / lines_per_row) as u32, (line % lines_per_row) as u32),
+                value,
+            );
+            line += lanes;
         }
     }
 

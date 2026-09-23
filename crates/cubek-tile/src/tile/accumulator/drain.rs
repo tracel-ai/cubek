@@ -52,6 +52,44 @@ impl CellRead {
     }
 }
 
+/// How a plane-resident accumulator's tiles reach memory: stored straight through the intrinsic,
+/// or bounced through the scratch, together where every tile has a slot of its own and one at a
+/// time where they share one. Read off the [`Scratch`] the accumulator was opened with.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum DrainPlan {
+    /// No scratch: each tile stores through its own intrinsic.
+    Straight,
+    /// Every tile has its own slot, so every spill happens before any add: two barriers in all.
+    BounceTogether,
+    /// One slot between the tiles, so each spills and adds inside the loop: three barriers each.
+    BounceEach,
+}
+
+impl DrainPlan {
+    pub(crate) fn new(scratch: Scratch) -> Self {
+        match scratch {
+            Scratch::None => DrainPlan::Straight,
+            Scratch::OneTile => DrainPlan::BounceEach,
+            Scratch::WholeGrid => DrainPlan::BounceTogether,
+        }
+    }
+}
+
+/// What a drain does to one tile of the accumulator at the leaf of its descent: the two halves of
+/// a bounce run as passes of their own where every tile has a slot, so the barriers between them
+/// are the whole drain's rather than each tile's.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum DrainPass {
+    /// Store through the tile's own intrinsic.
+    Copy,
+    /// Spill, add, and the three barriers around them.
+    Bounce,
+    /// Spill alone: the first pass of a drain whose tiles each have a slot.
+    Spill,
+    /// Add alone: its second pass.
+    Add,
+}
+
 /// Which of the plane's lanes carry a drain's writes, and what they do to their values first.
 ///
 /// Derived from the three facts that decide it and matched on once, so a write reads as four

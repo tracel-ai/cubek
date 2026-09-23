@@ -319,13 +319,8 @@ fn routed_block_matmul_kernel<E: Numeric>(
             let out_s = out.at(&slab);
             let x_s = x.at(&slab);
             let w_s = w.at(&slab);
-            let mut acc = out_s.block_accumulator::<E, E, E>(
-                &x_s,
-                &w_s,
-                comptime!(Fragments::below(&out_s, &x_s)),
-                REGISTER_BLOCK,
-                Monoid::Sum,
-            );
+            let mut acc =
+                out_s.block_accumulator::<E, E, E>(&x_s, &w_s, REGISTER_BLOCK, Monoid::Sum);
             acc.zero();
             for step in slab.over(&depth) {
                 let mut acc_s = acc.at(&step);

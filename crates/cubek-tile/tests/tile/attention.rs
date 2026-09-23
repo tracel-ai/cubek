@@ -10,9 +10,9 @@ use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Fragments, Level, Levels, MaskProbe, Memory, Monoid, Partitioning, RegisterBlock,
-    Resident, RowShare, RowState, Semiring, Space, StageStorage, StreamFold, TeamUnit, TileArg,
-    TileArgLaunch, TileSpec,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, MaskProbe, Memory, Monoid, Partitioning,
+    Placement, RegisterBlock, RowShare, RowState, Scratch, Semiring, Space, StageStorage,
+    StreamFold, TeamUnit, Tile, TileArg, TileArgLaunch, TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -434,19 +434,42 @@ fn attention_fold_cmma_kernel<E: Float>(
         let row_origin = plane.coord(QP) * rows_p;
 
         let mut state = RowState::<f32>::over_plane(comptime!(Space::new(&[(QP, rows_p)])), lanes);
-        let mut acc = out_w
-            .cmma_accumulator::<f32, f32>(
-                &score_w,
-                comptime!(Fragments {
-                    m_tiles: rm,
-                    n_tiles: vn,
-                    m: frag,
-                    n: frag,
-                    k: frag,
-                }),
-                Monoid::Sum,
-            )
-            .with_scratch(Resident::OneTile, planes, lanes);
+        // The accumulators' grids are stated as levels: the plane level above, and below it the
+        // fragment grid each is cut to, which is what sizes the fragments and the scratch.
+        let plane_level = comptime!(
+            Levels::leaf(&[(QP, rows_p)])
+                .planes(&[(QP, planes)])
+                .level()
+        );
+        let out_g = Tile::new(
+            out_w.kind.clone(),
+            comptime!(Placement::new(
+                out_w.place.space.clone(),
+                1,
+                vec![
+                    plane_level.clone(),
+                    Levels::leaf(&[(QP, frag), (V, frag), (S, frag)])
+                        .walk(&[(QP, rm), (V, vn), (S, cn)])
+                        .level(),
+                ]
+            )),
+        );
+        let score_g = Tile::new(
+            score_w.kind.clone(),
+            comptime!(Placement::new(
+                score_w.place.space.clone(),
+                1,
+                vec![
+                    plane_level.clone(),
+                    Levels::leaf(&[(QP, frag), (S, frag), (D, frag)])
+                        .walk(&[(QP, rm), (S, cn), (D, ks)])
+                        .level(),
+                ]
+            )),
+        );
+        let mut acc = out_g
+            .cmma_accumulator::<f32, f32>(&score_w, Monoid::Sum)
+            .with_scratch(Scratch::OneTile);
         acc.zero();
         // The fragment grids of every operand, cells in row-major order.
         let acc_cells = out_w.over(&comptime!(Level::every(&[(QP, frag), (V, frag)])));
@@ -479,17 +502,7 @@ fn attention_fold_cmma_kernel<E: Float>(
             sync_cube();
 
             // The score: `q · kᵀ`, the keys' window read col-major by the leaf.
-            let mut s = score_w.cmma_accumulator::<f32, E>(
-                &q_w,
-                comptime!(Fragments {
-                    m_tiles: rm,
-                    n_tiles: cn,
-                    m: frag,
-                    n: frag,
-                    k: frag,
-                }),
-                Monoid::Sum,
-            );
+            let mut s = score_g.cmma_accumulator::<f32, E>(&q_w, Monoid::Sum);
             s.zero();
             #[unroll]
             for si in 0..ks {

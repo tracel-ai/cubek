@@ -338,13 +338,7 @@ fn packed_gemv<E: Numeric, V: Size>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let mut acc = c.block_accumulator::<E, E, E>(
-            &x,
-            &values,
-            comptime!(Fragments::below(&c, &x)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);
@@ -409,13 +403,7 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(
-            &x,
-            &values,
-            comptime!(Fragments::below(&c, &x)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);
@@ -450,15 +438,7 @@ fn packed_cmma_rhs<E: Numeric>(
             scale.tile_as::<E>(comptime!(space.clone())),
         ));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &x,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &x.place.space,
-            std::slice::from_ref(&level)
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&x, Monoid::Sum);
     acc.zero();
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
@@ -1973,13 +1953,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(
-            &x,
-            &w,
-            comptime!(Fragments::below(&c, &x)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);

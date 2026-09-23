@@ -271,11 +271,6 @@ fn stream_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
-    let below = comptime!({
-        let mut below = vec![inner.clone()];
-        below.extend(leaf.clone());
-        below
-    });
     let portion = space.over(&outer).portion(comptime!(inner.clone()));
     for i in 0..portion.touched() {
         let region = portion.region(i);
@@ -286,11 +281,6 @@ fn stream_matmul<E: Numeric>(
         let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
-            comptime!(Fragments::new(
-                &c_region.place.space,
-                &a_region.place.space,
-                &below
-            )),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
@@ -338,11 +328,6 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
-            comptime!(Fragments::new(
-                &c_region.place.space,
-                &a_region.place.space,
-                std::slice::from_ref(&inner)
-            )),
             REGISTER_BLOCK,
             Monoid::Sum,
         );

@@ -30,7 +30,7 @@ pub struct MmaData<T: Numeric> {
     #[cube(comptime)]
     pub layout: MatrixLayout,
     #[cube(comptime)]
-    pub io: MmaIOConfig,
+    pub io: MmaIo,
 }
 
 /// One role's register array. The role rides inside the fragment because each carries a different
@@ -52,7 +52,7 @@ impl<T: Numeric> MmaData<T> {
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
-        #[comptime] io: MmaIOConfig,
+        #[comptime] io: MmaIo,
     ) -> MmaData<T> {
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         register_acc_size::<T>(&def);
@@ -73,7 +73,7 @@ impl<T: Numeric> MmaData<T> {
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
-        #[comptime] io: MmaIOConfig,
+        #[comptime] io: MmaIo,
     ) -> MmaData<T> {
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         register_lhs_size::<T>(&def);
@@ -94,7 +94,7 @@ impl<T: Numeric> MmaData<T> {
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
-        #[comptime] io: MmaIOConfig,
+        #[comptime] io: MmaIo,
     ) -> MmaData<T> {
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         register_rhs_size::<T>(&def);
@@ -226,7 +226,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] io: MmaIo,
     #[comptime] edges: (usize, usize),
 ) {
     // Fall back to manual loading for gathered operands.
@@ -244,7 +244,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
         LoadMethod::LoadMatrix => {
             comptime!(panic!(
                 "MmaData::load: the ldmatrix fast path is not yet wired for Memory windows; \
-                 state the register stage with MmaIOConfig::manual()"
+                 state the register stage with MmaIo::manual()"
             ))
         }
     }
@@ -298,14 +298,14 @@ fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] io: MmaIo,
 ) {
     match io.store_method() {
         StoreMethod::Manual => store_manual::<T, Out, A, B, CD>(mem, fragment, def, ident, layout),
         StoreMethod::StoreMatrix => {
             comptime!(panic!(
                 "MmaData::store: the stmatrix fast path is not yet wired for Memory windows; \
-                 state the register stage with MmaIOConfig::manual()"
+                 state the register stage with MmaIo::manual()"
             ))
         }
     }

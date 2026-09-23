@@ -99,7 +99,6 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut acc = out.block_accumulator::<E, E, E>(
         &w,
         &x,
-        comptime!(Fragments::below(&out, &w)),
         comptime!(RegisterBlock::new(budget)),
         Monoid::Sum,
     );

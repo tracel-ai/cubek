@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, DeliveryFamily, Fragments, Level, Levels, Monoid, Partitioning, PlanePartition, Ring,
-    Semiring, Space, StageStorage, TileArg, pipelined,
+    Accumulate, AccumulateExpand, Axis, DeliveryFamily, Level, Levels, Monoid, Partitioning,
+    PlanePartition, Ring, Semiring, Space, StageStorage, TileArg, pipelined,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -106,15 +106,7 @@ pub fn cmma_kernel<
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
     let depth = comptime!(bp.buffering);
-    let (i, c_grid) = comptime!((bp.instruction, bp.partition));
-    // This plane's fragments: the partition's grid of the instruction's tile.
-    let fragments = comptime!(Fragments {
-        m_tiles: c_grid.m,
-        n_tiles: c_grid.n,
-        m: i.m,
-        n: i.n,
-        k: i.k,
-    });
+    let i = comptime!(bp.instruction);
     // The block a tiled stage groups: the instruction's tile, one of every batch axis.
     let block = comptime!(
         batch
@@ -132,7 +124,8 @@ pub fn cmma_kernel<
         let b = b.at(&cube);
         let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
-        let mut acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
+        // The accumulator's grid is the partition's, read off the levels below the cube.
+        let mut acc = c.cmma_accumulator::<EA, EL>(&a, Monoid::Sum);
         acc.zero();
 
         // One stage of K per region, both inputs staged for it.

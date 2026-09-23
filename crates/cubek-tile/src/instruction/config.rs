@@ -1,4 +1,4 @@
-//! Host-side load/store method selection for the manual-mma form ([`MmaIOConfig`]) and the
+//! Host-side load/store method selection for the manual-mma form ([`MmaIo`]) and the
 //! execution configuration of the software instruction ([`RegisterBlock`]).
 //!
 //! Which fragment transport each role uses is a `(device, storage-type)` decision that queries
@@ -14,7 +14,7 @@ use cubecl::{
 /// `(device, operand storage types)` and carried by the manual-mma form
 /// because the fragment readers/writers branch on it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct MmaIOConfig {
+pub struct MmaIo {
     pub lhs_load_method: LoadMethod,
     pub rhs_load_method: LoadMethod,
     pub acc_load_method: LoadMethod,
@@ -33,7 +33,7 @@ pub enum StoreMethod {
     StoreMatrix,
 }
 
-impl MmaIOConfig {
+impl MmaIo {
     /// Select each role's transport from the device's `ldmatrix`/`stmatrix` support over that
     /// operand's storage element. A packed storage type never uses the intrinsic paths.
     pub fn new(

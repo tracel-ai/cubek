@@ -1,6 +1,6 @@
 //! What one plane contracts through ([`Instruction`]).
 
-use crate::{MmaIOConfig, RegisterBlock};
+use crate::{MmaIo, RegisterBlock};
 
 /// What one plane contracts through: the software instruction's register array (whose execution
 /// `config` rides along), or a matrix fragment in one of the two hardware forms. `io` rides the
@@ -24,5 +24,5 @@ pub enum Instruction {
     Cmma,
     /// cubek's own fragment transport over the matrix intrinsics, carrying the per-role
     /// load and store `io` the device supports.
-    Mma { io: MmaIOConfig },
+    Mma { io: MmaIo },
 }

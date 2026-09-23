@@ -325,26 +325,44 @@ fn atomic_split_matmul<E: Numeric>(
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        REGISTER_BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
+    // Drained through the levels it was opened under, which is what puts a lane's block in front
+    // of its own columns; every lane writes there, and one writes where they repeat.
+    acc.drained_into(&c);
+}
+
+/// The same, with the columns dealt out to the plane's lanes: one level more, and the lane level
+/// is walked like any other. A lane's block is then its own columns, which is what makes every
+/// lane a writer on the drain.
+#[cube(launch)]
+fn atomic_split_matmul_by_lane<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,
+    space: Partitioning,
+    #[comptime] cubes: Level,
+    #[comptime] lanes: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    // Opened above both walks, so it holds what one lane of one cube sums: its own columns
+    // against that cube's slice of the contraction.
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for cube in space.over(&cubes) {
+        for lane in cube.over(&lanes) {
+            let mut acc_lane = acc.at(&lane);
+            acc_lane.mma(&a.at(&lane), &b.at(&lane), Semiring::SUM_PROD);
+        }
     }
+    acc.drained_into(&c);
 }
 
 /// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.
@@ -520,7 +538,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         Form::Static,
     );
 
-    atomic_split_matmul::launch(
+    atomic_split_matmul_by_lane::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -538,6 +556,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         dtype,
     );
 
@@ -760,8 +779,6 @@ fn atomic_split_cmma<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
-    #[comptime] planes: usize,
-    #[comptime] lanes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -772,12 +789,8 @@ fn atomic_split_cmma<E: Numeric>(
         let b_cube = b.at(&cube);
         let c_cube = c.at(&cube);
         let mut acc = c_cube
-            .cmma_accumulator::<E, E>(
-                &a_cube,
-                comptime!(Fragments::below(&c_cube, &a_cube)),
-                Monoid::Sum,
-            )
-            .with_scratch(Resident::OneTile, planes, lanes);
+            .cmma_accumulator::<E, E>(&a_cube, Monoid::Sum)
+            .with_scratch(Scratch::OneTile);
         acc.zero();
         let walk = cube.walk();
         let mut ring = Ring::smem(
@@ -830,7 +843,6 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let lanes = client.properties().hardware.plane_size_max as usize;
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
     let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -878,8 +890,6 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        1usize,
-        lanes,
         dtype,
     );
 

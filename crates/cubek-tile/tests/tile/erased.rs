@@ -267,17 +267,7 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
@@ -319,17 +309,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         Write::Replace,
     )
     .tile(comptime!(space.levels().to_vec()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
@@ -370,17 +350,7 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     .tile(comptime!(space.levels().to_vec()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.place.space,
-            &a.place.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {

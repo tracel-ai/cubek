@@ -777,85 +777,55 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Drain this plane-resident accumulator into `dest`, cast to `dest`'s element, over the tiles
-    /// the `cells` level names — `None` where the accumulator is one tile and the drain one store.
-    ///
-    /// **`self` and `dest` are indexed by the same region**, so a caller that narrows one narrows
-    /// the other to the same window. An accumulator opened wider than the destination handed over
-    /// resolves each region somewhere else and drains the wrong cells.
-    ///
-    /// **The scratch's size decides the barrier count** ([`Resident`]). With one tile resident
-    /// each tile drains on its own, three cube-wide barriers apiece. With the whole partition
-    /// resident no two tiles share a slot: every spill, one barrier, every add, two in all.
-    pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Option<Level>) {
-        match cells {
-            // A grid below the drain: one region of `cells` per tile of it.
-            Some(cells) => self.drain_grid(dest, cells),
-            // No grid: the accumulator is one tile and the drain is one store.
-            // The register leaves are this shape, since their block is the
-            // plane's whole box rather than a partition of it.
-            None => self.drain_tile(dest),
-        }
-    }
-
-    /// [`drained_into`](Self::drained_into) over a grid of tiles.
-    fn drain_grid<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
-        let resident = self.resident();
-        if comptime!(!resident.bounces()) {
-            for region in dest.over(&cells).unrolled() {
-                let mut window = dest.at(&region);
-                window.copy_cast_from(&self.at(&region));
-            }
-        } else if comptime!(resident.drains_together()) {
-            // Every tile has its own slot, so every spill can happen before any add.
-            sync_cube();
-            for region in dest.over(&cells).unrolled() {
-                self.at(&region).spill_to_scratch();
-            }
-            sync_cube();
-            for region in dest.over(&cells).unrolled() {
-                let mut window = dest.at(&region);
-                window.add_from_scratch(&self.at(&region));
-            }
-            sync_cube();
-        } else {
-            // One slot between them, so each tile's spill and add pair off inside the loop.
-            for region in dest.over(&cells).unrolled() {
-                let mut window = dest.at(&region);
-                sync_cube();
-                self.at(&region).spill_to_scratch();
-                sync_cube();
-                window.add_from_scratch(&self.at(&region));
-                sync_cube();
-            }
-        }
-    }
-
-    /// [`drained_into`](Self::drained_into) for a single tile.
-    fn drain_tile<Out: Numeric>(&self, dest: &Tile<Out>) {
-        let resident = self.resident();
-        let mut window = dest.clone();
-        if comptime!(!resident.bounces()) {
-            window.copy_cast_from(self);
-        } else {
-            sync_cube();
-            self.spill_to_scratch();
-            sync_cube();
-            window.add_from_scratch(self);
-            sync_cube();
-        }
-    }
-
-    /// How much of this accumulator its scratch holds, which is what tells a drain whether to
-    /// bounce at all and whether it may hoist its barriers.
-    pub(crate) fn resident(&self) -> comptime_type!(Resident) {
+    /// Whether this operand was opened with a landing ([`with_landing`](Tile::with_landing)),
+    /// which is what lets a fragment load read it whatever its own window's layout is.
+    pub fn has_landing(&self) -> comptime_type!(bool) {
         match &self.kind {
-            TileKind::PlanePartition(p) => comptime!(p.resident),
-            TileKind::Memory(_)
-            | TileKind::PlaneTile(_)
+            TileKind::Memory(g) => g.has_landing(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lanes(_) => comptime!(Resident::None),
+            | TileKind::Lanes(_) => comptime!(false),
+        }
+    }
+
+    /// This operand with a landing: a plane-owned window of shared memory the fragment leaf lands
+    /// `values ⊗ scales` in before loading them as fragments ([`mma_scaled`](Tile::mma_scaled) on a
+    /// cmma accumulator, or [`Scaled::landed`] where the kernel lands a step whole).
+    ///
+    /// Stated where the operand is opened, since the landing is part of its residence, like
+    /// [`with_scratch`](Tile::with_scratch); sized where it lands, by the window landed, one per
+    /// plane of the cube.
+    ///
+    /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
+    /// lands them the way a packed global window does, which is what keeps a deep stage the
+    /// size of the words rather than of the values they unpack to.
+    pub fn with_landing(&self) -> Tile<T> {
+        match &self.kind {
+            TileKind::Memory(g) => Tile::new(
+                TileKind::new_Memory(g.clone().with_landing()),
+                comptime!(self.place.clone()),
+            ),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lanes(_) => {
+                panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
+            }
+        }
+    }
+
+    /// This operand landed where `instruction` needs it, and untouched where it does not.
+    ///
+    /// A fragment loads a window as it lies, so a factor reaching one lands first
+    /// ([`with_landing`](Tile::with_landing)); a register block reads through its layout and lands
+    /// nothing. This crate knows which instructions land, so a kernel opens its operands once.
+    pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<T> {
+        match comptime!(instruction) {
+            Instruction::Registers { .. } => self,
+            Instruction::Cmma | Instruction::Mma { .. } => self.with_landing(),
         }
     }
 
@@ -991,7 +961,7 @@ pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
 
 /// Where a tile sits in its partitioning: its space, and the levels below its depth. The same
 /// read on a tile and on the tile as comptime code sees it, so a comptime derivation
-/// ([`Fragments::below`](crate::Fragments::below)) takes either.
+/// takes either.
 pub trait Placed {
     fn space(&self) -> &Space;
     fn below(&self) -> &[Level];

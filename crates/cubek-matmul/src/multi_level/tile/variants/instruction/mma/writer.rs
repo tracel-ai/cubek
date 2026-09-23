@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::multi_level::tile::{
     StridedTile,
-    variants::{MmaIOConfig, StoreMethod},
+    variants::{MmaIo, StoreMethod},
 };
 use cubek_std::{MatrixLayout, as_cmma_layout};
 
@@ -30,7 +30,7 @@ impl MmaStageWriter {
         #[comptime] ident: MatrixIdent,
         #[comptime] layout: MatrixLayout,
         #[comptime] m: u32,
-        #[comptime] config: MmaIOConfig,
+        #[comptime] config: MmaIo,
     ) {
         let vector_layout = def.vector_layout(ident);
         let transposed = comptime![as_cmma_layout(layout) != vector_layout];

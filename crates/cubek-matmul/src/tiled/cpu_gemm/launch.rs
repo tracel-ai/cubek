@@ -203,7 +203,6 @@ pub fn launch_ref(
         b.arg(),
         c.arg(),
         launch.partitioning_arg(),
-        blueprint.clone(),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,

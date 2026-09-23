@@ -2373,7 +2373,7 @@ fn conv_mma_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] io: MmaIo,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -2381,16 +2381,7 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let mut acc = out.mma_accumulator::<E, E>(
-        &input,
-        comptime!(Fragments::new(
-            &out.place.space,
-            &input.place.space,
-            std::slice::from_ref(&level)
-        )),
-        io,
-        Monoid::Sum,
-    );
+    let mut acc = out.mma_accumulator::<E, E>(&input, io, Monoid::Sum);
     acc.zero();
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
@@ -2409,18 +2400,18 @@ fn conv_mma_kernel<E: Numeric>(
 
 #[test]
 fn conv1d_mma_leaf() {
-    conv1d_mma_leaf_with(MmaIOConfig::manual());
+    conv1d_mma_leaf_with(MmaIo::manual());
 }
 
 #[test]
 fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
-    conv1d_mma_leaf_with(MmaIOConfig {
+    conv1d_mma_leaf_with(MmaIo {
         lhs_load_method: LoadMethod::LoadMatrix,
-        ..MmaIOConfig::manual()
+        ..MmaIo::manual()
     });
 }
 
-fn conv1d_mma_leaf_with(io: MmaIOConfig) {
+fn conv1d_mma_leaf_with(io: MmaIo) {
     let client = cubecl::test_device().client();
     // The *shape*, not just the feature: a backend can advertise manual mma and offer only
     // `16x16x16` (gfx1151 does), and running `8x8x8` there is an instruction the hardware does

@@ -1353,16 +1353,7 @@ fn resident_fold_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let out = output.tile(comptime!(space.clone()));
-    let mut acc = out.block_reducer::<E, E>(
-        &input,
-        comptime!(Fragments::new(
-            &out.place.space,
-            &input.place.space,
-            std::slice::from_ref(&level)
-        )),
-        REGISTER_BLOCK,
-        monoid,
-    );
+    let mut acc = out.block_reducer::<E, E>(&input, REGISTER_BLOCK, monoid);
     acc.init(Monoid::identity::<E>(monoid));
     for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
