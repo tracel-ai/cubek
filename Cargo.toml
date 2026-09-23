@@ -37,16 +37,16 @@ cubek-tile = { path = "crates/cubek-tile", version = "=0.3.0-pre.4", default-fea
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
-### For the main cubek branch. ###
-# cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "c1285188a1473df51ba3346739974512135a0663", default-features = false }
-# cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "c1285188a1473df51ba3346739974512135a0663", default-features = false }
-# cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "c1285188a1473df51ba3346739974512135a0663", default-features = false }
-# cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "c1285188a1473df51ba3346739974512135a0663", default-features = false }
+### For CubeCL PR #1689. ###
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "36a509ce07f9da2033d55b50626aa9bd5d7ac2d9", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "36a509ce07f9da2033d55b50626aa9bd5d7ac2d9", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "36a509ce07f9da2033d55b50626aa9bd5d7ac2d9", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "36a509ce07f9da2033d55b50626aa9bd5d7ac2d9", default-features = false }
 ### For releases ###
-cubecl = { version = "=0.11.0-pre.4", default-features = false }
-cubecl-common = { version = "=0.11.0-pre.4", default-features = false }
-cubecl-environment = { version = "=0.11.0-pre.4", default-features = false }
-cubecl-ir = { version = "=0.11.0-pre.4", default-features = false }
+# cubecl = { version = "=0.11.0-pre.4", default-features = false }
+# cubecl-common = { version = "=0.11.0-pre.4", default-features = false }
+# cubecl-environment = { version = "=0.11.0-pre.4", default-features = false }
+# cubecl-ir = { version = "=0.11.0-pre.4", default-features = false }
 
 
 log = { default-features = false, version = "0.4.22" }
