@@ -167,7 +167,7 @@ impl<T: Numeric> CmmaData<T> {
         // The plane's own width, which the hardware states, so the lanes deal the lines
         // between them whatever shape the launch gave the cube.
         let lanes = PLANE_DIM as usize;
-        let mut line = UNIT_POS_X as usize;
+        let mut line = UNIT_POS_PLANE as usize;
         while line < lines {
             let mut value = Vector::<Out, W>::empty();
             #[unroll]

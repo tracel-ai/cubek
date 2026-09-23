@@ -406,10 +406,10 @@ impl<T: Numeric> PlanePartition<T> {
             }
         }
         let cells = comptime!(m * n);
-        // The plane's width is the launch's (`cube_dim = (plane_size, planes)`), so the lanes
-        // deal the cells between them at runtime.
+        // The plane's own width and this unit's place in it, both the hardware's: the lanes
+        // deal the cells between them whatever shape the launch gave the cube.
         let lanes = PLANE_DIM as usize;
-        let lane = UNIT_POS_X as usize;
+        let lane = UNIT_POS_PLANE as usize;
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
