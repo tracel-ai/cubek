@@ -123,8 +123,9 @@ impl Walk {
         let mut scales = Coords::<usize>::new();
 
         // Per-axis instance counts, `1` for `Sequential`: the grid itself where every worker takes
-        // one tile, the stated count where the grid is dealt across workers in runs. Folded, so a
-        // constant grid's decode below folds too (`/1`, `%1` vanish; `%` gets a constant divisor).
+        // one tile, the stated count where the grid is dealt across workers in runs, the lanes the
+        // launch runs where they take the grid in turns. Folded, so a constant grid's decode below
+        // folds too (`/1`, `%1` vanish; `%` gets a constant divisor).
         let mut instances = Coords::<usize>::new();
         #[unroll]
         for p in 0..rank {
@@ -133,6 +134,7 @@ impl Walk {
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
                 match comptime!(level.count(axis).unwrap()) {
                     Count::Across(workers) => instances.push(workers.runtime()),
+                    Count::Dealt(_) => instances.push(CUBE_DIM_X as usize),
                     Count::Of(_) | Count::Every => instances.push(grid.at(p)),
                 }
             } else {
@@ -191,7 +193,7 @@ impl Walk {
                         .at(p)
                         .fadd(comptime!(workers - 1).runtime())
                         .fdiv(workers.runtime()),
-                    Count::Of(_) | Count::Every => 1usize.runtime(),
+                    Count::Of(_) | Count::Every | Count::Dealt(_) => 1usize.runtime(),
                 };
                 counts.push(instance_tiles(
                     grid.at(p),

@@ -215,9 +215,11 @@ impl Partitioning {
             for axis in space.axes() {
                 if level.distribution(axis).scope() == Some(scope) {
                     // The stated workers, or one per tile of an every-level: `tiles` is `ceil`,
-                    // so an indivisible axis adds the cube for its partial tile.
+                    // so an indivisible axis adds the cube for its partial tile. Tiles dealt to
+                    // as many lanes as the launch runs ask for none of their own.
                     total *= match level.count(axis) {
                         Some(Count::Across(workers)) => workers,
+                        Some(Count::Dealt(_)) => 1,
                         _ => level.tiles(&space, axis),
                     } as u32;
                 }
@@ -253,7 +255,8 @@ impl Partitioning {
     }
 
     /// Lanes one instance holds, read off the levels' unit cuts. `1` where no level cuts to
-    /// units, which is a plan whose leaf the whole plane runs.
+    /// units, which is a plan whose leaf the whole plane runs, or where the lanes take their
+    /// tiles in turns ([`Count::Dealt`]), however many the launch runs.
     pub fn lanes(&self) -> u32 {
         self.instances(ComputeScope::Unit)
     }
