@@ -67,6 +67,9 @@ pub struct Memory<T: Numeric> {
     /// Opened by [`with_landing`](Tile::with_landing); without one the leaf takes it unscaled only.
     #[cube(comptime)]
     pub(crate) lands: bool,
+    /// The scales these values carry, attached by [`Tile::mul`](crate::Tile::mul) and read where
+    /// the values are read. Empty is an operand carrying none.
+    pub(crate) factor: Factor,
 }
 
 /// Which memory a [`Memory`] tile's buffer sits in. The payload is the same either way; the

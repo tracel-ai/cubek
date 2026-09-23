@@ -5,6 +5,7 @@
 
 mod access;
 mod base;
+mod factor;
 mod global;
 mod stage;
 mod tma;
@@ -12,6 +13,7 @@ mod view;
 mod window;
 
 pub use base::*;
+pub(crate) use factor::*;
 pub use global::*;
 pub(crate) use stage::*;
 pub use tma::*;

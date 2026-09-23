@@ -164,9 +164,9 @@ impl<T: Numeric> CmmaData<T> {
         let lines = comptime!(m * lines_per_row);
         let axes = comptime!(MatrixAxes::trailing(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
-        // The plane's width is the launch's (`cube_dim = (plane_size, planes)`), so the lanes
-        // deal the lines between them at runtime.
-        let lanes = CUBE_DIM_X as usize;
+        // The plane's own width, which the hardware states, so the lanes deal the lines
+        // between them whatever shape the launch gave the cube.
+        let lanes = PLANE_DIM as usize;
         let mut line = UNIT_POS_X as usize;
         while line < lines {
             let mut value = Vector::<Out, W>::empty();

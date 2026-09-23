@@ -1251,6 +1251,8 @@ impl<T: Numeric> Memory<T> {
             // Joined level by level: the level's whole space still has the axis this operand's
             // projection dropped, which is what tells a split from a cut of the whole axis.
             comptime!(SplitShare::new(&step.level, &step.space, &space).under(self.split_share)),
+            // The scales are windowed with the values they ride.
+            self.factor.at(step),
         )
     }
 
@@ -1372,6 +1374,7 @@ impl<T: Numeric> Memory<T> {
         #[comptime] access: Access,
         #[comptime] lanes: LaneShare,
         #[comptime] split_share: SplitShare,
+        factor: Factor,
     ) -> Memory<T> {
         Memory::<T> {
             address: comptime!(self.address),
@@ -1393,6 +1396,7 @@ impl<T: Numeric> Memory<T> {
             lanes,
             split_share,
             init_from: comptime!(self.init_from),
+            factor,
         }
     }
 
@@ -1466,6 +1470,8 @@ impl<T: Numeric> Memory<T> {
             }),
             comptime!(self.lanes),
             comptime!(self.split_share),
+            // Placing a window moves the values, and the scales ride them unchanged.
+            self.factor.clone(),
         )
     }
 }

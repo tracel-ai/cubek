@@ -139,7 +139,7 @@ impl<T: Numeric> Lines<T> {
             LaneRead::PlaneShared => {
                 let planes = comptime!(plane_windows(&operand.place.space, &operand.place.levels));
                 let cells = comptime!(lines * words);
-                let start = Takers::position(Takers::Planes) * cells;
+                let start = PLANE_POS.retyped::<usize>() * cells;
                 let end = start + cells;
                 ComptimeOption::new_Some(
                     Shared::<[u32]>::new_slice(comptime!(cells * planes))

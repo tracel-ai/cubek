@@ -1,4 +1,4 @@
-//! `dst.mul(&a, &b)`: the elementwise product of two tiles, each broadcasting over the axes it
+//! `dst.product(&a, &b)`: the elementwise product of two tiles, each broadcasting over the axes it
 //! omits.
 //!
 //! Not a quantization verb. A scale is a tile spanning fewer axes than the values it multiplies,
@@ -20,7 +20,7 @@ impl<T: Numeric> Tile<T> {
     ///
     /// The transport alone, like [`copy`](Tile::copy): every unit of the cube fills the whole
     /// tile, and the levels a product is split across are the kernel's own loops.
-    pub fn mul<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
+    pub fn product<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         self.mul_from(a, b)
     }
 

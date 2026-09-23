@@ -360,6 +360,7 @@ impl<T: Numeric> Memory<T> {
             lanes: comptime!(LaneShare::Repeated),
             split_share,
             init_from: comptime!(InitFrom::Cell),
+            factor: Factor::none(),
             lands: false,
         }
     }

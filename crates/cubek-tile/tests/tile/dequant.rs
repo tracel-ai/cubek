@@ -33,7 +33,7 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     let weights = weights.tile_as::<E>(comptime!(space.clone()));
     let scales = scales.tile(comptime!(space.clone()));
     let mut out = out.tile(comptime!(space.clone()));
-    out.mul(&weights, &scales);
+    out.product(&weights, &scales);
 }
 
 #[test]

@@ -339,10 +339,12 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                 let cells = comptime!(m * n);
                 let tiles = comptime!(p.m_tiles * p.n_tiles);
                 let slots = comptime!(scratch.slots(tiles));
-                // One window per plane of the cube, this plane's found by its position; the
-                // cube's whole claim sits behind it.
+                // One window per plane of the cube, this plane's found by the hardware's own
+                // plane index; the cube's whole claim sits behind it. Not the level's position:
+                // the launch decides the cube's shape, and a team wider than a plane puts two
+                // planes on one of its rows.
                 let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
-                let plane = Takers::position(Takers::Planes) * comptime!(cells * slots);
+                let plane = PLANE_POS.retyped::<usize>() * comptime!(cells * slots);
                 let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
                 // **Every fragment carries its own slot.** One taken off the grid by `at` then
                 // bounces on its own, and, where the whole grid is resident, no two fragments

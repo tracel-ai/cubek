@@ -438,6 +438,7 @@ impl<T: Numeric> Memory<T> {
                 lanes: comptime!(LaneShare::Repeated),
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
+                factor: Factor::none(),
                 source_window: source,
                 lands: false,
             }),
@@ -458,7 +459,7 @@ impl<T: Numeric> Memory<T> {
                 .map(|p| space.extent_at(p))
                 .product::<usize>()
         );
-        let start = Takers::position(Takers::Planes) * cells;
+        let start = PLANE_POS.retyped::<usize>() * cells;
         let end = start + cells;
         let window =
             Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);

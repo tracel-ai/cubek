@@ -435,7 +435,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// One level down: window this tile to `step`'s box.
-    fn at_step(&self, step: &Step) -> Tile<T> {
+    pub(crate) fn at_step(&self, step: &Step) -> Tile<T> {
         let tile_kind = match &self.kind {
             TileKind::Memory(g) => {
                 TileKind::new_Memory(g.at(step, comptime!(self.place.space.clone())))
@@ -1031,5 +1031,97 @@ impl<T: Numeric> Iterable for &TileExpand<T> {
 
     fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         self.clone().expand_unroll(scope, body)
+    }
+}
+
+impl<E: Numeric> Tile<E> {
+    /// These values under `scale`: the scales ride the operand from here on, windowed by the same
+    /// [`at`](Tile::at) and multiplied in where the values are read.
+    ///
+    /// A scale is a tile in the values' space with the axes one scale holds whole *omitted*, so
+    /// the value's own coordinate names its scale and nothing divides. Said once per level,
+    /// innermost first: `w.mul(&block).mul(&tensor)` is a block scale under a per-tensor one.
+    ///
+    /// A scale covering everything an accumulator sums belongs on the accumulator instead, one
+    /// multiply per cell rather than one per value read.
+    pub fn mul<S: Numeric>(&self, _scale: &Tile<S>) -> Tile<E> {
+        unexpanded!()
+    }
+}
+
+impl<E: Numeric> TileExpand<E> {
+    pub fn __expand_mul_method<S: Numeric>(
+        self,
+        scope: &Scope,
+        scale: &TileExpand<S>,
+    ) -> TileExpand<E> {
+        let values = self.place.space.clone();
+        let scales = scale.place.space.clone();
+        assert!(
+            scales.axes().all(|axis| values.contains(axis)),
+            "Tile::mul: the scales span {:?} where the values span {:?}; a scale is looked up at \
+             the value's coordinates, so every axis of the scales is one of the values'",
+            scales.axes().collect::<Vec<_>>(),
+            values.axes().collect::<Vec<_>>()
+        );
+        let mut out = self;
+        match &mut out.kind {
+            TileKindExpand::Memory(memory) => {
+                memory.factor = memory.factor.and(FactorExpand::of(scope, scale));
+            }
+            TileKindExpand::PlaneTile(_)
+            | TileKindExpand::PlanePartition(_)
+            | TileKindExpand::TmaGmem(_)
+            | TileKindExpand::Procedural(_)
+            | TileKindExpand::Lines(_) => {
+                panic!(
+                    "Tile::mul: a factor rides values read from memory; a fragment is scaled \
+                     once it holds them and a tma source is not read here at all"
+                )
+            }
+        }
+        out
+    }
+
+    /// The factor a leaf reads these values under: the innermost level looked up per line, every
+    /// coarser one read once here. `axes` is the matrix the leaf reads the values as and `matrix`
+    /// which batch matrix; `side`, `out` and `acc_axes` are what the statement is checked against.
+    pub(crate) fn __expand_reader_method(
+        self,
+        scope: &Scope,
+        axes: MatrixAxes,
+        matrix: NativeExpand<usize>,
+        side: Side,
+        out: Space,
+        acc_axes: MatrixAxes,
+    ) -> FactorReaderExpand {
+        let values = self.place.space.clone();
+        let vector_size = self.clone().__expand_vector_size_method(scope);
+        let factor = match &self.kind {
+            TileKindExpand::Memory(memory) => memory.factor.clone(),
+            _ => FactorExpand::default(),
+        };
+        if let Some(inner) = factor.inner() {
+            check_scales_omit_rather_than_divide(&inner.projection);
+            check_scales_ride(side, &inner.space, &out, acc_axes);
+            // A line of values is under one scale: the axis it runs along is one the scales omit,
+            // or the line is one value.
+            let innermost = values.axis_at(values.rank() - 1);
+            assert!(
+                vector_size == 1 || !inner.projection.addresses(innermost),
+                "Tile::mul: a line runs {vector_size} values along {innermost:?}, which its \
+                 scales address, so one line lies under several scales; serve the factor one \
+                 value a line, or omit {innermost:?} from the scales"
+            );
+        }
+        FactorReaderExpand {
+            coarse: factor.coarse(scope),
+            inner: factor.innermost(),
+            scaled: factor.scaled(),
+            values,
+            axes,
+            vector_size,
+            matrix,
+        }
     }
 }
