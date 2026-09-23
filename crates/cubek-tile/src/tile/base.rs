@@ -420,6 +420,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// This tile at `like`'s place in its nest, its depth and its levels, so every region that
+    /// windows `like` windows this tile too: what a buffer allocated over `like`'s box sits at.
+    pub(crate) fn nested_like<U: Numeric>(self, like: &Tile<U>) -> Tile<T> {
+        Tile::<T> {
+            tile_kind: self.tile_kind,
+            space: comptime!(self.space.clone()),
+            depth: comptime!(like.depth),
+            levels: comptime!(like.levels.clone()),
+        }
+    }
+
     /// This tile at `depth` in its nest: what a stage allocated for a walk's regions sits at.
     pub(crate) fn at_depth(self, #[comptime] depth: usize) -> Tile<T> {
         Tile::<T> {

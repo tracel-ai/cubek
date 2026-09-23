@@ -248,11 +248,11 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] space: Space,
     ) {
         match self {
-            PlaneTile::Cmma(d) => match comptime!(mem.access.write) {
-                Write::Replace => {
+            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
+                FragmentDrain::Intrinsic => {
                     d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
                 }
-                Write::Accumulate => d.accumulate_cast_window(mem, space),
+                FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
             },
             PlaneTile::Mma(d) => {
                 comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Mma"));

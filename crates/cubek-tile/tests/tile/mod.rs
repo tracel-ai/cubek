@@ -24,5 +24,6 @@ mod scaled;
 mod separable;
 mod softmax;
 mod space;
+mod smem_accumulation;
 mod split_k;
 mod stream;

@@ -204,9 +204,9 @@ impl Write {
     ///
     /// A register block writes cell by cell and so can; a cmma partition opened with a scratch
     /// ([`Tile::with_scratch`](crate::Tile::with_scratch)) bounces each fragment through it and
-    /// adds cell by cell too ([`CmmaData::accumulate_cast_window`]); an mma tile has no bounce.
+    /// adds cell by cell too ([`CmmaData::bounce_cast_window`]); an mma tile has no bounce.
     ///
-    /// [`CmmaData::accumulate_cast_window`]: crate::CmmaData::accumulate_cast_window
+    /// [`CmmaData::bounce_cast_window`]: crate::CmmaData::bounce_cast_window
     pub(crate) fn validate_fragment_drain(self, fragment: &str) {
         match self {
             Write::Replace => {}

@@ -151,9 +151,10 @@ impl<T: Numeric> CmmaData<T> {
         self.store_scratch(&self.scratch_slot("spill_to_scratch"));
     }
 
-    /// Add this fragment's spilled cells into `mem` through the store's own write, which for a
-    /// folding store is the atomic add: the second half of a bounce. The intrinsic's store
-    /// replaces and elects no writer; the scratch is what gives each cell one owner.
+    /// Write this fragment's spilled cells into `mem` through the store's own write, which for a
+    /// folding store is the atomic add and for a masked window skips the cells past its edge: the
+    /// second half of a bounce. The intrinsic's store replaces and elects no writer; the scratch is
+    /// what gives each cell one owner.
     ///
     /// Lines of the store's width rather than scalars, and the lanes deal them between
     /// themselves, so every cell has exactly one owner and lands once.
@@ -194,9 +195,12 @@ impl<T: Numeric> CmmaData<T> {
         }
     }
 
-    /// Drain this fragment into a store that folds, on its own: spill, wait, add, wait. What a
-    /// partition drained a tile at a time runs, and the barriers a whole-partition drain hoists.
-    pub(crate) fn accumulate_cast_window<Out: Numeric>(
+    /// Drain this fragment through the plane's scratch, on its own: spill, wait, write, wait. Each
+    /// lane then writes its cells through the store's own write, so every cell has one owner, a
+    /// store that folds adds it, and a window the problem's edge cuts short is written only where
+    /// it lies inside. What a partition drained a tile at a time runs, and the barriers a
+    /// whole-partition drain hoists.
+    pub(crate) fn bounce_cast_window<Out: Numeric>(
         &self,
         mem: &mut MemData<Out>,
         #[comptime] space: Space,
@@ -236,5 +240,59 @@ impl<T: Numeric> CmmaData<T> {
             stride,
             comptime!(self.layout),
         )
+    }
+}
+
+/// How a cmma fragment reaches its destination.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum FragmentDrain {
+    /// Through the fragment's own store intrinsic, which writes its whole window at once: only for
+    /// a destination that replaces and a window lying wholly inside it.
+    Intrinsic,
+    /// Through the plane's scratch, each lane then writing its cells through the destination's
+    /// own write: a destination that adds, or a window the problem's edge cuts short.
+    Bounce,
+}
+
+impl FragmentDrain {
+    /// How a fragment drains into a destination written as `access` says.
+    pub(crate) const fn of(access: &Access) -> Self {
+        match (access.write, access.overhang) {
+            (Write::Replace, Overhang::Never | Overhang::Fits) => FragmentDrain::Intrinsic,
+            (Write::Replace, Overhang::Masked) | (Write::Accumulate, _) => FragmentDrain::Bounce,
+        }
+    }
+}
+
+#[cfg(test)]
+mod fragment_drain_tests {
+    use super::*;
+
+    fn access(write: Write, overhang: Overhang) -> Access {
+        Access {
+            whole: false,
+            overhang,
+            write,
+            units: 0,
+            storage: Storage::Strided,
+        }
+    }
+
+    #[test]
+    fn a_replacing_window_inside_its_buffer_stores_through_the_intrinsic() {
+        for overhang in [Overhang::Never, Overhang::Fits] {
+            let drain = FragmentDrain::of(&access(Write::Replace, overhang));
+            assert_eq!(drain, FragmentDrain::Intrinsic);
+        }
+    }
+
+    #[test]
+    fn an_overhanging_or_folding_window_bounces() {
+        let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked));
+        assert_eq!(masked, FragmentDrain::Bounce);
+        for overhang in [Overhang::Never, Overhang::Fits, Overhang::Masked] {
+            let folding = FragmentDrain::of(&access(Write::Accumulate, overhang));
+            assert_eq!(folding, FragmentDrain::Bounce);
+        }
     }
 }
