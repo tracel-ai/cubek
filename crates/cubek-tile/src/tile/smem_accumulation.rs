@@ -7,6 +7,10 @@
 //! [`smem_accumulation`](Tile::smem_accumulation) returns, so the first add lands on the identity.
 //! Reading the source before every plane has drained and the cube has synchronized again reads a
 //! partial sum, and nothing here can tell.
+//!
+//! A call site's buffer is the same memory every time it runs, so an accumulator opened in a loop
+//! reuses the last one's cells. The cube synchronizes before zeroing too, so a unit still reading
+//! the previous sum finishes before the next one clears it.
 
 use core::marker::PhantomData;
 
@@ -34,7 +38,7 @@ pub struct SmemAccumulation<A: Numeric, T: Numeric> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// A shared-memory accumulator over this tile's box, summing in `A`, zeroed, with the cube
-    /// synchronized.
+    /// synchronized on both sides of the zeroing.
     ///
     /// Sized to this tile's own space, so a cube opens one over its box of the output and each of
     /// its planes drains into `sink.at(&plane)`; the source reads the sum as this tile's element,
@@ -45,6 +49,8 @@ impl<T: Numeric> Tile<T> {
         let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
         let cells = comptime!(form.cells());
         let values = Shared::<[Atomic<A>]>::new_slice(cells);
+        // The previous open from this call site may still be read; let it finish first.
+        sync_cube();
         let mut cell = UNIT_POS as usize;
         while cell < cells {
             values[cell].store(A::from_int(0));
