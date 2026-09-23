@@ -1,7 +1,7 @@
 //! The axis-agnostic tile DSL engine.
 //!
 //! A [`Space`] is the axes and their extents. A [`Level`] is one decomposition of it (the axes a
-//! loop steps, in what tile, how many, who takes them), stated leaf-up in counts ([`Tiling`]). A
+//! loop steps, in what tile, how many, who takes them), stated leaf-up in counts ([`Levels`]). A
 //! [`Partitioning`] is the space with its levels, outermost first, and is what a kernel is handed.
 //!
 //! `for cube in space` deals the first level, `for plane in cube` the next, each loop handing out
@@ -9,8 +9,8 @@
 //! launch ([`Launcher`]) reads the grid off those levels and binds the tensors to the same extents.
 //!
 //! The rest is the kernel's: operand storage ([`Stages::smem`], [`pipelined`]), accumulator
-//! ([`Accumulate`]), loaded fragments ([`PlanePartition::cmma_fragments`]), leaf instruction
-//! ([`Tile::mm_with`], [`Tile::mma`]).
+//! ([`Accumulate`]), loaded fragments ([`PlanePartition::cmma_fragments`]), and the leaf it contracts
+//! through ([`Tile::mm_with`], [`Tile::mma`]).
 //!
 //! A fragment's store to its output window is [`Tile::copy_cast_from`]. Where data decides what
 //! a loop reaches, [`Walk::routed`] gives an axis a table's coordinate (an expert per token,
