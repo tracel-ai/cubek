@@ -318,29 +318,33 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
         match comptime!(schedule) {
             Schedule::AheadInSlots => {
                 pipelined(walk, &mut ring, |slot, region| {
-                    let mut c_r = c.at(region);
+                    let c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        // Every unit fills its share of the slot; one contracts it, since the
-                        // contraction adds into `c` where it lies.
-                        if UNIT_POS == 0 {
-                            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
-                        }
+                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
                     });
                 });
             }
             Schedule::ThroughRegisters => {
                 pipelined_through_registers(walk, &mut ring, |slot, region| {
-                    let mut c_r = c.at(region);
+                    let c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        // Every unit fills its share of the slot; one contracts it, since the
-                        // contraction adds into `c` where it lies.
-                        if UNIT_POS == 0 {
-                            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
-                        }
+                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
                     });
                 });
             }
         }
+    }
+}
+
+/// `c += a · b` on the cube's last unit alone, the rest having only filled the slot: the
+/// contraction adds into `c` where it lies, so one unit makes it, and the last so that most of the
+/// units that wrote the slot sit in other planes, where only a barrier orders their writes before
+/// this read.
+#[cube]
+fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) {
+    if UNIT_POS == CUBE_DIM - 1 {
+        let mut c = c.clone();
+        c.mma_with(a, b, REGISTER_BLOCK, Semiring::SUM_PROD);
     }
 }
 
@@ -1788,9 +1792,10 @@ fn check_matmul_scheduled(
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
     // The cube's units, stated on each operand as `Launcher::arg` states them: a stage fetched
-    // into registers deals its lines over them at expansion.
+    // into registers deals its lines over them at expansion. The buffer is bound scalar: the
+    // kernel's line type carries the width, and the metadata stays in elements.
     let bound = |input: &TileInput| {
-        TileArgLaunch::new(input.tensor_arg(width), input.spec().units(units as usize))
+        TileArgLaunch::new(input.tensor_arg(1), input.spec().units(units as usize))
     };
     matmul_smem_ring_scheduled::launch(
         &client,
@@ -1810,28 +1815,37 @@ fn check_matmul_scheduled(
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
 
-/// The register-staged schedule against the one it splits, one slot and two, over a `K` walk of
+/// The register-staged schedule against the one it splits, one slot to three, over a `K` walk of
 /// four regions a cube and of one: the last region prefetches nothing, and a walk of one region
-/// is its prologue alone. On one unit, and on a cube of units a stage's lines do not divide, so a
-/// unit's last line runs past the stage — where a missing barrier lets the contracting unit read
-/// what the others have not written.
+/// is its prologue alone. Read in scalars and in lines four wide, on one unit, on a few units of
+/// one plane, and on a cube of 70 units over stages of 256 lines, which they do not divide: every
+/// unit fills its share and the last one contracts, so a missing or misplaced barrier lets it read
+/// what units of other planes have not written, or overwrite what it has not read.
 #[test]
 fn a_register_staged_ring_matches_a_slot_ahead_ring() {
-    for (units, width) in [(1, 1), (6, 1)] {
-        for (k, depth) in [(16, 1), (16, 2), (16, 3), (4, 1), (4, 2)] {
-            for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
-                check_matmul_scheduled(
-                    8,
-                    8,
-                    k,
-                    Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
-                        .walk_every(&[K])
-                        .cubes(&[M, N]),
-                    depth,
-                    schedule,
-                    units,
-                    width,
-                );
+    let small = || {
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[K])
+            .cubes(&[M, N])
+    };
+    let wide = || {
+        Tiling::leaf(&[(M, 16), (N, 16), (K, 16)])
+            .walk_every(&[K])
+            .cubes(&[M, N])
+    };
+    let cases: [(u32, usize, usize, fn() -> Tiling, [usize; 2]); 5] = [
+        (1, 1, 8, small, [16, 4]),
+        (6, 1, 8, small, [16, 4]),
+        (1, 4, 8, small, [16, 4]),
+        (70, 1, 32, wide, [64, 16]),
+        (70, 4, 32, wide, [64, 16]),
+    ];
+    for (units, width, edge, tiling, ks) in cases {
+        for k in ks {
+            for depth in [1, 2, 3] {
+                for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
+                    check_matmul_scheduled(edge, edge, k, tiling(), depth, schedule, units, width);
+                }
             }
         }
     }
