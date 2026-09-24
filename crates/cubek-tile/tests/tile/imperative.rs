@@ -82,8 +82,8 @@ fn ring_matmul_filled_by_the_kernel<E: Numeric>(
         walk,
         |slot, region| {
             slot.fill(|staged, pipe| {
-                pipe.fill(&mut staged.0, &a.at(region));
-                pipe.fill(&mut staged.1, &b.at(region));
+                pipe.fill(&mut staged.lhs, &a.at(region));
+                pipe.fill(&mut staged.rhs, &b.at(region));
             });
         },
         |slot, region| {
