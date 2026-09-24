@@ -149,8 +149,8 @@ pub fn pipelined_with<T: CubeType, Fill, F>(
 /// freed. Only one region is ever held ahead, so slots past a second sit idle.
 ///
 /// Only a stage copied by every unit of the cube, straight, from a plain operand, both operands
-/// holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way; anything else is refused at
-/// expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s schedule: the
+/// holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way; anything else
+/// is refused at expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s schedule: the
 /// fetch moves both operands of a slot at once, and a fixed one is filled once, above the loop.
 pub fn pipelined_through_registers<Lhs: Numeric, Rhs: Numeric, F>(
     _walk: Walk,

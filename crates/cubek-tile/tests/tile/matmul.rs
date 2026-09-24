@@ -1818,7 +1818,7 @@ fn check_matmul_scheduled(
 /// The register-staged schedule against the one it splits, one slot to three, over a `K` walk of
 /// four regions a cube and of one: the last region prefetches nothing, and a walk of one region
 /// is its prologue alone. Read in scalars and in lines four wide, on one unit, on a few units of
-/// one plane, and on a cube of 70 units over stages of 256 lines, which they do not divide: every
+/// one plane, and on a cube of 70 units over stages of 256 elements, whose lines they do not divide: every
 /// unit fills its share and the last one contracts, so a missing or misplaced barrier lets it read
 /// what units of other planes have not written, or overwrite what it has not read.
 #[test]

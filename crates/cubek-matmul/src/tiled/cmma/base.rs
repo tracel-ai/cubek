@@ -636,9 +636,9 @@ impl CmmaRoutine {
                 .unwrap_or(ik),
         };
 
-        // The order the cubes take the boxes in. The strip is the widest power of two the grid
-        // divides, up to [`MAX_SWIZZLE_WIDTH`]: a width the grid does not divide is refused by
-        // `validate`, so the pick is made among the ones that are whole.
+        // The order the cubes take the boxes in: the widest power of two the grid divides, up to
+        // [`MAX_SWIZZLE_WIDTH`]. Any width serves any grid (a last strip may be ragged); this
+        // inferred plan keeps its strips whole, at the cost of a width that moves with the grid.
         let stage_m = planes_m * part_m * im;
         let stages_m = problem.m.checked_div(stage_m).unwrap_or(0);
         let order = match (1..=MAX_SWIZZLE_WIDTH)

@@ -64,18 +64,6 @@ impl CubeOrder {
     pub fn swizzles(self) -> bool {
         !matches!(self.canonicalize(), CubeOrder::RowMajor)
     }
-
-    /// Whether this order's width divides the grid of `cubes` boxes on the axis it strips — `x`
-    /// for [`SwizzleRow`](CubeOrder::SwizzleRow), `y` for the other — so every strip is whole.
-    /// Every order is a bijection over every grid either way ([`swizzle_ragged`]).
-    pub fn divides(self, cubes: (usize, usize)) -> bool {
-        let (x, y) = cubes;
-        match self.canonicalize() {
-            CubeOrder::RowMajor => true,
-            CubeOrder::SwizzleRow(width) => width > 0 && x.is_multiple_of(width),
-            CubeOrder::SwizzleCol(width) => width > 0 && y.is_multiple_of(width),
-        }
-    }
 }
 
 /// The two in-plane positions this order gives the cube at flat dispatch index `flat`, over a
@@ -113,6 +101,10 @@ pub fn swizzle_ragged(
     #[comptime] step_length: u32,
     strip_axis: usize,
 ) -> Coords2d {
+    comptime!(assert!(
+        step_length > 0,
+        "swizzle: a strip holds at least one box"
+    ));
     let full = num_steps as u32 * step_length;
     let index = index as u32;
     let strip_index = index / full;
@@ -148,7 +140,6 @@ pub fn swizzle_ragged(
 /// Steps alternate direction: even steps go left-to-right, odd steps right-to-left.
 ///
 /// - Prefer **odd `num_steps`** for smoother transitions between strips.
-/// - Prefer **power-of-two `step_length`** for better performance.
 ///
 /// # Parameters
 ///
@@ -220,24 +211,6 @@ mod tests {
         assert_eq!(CubeOrder::SwizzleCol(1).canonicalize(), CubeOrder::RowMajor);
         assert!(!CubeOrder::SwizzleRow(1).swizzles());
         assert!(CubeOrder::SwizzleRow(4).swizzles());
-    }
-
-    /// The width divides the axis it strips, and only that axis: the other is walked whole
-    /// inside a step, so nothing there has to divide.
-    #[test]
-    fn the_width_divides_the_axis_it_strips() {
-        assert!(CubeOrder::SwizzleRow(4).divides((8, 6)));
-        assert!(!CubeOrder::SwizzleRow(4).divides((6, 8)));
-        assert!(CubeOrder::SwizzleCol(4).divides((6, 8)));
-        assert!(!CubeOrder::SwizzleCol(4).divides((8, 6)));
-        assert!(
-            CubeOrder::RowMajor.divides((7, 13)),
-            "the grid's own order always does"
-        );
-        assert!(
-            !CubeOrder::SwizzleRow(0).divides((8, 8)),
-            "a strip holds something"
-        );
     }
 
     /// Consecutive cubes stay close: what the order exists for, stated as the thing a cache

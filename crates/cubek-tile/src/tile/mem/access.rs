@@ -388,13 +388,13 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// [`fill_from`](MemData::fill_from)'s straight copy, its first half: this unit's lines of
-    /// `src` read into `fetched` ([`fetch_buffer`](MemData::fetch_buffer)), the registers a
-    /// schedule holds across a contraction so the loads are in flight while it runs. The second
-    /// half, [`store_fetched`](MemData::store_fetched), writes them into this stage.
+    /// `src` read into `fetched` (sized by [`fetched_scalars`](MemData::fetched_scalars)), the
+    /// registers a schedule holds across a contraction so the loads are in flight while it runs.
+    /// The second half, [`store_fetched`](MemData::store_fetched), writes them into this stage.
     ///
     /// Only the copy a matmul stage takes: a plain, direct, unmasked stage that replaces, filled
-    /// at its own width from a plain direct source, its ring holding at most [`MOST_FETCHED_SCALARS`]
-    /// of both operands a unit. Anything else is refused at expansion.
+    /// at its own width from a plain direct source, its ring holding at most
+    /// [`MOST_FETCHED_SCALARS`] of both operands a unit. Anything else is refused at expansion.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
     pub(crate) fn fetch_straight(
         &self,
