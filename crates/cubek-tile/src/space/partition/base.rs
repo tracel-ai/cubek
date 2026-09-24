@@ -248,7 +248,6 @@ impl Partitioning {
         let mut total = 1u32;
         let mut space = self.space.clone();
         for level in &self.levels {
-<<<<<<< HEAD:crates/cubek-tile/src/space/partition/base.rs
             if levels(level) {
                 match level.shared_by() {
                     Some(workers) => total *= workers as u32,
@@ -257,30 +256,14 @@ impl Partitioning {
                             if level.deals(axis) && axes(level, axis) {
                                 total *= match level.count(axis) {
                                     Some(Count::AllAcross(workers)) => workers,
+                                    // Tiles dealt to as many lanes as the launch runs ask for
+                                    // none of their own.
+                                    Some(Count::Dealt(_)) => 1,
                                     _ => level.tiles(&space, axis),
                                 } as u32;
                             }
                         }
                     }
-=======
-            // Work distributed as one rides its scope whole rather than through any one of its
-            // axes, so its instance count is the dim's and no axis of it contributes.
-            if let Some(work) = level.work()
-                && work.scope() == scope
-            {
-                total *= work.instances() as u32;
-            }
-            for axis in space.axes() {
-                if level.distribution(axis).scope() == Some(scope) {
-                    // The stated workers, or one per tile of an every-level: `tiles` is `ceil`,
-                    // so an indivisible axis adds the cube for its partial tile. Tiles dealt to
-                    // as many lanes as the launch runs ask for none of their own.
-                    total *= match level.count(axis) {
-                        Some(Count::Across(workers)) => workers,
-                        Some(Count::Dealt(_)) => 1,
-                        _ => level.tiles(&space, axis),
-                    } as u32;
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/space/partition/partitioning.rs
                 }
             }
             space = level.child(&space);

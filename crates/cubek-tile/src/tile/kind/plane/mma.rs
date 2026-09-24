@@ -146,17 +146,8 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
-<<<<<<< HEAD:crates/cubek-tile/src/tile/kind/plane/mma.rs
-    /// Drain this (accumulator) fragment into `mem`'s window.
-    pub(crate) fn store_window(&self, mem: &mut Memory<T>) {
-        self.store_cast_window::<T>(mem)
-    }
-
-    /// Drain this (accumulator) fragment into `mem`'s window, casting `T` down to the sink element.
-    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut Memory<Out>) {
-=======
     /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's.
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
+    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
         self.store_cast_window::<T>(mem, space)
     }
 
@@ -165,13 +156,12 @@ impl<T: Numeric> MmaData<T> {
     /// write, which masks a cell past the window's edge and adds into a destination that folds. A
     /// lane knows which cells it holds, so every cell has one writer and no scratch is needed to
     /// elect it. The `stmatrix` transport does not reach a memory window, so the store is always
-    /// this one, whatever [`MmaIOConfig::store_method`] says.
+    /// this one, whatever [`MmaIo::store_method`] says.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/tile/mma.rs
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -304,43 +294,11 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
 /// write masks a cell past the window's edge and adds into a destination that folds. A cell is one
 /// lane's, so each is written once.
 #[cube]
-<<<<<<< HEAD:crates/cubek-tile/src/tile/kind/plane/mma.rs
-fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    mem: &mut Memory<Out>,
-=======
 fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    mem: &mut MemData<Out>,
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/tile/mma.rs
-    fragment: &Array<Vector<T, NA>>,
-    def: &MmaDefinition<A, B, CD>,
-    #[comptime] layout: MatrixLayout,
-<<<<<<< HEAD:crates/cubek-tile/src/tile/kind/plane/mma.rs
-    #[comptime] io: MmaIo,
-) {
-    match io.store_method() {
-        StoreMethod::Manual => store_manual::<T, Out, A, B, CD>(mem, fragment, def, ident, layout),
-        StoreMethod::StoreMatrix => {
-            comptime!(panic!(
-                "MmaData::store: the stmatrix fast path is not yet wired for Memory windows; \
-                 state the register stage with MmaIo::manual()"
-            ))
-        }
-    }
-}
-
-/// Manual store: each register's element(s) written to their hardware position in the row-major
-/// window, cast to the sink element.
-#[cube]
-fn store_manual<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     mem: &mut Memory<Out>,
     fragment: &Array<Vector<T, NA>>,
     def: &MmaDefinition<A, B, CD>,
-    #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-) {
-    let num_vectors = def.vectors_per_lane(ident);
-    let vector_size = def.vector_size(ident);
-=======
     #[comptime] space: Space,
 ) {
     comptime!(assert!(
@@ -351,9 +309,8 @@ fn store_manual<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     ));
     let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
     let vector_size = def.vector_size(MatrixIdent::Accumulator);
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/tile/mma.rs
     let lane_id = UNIT_POS_PLANE;
-    let axes = comptime!(MatrixAxes::trailing_pair(&space));
+    let axes = comptime!(MatrixAxes::trailing(&space));
     let mut sink = mem.matrix_mut::<Const<1>>(0usize, axes, space);
 
     #[unroll]

@@ -22,6 +22,9 @@ pub(crate) enum AxisDeal {
         /// The workers an [`AllAcross`](Count::AllAcross) axis is dealt to in runs; `None` where
         /// each worker takes one tile.
         across: Option<usize>,
+        /// Whether the tiles are taken in turns by as many lanes as the launch runs
+        /// ([`Count::Dealt`]): the instances are the launch's, not the grid's.
+        in_turns: bool,
         /// Whether the host proved every worker's run whole, so the kernel skips clamping it.
         divides: bool,
         /// The later axes sharing this axis's hardware dimension, whose instance counts weight
@@ -60,8 +63,9 @@ impl AxisDeal {
             spread: level.cut(axis).spread,
             across: match level.cut(axis).count {
                 Count::AllAcross(workers) => Some(workers),
-                Count::Stated(_) | Count::All => None,
+                Count::Stated(_) | Count::All | Count::Dealt(_) => None,
             },
+            in_turns: matches!(level.cut(axis).count, Count::Dealt(_)),
             divides: AxisDeal::divides(level, space, axis),
             inner: ((p + 1)..space.rank()).filter(|&q| same_dim(q)).collect(),
             unspanned: AxisDeal::unspanned_weight(level, space, axis),
@@ -84,6 +88,8 @@ impl AxisDeal {
                     .is_multiple_of(workers),
                 Extent::Dynamic => false,
             },
+            // The lanes are the launch's, so nothing here can prove they divide the count.
+            Count::Dealt(_) => false,
             Count::Stated(_) | Count::All => true,
         }
     }

@@ -45,7 +45,7 @@ impl<T: Numeric> Tile<T> {
     /// so it copies into the box as it stands. Scalar, because an atomic is: whatever width the
     /// planes compute in, a line is added one element at a time.
     pub fn smem_accumulation<A: Numeric>(&self) -> SmemAccumulation<A, T> {
-        let space = comptime!(self.space.clone());
+        let space = comptime!(self.place.space.clone());
         let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
         let cells = comptime!(form.cells());
         let values = Shared::<[Atomic<A>]>::new_slice(cells);
@@ -59,7 +59,7 @@ impl<T: Numeric> Tile<T> {
         sync_cube();
 
         let units = self.units();
-        let sink = MemData::<A>::smem_backed(
+        let sink = Memory::<A>::smem_backed(
             comptime!(space.clone()),
             1usize,
             units,
@@ -71,7 +71,7 @@ impl<T: Numeric> Tile<T> {
             ComptimeOption::new_None(),
             comptime!(Write::Accumulate),
         );
-        let source = MemData::<T>::smem_backed(
+        let source = Memory::<T>::smem_backed(
             space,
             1usize,
             units,

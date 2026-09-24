@@ -10,16 +10,18 @@ use std::path::{Path, PathBuf};
 /// Public items declared anywhere in `src/`: types, traits, functions, constants, modules,
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
 ///
-/// Phase 10 sets the target the facade lands on.
-const PUB_ITEMS: usize = 748;
+/// Raised by the merge of upstream's shared-memory accumulator and dealt levels, whose own
+/// surface this count now includes. Phase 10 sets the target the facade lands on.
+const PUB_ITEMS: usize = 786;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 41;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
 const LONG_FILES: usize = 18;
-/// `#[allow(clippy::too_many_arguments)]` sites.
-const TOO_MANY_ARGUMENTS: usize = 26;
+/// `#[allow(clippy::too_many_arguments)]` sites. The 27th came in with upstream's
+/// shared-memory accumulator.
+const TOO_MANY_ARGUMENTS: usize = 27;
 
 /// Words the redesign retires, each checked as a whole identifier. A phase that deletes a concept
 /// moves its word here, and the count must be zero from then on.

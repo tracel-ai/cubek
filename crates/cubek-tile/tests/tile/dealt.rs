@@ -37,7 +37,6 @@ fn dealt_block_matmul<E: Numeric>(
                 let mut sum = c_unit.block_accumulator::<E, E, E>(
                     &a_unit,
                     &b_unit,
-                    comptime!(Fragments::below(&c_unit, &a_unit)),
                     comptime!(RegisterBlock::new(BLOCK[0] * BLOCK[1])),
                     Monoid::Sum,
                 );
@@ -46,7 +45,7 @@ fn dealt_block_matmul<E: Numeric>(
                     let mut sum_step = sum.at(&step);
                     sum_step.mma(&a_unit.at(&step), &b_unit.at(&step), Semiring::SUM_PROD);
                 }
-                sum.drained_into(&c_unit, comptime!(None));
+                sum.drained_into(&c_unit);
             }
         }
     }
@@ -87,15 +86,21 @@ fn run(m: usize, n: usize, k: usize, dealt: usize, lanes: u32) -> HostData {
     let [rows, columns, depth] = BLOCK;
     let partitioning = Partitioning::new(
         Space::new(&[(M, m), (N, n), (K, k)]),
-        Tiling::leaf(&[(M, rows), (N, columns), (K, depth)])
+        Levels::leaf(&[(M, rows), (N, columns), (K, depth)])
             .walk_every(&[K])
             .lanes_dealt(N, dealt)
             .planes(&[(M, 2)])
             .cubes(&[M, N])
-            .levels(),
+            .build(),
     );
-    let grid = (partitioning.cube_count(), partitioning.cube_dim(lanes));
-    let launcher = Launcher::partitioned(&client, partitioning, grid, KernelForm::Static);
+    // The lanes are the launch's: the partitioning states how many tiles they share, not how
+    // many of them there are.
+    let grid = Grid::Stated {
+        cube_count: partitioning.cube_count(),
+        cube_dim: partitioning.cube_dim(lanes),
+    };
+    let space = partitioning.space().clone();
+    let launcher = Launcher::new(&client, partitioning, &space, grid);
 
     dealt_block_matmul::launch(
         &client,
@@ -103,15 +108,15 @@ fn run(m: usize, n: usize, k: usize, dealt: usize, lanes: u32) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]).checked(true),
+            TileSpec::direct(&[M, K]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[K, N]).checked(true),
+            TileSpec::direct(&[K, N]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         TileArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).checked(true),
+            TileSpec::direct(&[M, N]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         launcher.partitioning_arg(),
         dtype,

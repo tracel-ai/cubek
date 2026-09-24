@@ -384,41 +384,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-<<<<<<< HEAD
-=======
-    /// This tile's place in its nest around another store: the same space, depth and levels,
-    /// which is what every window of a tile keeps.
-    pub(crate) fn with_kind(&self, tile_kind: TileKind<T>) -> Tile<T> {
-        Tile::<T> {
-            tile_kind,
-            space: comptime!(self.space.clone()),
-            depth: comptime!(self.depth),
-            levels: comptime!(self.levels.clone()),
-        }
-    }
-
-    /// This tile at `like`'s place in its nest, its depth and its levels, so every region that
-    /// windows `like` windows this tile too: what a buffer allocated over `like`'s box sits at.
+    /// This tile at `like`'s place in its nest, so every region that windows `like` windows this
+    /// tile too: what a buffer allocated over `like`'s box sits at.
     pub(crate) fn nested_like<U: Numeric>(self, like: &Tile<U>) -> Tile<T> {
         Tile::<T> {
-            tile_kind: self.tile_kind,
-            space: comptime!(self.space.clone()),
-            depth: comptime!(like.depth),
-            levels: comptime!(like.levels.clone()),
+            kind: self.kind,
+            place: comptime!(Placement::new(
+                self.place.space.clone(),
+                like.place.depth,
+                like.place.levels.clone()
+            )),
         }
     }
 
-    /// This tile at `depth` in its nest: what a stage allocated for a walk's regions sits at.
-    pub(crate) fn at_depth(self, #[comptime] depth: usize) -> Tile<T> {
-        Tile::<T> {
-            tile_kind: self.tile_kind,
-            space: comptime!(self.space.clone()),
-            depth,
-            levels: comptime!(self.levels.clone()),
-        }
-    }
-
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc
     /// This operand's window placed at `from` on `axis`, reading no further than `until`, both
     /// counted in that axis's own elements. A region names a whole tile of an axis; this names an
     /// element and where reads stop, both runtime, as a packed sequence's start and length are.

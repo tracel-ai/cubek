@@ -204,13 +204,9 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-<<<<<<< HEAD:crates/cubek-tile/src/tile/kind/plane/base.rs
-    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
-=======
     /// `space` is the sink window's, read as [`store_cast_window`](Self::store_cast_window) reads
     /// it: a cmma fragment bounces into a store that folds or a masked window here too.
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/tile/plane.rs
+    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
         match self {
             PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
                 FragmentDrain::Intrinsic => {
@@ -253,16 +249,8 @@ impl<T: Numeric> PlaneTile<T> {
                 }
                 FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
             },
-<<<<<<< HEAD:crates/cubek-tile/src/tile/kind/plane/base.rs
-            PlaneTile::Mma(d) => {
-                comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Mma"));
-                d.store_cast_window(mem)
-            }
-            PlaneTile::Registers(d) => d.store_cast_window(mem, space),
-=======
             PlaneTile::Mma(d) => d.store_cast_window(mem, space),
-            PlaneTile::Register(d) => d.store_cast_window(mem, space),
->>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/tile/plane.rs
+            PlaneTile::Registers(d) => d.store_cast_window(mem, space),
         }
     }
 }

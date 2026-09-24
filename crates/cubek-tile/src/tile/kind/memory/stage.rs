@@ -397,7 +397,7 @@ impl<T: Numeric> Memory<T> {
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         });
-        MemData::smem_backed(
+        Memory::smem_backed(
             space,
             vector_size,
             units,

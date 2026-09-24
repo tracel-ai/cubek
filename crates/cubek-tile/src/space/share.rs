@@ -44,6 +44,15 @@ impl LaneShare {
         // the same least-significant-last ordering the walk decodes with.
         let (mut weight, mut fold_mask) = (1usize, 0usize);
         for axis in level.axes().into_iter().rev() {
+            // Dealt to however many lanes the launch runs, and the level's only lane axis:
+            // carried where the operand spans it, and where it does not, every lane holds a
+            // partial of the same cell.
+            if let Count::Dealt(_) = level.cut(axis).count {
+                match spanned.contains(axis) {
+                    true => continue,
+                    false => return LaneShare::Plane,
+                }
+            }
             let lanes = level
                 .cut(axis)
                 .count

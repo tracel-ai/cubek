@@ -114,6 +114,9 @@ impl Walk {
                     across: Some(workers),
                     ..
                 } => instances.push(workers.runtime()),
+                // Taken in turns by however many lanes the launch runs: the plane's width is the
+                // launch's, so the kernel reads it rather than being compiled against it.
+                AxisDeal::Dealt { in_turns: true, .. } => instances.push(CUBE_DIM_X as usize),
                 AxisDeal::Dealt { .. } => instances.push(grid.at(p)),
                 AxisDeal::Walked => instances.push(1usize),
             }
@@ -140,6 +143,7 @@ impl Walk {
                     dim,
                     spread,
                     across,
+                    in_turns: _,
                     divides,
                     inner,
                     unspanned,
