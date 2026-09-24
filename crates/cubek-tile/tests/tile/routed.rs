@@ -10,7 +10,7 @@
 
 use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, std::tensor::TensorHandle, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
 use cubek_tile::*;
 
 /// Token.
@@ -492,6 +492,10 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
     // A unit level must partition the plane exactly, so the axis is as wide as the plane.
     let lanes = client.properties().hardware.plane_size_max as usize;
     let target = 2usize;
+    // The axis is as wide as the plane, so the plane must hold the expert the route names.
+    if skip_unless_plane_holds(&client, target as u32 + 1) {
+        return;
+    }
 
     let launcher = implied(
         &client,

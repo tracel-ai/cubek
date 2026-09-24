@@ -39,6 +39,23 @@ pub fn skip_unless_cpu(client: &Client) -> bool {
     false
 }
 
+/// A kernel whose levels cut down to lanes needs a plane wide enough to hold them: a unit level
+/// must partition the plane exactly, so a plane of one lane (what the CPU runtime always reports)
+/// leaves such a partitioning with nothing to cut. Records a `Skipped` outcome and returns `true`
+/// when `client`'s plane is narrower than `lanes`, so the caller can bail out of the test.
+#[track_caller]
+pub fn skip_unless_plane_holds(client: &Client, lanes: u32) -> bool {
+    let plane = client.properties().hardware.plane_size_max;
+    if plane < lanes {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "needs a plane of at least {lanes} lanes; this runtime reports {plane}"
+        )))
+        .enforce();
+        return true;
+    }
+    false
+}
+
 #[derive(Debug)]
 /// Whether a kernel was executed (without regard to correctness)
 /// or failed to compile.

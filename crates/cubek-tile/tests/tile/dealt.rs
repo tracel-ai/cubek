@@ -1,0 +1,155 @@
+//! Lanes that take their tiles in turns, however many the launch runs ([`Count::Dealt`]).
+//!
+//! The partitioning states how many tiles a plane's lanes share and nothing of how many lanes
+//! there are: the kernel reads that off the launch. So one compiled kernel is right at any lane
+//! count, fewer lanes than tiles (each takes several) or more (some take none), which is what
+//! these tests launch it at.
+#![allow(non_snake_case)]
+
+use cubecl::{prelude::*, zspace::shape};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
+
+use cubek_tile::*;
+
+const M: Axis = Axis(0);
+const N: Axis = Axis(1);
+const K: Axis = Axis(2);
+
+/// Rows and columns of the block one lane owns, and the depth one step of its walk reads.
+const BLOCK: [usize; 3] = [2, 2, 4];
+
+/// `c = a · b`, every lane summing its blocks in registers.
+#[cube(launch)]
+fn dealt_block_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in &space {
+        for plane in cube {
+            for unit in plane {
+                let (a_unit, b_unit, c_unit) = (a.at(&unit), b.at(&unit), c.at(&unit));
+                let mut sum = c_unit.block_accumulator::<E, E, E>(
+                    &a_unit,
+                    &b_unit,
+                    comptime!(Fragments::below(&c_unit, &a_unit)),
+                    comptime!(RegisterBlock::new(BLOCK[0] * BLOCK[1])),
+                    Monoid::Sum,
+                );
+                sum.zero();
+                for step in &unit {
+                    let mut sum_step = sum.at(&step);
+                    sum_step.mma(&a_unit.at(&step), &b_unit.at(&step), Semiring::SUM_PROD);
+                }
+                sum.drained_into(&c_unit, comptime!(None));
+            }
+        }
+    }
+}
+
+fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
+    let a = |i: usize, p: usize| ((i * k + p) % 7) as f32 - 3.0;
+    let b = |p: usize, j: usize| ((p * n + j) % 5) as f32 - 2.0;
+    (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| a(i, p) * b(p, j)).sum()
+        })
+        .collect()
+}
+
+/// `a · b` with each plane's `dealt` blocks along `n` taken in turns by `lanes` lanes.
+fn run(m: usize, n: usize, k: usize, dealt: usize, lanes: u32) -> HostData {
+    let client = cubecl::test_device().client();
+    let dtype = f32::elem_type_native();
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    // Filled with a value no product here reaches, so a block no lane took shows.
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .custom(vec![-1e6; m * n])
+        .generate_without_host_data();
+
+    let [rows, columns, depth] = BLOCK;
+    let partitioning = Partitioning::new(
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        Tiling::leaf(&[(M, rows), (N, columns), (K, depth)])
+            .walk_every(&[K])
+            .lanes_dealt(N, dealt)
+            .planes(&[(M, 2)])
+            .cubes(&[M, N])
+            .levels(),
+    );
+    let grid = (partitioning.cube_count(), partitioning.cube_dim(lanes));
+    let launcher = Launcher::partitioned(&client, partitioning, grid, KernelForm::Static);
+
+    dealt_block_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]).checked(true),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]).checked(true),
+        ),
+        TileArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).checked(true),
+        ),
+        launcher.partitioning_arg(),
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
+}
+
+fn assert_matches(got: &HostData, m: usize, n: usize, k: usize) {
+    let want = reference(m, n, k);
+    for i in 0..m {
+        for j in 0..n {
+            let have = got.get_f32(&[i, j]);
+            let want = want[i * n + j];
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// Twelve blocks a plane, and as many lanes as fit the launch: four lanes take three each, eight
+/// take one or two, and sixteen leave four idle. The same partitioning every time.
+#[test]
+fn every_block_is_taken_once_at_any_lane_count() {
+    let (m, n, k) = (8, 48, 12);
+    for lanes in [4, 8, 16] {
+        assert_matches(&run(m, n, k, 12, lanes), m, n, k);
+    }
+}
+
+/// A shape that tiles by nothing: the cubes overhang both axes of the output and the walk
+/// overhangs `K`, and the lanes still take every block inside once.
+#[test]
+fn dealt_blocks_mask_a_ragged_edge() {
+    let (m, n, k) = (7, 29, 11);
+    for lanes in [4, 16] {
+        assert_matches(&run(m, n, k, 6, lanes), m, n, k);
+    }
+}

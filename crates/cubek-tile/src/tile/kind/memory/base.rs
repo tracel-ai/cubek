@@ -212,6 +212,7 @@ pub enum Write {
     Accumulate,
 }
 
+<<<<<<< HEAD:crates/cubek-tile/src/tile/kind/memory/base.rs
 impl Write {
     /// Refuse an accumulation `split` leaves in pieces unless this write adds them. Called where
     /// an accumulator is opened and where it is written, the two places a partial can escape.
@@ -259,6 +260,8 @@ impl Write {
     }
 }
 
+=======
+>>>>>>> 63dc0a925ab4707db07cf93f6b7a7e626e8496bc:crates/cubek-tile/src/tile/mem/base.rs
 /// How a store relates to the window overhanging its valid data (`origin + pos` past
 /// [`Window`]'s `bound`); where gmem and smem genuinely differ.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
