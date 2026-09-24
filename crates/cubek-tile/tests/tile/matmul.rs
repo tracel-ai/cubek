@@ -1711,19 +1711,31 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Tiling, depth: usize) {
         .tile(&[tile_edge, tile_edge])
         .arange();
     // Poisoned, not zeroed: the kernel owns the init, so anything `c` held must be gone from the
-    // result.
-    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+    // result. And `c` is the first `m` rows of a buffer twice as tall, so a write past its edge
+    // lands in rows that must come back as they went in, rather than in whatever the allocator
+    // placed next to it.
+    let tall = TileInput::builder(&client, Space::new(&[(M, 2 * m), (N, n)]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
+    let before = HostData::from_tensor_handle(&client, tall.handle(), HostDataType::F32);
+    let mut c = tall.handle();
+    c.metadata.shape = shape![m / tile_edge, n / tile_edge, tile_edge, tile_edge];
+    // Bound by hand rather than through `Launcher::arg`, so the mask it would derive is stated
+    // here: an operand is checked where some tile reaches past the end of an axis it spans.
+    let partitioning = launcher.partitioning();
+    let overhangs = |axes: &[Axis]| axes.iter().any(|&axis| partitioning.overhangs(axis));
 
     matmul_smem_ring::launch(
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),
         1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec().checked(overhangs(&[M, K]))),
+        TileArgLaunch::new(b.tensor_arg(1), b.spec().checked(overhangs(&[K, N]))),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            tall.spec().checked(overhangs(&[M, N])),
+        ),
         launcher.partitioning_arg(),
         launcher.level(0),
         runs,
@@ -1731,7 +1743,34 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Tiling, depth: usize) {
         depth,
         f32::elem_type_native(),
     );
-    assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
+    assert_tiled_matmul(&client, c, m, n, k, tile_edge);
+    assert_nothing_written_past(&client, tall.handle(), &before, m / tile_edge);
+}
+
+/// The rows of `tall` from tile row `rows` on hold what they did `before` the launch: nothing
+/// wrote past the edge of the output bound over its first `rows` tile rows.
+fn assert_nothing_written_past(
+    client: &Client,
+    tall: TensorHandle,
+    before: &HostData,
+    rows: usize,
+) {
+    let shape = tall.shape().clone();
+    let after = HostData::from_tensor_handle(client, tall, HostDataType::F32);
+    for gm in rows..shape[0] {
+        for gn in 0..shape[1] {
+            for tm in 0..shape[2] {
+                for tn in 0..shape[3] {
+                    let at = [gm, gn, tm, tn];
+                    assert_eq!(
+                        after.get_f32(&at),
+                        before.get_f32(&at),
+                        "written past the output's edge at tile row {gm} (the output has {rows})",
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// `mma` never takes the init from the caller: the accumulating kernel folds onto what `c`
