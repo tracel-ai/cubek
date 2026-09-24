@@ -605,7 +605,7 @@ impl<T: Numeric> MemData<T> {
                 let all = self.lines::<W>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            Storage::Strided | Storage::Tiled(_) | Storage::Unaligned => self
+            Storage::Strided | Storage::Tiled(_) => self
                 .read_view::<W>(self.base())
                 .view(self.window().with_guard(guard)),
         }
@@ -623,7 +623,7 @@ impl<T: Numeric> MemData<T> {
                 let all = self.lines_storage::<I, WP>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            Storage::Strided | Storage::Tiled(_) | Storage::Unaligned => self
+            Storage::Strided | Storage::Tiled(_) => self
                 .lines_storage::<I, WP>()
                 .view(self.base())
                 .view(self.window().with_guard(guard)),
@@ -645,7 +645,7 @@ impl<T: Numeric> MemData<T> {
                 let len = all.len();
                 all.slice_mut(start, len).view_mut(layout)
             }
-            Storage::Strided | Storage::Tiled(_) | Storage::Unaligned => {
+            Storage::Strided | Storage::Tiled(_) => {
                 let base = self.base();
                 let window = self.window().with_guard(guard);
                 self.write_view::<W>(base).view_mut(window)
@@ -767,12 +767,12 @@ impl<T: Numeric> MemData<T> {
         match comptime!(self.access.storage) {
             Storage::Strided => {}
             Storage::Contiguous => {}
-            Storage::Tiled(level) => panic!(
+            Storage::Tiled(Some(level)) => panic!(
                 "MemData::window_offset: this window sits above its storage tile (the tile of \
                  level {level}), spanning several, so it is not one contiguous region; descend \
                  through that level first, or read the operand through its layout"
             ),
-            Storage::Unaligned => panic!(
+            Storage::Tiled(None) => panic!(
                 "MemData::window_offset: this operand's storage tile is the tile of no level of \
                  the kernel's nest, so no window is known to lie inside one; read it through its \
                  layout, or stage it"
@@ -1484,8 +1484,8 @@ fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -
     match storage {
         Storage::Strided => Storage::Strided,
         Storage::Contiguous => Storage::Contiguous,
-        Storage::Unaligned => Storage::Unaligned,
-        Storage::Tiled(tiled_at) => {
+        Storage::Tiled(None) => Storage::Tiled(None),
+        Storage::Tiled(Some(tiled_at)) => {
             assert!(
                 depth <= tiled_at,
                 "MemData::at: this window is above its storage tile, the tile of level \
@@ -1493,7 +1493,7 @@ fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -
                  skipped past"
             );
             if depth < tiled_at {
-                return Storage::Tiled(tiled_at);
+                return Storage::Tiled(Some(tiled_at));
             }
             for axis in space.axes() {
                 assert!(

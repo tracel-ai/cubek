@@ -599,9 +599,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
 /// stored tiles-of-tiles deep names one level per nesting, coarse to fine; [`at`](crate::Tile::at)
 /// descends to the innermost. Matched on the subspace axes alone: a batch dim is one physical dim.
 ///
-/// [`Unaligned`](Storage::Unaligned) when some nesting's storage tile is no level's tile, or the
-/// launch states no levels: the operand is then read through the layout walk alone, which maps
-/// every coordinate onto its fragments wherever the levels cut, and only a raw window refuses it.
+/// No level (`Tiled(None)`) when some nesting's storage tile is no level's tile, or the launch
+/// states no levels: the operand is then read through the layout walk alone, which maps every
+/// coordinate onto its fragments wherever the levels cut, and only a raw window refuses it.
 fn storage_level(
     geometry: &Geometry,
     subspace: &[Axis],
@@ -649,12 +649,14 @@ fn storage_level(
             })
             .collect();
         let Some(level) = (from..levels.len()).find(|&i| tile_of(i) == tile) else {
-            return Storage::Unaligned;
+            return Storage::Tiled(None);
         };
         innermost = Some(level);
         from = level + 1;
     }
-    Storage::Tiled(innermost.expect("a tiled operand has at least one nesting"))
+    Storage::Tiled(Some(
+        innermost.expect("a tiled operand has at least one nesting"),
+    ))
 }
 
 /// Reorder the trailing `subspace.len()` dims of `geometry` by stride, coarsest first, and
