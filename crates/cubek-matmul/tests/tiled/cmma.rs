@@ -558,11 +558,10 @@ fn cmma_swizzled_cube_order_f32() {
     }
 }
 
-/// A strip width the grid does not divide runs its last strip past the grid, so two boxes
-/// answer to one cube and a third to none. Refused at blueprint time, where the shape is known
-/// — the kernel cannot check it, because a `Space` carries its extents as runtime values.
+/// A strip width the grid does not divide deals a ragged last strip, every box to one cube: the
+/// blueprint takes it rather than fit a width to each grid.
 #[test]
-fn cmma_rejects_a_strip_the_grid_does_not_divide() {
+fn cmma_takes_a_strip_the_grid_does_not_divide() {
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulSetupError},
         routine::DeviceSettings,
@@ -574,8 +573,8 @@ fn cmma_rejects_a_strip_the_grid_does_not_divide() {
     use cubek_tile::CubeOrder;
 
     let client = client();
-    // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which no strip of 2
-    // divides.
+    // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
+    // leaves ragged.
     let blueprint = CmmaBlueprint {
         instruction: InstructionShape {
             m: 16,
@@ -605,11 +604,7 @@ fn cmma_rejects_a_strip_the_grid_does_not_divide() {
         problem.global_dtypes.out,
         StoredTiles::default(),
     ) {
-        Err(MatmulSetupError::InvalidConfig(msg)) => {
-            let msg = msg.to_string();
-            assert!(msg.contains("SwizzleRow"), "wrong rejection: {msg}");
-        }
-        Err(other) => panic!("expected a strip-width rejection, got {other:?}"),
-        Ok(_) => panic!("expected a strip-width rejection, got a blueprint"),
+        Ok(_) => {}
+        Err(other) => panic!("expected a blueprint over a ragged strip, got {other:?}"),
     }
 }
