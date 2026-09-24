@@ -4,11 +4,11 @@
 
 mod base;
 mod fill;
-pub(crate) mod payload;
+mod payload;
 mod plan;
 mod slot;
 
 pub use base::*;
-pub use payload::Pair;
+pub use payload::pair::OperandPair;
 pub use plan::*;
 pub use slot::*;

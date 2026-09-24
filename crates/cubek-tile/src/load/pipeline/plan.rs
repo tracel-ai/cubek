@@ -4,7 +4,7 @@
 //! Deduced once from the operands, so the stages' slots agree by construction rather than by each
 //! re-deriving the same answers off the same tiles.
 
-use super::payload::StageOperand;
+use super::payload::base::StageOperand;
 use crate::*;
 
 /// When a slot's buffer is brought to its region across the walk. The walk moves each operand's

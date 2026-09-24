@@ -3,7 +3,7 @@
 //!
 //! Single and double buffering are this schedule at `depth` 1 and 2. At depth 1 a region's fill is
 //! the last event before its read, so the consume publishes it; deeper, the fill a lap ahead does.
-//! That, prologue and drain are the protocol ([`pipelined`]); a kernel supplies stages and consume.
+//! That, prologue and drain are the protocol ([`pipelined`](Stages::pipelined)); a kernel supplies stages and consume.
 
 use cubecl::frontend::branch::{if_else_expand, if_expand};
 use cubecl::ir::Scope;
@@ -16,23 +16,23 @@ use crate::*;
 #[derive(CubeType, CubeTypeMut, IntoRuntime)]
 #[cube(runtime_variants)]
 pub enum Role {
-    /// Fills the slots, and takes no tile of any level ([`Level::filled_by`]).
+    /// Fills the slots, and takes no tile of any level ([`Levels::filled_by`](crate::Levels::filled_by)).
     Fill,
     /// Reads the slots and computes out of them, and fills none.
     Compute,
 }
 
 /// The `depth` slots of one buffered walk, and the operands they are filled from: the same
-/// payload shape at this level, so [`pipelined`] can fill a slot for a region on its own.
+/// payload shape at this level, so [`pipelined`](Stages::pipelined) can fill a slot for a region on its own.
 #[derive(CubeType)]
 pub struct Stages<T: CubeType> {
     pub(crate) slots: Sequence<Slot<T>>,
     pub(crate) sources: T,
-    // Read by the schedule ([`pipelined`]) at expand level only.
+    // Read by the schedule ([`pipelined`](Stages::pipelined)) at expand level only.
     #[allow(dead_code)]
     #[cube(comptime)]
     pub(crate) depth: usize,
-    /// Planes of the cube that fill these slots and do nothing else ([`Level::filled_by`]).
+    /// Planes of the cube that fill these slots and do nothing else ([`Levels::filled_by`](crate::Levels::filled_by)).
     #[cube(comptime)]
     pub(crate) fillers: usize,
 }
@@ -60,11 +60,11 @@ impl<T: CubeType> Stages<T> {
     }
 
     /// What this plane does with the stages' slots. The planes a walk sets aside to fill sit at
-    /// the end of the cube ([`Level::filled_by`]), so a unit fills exactly when it stands at or
+    /// the end of the cube ([`Levels::filled_by`](crate::Levels::filled_by)), so a unit fills exactly when it stands at or
     /// past the ones that compute, and every plane below is the one it would have been.
     ///
     /// Where the walk set none aside, every plane computes and fills its own slots, which is the
-    /// schedule [`pipelined`] writes.
+    /// schedule [`pipelined`](Stages::pipelined) writes.
     pub fn role(&self) -> Role {
         if comptime!(self.fillers == 0) {
             Role::new_Compute()
@@ -82,9 +82,8 @@ impl<T: CubeType> Stages<T> {
     }
 }
 
-/// How stages fill their slots from its own sources, at expand level: what [`pipelined`] needs
-/// from a payload shape, implemented once per shape beside the stages constructors
-/// ([`fill`](crate::fill)).
+/// How stages fill their slots from their own sources, at expand level: what
+/// [`pipelined`](Stages::pipelined) needs of them, whatever their payload holds.
 pub trait StagesFill {
     /// Whether any operand's window is fixed across the walk (filled once, above the loop).
     fn has_fixed(&self, scope: &Scope) -> bool;

@@ -9,7 +9,8 @@ use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use super::payload::{Pair, PairExpand, Payload, PayloadExpand, Staging};
+use super::payload::base::{Payload, PayloadExpand, StageSpec};
+use super::payload::pair::{OperandPair, OperandPairExpand};
 use super::plan::StagePlan;
 use crate::*;
 
@@ -36,7 +37,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
     ) -> Stages<P> {
         let operands = sources.operands();
         let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level));
-        let staging = comptime!(Staging {
+        let spec = comptime!(StageSpec {
             level: walk.level.clone(),
             depth: walk.depth(),
             storage,
@@ -47,7 +48,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
         // slots that share it. Nothing is shared at the first slot, so it stages against itself.
         let first = sources.staged(
             sources,
-            comptime!(staging.clone()),
+            comptime!(spec.clone()),
             comptime!(plan.refills(FIRST_SLOT)),
         );
         let mut slots = Sequence::<Slot<P>>::new();
@@ -58,7 +59,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
             } else {
                 sources.staged(
                     &first,
-                    comptime!(staging.clone()),
+                    comptime!(spec.clone()),
                     comptime!(plan.refills(slot)),
                 )
             };
@@ -107,7 +108,7 @@ impl<P: Payload<P> + CubeType<ExpandType: Clone>> Slot<P> {
     }
 }
 
-/// How the stages fill their own slots, at expand level: written once over a [`Payload`], since
+/// How the stages fill their own slots, at expand level: written once over any payload, since
 /// none of it is the payload's shape.
 impl<P: Payload<P> + CubeType<ExpandType: Clone>> StagesFill for StagesExpand<P> {
     fn has_fixed(&self, scope: &Scope) -> bool {
@@ -135,17 +136,21 @@ impl<P: Payload<P> + CubeType<ExpandType: Clone>> StagesFill for StagesExpand<P>
 }
 
 #[cube]
-impl<Lhs: Numeric, Rhs: Numeric> Stages<Pair<Lhs, Rhs>> {
-    /// [`new`](Stages::new) over the two operands of a contraction, which is what a walk stages
-    /// where it stages more than one thing: the pair is built here rather than at every caller.
+impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+    /// The `depth` slots staging both operands of a contraction into shared memory laid out as
+    /// `storage`, for a kernel walking `walk` itself.
+    ///
+    /// Slot 0 allocates every buffer. A later slot allocates only what the walk refills: an
+    /// operand whose window the walk leaves fixed is filled once, above the loop, and never
+    /// rewritten, so one buffer serves the whole stages ([`Shared`](Refill::Shared)).
     pub fn smem(
         walk: &Walk,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         #[comptime] storage: StageStorage,
         #[comptime] depth: usize,
-    ) -> Stages<Pair<Lhs, Rhs>> {
-        let sources = Pair::<Lhs, Rhs> {
+    ) -> Stages<OperandPair<Lhs, Rhs>> {
+        let sources = OperandPair::<Lhs, Rhs> {
             lhs: lhs.clone(),
             rhs: rhs.clone(),
         };
@@ -155,7 +160,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<Pair<Lhs, Rhs>> {
 
 #[cube]
 impl<T: Numeric> Stages<Tile<T>> {
-    /// [`new`](Stages::new) for the sole operand `input`.
+    /// [`smem`](Stages::smem) for the sole operand `input`, which is what a reduction or a copy
+    /// stages.
     pub fn smem_single(
         walk: &Walk,
         input: &Tile<T>,
@@ -180,7 +186,7 @@ impl<T: Numeric> Stages<Tile<T>> {
 
 // `consume` takes a closure so the body stays caller-defined, which is why it is spelled per
 // payload shape: inference resolves the pair's concrete `TileExpand` fields, not `P::ExpandType`.
-impl<Lhs: Numeric, Rhs: Numeric> Slot<Pair<Lhs, Rhs>> {
+impl<Lhs: Numeric, Rhs: Numeric> Slot<OperandPair<Lhs, Rhs>> {
     /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
     /// A filled payload is already this region's; an in-place one is the whole operand, the caller
     /// selecting the region. See [`SlotExpand::__expand_consume_method`].
@@ -191,15 +197,15 @@ impl<Lhs: Numeric, Rhs: Numeric> Slot<Pair<Lhs, Rhs>> {
     /// Producer: wait the slot is free, run `fill` over the staged buffers and the slot's
     /// [`Meeting`], then publish. What a fill *does* is the kernel's, which is why it is a
     /// closure. See [`SlotExpand::__expand_fill_method`].
-    pub fn fill(&mut self, _fill: impl FnOnce(&mut Pair<Lhs, Rhs>, &Meeting)) {
+    pub fn fill(&mut self, _fill: impl FnOnce(&mut OperandPair<Lhs, Rhs>, &Meeting)) {
         unexpanded!()
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<Pair<Lhs, Rhs>> {
+impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<OperandPair<Lhs, Rhs>> {
     pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
     where
-        F: FnOnce(&Scope, &mut PairExpand<Lhs, Rhs>, &MeetingExpand),
+        F: FnOnce(&Scope, &mut OperandPairExpand<Lhs, Rhs>, &MeetingExpand),
     {
         self.__expand_acquire_write_method(scope);
         fill(scope, &mut self.data, &self.pipeline);
@@ -248,7 +254,7 @@ impl<T: Numeric> SlotExpand<Tile<T>> {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> Stages<Pair<Lhs, Rhs>> {
+impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk. Waits the
     /// slot's fill, hands the staged tiles to `compute`, then frees the slot.
     pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
@@ -256,7 +262,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<Pair<Lhs, Rhs>> {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<Pair<Lhs, Rhs>> {
+impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
     where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),

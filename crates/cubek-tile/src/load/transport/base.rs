@@ -2,7 +2,7 @@
 //!
 //! Every cooperative fill under this module deals its lines out over `CUBE_DIM` workers indexed
 //! by `UNIT_POS`, assuming every unit of the cube runs it. A walk that sets planes aside to fill
-//! its stages ([`Level::filled_by`](crate::Level::filled_by)) breaks that: a wrong answer, not a
+//! its stages ([`Levels::filled_by`](crate::Levels::filled_by)) breaks that: a wrong answer, not a
 //! hang. Such a walk is refused where the two meet, and only a bulk copy may be filled by planes
 //! of their own.
 
@@ -127,48 +127,6 @@ impl TransportKind {
     }
 }
 
-impl Scan {
-    /// What the scan reads per line, which the source's own form decides: the destination is
-    /// plain here, since every other destination took a transport above.
-    fn new(dst: StoreForm, src: StoreForm, space: &Space) -> Self {
-        assert!(
-            !src.gathered && !dst.gathered,
-            "TransportKind: a gathered tile fills only a whole, unmasked, unquantized \
-             destination (a stage)"
-        );
-        // The read decodes at the source's true storage element: `T` for a plain tile, else the
-        // quantized store's element recovered from its scheme. That lets a plain `copy_from`
-        // dequantize on its own; the kernel never threads the storage element.
-        match (src.scheme, src.packing) {
-            (false, packing) => {
-                assert!(
-                    dst.width == src.width,
-                    "TransportKind: a plain source is scanned at the destination's width, so a \
-                     padded stage has to take the straight fill"
-                );
-                // Equal widths here, so this only asks that the innermost extent is whole lines:
-                // `storage_extents` rounds it up, and nothing on the scan path would otherwise
-                // notice the last line the source cannot fill.
-                fill_extent(space, src.width, dst.width, src.masks);
-                match packing {
-                    Packing::Plain => Scan::Element,
-                    Packing::Packed { field: _ } => Scan::Words,
-                    Packing::Native => panic!(
-                        "TransportKind: a native store with nothing to fold in serves its own \
-                         element; bind it as that element"
-                    ),
-                }
-            }
-            (true, Packing::Native) => Scan::Codes,
-            (true, Packing::Packed { field: _ }) if src.width == dst.width => Scan::Words,
-            (true, Packing::Packed { field: _ }) => Scan::SubWord,
-            (true, Packing::Plain) => {
-                panic!("TransportKind: a quantized source is never plain")
-            }
-        }
-    }
-}
-
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole
@@ -226,6 +184,48 @@ impl<T: Numeric> Memory<T> {
             }
             TransportKind::Straight => self.fill_straight::<T, W>(src, comptime!(space.clone())),
             TransportKind::Scanned(scan) => self.fill_scanned::<W>(src, comptime!(scan)),
+        }
+    }
+}
+
+impl Scan {
+    /// What the scan reads per line, which the source's own form decides: the destination is
+    /// plain here, since every other destination took a transport above.
+    fn new(dst: StoreForm, src: StoreForm, space: &Space) -> Self {
+        assert!(
+            !src.gathered && !dst.gathered,
+            "TransportKind: a gathered tile fills only a whole, unmasked, unquantized \
+             destination (a stage)"
+        );
+        // The read decodes at the source's true storage element: `T` for a plain tile, else the
+        // quantized store's element recovered from its scheme. That lets a plain `copy_from`
+        // dequantize on its own; the kernel never threads the storage element.
+        match (src.scheme, src.packing) {
+            (false, packing) => {
+                assert!(
+                    dst.width == src.width,
+                    "TransportKind: a plain source is scanned at the destination's width, so a \
+                     padded stage has to take the straight fill"
+                );
+                // Equal widths here, so this only asks that the innermost extent is whole lines:
+                // `storage_extents` rounds it up, and nothing on the scan path would otherwise
+                // notice the last line the source cannot fill.
+                fill_extent(space, src.width, dst.width, src.masks);
+                match packing {
+                    Packing::Plain => Scan::Element,
+                    Packing::Packed { field: _ } => Scan::Words,
+                    Packing::Native => panic!(
+                        "TransportKind: a native store with nothing to fold in serves its own \
+                         element; bind it as that element"
+                    ),
+                }
+            }
+            (true, Packing::Native) => Scan::Codes,
+            (true, Packing::Packed { field: _ }) if src.width == dst.width => Scan::Words,
+            (true, Packing::Packed { field: _ }) => Scan::SubWord,
+            (true, Packing::Plain) => {
+                panic!("TransportKind: a quantized source is never plain")
+            }
         }
     }
 }

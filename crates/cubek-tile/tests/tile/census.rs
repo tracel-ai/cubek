@@ -18,8 +18,6 @@ const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 37;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
-/// Lowered from 18 by phase 5: the fill half of `access.rs` moved to `load/transport/`, the
-/// stage derivation to `load/stage.rs`, and the pipeline's two payload families became one.
 const LONG_FILES: usize = 11;
 /// `#[allow(clippy::too_many_arguments)]` sites. The 27th came in with upstream's
 /// shared-memory accumulator.
