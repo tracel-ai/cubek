@@ -136,6 +136,98 @@ pub fn pipelined_with<T: CubeType, Fill, F>(
     unexpanded!()
 }
 
+/// [`pipelined`]'s walk with each region's fill split around the contraction before it: a unit
+/// reads its share of the next region's stage into registers, the slot is contracted, and the
+/// registers are written into the next slot. The next stage's global loads are in flight while
+/// the contraction runs, rather than issued after the barrier that frees their slot.
+///
+/// One slot costs two cube barriers a region (the contraction's reads are done, then the write
+/// is published); two or more cost one, since the slot written is one the last barrier already
+/// freed. Only a stage copied by every unit of the cube, straight, from a plain operand, is
+/// filled this way; a ring holding an operand the walk leaves fixed has no next region to fetch,
+/// and takes [`pipelined`]'s schedule.
+pub fn pipelined_through_registers<Lhs: Numeric, Rhs: Numeric, F>(
+    _walk: Walk,
+    _ring: &mut Ring<(Tile<Lhs>, Tile<Rhs>)>,
+    _compute: F,
+) where
+    F: FnMut(&mut Staging<(Tile<Lhs>, Tile<Rhs>)>, &Region),
+{
+    unexpanded!()
+}
+
+/// The expand of [`pipelined_through_registers`].
+pub mod pipelined_through_registers {
+    use super::*;
+
+    pub fn expand<Lhs: Numeric, Rhs: Numeric, F>(
+        scope: &Scope,
+        walk: WalkExpand,
+        ring: &mut RingExpand<(Tile<Lhs>, Tile<Rhs>)>,
+        mut compute: F,
+    ) where
+        F: FnMut(&Scope, &mut StagingExpand<(Tile<Lhs>, Tile<Rhs>)>, &RegionExpand),
+    {
+        ring.__expand_assert_copied_by_every_unit_method(scope);
+        // An operand the walk leaves fixed is filled once, above the loop: there is no next
+        // region of it to fetch, and the ring's own schedule is the whole walk.
+        if ring.has_fixed(scope) {
+            return super::pipelined::expand(scope, walk, ring, compute);
+        }
+        let depth = ring.depth;
+        let unroll = walk.unroll;
+        let total = walk.__expand_total_method(scope);
+
+        // The first region, filled and published before any contraction.
+        let any = 0usize.into_expand(scope).__expand_lt_method(scope, &total);
+        if_expand(scope, any, |scope| {
+            let first = walk.__expand_region_method(scope, FIRST_SLOT.into_expand(scope));
+            ring.fill_streamed(scope, FIRST_SLOT, &first);
+            ring.publish(scope, FIRST_SLOT);
+        });
+
+        let mut lhs = ring.__expand_lhs_fetch_buffer_method(scope);
+        let mut rhs = ring.__expand_rhs_fetch_buffer_method(scope);
+        let laps = total
+            .__expand_fadd_method(scope, (depth - 1).into_expand(scope))
+            .__expand_fdiv_method(scope, depth.into_expand(scope));
+        let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
+            for j in 0..depth {
+                let target = (j + 1) % depth;
+                let region_idx = lap
+                    .__expand_fmul_method(scope, depth.into_expand(scope))
+                    .__expand_fadd_method(scope, j.into_expand(scope));
+                let next = region_idx.__expand_fadd_method(scope, 1usize.into_expand(scope));
+                let draining = region_idx.__expand_lt_method(scope, &total);
+                if_expand(scope, draining, |scope| {
+                    let prefetching = next.__expand_lt_method(scope, &total);
+                    if_expand(scope, prefetching.clone(), |scope| {
+                        let upcoming = walk.__expand_region_method(scope, next.clone());
+                        ring.__expand_fetch_method(scope, target, &upcoming, &mut lhs, &mut rhs);
+                    });
+                    let region = walk.__expand_region_method(scope, region_idx);
+                    let slot = ring.__expand_slot_mut_method(scope, j);
+                    compute(scope, slot, &region);
+                    if_expand(scope, prefetching, |scope| {
+                        // One slot: every unit has read it before any overwrites it.
+                        if depth == 1 {
+                            ring.publish(scope, FIRST_SLOT);
+                        }
+                        ring.__expand_store_method(scope, target, &lhs, &rhs);
+                        ring.publish(scope, target);
+                    });
+                });
+            }
+        };
+        let range = RangeExpand::new(0usize.into_expand(scope), laps);
+        if unroll {
+            range.expand_unroll(scope, &mut body);
+        } else {
+            range.expand(scope, &mut body);
+        }
+    }
+}
+
 /// The expand of [`pipelined`], spelled at expand level so the compute body can be a closure.
 pub mod pipelined {
     use super::schedule::run;

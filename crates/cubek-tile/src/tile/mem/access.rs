@@ -36,6 +36,29 @@ impl<T: Numeric> Tile<T> {
         g.window_view::<W>(comptime!(Guard::Checked))
     }
 
+    /// The registers one unit holds a fill of this stage in across a contraction
+    /// ([`MemData::fetch_buffer`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetch_buffer(&self) -> Array<T> {
+        self.mem("fetch_buffer").fetch_buffer()
+    }
+
+    /// This unit's share of filling this stage from `src`, read into `fetched` and not yet
+    /// written ([`MemData::fetch_straight`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetch_from(&self, src: &Tile<T>, fetched: &mut Array<T>) {
+        let space = comptime!(self.space.clone());
+        self.mem("fetch_from")
+            .fetch_straight(src.mem("fetch_from"), space, fetched);
+    }
+
+    /// Write what [`fetch_from`](Tile::fetch_from) read into this stage
+    /// ([`MemData::store_fetched`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn store_fetched(&mut self, fetched: &Array<T>) {
+        self.mem_mut("store_fetched").store_fetched(fetched);
+    }
+
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem_mut("view_mut");
         if comptime!(g.store.quant.is_some()) {
@@ -341,6 +364,132 @@ impl<T: Numeric> MemData<T> {
             fill_lines::<I2, WP2, Const<1>>(
                 d, &s, projection, &shape, total, total_c, units, straight, padding,
             );
+        }
+    }
+
+    /// The registers [`fetch_straight`](MemData::fetch_straight) reads this stage's share of one
+    /// fill into: one scalar for every element of the lines this unit copies.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetch_buffer(&self) -> Array<T> {
+        let shape = self.layout.physical_shape.clone();
+        let plen = shape.len().comptime();
+        let total = shape
+            .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
+            .fcast::<usize>();
+        let total_c = total.constant();
+        let lines = comptime!(fetched_lines(total_c, self.access.units));
+        Array::<T>::new(comptime!(lines * self.store.vector_size))
+    }
+
+    /// [`fill_from`](MemData::fill_from)'s straight copy, its first half: this unit's lines of
+    /// `src` read into `fetched` ([`fetch_buffer`](MemData::fetch_buffer)), the registers a
+    /// schedule holds across a contraction so the loads are in flight while it runs. The second
+    /// half, [`store_fetched`](MemData::store_fetched), writes them into this stage.
+    ///
+    /// Only the copy a matmul stage takes: a plain, direct, unmasked stage that replaces, filled
+    /// at its own width from a plain direct source, in few enough lines a unit that the copy is
+    /// written out straight. Anything else is refused at expansion.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetch_straight(
+        &self,
+        src: &MemData<T>,
+        #[comptime] space: Space,
+        fetched: &mut Array<T>,
+    ) {
+        let size!(W) = comptime!(self.store.vector_size);
+        comptime!(assert!(
+            self.store.quant.is_none()
+                && src.store.quant.is_none()
+                && self.store.packing == Packing::Plain
+                && src.store.packing == Packing::Plain
+                && self.access.whole
+                && !self.access.overhang.masks()
+                && self.access.write == Write::Replace
+                && self.store.vector_size == src.store.vector_size
+                && self.projection.is_direct()
+                && src.projection.is_direct(),
+            "MemData::fetch_straight: only a plain, direct, whole stage filled at its source's \
+             width is fetched into registers"
+        ));
+        let check = comptime!(src.access.overhang.masks());
+        let w = comptime!(self.store.vector_size);
+        comptime!(fill_extent(&space, w, w, check));
+        let shape = self.layout.physical_shape.clone();
+        let plen = shape.len().comptime();
+        let total = shape
+            .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
+            .fcast::<usize>();
+        let projection = comptime!(self.layout.projection.clone());
+        let units = comptime!(self.access.units);
+        let total_c = total.constant();
+        let lines = comptime!(fetched_lines(total_c, units));
+        let total_c = comptime!(total_c.unwrap() as usize);
+        let s = MaskedView::new(
+            src.window_view_storage::<T, W>(comptime!(Guard::Checked)),
+            check,
+        );
+        #[unroll]
+        for t in 0..lines {
+            let i = UNIT_POS as usize + comptime!(t * units);
+            if comptime!((t + 1) * units > total_c) {
+                if i < total {
+                    let line = read_stage_line::<T, W, W>(
+                        &s,
+                        &physical_pos(comptime!(projection.clone()), i, &shape),
+                        comptime!(None),
+                    );
+                    #[unroll]
+                    for j in 0..w {
+                        fetched[comptime!(t * w + j)] = line.extract(j);
+                    }
+                }
+            } else {
+                let line = read_stage_line::<T, W, W>(
+                    &s,
+                    &physical_pos(comptime!(projection.clone()), i, &shape),
+                    comptime!(None),
+                );
+                #[unroll]
+                for j in 0..w {
+                    fetched[comptime!(t * w + j)] = line.extract(j);
+                }
+            }
+        }
+    }
+
+    /// The second half of [`fetch_straight`](MemData::fetch_straight): this unit's lines written
+    /// into this stage out of `fetched`. The caller owns the rendezvous, as for a whole fill: a
+    /// `sync_cube` must separate the stage's last read from this write, and this write from the
+    /// next read.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn store_fetched(&mut self, fetched: &Array<T>) {
+        let size!(W) = comptime!(self.store.vector_size);
+        let w = comptime!(self.store.vector_size);
+        let shape = self.layout.physical_shape.clone();
+        let plen = shape.len().comptime();
+        let total = shape
+            .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
+            .fcast::<usize>();
+        let units = comptime!(self.access.units);
+        let total_c = total.constant();
+        let lines = comptime!(fetched_lines(total_c, units));
+        let total_c = comptime!(total_c.unwrap() as usize);
+        let d = self.lines_storage_mut::<T, W>();
+        #[unroll]
+        for t in 0..lines {
+            let i = UNIT_POS as usize + comptime!(t * units);
+            let mut line = Vector::<T, W>::cast_from(fetched[comptime!(t * w)]);
+            #[unroll]
+            for j in 1..w {
+                line.insert(j, fetched[comptime!(t * w + j)]);
+            }
+            if comptime!((t + 1) * units > total_c) {
+                if i < total {
+                    d[i] = line;
+                }
+            } else {
+                d[i] = line;
+            }
         }
     }
 
@@ -1822,3 +1971,24 @@ fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
     x.fdiv(shape.fproduct(comptime!(((j + 1)..plen).collect::<Vec<_>>())))
         .frem(shape.at(j))
 }
+
+/// Lines one unit copies of a stage of `total` lines over `units` units, each held in registers
+/// across a contraction: written out straight, and at most [`MOST_FETCHED_LINES`] of them.
+fn fetched_lines(total: Option<u64>, units: usize) -> usize {
+    let total = total.expect("MemData: a stage fetched into registers has a static shape") as usize;
+    assert!(
+        units > 0,
+        "MemData: a stage fetched into registers deals its lines over the launch's units, which \
+         this operand's spec does not state: bind it through `Launcher::arg`, or set its `units`"
+    );
+    assert!(
+        total.div_ceil(units) <= MOST_FETCHED_LINES,
+        "MemData: a stage fetched into registers is at most {MOST_FETCHED_LINES} lines a unit; \
+         this one is {total} lines over {units} units"
+    );
+    total.div_ceil(units)
+}
+
+/// Lines one unit holds in registers for a fetched stage: past this the fetch spends more
+/// registers than the contraction it overlaps can spare.
+const MOST_FETCHED_LINES: usize = 32;

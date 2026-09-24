@@ -210,6 +210,59 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     }
 }
 
+#[cube]
+impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+    /// The registers one unit holds a fill of the lhs's stage in, across a contraction
+    /// ([`pipelined_through_registers`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn lhs_fetch_buffer(&self) -> Array<Lhs> {
+        self.slots.index(FIRST_SLOT).data.0.fetch_buffer()
+    }
+
+    /// The registers one unit holds a fill of the rhs's stage in, across a contraction.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn rhs_fetch_buffer(&self) -> Array<Rhs> {
+        self.slots.index(FIRST_SLOT).data.1.fetch_buffer()
+    }
+
+    /// This unit's share of filling slot `slot` for `region`, read into `lhs` and `rhs` and not
+    /// yet written: the loads a schedule issues before a contraction and lands after it.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetch(
+        &self,
+        #[comptime] slot: usize,
+        region: &Region,
+        lhs: &mut Array<Lhs>,
+        rhs: &mut Array<Rhs>,
+    ) {
+        let staged = self.slots.index(slot);
+        staged.data.0.fetch_from(&self.sources.0.at(region), lhs);
+        staged.data.1.fetch_from(&self.sources.1.at(region), rhs);
+    }
+
+    /// Write what [`fetch`](Ring::fetch) read into slot `slot`. The caller owns the rendezvous.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn store(&mut self, #[comptime] slot: usize, lhs: &Array<Lhs>, rhs: &Array<Rhs>) {
+        let staging = self.slot_mut(slot);
+        staging.data.0.store_fetched(lhs);
+        staging.data.1.store_fetched(rhs);
+    }
+
+    /// Refuse a ring a register-staged schedule cannot drive: one filled by planes of their own,
+    /// or by the TMA engine, whose copies land on a barrier rather than in a unit's registers.
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn assert_copied_by_every_unit(&self) {
+        let lhs = self.sources.0.delivery();
+        let rhs = self.sources.1.delivery();
+        comptime!(assert!(
+            self.fillers == 0 && !lhs.is_tma() && !rhs.is_tma(),
+            "Ring: a register-staged schedule fills its slots with every unit's own copy; this \
+             ring is filled by {} plane(s) of its own, or by the TMA engine",
+            self.fillers
+        ));
+    }
+}
+
 impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk. Waits the
     /// slot's fill, hands `compute` the two staged tiles, then frees the slot.

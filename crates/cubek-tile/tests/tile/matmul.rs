@@ -279,6 +279,63 @@ fn contract_staged<E: Numeric>(
     });
 }
 
+/// Which of the ring's schedules a staged test kernel drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Schedule {
+    /// [`pipelined`]: the next region's slot filled ahead of the contraction.
+    AheadInSlots,
+    /// [`pipelined_through_registers`]: the next region read into registers across the
+    /// contraction and written after it.
+    ThroughRegisters,
+}
+
+/// [`matmul_smem_ring`] under either of the ring's schedules.
+#[cube(launch)]
+fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
+    a: &TileArg<'_, E, V>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    space: Partitioning,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
+    #[comptime] depth: usize,
+    #[comptime] schedule: Schedule,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space.over(&cubes) {
+        let a = a.at(&cube);
+        let b = b.at(&cube);
+        let c = c.at(&cube);
+        for region in c.over(&steps) {
+            let mut c_w = c.at(&region);
+            c_w.zero();
+        }
+        let walk = cube.over(&steps);
+        let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
+        match comptime!(schedule) {
+            Schedule::AheadInSlots => {
+                pipelined(walk, &mut ring, |slot, region| {
+                    let mut c_r = c.at(region);
+                    slot.consume(|a_s, b_s| {
+                        c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                    });
+                });
+            }
+            Schedule::ThroughRegisters => {
+                pipelined_through_registers(walk, &mut ring, |slot, region| {
+                    let mut c_r = c.at(region);
+                    slot.consume(|a_s, b_s| {
+                        c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                    });
+                });
+            }
+        }
+    }
+}
+
 /// [`matmul_smem_ring`] walking its regions last to first.
 #[cube(launch)]
 fn matmul_smem_ring_reversed<E: Numeric, V: Size>(
@@ -1689,6 +1746,75 @@ fn assert_tiled_matmul(
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
         .enforce()
+}
+
+/// Drives [`matmul_smem_ring_scheduled`] for `C = A @ B` over `tiling`, whose last level is the
+/// walk it stages, `depth` regions in flight under `schedule`.
+fn check_matmul_scheduled(
+    m: usize,
+    n: usize,
+    k: usize,
+    tiling: Tiling,
+    depth: usize,
+    schedule: Schedule,
+) {
+    let client = cubecl::test_device().client();
+    let levels = tiling.levels();
+    let tile_edge = leaf_edge(&levels, M);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), levels),
+        KernelForm::Static,
+    );
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+        .tile(&[tile_edge, tile_edge])
+        .uniform(7, -100.0, 100.0);
+    // The cube's one unit, stated on each operand as `Launcher::arg` states it: a stage fetched
+    // into registers deals its lines over them at expansion.
+    let unit = |input: &TileInput| TileArgLaunch::new(input.tensor_arg(1), input.spec().units(1));
+    matmul_smem_ring_scheduled::launch(
+        &client,
+        launcher.cube_count(),
+        CubeDim::new_single(),
+        1,
+        unit(&a),
+        unit(&b),
+        unit(&c),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        depth,
+        schedule,
+        f32::elem_type_native(),
+    );
+    assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
+}
+
+/// The register-staged schedule against the one it splits, one slot and two, over a `K` walk of
+/// four regions a cube and of one: the last region prefetches nothing, and a walk of one region
+/// is its prologue alone.
+#[test]
+fn a_register_staged_ring_matches_a_slot_ahead_ring() {
+    for (k, depth) in [(16, 1), (16, 2), (16, 3), (4, 1), (4, 2)] {
+        for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
+            check_matmul_scheduled(
+                8,
+                8,
+                k,
+                Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                    .walk_every(&[K])
+                    .cubes(&[M, N]),
+                depth,
+                schedule,
+            );
+        }
+    }
 }
 
 /// Drives [`matmul_smem_ring`] for `C = A @ B`: the cube level over the walk it stages, through
