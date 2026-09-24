@@ -65,12 +65,12 @@ fn attention_fold_kernel<W: Size>(
     // budget caps the rows a visit keeps live.
     let config = comptime!(RegisterBlock::new(budget));
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
-    let mut score = Memory::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let mut p = Memory::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
+    let mut score = Tile::<f32>::shared(score_space.clone(), StageStorage::Strided);
+    let mut p = Tile::<f32>::shared(score_space, StageStorage::Strided);
     let row_space = comptime!(Space::new(&[(R, rows)]));
-    let mut factors = Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let mut factors = Tile::<f32>::shared(row_space.clone(), StageStorage::Strided);
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
-    let mut acc = Memory::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
+    let mut acc = Tile::<f32>::shared(acc_space, StageStorage::Strided);
     acc.zero();
     // One team over every unit of the cube, however many rows of it that takes: the unit's place
     // is stated rather than read off the cube's x dim, so a team wider than x is the same team.
@@ -404,17 +404,13 @@ fn attention_fold_cmma_kernel<E: Float>(
     let k_walk = k.over(&blocks);
     let k_probe = k.at(&k_walk.region(0usize));
     let v_probe = v.at(&k_walk.region(0usize));
-    let mut k_stage = Memory::<E>::smem(
+    let mut k_stage = Tile::<E>::shared(
         comptime!(k_probe.place.space.clone()),
-        1usize,
         StageStorage::Strided,
-        0usize,
     );
-    let mut v_stage = Memory::<E>::smem(
+    let mut v_stage = Tile::<E>::shared(
         comptime!(v_probe.place.space.clone()),
-        1usize,
         StageStorage::Strided,
-        0usize,
     );
     let bound_s = bound as usize;
     sync_cube();
@@ -880,13 +876,12 @@ fn attention_fold_split_kernel<W: Size>(
     });
     let row_space = comptime!(Space::new(&row_extents));
     let acc_space = comptime!(Space::new(&[(R, split_rows), (V, val_dim)]));
-    let score_all = Memory::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let p_all = Memory::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
-    let mut factors_all =
-        Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let m_all = Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let l_all = Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let mut acc_all = Memory::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
+    let score_all = Tile::<f32>::shared(score_space.clone(), StageStorage::Strided);
+    let p_all = Tile::<f32>::shared(score_space, StageStorage::Strided);
+    let mut factors_all = Tile::<f32>::shared(row_space.clone(), StageStorage::Strided);
+    let m_all = Tile::<f32>::shared(row_space.clone(), StageStorage::Strided);
+    let l_all = Tile::<f32>::shared(row_space.clone(), StageStorage::Strided);
+    let mut acc_all = Tile::<f32>::shared(acc_space, StageStorage::Strided);
     acc_all.zero();
 
     // Each split team spans `team_rows` rows of the cube, so its units are found by their

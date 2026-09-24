@@ -75,12 +75,9 @@ impl<E: Numeric> MaybeTile for ComptimeOption<Tile<E>> {
             {
                 #[comptime]
                 match self {
-                    ComptimeOption::Some(scales) => ComptimeOption::new_Some(Memory::<E>::stage(
-                        scales,
-                        comptime!(level.clone()),
-                        comptime!(storage.clone()),
-                        comptime!(None),
-                    )),
+                    ComptimeOption::Some(scales) => ComptimeOption::new_Some(
+                        scales.stage(comptime!(level.clone()), comptime!(storage.clone())),
+                    ),
                     ComptimeOption::None => ComptimeOption::new_None(),
                 }
             }

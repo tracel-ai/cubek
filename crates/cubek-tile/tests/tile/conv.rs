@@ -2930,12 +2930,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     offsets.push(offset);
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let stage = Memory::stage(
-        &input,
-        comptime!(level.clone()),
-        StageStorage::Strided,
-        comptime!(None),
-    );
+    let stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
     let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 

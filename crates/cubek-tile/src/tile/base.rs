@@ -669,6 +669,27 @@ impl<T: Numeric> Tile<T> {
         self.mem_mut("dense_mut").dense_lines_mut::<W>()
     }
 
+    /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
+    ///
+    /// The tile is shared memory, or the plane's own lanes where `storage` says so: an operand
+    /// reaches the instruction that reads it either way, and which of the two a walk chose is a
+    /// decision its blueprint already made.
+    ///
+    /// The stage takes the element this operand needs staged: the one it *serves* where the load
+    /// decodes it, else the one it is *stored* in. The operand carries which, so no caller asks.
+    pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile<T> {
+        Memory::<T>::stage(self, level, storage, comptime!(None))
+    }
+
+    /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.
+    ///
+    /// The working set a kernel keeps in shared memory beside the operands it staged: a row of
+    /// scores, a mask, a plane's scratch. No operand backs it, so nothing is staged into it and
+    /// nothing but the kernel's own writes fills it.
+    pub fn shared(#[comptime] space: Space, #[comptime] storage: StageStorage) -> Tile<T> {
+        Memory::<T>::smem(space, comptime!(1usize), storage, comptime!(0usize))
+    }
+
     /// Move `src` into `self`, the physical pairing picking the instruction that does it. A
     /// partition source is matched first because it needs the whole destination tile, which the
     /// pairing match below would keep borrowed.

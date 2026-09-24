@@ -1664,13 +1664,9 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut stage = Memory::<E>::stage(
-        &b,
-        comptime!(level.clone()),
-        StageStorage::Strided,
-        comptime!(None),
-    )
-    .with_landing();
+    let mut stage = b
+        .stage(comptime!(level.clone()), StageStorage::Strided)
+        .with_landing();
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
@@ -1843,11 +1839,9 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let b_plane = b_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
-            let mut lines = Memory::<S>::stage(
-                &scale_plane,
+            let mut lines = scale_plane.stage(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
-                comptime!(None),
             );
             let mut sum =
                 c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Monoid::Sum);
@@ -2255,11 +2249,9 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
             let out = comptime!(c_plane.place.space.clone());
-            let mut lines = Memory::<S>::stage(
-                &scale_plane,
+            let mut lines = scale_plane.stage(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
-                comptime!(None),
             );
             let mut sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Monoid::Sum);
             sum.zero();

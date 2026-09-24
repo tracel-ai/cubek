@@ -1143,12 +1143,7 @@ fn cmma_roundtrip<E: Numeric>(
 ) {
     let a = input.tile(comptime!(space.clone()));
 
-    let mut a_smem = Memory::smem(
-        comptime!(space.space().clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut a_smem = Tile::shared(comptime!(space.space().clone()), StageStorage::Strided);
     a_smem.copy_from(&a);
     sync_cube();
 
@@ -1162,12 +1157,7 @@ fn cmma_roundtrip<E: Numeric>(
     );
     frag.copy_from(&a_smem);
 
-    let mut c_smem = Memory::smem(
-        comptime!(space.space().clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut c_smem = Tile::shared(comptime!(space.space().clone()), StageStorage::Strided);
     c_smem.copy_from(&frag);
     sync_cube();
 
@@ -1189,28 +1179,13 @@ fn cmma_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
 
-    let mut a_smem_tile = Memory::smem(
-        comptime!(a.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut a_smem_tile = Tile::shared(comptime!(a.place.space.clone()), StageStorage::Strided);
     a_smem_tile.copy_from(&a);
 
-    let mut b_smem_tile = Memory::smem(
-        comptime!(b.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut b_smem_tile = Tile::shared(comptime!(b.place.space.clone()), StageStorage::Strided);
     b_smem_tile.copy_from(&b);
 
-    let mut c_smem_tile = Memory::smem(
-        comptime!(c.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut c_smem_tile = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
     c_smem_tile.copy_from(&c);
     sync_cube();
 
@@ -1264,20 +1239,10 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
 
-    let mut a_smem = Memory::smem(
-        comptime!(a.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut a_smem = Tile::shared(comptime!(a.place.space.clone()), StageStorage::Strided);
     a_smem.copy_from(&a);
 
-    let mut b_smem = Memory::smem(
-        comptime!(b.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut b_smem = Tile::shared(comptime!(b.place.space.clone()), StageStorage::Strided);
     b_smem.copy_from(&b);
     sync_cube();
 
@@ -1313,12 +1278,7 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
 
     acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
 
-    let mut c_smem = Memory::smem(
-        comptime!(c.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut c_smem = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
     c_smem.copy_from(&acc);
     sync_cube();
     c.copy_from(&c_smem);
@@ -1340,28 +1300,13 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
 
-    let mut a_smem = Memory::smem(
-        comptime!(a.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut a_smem = Tile::shared(comptime!(a.place.space.clone()), StageStorage::Strided);
     a_smem.copy_from(&a);
 
-    let mut b_smem = Memory::smem(
-        comptime!(b.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut b_smem = Tile::shared(comptime!(b.place.space.clone()), StageStorage::Strided);
     b_smem.copy_from(&b);
 
-    let mut c_smem = Memory::smem(
-        comptime!(c.place.space.clone()),
-        1usize,
-        StageStorage::Strided,
-        0usize,
-    );
+    let mut c_smem = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
     c_smem.copy_from(&c);
     sync_cube();
 

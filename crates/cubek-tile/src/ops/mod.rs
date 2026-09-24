@@ -1,11 +1,11 @@
-//! The verbs a client runs over tiles: [`matmul`] (`mma`), [`mul`], [`softmax`], [`rows`] and
-//! [`copy`]. Each reads an already-structured [`Tile`](crate::Tile) and either walks its levels or
-//! runs at the leaf; the shared machinery they compose lives in [`crate::load`].
+//! The verbs a client runs over tiles: [`matmul`] (`mma`), [`mul`], [`softmax`] and [`rows`].
+//! Each reads an already-structured [`Tile`](crate::Tile) and either walks its levels or runs at
+//! the leaf; the shared machinery they compose lives in [`crate::load`].
 //!
-//! Dequantization is no verb: a quantized store dequantizes in [`Tile::copy`](crate::Tile::copy).
+//! Moving cells is no verb of its own: a tile is filled from another through
+//! [`Tile::copy_from`](crate::Tile::copy_from), which a quantized store dequantizes on the way.
 
 mod attention;
-mod copy;
 pub(crate) mod matmul;
 mod mul;
 mod reduce;
