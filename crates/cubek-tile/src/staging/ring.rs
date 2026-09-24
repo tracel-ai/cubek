@@ -4,6 +4,9 @@
 //! Single and double buffering are this schedule at `depth` 1 and 2. At depth 1 a region's fill is
 //! the last event before its read, so the consume publishes it; deeper, the fill a lap ahead does.
 //! That, prologue and drain are the protocol ([`pipelined`]); a kernel supplies ring and consume.
+//!
+//! [`pipelined_through_registers`] is the same walk with each region's fill split around the
+//! contraction before it, the next region's loads held in the units' registers meanwhile.
 
 use cubecl::frontend::branch::{if_else_expand, if_expand};
 use cubecl::ir::Scope;
@@ -28,7 +31,7 @@ pub enum Role {
 pub struct Ring<T: CubeType> {
     pub(crate) slots: Sequence<Staging<T>>,
     pub(crate) sources: T,
-    // Read by the schedule ([`pipelined`]) at expand level only.
+    // Read by the schedules ([`pipelined`], [`pipelined_through_registers`]) at expand level only.
     #[allow(dead_code)]
     #[cube(comptime)]
     pub(crate) depth: usize,
@@ -143,9 +146,12 @@ pub fn pipelined_with<T: CubeType, Fill, F>(
 ///
 /// One slot costs two cube barriers a region (the contraction's reads are done, then the write
 /// is published); two or more cost one, since the slot written is one the last barrier already
-/// freed. Only a stage copied by every unit of the cube, straight, from a plain operand, is
-/// filled this way; a ring holding an operand the walk leaves fixed has no next region to fetch,
-/// and takes [`pipelined`]'s schedule.
+/// freed. Only one region is ever held ahead, so slots past a second sit idle.
+///
+/// Only a stage copied by every unit of the cube, straight, from a plain operand, and holding at
+/// most [`MOST_FETCHED_SCALARS`] of it a unit, is filled this way; anything else is refused at
+/// expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s schedule: the
+/// fetch moves both operands of a slot at once, and a fixed one is filled once, above the loop.
 pub fn pipelined_through_registers<Lhs: Numeric, Rhs: Numeric, F>(
     _walk: Walk,
     _ring: &mut Ring<(Tile<Lhs>, Tile<Rhs>)>,
@@ -198,8 +204,8 @@ pub mod pipelined_through_registers {
                     .__expand_fmul_method(scope, depth.into_expand(scope))
                     .__expand_fadd_method(scope, j.into_expand(scope));
                 let next = region_idx.__expand_fadd_method(scope, 1usize.into_expand(scope));
-                let draining = region_idx.__expand_lt_method(scope, &total);
-                if_expand(scope, draining, |scope| {
+                let in_walk = region_idx.__expand_lt_method(scope, &total);
+                if_expand(scope, in_walk, |scope| {
                     let prefetching = next.__expand_lt_method(scope, &total);
                     if_expand(scope, prefetching.clone(), |scope| {
                         let upcoming = walk.__expand_region_method(scope, next.clone());
@@ -346,22 +352,20 @@ mod schedule {
                     let ahead =
                         region_idx.__expand_fadd_method(scope, (depth - 1).into_expand(scope));
                     let prefetching = ahead.__expand_lt_method(scope, &total);
-                    let draining = region_idx.__expand_lt_method(scope, &total);
-                    // The fill ahead and the compute are two branches, not one branch holding the
-                    // compute twice: a compute written into both arms of `prefetching` is the
-                    // whole unrolled contraction emitted twice, its accumulator live across the
-                    // branch, which is what a kernel pays for rather than the fill.
+                    let in_walk = region_idx.__expand_lt_method(scope, &total);
+                    // The compute is emitted once, after the branch on the fill: it is the whole
+                    // unrolled contraction, its accumulator live across whatever branch holds it.
                     if_else_expand(scope, prefetching, |scope| {
                         let prefetch = walk.__expand_region_method(scope, ahead);
                         fill(scope, ring, (j + depth - 1) % depth, &prefetch);
                     })
                     .or_else(scope, |scope| {
                         // The walk is draining: no fill follows, so this consume publishes.
-                        if_expand(scope, draining.clone(), |scope| {
+                        if_expand(scope, in_walk.clone(), |scope| {
                             ring.publish(scope, j);
                         });
                     });
-                    if_expand(scope, draining, |scope| {
+                    if_expand(scope, in_walk, |scope| {
                         let region = walk.__expand_region_method(scope, region_idx);
                         let slot = ring.__expand_slot_mut_method(scope, j);
                         compute(scope, slot, &region);

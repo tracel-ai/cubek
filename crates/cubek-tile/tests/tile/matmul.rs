@@ -320,7 +320,11 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
                 pipelined(walk, &mut ring, |slot, region| {
                     let mut c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                        // Every unit fills its share of the slot; one contracts it, since the
+                        // contraction adds into `c` where it lies.
+                        if UNIT_POS == 0 {
+                            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                        }
                     });
                 });
             }
@@ -328,7 +332,11 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
                 pipelined_through_registers(walk, &mut ring, |slot, region| {
                     let mut c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                        // Every unit fills its share of the slot; one contracts it, since the
+                        // contraction adds into `c` where it lies.
+                        if UNIT_POS == 0 {
+                            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                        }
                     });
                 });
             }
@@ -1749,7 +1757,9 @@ fn assert_tiled_matmul(
 }
 
 /// Drives [`matmul_smem_ring_scheduled`] for `C = A @ B` over `tiling`, whose last level is the
-/// walk it stages, `depth` regions in flight under `schedule`.
+/// walk it stages, `depth` regions in flight under `schedule`, on a cube of `units` units reading
+/// every operand in lines `width` wide.
+#[allow(clippy::too_many_arguments)]
 fn check_matmul_scheduled(
     m: usize,
     n: usize,
@@ -1757,6 +1767,8 @@ fn check_matmul_scheduled(
     tiling: Tiling,
     depth: usize,
     schedule: Schedule,
+    units: u32,
+    width: usize,
 ) {
     let client = cubecl::test_device().client();
     let levels = tiling.levels();
@@ -1775,17 +1787,19 @@ fn check_matmul_scheduled(
     let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
-    // The cube's one unit, stated on each operand as `Launcher::arg` states it: a stage fetched
+    // The cube's units, stated on each operand as `Launcher::arg` states them: a stage fetched
     // into registers deals its lines over them at expansion.
-    let unit = |input: &TileInput| TileArgLaunch::new(input.tensor_arg(1), input.spec().units(1));
+    let bound = |input: &TileInput| {
+        TileArgLaunch::new(input.tensor_arg(width), input.spec().units(units as usize))
+    };
     matmul_smem_ring_scheduled::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        1,
-        unit(&a),
-        unit(&b),
-        unit(&c),
+        CubeDim::new_1d(units),
+        width,
+        bound(&a),
+        bound(&b),
+        bound(&c),
         launcher.partitioning_arg(),
         launcher.level(0),
         launcher.level(1),
@@ -1798,21 +1812,27 @@ fn check_matmul_scheduled(
 
 /// The register-staged schedule against the one it splits, one slot and two, over a `K` walk of
 /// four regions a cube and of one: the last region prefetches nothing, and a walk of one region
-/// is its prologue alone.
+/// is its prologue alone. On one unit, and on a cube of units a stage's lines do not divide, so a
+/// unit's last line runs past the stage — where a missing barrier lets the contracting unit read
+/// what the others have not written.
 #[test]
 fn a_register_staged_ring_matches_a_slot_ahead_ring() {
-    for (k, depth) in [(16, 1), (16, 2), (16, 3), (4, 1), (4, 2)] {
-        for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
-            check_matmul_scheduled(
-                8,
-                8,
-                k,
-                Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
-                    .walk_every(&[K])
-                    .cubes(&[M, N]),
-                depth,
-                schedule,
-            );
+    for (units, width) in [(1, 1), (6, 1)] {
+        for (k, depth) in [(16, 1), (16, 2), (16, 3), (4, 1), (4, 2)] {
+            for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
+                check_matmul_scheduled(
+                    8,
+                    8,
+                    k,
+                    Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                        .walk_every(&[K])
+                        .cubes(&[M, N]),
+                    depth,
+                    schedule,
+                    units,
+                    width,
+                );
+            }
         }
     }
 }
