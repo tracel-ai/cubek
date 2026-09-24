@@ -390,13 +390,43 @@ impl<T: Numeric> MemData<T> {
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
     ) -> Tile<T> {
-        // Shared memory is always an address: a stage is read back by the
-        // instruction that consumes it, which is the one thing a sink cannot do.
+        // A stage is an address: it is read back by the instruction that consumes it, which is
+        // the one thing a sink cannot do.
         let backing = Backing::<T>::new_Buffer(unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         });
+        MemData::smem_backed(
+            space,
+            vector_size,
+            units,
+            backing,
+            quant,
+            packing,
+            form,
+            map,
+            source,
+            comptime!(Write::Replace),
+        )
+    }
+
+    /// The whole-buffer window over a shared-memory `backing` laid out as `form`: what every smem
+    /// constructor ends in. `write` is what a store into it does, which is a replace for every
+    /// stage and an add for [`smem_accumulation`](Tile::smem_accumulation)'s sink.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn smem_backed(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] units: usize,
+        backing: Backing<T>,
+        quant: ComptimeOption<QuantInfo>,
+        #[comptime] packing: Packing,
+        #[comptime] form: StageForm,
+        map: RuntimeMap,
+        source: ComptimeOption<SourceWindow>,
+        #[comptime] write: Write,
+    ) -> Tile<T> {
         let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
@@ -429,7 +459,7 @@ impl<T: Numeric> MemData<T> {
                 access: comptime!(Access {
                     whole: true,
                     overhang: Overhang::Never,
-                    write: Write::Replace,
+                    write,
                     units,
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
@@ -655,7 +685,7 @@ impl StageForm {
     /// A materialized dense copy of the logical tile: what every direct operand stages into. An
     /// empty `nesting` is a plain row-major buffer; each block in it adds a `[grid…, block…]`
     /// split, so the buffer lays the innermost block down contiguously.
-    fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
+    pub(crate) fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
         let nesting = stage.nesting(space);
         StageForm {
             extents: StageForm::dense_extents(space, vector_size, &nesting),
@@ -694,7 +724,12 @@ impl StageForm {
     }
 
     /// How many lines the buffer holds.
-    fn cells(&self) -> usize {
+    /// The buffer's rank: how many physical axes its layout addresses.
+    pub(crate) fn physical_rank(&self) -> usize {
+        self.projection.physical_rank()
+    }
+
+    pub(crate) fn cells(&self) -> usize {
         self.extents.iter().product()
     }
 

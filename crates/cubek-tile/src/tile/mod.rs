@@ -15,6 +15,7 @@ mod plane;
 mod procedural;
 mod quant;
 mod register;
+mod smem_accumulation;
 mod tma;
 mod view;
 
@@ -30,5 +31,6 @@ pub use plane::*;
 pub use procedural::*;
 pub use quant::*;
 pub use register::*;
+pub use smem_accumulation::*;
 pub use tma::*;
 pub use view::*;

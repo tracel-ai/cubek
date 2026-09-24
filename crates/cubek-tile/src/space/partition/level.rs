@@ -21,6 +21,12 @@ pub enum Count {
     /// Every tile, dealt across this many workers in runs: a closed axis returning to the cube
     /// level to be split, and the one run whose length the kernel computes.
     Across(usize),
+    /// This many tiles, stated, taken in turns by the plane's lanes, however many the launch
+    /// runs: a lane count the kernel reads (`CUBE_DIM_X`) rather than one it is compiled
+    /// against, so the plane width never enters the kernel. A lane takes tiles `lane`,
+    /// `lane + lanes`, and so on, and one past the count takes none. Only lanes take it, and a
+    /// level taking it deals nothing else to them.
+    Dealt(usize),
 }
 
 /// What a walk counts along one axis of a level: a constant, or the extent handed down in
@@ -32,11 +38,13 @@ pub(crate) enum Grid {
 }
 
 impl Count {
-    /// The count where it is a stated number: `Of` and `Across` are, `Every` is the launch's.
+    /// The workers the tiles are dealt to, where that is a stated number: `Of` and `Across`
+    /// state it, `Every` deals to one worker a tile of a grid the launch counts, and `Dealt`
+    /// deals to as many lanes as the launch runs.
     pub(crate) fn stated(self) -> Option<usize> {
         match self {
             Count::Of(n) | Count::Across(n) => Some(n),
-            Count::Every => None,
+            Count::Every | Count::Dealt(_) => None,
         }
     }
 
@@ -44,7 +52,7 @@ impl Count {
     /// or every tile the extent holds, the last one partial where it does not divide.
     pub(crate) fn tiles(self, extent: usize, tile: usize) -> usize {
         match self {
-            Count::Of(n) => n,
+            Count::Of(n) | Count::Dealt(n) => n,
             Count::Every | Count::Across(_) => extent.div_ceil(tile),
         }
     }
@@ -53,7 +61,7 @@ impl Count {
     /// every tile of a [`Dynamic`](Extent::Dynamic) axis is the launch's to count.
     pub(crate) fn tiles_const(self, extent: Extent, tile: usize) -> Option<usize> {
         match (self, extent) {
-            (Count::Of(n), _) => Some(n),
+            (Count::Of(n) | Count::Dealt(n), _) => Some(n),
             (_, Extent::Static(extent)) => Some(self.tiles(extent, tile)),
             (_, Extent::Dynamic) => None,
         }
@@ -63,7 +71,7 @@ impl Count {
     /// is handed, in that tile.
     pub(crate) fn grid(self, tile: usize) -> Grid {
         match self {
-            Count::Of(n) => Grid::Const(n),
+            Count::Of(n) | Count::Dealt(n) => Grid::Const(n),
             Count::Every | Count::Across(_) => Grid::Extent(tile),
         }
     }
@@ -147,9 +155,32 @@ impl Level {
                          the device's; state how many"
                     )
                 }
+                (
+                    Count::Dealt(_),
+                    Distribution::Spatial {
+                        scope: ComputeScope::Unit,
+                        spread: Spread::Interleaved,
+                    },
+                ) => {}
+                (Count::Dealt(_), _) => panic!(
+                    "Level: {axis:?} is dealt in turns to however many lanes the launch runs, \
+                     which only a plane's lanes, taking turns, can be"
+                ),
                 _ => {}
             }
         }
+        let dealt = entries
+            .iter()
+            .any(|&(_, _, count, _)| matches!(count, Count::Dealt(_)));
+        let lane_axes = entries
+            .iter()
+            .filter(|&&(_, _, _, dist)| dist.scope() == Some(ComputeScope::Unit))
+            .count();
+        assert!(
+            !dealt || lane_axes == 1,
+            "Level: an axis dealt to however many lanes the launch runs takes all of them, so the \
+             level deals no other axis to the lanes; it deals {lane_axes}"
+        );
         let entries: Vec<_> = entries
             .iter()
             .map(|&(axis, tile, count, dist)| (axis, Entry { tile, count, dist }))
@@ -413,6 +444,8 @@ impl Level {
                 }
                 Extent::Dynamic => false,
             },
+            // The lanes are the launch's, so nothing here can prove they divide the count.
+            Some(Count::Dealt(_)) => false,
             _ => true,
         }
     }
@@ -470,10 +503,12 @@ impl Level {
 
     /// How many workers `axis` is dealt out to at this level, where comptime: the stated count, or
     /// the tiles an every-level takes over a static extent. `None` where the grid is unknown here:
-    /// a [`Dynamic`](Extent::Dynamic) extent, or `space` a projection dropping the axis (a drain).
+    /// a [`Dynamic`](Extent::Dynamic) extent, `space` a projection dropping the axis (a drain), or
+    /// an axis [`Dealt`](Count::Dealt) to as many lanes as the launch runs.
     pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),
+            Some(Count::Dealt(_)) => None,
             Some(count) => match count.stated() {
                 Some(n) => Some(n),
                 None if !space.contains(axis) => None,
@@ -522,6 +557,15 @@ impl Level {
             else {
                 continue;
             };
+            // Dealt to every lane the launch runs, and the level's only lane axis: carried where
+            // the operand spans it, and where it does not, every lane holds a partial of the
+            // same cell.
+            if let Count::Dealt(_) = self.entries.get(axis).count {
+                match spanned.contains(axis) {
+                    true => continue,
+                    false => return LaneShare::Plane,
+                }
+            }
             // Asserted, not skipped: a `Unit` axis always carries a stated count, and passing
             // over one whose count we could not read would shift every inner axis's bits by
             // its width.
