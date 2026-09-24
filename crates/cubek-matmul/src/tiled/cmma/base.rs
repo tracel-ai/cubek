@@ -156,6 +156,17 @@ impl CmmaBlueprint {
                 i.m, i.n, i.k, c.m, c.n, p.m, p.n, self.stage_k
             ))));
         }
+        // Any strip width serves any grid, but a strip holds a box: the kernel asserts it at
+        // expansion, which is too late for a plan to be turned down cleanly.
+        if matches!(
+            self.order,
+            CubeOrder::SwizzleRow(0) | CubeOrder::SwizzleCol(0)
+        ) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: a {:?} cube order deals strips of no boxes",
+                self.order
+            ))));
+        }
         let (stage_m, stage_n) = self.stage();
         if !problem.m.is_multiple_of(stage_m)
             || !problem.n.is_multiple_of(stage_n)

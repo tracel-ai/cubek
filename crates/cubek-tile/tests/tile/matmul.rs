@@ -1594,6 +1594,31 @@ fn matmul_one_tile_per_cube() {
     );
 }
 
+/// Cubes dealt their boxes in a swizzled order whose strips the grid does not divide: a 3x5 grid
+/// in strips of 2 and of 4 along either axis, the last strip narrower than the rest. Each box must
+/// still go to exactly one cube: one dealt twice doubles its product, one dealt to no cube keeps
+/// the poison `c` came in with.
+#[test]
+fn matmul_ragged_swizzle_deals_every_box_once() {
+    for order in [
+        CubeOrder::SwizzleRow(2),
+        CubeOrder::SwizzleCol(2),
+        CubeOrder::SwizzleRow(4),
+        CubeOrder::SwizzleCol(4),
+    ] {
+        check_matmul(
+            12,
+            20,
+            8,
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk_every(&[K])
+                .cubes(&[M, N])
+                .ordered(order),
+            1,
+        );
+    }
+}
+
 /// The kernel owns the init: `c` comes out as `a·b`, whatever it held going in.
 ///
 /// The whole contraction lands at the leaf here, so a single region writes each cell; the poison

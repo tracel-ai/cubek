@@ -210,12 +210,30 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     }
 }
 
+// The widths of the lines a register-staged fill holds of each operand, scope-registered sizes as
+// `RA` is: bound by `fetch_buffers`, read by `fetch` and `store`, never part of the ring's type.
+define_size!(pub(crate) FL);
+define_size!(pub(crate) FR);
+
+/// The registers a unit holds a register-staged fill of both operands in, a line a slot.
+pub(crate) type FetchBuffers<Lhs, Rhs> = (Array<Vector<Lhs, FL>>, Array<Vector<Rhs, FR>>);
+
+/// Bind the fetched line widths `FL` and `FR` for the rest of the kernel's scope.
+#[cube]
+fn register_fetched_widths(#[comptime] lhs: usize, #[comptime] rhs: usize) {
+    intrinsic!(|scope| {
+        scope.register_size::<FL>(lhs);
+        scope.register_size::<FR>(rhs);
+    });
+}
+
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     /// The registers one unit holds a fill of both operands' stages in, across a contraction
-    /// ([`pipelined_through_registers`]): at most [`MOST_FETCHED_SCALARS`] between them.
+    /// ([`pipelined_through_registers`]): whole lines at each stage's width, at most
+    /// [`MOST_FETCHED_SCALARS`] scalars between them.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
-    pub(crate) fn fetch_buffers(&self) -> (Array<Lhs>, Array<Rhs>) {
+    pub(crate) fn fetch_buffers(&self) -> FetchBuffers<Lhs, Rhs> {
         let staged = self.slots.index(FIRST_SLOT);
         let lhs = staged.data.0.fetched_scalars();
         let rhs = staged.data.1.fetched_scalars();
@@ -224,7 +242,13 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             "Ring: a fill fetched into registers holds {lhs} + {rhs} scalars a unit, past the \
              {MOST_FETCHED_SCALARS} a unit keeps beside its contraction"
         ));
-        (Array::<Lhs>::new(lhs), Array::<Rhs>::new(rhs))
+        let lhs_width = staged.data.0.vector_size();
+        let rhs_width = staged.data.1.vector_size();
+        register_fetched_widths(lhs_width, rhs_width);
+        (
+            Array::<Vector<Lhs, FL>>::new(comptime!(lhs / lhs_width)),
+            Array::<Vector<Rhs, FR>>::new(comptime!(rhs / rhs_width)),
+        )
     }
 
     /// This unit's share of filling slot `slot` for `region`, read into `lhs` and `rhs` and not
@@ -234,8 +258,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         &self,
         #[comptime] slot: usize,
         region: &Region,
-        lhs: &mut Array<Lhs>,
-        rhs: &mut Array<Rhs>,
+        lhs: &mut Array<Vector<Lhs, FL>>,
+        rhs: &mut Array<Vector<Rhs, FR>>,
     ) {
         let staged = self.slots.index(slot);
         staged.data.0.fetch_from(&self.sources.0.at(region), lhs);
@@ -244,22 +268,29 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
 
     /// Write what [`fetch`](Ring::fetch) read into slot `slot`. The caller owns the rendezvous.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
-    pub(crate) fn store(&mut self, #[comptime] slot: usize, lhs: &Array<Lhs>, rhs: &Array<Rhs>) {
+    pub(crate) fn store(
+        &mut self,
+        #[comptime] slot: usize,
+        lhs: &Array<Vector<Lhs, FL>>,
+        rhs: &Array<Vector<Rhs, FR>>,
+    ) {
         let staging = self.slot_mut(slot);
         staging.data.0.store_fetched(lhs);
         staging.data.1.store_fetched(rhs);
     }
 
     /// Refuse a ring a register-staged schedule cannot drive: one filled by planes of their own,
-    /// or by the TMA engine, whose copies land on a barrier rather than in a unit's registers.
+    /// by the TMA engine, whose copies land on a barrier rather than in a unit's registers, or
+    /// from a procedural source, which has no memory to read a line of.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
     pub(crate) fn assert_copied_by_every_unit(&self) {
         let lhs = self.sources.0.delivery();
         let rhs = self.sources.1.delivery();
         comptime!(assert!(
-            self.fillers == 0 && !lhs.is_tma() && !rhs.is_tma(),
-            "Ring: a register-staged schedule fills its slots with every unit's own copy; this \
-             ring is filled by {} plane(s) of its own, or by the TMA engine",
+            self.fillers == 0 && lhs == Delivery::Copy && rhs == Delivery::Copy,
+            "Ring: a register-staged schedule fills its slots with every unit's own copy of \
+             memory; this ring is filled by {} plane(s) of its own, or its sources are \
+             delivered {lhs:?} and {rhs:?}",
             self.fillers
         ));
     }

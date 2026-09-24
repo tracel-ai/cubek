@@ -522,6 +522,42 @@ fn cmma_refuses_stored_operands_that_disagree_on_k() {
     }
 }
 
+/// A strip of no boxes is refused as a plan, where the kernel would only assert it at expansion.
+#[test]
+fn cmma_rejects_a_strip_of_no_boxes() {
+    use cubek_matmul::{
+        definition::MatmulSetupError,
+        tiled::{
+            cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
+    use cubek_tile::CubeOrder;
+
+    for order in [CubeOrder::SwizzleRow(0), CubeOrder::SwizzleCol(0)] {
+        let blueprint = CmmaBlueprint {
+            instruction: InstructionShape {
+                m: 16,
+                n: 16,
+                k: 16,
+            },
+            partition: Partition { m: 1, n: 1 },
+            planes: PlaneGrid { m: 1, n: 1 },
+            stage_k: 16,
+            buffering: 2,
+            delivery: CmmaDelivery::Copy,
+            order,
+        };
+        match blueprint.validate(&rect(48, 64, 64, f16_elems())) {
+            Err(MatmulSetupError::InvalidConfig(msg)) => {
+                let msg = msg.to_string();
+                assert!(msg.contains("no boxes"), "wrong rejection: {msg}");
+            }
+            other => panic!("expected {order:?} refused, got {other:?}"),
+        }
+    }
+}
+
 /// The same plan with its cubes taking the output's boxes in a swizzled order, which is the one
 /// thing a [`CubeOrder`] changes: every box is still held by exactly one cube, and it still
 /// holds the same box's worth of the product.

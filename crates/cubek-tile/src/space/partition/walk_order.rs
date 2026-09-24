@@ -95,8 +95,8 @@ pub(crate) fn cube_positions(
 /// divide: every strip is `step_length` wide but the last, which holds what is left of the axis
 /// and snakes the same way. Where `step_length` divides the axis this is [`swizzle`].
 ///
-/// `index` lies in the grid, below `num_steps * strip_axis`; past it the position is garbage (but
-/// never a division by zero).
+/// `index` lies in the grid, below `num_steps * strip_axis`; past it the position lands off the
+/// grid, without a division by zero or an overflow.
 #[cube]
 pub fn swizzle_ragged(
     index: usize,
@@ -114,7 +114,7 @@ pub fn swizzle_ragged(
     let strip_offset = step_length * strip_index;
     // What is left of the axis: fewer than a strip only in the ragged last one. An index past the
     // grid leaves none, and takes a whole width rather than divide by it.
-    let left = strip_axis as u32 - strip_offset;
+    let left = (strip_axis as u32).saturating_sub(strip_offset);
     let width = if left < step_length && left > 0 {
         left
     } else {
@@ -248,17 +248,20 @@ mod tests {
         assert!(CubeOrder::SwizzleRow(4).swizzles());
     }
 
-    /// An index past the grid lands off it, but a strip boundary there leaves no boxes, which
-    /// must not become a width of zero to divide by: a dispatch larger than its grid is guarded
-    /// by its caller, not trapped here.
+    /// An index past the grid lands off it, but the strips there leave no boxes, which must not
+    /// become a width of zero to divide by nor an axis overdrawn: a dispatch larger than its grid
+    /// is guarded by its caller, not trapped here.
     #[test]
-    fn an_index_past_the_grid_divides_by_no_zero_width() {
-        // A 4x3 grid in strips of 2: index 12 is where a third strip would start.
-        let (_, along) = swizzle_ragged(12, 3, 2, 4);
-        assert!(
-            along >= 4,
-            "an index past the grid landed on it, at {along}"
-        );
+    fn an_index_past_the_grid_lands_off_it() {
+        // A 4x3 grid in strips of 2: index 12 is where a third strip would start, and 18 a fourth,
+        // wholly past the axis.
+        for index in [12, 18, 30] {
+            let (_, along) = swizzle_ragged(index, 3, 2, 4);
+            assert!(
+                along >= 4,
+                "index {index}, past the grid, landed on it at {along}"
+            );
+        }
     }
 
     /// Consecutive cubes stay close: what the order exists for, stated as the thing a cache
