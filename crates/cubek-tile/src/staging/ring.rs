@@ -347,21 +347,24 @@ mod schedule {
                         region_idx.__expand_fadd_method(scope, (depth - 1).into_expand(scope));
                     let prefetching = ahead.__expand_lt_method(scope, &total);
                     let draining = region_idx.__expand_lt_method(scope, &total);
+                    // The fill ahead and the compute are two branches, not one branch holding the
+                    // compute twice: a compute written into both arms of `prefetching` is the
+                    // whole unrolled contraction emitted twice, its accumulator live across the
+                    // branch, which is what a kernel pays for rather than the fill.
                     if_else_expand(scope, prefetching, |scope| {
                         let prefetch = walk.__expand_region_method(scope, ahead);
                         fill(scope, ring, (j + depth - 1) % depth, &prefetch);
-                        let region = walk.__expand_region_method(scope, region_idx);
-                        let slot = ring.__expand_slot_mut_method(scope, j);
-                        compute(scope, slot, &region);
                     })
                     .or_else(scope, |scope| {
                         // The walk is draining: no fill follows, so this consume publishes.
-                        if_expand(scope, draining, |scope| {
-                            let region = walk.__expand_region_method(scope, region_idx);
+                        if_expand(scope, draining.clone(), |scope| {
                             ring.publish(scope, j);
-                            let slot = ring.__expand_slot_mut_method(scope, j);
-                            compute(scope, slot, &region);
                         });
+                    });
+                    if_expand(scope, draining, |scope| {
+                        let region = walk.__expand_region_method(scope, region_idx);
+                        let slot = ring.__expand_slot_mut_method(scope, j);
+                        compute(scope, slot, &region);
                     });
                 }
             }
