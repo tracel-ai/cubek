@@ -375,7 +375,12 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
         let total_c = self.stage_lines().constant();
         let w = comptime!(self.store.vector_size);
-        comptime!(fetched_lines(total_c, self.access.units) * w)
+        let units = comptime!(self.access.units);
+        comptime!(fetched_scalars(
+            fetched_stage_lines(total_c, units) * w,
+            w,
+            units
+        ))
     }
 
     /// This stage's lines, a count its whole shape folds at expansion.
@@ -1967,16 +1972,21 @@ fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
         .frem(shape.at(j))
 }
 
-/// Lines one unit copies of a stage of `total` lines over `units` units, each held in registers
-/// across a contraction and written out straight.
-fn fetched_lines(total: Option<u64>, units: usize) -> usize {
-    let total = total.expect("MemData: a stage fetched into registers has a static shape") as usize;
+/// The lines of a stage fetched into registers over `units` units: its folded `total`, refused
+/// where the shape is not static or the units are not stated.
+fn fetched_stage_lines(total: Option<u64>, units: usize) -> usize {
     assert!(
         units > 0,
         "MemData: a stage fetched into registers deals its lines over the launch's units, which \
          this operand's spec does not state: bind it through `Launcher::arg`, or set its `units`"
     );
-    total.div_ceil(units)
+    total.expect("MemData: a stage fetched into registers has a static shape") as usize
+}
+
+/// Lines one unit copies of a stage of `total` lines over `units` units, each held in registers
+/// across a contraction and written out straight: [`fetched_scalars`] of lines one wide.
+fn fetched_lines(total: Option<u64>, units: usize) -> usize {
+    fetched_scalars(fetched_stage_lines(total, units), 1, units)
 }
 
 /// Scalars one unit of `units` holds in registers for a stage of `elements` read in lines `width`

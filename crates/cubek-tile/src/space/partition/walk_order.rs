@@ -94,6 +94,9 @@ pub(crate) fn cube_positions(
 /// [`swizzle`] over strips cut from an axis of `strip_axis` elements that `step_length` need not
 /// divide: every strip is `step_length` wide but the last, which holds what is left of the axis
 /// and snakes the same way. Where `step_length` divides the axis this is [`swizzle`].
+///
+/// `index` lies in the grid, below `num_steps * strip_axis`; past it the position is garbage (but
+/// never a division by zero).
 #[cube]
 pub fn swizzle_ragged(
     index: usize,
@@ -109,27 +112,21 @@ pub fn swizzle_ragged(
     let index = index as u32;
     let strip_index = index / full;
     let strip_offset = step_length * strip_index;
+    // What is left of the axis: fewer than a strip only in the ragged last one. An index past the
+    // grid leaves none, and takes a whole width rather than divide by it.
     let left = strip_axis as u32 - strip_offset;
-    let width = if left < step_length {
+    let width = if left < step_length && left > 0 {
         left
     } else {
         step_length.runtime()
     };
-    let pos_in_strip = index - strip_index * full;
-
-    let abs_step_index = pos_in_strip / width;
-    let abs_pos_in_step = pos_in_strip % width;
-
-    // Top-down (0) or bottom-up (1), then left-right (0) or right-left (1), as in [`swizzle`].
-    let strip_direction = strip_index % 2;
-    let step_direction = abs_step_index % 2;
-
-    let step_index = strip_direction * (num_steps as u32 - abs_step_index - 1)
-        + (1 - strip_direction) * abs_step_index;
-    let pos_in_step =
-        step_direction * (width - abs_pos_in_step - 1) + (1 - step_direction) * abs_pos_in_step;
-
-    (step_index, pos_in_step + strip_offset)
+    snake(
+        strip_index,
+        index - strip_index * full,
+        num_steps,
+        width,
+        strip_offset,
+    )
 }
 
 #[cube]
@@ -150,8 +147,46 @@ pub fn swizzle_ragged(
 /// # Returns
 /// `(x, y)` coordinates after swizzling
 pub fn swizzle(index: usize, num_steps: usize, #[comptime] step_length: u32) -> Coords2d {
-    // Strips cut from an axis no strip runs past: every strip whole.
-    swizzle_ragged(index, num_steps, step_length, u32::MAX as usize)
+    comptime!(assert!(
+        step_length > 0,
+        "swizzle: a strip holds at least one box"
+    ));
+    let full = num_steps as u32 * step_length;
+    let index = index as u32;
+    let strip_index = index / full;
+    // Every strip whole, so the width is the comptime one and its divisions are by a constant.
+    snake(
+        strip_index,
+        index - strip_index * full,
+        num_steps,
+        step_length,
+        step_length * strip_index,
+    )
+}
+
+/// The snake both swizzles walk: position `pos_in_strip` of strip `strip_index`, `width` boxes
+/// wide from `strip_offset`, top-down or bottom-up by strip and left-right or right-left by step.
+#[cube]
+fn snake(
+    strip_index: u32,
+    pos_in_strip: u32,
+    num_steps: usize,
+    width: u32,
+    strip_offset: u32,
+) -> Coords2d {
+    let abs_step_index = pos_in_strip / width;
+    let abs_pos_in_step = pos_in_strip % width;
+
+    // Top-down (0) or bottom-up (1), then left-right (0) or right-left (1).
+    let strip_direction = strip_index % 2;
+    let step_direction = abs_step_index % 2;
+
+    let step_index = strip_direction * (num_steps as u32 - abs_step_index - 1)
+        + (1 - strip_direction) * abs_step_index;
+    let pos_in_step =
+        step_direction * (width - abs_pos_in_step - 1) + (1 - step_direction) * abs_pos_in_step;
+
+    (step_index, pos_in_step + strip_offset)
 }
 
 #[cfg(test)]
@@ -211,6 +246,19 @@ mod tests {
         assert_eq!(CubeOrder::SwizzleCol(1).canonicalize(), CubeOrder::RowMajor);
         assert!(!CubeOrder::SwizzleRow(1).swizzles());
         assert!(CubeOrder::SwizzleRow(4).swizzles());
+    }
+
+    /// An index past the grid lands off it, but a strip boundary there leaves no boxes, which
+    /// must not become a width of zero to divide by: a dispatch larger than its grid is guarded
+    /// by its caller, not trapped here.
+    #[test]
+    fn an_index_past_the_grid_divides_by_no_zero_width() {
+        // A 4x3 grid in strips of 2: index 12 is where a third strip would start.
+        let (_, along) = swizzle_ragged(12, 3, 2, 4);
+        assert!(
+            along >= 4,
+            "an index past the grid landed on it, at {along}"
+        );
     }
 
     /// Consecutive cubes stay close: what the order exists for, stated as the thing a cache

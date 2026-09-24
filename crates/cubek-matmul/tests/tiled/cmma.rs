@@ -559,20 +559,16 @@ fn cmma_swizzled_cube_order_f32() {
 }
 
 /// A strip width the grid does not divide deals a ragged last strip, every box to one cube: the
-/// blueprint takes it rather than fit a width to each grid.
+/// blueprint takes it rather than fit a width to each grid. Validated alone, since the plan is
+/// what is judged and a device without the instruction turns down every blueprint whatever it is.
 #[test]
 fn cmma_takes_a_strip_the_grid_does_not_divide() {
-    use cubek_matmul::{
-        definition::{AvailableVectorSizes, MatmulSetupError},
-        routine::DeviceSettings,
-        tiled::{
-            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition, StoredTiles},
-            cpu_gemm::{InstructionShape, PlaneGrid},
-        },
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
     };
     use cubek_tile::CubeOrder;
 
-    let client = client();
     // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
     // leaves ragged.
     let blueprint = CmmaBlueprint {
@@ -589,22 +585,7 @@ fn cmma_takes_a_strip_the_grid_does_not_divide() {
         order: CubeOrder::SwizzleRow(2),
     };
     let problem = rect(48, 64, 64, f16_elems());
-    let device_settings = DeviceSettings {
-        plane_dim: client.properties().hardware.plane_size_max,
-        max_cube_count: client.properties().hardware.max_cube_count,
-        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, 4, 4, 4)
-            .pick_max()
-            .unwrap(),
-        client,
-    };
-    match CmmaRoutine::blueprint(
-        &BlueprintStrategy::Forced(blueprint),
-        &problem,
-        &device_settings,
-        problem.global_dtypes.out,
-        StoredTiles::default(),
-    ) {
-        Ok(_) => {}
-        Err(other) => panic!("expected a blueprint over a ragged strip, got {other:?}"),
+    if let Err(err) = blueprint.validate(&problem) {
+        panic!("expected a blueprint over a ragged strip, got {err:?}");
     }
 }

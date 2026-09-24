@@ -1815,36 +1815,43 @@ fn check_matmul_scheduled(
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
 
-/// The register-staged schedule against the one it splits, one slot to three, over a `K` walk of
-/// four regions a cube and of one: the last region prefetches nothing, and a walk of one region
-/// is its prologue alone. Read in scalars and in lines four wide, on one unit, on a few units of
-/// one plane, and on a cube of 70 units over stages of 256 elements, whose lines they do not divide: every
-/// unit fills its share and the last one contracts, so a missing or misplaced barrier lets it read
-/// what units of other planes have not written, or overwrite what it has not read.
+/// The register-staged schedule against the one it splits, over one slot and two (all it takes),
+/// over a `K` walk of four regions a cube and of one: the last region prefetches nothing, and a
+/// walk of one region is its prologue alone. Read in scalars and in lines four wide, on one unit,
+/// on a few units of one plane, and on a cube of 70 units over stages of 256 elements, whose lines
+/// they do not divide: every unit fills its share and the last one contracts, so a missing or
+/// misplaced barrier lets it read what units of other planes have not written, or overwrite what
+/// it has not read.
 #[test]
 fn a_register_staged_ring_matches_a_slot_ahead_ring() {
-    let small = || {
-        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+    // A leaf `edge` wide on every axis, walked along `K`.
+    let tiling = |edge: usize| {
+        Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
             .walk_every(&[K])
             .cubes(&[M, N])
     };
-    let wide = || {
-        Tiling::leaf(&[(M, 16), (N, 16), (K, 16)])
-            .walk_every(&[K])
-            .cubes(&[M, N])
-    };
-    let cases: [(u32, usize, usize, fn() -> Tiling, [usize; 2]); 5] = [
-        (1, 1, 8, small, [16, 4]),
-        (6, 1, 8, small, [16, 4]),
-        (1, 4, 8, small, [16, 4]),
-        (70, 1, 32, wide, [64, 16]),
-        (70, 4, 32, wide, [64, 16]),
+    // (units, width, problem edge, leaf edge, the `K`s).
+    let cases = [
+        (1u32, 1, 8, 4, [16, 4]),
+        (6, 1, 8, 4, [16, 4]),
+        (1, 4, 8, 4, [16, 4]),
+        (70, 1, 32, 16, [64, 16]),
+        (70, 4, 32, 16, [64, 16]),
     ];
-    for (units, width, edge, tiling, ks) in cases {
+    for (units, width, edge, leaf, ks) in cases {
         for k in ks {
-            for depth in [1, 2, 3] {
+            for depth in [1, 2] {
                 for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
-                    check_matmul_scheduled(edge, edge, k, tiling(), depth, schedule, units, width);
+                    check_matmul_scheduled(
+                        edge,
+                        edge,
+                        k,
+                        tiling(leaf),
+                        depth,
+                        schedule,
+                        units,
+                        width,
+                    );
                 }
             }
         }

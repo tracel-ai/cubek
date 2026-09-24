@@ -146,12 +146,14 @@ pub fn pipelined_with<T: CubeType, Fill, F>(
 ///
 /// One slot costs two cube barriers a region (the contraction's reads are done, then the write
 /// is published); two or more cost one, since the slot written is one the last barrier already
-/// freed. Only one region is ever held ahead, so slots past a second sit idle.
+/// freed. Only one region is ever held ahead, so a ring deeper than two slots is refused: its
+/// slots past the second would hold shared memory and never a stage.
 ///
 /// Only a stage copied by every unit of the cube, straight, from a plain operand, both operands
 /// holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way; anything else
-/// is refused at expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s schedule: the
-/// fetch moves both operands of a slot at once, and a fixed one is filled once, above the loop.
+/// is refused at expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s
+/// schedule, at any depth: the fetch moves both operands of a slot at once, and a fixed one is
+/// filled once, above the loop.
 pub fn pipelined_through_registers<Lhs: Numeric, Rhs: Numeric, F>(
     _walk: Walk,
     _ring: &mut Ring<(Tile<Lhs>, Tile<Rhs>)>,
@@ -181,6 +183,11 @@ pub mod pipelined_through_registers {
         }
         ring.__expand_assert_copied_by_every_unit_method(scope);
         let depth = ring.depth;
+        assert!(
+            depth <= 2,
+            "pipelined_through_registers: a ring of {depth} slots holds one region ahead, so the \
+             slots past a second would sit idle; build it with a depth of 1 or 2"
+        );
         let unroll = walk.unroll;
         let total = walk.__expand_total_method(scope);
 
@@ -206,8 +213,8 @@ pub mod pipelined_through_registers {
                 let in_walk = region_idx.__expand_lt_method(scope, &total);
                 if_expand(scope, in_walk, |scope| {
                     let prefetching = next.__expand_lt_method(scope, &total);
-                    if_expand(scope, prefetching.clone(), |scope| {
-                        let upcoming = walk.__expand_region_method(scope, next.clone());
+                    if_expand(scope, prefetching, |scope| {
+                        let upcoming = walk.__expand_region_method(scope, next);
                         ring.__expand_fetch_method(scope, target, &upcoming, &mut lhs, &mut rhs);
                     });
                     let region = walk.__expand_region_method(scope, region_idx);
@@ -360,7 +367,7 @@ mod schedule {
                     })
                     .or_else(scope, |scope| {
                         // The walk is draining: no fill follows, so this consume publishes.
-                        if_expand(scope, in_walk.clone(), |scope| {
+                        if_expand(scope, in_walk, |scope| {
                             ring.publish(scope, j);
                         });
                     });
