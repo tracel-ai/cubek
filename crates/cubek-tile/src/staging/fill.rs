@@ -212,17 +212,19 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
-    /// The registers one unit holds a fill of the lhs's stage in, across a contraction
-    /// ([`pipelined_through_registers`]).
+    /// The registers one unit holds a fill of both operands' stages in, across a contraction
+    /// ([`pipelined_through_registers`]): at most [`MOST_FETCHED_SCALARS`] between them.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
-    pub(crate) fn lhs_fetch_buffer(&self) -> Array<Lhs> {
-        self.slots.index(FIRST_SLOT).data.0.fetch_buffer()
-    }
-
-    /// The registers one unit holds a fill of the rhs's stage in, across a contraction.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
-    pub(crate) fn rhs_fetch_buffer(&self) -> Array<Rhs> {
-        self.slots.index(FIRST_SLOT).data.1.fetch_buffer()
+    pub(crate) fn fetch_buffers(&self) -> (Array<Lhs>, Array<Rhs>) {
+        let staged = self.slots.index(FIRST_SLOT);
+        let lhs = staged.data.0.fetched_scalars();
+        let rhs = staged.data.1.fetched_scalars();
+        comptime!(assert!(
+            lhs + rhs <= MOST_FETCHED_SCALARS,
+            "Ring: a fill fetched into registers holds {lhs} + {rhs} scalars a unit, past the \
+             {MOST_FETCHED_SCALARS} a unit keeps beside its contraction"
+        ));
+        (Array::<Lhs>::new(lhs), Array::<Rhs>::new(rhs))
     }
 
     /// This unit's share of filling slot `slot` for `region`, read into `lhs` and `rhs` and not

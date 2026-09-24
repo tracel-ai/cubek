@@ -148,8 +148,8 @@ pub fn pipelined_with<T: CubeType, Fill, F>(
 /// is published); two or more cost one, since the slot written is one the last barrier already
 /// freed. Only one region is ever held ahead, so slots past a second sit idle.
 ///
-/// Only a stage copied by every unit of the cube, straight, from a plain operand, and holding at
-/// most [`MOST_FETCHED_SCALARS`] of it a unit, is filled this way; anything else is refused at
+/// Only a stage copied by every unit of the cube, straight, from a plain operand, both operands
+/// holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way; anything else is refused at
 /// expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s schedule: the
 /// fetch moves both operands of a slot at once, and a fixed one is filled once, above the loop.
 pub fn pipelined_through_registers<Lhs: Numeric, Rhs: Numeric, F>(
@@ -174,12 +174,12 @@ pub mod pipelined_through_registers {
     ) where
         F: FnMut(&Scope, &mut StagingExpand<(Tile<Lhs>, Tile<Rhs>)>, &RegionExpand),
     {
-        ring.__expand_assert_copied_by_every_unit_method(scope);
         // An operand the walk leaves fixed is filled once, above the loop: there is no next
         // region of it to fetch, and the ring's own schedule is the whole walk.
         if ring.has_fixed(scope) {
             return super::pipelined::expand(scope, walk, ring, compute);
         }
+        ring.__expand_assert_copied_by_every_unit_method(scope);
         let depth = ring.depth;
         let unroll = walk.unroll;
         let total = walk.__expand_total_method(scope);
@@ -192,8 +192,7 @@ pub mod pipelined_through_registers {
             ring.publish(scope, FIRST_SLOT);
         });
 
-        let mut lhs = ring.__expand_lhs_fetch_buffer_method(scope);
-        let mut rhs = ring.__expand_rhs_fetch_buffer_method(scope);
+        let (mut lhs, mut rhs) = ring.__expand_fetch_buffers_method(scope);
         let laps = total
             .__expand_fadd_method(scope, (depth - 1).into_expand(scope))
             .__expand_fdiv_method(scope, depth.into_expand(scope));

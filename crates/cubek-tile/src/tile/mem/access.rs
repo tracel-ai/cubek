@@ -36,11 +36,11 @@ impl<T: Numeric> Tile<T> {
         g.window_view::<W>(comptime!(Guard::Checked))
     }
 
-    /// The registers one unit holds a fill of this stage in across a contraction
-    /// ([`MemData::fetch_buffer`]).
+    /// Scalars of this stage one unit holds in registers across a contraction
+    /// ([`MemData::fetched_scalars`]).
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
-    pub(crate) fn fetch_buffer(&self) -> Array<T> {
-        self.mem("fetch_buffer").fetch_buffer()
+    pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
+        self.mem("fetched_scalars").fetched_scalars()
     }
 
     /// This unit's share of filling this stage from `src`, read into `fetched` and not yet
@@ -367,14 +367,15 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// The registers [`fetch_straight`](MemData::fetch_straight) reads this stage's share of one
-    /// fill into: one scalar for every element of the lines this unit copies.
+    /// Scalars of this stage one unit holds in registers between [`fetch_straight`] and
+    /// [`store_fetched`](MemData::store_fetched): every element of the lines it copies.
+    ///
+    /// [`fetch_straight`]: MemData::fetch_straight
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
-    pub(crate) fn fetch_buffer(&self) -> Array<T> {
+    pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
         let total_c = self.stage_lines().constant();
         let w = comptime!(self.store.vector_size);
-        let lines = comptime!(fetched_lines(total_c, self.access.units, w));
-        Array::<T>::new(comptime!(lines * w))
+        comptime!(fetched_lines(total_c, self.access.units) * w)
     }
 
     /// This stage's lines, a count its whole shape folds at expansion.
@@ -392,8 +393,8 @@ impl<T: Numeric> MemData<T> {
     /// half, [`store_fetched`](MemData::store_fetched), writes them into this stage.
     ///
     /// Only the copy a matmul stage takes: a plain, direct, unmasked stage that replaces, filled
-    /// at its own width from a plain direct source, holding at most [`MOST_FETCHED_SCALARS`] a
-    /// unit. Anything else is refused at expansion.
+    /// at its own width from a plain direct source, its ring holding at most [`MOST_FETCHED_SCALARS`]
+    /// of both operands a unit. Anything else is refused at expansion.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
     pub(crate) fn fetch_straight(
         &self,
@@ -424,7 +425,7 @@ impl<T: Numeric> MemData<T> {
         let units = comptime!(self.access.units);
         let total = self.stage_lines();
         let total_c = total.constant();
-        let lines = comptime!(fetched_lines(total_c, units, w));
+        let lines = comptime!(fetched_lines(total_c, units));
         let total_c = comptime!(total_c.unwrap() as usize);
         let s = MaskedView::new(
             src.window_view_storage::<T, W>(comptime!(Guard::Checked)),
@@ -465,7 +466,7 @@ impl<T: Numeric> MemData<T> {
         let units = comptime!(self.access.units);
         let total = self.stage_lines();
         let total_c = total.constant();
-        let lines = comptime!(fetched_lines(total_c, units, w));
+        let lines = comptime!(fetched_lines(total_c, units));
         let total_c = comptime!(total_c.unwrap() as usize);
         let d = self.lines_storage_mut::<T, W>();
         #[unroll]
@@ -1966,26 +1967,28 @@ fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
         .frem(shape.at(j))
 }
 
-/// Lines one unit copies of a stage of `total` lines `width` wide over `units` units, each held in
-/// registers across a contraction: written out straight, at most [`MOST_FETCHED_SCALARS`] a unit.
-fn fetched_lines(total: Option<u64>, units: usize, width: usize) -> usize {
+/// Lines one unit copies of a stage of `total` lines over `units` units, each held in registers
+/// across a contraction and written out straight.
+fn fetched_lines(total: Option<u64>, units: usize) -> usize {
     let total = total.expect("MemData: a stage fetched into registers has a static shape") as usize;
     assert!(
         units > 0,
         "MemData: a stage fetched into registers deals its lines over the launch's units, which \
          this operand's spec does not state: bind it through `Launcher::arg`, or set its `units`"
     );
-    let lines = total.div_ceil(units);
-    assert!(
-        lines * width <= MOST_FETCHED_SCALARS,
-        "MemData: a stage fetched into registers holds at most {MOST_FETCHED_SCALARS} scalars a \
-         unit; this one is {total} lines {width} wide over {units} units"
-    );
-    lines
+    total.div_ceil(units)
 }
 
-/// Scalars of one operand's stage a unit holds in registers when its fill is fetched ahead of a
-/// contraction: what a schedule may ask of a unit's registers beside the contraction's own, whose
-/// accumulator is the larger share. A routine choosing `pipelined_through_registers` reads it to
-/// know which stages it may fetch.
+/// Scalars one unit of `units` holds in registers for a stage of `elements` read in lines `width`
+/// wide, when its fill is fetched ahead of a contraction ([`pipelined_through_registers`]): the
+/// rule a routine asks before choosing that schedule, and the one the ring holds it to.
+///
+/// [`pipelined_through_registers`]: crate::pipelined_through_registers
+pub fn fetched_scalars(elements: usize, width: usize, units: usize) -> usize {
+    elements.div_ceil(width).div_ceil(units) * width
+}
+
+/// Scalars of both operands' stages a unit holds in registers when a ring's fill is fetched ahead
+/// of a contraction ([`fetched_scalars`] of each, summed): what a schedule may ask of a unit's
+/// registers beside the contraction's own accumulator.
 pub const MOST_FETCHED_SCALARS: usize = 64;
