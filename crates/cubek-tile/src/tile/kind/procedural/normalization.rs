@@ -14,6 +14,7 @@ pub struct Normalization {
     pub guard: DivGuard,
     pub over: Space,
 }
+impl CubeDebug for Normalization {}
 
 impl Normalization {
     pub fn new(taps: TapSupport, guard: DivGuard, over: Space) -> Self {

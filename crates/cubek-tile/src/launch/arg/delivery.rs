@@ -28,6 +28,8 @@ pub enum Delivery {
     Tma,
 }
 
+impl CubeDebug for Delivery {}
+
 /// CUDA caps each TMA box dimension at 256; a bulk copy fills one smem stage, so the
 /// stage edges are the box dims. Public so a derivation can size a stage to it before
 /// [`validate_tma`](Delivery::validate_tma) refuses one past it.

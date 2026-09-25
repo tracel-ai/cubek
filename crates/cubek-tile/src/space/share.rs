@@ -32,6 +32,7 @@ pub enum UnitShare {
     Group { fold_mask: usize },
 }
 
+impl CubeDebug for UnitShare {}
 impl UnitShare {
     /// What `level` makes the plane's units to the cells of an operand spanning `spanned`: an
     /// axis the operand does not span is folded (units hold partials), one it spans is carried.
