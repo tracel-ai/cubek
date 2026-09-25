@@ -18,7 +18,7 @@
 //! is why the instruction disappears from the list and becomes the first line instead.
 //!
 //! **Counts, and "all of it".** Every level says how many of the thing below it
-//! ([`Count::Stated`]); lanes that cooperate on nothing may take their count in turns, however
+//! ([`Count::Stated`]); units that cooperate on nothing may take their count in turns, however
 //! many the launch runs ([`units_distributed`](Levels::units_distributed), [`Count::Distributed`]), which is still
 //! a stated count and builds its tile the same way. The exception takes *every* tile of an axis
 //! (a reduction's `K`, the output's boxes, the batch), a count nobody knows until launch
@@ -86,7 +86,7 @@ enum Takes {
     Stated,
     /// Every tile the level above hands down ([`Count::All`]).
     Every,
-    /// The count stated, taken in turns by as many lanes as the launch runs ([`Count::Distributed`]).
+    /// The count stated, taken in turns by as many units as the launch runs ([`Count::Distributed`]).
     DistributedToUnits,
 }
 
@@ -103,7 +103,7 @@ pub struct Levels {
 
 impl Levels {
     /// The tile one worker holds at the bottom — an instruction's shape, a register block, a
-    /// lane's vector. The only sizes in a partitioning, and the only ones a device dictates.
+    /// unit's vector. The only sizes in a partitioning, and the only ones a device dictates.
     pub fn leaf(tile: &[(Axis, usize)]) -> Self {
         Levels {
             sizes: tile.to_vec(),
@@ -123,14 +123,14 @@ impl Levels {
         self.every(Coverage::Walk, axes)
     }
 
-    /// This many of the thing below, one per lane of the plane.
+    /// This many of the thing below, one per unit of the plane.
     pub fn units(self, counts: &[(Axis, usize)]) -> Self {
         self.state(Coverage::Distribute(ComputeScope::Unit), counts)
     }
 
-    /// This many of the thing below, taken in turns by the plane's lanes, however many the
-    /// launch runs ([`Count::Distributed`]): what lanes that cooperate on nothing take, so the plane
-    /// width is read by the kernel rather than compiled into it. One axis, since the lanes are
+    /// This many of the thing below, taken in turns by the plane's units, however many the
+    /// launch runs ([`Count::Distributed`]): what units that cooperate on nothing take, so the plane
+    /// width is read by the kernel rather than compiled into it. One axis, since the units are
     /// all its own.
     pub fn units_distributed(mut self, axis: Axis, count: usize) -> Self {
         let tiles = vec![(axis, self.size(axis), count)];
@@ -219,8 +219,8 @@ impl Levels {
     }
 
     /// The workers of the level just stated take `axis`'s tiles in turns (worker 0 the first,
-    /// worker 1 the next) rather than each a contiguous run, so neighbouring lanes read
-    /// neighbouring memory at the same instant, as a lane split of a contiguous contraction wants.
+    /// worker 1 the next) rather than each a contiguous run, so neighbouring units read
+    /// neighbouring memory at the same instant, as a unit split of a contiguous contraction wants.
     pub fn interleaved(mut self, axis: Axis) -> Self {
         self.last("interleaved").interleaved.push(axis);
         self
@@ -482,10 +482,10 @@ mod tests {
         assert_eq!(one.count(K), Some(Count::Stated(1)));
     }
 
-    /// Lanes taking their tiles in turns state a count like any level, so the tile above is built
-    /// the same way, and the launch's lane count is none of the partitioning's.
+    /// Units taking their tiles in turns state a count like any level, so the tile above is built
+    /// the same way, and the launch's unit count is none of the partitioning's.
     #[test]
-    fn a_count_distributed_to_the_lanes_builds_its_tile() {
+    fn a_count_distributed_to_the_units_builds_its_tile() {
         let levels = Levels::leaf(&[(M, 4), (N, 4)])
             .units_distributed(N, 64)
             .planes(&[(M, 2)])
@@ -499,13 +499,13 @@ mod tests {
         );
         assert_eq!(levels[2].spread(N), Some(Spread::Interleaved));
         let partitioning = Partitioning::new(Space::new(&[(M, 100), (N, 1000)]), levels);
-        assert_eq!(partitioning.lanes(), 1);
+        assert_eq!(partitioning.units(), 1);
         assert_eq!(partitioning.planes_per_cube(), 2);
     }
 
     #[test]
-    #[should_panic(expected = "distributes no other axis to the lanes")]
-    fn a_count_distributed_to_the_lanes_is_their_only_axis() {
+    #[should_panic(expected = "distributes no other axis to the units")]
+    fn a_count_distributed_to_the_units_is_their_only_axis() {
         let _ = Level::new(
             Coverage::Distribute(ComputeScope::Unit),
             &[

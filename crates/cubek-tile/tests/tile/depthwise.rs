@@ -28,7 +28,7 @@ use cubek_tile::*;
 use cubek_tile::{Boundary, BoundaryPolicy};
 
 /// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
-/// specialization, no lane fan-out: the lines here run along the channel, not along `K`.
+/// specialization, no unit fan-out: the lines here run along the channel, not along `K`.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 // Output positions, window taps, and the one channel axis every operand shares.

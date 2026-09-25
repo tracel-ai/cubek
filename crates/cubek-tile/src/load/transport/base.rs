@@ -114,7 +114,7 @@ impl TransportKind {
             && access.write == Write::Replace
         {
             // A padded stage is served in lines its source cannot hand out whole, so each
-            // destination line is assembled lane by lane out of scalar source cells.
+            // destination line is assembled unit by unit out of scalar source cells.
             assert!(
                 dst.width == src.width || src.width == 1,
                 "TransportKind: a padded stage is filled from a plain scalar operand, but its \

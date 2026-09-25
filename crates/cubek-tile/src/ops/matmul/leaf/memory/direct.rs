@@ -98,7 +98,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
-    let lane_fanout = comptime!(config.lane_fanout);
+    let component_fanout = comptime!(config.component_fanout);
 
     for mat in 0..matrices {
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
@@ -179,7 +179,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     cols,
                     kc,
                     true,
-                    lane_fanout,
+                    component_fanout,
                     semiring,
                 );
             } else {
@@ -197,7 +197,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     cols,
                     kc,
                     false,
-                    lane_fanout,
+                    component_fanout,
                     semiring,
                 );
             }
@@ -217,7 +217,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 cols,
                 kc,
                 unroll,
-                lane_fanout,
+                component_fanout,
                 semiring,
             );
         }
@@ -242,7 +242,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] cols: usize,
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
-    #[comptime] lane_fanout: bool,
+    #[comptime] component_fanout: bool,
     #[comptime] semiring: Semiring,
 ) {
     let mut c =
@@ -259,7 +259,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         nr,
         kc,
         unroll,
-        lane_fanout,
+        component_fanout,
         semiring,
     );
     registers::commit::<E, V, A>(

@@ -30,13 +30,13 @@ pub enum RowShare {
     /// registers over the whole row. No shuffles, no syncs, nothing asked of
     /// the hardware — the arm a device with no plane ops still runs.
     Unit { rows: usize },
-    /// One **plane** per row-slice: its lanes split the reduced axis and meet
-    /// in a plane reduction, so every lane leaves holding the row's state.
+    /// One **plane** per row-slice: its units split the reduced axis and meet
+    /// in a plane reduction, so every unit leaves holding the row's state.
     ///
-    /// Costs `lanes`× the workers on the same rows, which is the point: a score tile of 8 rows
+    /// Costs `units`× the workers on the same rows, which is the point: a score tile of 8 rows
     /// keeps 8 units busy under `Unit` and a 64-unit cube under `Plane`. In exchange the cube's x
-    /// dim must be whole planes and `lanes` the width the device commits to, else silently wrong.
-    Plane { rows: usize, lanes: usize },
+    /// dim must be whole planes and `units` the width the device commits to, else silently wrong.
+    Plane { rows: usize, units: usize },
 }
 
 impl RowShare {
@@ -48,20 +48,25 @@ impl RowShare {
     }
 
     /// Units one worker spans: one, or the plane's width.
-    pub fn lanes(&self) -> usize {
+    pub fn units(&self) -> usize {
         match self {
             RowShare::Unit { .. } => 1,
-            RowShare::Plane { lanes, .. } => *lanes,
+            RowShare::Plane {
+                units: plane_units, ..
+            } => *plane_units,
         }
     }
 }
 
-/// This unit's lane within its worker: its position in the plane, or zero for a unit.
+/// This unit's unit within its worker: its position in the plane, or zero for a unit.
 #[cube]
-pub fn owned_lane(#[comptime] share: RowShare) -> usize {
+pub fn owned_unit(#[comptime] share: RowShare) -> usize {
     match comptime!(share) {
         RowShare::Unit { rows: _ } => 0usize,
-        RowShare::Plane { rows: _, lanes } => UNIT_POS_X as usize % lanes,
+        RowShare::Plane {
+            rows: _,
+            units: plane_units,
+        } => UNIT_POS_X as usize % plane_units,
     }
 }
 
@@ -76,7 +81,7 @@ pub struct RowState<E: Float> {
     pub l: Array<E>,
     #[cube(comptime)]
     pub space: Space,
-    /// Who owns which rows. Under [`RowShare::Plane`] every lane of a plane
+    /// Who owns which rows. Under [`RowShare::Plane`] every unit of a plane
     /// holds the same `(m, l)`, since a plane-reduced score is plane-uniform.
     #[cube(comptime)]
     pub share: RowShare,
@@ -105,19 +110,25 @@ impl<E: Float> RowState<E> {
         RowState::<E>::of(space, comptime!(RowShare::Unit { rows }))
     }
 
-    /// [`new`](RowState::new) at plane ownership: `units` units of `lanes`
-    /// each, so `units / lanes` planes share the tile and plane `p` owns rows
-    /// `[p*rpp, (p+1)*rpp)`, its lanes splitting each row's reduced axis.
+    /// [`new`](RowState::new) at plane ownership: `units` units of `units`
+    /// each, so `units / units` planes share the tile and plane `p` owns rows
+    /// `[p*rpp, (p+1)*rpp)`, its units splitting each row's reduced axis.
     ///
-    /// The state of a plane owning every row of `space`, its window of the score rows, `lanes`
+    /// The state of a plane owning every row of `space`, its window of the score rows, `units`
     /// wide.
     ///
-    /// `lanes` must be the width the device commits to (`plane_size_min == plane_size_max`, plane
-    /// ops offered); one lane is the degenerate case and gives back [`new`](RowState::new)'s arm,
+    /// `units` must be the width the device commits to (`plane_size_min == plane_size_max`, plane
+    /// ops offered); one unit is the degenerate case and gives back [`new`](RowState::new)'s arm,
     /// which is what a CPU runtime gets.
-    pub fn over_plane(#[comptime] space: Space, #[comptime] lanes: usize) -> RowState<E> {
+    pub fn over_plane(#[comptime] space: Space, #[comptime] plane_units: usize) -> RowState<E> {
         let rows = comptime!(space.cells());
-        RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
+        RowState::<E>::of(
+            space,
+            comptime!(RowShare::Plane {
+                rows,
+                units: plane_units
+            }),
+        )
     }
 
     /// The state one worker holds, at whatever [`RowShare`] the caller states, its team laid
@@ -157,7 +168,7 @@ impl<E: Float> RowState<E> {
     pub fn owned_row(&self, ri: usize) -> usize {
         match comptime!(self.share) {
             RowShare::Unit { rows } => self.team.index * rows + ri,
-            RowShare::Plane { rows: _, lanes: _ } => ri,
+            RowShare::Plane { rows: _, units: _ } => ri,
         }
     }
 

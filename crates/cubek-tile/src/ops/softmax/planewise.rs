@@ -1,17 +1,17 @@
 //! The row ops at plane ownership: a plane owns every row of the tile it is handed (windowed per
-//! plane by the kernel), its lanes split the reduced axis, and each row's reduction closes in one
+//! plane by the kernel), its units split the reduced axis, and each row's reduction closes in one
 //! plane op. In the [`rowwise`](super::rowwise) twin a unit owns the row; [`RowShare`] picks.
 //!
-//! A lane touches only the lines `lane, lane + lanes, …` of its plane's rows (a line being the
-//! tile's vector width of adjacent columns), so nothing reads a cell another lane wrote and the
-//! leaf keeps the twin's promise of no syncs; only the reduced scalar crosses lanes, in hardware.
+//! A unit touches only the lines `unit, unit + units, …` of its plane's rows (a line being the
+//! tile's vector width of adjacent columns), so nothing reads a cell another unit wrote and the
+//! leaf keeps the twin's promise of no syncs; only the reduced scalar crosses units, in hardware.
 //!
-//! Every loop is over a comptime bound and unrolls; the edge compare compiles out when the lanes
+//! Every loop is over a comptime bound and unrolls; the edge compare compiles out when the units
 //! divide the lines, which a fold sized to its plane arranges.
 //!
-//! **The plane must be the cube's**: `lanes` is the width the device commits to, and a plane may
+//! **The plane must be the cube's**: `units` is the width the device commits to, and a plane may
 //! not straddle the x dim, so `CUBE_DIM_X` has to be a whole number of planes. A wrong width
-//! reduces over the wrong lanes, silently, which is why the caller states it rather than reads it.
+//! reduces over the wrong units, silently, which is why the caller states it rather than reads it.
 
 use cubecl::prelude::*;
 
@@ -26,7 +26,7 @@ impl<EA: Float> Tile<EA> {
         probe: &MaskProbe,
         mask: &Tile<u32>,
         #[comptime] rpp: usize,
-        #[comptime] lanes: usize,
+        #[comptime] units: usize,
     ) {
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -41,9 +41,9 @@ impl<EA: Float> Tile<EA> {
             if r < rows {
                 let q = probe.row_q(r);
                 #[unroll]
-                for li in 0..comptime!(lines.div_ceil(lanes)) {
-                    let line = lane(lanes) + li * lanes;
-                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                for li in 0..comptime!(lines.div_ceil(units)) {
+                    let line = unit(units) + li * units;
+                    if comptime!(lines.is_multiple_of(units)) || line < lines {
                         let i = r * lines + line;
                         let mut v = view.read(i) * Vector::<EA, W>::cast_from(scale);
                         #[unroll]
@@ -58,15 +58,15 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`row_max`](Tile::row_max) at plane ownership: a lane's partial over its own lines, then
-    /// one plane reduction per row. Seeding with `base` on every lane is free: a max is
-    /// idempotent, so the seed survives the fold whichever lane carried it.
+    /// [`row_max`](Tile::row_max) at plane ownership: a unit's partial over its own lines, then
+    /// one plane reduction per row. Seeding with `base` on every unit is free: a max is
+    /// idempotent, so the seed survives the fold whichever unit carried it.
     pub fn row_max_planar(
         &self,
         acc: &mut Array<EA>,
         base: &Array<EA>,
         #[comptime] rpp: usize,
-        #[comptime] lanes: usize,
+        #[comptime] units: usize,
     ) {
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -81,9 +81,9 @@ impl<EA: Float> Tile<EA> {
             let r = ri;
             if r < rows {
                 #[unroll]
-                for li in 0..comptime!(lines.div_ceil(lanes)) {
-                    let line = lane(lanes) + li * lanes;
-                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                for li in 0..comptime!(lines.div_ceil(units)) {
+                    let line = unit(units) + li * units;
+                    if comptime!(lines.is_multiple_of(units)) || line < lines {
                         let v = view.read(r * lines + line);
                         #[unroll]
                         for j in 0..w {
@@ -92,18 +92,18 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = comptime!(LaneShare::of_lanes(lanes, lanes)).fold::<EA>(partial, Monoid::Max);
+            acc[ri] = comptime!(UnitShare::of_units(units, units)).fold::<EA>(partial, Monoid::Max);
         }
     }
 
     /// [`exp_diff`](Tile::exp_diff) at plane ownership. `rowwise` is
     /// plane-uniform coming out of [`row_max_planar`](Tile::row_max_planar),
-    /// so every lane exponentiates against the same row max.
+    /// so every unit exponentiates against the same row max.
     pub fn exp_diff_planar(
         &mut self,
         rowwise: &Array<EA>,
         #[comptime] rpp: usize,
-        #[comptime] lanes: usize,
+        #[comptime] units: usize,
     ) {
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -120,9 +120,9 @@ impl<EA: Float> Tile<EA> {
                 let live = EA::cast_from(rowwise[ri] >= threshold);
                 let safe_m = clamp_min(rowwise[ri], threshold);
                 #[unroll]
-                for li in 0..comptime!(lines.div_ceil(lanes)) {
-                    let line = lane(lanes) + li * lanes;
-                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                for li in 0..comptime!(lines.div_ceil(units)) {
+                    let line = unit(units) + li * units;
+                    if comptime!(lines.is_multiple_of(units)) || line < lines {
                         let i = r * lines + line;
                         let mut v = view.read(i);
                         #[unroll]
@@ -137,13 +137,13 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`row_sum`](Tile::row_sum) at plane ownership. Unlike the max there is
-    /// no seed: a sum's identity is zero and every lane must contribute its
+    /// no seed: a sum's identity is zero and every unit must contribute its
     /// own lines exactly once.
     pub fn row_sum_planar(
         &self,
         acc: &mut Array<EA>,
         #[comptime] rpp: usize,
-        #[comptime] lanes: usize,
+        #[comptime] units: usize,
     ) {
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -158,9 +158,9 @@ impl<EA: Float> Tile<EA> {
             let r = ri;
             if r < rows {
                 #[unroll]
-                for li in 0..comptime!(lines.div_ceil(lanes)) {
-                    let line = lane(lanes) + li * lanes;
-                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                for li in 0..comptime!(lines.div_ceil(units)) {
+                    let line = unit(units) + li * units;
+                    if comptime!(lines.is_multiple_of(units)) || line < lines {
                         let v = view.read(r * lines + line);
                         #[unroll]
                         for j in 0..w {
@@ -169,7 +169,7 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = comptime!(LaneShare::of_lanes(lanes, lanes)).fold::<EA>(partial, Monoid::Sum);
+            acc[ri] = comptime!(UnitShare::of_units(units, units)).fold::<EA>(partial, Monoid::Sum);
         }
     }
 
@@ -179,7 +179,7 @@ impl<EA: Float> Tile<EA> {
         &self,
         dest: &mut Tile<EP>,
         #[comptime] rpp: usize,
-        #[comptime] lanes: usize,
+        #[comptime] units: usize,
     ) {
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -199,9 +199,9 @@ impl<EA: Float> Tile<EA> {
             let r = ri;
             if r < rows {
                 #[unroll]
-                for li in 0..comptime!(lines.div_ceil(lanes)) {
-                    let line = lane(lanes) + li * lanes;
-                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                for li in 0..comptime!(lines.div_ceil(units)) {
+                    let line = unit(units) + li * units;
+                    if comptime!(lines.is_multiple_of(units)) || line < lines {
                         let i = r * lines + line;
                         dst.write(i, Vector::<EP, W>::cast_from(src.read(i)));
                     }
@@ -211,8 +211,8 @@ impl<EA: Float> Tile<EA> {
     }
 }
 
-/// This lane's index within its plane.
+/// This unit's index within its plane.
 #[cube]
-fn lane(#[comptime] lanes: usize) -> usize {
-    UNIT_POS_X as usize % lanes
+fn unit(#[comptime] units: usize) -> usize {
+    UNIT_POS_X as usize % units
 }

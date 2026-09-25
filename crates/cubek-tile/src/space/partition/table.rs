@@ -5,7 +5,7 @@
 //! beside it, axis by axis: a row that fails to multiply out is a partitioning that answers wrong.
 //!
 //! The level column is the coverage's glyph and what it covers: how many cubes, planes a cube or
-//! lanes, or how many steps a walk, with the spread and the filling planes where stated.
+//! units, or how many steps a walk, with the spread and the filling planes where stated.
 
 use std::fmt::{self, Display, Formatter};
 
@@ -115,7 +115,7 @@ fn coverage(level: &Level, space: &Space) -> String {
             Some(planes) => format!("{planes} planes sharing {many} boxes"),
             None => format!("{many} planes a cube"),
         },
-        Coverage::Distribute(ComputeScope::Unit) => format!("{many} lanes"),
+        Coverage::Distribute(ComputeScope::Unit) => format!("{many} units"),
         Coverage::Walk => format!("{many} steps"),
     };
     if interleaved {

@@ -146,7 +146,7 @@ impl<E: Numeric> Tile<E> {
         if comptime!(scaled || landed) {
             let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
             landing.load_into(frag, comptime!(read.out.clone()));
-            // The landing is this region's until every lane's load has read it.
+            // The landing is this region's until every unit's load has read it.
             sync_plane();
         } else {
             match &self.kind {
@@ -182,7 +182,7 @@ impl<E: Numeric> Tile<E> {
     /// axes, holding `values ⊗ scales`, that fragments load from as from any shared stage. Sized
     /// to this window: a kernel landing a step whole lands it once for its partition's fragments.
     ///
-    /// Each lane reads lines through the values' packed view, multiplies each by the scale at
+    /// Each unit reads lines through the values' packed view, multiplies each by the scale at
     /// the line's coordinates where the factor carries one, and writes it there; the plane then
     /// syncs past the writes. A scale-free factor walks the same way: the landing is a residence.
     ///
@@ -220,8 +220,8 @@ impl<E: Numeric> Tile<E> {
         let strides = comptime!(dense_strides(&space));
         let by_shuffle = scales.by_shuffle();
         if comptime!(by_shuffle) {
-            // A scale held in the plane's lanes is fetched by shuffle, which the whole plane must
-            // join: every lane takes every turn, and a lane past the lines reads the last one
+            // A scale held in the plane's units is fetched by shuffle, which the whole plane must
+            // join: every unit takes every turn, and a unit past the lines reads the last one
             // again and writes nothing.
             #[allow(clippy::manual_div_ceil)]
             let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;

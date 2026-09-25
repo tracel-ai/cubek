@@ -1,5 +1,5 @@
 //! The manual-mma encoding of a plane tile ([`MmaData`]) and its fragment↔memory transports.
-//! The raw-mma twin of [`cmma`](super::cmma), issuing [`MmaDefinition::execute`] over per-lane
+//! The raw-mma twin of [`cmma`](super::cmma), issuing [`MmaDefinition::execute`] over per-unit
 //! registers instead of `cmma::execute`.
 
 use cubecl::{
@@ -128,7 +128,7 @@ impl<T: Numeric> MmaData<T> {
             dequant_at == DequantAt::Load
                 || (matches!(io.lhs_load_method, LoadMethod::Manual)
                     && matches!(io.rhs_load_method, LoadMethod::Manual)),
-            "MmaData::load_window: the ldmatrix transport copies raw lanes, so it cannot decode a \
+            "MmaData::load_window: the ldmatrix transport copies raw units, so it cannot decode a \
              quantized source as it reads; serve that operand by its load (DequantAt::Load)"
         ));
         let m = comptime!(self.m);
@@ -152,9 +152,9 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's, casting
-    /// `T` down to the sink element: each lane writing its own cells through the destination's
+    /// `T` down to the sink element: each unit writing its own cells through the destination's
     /// write, which masks a cell past the window's edge and adds into a destination that folds. A
-    /// lane knows which cells it holds, so every cell has one writer and no scratch is needed to
+    /// unit knows which cells it holds, so every cell has one writer and no scratch is needed to
     /// elect it. The `stmatrix` transport does not reach a memory window, so the store is always
     /// this one, whatever [`MmaIo::store_method`] says.
     pub(crate) fn store_cast_window<Out: Numeric>(
@@ -263,7 +263,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
-    let lane_id = UNIT_POS_PLANE;
+    let unit_id = UNIT_POS_PLANE;
     let served = src.vector_size();
     let width = comptime!(served as u32);
     // Only row-major layout is currently supported for manual fragment loads.
@@ -282,7 +282,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
         #[unroll]
         for e in 0..vector_size {
             let elem_idx = i * vector_size + e;
-            let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
+            let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
             let line = view.read((row, col / width));
             vector.insert(e, line.extract_dynamic((col % width).cast::<usize>()));
         }
@@ -290,9 +290,9 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
     }
 }
 
-/// Each lane's accumulator cells written through `mem`'s own write, one element at a time: the
+/// Each unit's accumulator cells written through `mem`'s own write, one element at a time: the
 /// write masks a cell past the window's edge and adds into a destination that folds. A cell is one
-/// lane's, so each is written once.
+/// unit's, so each is written once.
 #[cube]
 fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     mem: &mut Memory<Out>,
@@ -309,7 +309,7 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     ));
     let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
     let vector_size = def.vector_size(MatrixIdent::Accumulator);
-    let lane_id = UNIT_POS_PLANE;
+    let unit_id = UNIT_POS_PLANE;
     let axes = comptime!(MatrixAxes::trailing(&space));
     let mut sink = mem.matrix_mut::<Const<1>>(0usize, axes, space);
 
@@ -319,7 +319,7 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
         for e in 0..vector_size {
             let elem_idx = i * vector_size + e;
             let (row, col) =
-                def.position_of_nth(lane_id, elem_idx as u32, MatrixIdent::Accumulator);
+                def.position_of_nth(unit_id, elem_idx as u32, MatrixIdent::Accumulator);
             let at = match comptime!(layout) {
                 MatrixLayout::RowMajor => (row, col),
                 MatrixLayout::ColMajor => (col, row),

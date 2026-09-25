@@ -27,7 +27,7 @@ impl<T: Numeric> RegisterData<T> {
     /// as a packed `vector_size` is the *served* width, and the block was opened at the rhs's.
     ///
     /// An rhs lined along the contraction is the folded step ([`fold`](Self::fold)): a step
-    /// consumes a whole line of each operand and the block's lanes are one cell's partials, which
+    /// consumes a whole line of each operand and the block's units are one cell's partials, which
     /// [`store_cast_window`](Self::store_cast_window) collapses. The block must be opened that way.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
@@ -100,7 +100,7 @@ impl<T: Numeric> RegisterData<T> {
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
-        let lane_fanout = comptime!(config.lane_fanout);
+        let component_fanout = comptime!(config.component_fanout);
 
         // Each factor as the block reads it: its values' matrix, and its scales looked up at
         // every line's own coordinates. The rhs and the block share the width `RA` (asserted
@@ -134,7 +134,7 @@ impl<T: Numeric> RegisterData<T> {
             nr,
             kc,
             unroll,
-            lane_fanout,
+            component_fanout,
             semiring,
         );
     }

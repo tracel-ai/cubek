@@ -743,7 +743,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
 }
 
 /// Reduction over an outer axis while retaining the innermost axis with vector_size = 4.
-/// Exercises line indexing and lane extraction when the innermost axis is in accumulator nest.
+/// Exercises line indexing and unit extraction when the innermost axis is in accumulator nest.
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
@@ -1144,7 +1144,7 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
 }
 
 /// Reduction over the innermost axis with vector_size = 4: the line runs along the axis being
-/// reduced, so a step folds the whole line into one cell and the lanes collapse once at the end.
+/// reduced, so a step folds the whole line into one cell and the units collapse once at the end.
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
@@ -1222,10 +1222,10 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     }
 }
 
-/// Reduction over an axis spread across plane lanes (ComputeScope::Unit / LaneShare::Plane).
-/// Tests that LaneShare::Plane seeds with 0 and folds across lanes combining with accumulator.
+/// Reduction over an axis spread across plane units (ComputeScope::Unit / UnitShare::Plane).
+/// Tests that UnitShare::Plane seeds with 0 and folds across units combining with accumulator.
 #[test]
-fn test_reduce_axis_sum_spatial_unit_lanes() {
+fn test_reduce_axis_sum_spatial_unit_units() {
     let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
@@ -1260,7 +1260,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 }
 
 #[test]
-fn test_reduce_axis_max_spatial_unit_lanes() {
+fn test_reduce_axis_max_spatial_unit_units() {
     let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
@@ -1297,7 +1297,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 }
 
 #[test]
-fn test_reduce_axis_min_spatial_unit_lanes() {
+fn test_reduce_axis_min_spatial_unit_units() {
     let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
@@ -1334,12 +1334,12 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 }
 
 /// A `Max` reduce whose accumulator lives in registers while the reduced axis is split across the
-/// plane's lanes: each lane folds its own `K` slice, so each holds a partial maximum, and the drain
+/// plane's units: each unit folds its own `K` slice, so each holds a partial maximum, and the drain
 /// combines them under the same fold the accumulator was built with.
 ///
-/// Two things had to be true for this to work, and neither was. The drain combined lanes with a
-/// hardcoded sum, and a promoted block read its `LaneShare` from the tile, which is only stamped on
-/// the way down, so it saw `Whole` and every lane wrote its partial over the last.
+/// Two things had to be true for this to work, and neither was. The drain combined units with a
+/// hardcoded sum, and a promoted block read its `UnitShare` from the tile, which is only stamped on
+/// the way down, so it saw `Whole` and every unit wrote its partial over the last.
 ///
 /// The data is all negative, so any identity leaking in (a zero from a sum-shaped combine, or
 /// from an out-of-bounds read) wins the maximum and the assert catches it.
@@ -1367,7 +1367,7 @@ fn resident_fold_kernel<E: Numeric>(
 }
 
 #[test]
-fn resident_max_over_lane_split_k() {
+fn resident_max_over_unit_split_k() {
     let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let (m, n, kr) = (4usize, 4usize, 2usize);
@@ -1389,7 +1389,7 @@ fn resident_max_over_lane_split_k() {
         .custom(values.clone())
         .generate_with_f32_host_data();
     // Poisoned with values above every input, so a fold that let the sink take part would win the
-    // maximum and be caught. `reduce_axis` owns the init, and the lane-split contraction is
+    // maximum and be caught. `reduce_axis` owns the init, and the unit-split contraction is
     // exactly the case where it must seed rather than overwrite.
     let out_handle = TestInput::builder(client.clone(), shape![m, n])
         .dtype(f32_ty)
@@ -1425,9 +1425,9 @@ fn resident_max_over_lane_split_k() {
     }
 }
 
-/// The twin of [`resident_max_over_lane_split_k`] at a **segmented** fold: the plane splits into
+/// The twin of [`resident_max_over_unit_split_k`] at a **segmented** fold: the plane splits into
 /// aligned groups, each holding one `(m, n)` cell's partials, rather than the whole plane holding
-/// one. `LaneShare::Group` where that test is `LaneShare::Plane`.
+/// one. `UnitShare::Group` where that test is `UnitShare::Plane`.
 ///
 /// The drain is shared with the promoted matmul's, where reading the odometer off a projected
 /// nest (the accumulator spans `{M, N}`, so the contracted `K` is not in its axis list) gave every
@@ -1439,11 +1439,11 @@ fn resident_max_over_lane_split_k() {
 #[ignore = "known-failing reproducer: the segmented share is still wrong on this path, and \
             whether that is a cubek defect or an unsupported combination is not yet established \
             , it is not what the walk fix addresses"]
-fn resident_max_over_lane_group_k() {
+fn resident_max_over_unit_group_k() {
     let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
-    let (group_lanes, kr, n) = (8usize, 2usize, 2usize);
-    let (groups, k) = (plane_size / group_lanes, group_lanes * kr);
+    let (group_units, kr, n) = (8usize, 2usize, 2usize);
+    let (groups, k) = (plane_size / group_units, group_units * kr);
     let m = groups;
 
     let launcher = implied(
@@ -1451,7 +1451,7 @@ fn resident_max_over_lane_group_k() {
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
             Levels::leaf(&[(M, 1), (K, kr)])
-                .units(&[(M, groups), (K, group_lanes)])
+                .units(&[(M, groups), (K, group_units)])
                 .interleaved(K)
                 .build(),
         ),

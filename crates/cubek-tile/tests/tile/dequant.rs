@@ -38,7 +38,7 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
 
 #[test]
 fn a_packed_tensor_decodes_against_its_scales() {
-    let (rows, blocks, inside, scale_lanes) = (4, 4, 8, 4);
+    let (rows, blocks, inside, scale_units) = (4, 4, 8, 4);
     let cols = blocks * inside;
     let field = QuantValue::Q4S;
     let bits = field.size_bits();
@@ -117,12 +117,12 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .packed(field)
         .vectorize(factor)
         .build();
-    // Four scales per read: one read covers four blocks of columns, and each of its lanes is
+    // Four scales per read: one read covers four blocks of columns, and each of its units is
     // taken by the run of values that block holds.
     let s_op = launcher
         .arg(s_tensor.binding())
         .axes(&[ROW, CB])
-        .vectorize(scale_lanes)
+        .vectorize(scale_units)
         .build();
     let out_op = launcher
         .arg(out.clone().binding())
@@ -135,7 +135,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         launcher.cube_count(),
         launcher.cube_dim(),
         factor,
-        scale_lanes,
+        scale_units,
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),

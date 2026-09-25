@@ -93,7 +93,7 @@ const B1: Axis = Axis(5);
 const K2: Axis = Axis(6);
 
 /// The software instruction most tests contract through: a 16-cell budget, no edge split, no
-/// lane fan-out.
+/// unit fan-out.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// Where an operand is read from in the kernels that offer both: staged in shared memory, or
@@ -2225,13 +2225,13 @@ fn matmul_cpu_dynamic_k() {
     assert_tiled_matmul(&client, c.handle(), m, n, k, edge);
 }
 
-/// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint column of
+/// N spread across a plane's units (`ComputeScope::Unit`): each unit owns a disjoint column of
 /// the register-leaf output and contracts all of K in registers: the gemv-perpendicular mapping.
-/// `plane_size == 1` on CPU is one lane doing all of N (still correct); the win is on GPU's lanes.
+/// `plane_size == 1` on CPU is one unit doing all of N (still correct); the win is on GPU's units.
 ///
-/// A bare `lanes()` declares the split without the lane count; [`Space::resolve_lanes`] (the
+/// A bare `units()` declares the split without the unit count; [`Space::resolve_units`] (the
 /// launch's stamping pass) fills it from the hardware `plane_size`, so the Unit axis rides the
-/// warp's lanes on the cube's X dim.
+/// warp's units on the cube's X dim.
 #[test]
 fn register_matmul_unit_spread_n() {
     let client = cubecl::test_device().client();
@@ -2282,21 +2282,21 @@ fn register_matmul_unit_spread_n() {
 // ---- padded stages ----------------------------------------------------------------
 
 /// A scalar `K×N` source whose `N = 3` rows cannot be vectorized globally is padded into
-/// four-wide shared-memory lines. The register gather scatters those lanes back into the scalar
-/// `M×N` sink; the fourth lane is padding and must not consume the next row's first live value.
+/// four-wide shared-memory lines. The register gather scatters those units back into the scalar
+/// `M×N` sink; the fourth unit is padding and must not consume the next row's first live value.
 #[test]
 fn matmul_padded_rhs_stage_into_scalar_sink() {
     check_padded_rhs_stage((2, 3, 2), vec![3.0, 4.0, 5.0, 9.0, 14.0, 19.0]);
 }
 
 /// The single-row shape, where a block column overhanging `N` has nowhere legal to land: with no
-/// row after it, `block::commit`'s masked lanes are all that keeps the write inside the output.
+/// row after it, `block::commit`'s masked units are all that keeps the write inside the output.
 #[test]
 fn matmul_padded_rhs_stage_single_row_sink() {
     check_padded_rhs_stage((1, 3, 2), vec![3.0, 4.0, 5.0]);
 }
 
-/// A scalar `K×N` source with `N = 5` spanning two 4-wide shared-memory lines (total 8 lanes, 3
+/// A scalar `K×N` source with `N = 5` spanning two 4-wide shared-memory lines (total 8 units, 3
 /// padding). Exercises non-multiple tail across multi-line stages.
 #[test]
 fn matmul_padded_rhs_stage_multi_line() {
@@ -3035,7 +3035,7 @@ fn tropical_matmul_in_place() {
 }
 
 /// Max-plus through a promoted block: the register accumulator is built under `Max`, so it starts
-/// at the lowest value, steps with `+`, and drains its lanes under the same fold.
+/// at the lowest value, steps with `+`, and drains its units under the same fold.
 #[test]
 fn tropical_matmul_promoted() {
     let client = cubecl::test_device().client();
@@ -3294,7 +3294,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-// ---- lined lhs: the (line, lane) K walk --------------------------------------
+// ---- lined lhs: the (line, component) K walk --------------------------------------
 
 /// A single-level nest whose leaf takes the whole problem, the shape the lined-lhs and folded
 /// tests drive.
@@ -3311,7 +3311,7 @@ fn lined_lhs_space(m: usize, n: usize, k: usize) -> Launcher {
     )
 }
 
-/// The memory-backed leaf with the lhs lined 2-wide along `K`: two lanes per K-line, each
+/// The memory-backed leaf with the lhs lined 2-wide along `K`: two units per K-line, each
 /// reaching its element by a comptime `extract` rather than a dynamic one.
 #[test]
 fn register_matmul_lined_lhs() {
@@ -3351,7 +3351,7 @@ fn register_matmul_lined_lhs() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// [`register_matmul_lined_lhs`] through the promoted block: same walk, same lanes, but the
+/// [`register_matmul_lined_lhs`] through the promoted block: same walk, same units, but the
 /// accumulator never round-trips to the output between `K` steps.
 #[test]
 fn register_matmul_promoted_lined_lhs() {
@@ -3374,7 +3374,7 @@ fn register_matmul_promoted_lined_lhs() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        // Lhs 2-wide along K, rhs and output 2-wide along N: both the lane fan-out and the
+        // Lhs 2-wide along K, rhs and output 2-wide along N: both the unit fan-out and the
         // block's own line width are off their scalar case at once.
         2,
         2,
@@ -3405,7 +3405,7 @@ fn folded_matmul_reference(m: usize, n: usize, k: usize) -> Vec<f32> {
 }
 
 /// Both operands lined along `K` with a scalar output: a step consumes a whole line, the block's
-/// lanes are `K`-partials of one cell, and one horizontal fold collapses them. The rhs is declared
+/// units are `K`-partials of one cell, and one horizontal fold collapses them. The rhs is declared
 /// `[N, K]`, which puts its line on the contracted axis.
 ///
 /// `budget` sizes the block: too small for the shape and the rolled body runs, indexing its local
@@ -3717,22 +3717,22 @@ fn run_folded_step_quant(
         .enforce()
 }
 
-// ---- the sub-plane fold: LaneShare::Group --------------------------------------
+// ---- the sub-plane fold: UnitShare::Group --------------------------------------
 
-/// The nest a rows-in-flight gemv cuts: the plane splits into aligned groups of `group_lanes`,
-/// each group owning one output row and its lanes interleaving `K` between them. Every lane holds
-/// a *partial* of the row, so the drain is a segmented reduction: `LaneShare::Group`, not `Plane`.
+/// The nest a rows-in-flight gemv cuts: the plane splits into aligned groups of `group_units`,
+/// each group owning one output row and its units interleaving `K` between them. Every unit holds
+/// a *partial* of the row, so the drain is a segmented reduction: `UnitShare::Group`, not `Plane`.
 ///
-/// `groups == 1` is the same nest at `LaneShare::Plane`, which is the case already covered; the
+/// `groups == 1` is the same nest at `UnitShare::Plane`, which is the case already covered; the
 /// point here is a plane carrying several cells at once.
-fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: usize) -> Launcher {
-    let groups = plane_size / group_lanes;
+fn unit_group_fold_space(plane_size: usize, group_units: usize, edge: usize, n: usize) -> Launcher {
+    let groups = plane_size / group_units;
     implied(
         &cubecl::test_device().client(),
         Partitioning::new(
-            Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
+            Space::new(&[(M, groups), (N, n), (K, group_units * edge)]),
             Levels::leaf(&[(M, 1), (K, edge)])
-                .units(&[(M, groups), (K, group_lanes)])
+                .units(&[(M, groups), (K, group_units)])
                 .interleaved(K)
                 .build(),
         ),
@@ -3741,20 +3741,20 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
 }
 
 /// The memory-backed leaf over the segmented fold, the control for
-/// [`register_matmul_promoted_lane_group_fold`]. If this one fails the space itself is wrong and
+/// [`register_matmul_promoted_unit_group_fold`]. If this one fails the space itself is wrong and
 /// the promoted result proves nothing.
 #[test]
-fn register_matmul_lane_group_fold() {
+fn register_matmul_unit_group_fold() {
     let client = cubecl::test_device().client();
-    let lanes = client.properties().hardware.plane_size_max as usize;
-    let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
-    // A fold over lane groups needs a plane that holds at least one whole group.
-    if skip_unless_plane_holds(&client, group_lanes as u32) {
+    let plane_units = client.properties().hardware.plane_size_max as usize;
+    let (group_units, edge, n) = (8usize, 4usize, 1usize);
+    // A fold over unit groups needs a plane that holds at least one whole group.
+    if skip_unless_plane_holds(&client, group_units as u32) {
         return;
     }
-    let (groups, k) = (lanes / group_lanes, group_lanes * edge);
+    let (groups, k) = (plane_units / group_units, group_units * edge);
     let m = groups;
-    let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
+    let launcher = unit_group_fold_space(plane_units, group_units, edge, n);
 
     let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .untiled()
@@ -3791,22 +3791,22 @@ fn register_matmul_lane_group_fold() {
 ///
 /// The case no other test covers: every promoted test here folds either nothing (`Whole`) or the
 /// whole plane (`Plane`). A plane carrying one cell per group has to reduce within each group and
-/// let each group's first lane write *its own row*.
+/// let each group's first unit write *its own row*.
 ///
 /// The rows a group owns are what the `M` cut hands it, which a block built before the walk
 /// descends has to be told rather than assume.
 #[test]
-fn register_matmul_promoted_lane_group_fold() {
+fn register_matmul_promoted_unit_group_fold() {
     let client = cubecl::test_device().client();
-    let lanes = client.properties().hardware.plane_size_max as usize;
-    let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
-    // A fold over lane groups needs a plane that holds at least one whole group.
-    if skip_unless_plane_holds(&client, group_lanes as u32) {
+    let plane_units = client.properties().hardware.plane_size_max as usize;
+    let (group_units, edge, n) = (8usize, 4usize, 1usize);
+    // A fold over unit groups needs a plane that holds at least one whole group.
+    if skip_unless_plane_holds(&client, group_units as u32) {
         return;
     }
-    let (groups, k) = (lanes / group_lanes, group_lanes * edge);
+    let (groups, k) = (plane_units / group_units, group_units * edge);
     let (m, dtype) = (groups, f32::elem_type_native());
-    let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
+    let launcher = unit_group_fold_space(plane_units, group_units, edge, n);
 
     let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .untiled()
@@ -3838,24 +3838,24 @@ fn register_matmul_promoted_lane_group_fold() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// The gemv's own layout, promoted: a plane split into groups, each owning a row, its lanes
+/// The gemv's own layout, promoted: a plane split into groups, each owning a row, its units
 /// interleaving `K`, and the weight stored along `K` lining both operands along the contraction.
-/// Every lane's block is one line of partials, so the drain folds line then group and writes once.
+/// Every unit's block is one line of partials, so the drain folds line then group and writes once.
 ///
 /// The memory-backed leaf does both folds per visit and rounds the cell at each; a half-precision
 /// cell rounds away the walk that way, so this is the block a half-precision gemv runs in.
 #[test]
-fn register_matmul_promoted_folded_step_lane_group_fold() {
+fn register_matmul_promoted_folded_step_unit_group_fold() {
     let client = cubecl::test_device().client();
-    let lanes = client.properties().hardware.plane_size_max as usize;
-    let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
-    // A fold over lane groups needs a plane that holds at least one whole group.
-    if skip_unless_plane_holds(&client, group_lanes as u32) {
+    let plane_units = client.properties().hardware.plane_size_max as usize;
+    let (group_units, edge, n) = (8usize, 4usize, 1usize);
+    // A fold over unit groups needs a plane that holds at least one whole group.
+    if skip_unless_plane_holds(&client, group_units as u32) {
         return;
     }
-    let (groups, k) = (lanes / group_lanes, group_lanes * edge);
+    let (groups, k) = (plane_units / group_units, group_units * edge);
     let (m, dtype) = (groups, f32::elem_type_native());
-    let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
+    let launcher = unit_group_fold_space(plane_units, group_units, edge, n);
 
     let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .untiled()

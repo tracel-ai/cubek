@@ -93,7 +93,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
 /// along the contracted axis folds, an rhs lined along the accumulator's innermost axis holds
 /// cells that must stay apart.
 ///
-/// Both must serve the same count, and the block's lanes mean one axis, so a folded step needs a
+/// Both must serve the same count, and the block's units mean one axis, so a folded step needs a
 /// scalar-contracted_per_step accumulator. Settled once per block, whether the memory leaf's or
 /// opened ahead of the walk ([`Tile::block_accumulator`]).
 pub(crate) fn contracted_per_step(
@@ -132,7 +132,7 @@ pub(crate) fn contracted_per_step(
     assert_eq!(
         aw, 1,
         "contract: a step serving {contracted_per_step} contracted values holds partials of one cell in the \
-         block's lanes, so the accumulator cannot also be served in {aw}-wide lines"
+         block's units, so the accumulator cannot also be served in {aw}-wide lines"
     );
     contracted_per_step
 }
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 2, 2), 1);
     }
 
-    /// Both operands lined along the contracted axis: the lanes are partials of one cell.
+    /// Both operands lined along the contracted axis: the units are partials of one cell.
     #[test]
     fn both_operands_lined_along_the_contracted_axis_serve_a_line() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
@@ -189,7 +189,7 @@ mod tests {
         contracted_per_step(&lhs, &rhs, &acc, 1, 4, 1);
     }
 
-    /// The block's lanes mean one axis, and a lined accumulator has already claimed them.
+    /// The block's units mean one axis, and a lined accumulator has already claimed them.
     #[test]
     #[should_panic(expected = "cannot also be served")]
     fn a_folded_step_needs_a_scalar_accumulator() {

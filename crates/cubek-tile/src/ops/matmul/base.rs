@@ -117,7 +117,7 @@ pub fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
         ),
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) | TileKind::Lines(_) => {
-            panic!("mma: a procedural tile and the plane's lanes are not an accumulator sink")
+            panic!("mma: a procedural tile and the plane's units are not an accumulator sink")
         }
     }
 }

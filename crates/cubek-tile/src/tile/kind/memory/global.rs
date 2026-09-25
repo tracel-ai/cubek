@@ -237,7 +237,7 @@ impl<T: Numeric> Memory<T> {
         let spec = comptime!(operand.spec.clone());
         let write = comptime!(operand.write);
         // The one projection: the kernel's space narrowed to this operand's axes. What the
-        // instances and lanes are to these cells is stamped level by level on the way down
+        // instances and units are to these cells is stamped level by level on the way down
         // ([`Memory::at`]): a fresh tile has been distributed out by nothing yet.
         let split_share = comptime!(SplitShare::Whole);
         let space = comptime!(space.subspace(spec.axes()));
@@ -357,7 +357,7 @@ impl<T: Numeric> Memory<T> {
                 units: spec.units,
                 storage: spec.storage,
             }),
-            lanes: comptime!(LaneShare::Repeated),
+            unit_share: comptime!(UnitShare::Repeated),
             split_share,
             init_from: comptime!(InitFrom::Cell),
             factor: Factor::none(),

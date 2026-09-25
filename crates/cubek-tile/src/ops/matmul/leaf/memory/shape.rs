@@ -30,7 +30,7 @@ pub(super) struct ContractShape {
     pub cols: usize,
     /// Contracted values one step consumes ([`Space::contracted_per_step`]).
     pub contracted_per_step: usize,
-    /// How many sink cells one block column's vector lanes spread across.
+    /// How many sink cells one block column's vector components spread across.
     pub spread: usize,
     /// The lhs's line width.
     pub lw: usize,
@@ -60,7 +60,7 @@ impl ContractShape {
             .collect::<Vec<_>>();
         let cols = acc_axes.cols(&space);
         let spread = if contracted_per_step > 1 { 1 } else { vw / aw };
-        // A spread block column rounds up, since its lanes hold whole sink cells and the last
+        // A spread block column rounds up, since its units hold whole sink cells and the last
         // one may be short; every other cell width divides the column edge exactly.
         let cell = column_cell_width(contracted_per_step, spread, vw);
         let nr = if spread > 1 {
@@ -172,9 +172,9 @@ impl ContractShape {
         self.mr * self.nr * self.contracted_per_step * self.aw * self.spread
     }
 
-    /// Whether the lane fan-out's fixed extracts stay in step with the coordinate
-    /// `lane_component` decodes on the flat walk.
-    pub(crate) fn lane_index_exact(&self) -> bool {
+    /// Whether the unit fan-out's fixed extracts stay in step with the coordinate
+    /// `line_component` decodes on the flat walk.
+    pub(crate) fn component_index_exact(&self) -> bool {
         self.reduce.len() == 1
             || self.reduce_extents[self.reduce_extents.len() - 1].is_multiple_of(self.lw)
     }

@@ -636,7 +636,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The words a packed store holds, as they lie, over the tile's whole logical box: what a
-    /// lane loads its line from, decoded later at the read.
+    /// unit loads its line from, decoded later at the read.
     pub(crate) fn nd_words<WP: Size>(
         &self,
         layout: ProjectionInKernel,
@@ -748,7 +748,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](Memory::matrix_mut) plus the
-    /// [`LaneShare`] these cells carry, the [`Monoid`] they fold under and what the accumulation
+    /// [`UnitShare`] these cells carry, the [`Monoid`] they fold under and what the accumulation
     /// starts from, so a leaf accumulates through it without being told any of the three.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
@@ -757,13 +757,13 @@ impl<T: Numeric> Memory<T> {
         #[comptime] space: Space,
         #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W> {
-        let lanes = comptime!(self.lanes);
+        let unit_share = comptime!(self.unit_share);
         let split_share = comptime!(self.split_share);
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.matrix_mut::<W>(i, axes, space),
-            lanes,
+            unit_share,
             split_share,
             write,
             monoid,
@@ -772,7 +772,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](Memory::flat_mut) plus the
-    /// [`LaneShare`] these cells carry and the [`Monoid`] they fold under.
+    /// [`UnitShare`] these cells carry and the [`Monoid`] they fold under.
     pub(crate) fn flat_accumulate<W: Size>(
         &mut self,
         #[comptime] monoid: Monoid,
@@ -788,13 +788,13 @@ impl<T: Numeric> Memory<T> {
             self.projection.is_direct(),
             "Memory::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
-        let lanes = comptime!(self.lanes);
+        let unit_share = comptime!(self.unit_share);
         let split_share = comptime!(self.split_share);
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.flat_mut::<W>(),
-            lanes,
+            unit_share,
             split_share,
             write,
             monoid,
@@ -872,7 +872,7 @@ impl<T: Numeric> Memory<T> {
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
-            comptime!(LaneShare::new(&step.level, &space).under(self.lanes)),
+            comptime!(UnitShare::new(&step.level, &space).under(self.unit_share)),
             // Joined level by level: the level's whole space still has the axis this operand's
             // projection dropped, which is what tells a split from a cut of the whole axis.
             comptime!(SplitShare::new(&step.level, &step.space, &space).under(self.split_share)),
@@ -982,7 +982,7 @@ impl<T: Numeric> Memory<T> {
         (origin, extent, advances, map)
     }
 
-    /// This store looking at `window` from line `window_start` on, under `access`, `lanes` and
+    /// This store looking at `window` from line `window_start` on, under `access`, `units` and
     /// `split_share`: the same buffer, layout, mapping and offsets, which no descent moves. What
     /// [`at`](Memory::at) and [`within`](Memory::within) build once they have settled the window.
     ///
@@ -997,7 +997,7 @@ impl<T: Numeric> Memory<T> {
         map: RuntimeMap,
         quant: ComptimeOption<QuantInfo>,
         #[comptime] access: Access,
-        #[comptime] lanes: LaneShare,
+        #[comptime] unit_share: UnitShare,
         #[comptime] split_share: SplitShare,
         factor: Factor,
     ) -> Memory<T> {
@@ -1018,7 +1018,7 @@ impl<T: Numeric> Memory<T> {
             offsets: self.offsets.clone(),
             window_start,
             access,
-            lanes,
+            unit_share,
             split_share,
             init_from: comptime!(self.init_from),
             factor,
@@ -1091,7 +1091,7 @@ impl<T: Numeric> Memory<T> {
                 units: self.access.units,
                 storage: self.access.storage,
             }),
-            comptime!(self.lanes),
+            comptime!(self.unit_share),
             comptime!(self.split_share),
             // Placing a window moves the values, and the scales ride them unchanged.
             self.factor.clone(),

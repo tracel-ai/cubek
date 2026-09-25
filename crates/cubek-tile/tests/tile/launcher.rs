@@ -1031,7 +1031,7 @@ fn quantized_non_f32_param_panics() {
 }
 
 /// A packed store's values are laid down along the innermost axis, so that is the only axis it may
-/// pack on: the view unpacks a line's lanes into consecutive served values.
+/// pack on: the view unpacks a line's components into consecutive served values.
 #[test]
 #[should_panic(expected = "must pack along the innermost axis")]
 fn quantized_packed_store_outer_axis_panics() {

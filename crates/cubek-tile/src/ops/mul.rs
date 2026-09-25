@@ -25,7 +25,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The transport: every unit of the cube strides the destination's groups, reading `b` once
-    /// per group and taking a lane of it per fold.
+    /// per group and taking a unit of it per fold.
     ///
     /// Each operand is addressed over *its own* axes, so an axis it does not span costs it nothing
     /// and one value serves every position of it. A packed operand serves a whole stored word per
@@ -58,8 +58,8 @@ impl<T: Numeric> Tile<T> {
                 folds,
             );
 
-            // The fold is a *lane* of `b`'s read, not a step of it, so its address is the group's
-            // and the read happens here rather than once per lane.
+            // The fold is a *unit* of `b`'s read, not a step of it, so its address is the group's
+            // and the read happens here rather than once per unit.
             let scales = b_reader
                 .view
                 .read(b_reader.map.anchor(b_base, comptime!(Vec::new())));
@@ -87,10 +87,10 @@ impl<T: Numeric> Tile<T> {
 }
 
 /// How a product's walk divides: one read of the broadcast operand per group, and the folds inside
-/// a group taken as lanes of it.
+/// a group taken as units of it.
 ///
-/// The fold is the walk's unrolled dimension because a lane index is not addressable at runtime,
-/// and the runs under one fold are not, because only the lane has to be a constant.
+/// The fold is the walk's unrolled dimension because a unit index is not addressable at runtime,
+/// and the runs under one fold are not, because only the unit has to be a constant.
 #[derive(Clone, Debug)]
 struct FoldWalk {
     /// The axis the fold steps: the one the broadcast operand's own lines run along.

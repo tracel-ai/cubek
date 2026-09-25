@@ -263,7 +263,7 @@ impl Partitioning {
                             if level.distributes(axis) && axes(level, axis) {
                                 total *= match level.count(axis) {
                                     Some(Count::AllAcross(workers)) => workers,
-                                    // Tiles distributed to as many lanes as the launch runs ask for
+                                    // Tiles distributed to as many units as the launch runs ask for
                                     // none of their own.
                                     Some(Count::Distributed(_)) => 1,
                                     _ => level.tiles(&space, axis),
@@ -303,10 +303,10 @@ impl Partitioning {
         self.levels.iter().map(|level| level.fillers() as u32).sum()
     }
 
-    /// Lanes one instance holds, read off the levels' unit cuts. `1` where no level cuts to
-    /// units, which is a plan whose leaf the whole plane runs, or where the lanes take their
+    /// Units one instance holds, read off the levels' unit cuts. `1` where no level cuts to
+    /// units, which is a plan whose leaf the whole plane runs, or where the units take their
     /// tiles in turns ([`Count::Distributed`]), however many the launch runs.
-    pub fn lanes(&self) -> u32 {
+    pub fn units(&self) -> u32 {
         self.instances(Coverage::Distribute(ComputeScope::Unit))
     }
 
@@ -362,7 +362,7 @@ mod tests {
             filled.instances(Coverage::Distribute(ComputeScope::Plane)),
             plain.instances(Coverage::Distribute(ComputeScope::Plane))
         );
-        assert_eq!(filled.lanes(), plain.lanes());
+        assert_eq!(filled.units(), plain.units());
         for dim in [CubeAxis::X, CubeAxis::Y, CubeAxis::Z] {
             assert_eq!(filled.cube_instances(dim), plain.cube_instances(dim));
         }

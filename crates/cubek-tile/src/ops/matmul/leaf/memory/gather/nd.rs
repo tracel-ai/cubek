@@ -42,7 +42,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let provable = comptime!(lhs_provable && rhs_provable);
     // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
     // extent, one past the far corner [`box_in_bounds`] proves. [`registers::seed`]/[`registers::commit`]
-    // mask those spare lanes; an unguarded operand read has nothing, so keep the leaf checked.
+    // mask those spare units; an unguarded operand read has nothing, so keep the leaf checked.
     let spread_overhang = comptime!(registers::spread_guard(
         problem.block.spread,
         problem.block.cols
@@ -187,17 +187,17 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let lw = comptime!(problem.block.lw);
     let kc = comptime!(problem.block.kc);
 
-    // The fan-out walk names the lane with a comptime extract. Its final physical line can be
+    // The fan-out walk names the unit with a comptime extract. Its final physical line can be
     // partial, just as the direct leaf's can, so retain a short tail rather than rejecting a
     // perfectly valid checked tile.
     let k_lines = comptime!(kc / lw);
     let k_tail = comptime!(kc % lw);
     // A col-lined lhs has no `K` component for a fixed extract to name -- its line *is* the cell
     // -- so the fan-out buys it nothing.
-    let lane_fanout = comptime!(
-        config.lane_fanout
+    let component_fanout = comptime!(
+        config.component_fanout
             && problem.lhs != LhsRole::LinedAlongColumn
-            && problem.block.lane_index_exact()
+            && problem.block.component_index_exact()
     );
 
     let mut c = registers::seed::<E, V, A>(
@@ -212,7 +212,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     );
 
     // One rhs line per accumulator column, reused by every row of the rank-1 update. Held across
-    // the whole K walk so the trace allocates it once however many lane bodies the fan-out emits.
+    // the whole K walk so the trace allocates it once however many unit bodies the fan-out emits.
     // An rhs varying down the rows has no per-column value and leaves this unwritten to fold away.
     let mut b = Array::<Vector<E, V>>::new(comptime!(nr));
 
@@ -231,18 +231,18 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 semiring,
             );
         }
-    } else if comptime!(lane_fanout && lw > 1) {
+    } else if comptime!(component_fanout && lw > 1) {
         for line in 0..k_lines {
             #[unroll]
-            for lane in 0..lw {
+            for unit in 0..lw {
                 rank1_update::<E, EL, L, ER, V>(
                     lhs_view,
                     rhs_view,
                     &mut c,
                     &mut b,
                     batch,
-                    line * lw + lane,
-                    comptime!(Some(lane)),
+                    line * lw + unit,
+                    comptime!(Some(unit)),
                     unroll,
                     comptime!(problem.clone()),
                     semiring,
@@ -250,15 +250,15 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             }
         }
         #[unroll]
-        for lane in 0..k_tail {
+        for unit in 0..k_tail {
             rank1_update::<E, EL, L, ER, V>(
                 lhs_view,
                 rhs_view,
                 &mut c,
                 &mut b,
                 batch,
-                comptime!(k_lines * lw + lane),
-                comptime!(Some(lane)),
+                comptime!(k_lines * lw + unit),
+                comptime!(Some(unit)),
                 unroll,
                 comptime!(problem.clone()),
                 semiring,
@@ -298,8 +298,8 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     );
 }
 
-/// One gathered rank-1 update. `lane` names the component to take when the caller walks `K` as
-/// (line, lane), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
+/// One gathered rank-1 update. `unit` names the component to take when the caller walks `K` as
+/// (line, component), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
 /// the component from `reduce_coords` on the fastest contracted axis instead.
 ///
 /// The operands' roles say which reads hoist out of the cell loop: each read is taken at the
@@ -314,7 +314,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     b: &mut Array<Vector<E, V>>,
     batch: &Coords<u32>,
     p: usize,
-    #[comptime] lane: Option<usize>,
+    #[comptime] unit: Option<usize>,
     #[comptime] unroll: bool,
     #[comptime] problem: GatherProblem,
     #[comptime] semiring: Semiring,
@@ -351,7 +351,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         let mut a_row = Vector::<E, V>::cast_from(E::from_int(0));
         if comptime!(problem.lhs == LhsRole::FreeOfColumn) {
             // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line
-            // index, so this is the same position for every lane of one line.
+            // index, so this is the same position for every component of one line.
             let line = cell_read::<EL, L>(
                 lhs_view,
                 batch,
@@ -362,10 +362,10 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 comptime!(problem.clone()),
                 lw,
             );
-            a_row = lane_component::<E, EL, L, V>(
+            a_row = line_component::<E, EL, L, V>(
                 line,
                 &reduce_coords,
-                lane,
+                unit,
                 contracted_per_step,
                 lw,
                 k_axis_idx,
@@ -403,10 +403,10 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 if comptime!(problem.lhs == LhsRole::LinedAlongColumn) {
                     Vector::<E, V>::cast_from(line)
                 } else {
-                    lane_component::<E, EL, L, V>(
+                    line_component::<E, EL, L, V>(
                         line,
                         &reduce_coords,
-                        lane,
+                        unit,
                         contracted_per_step,
                         lw,
                         k_axis_idx,
@@ -438,21 +438,21 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 }
 
 /// The `K` component of one lhs line, widened into the accumulate element. The whole line at a
-/// folded step, fixed when the caller walks `K` as (line, lane), resolved from the fastest
+/// folded step, fixed when the caller walks `K` as (line, component), resolved from the fastest
 /// contracted coordinate in `reduce_coords` on the flat walk.
 #[cube]
-fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
+fn line_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     line: Vector<EL, L>,
     reduce_coords: &Coords<u32>,
-    #[comptime] lane: Option<usize>,
+    #[comptime] unit: Option<usize>,
     #[comptime] contracted_per_step: usize,
     #[comptime] lw: usize,
     #[comptime] k_axis_idx: usize,
 ) -> Vector<E, V> {
     if comptime!(contracted_per_step > 1) {
         Vector::<E, V>::cast_from(line)
-    } else if comptime!(lane.is_some()) {
-        Vector::<E, V>::cast_from(line.extract(comptime!(lane.unwrap())))
+    } else if comptime!(unit.is_some()) {
+        Vector::<E, V>::cast_from(line.extract(comptime!(unit.unwrap())))
     } else if comptime!(lw == 1) {
         Vector::<E, V>::cast_from(line.extract(0usize))
     } else {

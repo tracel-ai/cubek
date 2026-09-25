@@ -256,7 +256,7 @@ fn contract<E: Numeric>(acc: &Tile<E>, a: &Tile<E>, b: &Tile<E>, region: &Region
 /// region's part of the run, and drains once through the atomic sink.
 ///
 /// `inner` is the level the run is counted in; `leaf` a level below it, where the run's step is
-/// itself walked (a lane's run of `K`), or none where the step is the contraction's own.
+/// itself walked (a unit's run of `K`), or none where the step is the contraction's own.
 #[cube(launch)]
 fn stream_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -557,22 +557,22 @@ fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {
 }
 
 /// Two scopes sharing one contraction: the cubes take shares of the work, and inside a cube the
-/// plane's lanes cut `K` between them and meet in registers. The share is counted in the steps
-/// the lanes take *together*, so a cube's slice is the same size however many lanes cover a step.
+/// plane's units cut `K` between them and meet in registers. The share is counted in the steps
+/// the units take *together*, so a cube's slice is the same size however many units cover a step.
 #[test]
-fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
+fn cubes_take_shares_while_the_units_cut_k_between_them() {
     let client = cubecl::test_device().client();
     if !folds_atomically() {
         return;
     }
     let dtype = f32::elem_type_native();
     let plane_size = client.properties().hardware.plane_size_max as usize;
-    // Two steps of `K` per lane, walked under the lanes, so a cube's share is counted in
+    // Two steps of `K` per unit, walked under the units, so a cube's share is counted in
     // something longer than one step of the contraction.
     let (m, n, k) = (8usize, 8usize, 2 * plane_size);
     let want = reference(m, n, k);
 
-    // 4 output tiles of one lane tile each: 4 shares of work, over fewer cubes and more.
+    // 4 output tiles of one unit tile each: 4 shares of work, over fewer cubes and more.
     for runs in [1usize, 3, 5] {
         let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
         let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();

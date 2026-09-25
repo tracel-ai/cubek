@@ -14,7 +14,7 @@ const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
-/// The software instruction the leaf runs: a 16-cell budget, no edge split, no lane fan-out.
+/// The software instruction the leaf runs: a 16-cell budget, no edge split, no unit fan-out.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// `c = a · b` over a K walk whose blocks of `a` and `b` are double-buffered in shared memory,

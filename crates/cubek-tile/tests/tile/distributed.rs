@@ -1,8 +1,8 @@
-//! Lanes that take their tiles in turns, however many the launch runs ([`Count::Distributed`]).
+//! Units that take their tiles in turns, however many the launch runs ([`Count::Distributed`]).
 //!
-//! The partitioning states how many tiles a plane's lanes share and nothing of how many lanes
-//! there are: the kernel reads that off the launch. So one compiled kernel is right at any lane
-//! count, fewer lanes than tiles (each takes several) or more (some take none), which is what
+//! The partitioning states how many tiles a plane's units share and nothing of how many units
+//! there are: the kernel reads that off the launch. So one compiled kernel is right at any unit
+//! count, fewer units than tiles (each takes several) or more (some take none), which is what
 //! these tests launch it at.
 #![allow(non_snake_case)]
 
@@ -15,10 +15,10 @@ const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
-/// Rows and columns of the block one lane owns, and the depth one step of its walk reads.
+/// Rows and columns of the block one unit owns, and the depth one step of its walk reads.
 const BLOCK: [usize; 3] = [2, 2, 4];
 
-/// `c = a · b`, every lane summing its blocks in registers.
+/// `c = a · b`, every unit summing its blocks in registers.
 #[cube(launch)]
 fn distributed_block_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -62,8 +62,8 @@ fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-/// `a · b` with each plane's `distributed` blocks along `n` taken in turns by `lanes` lanes.
-fn run(m: usize, n: usize, k: usize, distributed: usize, lanes: u32) -> HostData {
+/// `a · b` with each plane's `distributed` blocks along `n` taken in turns by `units` units.
+fn run(m: usize, n: usize, k: usize, distributed: usize, units: u32) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
@@ -77,7 +77,7 @@ fn run(m: usize, n: usize, k: usize, distributed: usize, lanes: u32) -> HostData
         .dtype(dtype)
         .custom(b)
         .generate_with_f32_host_data();
-    // Filled with a value no product here reaches, so a block no lane took shows.
+    // Filled with a value no product here reaches, so a block no unit took shows.
     let out = TestInput::builder(client.clone(), shape![m, n])
         .dtype(dtype)
         .custom(vec![-1e6; m * n])
@@ -93,11 +93,11 @@ fn run(m: usize, n: usize, k: usize, distributed: usize, lanes: u32) -> HostData
             .cubes(&[M, N])
             .build(),
     );
-    // The lanes are the launch's: the partitioning states how many tiles they share, not how
+    // The units are the launch's: the partitioning states how many tiles they share, not how
     // many of them there are.
     let grid = Grid::Stated {
         cube_count: partitioning.cube_count(),
-        cube_dim: partitioning.cube_dim(lanes),
+        cube_dim: partitioning.cube_dim(units),
     };
     let space = partitioning.space().clone();
     let launcher = Launcher::new(&client, partitioning, &space, grid);
@@ -139,22 +139,22 @@ fn assert_matches(got: &HostData, m: usize, n: usize, k: usize) {
     }
 }
 
-/// Twelve blocks a plane, and as many lanes as fit the launch: four lanes take three each, eight
+/// Twelve blocks a plane, and as many units as fit the launch: four units take three each, eight
 /// take one or two, and sixteen leave four idle. The same partitioning every time.
 #[test]
-fn every_block_is_taken_once_at_any_lane_count() {
+fn every_block_is_taken_once_at_any_unit_count() {
     let (m, n, k) = (8, 48, 12);
-    for lanes in [4, 8, 16] {
-        assert_matches(&run(m, n, k, 12, lanes), m, n, k);
+    for units in [4, 8, 16] {
+        assert_matches(&run(m, n, k, 12, units), m, n, k);
     }
 }
 
 /// A shape that tiles by nothing: the cubes overhang both axes of the output and the walk
-/// overhangs `K`, and the lanes still take every block inside once.
+/// overhangs `K`, and the units still take every block inside once.
 #[test]
 fn distributed_blocks_mask_a_ragged_edge() {
     let (m, n, k) = (7, 29, 11);
-    for lanes in [4, 16] {
-        assert_matches(&run(m, n, k, 6, lanes), m, n, k);
+    for units in [4, 16] {
+        assert_matches(&run(m, n, k, 6, units), m, n, k);
     }
 }

@@ -4,7 +4,7 @@
 //! Row ownership is the state's statement ([`RowShare`]) and this leaf's only branch: a worker
 //! owns a contiguous slice of the score tile's rows and keeps their running state in registers.
 //!
-//! The worker is a unit ([`rowwise`](super::rowwise)) or a plane whose lanes split the reduced
+//! The worker is a unit ([`rowwise`](super::rowwise)) or a plane whose units split the reduced
 //! axis ([`planewise`](super::planewise)); neither arm reads another worker's cell, so no syncs.
 
 use cubecl::prelude::*;
@@ -34,7 +34,7 @@ impl<EA: Float> Tile<EA> {
         let corr = self.softmax_in_place(state, probe, mask, scale);
         match comptime!(state.share) {
             RowShare::Unit { rows: _ } => self.write_rows_to(p, &*state),
-            RowShare::Plane { rows, lanes } => self.write_rows_to_planar(p, rows, lanes),
+            RowShare::Plane { rows, units } => self.write_rows_to_planar(p, rows, units),
         }
         corr
     }
@@ -81,11 +81,11 @@ impl<EA: Float> Tile<EA> {
                 self.exp_diff(&max_buf, &*state);
                 self.row_sum(&mut sum_buf, &*state);
             }
-            RowShare::Plane { rows, lanes } => {
-                self.scale_and_mask_planar(scale, probe, mask, rows, lanes);
-                self.row_max_planar(&mut max_buf, &state.m, rows, lanes);
-                self.exp_diff_planar(&max_buf, rows, lanes);
-                self.row_sum_planar(&mut sum_buf, rows, lanes);
+            RowShare::Plane { rows, units } => {
+                self.scale_and_mask_planar(scale, probe, mask, rows, units);
+                self.row_max_planar(&mut max_buf, &state.m, rows, units);
+                self.exp_diff_planar(&max_buf, rows, units);
+                self.row_sum_planar(&mut sum_buf, rows, units);
             }
         }
 

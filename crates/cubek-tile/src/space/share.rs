@@ -1,147 +1,147 @@
 //! What the hardware instances are to a tile's cells, once a level has been distributed out.
 //!
-//! Two questions, at two scopes. A plane's lanes share registers and combine there, so a folding
-//! drain asks what each lane holds of a cell ([`LaneShare`]), and folds the partials with
-//! [`LaneShare::fold`]. Planes and cubes share none; the one question is whether an instance holds
+//! Two questions, at two scopes. A plane's units share registers and combine there, so a folding
+//! drain asks what each unit holds of a cell ([`UnitShare`]), and folds the partials with
+//! [`UnitShare::fold`]. Planes and cubes share none; the one question is whether an instance holds
 //! a whole cell ([`SplitShare`]).
 //!
 //! Both are read off a [`Level`] against the space an operand spans, level by level on the way
-//! down a partitioning ([`under`](LaneShare::under)), since the level that spreads an axis is only
+//! down a partitioning ([`under`](UnitShare::under)), since the level that spreads an axis is only
 //! known then.
 
 use cubecl::prelude::*;
 
 use crate::{Axis, Carrier, ComputeScope, Count, Coverage, Level, Monoid, Space};
 
-/// What the plane's lanes each hold of a tile's cells, once a lanes level is distributed out. An axis
-/// the tile does not span is *folded* (lanes cover disjoint slices, each holds a partial); one it
-/// does span is *carried* (each lane gets a different cell). The case says how a partial drains.
+/// What the plane's units each hold of a tile's cells, once a units level is distributed out. An axis
+/// the tile does not span is *folded* (units cover disjoint slices, each holds a partial); one it
+/// does span is *carried* (each unit gets a different cell). The case says how a partial drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum LaneShare {
-    /// Nothing rides the lanes, so every lane repeats the same work over the same whole cells: a
+pub enum UnitShare {
+    /// Nothing rides the units, so every unit repeats the same work over the same whole cells: a
     /// store lands the same value however many make it, a fold must land once.
     Repeated,
-    /// The lanes carry cells of their own and fold nothing: each reads and writes as it is.
+    /// The units carry cells of their own and fold nothing: each reads and writes as it is.
     Whole,
-    /// Nothing carried, everything folded: every lane of the plane holds a partial of the *same*
+    /// Nothing carried, everything folded: every unit of the plane holds a partial of the *same*
     /// cell, and the plane's own reduction is the drain.
     Plane,
     /// Both, so the plane splits into groups: one cell each, several cells in flight at once.
-    /// `fold_mask` is the set of lane-index bits the folded axes occupy, so a cell's partials
-    /// live on exactly the lanes that agree outside it and differ inside.
+    /// `fold_mask` is the set of unit-index bits the folded axes occupy, so a cell's partials
+    /// live on exactly the units that agree outside it and differ inside.
     Group { fold_mask: usize },
 }
 
-impl LaneShare {
-    /// What `level` makes the plane's lanes to the cells of an operand spanning `spanned`: an
-    /// axis the operand does not span is folded (lanes hold partials), one it spans is carried.
-    /// A level that is not the lanes' leaves the lanes as they were ([`Repeated`](Self::Repeated)).
-    pub fn new(level: &Level, spanned: &Space) -> LaneShare {
+impl UnitShare {
+    /// What `level` makes the plane's units to the cells of an operand spanning `spanned`: an
+    /// axis the operand does not span is folded (units hold partials), one it spans is carried.
+    /// A level that is not the units' leaves the units as they were ([`Repeated`](Self::Repeated)).
+    pub fn new(level: &Level, spanned: &Space) -> UnitShare {
         if level.coverage() != Coverage::Distribute(ComputeScope::Unit) {
-            return LaneShare::Repeated;
+            return UnitShare::Repeated;
         }
-        // Innermost first, so `weight` is the axis's stride in the lane index as it is reached,
+        // Innermost first, so `weight` is the axis's stride in the unit index as it is reached,
         // the same least-significant-last ordering the walk decodes with.
         let (mut weight, mut fold_mask) = (1usize, 0usize);
         for axis in level.axes().into_iter().rev() {
-            // Distributed to however many lanes the launch runs, and the level's only lane axis:
-            // carried where the operand spans it, and where it does not, every lane holds a
+            // Distributed to however many units the launch runs, and the level's only unit axis:
+            // carried where the operand spans it, and where it does not, every unit holds a
             // partial of the same cell.
             if let Count::Distributed(_) = level.cut(axis).count {
                 match spanned.contains(axis) {
                     true => continue,
-                    false => return LaneShare::Plane,
+                    false => return UnitShare::Plane,
                 }
             }
-            let lanes = level
+            let plane_units = level
                 .cut(axis)
                 .count
                 .stated()
-                .expect("Level::new: a lanes level carries stated counts");
-            if lanes == 1 {
+                .expect("Level::new: a units level carries stated counts");
+            if plane_units == 1 {
                 continue;
             }
             assert!(
-                lanes.is_power_of_two(),
-                "LaneShare: {axis:?} rides {lanes} lanes, which is not a power of two, so its \
+                plane_units.is_power_of_two(),
+                "UnitShare: {axis:?} rides {plane_units} units, which is not a power of two, so its \
                  partials are not a bit range"
             );
             if !spanned.contains(axis) {
-                fold_mask |= (lanes - 1) * weight;
+                fold_mask |= (plane_units - 1) * weight;
             }
-            weight *= lanes;
+            weight *= plane_units;
         }
         match fold_mask {
-            // Nothing rides the lanes at all when every count is one.
-            0 if weight == 1 => LaneShare::Repeated,
-            0 => LaneShare::Whole,
-            // Every lane's bit folded: nothing is carried, so the plane shares the one cell.
-            mask if mask == weight - 1 => LaneShare::Plane,
-            fold_mask => LaneShare::Group { fold_mask },
+            // Nothing rides the units at all when every count is one.
+            0 if weight == 1 => UnitShare::Repeated,
+            0 => UnitShare::Whole,
+            // Every unit's bit folded: nothing is carried, so the plane shares the one cell.
+            mask if mask == weight - 1 => UnitShare::Plane,
+            fold_mask => UnitShare::Group { fold_mask },
         }
     }
 
     /// This share under `parent`'s: the folds compose, since each level takes its own bits of the
-    /// lane index, and lanes that once carried cells of their own keep doing so.
-    /// [`Plane`](Self::Plane) spans every lane, so nothing folds under it.
-    pub fn under(self, parent: LaneShare) -> LaneShare {
+    /// unit index, and units that once carried cells of their own keep doing so.
+    /// [`Plane`](Self::Plane) spans every unit, so nothing folds under it.
+    pub fn under(self, parent: UnitShare) -> UnitShare {
         match (parent, self) {
-            (LaneShare::Repeated, share) | (share, LaneShare::Repeated) => share,
-            (LaneShare::Whole, share) | (share, LaneShare::Whole) => share,
-            (LaneShare::Group { fold_mask: a }, LaneShare::Group { fold_mask: b }) => {
-                LaneShare::Group { fold_mask: a | b }
+            (UnitShare::Repeated, share) | (share, UnitShare::Repeated) => share,
+            (UnitShare::Whole, share) | (share, UnitShare::Whole) => share,
+            (UnitShare::Group { fold_mask: a }, UnitShare::Group { fold_mask: b }) => {
+                UnitShare::Group { fold_mask: a | b }
             }
-            _ => panic!("LaneShare::under: {self:?} under {parent:?}: nothing folds under a plane"),
+            _ => panic!("UnitShare::under: {self:?} under {parent:?}: nothing folds under a plane"),
         }
     }
 
-    /// Whether a cell's partials sit on several lanes, so a drain has to fold before it writes.
+    /// Whether a cell's partials sit on several units, so a drain has to fold before it writes.
     pub fn folds(self) -> bool {
-        matches!(self, LaneShare::Plane | LaneShare::Group { .. })
+        matches!(self, UnitShare::Plane | UnitShare::Group { .. })
     }
 
-    /// The lanes over which `axis` of a lanes level is distributed, as a share: the whole plane where
-    /// they are all of it, a group otherwise. What a row-owning verb asks of the lanes level it
+    /// The units over which `axis` of a units level is distributed, as a share: the whole plane where
+    /// they are all of it, a group otherwise. What a row-owning verb asks of the units level it
     /// runs under.
-    pub fn of_lanes(lanes: usize, plane: usize) -> LaneShare {
-        match lanes {
-            1 => LaneShare::Repeated,
-            n if n == plane => LaneShare::Plane,
+    pub fn of_units(plane_units: usize, plane: usize) -> UnitShare {
+        match plane_units {
+            1 => UnitShare::Repeated,
+            n if n == plane => UnitShare::Plane,
             n => {
                 assert!(
                     n.is_power_of_two() && n < plane,
-                    "LaneShare::of_lanes: a group of {n} lanes in a plane of {plane} is not a bit \
-                     range of the lane index"
+                    "UnitShare::of_units: a group of {n} units in a plane of {plane} is not a bit \
+                     range of the unit index"
                 );
-                LaneShare::Group { fold_mask: n - 1 }
+                UnitShare::Group { fold_mask: n - 1 }
             }
         }
     }
 }
 
 #[cube]
-impl LaneShare {
-    /// Combine the partials of one cell under `monoid`, leaving every lane that holds one holding
+impl UnitShare {
+    /// Combine the partials of one cell under `monoid`, leaving every unit that holds one holding
     /// the total: the plane instruction where the whole plane shares the cell, a butterfly over the
-    /// group's lane bits where a group does, `value` itself where nothing is folded.
+    /// group's unit bits where a group does, `value` itself where nothing is folded.
     ///
-    /// One butterfly step per bit of the group's mask. A cell's partials sit on the lanes that
+    /// One butterfly step per bit of the group's mask. A cell's partials sit on the units that
     /// agree outside the mask and differ inside it, so an xor by a single mask bit stays within the
     /// group: every group folds at once, each over its own cell, with no guard and no branch.
     pub fn fold_of<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
         value: T,
-        #[comptime] share: LaneShare,
+        #[comptime] share: UnitShare,
         #[comptime] monoid: Monoid,
     ) -> T {
         match comptime!(share) {
-            LaneShare::Repeated | LaneShare::Whole => value,
-            LaneShare::Plane => match comptime!(monoid) {
+            UnitShare::Repeated | UnitShare::Whole => value,
+            UnitShare::Plane => match comptime!(monoid) {
                 Monoid::Sum => plane_sum(value),
                 Monoid::Prod => plane_prod(value),
                 Monoid::Max => plane_max(value),
                 Monoid::Min => plane_min(value),
             },
-            LaneShare::Group { fold_mask } => {
+            UnitShare::Group { fold_mask } => {
                 let mut total = value;
                 #[unroll]
                 for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
@@ -156,14 +156,14 @@ impl LaneShare {
     }
 }
 
-impl LaneShare {
+impl UnitShare {
     /// [`fold_of`](Self::fold_of) as a method on the share.
     pub fn fold<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
         self,
         value: T,
         monoid: Monoid,
     ) -> T {
-        LaneShare::fold_of::<T>(value, self, monoid)
+        UnitShare::fold_of::<T>(value, self, monoid)
     }
 
     pub fn __expand_fold_method<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
@@ -172,12 +172,12 @@ impl LaneShare {
         value: T::ExpandType,
         monoid: Monoid,
     ) -> T::ExpandType {
-        LaneShare::__expand_fold_of::<T>(scope, value, self, monoid)
+        UnitShare::__expand_fold_of::<T>(scope, value, self, monoid)
     }
 }
 
 /// What one instance holds of a tile's cells, across the scopes whose instances can only meet in
-/// the destination: `Plane` and `Cube`. Coarser than [`LaneShare`], whose lanes share registers
+/// the destination: `Plane` and `Cube`. Coarser than [`UnitShare`], whose units share registers
 /// and elect a writer (a mask); planes and cubes share none, so each folds its own contribution.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SplitShare {
@@ -232,12 +232,12 @@ impl SplitShare {
     }
 }
 
-/// A count a lanes level states along an axis, as the lanes it takes.
+/// A count a units level states along an axis, as the units it takes.
 impl From<Count> for usize {
     fn from(count: Count) -> usize {
         count
             .stated()
-            .expect("a lanes level's count is stated; every tile is the launch's")
+            .expect("a units level's count is stated; every tile is the launch's")
     }
 }
 
@@ -325,40 +325,40 @@ mod tests {
         );
     }
 
-    /// A lanes level over the contraction alone folds every lane's bit: the plane shares the cell.
-    /// One over an axis the operand spans carries; a lanes level naming both is a group per cell.
+    /// A units level over the contraction alone folds every unit's bit: the plane shares the cell.
+    /// One over an axis the operand spans carries; a units level naming both is a group per cell.
     #[test]
-    fn a_lanes_level_folds_what_the_operand_does_not_span() {
+    fn a_units_level_folds_what_the_operand_does_not_span() {
         let space = Space::new(&[(M, 4), (N, 8), (K, 32)]);
         let out = space.subspace(&[M, N]);
         let plane = Levels::leaf(&[(K, 1)]).units(&[(K, 32)]).level();
-        assert_eq!(LaneShare::new(&plane, &out), LaneShare::Plane);
+        assert_eq!(UnitShare::new(&plane, &out), UnitShare::Plane);
         let whole = Levels::leaf(&[(N, 1)]).units(&[(N, 8)]).level();
-        assert_eq!(LaneShare::new(&whole, &out), LaneShare::Whole);
+        assert_eq!(UnitShare::new(&whole, &out), UnitShare::Whole);
         let team = Levels::leaf(&[(N, 1), (K, 1)])
             .units(&[(N, 8), (K, 4)])
             .level();
         assert_eq!(
-            LaneShare::new(&team, &out),
-            LaneShare::Group { fold_mask: 3 }
+            UnitShare::new(&team, &out),
+            UnitShare::Group { fold_mask: 3 }
         );
         let walk = Levels::leaf(&[(K, 8)]).walk_every(&[K]).level();
-        assert_eq!(LaneShare::new(&walk, &out), LaneShare::Repeated);
+        assert_eq!(UnitShare::new(&walk, &out), UnitShare::Repeated);
     }
 
     /// Descending composes the folds and keeps the carry.
     #[test]
     fn shares_compose_level_by_level() {
-        let group = LaneShare::Group { fold_mask: 3 };
-        assert_eq!(group.under(LaneShare::Repeated), group);
-        assert_eq!(LaneShare::Whole.under(group), group);
+        let group = UnitShare::Group { fold_mask: 3 };
+        assert_eq!(group.under(UnitShare::Repeated), group);
+        assert_eq!(UnitShare::Whole.under(group), group);
         assert_eq!(
-            LaneShare::Group { fold_mask: 12 }.under(group),
-            LaneShare::Group { fold_mask: 15 }
+            UnitShare::Group { fold_mask: 12 }.under(group),
+            UnitShare::Group { fold_mask: 15 }
         );
         assert_eq!(
-            LaneShare::Repeated.under(LaneShare::Whole),
-            LaneShare::Whole
+            UnitShare::Repeated.under(UnitShare::Whole),
+            UnitShare::Whole
         );
         assert_eq!(
             SplitShare::Whole.under(SplitShare::Partial),

@@ -47,7 +47,7 @@ impl GridShape {
 
 /// How much of a plane's accumulator its scratch holds at once.
 ///
-/// A fragment's cells sit across the plane's lanes in a layout only the hardware knows, so
+/// A fragment's cells sit across the plane's units in a layout only the hardware knows, so
 /// anything that must touch them one at a time spills the tile to shared memory first. How much is
 /// resident is a trade and not a fact: barriers against bytes.
 ///
@@ -108,7 +108,7 @@ impl Scratch {
     ///
     /// **Forced for a destination that folds**: the intrinsic's store overwrites, so the cells must
     /// become addressable before they can be added. A replacing destination may want it too, since
-    /// a bounced drain writes lines the lanes distribute between them; which is faster is a measurement.
+    /// a bounced drain writes lines the units distribute between them; which is faster is a measurement.
     pub fn bounces(self) -> bool {
         !matches!(self, Scratch::None)
     }

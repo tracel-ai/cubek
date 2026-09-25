@@ -19,7 +19,7 @@ use crate::*;
 pub(crate) enum LhsRole {
     /// Free of the accumulator's innermost axis, so one read serves every cell of a row.
     FreeOfColumn,
-    /// Lined *along* that axis: the line it reads is the cell, every lane a different column,
+    /// Lined *along* that axis: the line it reads is the cell, every unit a different column,
     /// and there is no `K` component to extract. What a batched contraction needs -- an axis
     /// every operand spans, like a depthwise convolution's channel.
     LinedAlongColumn,
@@ -281,7 +281,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     // refused anything but a matched pair or a scalar sink, so the division is exact.
     comptime!(assert!(
         rw == aw || aw == 1,
-        "contract gather: a rhs staged wider than its sink spreads its lanes across scalar cells, \
+        "contract gather: a rhs staged wider than its sink spreads its units across scalar cells, \
          so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
     ));
     let factors = lhs.factors();

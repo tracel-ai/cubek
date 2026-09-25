@@ -535,8 +535,8 @@ fn masked_space(form: Form) -> Launcher {
 /// [`buffer_kernel`] at a served width of two.
 ///
 /// The source is a bound operand rather than [`Position`]: a procedural recipe is evaluated once
-/// per *line*, so at a width of two both lanes of a line would carry one value and the test could
-/// not tell a masked store from a store one lane wide.
+/// per *line*, so at a width of two both components of a line would carry one value and the test could
+/// not tell a masked store from a store one unit wide.
 #[cube(launch)]
 fn wide_buffer_kernel<E: Float>(
     input: &TileArg<'_, E, Const<2>>,
@@ -665,7 +665,7 @@ fn run_masked(erased: Erased) -> HostData {
 
 /// A masked store through a sink writes the cells a masked store through a buffer writes.
 ///
-/// The guard is the whole question: a sink's write ends in a call, so an overhanging lane a buffer
+/// The guard is the whole question: a sink's write ends in a call, so an overhanging unit a buffer
 /// would have clipped has nothing to clip it, and a mask dropped between the walk and `write_view`
 /// hands the epilogue coordinates off the product's end. The `stride / 2` width is the other half.
 #[test]

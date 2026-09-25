@@ -28,7 +28,7 @@ const OW: Axis = Axis(4);
 const RW: Axis = Axis(5);
 
 /// The software instruction the leaves here run under unless a test states another: a 16-cell
-/// budget, no edge split, no lane fan-out.
+/// budget, no edge split, no unit fan-out.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// Where a kernel reads its inputs from: where they lie, or a shared-memory stage it fills per
@@ -42,7 +42,7 @@ enum Stage {
 
 /// The same body matmul runs: the operands' spaces say what is contracted, their projections say
 /// how they are addressed, and the leaf does the rest. `V` is the input's line width along its
-/// fastest contracted axis, which the leaf splits into line index and lane; a real width is needed.
+/// fastest contracted axis, which the leaf splits into line index and unit; a real width is needed.
 #[cube(launch)]
 fn conv_kernel<E: Numeric, V: Size>(
     input: &TileArg<'_, E, V>,
@@ -786,7 +786,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
 }
 
 /// The gathered operand in two-wide lines. Its innermost axis is `CI`, the fastest contracted one,
-/// so the leaf splits each reduce step into the line index it reads and the lane it broadcasts:
+/// so the leaf splits each reduce step into the line index it reads and the unit it broadcasts:
 /// the one arithmetic on the gather path that a width of `1` leaves dead.
 #[test]
 fn conv1d_vectorized_input() {
@@ -801,7 +801,7 @@ fn conv1d_vectorized_input() {
     .check_at(4, 4, 2, false, Stage::InPlace);
 }
 
-/// The GPU specialization uses fixed lane extracts. Exercise that path on the CPU test runtime as
+/// The GPU specialization uses fixed unit extracts. Exercise that path on the CPU test runtime as
 /// well, even though production CPU launches select the compact flat walk.
 #[test]
 fn conv1d_vectorized_input_fanout() {
@@ -819,7 +819,7 @@ fn conv1d_vectorized_input_fanout() {
         2,
         false,
         Stage::InPlace,
-        RegisterBlock::new(16).lane_fanout(),
+        RegisterBlock::new(16).component_fanout(),
     );
 }
 
@@ -2986,10 +2986,10 @@ fn resize1d_dynamic_stage_read_before_fill() {
 }
 
 /// A gathered convolution with multiple reduce axes (`[RH, CI]`, where `RH = 3, CI = 3`),
-/// with the gathered input staged at line width 4. The flat walk must extract lanes using the
+/// with the gathered input staged at line width 4. The flat walk must extract units using the
 /// fastest contracted axis (`CI`) coordinate, not flat step `p`.
 #[test]
-fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
+fn conv1d_staged_padded_multi_axis_reduce_component_indexing() {
     let oh = 6;
     let co = 4;
     let rh = 3;
@@ -3069,11 +3069,11 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     }
 }
 
-/// A staged padded conv with `lane_fanout = true` requested on the register block.
+/// A staged padded conv with `component_fanout = true` requested on the register block.
 /// The innermost reduction extent `CI = 3` is not divisible by stage line width `4`,
-/// so it correctly falls back to the coordinate-decoded flat walk rather than corrupting lanes.
+/// so it correctly falls back to the coordinate-decoded flat walk rather than corrupting units.
 #[test]
-fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
+fn conv1d_staged_padded_multi_axis_reduce_component_fanout() {
     let (in_len, ci, co, rh) = (16, 3, 4, 3);
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
@@ -3110,7 +3110,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
-        RegisterBlock::new(16).lane_fanout(),
+        RegisterBlock::new(16).component_fanout(),
         Stage::Smem {
             depth: 1,
             width: Some(4),
@@ -3142,7 +3142,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
             assert_eq!(
                 got.get_f32(&[o, c]),
                 want[o * co + c],
-                "conv1d_staged_padded_multi_axis_reduce_lane_fanout: wrong at ({o}, {c})"
+                "conv1d_staged_padded_multi_axis_reduce_component_fanout: wrong at ({o}, {c})"
             );
         }
     }

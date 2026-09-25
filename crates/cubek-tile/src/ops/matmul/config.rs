@@ -102,9 +102,9 @@ pub struct RegisterBlock {
     /// Whether to generate a dual-path specialization for masked/edge tiles (fast in-bounds path
     /// plus checked fallback).
     pub split_edge: bool,
-    /// Whether to walk K as (line, lane) with fixed comptime extracts, rather than as a flat
+    /// Whether to walk K as (line, component) with fixed comptime extracts, rather than as a flat
     /// scalar walk.
-    pub lane_fanout: bool,
+    pub component_fanout: bool,
 }
 
 impl RegisterBlock {
@@ -115,7 +115,7 @@ impl RegisterBlock {
         Self {
             budget,
             split_edge: false,
-            lane_fanout: false,
+            component_fanout: false,
         }
     }
 
@@ -128,10 +128,10 @@ impl RegisterBlock {
         }
     }
 
-    /// Walk `K` as (line, lane) with fixed comptime extracts, rather than as a flat scalar walk.
-    pub const fn lane_fanout(self) -> Self {
+    /// Walk `K` as (line, component) with fixed comptime extracts, rather than as a flat scalar walk.
+    pub const fn component_fanout(self) -> Self {
         Self {
-            lane_fanout: true,
+            component_fanout: true,
             ..self
         }
     }

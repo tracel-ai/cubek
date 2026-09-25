@@ -19,7 +19,7 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
     #[comptime] monoid: Monoid,
 ) {
     // The block was built to fold one way and is drained that way; folding it another here would
-    // combine the lanes under an operator the partials were never built for.
+    // combine the units under an operator the partials were never built for.
     comptime!(assert!(
         acc.monoid == monoid,
         "reduce: this accumulator folds under {:?} (stated at `Tile::accumulate`) but is being \
@@ -56,8 +56,8 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
             Coords::constant(comptime!(layout.acc_extents.clone())).unravel(comptime!(a as u32));
 
         let line_idx = comptime!(a / acc.vector_size);
-        let lane_idx = comptime!(a % acc.vector_size);
-        let seed = acc.data[line_idx].extract(comptime!(lane_idx));
+        let component_idx = comptime!(a % acc.vector_size);
+        let seed = acc.data[line_idx].extract(comptime!(component_idx));
 
         let curr_val: Acc = element::<Acc, In, V>(
             &in_view,
@@ -71,7 +71,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
         );
 
         let mut vec_line = acc.data[line_idx];
-        vec_line.insert(comptime!(lane_idx), curr_val);
+        vec_line.insert(comptime!(component_idx), curr_val);
         acc.data[line_idx] = vec_line;
     }
 }
@@ -115,12 +115,12 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
         let mut result = seed_vec;
 
         #[unroll]
-        for lane_idx in 0..comptime!(ws) {
-            let a = line_idx * comptime!(ws) + comptime!(lane_idx);
+        for component_idx in 0..comptime!(ws) {
+            let a = line_idx * comptime!(ws) + comptime!(component_idx);
             let acc_coords =
                 Coords::constant(comptime!(layout.acc_extents.clone())).unravel(a.cast::<u32>());
 
-            let seed = seed_vec.extract(comptime!(lane_idx));
+            let seed = seed_vec.extract(comptime!(component_idx));
             let curr_val: Acc = element::<Acc, In, V>(
                 &in_view,
                 comptime!(in_space.clone()),
@@ -132,7 +132,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
                 monoid,
             );
 
-            result.insert(comptime!(lane_idx), curr_val);
+            result.insert(comptime!(component_idx), curr_val);
         }
 
         acc_view.commit(line_idx, result);
@@ -183,7 +183,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
 }
 
 /// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step
-/// lands on a line start and one read serves `contracted_per_step` folds. The lanes accumulate in
+/// lands on a line start and one read serves `contracted_per_step` folds. The units accumulate in
 /// parallel and collapse through [`Monoid::reduce`] once, after the walk.
 #[cube]
 #[allow(clippy::too_many_arguments)]
@@ -277,7 +277,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
         let in_val = if comptime!(vw <= 1) {
             in_vec.extract(0usize)
         } else {
-            let in_lane = resolve_reduce_in_lane(
+            let in_component = resolve_reduce_component(
                 comptime!(in_space.clone()),
                 comptime!(acc_space.clone()),
                 comptime!(layout.reduce_axes.clone()),
@@ -285,7 +285,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
                 &reduce_coords,
                 vw,
             );
-            in_vec.extract_dynamic(in_lane)
+            in_vec.extract_dynamic(in_component)
         };
         let in_cast = Acc::cast_from(in_val);
 
@@ -329,10 +329,10 @@ impl ReduceLayout {
     }
 }
 
-/// The lane within the vectorized line for the input's fastest (innermost) axis, whether it is
+/// The component within the vectorized line for the input's fastest (innermost) axis, whether it is
 /// contracted (in `reduce_axes`) or surviving (in `acc_space`).
 #[cube]
-fn resolve_reduce_in_lane(
+fn resolve_reduce_component(
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] reduce_axes: Vec<Axis>,

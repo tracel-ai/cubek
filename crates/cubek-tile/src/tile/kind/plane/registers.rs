@@ -31,7 +31,7 @@ pub struct RegisterData<T: Numeric> {
     /// Physical line width, the numeric twin of `RA`; comptime, for the line arithmetic.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    /// Contracted values a line holds of one cell: `1` where its lanes are neighbouring cells,
+    /// Contracted values a line holds of one cell: `1` where its units are neighbouring cells,
     /// the line width where they are that cell's partials. What [`vector_size`](Self::vector_size)
     /// means, not how wide it is.
     #[cube(comptime)]
@@ -53,7 +53,7 @@ pub struct RegisterData<T: Numeric> {
     pub(crate) config: RegisterBlock,
     /// How this block's partials merge: the `⊕` it accumulates under, [`Sum`](Monoid::Sum) for a
     /// matmul. Stated where the block is built ([`Tile::block_accumulator`]), since comptime state
-    /// cannot be set afterwards; read on drain with [`lanes`](Self::lanes), which says they exist.
+    /// cannot be set afterwards; read on drain with [`units`](Self::units), which says they exist.
     #[cube(comptime)]
     pub(crate) monoid: Monoid,
 }
@@ -166,20 +166,20 @@ impl<T: Numeric> RegisterData<T> {
 #[cube]
 impl<T: Numeric> RegisterData<T> {
     /// Write the block into `mem`'s window, casting down to its element: the same manual,
-    /// row-major store the mma fragment does, over lines instead of lane positions.
+    /// row-major store the mma fragment does, over lines instead of unit positions.
     ///
-    /// Under a folded [`LaneShare`] each lane holds only part of every cell, so fold first, then
-    /// let one lane write, as [`AccumulateView::commit`] does; skipping it is every lane writing
+    /// Under a folded [`UnitShare`] each unit holds only part of every cell, so fold first, then
+    /// let one unit write, as [`AccumulateView::commit`] does; skipping it is every unit writing
     /// its fraction over the last. The share is `mem`'s (descended every level), not the block's.
     ///
     /// A write that folds ([`Write::Accumulate`]) rather than replaces adds one more election:
-    /// lanes that repeat each other's work would each add the same contribution.
+    /// units that repeat each other's work would each add the same contribution.
     ///
     /// The write goes through the sink's masked matrix view, as [`AccumulateView::commit`] does: a
     /// block is sized to the leaf, so it may overhang the real extent, and the lines past the edge
     /// belong to the next row. The mask is a comptime flag, so a block that fits stores straight.
     ///
-    /// A line of one cell's partials ([`fold`](Self::fold)) is collapsed after the lanes are
+    /// A line of one cell's partials ([`fold`](Self::fold)) is collapsed after the units are
     /// combined and lands in a scalar cell; a line of neighbouring cells lands as it is.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
@@ -198,17 +198,17 @@ impl<T: Numeric> RegisterData<T> {
     /// the block's own width, or scalar where a line folds into one cell.
     fn drain<Out: Numeric, A: Size>(&self, mem: &mut Memory<Out>, #[comptime] space: Space) {
         let mem_write = comptime!(mem.access.write);
-        let lanes = comptime!(mem.lanes);
+        let unit_share = comptime!(mem.unit_share);
         let fold = comptime!(self.fold);
         let monoid = comptime!(self.monoid);
         // Bounded by the window extent.
         let mut sink = mem.matrix_mut::<A>(0usize, comptime!(self.axes), space);
 
-        // Split comptime rather than branching per line: a value-producing `match` plus a lane
+        // Split comptime rather than branching per line: a value-producing `match` plus a unit
         // guard emits a binding the CPU backend cannot resolve ("Value should have been declared
-        // before"), and a `Whole` share (every CPU, whose planes are one lane) needs neither.
-        match comptime!(Drain::of(lanes, mem_write)) {
-            Drain::EachLane =>
+        // before"), and a `Whole` share (every CPU, whose planes are one unit) needs neither.
+        match comptime!(Drain::of(unit_share, mem_write)) {
+            Drain::EachUnit =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
@@ -220,7 +220,7 @@ impl<T: Numeric> RegisterData<T> {
                     }
                 }
             }
-            Drain::LaneZero =>
+            Drain::UnitZero =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
@@ -240,7 +240,7 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = LaneShare::Plane
+                        let combined = UnitShare::Plane
                             .fold::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
                         let cell = cell::<T, Out, A>(combined, fold, monoid);
                         if UNIT_POS_X == 0 {
@@ -255,11 +255,11 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = comptime!(LaneShare::Group { fold_mask })
+                        let combined = comptime!(UnitShare::Group { fold_mask })
                             .fold::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
                         let cell = cell::<T, Out, A>(combined, fold, monoid);
-                        let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
-                        if lane_in_group == 0 {
+                        let unit_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
+                        if unit_in_group == 0 {
                             sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
                         }
                     }
@@ -269,7 +269,7 @@ impl<T: Numeric> RegisterData<T> {
     }
 }
 
-/// What a drained line lands as: the line itself, cast, where its lanes are neighbouring cells;
+/// What a drained line lands as: the line itself, cast, where its units are neighbouring cells;
 /// their fold under `monoid`, cast, where they are `fold` partials of one cell.
 #[cube]
 fn cell<T: Numeric, Out: Numeric, A: Size>(

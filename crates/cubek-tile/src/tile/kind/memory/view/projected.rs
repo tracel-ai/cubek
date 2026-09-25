@@ -122,7 +122,7 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
             TileKind::Lines(_) => {
-                panic!("Tile::nd: the plane's lanes are read at a coordinate (`scale_at`)")
+                panic!("Tile::nd: the plane's units are read at a coordinate (`scale_at`)")
             }
         }
     }
@@ -145,7 +145,7 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
             TileKind::Lines(_) => {
-                panic!("Tile::nd: the plane's lanes are read at a coordinate (`scale_at`)")
+                panic!("Tile::nd: the plane's units are read at a coordinate (`scale_at`)")
             }
         }
     }

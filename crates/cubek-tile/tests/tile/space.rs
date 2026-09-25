@@ -341,11 +341,11 @@ fn a_level_naming_no_axis_distributes_everything_to_one_cube() {
     );
 }
 
-/// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
+/// The plane's units combine in registers, which needs them in lockstep. Units holding different
 /// shares are on different regions, so they never reach a reduction together.
 #[test]
 #[should_panic = "combine in registers"]
-fn sharing_tiles_across_lanes_is_refused() {
+fn sharing_tiles_across_units_is_refused() {
     let _ = Levels::leaf(&[(M, 16), (N, 32), (K, 16)])
         .units(&[(M, 4), (N, 4), (K, 4)])
         .shared_by(4)

@@ -40,7 +40,7 @@ pub struct Walk {
     route: Coords<u32>,
     /// Which axes [`route`](Self::route) speaks for, so the rest fold their digit as ever and pay
     /// nothing. A routed axis takes that coordinate whole: folding in an instance position would
-    /// hand each lane of a distributed axis a different one, which is not what naming one means.
+    /// hand each unit of a distributed axis a different one, which is not what naming one means.
     #[cube(comptime)]
     routed_at: Vec<usize>,
     /// Where in this level's flat step space the walk starts. `0` for a whole walk, so it
@@ -114,7 +114,7 @@ impl Walk {
                     across: Some(workers),
                     ..
                 }) => instances.push(workers.runtime()),
-                // Taken in turns by however many lanes the launch runs: the plane's width is the
+                // Taken in turns by however many units the launch runs: the plane's width is the
                 // launch's, so the kernel reads it rather than being compiled against it.
                 AxisDistribution::Distributed(Distribution { in_turns: true, .. }) => {
                     instances.push(CUBE_DIM_X as usize)
@@ -240,7 +240,7 @@ impl Walk {
             // unavailable here (a panic in a cube verb dies on a kernel-expansion thread, unseen).
             if comptime!(p == at) {
                 // The axis's own tiles, not `counts`, which on a distributed axis is this
-                // instance's share of them and would clamp every lane to its first.
+                // instance's share of them and would clamp every unit to its first.
                 let last = comptime!(self.level.tiles(&self.space, axis) - 1).runtime();
                 counts.push(1usize);
                 route.push(coord.min_with(last).cast::<u32>());

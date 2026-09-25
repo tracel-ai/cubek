@@ -49,10 +49,10 @@ impl<T: Numeric> Memory<T> {
         let projection = comptime!(self.layout.projection.clone());
         // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
         // the same agreement between the two boxes.
-        let lanes = comptime!(fill_extent(&space, sw, w, check));
+        let extent = comptime!(fill_extent(&space, sw, w, check));
         let src_rank = comptime!(src.projection.physical_rank());
         let padding = comptime!((sw != w).then(|| {
-            // `source_lane` swaps the innermost entry of a destination coordinate to address the
+            // `source_component` swaps the innermost entry of a destination coordinate to address the
             // source, which only lands on a source cell when the two boxes have the same rank. A
             // storage-tiled stage splits each axis into a grid and a block digit and does not.
             assert!(
@@ -62,7 +62,7 @@ impl<T: Numeric> Memory<T> {
             );
             Padding {
                 width: w,
-                lanes,
+                extent,
                 rank: src_rank,
             }
         }));
@@ -131,11 +131,11 @@ impl<T: Numeric> Memory<T> {
 /// The innermost extent of `space` in cells, with the two widths a fill pairs checked against it.
 ///
 /// The fill reads whole `sw`-wide source lines, so the innermost extent has to be a whole number
-/// of them; only the *destination* may hold a partial `w`-wide line (a padded stage, spare lanes
+/// of them; only the *destination* may hold a partial `w`-wide line (a padded stage, spare units
 /// zero). Else the stage rounds its line count up ([`storage_extents`]) where the source truncates.
 ///
 /// `None` for a `Dynamic` extent: nothing can be said at comptime, so a padded stage over one
-/// leans on `check` to zero its spare lanes instead.
+/// leans on `check` to zero its spare units instead.
 pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Option<usize> {
     match space.extent_raw(space.axis_at(space.rank() - 1)) {
         Extent::Static(e) => {
@@ -150,7 +150,7 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
             assert!(
                 sw == w || check,
                 "Memory: a padded stage over a Dynamic innermost extent cannot know at comptime \
-                 which lanes are padding, so its source must be bounds-checked for them to read \
+                 which units are padding, so its source must be bounds-checked for them to read \
                  as zero"
             );
             None

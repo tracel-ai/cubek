@@ -213,7 +213,7 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn> for Proc
             W::__expand_value(scope),
             1,
             "Procedural: a procedural read is scalar; a vectorized read would broadcast \
-             the first lane's value instead of ramping the innermost coordinate"
+             the first unit's value instead of ramping the innermost coordinate"
         );
         let value = self
             .clone()

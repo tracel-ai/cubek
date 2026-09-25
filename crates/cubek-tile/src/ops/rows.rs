@@ -1,4 +1,4 @@
-//! Row verbs on a tile: publish a per-row register into a row lane, scale a row by its factor,
+//! Row verbs on a tile: publish a per-row register into a row unit, scale a row by its factor,
 //! copy the owned rows elsewhere. Structure, not algebra: nothing here reads the state of its
 //! callers, the online softmax ([`softmax`](crate::Tile::softmax)) and the attention leaves.
 //!
@@ -17,9 +17,9 @@ impl<EA: Float> Tile<EA> {
     ///
     /// Takes the [`RowShare`] rather than a count, because it has to agree with the leaf about
     /// who owns row `r`, and under [`Plane`](RowShare::Plane) it also has to write each row once
-    /// where every lane of the plane holds the value.
+    /// where every unit of the plane holds the value.
     ///
-    /// A row lane at any rank: a fold's window on a split-wide tile is
+    /// A row unit at any rank: a fold's window on a split-wide tile is
     /// `{1, rows}`, the same cells as a plain `{rows}`.
     ///
     /// `state` says who owns which rows: its share, and the unit's place in its team, which a
@@ -33,15 +33,15 @@ impl<EA: Float> Tile<EA> {
                 .filter(|&p| self.place.space.extent_at(p) > 1)
                 .count()
                 <= 1,
-            "store_rows: a row lane, one cell per score row; this tile spans {:?}",
+            "store_rows: a row unit, one cell per score row; this tile spans {:?}",
             self.place.space
         ));
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
         // One writer per row: the owning unit, or the owning plane's first
-        // lane, every other lane holding the same value.
-        let writer = owned_lane(share) == 0;
+        // unit, every other unit holding the same value.
+        let writer = owned_unit(share) == 0;
         #[unroll]
         for ri in 0..rpu {
             let r = state.owned_row(ri);
@@ -53,7 +53,7 @@ impl<EA: Float> Tile<EA> {
 
     /// The online-softmax rescale by the row's owner: `self[r, :] *= corr[ri]` over `share`'s rows,
     /// straight out of [`softmax`](Tile::softmax), before the sync handing the accumulator to the
-    /// value matmul; no factors tile or barrier. [`Plane`](RowShare::Plane) lanes split the lines.
+    /// value matmul; no factors tile or barrier. [`Plane`](RowShare::Plane) units split the lines.
     ///
     /// A plane-resident accumulator ([`cmma_accumulator`](Tile::cmma_accumulator)) is scaled
     /// where it sits, tile by tile through its scratch ([`with_scratch`](Tile::with_scratch)); the
@@ -91,8 +91,8 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = w;
         let lines = comptime!(cols / w);
         let rpw = comptime!(share.rows());
-        let lanes = comptime!(share.lanes());
-        let lane = owned_lane(share);
+        let units = comptime!(share.units());
+        let plane_unit = owned_unit(share);
         let mut view = self.flat_mut::<W>();
         #[unroll]
         for ri in 0..rpw {
@@ -100,9 +100,9 @@ impl<EA: Float> Tile<EA> {
             if r < rows {
                 let factor = Vector::<EA, W>::cast_from(corr[ri]);
                 #[unroll]
-                for li in 0..comptime!(lines.div_ceil(lanes)) {
-                    let line = lane + li * lanes;
-                    if comptime!(lines % lanes == 0) || line < lines {
+                for li in 0..comptime!(lines.div_ceil(units)) {
+                    let line = plane_unit + li * units;
+                    if comptime!(lines % units == 0) || line < lines {
                         let i = r * lines + line;
                         view.write(i, view.read(i) * factor);
                     }

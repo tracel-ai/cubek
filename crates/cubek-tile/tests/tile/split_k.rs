@@ -331,35 +331,35 @@ fn atomic_split_matmul<E: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    // Drained through the levels it was opened under, which is what puts a lane's block in front
-    // of its own columns; every lane writes there, and one writes where they repeat.
+    // Drained through the levels it was opened under, which is what puts a unit's block in front
+    // of its own columns; every unit writes there, and one writes where they repeat.
     acc.drained_into(&c);
 }
 
-/// The same, with the columns distributed out to the plane's lanes: one level more, and the lane level
-/// is walked like any other. A lane's block is then its own columns, which is what makes every
-/// lane a writer on the drain.
+/// The same, with the columns distributed out to the plane's units: one level more, and the unit level
+/// is walked like any other. A unit's block is then its own columns, which is what makes every
+/// unit a writer on the drain.
 #[cube(launch)]
-fn atomic_split_matmul_by_lane<E: Numeric>(
+fn atomic_split_matmul_by_unit<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] cubes: Level,
-    #[comptime] lanes: Level,
+    #[comptime] plane_units: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
-    // Opened above both walks, so it holds what one lane of one cube sums: its own columns
+    // Opened above both walks, so it holds what one unit of one cube sums: its own columns
     // against that cube's slice of the contraction.
     let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for cube in space.over(&cubes) {
-        for lane in cube.over(&lanes) {
-            let mut acc_lane = acc.at(&lane);
-            acc_lane.mma(&a.at(&lane), &b.at(&lane), Semiring::SUM_PROD);
+        for unit in cube.over(&plane_units) {
+            let mut acc_unit = acc.at(&unit);
+            acc_unit.mma(&a.at(&unit), &b.at(&unit), Semiring::SUM_PROD);
         }
     }
     acc.drained_into(&c);
@@ -485,14 +485,14 @@ fn the_atomic_drain_agrees_with_the_workspace() {
     }
 }
 
-/// The same fold with the lanes carrying cells of their own: `N` rides the plane's lanes while
-/// `K` rides the cubes, so a lane owns its columns and a cube owns its slice of the contraction.
+/// The same fold with the units carrying cells of their own: `N` rides the plane's units while
+/// `K` rides the cubes, so a unit owns its columns and a cube owns its slice of the contraction.
 ///
-/// The control on the writer election. A fold from lanes that repeat each other's work has to be
-/// made by one of them, and a fold from lanes that each hold their own cells by all of them: an
-/// election that cannot tell them apart is wrong one way; "lane zero writes" would drop this half.
+/// The control on the writer election. A fold from units that repeat each other's work has to be
+/// made by one of them, and a fold from units that each hold their own cells by all of them: an
+/// election that cannot tell them apart is wrong one way; "unit zero writes" would drop this half.
 #[test]
-fn an_atomic_drain_with_lanes_of_their_own() {
+fn an_atomic_drain_with_units_of_their_own() {
     let client = cubecl::test_device().client();
     if !client
         .properties()
@@ -508,8 +508,8 @@ fn an_atomic_drain_with_lanes_of_their_own() {
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let dtype = f32::elem_type_native();
 
-    let (m, k, splits, per_lane) = (4usize, 16usize, 4usize, 2usize);
-    let n = plane_size * per_lane;
+    let (m, k, splits, per_unit) = (4usize, 16usize, 4usize, 2usize);
+    let n = plane_size * per_unit;
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
     let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -530,7 +530,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(N, per_lane), (K, k / splits)])
+            Levels::leaf(&[(N, per_unit), (K, k / splits)])
                 .units(&[(N, plane_size)])
                 .cubes(&[K])
                 .build(),
@@ -538,7 +538,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         Form::Static,
     );
 
-    atomic_split_matmul_by_lane::launch(
+    atomic_split_matmul_by_unit::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -576,7 +576,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
 
 /// The same fold one scope down: `K` cut across the *planes* of a single cube. Planes share no
 /// registers either, so each holds a slice of every cell and the drain folds them in, and the
-/// election is per plane, so one lane of each folds its own plane's contribution.
+/// election is per plane, so one unit of each folds its own plane's contribution.
 ///
 /// One cube, so nothing here is a cube split at all: what is being checked is that the combine is
 /// about instances that cannot meet in registers, not about cubes in particular.
@@ -769,7 +769,7 @@ fn a_folding_output_contracts_in_place() {
 //
 // A cmma accumulator stores through its intrinsic, which replaces and elects no writer, so on its
 // own it cannot drain into a store that folds. Opened with a scratch, the partition bounces each
-// fragment through smem, its one door, and the lanes fold its cells atomically, as a block does.
+// fragment through smem, its one door, and the units fold its cells atomically, as a block does.
 
 /// [`atomic_split_matmul`]'s tensor-core twin: the cube's slice of `K` staged and contracted in
 /// fragments, the accumulator opened with a scratch and drained through the folding sink.

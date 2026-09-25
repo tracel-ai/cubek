@@ -8,13 +8,13 @@
 //!
 //! # Teams within the plane
 //!
-//! A plane splits into `lanes / span` **teams** of `span` lanes, each folding every `teams`-th
-//! position with its own state; the teams meet once, at the ending. The span is sized so a lane
+//! A plane splits into `units / span` **teams** of `span` units, each folding every `teams`-th
+//! position with its own state; the teams meet once, at the ending. The span is sized so a unit
 //! holds a few lines of the head, not one: on a GPU the walk is bound by instructions, not bytes.
 //!
 //! A plane on one position runs one butterfly per score (five shuffles on a 32-wide plane) and
-//! at a 128-wide f16 head idles half its lanes (16 lines of 8): 20 GB/s on GP100. A team of 8
-//! lanes closes its score in three shuffles that four teams issue together, every lane loaded.
+//! at a 128-wide f16 head idles half its units (16 lines of 8): 20 GB/s on GP100. A team of 8
+//! units closes its score in three shuffles that four teams issue together, every unit loaded.
 
 use cubecl::prelude::*;
 
@@ -25,46 +25,46 @@ use crate::*;
 /// it hands the scheduler.
 const CHUNK: usize = 4;
 
-/// Floats of query and accumulator a lane is sized to hold: what the span is
-/// chosen against, so the lines a lane owns grow as the rows shrink. Past it
+/// Floats of query and accumulator a unit is sized to hold: what the span is
+/// chosen against, so the lines a unit owns grow as the rows shrink. Past it
 /// the fold would spill before it gained anything.
 ///
-/// This covers the query and the accumulator only — the lines a lane holds for
+/// This covers the query and the accumulator only — the lines a unit holds for
 /// the whole walk. The K and V a step stages are a second, separate claim on
 /// the same registers; see [`STAGE_FLOATS`].
-const LANE_FLOATS: usize = 64;
+const UNIT_FLOATS: usize = 64;
 
-/// Elements of K and V together a lane stages for one step: the second half of the register
-/// budget, and why [`CHUNK`] is a ceiling, not the count. A step stages `2 · chunk · per_lane`
-/// lines, and `per_lane` peaks where [`LANE_FLOATS`] is already spent (one row over a wide head).
+/// Elements of K and V together a unit stages for one step: the second half of the register
+/// budget, and why [`CHUNK`] is a ceiling, not the count. A step stages `2 · chunk · per_unit`
+/// lines, and `per_unit` peaks where [`UNIT_FLOATS`] is already spent (one row over a wide head).
 ///
 /// Unbounded, a 128-wide MHA decode staged 256 elements over 64 of query and accumulator, and
-/// spilled. Bounding the *product* keeps both decompositions: capping `per_lane` instead would
+/// spilled. Bounding the *product* keeps both decompositions: capping `per_unit` instead would
 /// leave one team on the whole plane; capping `chunk`, one position in flight, latency-bound again.
 ///
 /// Counted in elements, not weighted by `EI`: K and V are often half the accumulator's width, so
-/// this is conservative where it is wrong. The number wants tuning against a real lane file; it
+/// this is conservative where it is wrong. The number wants tuning against a real unit file; it
 /// is set to leave two positions in flight at the widest head this fold is meant for.
 const STAGE_FLOATS: usize = 128;
 
-/// Lanes on one key position: enough to hold a head's lines at
-/// [`LANE_FLOATS`] per lane, a power of two so a team is an aligned run of
-/// lanes a butterfly closes without leaving it, and never wider than the plane.
-fn team_span(lines: usize, lanes: usize, rows: usize, width: usize) -> usize {
-    if lanes <= 1 || !lanes.is_power_of_two() {
-        return lanes.max(1);
+/// Units on one key position: enough to hold a head's lines at
+/// [`UNIT_FLOATS`] per unit, a power of two so a team is an aligned run of
+/// units a butterfly closes without leaving it, and never wider than the plane.
+fn team_span(lines: usize, units: usize, rows: usize, width: usize) -> usize {
+    if units <= 1 || !units.is_power_of_two() {
+        return units.max(1);
     }
-    let per_lane = (LANE_FLOATS / (2 * rows * width)).max(1);
-    lines.div_ceil(per_lane).next_power_of_two().min(lanes)
+    let per_unit = (UNIT_FLOATS / (2 * rows * width)).max(1);
+    lines.div_ceil(per_unit).next_power_of_two().min(units)
 }
 
 /// One plane's share of the streamed fold.
 ///
 /// Holds the plane's query rows and output accumulators in registers. The plane splits into teams
-/// of `span` lanes (module doc): lane `l` is team `l / span` and owns lines `l % span + i·span`
+/// of `span` units (module doc): unit `l` is team `l / span` and owns lines `l % span + i·span`
 /// of every row.
 ///
-/// Each team carries a running [`RowState`] of its own, replicated across its lanes, until
+/// Each team carries a running [`RowState`] of its own, replicated across its units, until
 /// [`store`](Self::store) or [`publish`](Self::publish) closes the teams into one.
 #[derive(CubeType)]
 pub struct StreamFold<EA: Float, N: Size> {
@@ -76,9 +76,9 @@ pub struct StreamFold<EA: Float, N: Size> {
     #[cube(comptime)]
     lines: usize,
     #[cube(comptime)]
-    per_lane: usize,
+    per_unit: usize,
     #[cube(comptime)]
-    lanes: usize,
+    units: usize,
     #[cube(comptime)]
     span: usize,
     #[cube(comptime)]
@@ -87,15 +87,15 @@ pub struct StreamFold<EA: Float, N: Size> {
 
 #[cube]
 impl<EA: Float, N: Size> StreamFold<EA, N> {
-    /// Load the fold's operands off the final query tile: this lane's lines
+    /// Load the fold's operands off the final query tile: this unit's lines
     /// of every row, zeroed accumulators, the identity state.
     ///
-    /// `q` is `{rows..., head_dim}`, group-major. `lanes` is the plane width
+    /// `q` is `{rows..., head_dim}`, group-major. `units` is the plane width
     /// (the cube's x dim). `N` must be bound to the operands' vector width
     /// (`let size!(N) = q.vector_size()`).
     pub fn new<EI: Numeric>(
         q: &Tile<EI>,
-        #[comptime] lanes: usize,
+        #[comptime] units: usize,
         #[comptime] row_space: Space,
     ) -> StreamFold<EA, N> {
         let w = q.vector_size();
@@ -107,24 +107,24 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             "StreamFold: q is {{rows..., head_dim}} with the line width dividing the head dim"
         ));
         let lines = comptime!(d / w);
-        let span = comptime!(team_span(lines, lanes, rows, w));
-        let per_lane = comptime!(lines.div_ceil(span));
+        let span = comptime!(team_span(lines, units, rows, w));
+        let per_unit = comptime!(lines.div_ceil(span));
 
         let qf = q.dense::<N>();
-        let mut qa = Array::<Vector<EA, N>>::new(comptime!(rows * per_lane));
-        let mut acc = Array::<Vector<EA, N>>::new(comptime!(rows * per_lane));
+        let mut qa = Array::<Vector<EA, N>>::new(comptime!(rows * per_unit));
+        let mut acc = Array::<Vector<EA, N>>::new(comptime!(rows * per_unit));
         let first = UNIT_POS_X as usize % span;
         #[unroll]
         for g in 0..rows {
             #[unroll]
-            for p in 0..per_lane {
+            for p in 0..per_unit {
                 let li = first + p * span;
                 let mut qv = Vector::<EA, N>::cast_from(0u32);
                 if li < lines {
                     qv = Vector::<EA, N>::cast_from(qf[g * lines + li]);
                 }
-                qa[g * per_lane + p] = qv;
-                acc[g * per_lane + p] = Vector::<EA, N>::cast_from(0u32);
+                qa[g * per_unit + p] = qv;
+                acc[g * per_unit + p] = Vector::<EA, N>::cast_from(0u32);
             }
         }
 
@@ -134,15 +134,15 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             state: RowState::<EA>::new(row_space, 1usize),
             rows,
             lines,
-            per_lane,
-            lanes,
+            per_unit,
+            units,
             span,
             width: comptime!(w),
         }
     }
 
     /// Fold one K/V block in. Each team takes every `teams`-th position, [`CHUNK`] per step: K and
-    /// V lines loaded first, then the dots closed across the team's lanes, one state update for the
+    /// V lines loaded first, then the dots closed across the team's units, one state update for the
     /// chunk, the value rows rescaled and accumulated. Positions at/past `cols_bound` are skipped.
     ///
     /// **The chunk keeps the walk from being latency-bound.** One position at a time, each step
@@ -170,25 +170,25 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let cols = comptime!(k.place.space.extent_at(rank - 2));
         let rows = comptime!(self.rows);
         let lines = comptime!(self.lines);
-        let per_lane = comptime!(self.per_lane);
+        let per_unit = comptime!(self.per_unit);
         let span = comptime!(self.span);
-        let teams = comptime!(self.lanes / self.span);
+        let teams = comptime!(self.units / self.span);
         let w = comptime!(self.width);
         // Positions per step: the ceiling, what the block leaves for a team,
-        // and what the staging budget affords at this `per_lane` — the last is
-        // the one that binds on a wide head, where a lane's lines are many.
+        // and what the staging budget affords at this `per_unit` — the last is
+        // the one that binds on a wide head, where a unit's lines are many.
         let chunk = comptime!(
             CHUNK
                 .min(cols.div_ceil(teams))
-                .min(STAGE_FLOATS / (2 * per_lane * w))
+                .min(STAGE_FLOATS / (2 * per_unit * w))
                 .max(1)
         );
 
         let kf = k.dense::<N>();
         let vf = v.dense::<N>();
-        let lane = UNIT_POS_X as usize;
-        let team = lane / span;
-        let first = lane % span;
+        let unit = UNIT_POS_X as usize;
+        let team = unit / span;
+        let first = unit % span;
         let bound = min(cols_bound, cols);
 
         let mut s0 = 0usize;
@@ -196,13 +196,13 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             // Every load of the step issued before any is used. A position
             // past the bound reads nothing and holds zeros, which its zero
             // weight below keeps out of the mix.
-            let mut ks = Array::<Vector<EI, N>>::new(comptime!(chunk * per_lane));
-            let mut vs = Array::<Vector<EI, N>>::new(comptime!(chunk * per_lane));
+            let mut ks = Array::<Vector<EI, N>>::new(comptime!(chunk * per_unit));
+            let mut vs = Array::<Vector<EI, N>>::new(comptime!(chunk * per_unit));
             #[unroll]
             for c in 0..chunk {
                 let s = s0 + c * teams + team;
                 #[unroll]
-                for p in 0..per_lane {
+                for p in 0..per_unit {
                     let li = first + p * span;
                     let mut kv = Vector::<EI, N>::cast_from(0u32);
                     let mut vv = Vector::<EI, N>::cast_from(0u32);
@@ -210,8 +210,8 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                         kv = kf[s * lines + li];
                         vv = vf[s * lines + li];
                     }
-                    ks[c * per_lane + p] = kv;
-                    vs[c * per_lane + p] = vv;
+                    ks[c * per_unit + p] = kv;
+                    vs[c * per_unit + p] = vv;
                 }
             }
 
@@ -222,12 +222,12 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                 for c in 0..chunk {
                     let mut partial = EA::from_int(0);
                     #[unroll]
-                    for p in 0..per_lane {
+                    for p in 0..per_unit {
                         let li = first + p * span;
                         if li < lines {
                             partial += Monoid::reduce::<EA, N>(
-                                self.q[g * per_lane + p]
-                                    * Vector::<EA, N>::cast_from(ks[c * per_lane + p]),
+                                self.q[g * per_unit + p]
+                                    * Vector::<EA, N>::cast_from(ks[c * per_unit + p]),
                                 w,
                                 Monoid::Sum,
                             );
@@ -268,19 +268,19 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             }
 
             #[unroll]
-            for p in 0..per_lane {
+            for p in 0..per_unit {
                 let li = first + p * span;
                 if li < lines {
                     #[unroll]
                     for g in 0..rows {
                         let mut acc =
-                            self.acc[g * per_lane + p] * Vector::cast_from(corrections[g]);
+                            self.acc[g * per_unit + p] * Vector::cast_from(corrections[g]);
                         #[unroll]
                         for c in 0..chunk {
-                            acc += Vector::<EA, N>::cast_from(vs[c * per_lane + p])
+                            acc += Vector::<EA, N>::cast_from(vs[c * per_unit + p])
                                 * Vector::cast_from(weights[g * chunk + c]);
                         }
-                        self.acc[g * per_lane + p] = acc;
+                        self.acc[g * per_unit + p] = acc;
                     }
                 }
             }
@@ -288,24 +288,24 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// Close the plane's teams into one state: every lane leaves holding the
+    /// Close the plane's teams into one state: every unit leaves holding the
     /// plane's `(m, l)` and, for its lines, the plane's accumulator — the
-    /// split-plane merge, run across lane bits instead of shared memory.
+    /// split-plane merge, run across unit bits instead of shared memory.
     ///
     /// Run once and only once. A second pass finds `m` already uniform, so its weight is
     /// `exp(0) = 1`, and folds the already-folded `l` and `acc` across the teams again, silently
     /// scaling both by `teams`. The two endings consume the fold so it cannot be reached twice.
     fn close_teams(&mut self) {
-        let teams = comptime!(self.lanes / self.span);
+        let teams = comptime!(self.units / self.span);
         if comptime!(teams > 1) {
             let rows = comptime!(self.rows);
-            let per_lane = comptime!(self.per_lane);
-            let team_bits = comptime!((self.lanes - 1) & !(self.span - 1));
+            let per_unit = comptime!(self.per_unit);
+            let team_bits = comptime!((self.units - 1) & !(self.span - 1));
             let size!(W1) = 1usize;
             #[unroll]
             for g in 0..rows {
                 let m = self.state.m[g];
-                let teams = comptime!(LaneShare::Group {
+                let teams = comptime!(UnitShare::Group {
                     fold_mask: team_bits
                 });
                 let m_all = teams
@@ -321,9 +321,9 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                 self.state.m[g] = m_all;
                 self.state.l[g] = l_all;
                 #[unroll]
-                for p in 0..per_lane {
-                    self.acc[g * per_lane + p] = teams.fold::<Vector<EA, N>>(
-                        self.acc[g * per_lane + p] * Vector::cast_from(weight),
+                for p in 0..per_unit {
+                    self.acc[g * per_unit + p] = teams.fold::<Vector<EA, N>>(
+                        self.acc[g * per_unit + p] * Vector::cast_from(weight),
                         Monoid::Sum,
                     );
                 }
@@ -341,7 +341,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let mut this = self;
         this.close_teams();
         let rows = comptime!(this.rows);
-        let per_lane = comptime!(this.per_lane);
+        let per_unit = comptime!(this.per_unit);
         let span = comptime!(this.span);
         let lines = comptime!(this.lines);
         let wo = out.vector_size();
@@ -355,15 +355,15 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         ));
 
         let mut partials =
-            Shared::<[Vector<EA, N>]>::new_slice(comptime!(rows * splits * per_lane * span));
+            Shared::<[Vector<EA, N>]>::new_slice(comptime!(rows * splits * per_unit * span));
         let mut maxes = Shared::<[EA]>::new_slice(comptime!(rows * splits));
         let mut sums = Shared::<[EA]>::new_slice(comptime!(rows * splits));
-        let lane = UNIT_POS_X as usize;
+        let unit = UNIT_POS_X as usize;
         let split = UNIT_POS_Y as usize;
         // After the close every team holds the same values; the first one
         // speaks for the plane.
-        let speaks = lane < span;
-        if lane == 0 {
+        let speaks = unit < span;
+        if unit == 0 {
             #[unroll]
             for g in 0..rows {
                 maxes[g * splits + split] = this.state.m[g];
@@ -374,9 +374,9 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             #[unroll]
             for g in 0..rows {
                 #[unroll]
-                for i in 0..per_lane {
-                    partials[((g * splits + split) * per_lane + i) * span + lane] =
-                        this.acc[g * per_lane + i];
+                for i in 0..per_unit {
+                    partials[((g * splits + split) * per_unit + i) * span + unit] =
+                        this.acc[g * per_unit + i];
                 }
             }
         }
@@ -399,12 +399,12 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                 }
                 let recip = masked_recip::<EA>(norm);
                 #[unroll]
-                for i in 0..per_lane {
-                    let li = lane + i * span;
+                for i in 0..per_unit {
+                    let li = unit + i * span;
                     if li < lines {
                         let mut total = Vector::<EA, N>::cast_from(0u32);
                         for t in 0..splits {
-                            total += partials[((g * splits + t) * per_lane + i) * span + lane]
+                            total += partials[((g * splits + t) * per_unit + i) * span + unit]
                                 * Vector::cast_from(weights[t]);
                         }
                         of[g * lines + li] = Vector::cast_from(total * Vector::cast_from(recip));
@@ -414,7 +414,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// The split ending: close the teams, then publish the plane's running state (lane 0 writes; it
+    /// The split ending: close the teams, then publish the plane's running state (unit 0 writes; it
     /// is plane-uniform) and its accumulator lines into the team's split-wide buffer windows.
     /// The caller syncs, merges ([`Tile::merge_splits`]) and drains with the weights folded in.
     ///
@@ -425,7 +425,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         this.close_teams();
         let rows = comptime!(this.rows);
         // The fold's own share: one worker owning every row, which is what puts
-        // lane 0 in range and every other lane past it.
+        // unit 0 in range and every other unit past it.
         m_win.store_rows(&this.state.m, &this.state);
         l_win.store_rows(&this.state.l, &this.state);
 
@@ -434,7 +434,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             acc_win.place.space.cells() == rows * d,
             "StreamFold::publish: the accumulator window is {{rows, head_dim}}"
         ));
-        let per_lane = comptime!(this.per_lane);
+        let per_unit = comptime!(this.per_unit);
         let span = comptime!(this.span);
         let lines = comptime!(this.lines);
         let w = comptime!(this.width);
@@ -445,19 +445,19 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         ));
         let size!(W1) = wa;
         let mut af = acc_win.flat_mut::<W1>();
-        let lane = UNIT_POS_X as usize;
-        if lane < span {
+        let unit = UNIT_POS_X as usize;
+        if unit < span {
             #[unroll]
             for g in 0..rows {
                 #[unroll]
-                for p in 0..per_lane {
-                    let li = lane + p * span;
+                for p in 0..per_unit {
+                    let li = unit + p * span;
                     if li < lines {
                         #[unroll]
                         for j in 0..w {
                             af.write(
                                 g * d + li * w + j,
-                                Vector::cast_from(this.acc[g * per_lane + p].extract(j)),
+                                Vector::cast_from(this.acc[g * per_unit + p].extract(j)),
                             );
                         }
                     }
@@ -467,19 +467,19 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     }
 }
 
-/// Close `value` across one team's `span` lanes, leaving each of them holding
+/// Close `value` across one team's `span` units, leaving each of them holding
 /// the team's total. A span of the whole plane is the plane reduction, which
 /// also serves a plane width the butterfly cannot split.
 #[cube]
 fn team_fold<E: Float>(value: E, #[comptime] span: usize, #[comptime] monoid: Monoid) -> E {
     if comptime!(span.is_power_of_two()) {
         let size!(W1) = 1usize;
-        comptime!(LaneShare::Group {
+        comptime!(UnitShare::Group {
             fold_mask: span - 1
         })
         .fold::<Vector<E, W1>>(Vector::cast_from(value), monoid)
         .extract(0usize)
     } else {
-        comptime!(LaneShare::of_lanes(span, span)).fold::<E>(value, monoid)
+        comptime!(UnitShare::of_units(span, span)).fold::<E>(value, monoid)
     }
 }

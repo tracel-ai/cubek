@@ -136,7 +136,7 @@ pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_c
     );
 }
 
-/// What [`resolve_nd_coords`] and the lane fold assume about how the operands are lined up: one
+/// What [`resolve_nd_coords`] and the unit fold assume about how the operands are lined up: one
 /// axis per operand is the vectorized one, addressed in lines; if it is not the axis the operand
 /// really lines along, reads are silently off by the width. Host-side, so it fails at comptime.
 #[allow(clippy::too_many_arguments)]
@@ -170,8 +170,8 @@ pub(super) fn assert_operand_shapes(
         lhs_role == LhsRole::LinedAlongColumn || lhs.axis_at(lhs.rank() - 1) == fastest,
         "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
     );
-    // A vectorized rhs lines along the accumulator's innermost axis (its lanes are cells) or the
-    // fastest contracted one (its lanes are partials of one cell); a scalar one is addressed in
+    // A vectorized rhs lines along the accumulator's innermost axis (its units are cells) or the
+    // fastest contracted one (its units are partials of one cell); a scalar one is addressed in
     // elements and need not span either, so a weight shared by every column can omit that axis.
     let rhs_lined = rhs.axis_at(rhs.rank() - 1);
     assert!(
@@ -181,7 +181,7 @@ pub(super) fn assert_operand_shapes(
     );
     // A [`LhsRole::PerCell`] lhs is read once per cell, and a cell is `rhs_vec_len` columns wide,
     // so one read covers them only when it lines along the column axis. Lined along a contracted
-    // axis instead, the broadcast would silently serve the first column's value to every lane.
+    // axis instead, the broadcast would silently serve the first column's value to every unit.
     assert!(
         lhs_role != LhsRole::PerCell || rhs_vec_len == 1,
         "contract gather: an lhs spanning the accumulator's innermost axis needs a value per \

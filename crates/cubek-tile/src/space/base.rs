@@ -270,7 +270,7 @@ impl Space {
     /// How many contracted values one step consumes off a `width`-wide line of this operand.
     ///
     /// A line folds into one accumulator cell only where it runs along the fastest of
-    /// `contracted`, absent from the accumulator, so its lanes are partials of one cell; skipping
+    /// `contracted`, absent from the accumulator, so its units are partials of one cell; skipping
     /// the test silently merges distinct cells. The width must divide the axis: no masked tail.
     pub(crate) fn contracted_per_step(&self, contracted: &[Axis], width: usize) -> usize {
         let lined = self.axis_at(self.rank() - 1);

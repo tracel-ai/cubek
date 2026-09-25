@@ -401,7 +401,7 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
 }
 
 /// The prefill shape on the tensor cores: a packed weight on the rhs with byte scales, landed
-/// unpacked and scaled by the plane's lanes, contracted through the plain cmma instruction.
+/// unpacked and scaled by the plane's units, contracted through the plain cmma instruction.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn packed_cmma_rhs<E: Numeric>(

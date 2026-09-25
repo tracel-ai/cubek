@@ -145,7 +145,7 @@ impl<T: Numeric> CmmaData<T> {
     /// second half of a bounce. The intrinsic's store replaces and elects no writer; the scratch is
     /// what gives each cell one owner.
     ///
-    /// Lines of the store's width rather than scalars, and the lanes distribute them between
+    /// Lines of the store's width rather than scalars, and the units distribute them between
     /// themselves, so every cell has exactly one owner and lands once.
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
@@ -165,9 +165,9 @@ impl<T: Numeric> CmmaData<T> {
         let lines = comptime!(m * lines_per_row);
         let axes = comptime!(MatrixAxes::trailing(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
-        // The plane's own width, which the hardware states, so the lanes distribute the lines
+        // The plane's own width, which the hardware states, so the units distribute the lines
         // between them whatever shape the launch gave the cube.
-        let lanes = PLANE_DIM as usize;
+        let plane_units = PLANE_DIM as usize;
         let mut line = UNIT_POS_PLANE as usize;
         while line < lines {
             let mut value = Vector::<Out, W>::empty();
@@ -179,12 +179,12 @@ impl<T: Numeric> CmmaData<T> {
                 ((line / lines_per_row) as u32, (line % lines_per_row) as u32),
                 value,
             );
-            line += lanes;
+            line += plane_units;
         }
     }
 
     /// Drain this fragment through the plane's scratch, on its own: spill, wait, write, wait. Each
-    /// lane then writes its cells through the store's own write, so every cell has one owner, a
+    /// unit then writes its cells through the store's own write, so every cell has one owner, a
     /// store that folds adds it, and a window the problem's edge cuts short is written only where
     /// it lies inside. What a partition drained a tile at a time runs, and the barriers a
     /// whole-partition drain hoists.
@@ -238,7 +238,7 @@ pub(crate) enum FragmentDrain {
     /// Through the fragment's own store intrinsic, which writes its whole window at once: only for
     /// a destination that replaces and a window lying wholly inside it.
     Intrinsic,
-    /// Through the plane's scratch, each lane then writing its cells through the destination's
+    /// Through the plane's scratch, each unit then writing its cells through the destination's
     /// own write: a destination that adds, or a window the problem's edge cuts short.
     Bounce,
 }

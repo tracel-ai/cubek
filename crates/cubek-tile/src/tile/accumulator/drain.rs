@@ -22,9 +22,9 @@ pub(crate) enum InitFrom {
 /// both sites read this rather than deciding for themselves.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum CellRead {
-    /// This lane owns the cell whole, so the block starts from it.
+    /// This unit owns the cell whole, so the block starts from it.
     AtSeed,
-    /// The plane's lanes each hold a partial, so no lane may start from the cell: the one lane
+    /// The plane's units each hold a partial, so no unit may start from the cell: the one unit
     /// elected to write folds it in once instead.
     AtCommit,
     /// Nothing the cell holds counts.
@@ -33,19 +33,19 @@ pub(crate) enum CellRead {
 
 impl CellRead {
     /// Derived, never stated: whether the cell counts at all is the accumulation's statement, and
-    /// which site reads it is what the plane's lanes hold of it.
+    /// which site reads it is what the plane's units hold of it.
     ///
     /// A destination that folds is never read here, whatever the accumulation says: the store's
     /// atomic read-modify-write *is* the fold, so reading the cell back would duplicate the commit
     /// and race every other instance writing it. That is what lets a split contract in place.
-    const fn of(lane_share: LaneShare, init_from: InitFrom, write: Write) -> Self {
+    const fn of(unit_share: UnitShare, init_from: InitFrom, write: Write) -> Self {
         match write {
             Write::Accumulate => CellRead::Never,
             Write::Replace => match init_from {
                 InitFrom::Identity => CellRead::Never,
-                InitFrom::Cell => match lane_share {
-                    LaneShare::Repeated | LaneShare::Whole => CellRead::AtSeed,
-                    LaneShare::Plane | LaneShare::Group { .. } => CellRead::AtCommit,
+                InitFrom::Cell => match unit_share {
+                    UnitShare::Repeated | UnitShare::Whole => CellRead::AtSeed,
+                    UnitShare::Plane | UnitShare::Group { .. } => CellRead::AtCommit,
                 },
             },
         }
@@ -90,42 +90,42 @@ pub(crate) enum DrainPass {
     Add,
 }
 
-/// Which of the plane's lanes carry a drain's writes, and what they do to their values first.
+/// Which of the plane's units carry a drain's writes, and what they do to their values first.
 ///
 /// Derived from the three facts that decide it and matched on once, so a write reads as four
-/// cases rather than as a lane guard nested in a share. Shared by the two sites that carry an
+/// cases rather than as a unit guard nested in a share. Shared by the two sites that carry an
 /// accumulation into memory: this view's commit, and a register block's drain.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Drain {
-    /// Each lane holds whole cells of its own and writes them as they are.
-    EachLane,
-    /// Every lane holds the same whole cells, and the write folds, so one lane writes.
-    LaneZero,
-    /// The plane's lanes each hold a partial of one cell: combine across the plane, lane zero
+    /// Each unit holds whole cells of its own and writes them as they are.
+    EachUnit,
+    /// Every unit holds the same whole cells, and the write folds, so one unit writes.
+    UnitZero,
+    /// The plane's units each hold a partial of one cell: combine across the plane, unit zero
     /// writes.
     PlaneFold,
-    /// Groups of lanes each hold a partial of one cell: combine within the group, its first
-    /// lane writes.
+    /// Groups of units each hold a partial of one cell: combine within the group, its first
+    /// unit writes.
     GroupFold { fold_mask: usize },
 }
 
 impl Drain {
-    pub(crate) const fn of(lanes: LaneShare, write: Write) -> Self {
-        match (lanes, write) {
-            (LaneShare::Plane, _) => Drain::PlaneFold,
-            (LaneShare::Group { fold_mask }, _) => Drain::GroupFold { fold_mask },
-            // Nothing is folded across the lanes, so nothing has to be combined. Whether they may
-            // all write is what a fold turns on: repeated lanes hold the same cells, so a store
-            // lands the same value however many make it, but a fold lands it once per lane.
-            (LaneShare::Repeated, Write::Accumulate) => Drain::LaneZero,
-            (LaneShare::Repeated, Write::Replace) | (LaneShare::Whole, _) => Drain::EachLane,
+    pub(crate) const fn of(units: UnitShare, write: Write) -> Self {
+        match (units, write) {
+            (UnitShare::Plane, _) => Drain::PlaneFold,
+            (UnitShare::Group { fold_mask }, _) => Drain::GroupFold { fold_mask },
+            // Nothing is folded across the units, so nothing has to be combined. Whether they may
+            // all write is what a fold turns on: repeated units hold the same cells, so a store
+            // lands the same value however many make it, but a fold lands it once per unit.
+            (UnitShare::Repeated, Write::Accumulate) => Drain::UnitZero,
+            (UnitShare::Repeated, Write::Replace) | (UnitShare::Whole, _) => Drain::EachUnit,
         }
     }
 }
 
 /// The view a register block accumulates through: [`seed`](AccumulateView::seed) it, contract into
-/// it, [`commit`](AccumulateView::commit) it back. It owns the [`LaneShare`], so cells the plane's
-/// lanes hold partials of combine on commit and the contraction never asks.
+/// it, [`commit`](AccumulateView::commit) it back. It owns the [`UnitShare`], so cells the plane's
+/// units hold partials of combine on commit and the contraction never asks.
 ///
 /// It owns the [`Monoid`] and the [`CellRead`] for the same reason. Both are one fact about the
 /// accumulation, not a fact about each cell, so they are settled where the view is built and read
@@ -134,7 +134,7 @@ impl Drain {
 pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
     values: MaskedMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
-    lanes: LaneShare,
+    units: UnitShare,
     #[cube(comptime)]
     monoid: Monoid,
     #[cube(comptime)]
@@ -147,7 +147,7 @@ pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = 
 impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedMut<'a, Vector<E, V>, C>,
-        #[comptime] lanes: LaneShare,
+        #[comptime] units: UnitShare,
         #[comptime] split_share: SplitShare,
         #[comptime] write: Write,
         #[comptime] monoid: Monoid,
@@ -156,10 +156,10 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         comptime!(write.admits(split_share, "AccumulateView"));
         AccumulateView::<'a, E, V, C> {
             values,
-            lanes,
+            units,
             monoid,
-            cell_read: comptime!(CellRead::of(lanes, init_from, write)),
-            drain: comptime!(Drain::of(lanes, write)),
+            cell_read: comptime!(CellRead::of(units, init_from, write)),
+            drain: comptime!(Drain::of(units, write)),
         }
     }
 
@@ -169,11 +169,11 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         comptime!(self.values.check)
     }
 
-    /// How these cells are shared across the plane's lanes. A leaf that commits *conditionally*
+    /// How these cells are shared across the plane's units. A leaf that commits *conditionally*
     /// has to ask: past `Whole`, [`commit`](Self::commit) folds across the plane, and a plane op
     /// under divergent control flow is undefined.
-    pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
-        comptime!(self.lanes)
+    pub(crate) fn unit_share(&self) -> comptime_type!(UnitShare) {
+        comptime!(self.units)
     }
 
     /// The monoid these cells fold under, stated where the view was built. A register block asks
@@ -199,28 +199,28 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     }
 
     /// Fold a finished block back. The fold reduces each `V`-wide cell element-wise and leaves
-    /// every lane holding the total, so one writes: the plane's first lane where the whole plane
-    /// shares one cell, each group's first lane where the plane carries a cell per group.
+    /// every unit holding the total, so one writes: the plane's first unit where the whole plane
+    /// shares one cell, each group's first unit where the plane carries a cell per group.
     pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
         match comptime!(self.drain) {
             Drain::PlaneFold => {
-                let combined = self.lanes.fold::<Vector<E, V>>(value, self.monoid);
+                let combined = self.units.fold::<Vector<E, V>>(value, self.monoid);
                 self.commit_shared(pos, combined, UNIT_POS_X == 0);
             }
             Drain::GroupFold { fold_mask } => {
-                let combined = self.lanes.fold::<Vector<E, V>>(value, self.monoid);
-                let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
-                self.commit_shared(pos, combined, lane_in_group == 0);
+                let combined = self.units.fold::<Vector<E, V>>(value, self.monoid);
+                let unit_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
+                self.commit_shared(pos, combined, unit_in_group == 0);
             }
-            // Nothing to combine, but a fold from lanes that repeat each other's work would land
-            // once per lane, so one of them makes it.
-            Drain::LaneZero => self.commit_shared(pos, value, UNIT_POS_X == 0),
-            Drain::EachLane => self.values.write(pos, value),
+            // Nothing to combine, but a fold from units that repeat each other's work would land
+            // once per unit, so one of them makes it.
+            Drain::UnitZero => self.commit_shared(pos, value, UNIT_POS_X == 0),
+            Drain::EachUnit => self.values.write(pos, value),
         }
     }
 
-    /// Commit a cell the plane's lanes share, under the one lane elected to write it. Where this
-    /// is the site that reads the cell, that lane folds it in, which no lane's seed could do.
+    /// Commit a cell the plane's units share, under the one unit elected to write it. Where this
+    /// is the site that reads the cell, that unit folds it in, which no unit's seed could do.
     fn commit_shared(&mut self, pos: C, combined: Vector<E, V>, leader: bool) {
         if leader {
             match comptime!(self.cell_read) {

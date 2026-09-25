@@ -77,7 +77,7 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
         for j in 0..factor {
             let raw = (word >> comptime!((j * bits) as u32)) & mask;
             // Branchless sign extension: `(raw ^ s) - s` with `s = 2^(bits-1)` runs the identical
-            // xor/sub on every lane, two uniform vector ops instead of a compare/select chain.
+            // xor/sub on every unit, two uniform vector ops instead of a compare/select chain.
             let value = (raw ^ sign) as i32 - sign as i32;
             out.insert(base + j, F::cast_from(value));
         }

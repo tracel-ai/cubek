@@ -234,8 +234,8 @@ pub struct FactorReader {
 }
 
 impl FactorReader {
-    /// Whether a read of the scales reaches the lane that asks by a plane shuffle, which the
-    /// whole plane takes part in: a reader keeps its lanes converged around one.
+    /// Whether a read of the scales reaches the unit that asks by a plane shuffle, which the
+    /// whole plane takes part in: a reader keeps its units converged around one.
     pub(crate) fn by_shuffle(&self) -> bool {
         unexpanded!()
     }

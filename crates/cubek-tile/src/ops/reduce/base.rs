@@ -63,7 +63,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
         }
         TileKind::TmaGmem(_) => panic!("reduce: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) | TileKind::Lines(_) => {
-            panic!("reduce: a procedural tile and the plane's lanes are not an accumulator sink")
+            panic!("reduce: a procedural tile and the plane's units are not an accumulator sink")
         }
     }
 }
@@ -81,7 +81,7 @@ fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
         }
         PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
             panic!(
-                "reduce: a hardware mma fragment scatters its rows across lanes in a \
+                "reduce: a hardware mma fragment scatters its rows across units in a \
                  layout the elementwise walk cannot address; reduce into a register, \
                  Gmem or Smem accumulator instead"
             );

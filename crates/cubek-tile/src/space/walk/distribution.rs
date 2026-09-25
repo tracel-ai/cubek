@@ -31,7 +31,7 @@ pub(crate) struct Distribution {
     /// The workers an [`AllAcross`](Count::AllAcross) axis is distributed to in runs; `None`
     /// where each worker takes one tile.
     pub(crate) across: Option<usize>,
-    /// Whether the tiles are taken in turns by as many lanes as the launch runs
+    /// Whether the tiles are taken in turns by as many units as the launch runs
     /// ([`Count::Distributed`]): the instances are the launch's, not the grid's.
     pub(crate) in_turns: bool,
     /// Whether the host proved every worker's run whole, so the kernel skips clamping it.
@@ -99,7 +99,7 @@ impl AxisDistribution {
                     .is_multiple_of(workers),
                 Extent::Dynamic => false,
             },
-            // The lanes are the launch's, so nothing here can prove they divide the count.
+            // The units are the launch's, so nothing here can prove they divide the count.
             Count::Distributed(_) => false,
             Count::Stated(_) | Count::All => true,
         }

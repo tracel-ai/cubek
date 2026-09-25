@@ -184,7 +184,7 @@ fn each_cube_folds_only_its_own_box() {
 // -- A fragment written into a window the edge cuts short --------------------------------------
 //
 // A fragment's store intrinsic writes its whole window, so a tile the problem's edge cuts short
-// bounces through the plane's scratch and each lane writes only the cells inside.
+// bounces through the plane's scratch and each unit writes only the cells inside.
 
 /// `c = a · b` in `16×16×16` fragments over boxes that overhang the output, drained into a plain
 /// output that replaces: through [`Tile::drained_into`], or where `copies` through

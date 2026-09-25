@@ -1,5 +1,5 @@
 //! Deriving the tile an operand is staged into: which element the stage takes, which kind it is
-//! (shared memory, or the plane's own lanes), and the cooperative evaluation that fills a stage
+//! (shared memory, or the plane's own units), and the cooperative evaluation that fills a stage
 //! from a procedural source.
 
 use cubecl::prelude::*;
@@ -52,7 +52,7 @@ impl<T: Numeric> Memory<T> {
         #[comptime] width: Option<usize>,
     ) -> Tile<T> {
         match comptime!(storage.clone()) {
-            // The lanes are not memory: the plane holds them, at the depth one region of
+            // The units are not memory: the plane holds them, at the depth one region of
             // `level` sits, so the regions below the level window them as they window the
             // operand.
             StageStorage::Lines { read } => Tile::<T> {
@@ -183,7 +183,7 @@ impl<T: Numeric> Memory<T> {
             }
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!(
-                    "Memory::smem_stored: a procedural tile and the plane's lanes are not a stage source"
+                    "Memory::smem_stored: a procedural tile and the plane's units are not a stage source"
                 )
             }
         }

@@ -166,7 +166,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
 }
 
 /// [`scaled_matmul`] on a tensor-core accumulator: the scaled operand is landed in shared memory
-/// by the plane's lanes, unpacked and scaled, and loaded as the fragment the plain instruction
+/// by the plane's units, unpacked and scaled, and loaded as the fragment the plain instruction
 /// takes. Both operands carry a landing here so one kernel serves either side.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -1249,11 +1249,11 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
 /// nothing exercised the second.
 ///
 /// The block walks its columns under a constant ordinal, which is what a wide read needs — a fold
-/// is a lane of the read it arrived in, and a lane index is not addressable at runtime. So lane
+/// is a unit of the read it arrived in, and a unit index is not addressable at runtime. So unit
 /// `j` of a scale line goes with column `j`, and the scales vary per `(block of K, column)`.
 #[test]
 fn rhs_scales_are_served_several_at_a_time() {
-    let (rows, cols, block, blocks, lanes) = (2, 4, 8, 4, 4);
+    let (rows, cols, block, blocks, plane_units) = (2, 4, 8, 4, 4);
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
@@ -1296,7 +1296,7 @@ fn rhs_scales_are_served_several_at_a_time() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        plane_units,
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1352,8 +1352,8 @@ fn rhs_scales_are_served_several_at_a_time() {
 }
 
 /// [`scaled_matmul`] with the lhs's scales served as lines: `SW` of them per read, along `KB`.
-/// The fold rides the lane walk, which reads one line per `lw` steps and takes a fixed component
-/// of it; the scalar walk has no line ordinal to fold under, so this block fans out over lanes.
+/// The fold rides the unit walk, which reads one line per `lw` steps and takes a fixed component
+/// of it; the scalar walk has no line ordinal to fold under, so this block fans out over units.
 #[cube(launch)]
 fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<4>>,
@@ -1376,13 +1376,13 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
             Scaled::Lhs => c_r.mma_with(
                 &a.at(&region).mul(&scale.at(&region)),
                 &b.at(&region),
-                comptime!(RegisterBlock::new(64).lane_fanout()),
+                comptime!(RegisterBlock::new(64).component_fanout()),
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => c_r.mma_with(
                 &a.at(&region),
                 &b.at(&region).mul(&scale.at(&region)),
-                comptime!(RegisterBlock::new(64).lane_fanout()),
+                comptime!(RegisterBlock::new(64).component_fanout()),
                 Semiring::SUM_PROD,
             ),
         }
@@ -1393,11 +1393,11 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
 /// else, so `KB` is their innermost axis and a read serves several blocks of `K` at once.
 ///
 /// The block walks its contraction in runs of one scale line for this: the folds are unrolled so
-/// each one's lane is a constant, and the lines under one fold stay rolled, since they all take
+/// each one's unit is a constant, and the lines under one fold stay rolled, since they all take
 /// the same scale. One row here, so the scales are per block of `K` alone.
 #[test]
 fn lhs_scales_are_served_several_at_a_time() {
-    let (cols, block, blocks, lanes) = (4, 4, 4, 4);
+    let (cols, block, blocks, plane_units) = (4, 4, 4, 4);
     let depth = block * blocks;
 
     let client = cubecl::test_device().client();
@@ -1439,7 +1439,7 @@ fn lhs_scales_are_served_several_at_a_time() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        plane_units,
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1628,7 +1628,7 @@ fn check_scaled_cmma(case: CmmaCase) {
 }
 
 /// **The scaled contraction runs on the tensor cores.** The lhs is landed scaled by the plane's
-/// lanes and loaded as the `A` fragment; the instruction is the plain one.
+/// units and loaded as the `A` fragment; the instruction is the plain one.
 #[test]
 fn a_cmma_accumulator_takes_the_scaled_contraction() {
     check_scaled_cmma(CmmaCase::Lhs);
@@ -1804,9 +1804,9 @@ const NI: Axis = Axis(5);
 
 /// `c = a · (b ⊗ s)` over a weight **stored in tile order**, walked the way the memory-bound
 /// kernel walks it on either arm: the cube grid, the planes, the chunks a plane walks under one
-/// load of its scales, the steps of a chunk, and below them the block's lanes or the one fragment.
+/// load of its scales, the steps of a chunk, and below them the block's units or the one fragment.
 ///
-/// The scales of a chunk are loaded once, into the plane's lanes or its own shared window, and
+/// The scales of a chunk are loaded once, into the plane's units or its own shared window, and
 /// every step reads its scale from there.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -1818,7 +1818,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     space: Partitioning,
     #[comptime] instruction: Instruction,
     #[comptime] chunks: Level,
-    #[comptime] read: LaneRead,
+    #[comptime] read: UnitRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     // Both factors land where the instruction reads a window as it lies, and neither does where
@@ -2114,22 +2114,22 @@ enum Arm {
 
 /// **A plane holds its scales for a chunk.** The weight lies in tile order and its scales in
 /// lines, `[NB][KB][NI]`; a plane walks the contraction a chunk of thirty-two blocks at a time and
-/// loads the chunk's thirty-two lines once: lane `t` holds line `t`, or a shared window holds all.
+/// loads the chunk's thirty-two lines once: unit `t` holds line `t`, or a shared window holds all.
 ///
 /// Every step reads the scale of the value it lands or contracts at that value's coordinates, a
 /// word at a time.
 ///
-/// On the register arm a lane holds one column over one block a step, the plane's lanes are a
+/// On the register arm a unit holds one column over one block a step, the plane's units are a
 /// tile's columns by two blocks, and a chunk is sixteen steps. On the tensor cores a plane holds
 /// one fragment, eight rows by half a tile's columns, and walks a chunk one fragment depth a step.
-fn check_chunked(arm: Arm, scales: TileScales, read: LaneRead) {
+fn check_chunked(arm: Arm, scales: TileScales, read: UnitRead) {
     let (rows, n_tiles, chunk, chunks) = (8, 2, 32, 2);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
     if matches!(arm, Arm::Landing) && !require_cmma_8x8x8_f32(&client) {
         return;
     }
-    // The register arm distributes a tile's columns by two blocks to the plane's lanes.
+    // The register arm distributes a tile's columns by two blocks to the plane's units.
     if matches!(arm, Arm::Registers) && skip_unless_plane_holds(&client, (w.tile * 2) as u32) {
         return;
     }
@@ -2139,7 +2139,7 @@ fn check_chunked(arm: Arm, scales: TileScales, read: LaneRead) {
         .zeros()
         .generate_without_host_data();
 
-    // Leaf up: what a lane or a plane holds a step, the steps of a chunk, the chunks, the planes
+    // Leaf up: what a unit or a plane holds a step, the steps of a chunk, the chunks, the planes
     // of a cube, the cubes. A fragment is a level of one all the same, since the body's innermost
     // loop is a level's.
     let levels = match arm {
@@ -2185,33 +2185,33 @@ fn check_chunked(arm: Arm, scales: TileScales, read: LaneRead) {
     w.check(&client, c, &format!("{arm:?} {scales:?}"));
 }
 
-/// Every arm and every scale element, **read both ways**: what the lanes hold is the same
+/// Every arm and every scale element, **read both ways**: what the units hold is the same
 /// either way, so a value read by shuffle and a value read out of the plane's window are the
 /// same value or one of the two is wrong.
 #[test]
-fn a_plane_holds_its_scales_in_its_lanes() {
-    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+fn a_plane_holds_its_scales_in_its_units() {
+    for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_chunked(Arm::Registers, TileScales::F32, read);
     }
 }
 
 #[test]
-fn a_plane_holds_its_byte_scales_in_its_lanes() {
-    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+fn a_plane_holds_its_byte_scales_in_its_units() {
+    for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_chunked(Arm::Registers, TileScales::Ue4m3, read);
     }
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores() {
-    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+    for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_chunked(Arm::Landing, TileScales::F32, read);
     }
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
-    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+    for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_chunked(Arm::Landing, TileScales::Ue4m3, read);
     }
 }
@@ -2231,7 +2231,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] chunks: Level,
-    #[comptime] read: LaneRead,
+    #[comptime] read: UnitRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     let a = a.tile(comptime!(space.clone())).with_landing();
@@ -2284,7 +2284,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
 /// **A tile-ordered weight lands on the tensor cores under a partition.** Sixteen rows: a plane
 /// holds two fragments of rows by two of columns and walks the contraction two blocks a step,
 /// two instructions a block, landing every step's window once.
-fn check_partitioned(scales: TileScales, read: LaneRead) {
+fn check_partitioned(scales: TileScales, read: UnitRead) {
     let (rows, n_tiles, chunk, chunks, fragment) = (16, 2, 32, 2, 8);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
@@ -2331,14 +2331,14 @@ fn check_partitioned(scales: TileScales, read: LaneRead) {
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition() {
-    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+    for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_partitioned(TileScales::F32, read);
     }
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition_with_byte_scales() {
-    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+    for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_partitioned(TileScales::Ue4m3, read);
     }
 }

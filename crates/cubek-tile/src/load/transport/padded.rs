@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 use crate::*;
 
 /// Read one destination line from the masked source view at `pos`: whole for a 1:1 copy, or
-/// assembled lane by lane from scalar source cells for a padded stage ([`widen_line`]).
+/// assembled unit by unit from scalar source cells for a padded stage ([`widen_line`]).
 #[cube]
 pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
@@ -42,9 +42,9 @@ pub(crate) fn physical_pos(
 
 /// Assemble one padded destination line from adjacent scalar source cells.
 ///
-/// When `Padding::lanes` is `None` (a `Dynamic` innermost extent), the source window must be
+/// When `Padding::units` is `None` (a `Dynamic` innermost extent), the source window must be
 /// bounds-checked so that reads past the extent return zero. When it is `Some(n)`, reads past `n`
-/// are masked off explicitly so the padding lanes keep the zero they start at.
+/// are masked off explicitly so the padding units keep the zero they start at.
 #[cube]
 pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
     s: &Masked<'_, Vector<T, SW>, CoordsDyn>,
@@ -60,13 +60,13 @@ pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
     ));
     comptime!(assert!(
         W::try_value_const().is_none_or(|n| n == width),
-        "widen_line: assembles {width} lanes into a {:?}-wide destination line",
+        "widen_line: assembles {width} units into a {:?}-wide destination line",
         W::try_value_const()
     ));
     let last = comptime!(rank - 1);
     let line = pos[last];
     let mut out = Vector::<T, W>::cast_from(T::from_int(0));
-    let guarded = comptime!(match padding.lanes {
+    let guarded = comptime!(match padding.extent {
         Some(n) => !n.is_multiple_of(width),
         None => false,
     });
@@ -76,14 +76,14 @@ pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
             .times(comptime!(width as u32))
             .plus(comptime!(l as u32));
         let valid = if comptime!(guarded) {
-            cell < comptime!(padding.lanes.unwrap() as u32)
+            cell < comptime!(padding.extent.unwrap() as u32)
         } else {
             true.runtime()
         };
         if valid {
             out.insert(
                 l,
-                s.read(source_lane(pos, comptime!(rank), cell))
+                s.read(source_component(pos, comptime!(rank), cell))
                     .extract(0usize),
             );
         }
@@ -93,7 +93,7 @@ pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
 
 /// Replace the destination line coordinate with its scalar source-cell coordinate.
 #[cube]
-pub(crate) fn source_lane(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
+pub(crate) fn source_component(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
     let mut out = CoordsDyn::new();
     #[unroll]
     for p in 0..rank {

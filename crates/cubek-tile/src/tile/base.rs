@@ -36,7 +36,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This tile's memory store, for a reader that addresses bytes. `site` names the reader in
-    /// the refusal: a plane tile, a tensor-map source, a recipe and the plane's lanes have none.
+    /// the refusal: a plane tile, a tensor-map source, a recipe and the plane's units have none.
     pub(crate) fn mem(&self, #[comptime] site: &str) -> &Memory<T> {
         match &self.kind {
             TileKind::Memory(g) => g,
@@ -45,7 +45,7 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::TmaGmem(_) => panic!("Tile::{site}: a tma source has no element view"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
-                panic!("Tile::{site}: a procedural tile and the plane's lanes have no memory view")
+                panic!("Tile::{site}: a procedural tile and the plane's units have no memory view")
             }
         }
     }
@@ -59,7 +59,7 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::TmaGmem(_) => panic!("Tile::{site}: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
-                panic!("Tile::{site}: a procedural tile and the plane's lanes are not writable")
+                panic!("Tile::{site}: a procedural tile and the plane's units are not writable")
             }
         }
     }
@@ -344,7 +344,7 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn projection(&self) -> comptime_type!(Projection) {
         match &self.kind {
             TileKind::Memory(g) => comptime!(g.projection.clone()),
-            // The lanes keep the projection of the operand they stage: which axes one line
+            // The units keep the projection of the operand they stage: which axes one line
             // holds whole is that operand's fact.
             TileKind::Lines(c) => c.projection(),
             TileKind::PlaneTile(_)
@@ -490,7 +490,7 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!(
-                    "Tile::runtime_extent: a procedural tile and the plane's lanes have no extent"
+                    "Tile::runtime_extent: a procedural tile and the plane's units have no extent"
                 )
             }
         };
@@ -546,7 +546,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlanePartition(p) => p.zero(),
             TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
-                panic!("Tile::zero: a procedural tile and the plane's lanes are not writable")
+                panic!("Tile::zero: a procedural tile and the plane's units are not writable")
             }
         }
     }
@@ -624,7 +624,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlanePartition(p) => p.init(val),
             TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
-                panic!("Tile::init: a procedural tile and the plane's lanes are not writable")
+                panic!("Tile::init: a procedural tile and the plane's units are not writable")
             }
         }
     }
@@ -643,7 +643,7 @@ impl<T: Numeric> Tile<T> {
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     ///
-    /// The tile is shared memory, or the plane's own lanes where `storage` says so: an operand
+    /// The tile is shared memory, or the plane's own units where `storage` says so: an operand
     /// reaches the instruction that reads it either way, and which of the two a walk chose is a
     /// decision its blueprint already made.
     ///
@@ -687,7 +687,7 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => match (&mut self.kind, &src.kind) {
-                // The lanes are filled from the memory window of the box they were opened over.
+                // The units are filled from the memory window of the box they were opened over.
                 (TileKind::Lines(d), TileKind::Memory(_)) => d.load(src),
                 (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from(src),
                 (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
@@ -1191,9 +1191,9 @@ impl<E: Numeric> TileExpand<E> {
 
 #[cube]
 impl<S: Numeric> Tile<S> {
-    /// Whether a read of this tile reaches the lane that asks by a plane shuffle, which the
-    /// whole plane takes part in: a reader must keep its lanes converged around it. True of the
-    /// plane's own lanes ([`Lines`]) and of nothing else.
+    /// Whether a read of this tile reaches the unit that asks by a plane shuffle, which the
+    /// whole plane takes part in: a reader must keep its units converged around it. True of the
+    /// plane's own units ([`Lines`]) and of nothing else.
     #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
     pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
         match &self.kind {
@@ -1207,7 +1207,7 @@ impl<S: Numeric> Tile<S> {
     }
 
     /// The one scale at `coords`, one entry per axis of this tile's space, through whatever
-    /// holds it: the plane's lanes are read at the coordinate itself; a memory tile serves
+    /// holds it: the plane's units are read at the coordinate itself; a memory tile serves
     /// lines, so the coordinate names a line and the field of it the scale sits in.
     #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
@@ -1218,7 +1218,7 @@ impl<S: Numeric> Tile<S> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                panic!("Tile::scale_at: a scale is read from memory or from the plane's lanes")
+                panic!("Tile::scale_at: a scale is read from memory or from the plane's units")
             }
         }
     }

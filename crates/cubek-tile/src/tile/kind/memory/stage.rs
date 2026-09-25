@@ -284,7 +284,7 @@ impl<T: Numeric> Memory<T> {
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
                 }),
-                lanes: comptime!(LaneShare::Repeated),
+                unit_share: comptime!(UnitShare::Repeated),
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 factor: Factor::none(),
@@ -297,7 +297,7 @@ impl<T: Numeric> Memory<T> {
 
     /// One plane's landing: a dense, scalar stage over `space`, one window per plane of the
     /// cube in one shared buffer, this plane's found by the walk's own decode of the hardware
-    /// position. The buffer comes back beside the tile, for the lanes that fill it.
+    /// position. The buffer comes back beside the tile, for the units that fill it.
     pub(crate) fn landing(
         #[comptime] space: Space,
         #[comptime] units: usize,
@@ -579,7 +579,7 @@ impl StageForm {
             extents.push(outer.extent_at(p));
         }
         // Rounded up, not truncated: a padded stage's innermost extent need not fill whole lines,
-        // and the spare lanes of the last one are its padding. `fill_extent` refuses the case where
+        // and the spare units of the last one are its padding. `fill_extent` refuses the case where
         // the rounding would mean the stage and its source disagree; every fill path asks it.
         let last = extents.len() - 1;
         extents[last] = extents[last].div_ceil(vector_size);
@@ -605,12 +605,12 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
 }
 
 /// What a padded fill needs beyond the two boxes: `width` scalar source cells assembled per
-/// destination line, and `lanes` the innermost extent past which those cells are padding; `None`
+/// destination line, and `units` the innermost extent past which those cells are padding; `None`
 /// for a `Dynamic` extent, where the source's own bounds check zeroes them ([`fill_extent`]).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Padding {
     pub(crate) width: usize,
-    pub(crate) lanes: Option<usize>,
+    pub(crate) extent: Option<usize>,
     /// The physical rank both boxes share, which only this path needs: the 1:1 copy reads its
     /// line whole and never rebuilds a coordinate.
     pub(crate) rank: usize,
@@ -627,7 +627,7 @@ impl StageStorage {
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
             StageStorage::Lines { .. } => {
-                panic!("StageStorage::Lines: the plane's lanes are not shared memory")
+                panic!("StageStorage::Lines: the plane's units are not shared memory")
             }
             StageStorage::Tiled { block } => {
                 let nested = Space::new(

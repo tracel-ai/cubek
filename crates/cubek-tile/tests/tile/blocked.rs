@@ -653,10 +653,10 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
 
 /// **The scales read as a line.** Their innermost axis is `NB`, the block index, an axis they
 /// actually vary over, so a read of four serves four *different* scales covering four blocks of
-/// columns. A value line's lane is its ordinal along the shared edge, constant across the block.
+/// columns. A value line's component is its ordinal along the shared edge, constant across the block.
 #[test]
 fn scales_are_served_several_at_a_time() {
-    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
     let client = cubecl::test_device().client();
@@ -698,7 +698,7 @@ fn scales_are_served_several_at_a_time() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        units,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -713,7 +713,7 @@ fn scales_are_served_several_at_a_time() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             // The block index alone, and it is innermost: the width lands on the axis the scales
-            // vary over, so one read serves `lanes` different scales.
+            // vary over, so one read serves `units` different scales.
             TileSpec::new(Projection::new(&[K, NB], &[PhysicalAxisMap::of(NB)])),
         ),
         TileArgLaunch::new(
@@ -886,7 +886,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
 /// **The shape a decode gemv runs.** Scales read as a line against a register accumulator.
 #[test]
 fn a_promoted_accumulator_takes_scales_by_the_line() {
-    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
     let client = cubecl::test_device().client();
@@ -927,7 +927,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        units,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -1005,7 +1005,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
 /// binding's, and neither is the values'.
 #[test]
 fn scales_keep_their_own_element_when_served_as_lines() {
-    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
     let client = cubecl::test_device().client();
@@ -1048,7 +1048,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        units,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),

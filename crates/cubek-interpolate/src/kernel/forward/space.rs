@@ -31,7 +31,7 @@ const LABELS: [(Axis, &str); 6] = [
 pub fn register_block(client: &Client) -> RegisterBlock {
     match client.properties().hardware.num_cpu_cores {
         Some(_) => RegisterBlock::new(256).split_edge(),
-        None => RegisterBlock::new(64).lane_fanout(),
+        None => RegisterBlock::new(64).component_fanout(),
     }
 }
 

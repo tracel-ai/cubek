@@ -38,7 +38,7 @@ pub struct Launcher {
 
 impl Launcher {
     /// `partitioning` over `concrete`'s real extents, on `grid`. Refuses a cube the device cannot
-    /// hold, a filler role on a device with no barrier, and a lanes level that is neither one lane
+    /// hold, a filler role on a device with no barrier, and a units level that is neither one unit
     /// nor the plane when the grid is read off the levels.
     pub fn new(client: &Client, partitioning: Partitioning, concrete: &Space, grid: Grid) -> Self {
         let (cube_count, cube_dim) = match grid {
@@ -48,11 +48,11 @@ impl Launcher {
             } => (cube_count, cube_dim),
             Grid::FromLevels => {
                 let plane_size = client.properties().hardware.plane_size_max;
-                let lanes = partitioning.lanes();
+                let plane_units = partitioning.units();
                 assert!(
-                    lanes == 1 || lanes == plane_size,
-                    "Launcher: a grid read off the levels needs a lanes level of one lane or the \
-                     whole plane ({plane_size}), got {lanes}"
+                    plane_units == 1 || plane_units == plane_size,
+                    "Launcher: a grid read off the levels needs a units level of one unit or the \
+                     whole plane ({plane_size}), got {plane_units}"
                 );
                 // Counted over the real extents: the kernel-form space may state none.
                 let over_concrete =

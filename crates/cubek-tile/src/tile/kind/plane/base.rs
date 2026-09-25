@@ -1,7 +1,7 @@
 //! The plane-level tile ([`PlaneTile`]) and the grid of them one plane owns
 //! ([`PlanePartition`]).
 //!
-//! A plane tile is owned by a plane and sliced across its lanes, never unit-addressable: cmma's
+//! A plane tile is owned by a plane and sliced across its units, never unit-addressable: cmma's
 //! `Matrix` is `MatrixScope::Plane`, manual mma's registers index by `UNIT_POS_PLANE`. One concept,
 //! two encodings ([`CmmaData`], [`MmaData`]), so the partition over them is written once.
 
@@ -18,7 +18,7 @@ use crate::*;
 pub enum PlaneTile<T: Numeric> {
     Cmma(CmmaData<T>),
     Mma(MmaData<T>),
-    /// The software leaf's accumulator: a register block, not a hardware fragment. Its lanes
+    /// The software leaf's accumulator: a register block, not a hardware fragment. Its units
     /// hold the block the way the encoding above holds a matrix, so the partition over the
     /// three stays encoding-blind.
     Registers(RegisterData<T>),
@@ -234,7 +234,7 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// `space` is the sink window's: only the software block, a manual mma fragment (whose lanes
+    /// `space` is the sink window's: only the software block, a manual mma fragment (whose units
     /// write their own cells through it) and a cmma fragment bouncing into a store that folds or
     /// a masked window read it.
     pub(crate) fn store_cast_window<Out: Numeric>(
@@ -384,10 +384,10 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// `self[r, :] *= corr[r]` over the partition's rows, each tile bounced through the scratch:
-    /// stored, scaled a cell per lane, loaded back.
+    /// stored, scaled a cell per unit, loaded back.
     ///
     /// The syncs are cube-wide, as every fragment bounce here is: a plane sync does not order a
-    /// fragment store against the lanes' own writes on every backend. They sit outside the skip,
+    /// fragment store against the units' own writes on every backend. They sit outside the skip,
     /// so a plane whose factors are all one still reaches each; the skip is uniform, as `corr` is.
     pub(crate) fn rescale_rows(&self, corr: &Array<T>) {
         let mut scratch = #[comptime]
@@ -408,10 +408,10 @@ impl<T: Numeric> PlanePartition<T> {
             }
         }
         let cells = comptime!(m * n);
-        // The plane's own width and this unit's place in it, both the hardware's: the lanes
+        // The plane's own width and this unit's place in it, both the hardware's: the units
         // distribute the cells between them whatever shape the launch gave the cube.
-        let lanes = PLANE_DIM as usize;
-        let lane = UNIT_POS_PLANE as usize;
+        let units = PLANE_DIM as usize;
+        let plane_unit = UNIT_POS_PLANE as usize;
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
@@ -422,10 +422,10 @@ impl<T: Numeric> PlanePartition<T> {
                 }
                 sync_cube();
                 if moved {
-                    let mut cell = lane;
+                    let mut cell = plane_unit;
                     while cell < cells {
                         scratch[cell] *= corr[mi * m + cell / n];
-                        cell += lanes;
+                        cell += units;
                     }
                 }
                 sync_cube();

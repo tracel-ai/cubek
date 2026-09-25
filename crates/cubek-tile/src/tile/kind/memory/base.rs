@@ -44,12 +44,12 @@ pub struct Memory<T: Numeric> {
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
-    /// What the plane's lanes are to these cells, stamped across [`at`](Tile::at)s, since the
+    /// What the plane's units are to these cells, stamped across [`at`](Tile::at)s, since the
     /// level that spreads an axis is only known on the way down.
     #[cube(comptime)]
-    pub(crate) lanes: LaneShare,
+    pub(crate) unit_share: UnitShare,
     /// What one instance holds of these cells, stamped across [`at`](Tile::at)s like
-    /// [`lanes`](Self::lanes), since only each level's whole space still has the axis this
+    /// [`units`](Self::units), since only each level's whole space still has the axis this
     /// operand's projection dropped. Read by accumulators only; meaningless (`Partial`) elsewhere.
     #[cube(comptime)]
     pub(crate) split_share: SplitShare,
@@ -63,7 +63,7 @@ pub struct Memory<T: Numeric> {
     /// a gathered stage, whose fill replaced out-of-bounds samples its own window cannot name.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
     /// Whether this operand lands on its way to a tensor-core fragment: unpacked and scaled by the
-    /// plane's lanes into plane-owned shared memory ([`Tile::landed`](crate::Tile::landed)).
+    /// plane's units into plane-owned shared memory ([`Tile::landed`](crate::Tile::landed)).
     /// Opened by [`with_landing`](Tile::with_landing); without one the leaf takes it unscaled only.
     #[cube(comptime)]
     pub(crate) lands: bool,
@@ -229,8 +229,8 @@ impl Write {
                  A contracted axis distributed across planes or cubes gives each instance a \
                  slice of the contraction, and none of them holds a whole cell. \
                  Drain into an accumulating destination (bind it as an `AccumulateArg`), \
-                 distribute the contraction across the plane's lanes instead \
-                 (`distribute(lanes(n), ..)`, combined in the plane's registers), or give the \
+                 distribute the contraction across the plane's units instead \
+                 (`distribute(units(n), ..)`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
             ),
         }

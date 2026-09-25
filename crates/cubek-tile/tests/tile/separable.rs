@@ -19,7 +19,7 @@ const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
 const TAP: [Axis; 3] = [Axis(2), Axis(3), Axis(4)];
 
-/// The software instruction every leaf here runs under: a 16-cell budget, no edge split, no lane
+/// The software instruction every leaf here runs under: a 16-cell budget, no edge split, no unit
 /// fan-out.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 

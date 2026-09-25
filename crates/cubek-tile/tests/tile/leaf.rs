@@ -3,7 +3,7 @@
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{LaneShare, Monoid, logsumexp};
+use cubek_tile::{Monoid, UnitShare, logsumexp};
 
 #[cube(launch)]
 fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
@@ -103,42 +103,42 @@ fn test_logsumexp_step_kernel(scores: &Tensor<f32>, output: &mut Tensor<f32>) {
 
 #[cube(launch)]
 fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
-    let lane_id = UNIT_POS_X;
-    let val = (lane_id + 1u32) as f32; // Lane 0: 1.0, Lane 1: 2.0, Lane 2: 3.0, Lane 3: 4.0
+    let unit_id = UNIT_POS_X;
+    let val = (unit_id + 1u32) as f32; // Unit 0: 1.0, Unit 1: 2.0, Unit 2: 3.0, Unit 3: 4.0
 
-    // Non-trivial 4-lane plane operations
-    let p_sum = comptime!(LaneShare::Plane).fold::<f32>(val, Monoid::Sum);
-    let p_max = comptime!(LaneShare::Plane).fold::<f32>(val, Monoid::Max);
-    let p_min = comptime!(LaneShare::Plane).fold::<f32>(val, Monoid::Min);
+    // Non-trivial 4-unit plane operations
+    let p_sum = comptime!(UnitShare::Plane).fold::<f32>(val, Monoid::Sum);
+    let p_max = comptime!(UnitShare::Plane).fold::<f32>(val, Monoid::Max);
+    let p_min = comptime!(UnitShare::Plane).fold::<f32>(val, Monoid::Min);
 
-    // Non-trivial 4-lane butterfly group fold (mask 0b11 = folds all 4 lanes)
+    // Non-trivial 4-unit butterfly group fold (mask 0b11 = folds all 4 units)
     let size!(W2) = 2;
     let mut v2 = Vector::<f32, W2>::zeroed();
     v2.insert(0usize, val);
     v2.insert(1usize, val * 2.0f32);
     let folded_full =
-        comptime!(LaneShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
+        comptime!(UnitShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
 
-    // 2-lane sub-group butterfly fold (mask 0b01 = folds (0,1) and (2,3) separately)
+    // 2-unit sub-group butterfly fold (mask 0b01 = folds (0,1) and (2,3) separately)
     let folded_pair =
-        comptime!(LaneShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
+        comptime!(UnitShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // The same butterfly under max and min
     let max_full =
-        comptime!(LaneShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Max);
+        comptime!(UnitShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Max);
     let min_full =
-        comptime!(LaneShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
+        comptime!(UnitShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
     let min_pair =
-        comptime!(LaneShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
+        comptime!(UnitShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
 
-    // 1-lane fallback paths (lanes = 1, mask = 0)
-    let s_fallback = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Sum);
-    let m_fallback = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Max);
-    let n_fallback = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Min);
-    let g_fallback = comptime!(LaneShare::Whole).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
+    // 1-unit fallback paths (units = 1, mask = 0)
+    let s_fallback = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Sum);
+    let m_fallback = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Max);
+    let n_fallback = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Min);
+    let g_fallback = comptime!(UnitShare::Whole).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
 
-    // Store per-lane results at lane_id * 15
-    let base = (lane_id * 15u32) as usize;
+    // Store per-unit results at unit_id * 15
+    let base = (unit_id * 15u32) as usize;
     output[base] = p_sum;
     output[base + 1] = p_max;
     output[base + 2] = p_min;
@@ -156,21 +156,21 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     output[base + 14] = min_pair.extract(0usize);
 }
 
-/// CPU planes contain one unit, so only exercise the explicit one-lane fallbacks there.
+/// CPU planes contain one unit, so only exercise the explicit one-unit fallbacks there.
 #[cube(launch)]
 fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
-    let lane_id = UNIT_POS_X;
-    let val = (lane_id + 1u32) as f32;
+    let unit_id = UNIT_POS_X;
+    let val = (unit_id + 1u32) as f32;
     let size!(W2) = 2;
     let mut v2 = Vector::<f32, W2>::zeroed();
     v2.insert(0usize, val);
     v2.insert(1usize, val * 2.0f32);
 
-    let base = (lane_id * 15u32) as usize;
-    output[base + 7] = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Sum);
-    output[base + 8] = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Max);
-    output[base + 9] = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Min);
-    output[base + 10] = comptime!(LaneShare::Whole)
+    let base = (unit_id * 15u32) as usize;
+    output[base + 7] = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Sum);
+    output[base + 8] = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Max);
+    output[base + 9] = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Min);
+    output[base + 10] = comptime!(UnitShare::Whole)
         .fold::<Vector<f32, W2>>(v2, Monoid::Sum)
         .extract(0usize);
 }
@@ -298,97 +298,109 @@ fn test_plane_and_group_primitives() {
 
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
-    for lane in 0..4 {
-        let base = lane * 15;
-        let val = (lane + 1) as f32;
+    for plane_unit in 0..4 {
+        let base = plane_unit * 15;
+        let val = (plane_unit + 1) as f32;
 
         if !is_cpu {
-            // Plane cooperative intrinsics (all lanes see the whole-plane reduction)
-            assert_eq!(output.get_f32(&[base]), 10.0, "plane_sum on lane {lane}");
-            assert_eq!(output.get_f32(&[base + 1]), 4.0, "plane_max on lane {lane}");
-            assert_eq!(output.get_f32(&[base + 2]), 1.0, "plane_min on lane {lane}");
+            // Plane cooperative intrinsics (all units see the whole-plane reduction)
+            assert_eq!(
+                output.get_f32(&[base]),
+                10.0,
+                "plane_sum on unit {plane_unit}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 1]),
+                4.0,
+                "plane_max on unit {plane_unit}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 2]),
+                1.0,
+                "plane_min on unit {plane_unit}"
+            );
 
-            // 4-lane butterfly group fold (mask 0b11: all lanes hold the 4-lane vector total)
+            // 4-unit butterfly group fold (mask 0b11: all units hold the 4-unit vector total)
             assert_eq!(
                 output.get_f32(&[base + 3]),
                 10.0,
-                "fold_group 0b11 [0] on lane {lane}"
+                "fold_group 0b11 [0] on unit {plane_unit}"
             );
             assert_eq!(
                 output.get_f32(&[base + 4]),
                 20.0,
-                "fold_group 0b11 [1] on lane {lane}"
+                "fold_group 0b11 [1] on unit {plane_unit}"
             );
 
-            // 2-lane pairwise butterfly fold (mask 0b01: lanes (0,1) and (2,3) fold separately)
-            if lane < 2 {
+            // 2-unit pairwise butterfly fold (mask 0b01: units (0,1) and (2,3) fold separately)
+            if plane_unit < 2 {
                 assert_eq!(
                     output.get_f32(&[base + 5]),
                     3.0,
-                    "fold_group 0b01 [0] on lane {lane}"
+                    "fold_group 0b01 [0] on unit {plane_unit}"
                 );
                 assert_eq!(
                     output.get_f32(&[base + 6]),
                     6.0,
-                    "fold_group 0b01 [1] on lane {lane}"
+                    "fold_group 0b01 [1] on unit {plane_unit}"
                 );
             } else {
                 assert_eq!(
                     output.get_f32(&[base + 5]),
                     7.0,
-                    "fold_group 0b01 [0] on lane {lane}"
+                    "fold_group 0b01 [0] on unit {plane_unit}"
                 );
                 assert_eq!(
                     output.get_f32(&[base + 6]),
                     14.0,
-                    "fold_group 0b01 [1] on lane {lane}"
+                    "fold_group 0b01 [1] on unit {plane_unit}"
                 );
             }
         }
 
-        // 1-lane fallback paths (lanes = 1, mask = 0)
+        // 1-unit fallback paths (units = 1, mask = 0)
         assert_eq!(
             output.get_f32(&[base + 7]),
             val,
-            "sum 1-lane fallback on lane {lane}"
+            "sum 1-unit fallback on unit {plane_unit}"
         );
         assert_eq!(
             output.get_f32(&[base + 8]),
             val,
-            "max 1-lane fallback on lane {lane}"
+            "max 1-unit fallback on unit {plane_unit}"
         );
         assert_eq!(
             output.get_f32(&[base + 9]),
             val,
-            "min 1-lane fallback on lane {lane}"
+            "min 1-unit fallback on unit {plane_unit}"
         );
         assert_eq!(
             output.get_f32(&[base + 10]),
             val,
-            "group mask 0 fallback on lane {lane}"
+            "group mask 0 fallback on unit {plane_unit}"
         );
 
         if !is_cpu {
-            // Max/min butterfly over the same 4 lanes: vectors are [1,2] [2,4] [3,6] [4,8]
+            // Max/min butterfly over the same 4 units: vectors are [1,2] [2,4] [3,6] [4,8]
             assert_eq!(
                 output.get_f32(&[base + 11]),
                 4.0,
-                "max_group 0b11 [0] on lane {lane}"
+                "max_group 0b11 [0] on unit {plane_unit}"
             );
             assert_eq!(
                 output.get_f32(&[base + 12]),
                 8.0,
-                "max_group 0b11 [1] on lane {lane}"
+                "max_group 0b11 [1] on unit {plane_unit}"
             );
             assert_eq!(
                 output.get_f32(&[base + 13]),
                 1.0,
-                "min_group 0b11 [0] on lane {lane}"
+                "min_group 0b11 [0] on unit {plane_unit}"
             );
             assert_eq!(
                 output.get_f32(&[base + 14]),
-                if lane < 2 { 1.0 } else { 3.0 },
-                "min_group 0b01 [0] on lane {lane}"
+                if plane_unit < 2 { 1.0 } else { 3.0 },
+                "min_group 0b01 [0] on unit {plane_unit}"
             );
         }
     }

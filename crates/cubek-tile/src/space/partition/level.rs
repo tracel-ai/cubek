@@ -7,8 +7,8 @@
 //! touches; the rest pass down whole. [`Level::every`], a walk over a region, is the one level
 //! built directly.
 //!
-//! A level states; it does not answer for its consumers. What the plane's lanes are to an
-//! operand's cells is [`LaneShare::new`](crate::LaneShare), what one instance holds of them
+//! A level states; it does not answer for its consumers. What the plane's units are to an
+//! operand's cells is [`UnitShare::new`](crate::UnitShare), what one instance holds of them
 //! [`SplitShare::new`](crate::SplitShare), how a walk distributes an axis `AxisDistribution::new`: each asker
 //! reads the statement and derives its own answer.
 
@@ -56,10 +56,10 @@ pub enum Count {
     /// Every tile, distributed across this many workers in runs: a closed axis returning to the cube
     /// level to be split, and the one run whose length the kernel computes.
     AllAcross(usize),
-    /// This many tiles, stated, taken in turns by the plane's lanes, however many the launch
-    /// runs: a lane count the kernel reads rather than one it is compiled against, so the plane
-    /// width never enters the kernel. A lane takes tiles `lane`, `lane + lanes`, and so on, and
-    /// one past the count takes none. Only lanes take it, and a level taking it distributes nothing
+    /// This many tiles, stated, taken in turns by the plane's units, however many the launch
+    /// runs: a unit count the kernel reads rather than one it is compiled against, so the plane
+    /// width never enters the kernel. A unit takes tiles `unit`, `unit + units`, and so on, and
+    /// one past the count takes none. Only units take it, and a level taking it distributes nothing
     /// else to them.
     Distributed(usize),
 }
@@ -122,7 +122,7 @@ pub enum CubeAxis {
 impl Count {
     /// The workers the tiles are distributed to, where that is a stated number: `Stated` and
     /// `AllAcross` state it, `All` distributes one worker a tile of a grid the launch counts, and
-    /// `Distributed` distributes to as many lanes as the launch runs.
+    /// `Distributed` distributes to as many units as the launch runs.
     pub(crate) fn stated(self) -> Option<usize> {
         match self {
             Count::Stated(n) | Count::AllAcross(n) => Some(n),
@@ -174,7 +174,7 @@ impl Level {
     /// constructor: [`Levels`](crate::Levels) is the only other caller, and it states the tile
     /// as the product of the levels below.
     ///
-    /// What each taker can state: a walk steps a stated count or every tile; lanes and planes
+    /// What each taker can state: a walk steps a stated count or every tile; units and planes
     /// take a stated count each, since their number is the device's; cubes take every tile, or
     /// every tile distributed across a stated number of them.
     pub(crate) fn new(coverage: Coverage, cuts: &[(Axis, usize, Count, Spread)]) -> Level {
@@ -206,12 +206,12 @@ impl Level {
                         cuts.iter().find(|&&(a, ..)| a == axis).map(|&(.., s)| s),
                         Some(Spread::Interleaved)
                     ),
-                    "Level: {axis:?} is distributed in turns to however many lanes the launch runs, so \
-                     the lanes take it interleaved"
+                    "Level: {axis:?} is distributed in turns to however many units the launch runs, so \
+                     the units take it interleaved"
                 ),
                 (_, Count::Distributed(_)) => panic!(
-                    "Level: {axis:?} is distributed in turns to however many lanes the launch runs, \
-                     which only a plane's lanes can be"
+                    "Level: {axis:?} is distributed in turns to however many units the launch runs, \
+                     which only a plane's units can be"
                 ),
                 _ => {}
             }
@@ -222,8 +222,8 @@ impl Level {
         assert!(
             !distributed
                 || (coverage == Coverage::Distribute(ComputeScope::Unit) && cuts.len() == 1),
-            "Level: an axis distributed to however many lanes the launch runs takes all of them, so \
-             the level distributes no other axis to the lanes; it distributes {}",
+            "Level: an axis distributed to however many units the launch runs takes all of them, so \
+             the level distributes no other axis to the units; it distributes {}",
             cuts.len()
         );
         let cuts: Vec<_> = cuts
@@ -275,15 +275,15 @@ impl Level {
     /// of the whole, not a box, which balances a grid its shape cannot divide. It also spans a
     /// region of the level below, so a [`Walk::range`](crate::Walk::range) can end mid-region.
     ///
-    /// Not for lanes: they combine in registers, which needs them in lockstep, and lanes holding
+    /// Not for units: they combine in registers, which needs them in lockstep, and units holding
     /// different shares never are.
     pub(crate) fn sharing(mut self, n: usize) -> Level {
         match self.coverage {
             Coverage::Distribute(ComputeScope::Cube)
             | Coverage::Distribute(ComputeScope::Plane) => {}
             Coverage::Distribute(ComputeScope::Unit) => panic!(
-                "Level::sharing: the plane's lanes combine in registers, which needs them in \
-                 lockstep, and lanes holding different shares never are"
+                "Level::sharing: the plane's units combine in registers, which needs them in \
+                 lockstep, and units holding different shares never are"
             ),
             Coverage::Walk => panic!("Level::sharing: a walk has no workers to share its tiles"),
         }
@@ -482,7 +482,7 @@ impl Level {
     /// How many workers `axis` is distributed out to at this level, where comptime: the stated count, or
     /// the tiles an every-level takes over a static extent. `None` where the grid is unknown here:
     /// a [`Dynamic`](Extent::Dynamic) extent, `space` a projection dropping the axis (a drain), or
-    /// an axis [`Distributed`](Count::Distributed) to as many lanes as the launch runs.
+    /// an axis [`Distributed`](Count::Distributed) to as many units as the launch runs.
     pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),

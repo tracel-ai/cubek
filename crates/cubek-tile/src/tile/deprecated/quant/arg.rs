@@ -72,7 +72,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
 pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
-    // vectorized) axis, whose lanes the view lays down contiguously. Sub-byte native isn't wired.
+    // vectorized) axis, whose units the view lays down contiguously. Sub-byte native isn't wired.
     match scheme.store {
         QuantStore::Native => {}
         QuantStore::PackedU32(dim) => {

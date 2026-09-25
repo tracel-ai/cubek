@@ -372,7 +372,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     #[comptime] frag: usize,
     #[comptime] planes: usize,
     #[comptime] score_vec: usize,
-    #[comptime] lanes: usize,
+    #[comptime] plane_units: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     let q = q.tile(comptime!(space.clone()));
@@ -429,7 +429,8 @@ fn attention_fold_cmma_kernel<E: Float>(
         let v_w = v_stage.at(&plane);
         let row_origin = plane.coord(QP) * rows_p;
 
-        let mut state = RowState::<f32>::over_plane(comptime!(Space::new(&[(QP, rows_p)])), lanes);
+        let mut state =
+            RowState::<f32>::over_plane(comptime!(Space::new(&[(QP, rows_p)])), plane_units);
         // The accumulators' grids are stated as levels: the plane level above, and below it the
         // fragment grid each is cut to, which is what sizes the fragments and the scratch.
         let plane_level = comptime!(
@@ -566,7 +567,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     }
 }
 
-/// Launch the hardware fold: `planes` planes of `lanes`, each owning `rows / planes` rows, over
+/// Launch the hardware fold: `planes` planes of `units`, each owning `rows / planes` rows, over
 /// `block`-wide steps of `s_total` keys with `frag` fragments, and check against direct host
 /// math.
 #[allow(clippy::too_many_arguments)]
@@ -587,10 +588,10 @@ fn run_cmma<E: Float + CubeElement>(
         .enforce();
         return;
     }
-    let lanes = hw.plane_size_min as usize;
-    if lanes * planes > hw.max_units_per_cube as usize {
+    let plane_units = hw.plane_size_min as usize;
+    if plane_units * planes > hw.max_units_per_cube as usize {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "{planes} planes of {lanes} do not fit one cube here"
+            "{planes} planes of {plane_units} do not fit one cube here"
         )))
         .enforce();
         return;
@@ -688,7 +689,7 @@ fn run_cmma<E: Float + CubeElement>(
     attention_fold_cmma_kernel::launch(
         &client,
         CubeCount::new_single(),
-        CubeDim::new_2d(lanes as u32, planes as u32),
+        CubeDim::new_2d(plane_units as u32, planes as u32),
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[QP, D]),
@@ -718,7 +719,7 @@ fn run_cmma<E: Float + CubeElement>(
         frag,
         planes,
         score_vec,
-        lanes,
+        plane_units,
         e_ty,
     );
 
@@ -860,7 +861,7 @@ fn attention_fold_split_kernel<W: Size>(
     // Split-wide working set: a leading `splits` slice on every tile, one
     // window per team.
     //
-    // Only the row lanes name the split as an axis: they are what
+    // Only the row units name the split as an axis: they are what
     // `merge_splits` reads. The score and the accumulator stack it into their
     // row axis, which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
@@ -997,7 +998,7 @@ fn attention_fold_split_kernel<W: Size>(
     }
 }
 
-/// Launch the split fold and check against direct host math, once per row-lane
+/// Launch the split fold and check against direct host math, once per row-unit
 /// layout: the answer cannot depend on where the space puts the split axis.
 #[allow(clippy::too_many_arguments)]
 fn run_split(
@@ -1220,7 +1221,7 @@ fn attention_stream_test_kernel<W: Size>(
     bound: u32,
     space: Partitioning,
     #[comptime] blocks: Level,
-    #[comptime] lanes: usize,
+    #[comptime] plane_units: usize,
     #[comptime] splits: usize,
     #[comptime] block: usize,
 ) {
@@ -1235,7 +1236,7 @@ fn attention_stream_test_kernel<W: Size>(
 
     let kept = comptime!(Space::new(&[(R, rows)]));
     let size!(N) = q.vector_size();
-    let mut fold = StreamFold::<f32, N>::new(&q, lanes, kept);
+    let mut fold = StreamFold::<f32, N>::new(&q, plane_units, kept);
 
     // This team's contiguous slice of the walk: no barriers anywhere.
     let t = UNIT_POS_Y as usize;
@@ -1265,9 +1266,9 @@ fn run_stream(
     vec: usize,
 ) {
     let client: Client = cubecl::test_device().client();
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let plane_units = client.properties().hardware.plane_size_max as usize;
     let cap = client.properties().hardware.max_units_per_cube as usize;
-    let splits = splits.min((cap / lanes).max(1));
+    let splits = splits.min((cap / plane_units).max(1));
     let rows = g;
     let val_dim = d;
     let scale = 1. / (d as f32).sqrt();
@@ -1308,7 +1309,7 @@ fn run_stream(
     attention_stream_test_kernel::launch(
         &client,
         CubeCount::new_single(),
-        CubeDim::new_2d(lanes as u32, splits as u32),
+        CubeDim::new_2d(plane_units as u32, splits as u32),
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
@@ -1330,7 +1331,7 @@ fn run_stream(
         bound_s as u32,
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        lanes,
+        plane_units,
         splits,
         block,
     );
@@ -1379,8 +1380,8 @@ fn stream_fold_idle_teams() {
     run_stream((4, 2, 16, 8, 8), 10, 1);
 }
 
-/// Plain MHA decode: one row, a full 128-wide head, scalar reads. The per-lane budget is tightest
-/// here: `per_lane` is at its maximum, so every team stages a full `CHUNK` of K and V lines on top
+/// Plain MHA decode: one row, a full 128-wide head, scalar reads. The per-unit budget is tightest
+/// here: `per_unit` is at its maximum, so every team stages a full `CHUNK` of K and V lines on top
 /// of its query and accumulator lines. The GQA cases carry several rows, which divides it down.
 #[test]
 fn stream_fold_decode_mha_wide() {
