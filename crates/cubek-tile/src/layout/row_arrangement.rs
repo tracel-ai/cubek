@@ -1,8 +1,6 @@
 //! Where a stage keeps each line of a block row ([`RowArrangement`]): the form [`RowChunks`]
 //! resolves to once the stage knows its extents and its line.
 
-use cubecl::prelude::*;
-
 use crate::*;
 
 /// Bytes one physical line of a buffer holds: what a stage's block rows are placed by, which is
@@ -47,7 +45,7 @@ impl RowArrangement {
     }
 
     /// Whether a row is followed by padding, so line `i` of the stage no longer sits at offset
-    /// `i` and a fill writes it at its pitched offset ([`stage_offset`]).
+    /// `i` and a fill writes it at its pitched offset ([`BufferLayout::line_offset`]).
     pub(crate) fn is_pitched(&self) -> bool {
         match self {
             Self::InOrder | Self::Swizzled(_) => false,
@@ -107,51 +105,6 @@ impl RowArrangement {
             Self::Swizzled(swizzle) if swizzle.line_axis() == axis => Some(*swizzle),
             Self::InOrder | Self::Swizzled(_) | Self::Padded { .. } => None,
         }
-    }
-}
-
-/// `digits`, one per physical axis of a stage, with a block row's line moved to where `rows` keeps
-/// it: a swizzled stage's line digit XORed by its row's key, every other digit as it is. The one
-/// place a swizzle is applied, by the stage's views and its fills alike.
-#[cube]
-pub(crate) fn placed_digits(#[comptime] rows: RowArrangement, digits: &Coords<u32>) -> Coords<u32> {
-    let mut placed = Coords::<u32>::new();
-    #[unroll]
-    for axis in 0..digits.len() {
-        let mut digit = digits.at(axis);
-        // A `match`, not an `if let`: the cube macro branches on a comptime value through a match.
-        #[allow(clippy::single_match)]
-        match comptime!(rows.swizzle_along(axis)) {
-            Some(swizzle) => {
-                digit = swizzled_line(swizzle, digit, digits.at(comptime!(swizzle.row_axis())));
-            }
-            None => {}
-        }
-        placed.push(digit);
-    }
-    placed
-}
-
-/// Where line `i` of a stage whose lines are `shape` sits in its buffer: at `i` where its rows
-/// are not pitched, and past each row's padding by `strides` where they are
-/// ([`RowArrangement::Padded`]).
-#[cube]
-pub(crate) fn stage_offset(
-    #[comptime] rows: RowArrangement,
-    i: usize,
-    shape: &Coords<u32>,
-    strides: &Coords<u32>,
-) -> usize {
-    if comptime!(rows.is_pitched()) {
-        let x = i.cast::<u32>();
-        let mut offset = 0u32;
-        #[unroll]
-        for j in 0..shape.len() {
-            offset = offset.plus(line_digit(x, shape, j).times(strides.at(j)));
-        }
-        offset.cast::<usize>()
-    } else {
-        i
     }
 }
 

@@ -3,7 +3,7 @@
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
-use super::padded::{physical_pos, read_stage_line, widened_shape};
+use super::padded::{read_stage_line, widened_shape};
 use crate::*;
 
 #[cube]
@@ -46,9 +46,7 @@ impl<T: Numeric> Memory<T> {
         let total = shape
             .product(comptime!((0..plen).collect::<Vec<_>>()))
             .cast::<usize>();
-        let projection = comptime!(self.layout.projection.clone());
-        let rows = comptime!(self.layout.rows);
-        let strides = self.layout.physical_strides.clone();
+        let layout = self.layout.clone();
         // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
         // the same agreement between the two boxes.
         let extent = comptime!(fill_extent(&space, sw, w, check));
@@ -104,9 +102,7 @@ impl<T: Numeric> Memory<T> {
                     check,
                 )
             };
-            fill_lines::<I2, WP2, WP2>(
-                d, &s, projection, rows, &shape, &strides, total, total_c, units, straight, padding,
-            );
+            fill_lines::<I2, WP2, WP2>(d, &s, &layout, total, total_c, units, straight, padding);
         } else {
             let s = if comptime!(steps.is_empty()) {
                 Masked::new(
@@ -124,7 +120,7 @@ impl<T: Numeric> Memory<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, projection, rows, &shape, &strides, total, total_c, units, straight, padding,
+                d, &s, &layout, total, total_c, units, straight, padding,
             );
         }
     }
@@ -168,10 +164,7 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
 pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
     s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
-    #[comptime] projection: Projection,
-    #[comptime] rows: RowArrangement,
-    shape: &Coords<u32>,
-    strides: &Coords<u32>,
+    layout: &BufferLayout,
     total: usize,
     #[comptime] total_c: Option<u64>,
     #[comptime] units: usize,
@@ -185,29 +178,23 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             let i = UNIT_POS as usize + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
-                    d[stage_offset(rows, i, shape, strides)] = read_stage_line::<I2, WP2, SW>(
+                    d[layout.line_offset(i)] = read_stage_line::<I2, WP2, SW>(
                         s,
-                        &physical_pos(comptime!(projection.clone()), rows, i, shape),
+                        &layout.line_coords(i),
                         comptime!(padding),
                     );
                 }
             } else {
-                d[stage_offset(rows, i, shape, strides)] = read_stage_line::<I2, WP2, SW>(
-                    s,
-                    &physical_pos(comptime!(projection.clone()), rows, i, shape),
-                    comptime!(padding),
-                );
+                d[layout.line_offset(i)] =
+                    read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding));
             }
         }
     } else {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            d[stage_offset(rows, i, shape, strides)] = read_stage_line::<I2, WP2, SW>(
-                s,
-                &physical_pos(comptime!(projection.clone()), rows, i, shape),
-                comptime!(padding),
-            );
+            d[layout.line_offset(i)] =
+                read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding));
             i += workers;
         }
     }

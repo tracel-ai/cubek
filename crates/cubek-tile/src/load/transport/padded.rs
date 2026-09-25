@@ -22,27 +22,6 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     }
 }
 
-/// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
-/// digit per physical axis ([`line_digit`]), then [`fold_physical`] folds a storage-tiled axis's
-/// digits back into one off `projection`'s own div/modulo (`BufferLayout`'s map, invertible).
-#[cube]
-pub(crate) fn physical_pos(
-    #[comptime] projection: Projection,
-    #[comptime] rows: RowArrangement,
-    i: usize,
-    shape: &Coords<u32>,
-) -> CoordsDyn {
-    let x = i.cast::<u32>();
-    let mut digits = Coords::<u32>::new();
-    #[unroll]
-    for j in 0..shape.len() {
-        digits.push(line_digit(x, shape, j));
-    }
-    // Line `i` of a swizzled stage holds the line its row's key moved there; the XOR is its own
-    // inverse, so the same placement finds it.
-    fold_physical(comptime!(projection), &placed_digits(rows, &digits), shape)
-}
-
 /// Assemble one padded destination line from adjacent scalar source cells.
 ///
 /// When `Padding::units` is `None` (a `Dynamic` innermost extent), the source window must be

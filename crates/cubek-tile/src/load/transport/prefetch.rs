@@ -8,7 +8,7 @@
 use cubecl::prelude::*;
 
 use super::cooperative::fill_extent;
-use super::padded::{physical_pos, read_stage_line};
+use super::padded::read_stage_line;
 use crate::*;
 
 /// Scalars of both operands' stages one unit may hold in registers beside a contraction's own
@@ -128,9 +128,7 @@ impl<T: Numeric> Memory<T> {
         ));
         let check = comptime!(src.access.overhang.masks());
         comptime!(fill_extent(&space, w, w, check));
-        let shape = self.layout.physical_shape.clone();
-        let projection = comptime!(self.layout.projection.clone());
-        let rows = comptime!(self.layout.rows);
+        let layout = self.layout.clone();
         let lines = self.unit_lines();
         let total = self.stage_lines();
         let s = Masked::new(
@@ -141,11 +139,8 @@ impl<T: Numeric> Memory<T> {
         for t in 0..comptime!(lines.tasks()) {
             let i = task_line(t, comptime!(lines));
             if in_stage(i, total, t, comptime!(lines)) {
-                fetched[t] = read_stage_line::<T, W, W>(
-                    &s,
-                    &physical_pos(comptime!(projection.clone()), rows, i, &shape),
-                    comptime!(None),
-                );
+                fetched[t] =
+                    read_stage_line::<T, W, W>(&s, &layout.line_coords(i), comptime!(None));
             }
         }
     }
@@ -158,15 +153,13 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         let lines = self.unit_lines();
         let total = self.stage_lines();
-        let rows = comptime!(self.layout.rows);
-        let shape = self.layout.physical_shape.clone();
-        let strides = self.layout.physical_strides.clone();
+        let layout = self.layout.clone();
         let d = self.lines_storage_mut::<T, W>();
         #[unroll]
         for t in 0..comptime!(lines.tasks()) {
             let i = task_line(t, comptime!(lines));
             if in_stage(i, total, t, comptime!(lines)) {
-                d[stage_offset(rows, i, &shape, &strides)] = fetched[t];
+                d[layout.line_offset(i)] = fetched[t];
             }
         }
     }

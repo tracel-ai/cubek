@@ -6,7 +6,7 @@
 //! In `f16` summed in `f32`, at `16×16×16` where the device offers it and at the shape it does
 //! otherwise (NVIDIA's manual mma is `16×8×16`); a device with no such instruction reports the
 //! test skipped. Lines of
-//! other byte widths (a 4-byte element's, a packed word's) are placed by the same rule, held on
+//! other byte widths (a 4-byte element's, a packed word's) are arranged by the same rule, held on
 //! the host by `RowArrangement`'s and `ChunkSwizzle`'s own tests.
 
 use cubecl::{ir::ElemType, prelude::*, zspace::shape};
@@ -273,7 +273,7 @@ fn check(case: Case) {
 /// A 64-byte row (32 `f16` of `K`), the block the cmma transport conflicts on, swizzled or padded:
 /// the same product as in order.
 #[test]
-fn a_placed_stage_holds_the_product_of_one_in_order() {
+fn an_arranged_stage_holds_the_product_of_one_in_order() {
     for chunks in [RowChunks::InOrder, RowChunks::Swizzled, RowChunks::Padded] {
         check(Case {
             chunks,
@@ -284,7 +284,7 @@ fn a_placed_stage_holds_the_product_of_one_in_order() {
 
 /// A 32-byte row (16 `f16` of `K`), whose rows take two keys or pad by half their length.
 #[test]
-fn a_placed_stage_one_instruction_deep_holds_the_product() {
+fn an_arranged_stage_one_instruction_deep_holds_the_product() {
     for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
         check(Case {
             chunks,
@@ -296,7 +296,7 @@ fn a_placed_stage_one_instruction_deep_holds_the_product() {
 
 /// A 128-byte row (64 `f16` of `K`), four instructions deep.
 #[test]
-fn a_placed_stage_four_instructions_deep_holds_the_product() {
+fn an_arranged_stage_four_instructions_deep_holds_the_product() {
     for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
         for transposed in [false, true] {
             check(Case {
@@ -311,7 +311,7 @@ fn a_placed_stage_four_instructions_deep_holds_the_product() {
 
 /// Lines narrower than a chunk: four lines move together, or four pad a row.
 #[test]
-fn a_placed_stage_of_narrow_lines_holds_the_product() {
+fn an_arranged_stage_of_narrow_lines_holds_the_product() {
     for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
         check(Case {
             chunks,
@@ -335,9 +335,9 @@ fn a_weight_stored_along_k_is_read_where_it_lies() {
 }
 
 /// Two stages in flight, and the next held in registers across the contraction: both fills
-/// write a placed stage where its reads look.
+/// write an arranged stage where its reads look.
 #[test]
-fn a_placed_stage_is_filled_ahead_and_through_registers() {
+fn an_arranged_stage_is_filled_ahead_and_through_registers() {
     for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
         for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
             for transposed in [false, true] {
@@ -372,7 +372,7 @@ fn the_fragment_api_reads_a_padded_stage() {
 /// A stage of two blocks along `M` and `N` each: a block's rows are pitched or swizzled within it,
 /// and the next block starts past the last one's padding.
 #[test]
-fn a_placed_stage_of_several_blocks_holds_the_product() {
+fn an_arranged_stage_of_several_blocks_holds_the_product() {
     for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
         for transposed in [false, true] {
             for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
@@ -391,7 +391,7 @@ fn a_placed_stage_of_several_blocks_holds_the_product() {
 /// Lines wider than a chunk (16 `f16`, 32 bytes): a swizzle moves whole lines, and a pad is one
 /// line long.
 #[test]
-fn a_placed_stage_of_wide_lines_holds_the_product() {
+fn an_arranged_stage_of_wide_lines_holds_the_product() {
     for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
         for transposed in [false, true] {
             check(Case {
