@@ -22,15 +22,6 @@ pub enum Refusal {
     /// A gathered mapping addresses the buffer's own dims, so a storage-tiled binding has no
     /// reading under it.
     GatherOfATiledBinding(Tiling),
-    /// A storage-tiled operand's storage tile is matched against the kernel's levels, which this
-    /// launch does not state.
-    TiledWithoutLevels,
-    /// The operand is stored in `tile` storage tiles, which is the tile of no level of the kernel's
-    /// nest (the levels cut it to `cuts`); the space owns the storage tile's size.
-    StorageTileOfNoLevel {
-        tile: Vec<(Axis, usize)>,
-        cuts: Vec<Vec<(Axis, usize)>>,
-    },
     /// [`gathered`](super::Arg::gathered) states the mapping outright, so `axes` and `batches`
     /// have nothing left to describe.
     GatherWithLabels,
@@ -69,17 +60,6 @@ impl Display for Refusal {
                 f,
                 "Arg::gathered: the mapping addresses the buffer's own dims, so a storage-tiled \
                  binding ({tiling:?}) has no reading here"
-            ),
-            Refusal::TiledWithoutLevels => write!(
-                f,
-                "Arg: a storage-tiled operand's storage tile is the tile of one of the kernel's \
-                 levels, which this launch does not state"
-            ),
-            Refusal::StorageTileOfNoLevel { tile, cuts } => write!(
-                f,
-                "Arg: this operand is stored in {tile:?} storage tiles, which is the tile of no \
-                 level of the kernel's nest (the levels cut it to {cuts:?}); the space owns the \
-                 storage tile's size, so pack the tensor to one of its tiles"
             ),
             Refusal::GatherWithLabels => write!(
                 f,
@@ -242,7 +222,7 @@ impl Labels {
 /// stored tiles-of-tiles deep names one level per nesting, coarse to fine; [`at`](crate::Tile::at)
 /// descends to the innermost. Matched on the labelled axes alone: a batch dim is one physical dim.
 pub(crate) struct StorageLevel {
-    innermost: usize,
+    innermost: Option<usize>,
 }
 
 impl StorageLevel {
@@ -252,9 +232,9 @@ impl StorageLevel {
         tiling: &StorageTiling,
         space: &Space,
         levels: &[Level],
-    ) -> Result<Self, Refusal> {
+    ) -> Self {
         if levels.is_empty() {
-            return Err(Refusal::TiledWithoutLevels);
+            return StorageLevel { innermost: None };
         }
         let fragments = Self::fragments(geometry, axes, tiling);
         let tile_of = |i: usize| -> Vec<(Axis, usize)> {
@@ -280,18 +260,18 @@ impl StorageLevel {
                     ),
                 })
                 .collect();
-            let level = (from..levels.len())
-                .find(|&i| tile_of(i) == tile)
-                .ok_or_else(|| Refusal::StorageTileOfNoLevel {
-                    tile: tile.clone(),
-                    cuts: (from..levels.len()).map(tile_of).collect(),
-                })?;
+            // A storage tile that is no level's tile leaves the operand read through the layout
+            // walk alone, which maps every coordinate onto its fragments wherever the levels cut;
+            // only a raw window refuses it ([`Memory::window_offset`]).
+            let Some(level) = (from..levels.len()).find(|&i| tile_of(i) == tile) else {
+                return StorageLevel { innermost: None };
+            };
             innermost = Some(level);
             from = level + 1;
         }
-        Ok(StorageLevel {
-            innermost: innermost.expect("a tiled operand has at least one nesting"),
-        })
+        StorageLevel {
+            innermost: Some(innermost.expect("a tiled operand has at least one nesting")),
+        }
     }
 
     pub(crate) fn storage(&self) -> Storage {

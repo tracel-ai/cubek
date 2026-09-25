@@ -296,18 +296,19 @@ impl Guard {
 /// block is an axis of a scaled matmul: the space owns the block size, so a window that descended
 /// through that level lies inside one storage tile by construction, not by a divisibility check.
 ///
-/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand
-/// and refuses a tensor whose storage tile is no level's tile. A comptime fact in the kernel;
-/// [`at`](crate::Tile::at) makes [`Tiled`](Storage::Tiled) [`Contiguous`](Storage::Contiguous).
+/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand.
+/// A comptime fact in the kernel; [`at`](crate::Tile::at) makes [`Tiled`](Storage::Tiled)
+/// [`Contiguous`](Storage::Contiguous).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Storage {
     /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
     /// window lies inside it.
     Strided,
-    /// Storage-tiled, the storage tile being the tile of level `i` of the kernel's nest; this
-    /// window sits above that level and spans several storage tiles, so only a layout walk
-    /// addresses its cells. Descending through level `i` makes it [`Contiguous`](Self::Contiguous).
-    Tiled(usize),
+    /// Storage-tiled, and this window may span several storage tiles, so only a layout walk
+    /// addresses its cells. The level is the one of the kernel's nest whose tile the storage tile
+    /// is: descending through it makes the window [`Contiguous`](Self::Contiguous). `None` where
+    /// the storage tile is no level's tile, and then no window is ever known to lie inside one.
+    Tiled(Option<usize>),
     /// Storage-tiled and inside one storage tile: one contiguous run from its origin, addressed
     /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
     /// want.

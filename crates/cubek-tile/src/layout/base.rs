@@ -234,6 +234,19 @@ impl Projection {
         }
     }
 
+    /// One value over the whole of this operand: the same axes, none of them addressed. The
+    /// per-tensor scale above a block level is this of the block scales.
+    pub fn whole(&self) -> Projection {
+        Projection {
+            physical: self
+                .physical
+                .iter()
+                .map(|_| PhysicalAxisMap::broadcast())
+                .collect(),
+            axes: self.axes.clone(),
+        }
+    }
+
     /// `axes` in the tile's logical order, `physical` one per physical axis in buffer order.
     pub fn new(axes: &[Axis], physical: &[PhysicalAxisMap]) -> Self {
         Projection {

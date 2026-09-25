@@ -302,7 +302,7 @@ fn storage_of(
         &tiling,
         launch.space(),
         launch.partitioning().levels(),
-    )?;
+    );
     Ok((Some(tiling), level.storage()))
 }
 

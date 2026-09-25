@@ -235,7 +235,7 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     let mut leaf_tiles = binding(&client, &[8, 2, 8, 4]);
     leaf_tiles.tiling = Tiling::new(&[2, 2]).unwrap();
     let leaf = launch.arg(leaf_tiles).axes(&[M, K]).build();
-    assert_eq!(leaf.spec.storage, Storage::Tiled(2));
+    assert_eq!(leaf.spec.storage, Storage::Tiled(Some(2)));
 
     // Storage of (16, K whole) are the cube's tile, the first level's: an axis stored as one
     // fragment is whole, and a level that leaves it whole matches it. Level-major, the whole
@@ -243,17 +243,17 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     let mut cube_tiles = binding(&client, &[4, 8, 16]);
     cube_tiles.tiling = Tiling::new(&[2, 1]).unwrap();
     let cube = launch.arg(cube_tiles).axes(&[M, K]).build();
-    assert_eq!(cube.spec.storage, Storage::Tiled(0));
+    assert_eq!(cube.spec.storage, Storage::Tiled(Some(0)));
 
     let plain = launch.arg(binding(&client, &[64, 8])).axes(&[M, K]).build();
     assert_eq!(plain.spec.storage, Storage::Strided);
 }
 
-/// A tensor whose block is no level's tile is refused at the launch, on the caller's thread:
-/// (16, 4) is the cube's M with the leaf's K, which no level cuts to.
+/// A tensor whose block is no level's tile is still an operand: (16, 4) is the cube's M with the
+/// leaf's K, which no level cuts to, so no window is known to lie inside one storage tile and every
+/// read goes through the layout walk.
 #[test]
-#[should_panic(expected = "the tile of no level")]
-fn arg_refuses_a_storage_tile_that_is_no_level() {
+fn arg_reads_a_storage_tile_that_is_no_level_through_its_layout() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
@@ -261,7 +261,8 @@ fn arg_refuses_a_storage_tile_that_is_no_level() {
     };
     let mut tiled = binding(&client, &[4, 2, 16, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
-    launch.arg(tiled).axes(&[M, K]).build();
+    let arg = launch.arg(tiled).axes(&[M, K]).build();
+    assert_eq!(arg.spec.storage, Storage::Tiled(None));
 }
 
 /// A batch dim ahead of the tiled block: the metadata describes every logical dim, the operand's
@@ -281,7 +282,7 @@ fn arg_reads_a_tiling_stated_over_batch_dims_too() {
 
     assert_eq!(arg.spec.projection.physical_rank(), 5);
     assert_eq!(arg.spec.projection.coordinate_rank(), 3);
-    assert_eq!(arg.spec.storage, Storage::Tiled(2));
+    assert_eq!(arg.spec.storage, Storage::Tiled(Some(2)));
 }
 
 #[test]
