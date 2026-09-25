@@ -9,4 +9,4 @@ pub(crate) mod prefetch;
 pub(crate) mod scanned;
 pub(crate) mod words;
 
-pub use prefetch::{MOST_FETCHED_SCALARS, fetched_scalars};
+pub use prefetch::{MOST_FETCHED_SCALARS, UnitLines};

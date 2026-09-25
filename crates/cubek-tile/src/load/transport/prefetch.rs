@@ -12,32 +12,83 @@ use super::padded::{physical_pos, read_stage_line};
 use crate::*;
 
 /// Scalars of both operands' stages one unit may hold in registers beside a contraction's own
-/// accumulator, summed over the two ([`fetched_scalars`]).
+/// accumulator, summed over the two ([`UnitLines::scalars`]).
 pub const MOST_FETCHED_SCALARS: usize = 64;
 
-/// Scalars one unit of `units` holds in registers for a stage of `elements` read in lines `width`
-/// wide, when its fill is fetched ahead of a contraction: the rule a routine asks before choosing
-/// that schedule, and the one [`Stages::prefetched`] holds it to.
-pub fn fetched_scalars(elements: usize, width: usize, units: usize) -> usize {
-    elements.div_ceil(width).div_ceil(units) * width
+/// The lines of one stage a single unit moves, when the cube's units take them between them.
+///
+/// **Unit `u` takes lines `u`, `u + units`, …**, so every unit takes the same count and only the
+/// last of them can run past the stage. Holding the two numbers together is what lets the fetch
+/// and the store agree on which line a task is without either re-deriving it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct UnitLines {
+    /// The units the lines are spread over, which must be the launch's `CUBE_DIM`.
+    units: usize,
+    /// The stage's whole line count.
+    lines: usize,
+}
+
+impl UnitLines {
+    /// The lines of a stage of `lines` spread over `units`.
+    ///
+    /// # Panics
+    ///
+    /// Units that were never stated: a stage fetched into registers spreads its lines over the
+    /// launch's units, which an operand's spec has to carry.
+    pub fn new(lines: usize, units: usize) -> Self {
+        assert!(
+            units > 0,
+            "UnitLines: a stage fetched into registers spreads its lines over the launch's \
+             units, which this operand's spec does not state: bind it through `Launcher::arg`, \
+             or set its `units`"
+        );
+        UnitLines { units, lines }
+    }
+
+    /// How many lines one unit moves: the tasks a fetch and a store each run.
+    pub(crate) fn tasks(self) -> usize {
+        self.lines.div_ceil(self.units)
+    }
+
+    /// Scalars one unit holds in registers when each line is `width` wide: what a routine asks
+    /// before choosing this schedule, and what the stages hold it to.
+    pub fn scalars(self, width: usize) -> usize {
+        self.tasks() * width
+    }
+
+    /// Whether task `t` has to be guarded against running past the stage. Only the last task can,
+    /// and only where the units do not divide the lines; elsewhere the guard is a constant the
+    /// expansion folds away.
+    fn guarded(self, t: usize) -> bool {
+        (t + 1) * self.units > self.lines
+    }
 }
 
 #[cube]
 impl<T: Numeric> Memory<T> {
+    /// The lines of this stage one unit moves ([`UnitLines`]).
+    ///
+    /// # Panics
+    ///
+    /// A stage whose shape does not fold, which has no line count to spread.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
+    pub(crate) fn unit_lines(&self) -> comptime_type!(UnitLines) {
+        let folded = self.stage_lines().constant();
+        let units = comptime!(self.access.units);
+        comptime!(UnitLines::new(
+            folded.expect("Memory: a stage fetched into registers has a static shape") as usize,
+            units,
+        ))
+    }
+
     /// Scalars of this stage one unit holds in registers between [`fetch_straight`] and
     /// [`store_fetched`](Memory::store_fetched): every element of the lines it copies.
     ///
     /// [`fetch_straight`]: Memory::fetch_straight
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
-        let total_c = self.stage_lines().constant();
-        let w = comptime!(self.store.vector_size);
-        let units = comptime!(self.access.units);
-        comptime!(fetched_scalars(
-            fetched_stage_lines(total_c, units) * w,
-            w,
-            units
-        ))
+        let lines = self.unit_lines();
+        comptime!(lines.scalars(self.store.vector_size))
     }
 
     /// This stage's lines, a count its whole shape folds at expansion.
@@ -50,13 +101,11 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The straight fill's first half: this unit's lines of `src` read into `fetched`, one
-    /// `W`-wide line per slot ([`fetched_scalars`](Memory::fetched_scalars) over the width). The
-    /// second half, [`store_fetched`](Memory::store_fetched), writes them into this stage.
+    /// `W`-wide line per task. The second half, [`store_fetched`](Memory::store_fetched), writes
+    /// them into this stage.
     ///
     /// Only the copy a matmul stage takes: a plain, direct, unmasked stage that replaces, filled
-    /// at its own width from a plain direct source. Anything else is refused at expansion. The
-    /// lines are dealt over the spec's `units`, which must be the launch's `CUBE_DIM`
-    /// ([`dealt_line`]).
+    /// at its own width from a plain direct source. Anything else is refused at expansion.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn fetch_straight<W: Size>(
         &self,
@@ -64,20 +113,7 @@ impl<T: Numeric> Memory<T> {
         #[comptime] space: Space,
         fetched: &mut Array<Vector<T, W>>,
     ) {
-        comptime!(assert!(
-            self.store.quant.is_none()
-                && src.store.quant.is_none()
-                && self.store.packing == Packing::Plain
-                && src.store.packing == Packing::Plain
-                && self.access.whole
-                && !self.access.overhang.masks()
-                && self.access.write == Write::Replace
-                && self.store.vector_size == src.store.vector_size
-                && self.projection.is_direct()
-                && src.projection.is_direct(),
-            "Memory::fetch_straight: only a plain, direct, whole stage filled at its source's \
-             width is fetched into registers"
-        ));
+        self.refuse_unfetchable(src);
         let w = comptime!(self.store.vector_size);
         let fetched_width = W::value();
         comptime!(assert_eq!(
@@ -88,18 +124,16 @@ impl<T: Numeric> Memory<T> {
         comptime!(fill_extent(&space, w, w, check));
         let shape = self.layout.physical_shape.clone();
         let projection = comptime!(self.layout.projection.clone());
-        let units = comptime!(self.access.units);
+        let lines = self.unit_lines();
         let total = self.stage_lines();
-        let total_c = total.constant();
-        let total_c = comptime!(fetched_stage_lines(total_c, units));
         let s = Masked::new(
             src.window_view_storage::<T, W>(comptime!(Guard::Checked)),
             check,
         );
         #[unroll]
-        for t in 0..comptime!(total_c.div_ceil(units)) {
-            let (i, in_stage) = dealt_line(t, units, total, total_c);
-            if in_stage {
+        for t in 0..comptime!(lines.tasks()) {
+            let i = task_line(t, comptime!(lines));
+            if in_stage(i, total, t, comptime!(lines)) {
                 fetched[t] = read_stage_line::<T, W, W>(
                     &s,
                     &physical_pos(comptime!(projection.clone()), i, &shape),
@@ -115,52 +149,98 @@ impl<T: Numeric> Memory<T> {
     /// next read.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
-        let units = comptime!(self.access.units);
+        let lines = self.unit_lines();
         let total = self.stage_lines();
-        let total_c = total.constant();
-        let total_c = comptime!(fetched_stage_lines(total_c, units));
         let d = self.lines_storage_mut::<T, W>();
         #[unroll]
-        for t in 0..comptime!(total_c.div_ceil(units)) {
-            let (i, in_stage) = dealt_line(t, units, total, total_c);
-            if in_stage {
+        for t in 0..comptime!(lines.tasks()) {
+            let i = task_line(t, comptime!(lines));
+            if in_stage(i, total, t, comptime!(lines)) {
                 d[i] = fetched[t];
             }
         }
     }
+
+    /// Refuse a pairing this transport cannot move: everything it rests on, asserted where the
+    /// fill would otherwise read or write the wrong cells rather than fail.
+    fn refuse_unfetchable(&self, src: &Memory<T>) {
+        comptime!(assert!(
+            self.store.quant.is_none()
+                && src.store.quant.is_none()
+                && self.store.packing == Packing::Plain
+                && src.store.packing == Packing::Plain
+                && self.access.whole
+                && !self.access.overhang.masks()
+                && self.access.write == Write::Replace
+                && self.store.vector_size == src.store.vector_size
+                && self.projection.is_direct()
+                && src.projection.is_direct(),
+            "Memory::fetch_straight: only a plain, direct, whole stage filled at its source's \
+             width is fetched into registers"
+        ));
+    }
 }
 
-/// Task `t` of this unit's share of a stage of `total` lines (`total_c` folded) dealt over `units`
-/// units, straight-line: the line it moves, and whether that line is in the stage. Only the last
-/// task can run past the stage, and only where the units do not divide its lines, so only there
-/// is the guard a comparison; elsewhere it is a constant the expansion folds away.
-///
-/// `units` must be the launch's `CUBE_DIM`, which the kernel cannot check: fewer, and the units
-/// past them write past the stage; more, and lines of it are never written.
+/// The line task `t` of this unit moves.
 #[cube]
-fn dealt_line(
-    #[comptime] t: usize,
-    #[comptime] units: usize,
-    total: usize,
-    #[comptime] total_c: usize,
-) -> (usize, bool) {
-    let i = UNIT_POS as usize + comptime!(t * units);
-    let in_stage = if comptime!((t + 1) * units > total_c) {
+fn task_line(#[comptime] t: usize, #[comptime] lines: UnitLines) -> usize {
+    UNIT_POS as usize + comptime!(t * lines.units)
+}
+
+/// Whether line `i` is one of the stage's `total`. Guarded only where task `t` can run past it
+/// ([`UnitLines::guarded`]); elsewhere a constant the `if` folds away.
+#[cube]
+fn in_stage(i: usize, total: usize, #[comptime] t: usize, #[comptime] lines: UnitLines) -> bool {
+    if comptime!(lines.guarded(t)) {
         i < total
     } else {
-        // A constant, which the `if` it guards folds away.
         true.runtime()
-    };
-    (i, in_stage)
+    }
 }
 
-/// The lines of a stage fetched into registers over `units` units: its folded `total`, refused
-/// where the shape is not static or the units are not stated.
-fn fetched_stage_lines(total: Option<u64>, units: usize) -> usize {
-    assert!(
-        units > 0,
-        "Memory: a stage fetched into registers deals its lines over the launch's units, which \
-         this operand's spec does not state: bind it through `Launcher::arg`, or set its `units`"
-    );
-    total.expect("Memory: a stage fetched into registers has a static shape") as usize
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every unit runs the same number of tasks, so the count rounds up: the units that have no
+    /// line left still step through the loop, guarded.
+    #[test]
+    fn every_unit_runs_the_same_tasks() {
+        assert_eq!(UnitLines::new(256, 64).tasks(), 4);
+        assert_eq!(UnitLines::new(255, 64).tasks(), 4);
+        assert_eq!(UnitLines::new(1, 64).tasks(), 1);
+    }
+
+    /// The registers a unit holds are its tasks at the line's width.
+    #[test]
+    fn the_registers_are_the_tasks_at_the_width() {
+        assert_eq!(UnitLines::new(256, 64).scalars(4), 16);
+        assert_eq!(UnitLines::new(256, 64).scalars(1), 4);
+    }
+
+    /// Only the last task can run past the stage, and only where the units do not divide its
+    /// lines: everywhere else the guard is a constant.
+    #[test]
+    fn only_a_last_task_past_the_lines_is_guarded() {
+        let exact = UnitLines::new(256, 64);
+        for t in 0..exact.tasks() {
+            assert!(
+                !exact.guarded(t),
+                "task {t} of an exact spread needs no guard"
+            );
+        }
+        let ragged = UnitLines::new(200, 64);
+        assert_eq!(ragged.tasks(), 4);
+        for t in 0..3 {
+            assert!(!ragged.guarded(t), "task {t} lies wholly inside the lines");
+        }
+        assert!(ragged.guarded(3), "the last task runs past 200 lines");
+    }
+
+    /// Units nobody stated are refused by name: the spread would otherwise divide by zero.
+    #[test]
+    #[should_panic(expected = "spreads its lines over the launch's units")]
+    fn lines_with_no_units_are_refused() {
+        UnitLines::new(256, 0);
+    }
 }

@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
 ///
 /// Raised by the merges of upstream's shared-memory accumulator, its dealt levels, and its
-/// register-staged fill, whose own surfaces this count now includes. Phase 10 sets the target
-/// the facade lands on.
-const PUB_ITEMS: usize = 792;
+/// register-staged fill, whose own surfaces this count now includes -- the last of them through
+/// [`UnitLines`], the type that replaced its positional helpers. Phase 10 sets the target the
+/// facade lands on.
+const PUB_ITEMS: usize = 794;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 37;
