@@ -12,6 +12,9 @@ rust-version.workspace = true
 repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-test-utils"
 version.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["cubecl/default"]
 std = ["cubecl/std"]

@@ -10,6 +10,9 @@ readme.workspace = true
 repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-matmul"
 version.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["std", "tiled", "multi-level", "cubecl/default"]
 std = ["cubecl/std"]
