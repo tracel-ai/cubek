@@ -40,10 +40,17 @@ fn auto_skinny_matvec() {
     test_matmul_strategy(client(), rect(256, 1, 256, f16_elems()), Strategy::Auto);
 }
 
+/// Skipped where the device has no f64, as on Metal: building the inputs alone launches an f64
+/// kernel the device refuses.
 #[cfg(feature = "heavy")]
 #[test]
 fn auto_medium_f64() {
-    test_matmul_strategy(client(), square(256, f64_elems()), Strategy::Auto);
+    use cubecl::{features::TypeUsage, prelude::*};
+    let client = client();
+    if !f64::supported_uses(&client).contains(TypeUsage::Arithmetic) {
+        return;
+    }
+    test_matmul_strategy(client, square(256, f64_elems()), Strategy::Auto);
 }
 
 /// Stride-0 coverage: an `extended`-tier check, like the rest of the broadcast table.
