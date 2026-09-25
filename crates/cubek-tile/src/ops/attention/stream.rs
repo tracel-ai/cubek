@@ -225,7 +225,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                     for p in 0..per_lane {
                         let li = first + p * span;
                         if li < lines {
-                            partial += Monoid::fold_lanes::<EA, N>(
+                            partial += Monoid::reduce::<EA, N>(
                                 self.q[g * per_lane + p]
                                     * Vector::<EA, N>::cast_from(ks[c * per_lane + p]),
                                 w,

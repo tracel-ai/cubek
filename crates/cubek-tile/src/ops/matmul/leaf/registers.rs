@@ -350,7 +350,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
                     }
                 }
             } else if comptime!(contracted_per_step > 1) {
-                let total = Monoid::fold_lanes::<E, V>(cell, contracted_per_step, monoid);
+                let total = Monoid::reduce::<E, V>(cell, contracted_per_step, monoid);
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(total));
             } else {
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(cell));

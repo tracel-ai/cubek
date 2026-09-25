@@ -79,7 +79,7 @@ impl<EA: Float> Tile<EA> {
                 }
                 #[unroll]
                 for i in 0..height {
-                    let s = Monoid::fold_lanes::<EA, WI>(acc[i], wq, Monoid::Sum);
+                    let s = Monoid::reduce::<EA, WI>(acc[i], wq, Monoid::Sum);
                     out.write((base + i) * cols + c, Vector::cast_from(s));
                 }
             }

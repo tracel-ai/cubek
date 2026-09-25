@@ -56,7 +56,7 @@ impl Arrival {
     }
 }
 
-/// `arrival.count_in(counter)`, the pair [`Monoid::fold`](crate::Monoid::fold) documents.
+/// `arrival.count_in(counter)`, the pair [`Monoid::combine`](crate::Monoid::combine) documents.
 impl Arrival {
     pub fn count_in(self, counter: &Atomic<u32>) -> bool {
         Arrival::count_in_of(counter, self)

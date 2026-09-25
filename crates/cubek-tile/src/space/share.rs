@@ -147,7 +147,7 @@ impl LaneShare {
                 for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
                     if comptime!(fold_mask & (1 << bit) != 0) {
                         total = monoid
-                            .fold::<T>(total, plane_shuffle_xor(total, comptime!(1u32 << bit)));
+                            .combine::<T>(total, plane_shuffle_xor(total, comptime!(1u32 << bit)));
                     }
                 }
                 total

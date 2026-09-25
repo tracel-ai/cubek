@@ -278,7 +278,7 @@ fn cell<T: Numeric, Out: Numeric, A: Size>(
     #[comptime] monoid: Monoid,
 ) -> Vector<Out, A> {
     if comptime!(fold > 1) {
-        Vector::<Out, A>::cast_from(Monoid::fold_lanes::<T, RA>(line, fold, monoid))
+        Vector::<Out, A>::cast_from(Monoid::reduce::<T, RA>(line, fold, monoid))
     } else {
         Vector::<Out, A>::cast_from(line)
     }

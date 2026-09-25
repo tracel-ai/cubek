@@ -184,7 +184,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
 
 /// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step
 /// lands on a line start and one read serves `contracted_per_step` folds. The lanes accumulate in
-/// parallel and collapse through [`Monoid::fold_lanes`] once, after the walk.
+/// parallel and collapse through [`Monoid::reduce`] once, after the walk.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
@@ -224,11 +224,11 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
                 )
             }
         };
-        acc_vec = monoid.fold::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec));
+        acc_vec = monoid.combine::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec));
     }
-    monoid.fold::<Acc>(
+    monoid.combine::<Acc>(
         seed,
-        Monoid::fold_lanes::<Acc, V>(acc_vec, contracted_per_step, monoid),
+        Monoid::reduce::<Acc, V>(acc_vec, contracted_per_step, monoid),
     )
 }
 
@@ -289,7 +289,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
         };
         let in_cast = Acc::cast_from(in_val);
 
-        curr_val = monoid.fold::<Acc>(curr_val, in_cast);
+        curr_val = monoid.combine::<Acc>(curr_val, in_cast);
     }
 
     curr_val

@@ -227,7 +227,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 CellRead::AtCommit => {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, self.monoid.fold::<Vector<E, V>>(old, combined));
+                        .write(pos, self.monoid.combine::<Vector<E, V>>(old, combined));
                 }
                 CellRead::AtSeed | CellRead::Never => self.values.write(pos, combined),
             }

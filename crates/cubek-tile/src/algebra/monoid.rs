@@ -1,9 +1,9 @@
-//! An identity and an associative fold: what every merge of values runs under.
+//! An identity and an associative operation: what every merge of values runs under.
 
 use cubecl::prelude::*;
 
-/// What a monoid asks of the values it folds: ordering and arithmetic. Every bound here is one
-/// the four folds need, and the set stays well below `Numeric`, which `Vector` does not have.
+/// What a monoid asks of the values it combines: ordering and arithmetic. Every bound here is
+/// one the four operations need, and the set stays well below `Numeric`, which `Vector` does not have.
 pub trait Carrier:
     CubePartialOrd
     + CubeAdd
@@ -23,8 +23,8 @@ impl<T> Carrier for T where
 {
 }
 
-/// An identity and an associative fold, taken by everything that merges values: the lane folds,
-/// the register nests, the reduce verb, and the drain that combines a plane's partials.
+/// An identity and an associative operation, taken by everything that merges values: the plane
+/// reductions, the register nests, the reduce verb, and the drain that combines a plane's partials.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Monoid {
     /// `acc + val`, identity `0`.
@@ -51,8 +51,9 @@ impl Monoid {
         }
     }
 
-    /// Fold `rhs` into `lhs`, over scalars and lines alike.
-    fn fold_of<T: Carrier>(lhs: T, rhs: T, #[comptime] monoid: Monoid) -> T {
+    /// `lhs ∗ rhs`, this monoid's operation: pointwise on vectors, which form the same monoid
+    /// component by component.
+    fn combine_of<T: Carrier>(lhs: T, rhs: T, #[comptime] monoid: Monoid) -> T {
         match comptime!(monoid) {
             Monoid::Sum => lhs + rhs,
             Monoid::Prod => lhs * rhs,
@@ -61,8 +62,9 @@ impl Monoid {
         }
     }
 
-    /// Fold a vector's first `width` lanes under `monoid`, seeded with its identity.
-    pub fn fold_lanes<E: Numeric, N: Size>(
+    /// `v₀ ∗ v₁ ∗ … ∗ v_{width-1}`: a vector's first `width` components combined into one value,
+    /// starting from the identity.
+    pub fn reduce<E: Numeric, N: Size>(
         v: Vector<E, N>,
         #[comptime] width: usize,
         #[comptime] monoid: Monoid,
@@ -70,13 +72,13 @@ impl Monoid {
         let mut acc = Monoid::identity::<E>(monoid);
         #[unroll]
         for j in 0..width {
-            acc = monoid.fold::<E>(acc, v.extract(j));
+            acc = monoid.combine::<E>(acc, v.extract(j));
         }
         acc
     }
 
-    /// Fold `len` elements of `arr` under `monoid`, starting from `seed`.
-    pub fn fold_array<E: Numeric>(
+    /// `seed ∗ arr₀ ∗ … ∗ arr_{len-1}`: `len` elements of `arr` combined into `seed`.
+    pub fn reduce_array<E: Numeric>(
         arr: &Array<E>,
         #[comptime] len: usize,
         seed: E,
@@ -85,13 +87,13 @@ impl Monoid {
         let mut acc = seed;
         #[unroll]
         for i in 0..len {
-            acc = monoid.fold::<E>(acc, arr[i]);
+            acc = monoid.combine::<E>(acc, arr[i]);
         }
         acc
     }
 }
 
-/// `monoid.fold(a, b)`, the form call sites use.
+/// `monoid.combine(a, b)`, the form call sites use.
 ///
 /// Written out rather than generated: `#[cube]` hangs a method's expansion on `{Name}Expand`,
 /// which a comptime-only value lacks, so the operation is an associated function above and this
@@ -99,17 +101,17 @@ impl Monoid {
 ///
 /// [`identity`](Monoid::identity) needs no pair: its call is fully comptime and folds on the host.
 impl Monoid {
-    pub fn fold<T: Carrier>(self, lhs: T, rhs: T) -> T {
-        Monoid::fold_of::<T>(lhs, rhs, self)
+    pub fn combine<T: Carrier>(self, lhs: T, rhs: T) -> T {
+        Monoid::combine_of::<T>(lhs, rhs, self)
     }
 
-    pub fn __expand_fold_method<T: Carrier>(
+    pub fn __expand_combine_method<T: Carrier>(
         self,
         scope: &Scope,
         lhs: T::ExpandType,
         rhs: T::ExpandType,
     ) -> T::ExpandType {
-        Monoid::__expand_fold_of::<T>(scope, lhs, rhs, self)
+        Monoid::__expand_combine_of::<T>(scope, lhs, rhs, self)
     }
 }
 

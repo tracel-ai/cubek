@@ -52,7 +52,7 @@ impl Semiring {
     /// One accumulation step: `acc + (lhs * rhs)` under this semiring's two monoids. Takes its
     /// operands in `fma`'s order, which is the instruction the ordinary semiring is.
     ///
-    /// One function rather than [`Monoid::fold`] twice because [`SUM_PROD`](Semiring::SUM_PROD)
+    /// One function rather than [`Monoid::combine`] twice because [`SUM_PROD`](Semiring::SUM_PROD)
     /// must stay a single `fma`: a separate multiply and dependent add doubles the FP instruction
     /// count and serializes the accumulate, since the CPU backend contracts neither.
     fn step_of<T: Carrier + CubePrimitive>(
@@ -64,13 +64,13 @@ impl Semiring {
         if comptime!(semiring == Semiring::SUM_PROD) {
             fma(lhs, rhs, acc)
         } else {
-            let product = semiring.mul().fold::<T>(lhs, rhs);
-            semiring.add().fold::<T>(product, acc)
+            let product = semiring.mul().combine::<T>(lhs, rhs);
+            semiring.add().combine::<T>(product, acc)
         }
     }
 }
 
-/// `semiring.step(a, b, acc)`, the pair [`Monoid::fold`] documents.
+/// `semiring.step(a, b, acc)`, the pair [`Monoid::combine`] documents.
 impl Semiring {
     pub fn step<T: Carrier + CubePrimitive>(self, lhs: T, rhs: T, acc: T) -> T {
         Semiring::step_of::<T>(lhs, rhs, acc, self)
