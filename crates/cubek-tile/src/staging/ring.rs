@@ -4,6 +4,9 @@
 //! Single and double buffering are this schedule at `depth` 1 and 2. At depth 1 a region's fill is
 //! the last event before its read, so the consume publishes it; deeper, the fill a lap ahead does.
 //! That, prologue and drain are the protocol ([`pipelined`]); a kernel supplies ring and consume.
+//!
+//! [`pipelined_through_registers`] is the same walk with each region's fill split around the
+//! contraction before it, the next region's loads held in the units' registers meanwhile.
 
 use cubecl::frontend::branch::{if_else_expand, if_expand};
 use cubecl::ir::Scope;
@@ -28,7 +31,7 @@ pub enum Role {
 pub struct Ring<T: CubeType> {
     pub(crate) slots: Sequence<Staging<T>>,
     pub(crate) sources: T,
-    // Read by the schedule ([`pipelined`]) at expand level only.
+    // Read by the schedules ([`pipelined`], [`pipelined_through_registers`]) at expand level only.
     #[allow(dead_code)]
     #[cube(comptime)]
     pub(crate) depth: usize,
@@ -134,6 +137,107 @@ pub fn pipelined_with<T: CubeType, Fill, F>(
     F: FnMut(&mut Staging<T>, &Region),
 {
     unexpanded!()
+}
+
+/// [`pipelined`]'s walk with each region's fill split around the contraction before it: a unit
+/// reads its share of the next region's stage into registers, the slot is contracted, and the
+/// registers are written into the next slot. The next stage's global loads are in flight while
+/// the contraction runs, rather than issued after the barrier that frees their slot.
+///
+/// One slot costs two cube barriers a region (the contraction's reads are done, then the write
+/// is published); two or more cost one, since the slot written is one the last barrier already
+/// freed. Only one region is ever held ahead, so a ring deeper than two slots is refused: its
+/// slots past the second would hold shared memory and never a stage.
+///
+/// Only a stage copied by every unit of the cube, straight, from a plain operand, both operands
+/// holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way; anything else
+/// is refused at expansion. A ring holding an operand the walk leaves fixed takes [`pipelined`]'s
+/// schedule, at any depth: the fetch moves both operands of a slot at once, and a fixed one is
+/// filled once, above the loop.
+pub fn pipelined_through_registers<Lhs: Numeric, Rhs: Numeric, F>(
+    _walk: Walk,
+    _ring: &mut Ring<(Tile<Lhs>, Tile<Rhs>)>,
+    _compute: F,
+) where
+    F: FnMut(&mut Staging<(Tile<Lhs>, Tile<Rhs>)>, &Region),
+{
+    unexpanded!()
+}
+
+/// The expand of [`pipelined_through_registers`].
+pub mod pipelined_through_registers {
+    use super::*;
+
+    pub fn expand<Lhs: Numeric, Rhs: Numeric, F>(
+        scope: &Scope,
+        walk: WalkExpand,
+        ring: &mut RingExpand<(Tile<Lhs>, Tile<Rhs>)>,
+        mut compute: F,
+    ) where
+        F: FnMut(&Scope, &mut StagingExpand<(Tile<Lhs>, Tile<Rhs>)>, &RegionExpand),
+    {
+        // An operand the walk leaves fixed is filled once, above the loop: there is no next
+        // region of it to fetch, and the ring's own schedule is the whole walk.
+        if ring.has_fixed(scope) {
+            return super::pipelined::expand(scope, walk, ring, compute);
+        }
+        ring.__expand_assert_copied_by_every_unit_method(scope);
+        let depth = ring.depth;
+        assert!(
+            depth <= 2,
+            "pipelined_through_registers: a ring of {depth} slots holds one region ahead, so the \
+             slots past a second would sit idle; build it with a depth of 1 or 2"
+        );
+        let unroll = walk.unroll;
+        let total = walk.__expand_total_method(scope);
+
+        // The first region, filled and published before any contraction.
+        let any = 0usize.into_expand(scope).__expand_lt_method(scope, &total);
+        if_expand(scope, any, |scope| {
+            let first = walk.__expand_region_method(scope, FIRST_SLOT.into_expand(scope));
+            ring.fill_streamed(scope, FIRST_SLOT, &first);
+            ring.publish(scope, FIRST_SLOT);
+        });
+
+        let (mut lhs, mut rhs) = ring.__expand_fetch_buffers_method(scope);
+        let laps = total
+            .__expand_fadd_method(scope, (depth - 1).into_expand(scope))
+            .__expand_fdiv_method(scope, depth.into_expand(scope));
+        let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
+            for j in 0..depth {
+                let target = (j + 1) % depth;
+                let region_idx = lap
+                    .__expand_fmul_method(scope, depth.into_expand(scope))
+                    .__expand_fadd_method(scope, j.into_expand(scope));
+                let next = region_idx.__expand_fadd_method(scope, 1usize.into_expand(scope));
+                let in_walk = region_idx.__expand_lt_method(scope, &total);
+                if_expand(scope, in_walk, |scope| {
+                    let prefetching = next.__expand_lt_method(scope, &total);
+                    if_expand(scope, prefetching, |scope| {
+                        let upcoming = walk.__expand_region_method(scope, next);
+                        ring.__expand_fetch_method(scope, target, &upcoming, &mut lhs, &mut rhs);
+                    });
+                    let region = walk.__expand_region_method(scope, region_idx);
+                    let slot = ring.__expand_slot_mut_method(scope, j);
+                    compute(scope, slot, &region);
+                    if_expand(scope, prefetching, |scope| {
+                        // One slot: every unit has read it before any overwrites it.
+                        if depth == 1 {
+                            ring.publish(scope, FIRST_SLOT);
+                        }
+                        ring.__expand_store_method(scope, target, &lhs, &rhs);
+                        ring.publish(scope, target);
+                    });
+                });
+            }
+        };
+        let range = RangeExpand::new(0usize.into_expand(scope), laps);
+        if unroll {
+            range.expand_unroll(scope, &mut body);
+        } else {
+            range.expand(scope, &mut body);
+        }
+    }
 }
 
 /// The expand of [`pipelined`], spelled at expand level so the compute body can be a closure.
@@ -254,22 +358,23 @@ mod schedule {
                     let ahead =
                         region_idx.__expand_fadd_method(scope, (depth - 1).into_expand(scope));
                     let prefetching = ahead.__expand_lt_method(scope, &total);
-                    let draining = region_idx.__expand_lt_method(scope, &total);
+                    let in_walk = region_idx.__expand_lt_method(scope, &total);
+                    // The compute is emitted once, after the branch on the fill: it is the whole
+                    // unrolled contraction, its accumulator live across whatever branch holds it.
                     if_else_expand(scope, prefetching, |scope| {
                         let prefetch = walk.__expand_region_method(scope, ahead);
                         fill(scope, ring, (j + depth - 1) % depth, &prefetch);
-                        let region = walk.__expand_region_method(scope, region_idx);
-                        let slot = ring.__expand_slot_mut_method(scope, j);
-                        compute(scope, slot, &region);
                     })
                     .or_else(scope, |scope| {
                         // The walk is draining: no fill follows, so this consume publishes.
-                        if_expand(scope, draining, |scope| {
-                            let region = walk.__expand_region_method(scope, region_idx);
+                        if_expand(scope, in_walk, |scope| {
                             ring.publish(scope, j);
-                            let slot = ring.__expand_slot_mut_method(scope, j);
-                            compute(scope, slot, &region);
                         });
+                    });
+                    if_expand(scope, in_walk, |scope| {
+                        let region = walk.__expand_region_method(scope, region_idx);
+                        let slot = ring.__expand_slot_mut_method(scope, j);
+                        compute(scope, slot, &region);
                     });
                 }
             }

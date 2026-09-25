@@ -279,6 +279,75 @@ fn contract_staged<E: Numeric>(
     });
 }
 
+/// Which of the ring's schedules a staged test kernel drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Schedule {
+    /// [`pipelined`]: the next region's slot filled ahead of the contraction.
+    AheadInSlots,
+    /// [`pipelined_through_registers`]: the next region read into registers across the
+    /// contraction and written after it.
+    ThroughRegisters,
+}
+
+/// [`matmul_smem_ring`] under either of the ring's schedules.
+#[cube(launch)]
+fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
+    a: &TileArg<'_, E, V>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    space: Partitioning,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
+    #[comptime] depth: usize,
+    #[comptime] schedule: Schedule,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space.over(&cubes) {
+        let a = a.at(&cube);
+        let b = b.at(&cube);
+        let c = c.at(&cube);
+        for region in c.over(&steps) {
+            let mut c_w = c.at(&region);
+            c_w.zero();
+        }
+        let walk = cube.over(&steps);
+        let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
+        match comptime!(schedule) {
+            Schedule::AheadInSlots => {
+                pipelined(walk, &mut ring, |slot, region| {
+                    let c_r = c.at(region);
+                    slot.consume(|a_s, b_s| {
+                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
+                    });
+                });
+            }
+            Schedule::ThroughRegisters => {
+                pipelined_through_registers(walk, &mut ring, |slot, region| {
+                    let c_r = c.at(region);
+                    slot.consume(|a_s, b_s| {
+                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
+                    });
+                });
+            }
+        }
+    }
+}
+
+/// `c += a · b` on the cube's last unit alone, the rest having only filled the slot: the
+/// contraction adds into `c` where it lies, so one unit makes it, and the last so that most of the
+/// units that wrote the slot sit in other planes, where only a barrier orders their writes before
+/// this read.
+#[cube]
+fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) {
+    if UNIT_POS == CUBE_DIM - 1 {
+        let mut c = c.clone();
+        c.mma_with(a, b, REGISTER_BLOCK, Semiring::SUM_PROD);
+    }
+}
+
 /// [`matmul_smem_ring`] walking its regions last to first.
 #[cube(launch)]
 fn matmul_smem_ring_reversed<E: Numeric, V: Size>(
@@ -1525,6 +1594,31 @@ fn matmul_one_tile_per_cube() {
     );
 }
 
+/// Cubes dealt their boxes in a swizzled order whose strips the grid does not divide: a 3x5 grid
+/// in strips of 2 and of 4 along either axis, the last strip narrower than the rest. Each box must
+/// still go to exactly one cube: one dealt twice doubles its product, one dealt to no cube keeps
+/// the poison `c` came in with.
+#[test]
+fn matmul_ragged_swizzle_deals_every_box_once() {
+    for order in [
+        CubeOrder::SwizzleRow(2),
+        CubeOrder::SwizzleCol(2),
+        CubeOrder::SwizzleRow(4),
+        CubeOrder::SwizzleCol(4),
+    ] {
+        check_matmul(
+            12,
+            20,
+            8,
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk_every(&[K])
+                .cubes(&[M, N])
+                .ordered(order),
+            1,
+        );
+    }
+}
+
 /// The kernel owns the init: `c` comes out as `a·b`, whatever it held going in.
 ///
 /// The whole contraction lands at the leaf here, so a single region writes each cell; the poison
@@ -1689,6 +1783,104 @@ fn assert_tiled_matmul(
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
         .enforce()
+}
+
+/// Drives [`matmul_smem_ring_scheduled`] for `C = A @ B` over `tiling`, whose last level is the
+/// walk it stages, `depth` regions in flight under `schedule`, on a cube of `units` units reading
+/// every operand in lines `width` wide.
+#[allow(clippy::too_many_arguments)]
+fn check_matmul_scheduled(
+    m: usize,
+    n: usize,
+    k: usize,
+    tiling: Tiling,
+    depth: usize,
+    schedule: Schedule,
+    units: u32,
+    width: usize,
+) {
+    let client = cubecl::test_device().client();
+    let levels = tiling.levels();
+    let tile_edge = leaf_edge(&levels, M);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), levels),
+        KernelForm::Static,
+    );
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+        .tile(&[tile_edge, tile_edge])
+        .uniform(7, -100.0, 100.0);
+    // The cube's units, stated on each operand as `Launcher::arg` states them: a stage fetched
+    // into registers deals its lines over them at expansion. The buffer is bound scalar: the
+    // kernel's line type carries the width, and the metadata stays in elements.
+    let bound = |input: &TileInput| {
+        TileArgLaunch::new(input.tensor_arg(1), input.spec().units(units as usize))
+    };
+    matmul_smem_ring_scheduled::launch(
+        &client,
+        launcher.cube_count(),
+        CubeDim::new_1d(units),
+        width,
+        bound(&a),
+        bound(&b),
+        bound(&c),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        depth,
+        schedule,
+        f32::elem_type_native(),
+    );
+    assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
+}
+
+/// The register-staged schedule against the one it splits, over one slot and two (all it takes),
+/// over a `K` walk of four regions a cube and of one: the last region prefetches nothing, and a
+/// walk of one region is its prologue alone. Read in scalars and in lines four wide, on one unit,
+/// on a few units of one plane, and on a cube of 70 units over stages of 256 elements, whose lines
+/// they do not divide: every unit fills its share and the last one contracts, so a missing or
+/// misplaced barrier lets it read what units of other planes have not written, or overwrite what
+/// it has not read.
+#[test]
+fn a_register_staged_ring_matches_a_slot_ahead_ring() {
+    // A leaf `edge` wide on every axis, walked along `K`.
+    let tiling = |edge: usize| {
+        Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+            .walk_every(&[K])
+            .cubes(&[M, N])
+    };
+    // (units, width, problem edge, leaf edge, the `K`s).
+    let cases = [
+        (1u32, 1, 8, 4, [16, 4]),
+        (6, 1, 8, 4, [16, 4]),
+        (1, 4, 8, 4, [16, 4]),
+        (70, 1, 32, 16, [64, 16]),
+        (70, 4, 32, 16, [64, 16]),
+    ];
+    for (units, width, edge, leaf, ks) in cases {
+        for k in ks {
+            for depth in [1, 2] {
+                for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
+                    check_matmul_scheduled(
+                        edge,
+                        edge,
+                        k,
+                        tiling(leaf),
+                        depth,
+                        schedule,
+                        units,
+                        width,
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Drives [`matmul_smem_ring`] for `C = A @ B`: the cube level over the walk it stages, through

@@ -156,6 +156,17 @@ impl CmmaBlueprint {
                 i.m, i.n, i.k, c.m, c.n, p.m, p.n, self.stage_k
             ))));
         }
+        // Any strip width serves any grid, but a strip holds a box: the kernel asserts it at
+        // expansion, which is too late for a plan to be turned down cleanly.
+        if matches!(
+            self.order,
+            CubeOrder::SwizzleRow(0) | CubeOrder::SwizzleCol(0)
+        ) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: a {:?} cube order deals strips of no boxes",
+                self.order
+            ))));
+        }
         let (stage_m, stage_n) = self.stage();
         if !problem.m.is_multiple_of(stage_m)
             || !problem.n.is_multiple_of(stage_n)
@@ -166,18 +177,6 @@ impl CmmaBlueprint {
                 "Cmma requires a shape divisible by the stage: \
                  {}x{}x{} vs stage {stage_m}x{stage_n}x{} (stage_k {})",
                 problem.m, problem.n, problem.k, i.k, self.stage_k
-            ))));
-        }
-        // A swizzle starts a strip every `width` boxes, so a width that does not divide the
-        // grid runs the last strip past it and two boxes answer to one cube. The kernel cannot
-        // check it — a `Space` carries its extents as runtime values — so it is checked here,
-        // where the shape is known.
-        let (stages_m, stages_n) = (problem.m / stage_m, problem.n / stage_n);
-        if !self.order.divides((stages_m, stages_n)) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Cmma: a {:?} cube order strips a grid of {stages_m}x{stages_n} boxes into \
-                 widths that do not divide it, so two boxes would answer to one cube",
-                self.order
             ))));
         }
         // The bulk-copy box is the stage; TMA owns which boxes it can encode.
@@ -648,9 +647,9 @@ impl CmmaRoutine {
                 .unwrap_or(ik),
         };
 
-        // The order the cubes take the boxes in. The strip is the widest power of two the grid
-        // divides, up to [`MAX_SWIZZLE_WIDTH`]: a width the grid does not divide is refused by
-        // `validate`, so the pick is made among the ones that are whole.
+        // The order the cubes take the boxes in: the widest power of two the grid divides, up to
+        // [`MAX_SWIZZLE_WIDTH`]. Any width serves any grid (a last strip may be ragged); this
+        // inferred plan keeps its strips whole, at the cost of a width that moves with the grid.
         let stage_m = planes_m * part_m * im;
         let stages_m = problem.m.checked_div(stage_m).unwrap_or(0);
         let order = match (1..=MAX_SWIZZLE_WIDTH)
