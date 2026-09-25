@@ -1,12 +1,12 @@
 //! Test-only physical-layout enum for the cpu_gemm layout laboratory: a compact
 //! `RowMajor`/`ColMajor`/`Tiled` description that builds synthetic operands (their physical dims +
-//! strides) and converts to the real [`ConcreteLayout`]. Production carries no such enum: it reads
-//! the storage-tiling depth + strides straight off each binding, so this lives with the tests.
+//! strides). Production carries no such enum: it reads the storage-tiling depth + strides straight
+//! off each binding, so this lives with the tests.
 
 use cubecl::prelude::{TensorArg, TensorBinding};
 use cubek_matmul::definition::MatmulSetupError;
 use cubek_std::MatrixLayout;
-use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, StorageTiling};
+use cubek_tile::StorageTiling;
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,38 +60,6 @@ impl InnerLayout {
         strides: &[usize],
     ) -> Result<Self, MatmulSetupError> {
         Ok(MatrixLayout::from_shape_and_strides(shape, strides, None)?.into())
-    }
-
-    /// The per-operand [`ConcreteLayout`] this imposes on the matrix axes `[row, col]`, in physical
-    /// (major-to-minor) order, for layout-request matching: row-major makes `col` innermost,
-    /// col-major `row`, a tiled layout expands each matrix axis into its `[grid…, leaf]` fragments.
-    pub fn to_concrete(
-        &self,
-        matrix: [Axis; 2],
-        num_rows: usize,
-        num_cols: usize,
-    ) -> ConcreteLayout {
-        let [row, col] = matrix;
-        match self {
-            InnerLayout::RowMajor => ConcreteLayout::new(&[
-                PhysicalAxis::new(row, num_rows),
-                PhysicalAxis::new(col, num_cols),
-            ]),
-            InnerLayout::ColMajor => ConcreteLayout::new(&[
-                PhysicalAxis::new(col, num_cols),
-                PhysicalAxis::new(row, num_rows),
-            ]),
-            InnerLayout::Tiled { tiles } => {
-                let row_factors = axis_factors(tiles.iter().map(|t| t.0), num_rows);
-                let col_factors = axis_factors(tiles.iter().map(|t| t.1), num_cols);
-                let mut axes = Vec::with_capacity(row_factors.len() * 2);
-                for (r, c) in row_factors.into_iter().zip(col_factors) {
-                    axes.push(PhysicalAxis::new(row, r));
-                    axes.push(PhysicalAxis::new(col, c));
-                }
-                ConcreteLayout::new(&axes)
-            }
-        }
     }
 
     /// Physical buffer dims to allocate for a logical `(batches, rows, cols)` operand. Strided
