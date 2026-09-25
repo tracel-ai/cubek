@@ -7,7 +7,7 @@
 //! otherwise (NVIDIA's manual mma is `16×8×16`); a device with no such instruction reports the
 //! test skipped. Lines of
 //! other byte widths (a 4-byte element's, a packed word's) are placed by the same rule, held on
-//! the host by `RowPlacement`'s and `ChunkSwizzle`'s own tests.
+//! the host by `RowArrangement`'s and `ChunkSwizzle`'s own tests.
 
 use cubecl::{ir::ElemType, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};

@@ -20,10 +20,10 @@ pub(crate) struct BufferLayout {
     pub(crate) physical_strides: Coords<u32>,
     #[cube(comptime)]
     pub(crate) projection: Projection,
-    /// Where a stage keeps each line of a block row; [`InOrder`](RowPlacement::InOrder) for every
+    /// Where a stage keeps each line of a block row; [`InOrder`](RowArrangement::InOrder) for every
     /// other buffer.
     #[cube(comptime)]
-    pub(crate) rows: RowPlacement,
+    pub(crate) rows: RowArrangement,
 }
 
 #[cube]

@@ -300,7 +300,7 @@ impl<T: Numeric> Memory<T> {
             physical_shape: self.window.extent.clone(),
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
-            rows: RowPlacement::InOrder,
+            rows: RowArrangement::InOrder,
         }
     }
 

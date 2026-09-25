@@ -169,7 +169,7 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
     s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
     #[comptime] projection: Projection,
-    #[comptime] rows: RowPlacement,
+    #[comptime] rows: RowArrangement,
     shape: &Coords<u32>,
     strides: &Coords<u32>,
     total: usize,

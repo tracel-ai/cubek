@@ -28,7 +28,7 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 #[cube]
 pub(crate) fn physical_pos(
     #[comptime] projection: Projection,
-    #[comptime] rows: RowPlacement,
+    #[comptime] rows: RowArrangement,
     i: usize,
     shape: &Coords<u32>,
 ) -> CoordsDyn {

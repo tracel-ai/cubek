@@ -1,4 +1,4 @@
-//! Where a stage keeps each line of a block row ([`RowPlacement`]): the form [`RowChunks`]
+//! Where a stage keeps each line of a block row ([`RowArrangement`]): the form [`RowChunks`]
 //! resolves to once the stage knows its extents and its line.
 
 use cubecl::prelude::*;
@@ -14,7 +14,7 @@ pub(crate) struct LineBytes(pub(crate) usize);
 /// resolves to for a stage's physical extents and line size, and what every read and fill of the
 /// stage addresses through.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum RowPlacement {
+pub(crate) enum RowArrangement {
     /// Each row one run, the next right after it: line `i` of the stage sits at offset `i`. Every
     /// buffer that is not a stage asking otherwise, and a stage whose rows are one chunk each,
     /// which already start on distinct banks.
@@ -28,7 +28,7 @@ pub(crate) enum RowPlacement {
     Padded { lines: usize },
 }
 
-impl RowPlacement {
+impl RowArrangement {
     /// Where the rows of a stage whose physical line extents are `extents` (the last two its
     /// innermost block's rows and a row's lines), each line `line` long, are kept under `chunks`.
     pub(crate) fn new(chunks: RowChunks, extents: &[usize], line: LineBytes) -> Self {
@@ -114,7 +114,7 @@ impl RowPlacement {
 /// it: a swizzled stage's line digit XORed by its row's key, every other digit as it is. The one
 /// place a swizzle is applied, by the stage's views and its fills alike.
 #[cube]
-pub(crate) fn placed_digits(#[comptime] rows: RowPlacement, digits: &Coords<u32>) -> Coords<u32> {
+pub(crate) fn placed_digits(#[comptime] rows: RowArrangement, digits: &Coords<u32>) -> Coords<u32> {
     let mut placed = Coords::<u32>::new();
     #[unroll]
     for axis in 0..digits.len() {
@@ -134,10 +134,10 @@ pub(crate) fn placed_digits(#[comptime] rows: RowPlacement, digits: &Coords<u32>
 
 /// Where line `i` of a stage whose lines are `shape` sits in its buffer: at `i` where its rows
 /// are not pitched, and past each row's padding by `strides` where they are
-/// ([`RowPlacement::Padded`]).
+/// ([`RowArrangement::Padded`]).
 #[cube]
 pub(crate) fn stage_offset(
-    #[comptime] rows: RowPlacement,
+    #[comptime] rows: RowArrangement,
     i: usize,
     shape: &Coords<u32>,
     strides: &Coords<u32>,
@@ -159,19 +159,19 @@ pub(crate) fn stage_offset(
 mod tests {
     use super::*;
 
-    fn swizzled() -> RowPlacement {
-        RowPlacement::new(RowChunks::Swizzled, &[16, 4], LineBytes(16))
+    fn swizzled() -> RowArrangement {
+        RowArrangement::new(RowChunks::Swizzled, &[16, 4], LineBytes(16))
     }
 
-    fn padded() -> RowPlacement {
-        RowPlacement::new(RowChunks::Padded, &[16, 4], LineBytes(16))
+    fn padded() -> RowArrangement {
+        RowArrangement::new(RowChunks::Padded, &[16, 4], LineBytes(16))
     }
 
     /// A TMA box and a window read as one run take rows in order only.
     #[test]
     #[should_panic(expected = "stage it RowChunks::InOrder")]
     fn a_dense_reader_refuses_a_swizzled_stage() {
-        RowPlacement::InOrder.assert_in_order("reader", "why");
+        RowArrangement::InOrder.assert_in_order("reader", "why");
         swizzled().assert_in_order("reader", "why");
     }
 
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "a swizzled stage keeps a row's chunks out of order")]
     fn a_fragment_api_refuses_a_swizzled_stage() {
-        RowPlacement::InOrder.assert_rows_are_runs("cmma");
+        RowArrangement::InOrder.assert_rows_are_runs("cmma");
         padded().assert_rows_are_runs("cmma");
         swizzled().assert_rows_are_runs("cmma");
     }
@@ -198,28 +198,28 @@ mod tests {
     fn a_request_resolves_against_the_rows_it_lays_down() {
         let extents = [2, 16, 4];
         assert_eq!(
-            RowPlacement::new(RowChunks::InOrder, &extents, LineBytes(16)),
-            RowPlacement::InOrder
+            RowArrangement::new(RowChunks::InOrder, &extents, LineBytes(16)),
+            RowArrangement::InOrder
         );
         assert!(matches!(
-            RowPlacement::new(RowChunks::Swizzled, &extents, LineBytes(16)),
-            RowPlacement::Swizzled(_)
+            RowArrangement::new(RowChunks::Swizzled, &extents, LineBytes(16)),
+            RowArrangement::Swizzled(_)
         ));
         assert_eq!(
-            RowPlacement::new(RowChunks::Padded, &extents, LineBytes(16)),
-            RowPlacement::Padded { lines: 1 }
+            RowArrangement::new(RowChunks::Padded, &extents, LineBytes(16)),
+            RowArrangement::Padded { lines: 1 }
         );
         assert_eq!(
-            RowPlacement::new(RowChunks::Padded, &[16, 1], LineBytes(16)),
-            RowPlacement::InOrder
+            RowArrangement::new(RowChunks::Padded, &[16, 1], LineBytes(16)),
+            RowArrangement::InOrder
         );
         assert_eq!(
-            RowPlacement::new(RowChunks::Padded, &[16, 16], LineBytes(4)),
-            RowPlacement::Padded { lines: 4 }
+            RowArrangement::new(RowChunks::Padded, &[16, 16], LineBytes(4)),
+            RowArrangement::Padded { lines: 4 }
         );
         assert_eq!(
-            RowPlacement::new(RowChunks::Padded, &[16, 4], LineBytes(32)),
-            RowPlacement::Padded { lines: 1 }
+            RowArrangement::new(RowChunks::Padded, &[16, 4], LineBytes(32)),
+            RowArrangement::Padded { lines: 1 }
         );
     }
 }
