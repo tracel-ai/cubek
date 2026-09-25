@@ -13,7 +13,13 @@ use crate::*;
 
 /// Scalars of both operands' stages one unit may hold in registers beside a contraction's own
 /// accumulator, summed over the two ([`UnitLines::scalars`]).
-pub const MOST_FETCHED_SCALARS: usize = 64;
+///
+/// 128 scalars: as many registers of 32-bit values, half as many of packed 16-bit pairs. That is
+/// enough for a GEMM stage 64 deep on eight planes (96 scalars a unit), whose global loads are
+/// then in flight across a contraction rather than waited on after it. Whether a stage this large
+/// still fits beside its accumulator without spilling is the caller's to measure; a bound only
+/// rules out what cannot pay.
+pub const MOST_FETCHED_SCALARS: usize = 128;
 
 /// The lines of one stage a single unit moves, when the cube's units take them between them.
 ///
