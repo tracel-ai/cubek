@@ -31,16 +31,6 @@ use cubecl::zspace::SmallVec;
 
 use crate::{Axis, Composition, PhysicalAxisMap, Projection, Space};
 
-impl Projection {
-    /// Start writing a projection one buffer dim at a time. See the [module doc](self).
-    pub fn dims() -> DimsBuilder {
-        DimsBuilder {
-            physical: SmallVec::new(),
-            spanning: SmallVec::new(),
-        }
-    }
-}
-
 /// A [`Projection`] under construction: the dims stated so far, and any axis the operand is
 /// defined over but addresses with no dim.
 #[derive(Clone, Debug)]
@@ -50,6 +40,14 @@ pub struct DimsBuilder {
 }
 
 impl DimsBuilder {
+    /// No dim stated yet: what [`Projection::dims`] starts from.
+    pub(crate) fn new() -> Self {
+        DimsBuilder {
+            physical: SmallVec::new(),
+            spanning: SmallVec::new(),
+        }
+    }
+
     /// The next buffer dim, coarsest first: an [`Axis`], a [`split`], or a [`stencil`].
     pub fn dim(mut self, dim: impl Into<PhysicalAxisMap>) -> Self {
         self.physical.push(dim.into());

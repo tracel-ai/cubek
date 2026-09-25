@@ -7,13 +7,11 @@ mod base;
 mod deprecated;
 mod kind;
 mod packing;
-mod place;
-mod smem_accumulation;
+mod placement;
 
 pub use accumulator::*;
 pub use base::*;
 pub use deprecated::*;
 pub use kind::*;
 pub use packing::*;
-pub use place::*;
-pub use smem_accumulation::*;
+pub use placement::*;

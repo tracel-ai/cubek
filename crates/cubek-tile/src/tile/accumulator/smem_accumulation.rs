@@ -1,7 +1,7 @@
 //! The destination a contraction cut across a cube's planes drains into: a shared-memory buffer
 //! whose writes add into the cell atomically, and a tile that reads the sum back.
 //!
-//! [`atomic`](super::atomic) is the same destination one scope up, in global memory.
+//! [`AccumulateArg`](crate::AccumulateArg) is the same destination one scope up, in global memory.
 //!
 //! What the caller owns is the order. The buffer is zeroed and the cube synchronized before
 //! [`smem_accumulation`](Tile::smem_accumulation) returns, so the first add lands on the identity.
@@ -92,7 +92,7 @@ impl<T: Numeric> Tile<T> {
 
 /// The erased tensors over a shared buffer of atomics: one adds into it, one loads out of it.
 ///
-/// Constructors here rather than in cubecl for the reason [`atomic`](super::atomic)'s is: what a
+/// Constructors here rather than in cubecl for the reason [`AccumulateArg`](crate::AccumulateArg)'s is: what a
 /// write *means* is this crate's statement.
 pub(crate) trait SmemAccumulateSink<E: Numeric> {
     /// The sink that adds into `values`, one scalar per line.
