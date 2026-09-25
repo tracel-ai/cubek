@@ -58,7 +58,8 @@ impl ReduceWithIndicesDtypes {
 /// caps the width to one the second dtype also supports, rather than dropping to scalar on
 /// any width mismatch. `None` for the single-output path.
 ///
-/// Returns the blueprint, the launch settings, and the output vectorization axis.
+/// Returns the blueprint, the launch settings, and the output vectorization axis, or
+/// `None` where the output holds no element and there is nothing for a kernel to write.
 #[allow(clippy::too_many_arguments)]
 fn prepare_reduce_launch(
     client: &Client,
@@ -70,11 +71,24 @@ fn prepare_reduce_launch(
     inst: ReduceOperationConfig,
     address_type: AddressType,
     second_output: Option<ElemType>,
-) -> Result<(ReduceBlueprint, ReduceLaunchSettings, usize), ReduceError> {
-    // Number of distinct reductions = product of non-reduce input dims.
+) -> Result<Option<(ReduceBlueprint, ReduceLaunchSettings, usize)>, ReduceError> {
+    // Number of distinct reductions = product of non-reduce input dims. Taken as a
+    // product rather than `input_elems / reduce_len`, which divides by zero on an
+    // empty reduce axis.
     let reduce_len = input.shape[reduce_axis];
-    let input_elems: usize = input.shape.iter().copied().product();
-    let reduce_count = input_elems / reduce_len;
+    let reduce_count: usize = input
+        .shape
+        .iter()
+        .enumerate()
+        .filter(|(axis, _)| *axis != reduce_axis)
+        .map(|(_, len)| len)
+        .product();
+
+    // A dimension of length zero outside the reduce axis leaves the output empty.
+    // There is no value to write, and a launch sized from it asks for zero units.
+    if reduce_count == 0 {
+        return Ok(None);
+    }
 
     let problem = ReduceProblem {
         reduce_len,
@@ -168,7 +182,7 @@ fn prepare_reduce_launch(
         }
     };
 
-    Ok((blueprint, settings, out_vec_axis))
+    Ok(Some((blueprint, settings, out_vec_axis)))
 }
 
 /// Launch a reduce kernel. This function assumes that all parameters are already validated.
@@ -188,7 +202,7 @@ pub(crate) fn launch_reduce(
         .required_address_type(dtypes.input.size())
         .max(output.required_address_type(dtypes.output.size()));
 
-    let (blueprint, settings, out_vec_axis) = prepare_reduce_launch(
+    let Some((blueprint, settings, out_vec_axis)) = prepare_reduce_launch(
         client,
         &input,
         &output,
@@ -198,7 +212,10 @@ pub(crate) fn launch_reduce(
         inst,
         address_type,
         None,
-    )?;
+    )?
+    else {
+        return Ok(());
+    };
 
     unsafe {
         reduce_kernel::launch_unchecked::<TensorArgs>(
@@ -331,7 +348,7 @@ fn launch_fused<R: ReduceWithIndicesFamily>(
         .max(values.required_address_type(dtypes.values.size()))
         .max(indices.required_address_type(dtypes.indices.size()));
 
-    let (blueprint, settings, out_vec_axis) = prepare_reduce_launch(
+    let Some((blueprint, settings, out_vec_axis)) = prepare_reduce_launch(
         client,
         &input,
         &values,
@@ -347,7 +364,10 @@ fn launch_fused<R: ReduceWithIndicesFamily>(
         // The index output shares the values layout but not its dtype, so the
         // shared output width must stay legal for the index dtype too.
         Some(dtypes.indices),
-    )?;
+    )?
+    else {
+        return Ok(());
+    };
 
     unsafe {
         reduce_with_indices_kernel::launch_unchecked::<TensorArgs, R>(
