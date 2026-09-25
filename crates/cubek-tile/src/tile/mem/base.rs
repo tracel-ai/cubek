@@ -34,9 +34,10 @@ pub struct MemData<T: Numeric> {
     /// [`Offset::Dynamic`](crate::Offset) axis, signed since a padding starts before the buffer.
     /// Not in [`map`](Self::map): it only places the top [`window`](Self::window).
     pub(crate) offsets: Coords<i32>,
-    /// The window origin's offset through the layout, accumulated across [`at`](Tile::at)s rather
-    /// than re-derived: each descent shifts by a *comptime* edge, so [`step_offset`] folds to a
-    /// multiply-add, where re-deriving it would divide per [`window_slice`](MemData::window_slice).
+    /// The window origin's offset through the layout, in lines, accumulated across
+    /// [`at`](Tile::at)s rather than re-derived: each descent shifts by a *comptime* edge, so
+    /// [`step_offset`] folds to a multiply-add, where re-deriving it would divide. The origin of
+    /// the window's [`WindowAddress`].
     pub(crate) window_start: u32,
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]

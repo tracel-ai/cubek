@@ -194,9 +194,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         match self {
             PlaneTile::Cmma(d) => match &src.tile_kind {
-                TileKind::Gmem(m) | TileKind::Smem(m) => {
-                    d.load_window(m, comptime!(MatrixAxes::edges(&src.space).row_split))
-                }
+                TileKind::Gmem(m) | TileKind::Smem(m) => d.load_window(m, comptime!(&src.space)),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -219,9 +217,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
         match self {
             PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
-                FragmentDrain::Intrinsic => {
-                    d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
-                }
+                FragmentDrain::Intrinsic => d.store_window(mem, comptime!(&space)),
                 FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
             },
             PlaneTile::Mma(d) => d.store_window(mem, space),
@@ -254,9 +250,7 @@ impl<T: Numeric> PlaneTile<T> {
     ) {
         match self {
             PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
-                FragmentDrain::Intrinsic => {
-                    d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
-                }
+                FragmentDrain::Intrinsic => d.store_cast_window(mem, comptime!(&space)),
                 FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
             },
             PlaneTile::Mma(d) => d.store_cast_window(mem, space),

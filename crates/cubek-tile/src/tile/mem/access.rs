@@ -580,9 +580,7 @@ impl<T: Numeric> MemData<T> {
                 let lpw = comptime!(nq / w);
                 let size!(NW) = 1usize;
                 let words = src
-                    .lines_storage::<u32, NW>()
-                    .view(src.base())
-                    .view(src.window())
+                    .window_view_storage::<u32, NW>(comptime!(Guard::Checked))
                     .view(FlatLayout::new(src.window.extent.clone()));
                 let scales = info
                     .buffer
@@ -677,14 +675,14 @@ impl<T: Numeric> MemData<T> {
     ///
     /// Buffers only, and only where a *slice* is wanted: every layout-addressed read goes through
     /// [`read_view`](MemData::read_view), which an erased source serves and this cannot.
-    fn lines<W: Size>(&self) -> &[Vector<T, W>] {
+    pub(super) fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.store.buffer().as_vectorized().with_vector_size::<W>()
     }
 
     /// The mutable twin of [`lines`](MemData::lines). Buffers only: an erased destination has no
     /// address and so no lines to hand out. [`write_view`](MemData::write_view) is the write path
     /// both backings share.
-    fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+    pub(super) fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.store
             .buffer_mut()
             .as_vectorized_mut()
@@ -733,11 +731,7 @@ impl<T: Numeric> MemData<T> {
     /// the origin under the storage tile's own strides, otherwise the layout walk under `guard`.
     fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
-            Storage::Contiguous => {
-                let start = self.window_start.fcast::<usize>();
-                let all = self.lines::<W>();
-                all.slice(start, all.len()).view(self.contiguous_layout())
-            }
+            Storage::Contiguous => self.addressed_view::<W>(),
             Storage::Strided | Storage::Tiled(_) => self
                 .read_view::<W>(self.base())
                 .view(self.window().with_guard(guard)),
@@ -751,11 +745,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] guard: Guard,
     ) -> View<'_, Vector<I, WP>, CoordsDyn> {
         match comptime!(self.access.storage) {
-            Storage::Contiguous => {
-                let start = self.window_start.fcast::<usize>();
-                let all = self.lines_storage::<I, WP>();
-                all.slice(start, all.len()).view(self.contiguous_layout())
-            }
+            Storage::Contiguous => self.addressed_view_storage::<I, WP>(),
             Storage::Strided | Storage::Tiled(_) => self
                 .lines_storage::<I, WP>()
                 .view(self.base())
@@ -771,13 +761,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] guard: Guard,
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
-            Storage::Contiguous => {
-                let start = self.window_start.fcast::<usize>();
-                let layout = self.contiguous_layout();
-                let all = self.lines_mut::<W>();
-                let len = all.len();
-                all.slice_mut(start, len).view_mut(layout)
-            }
+            Storage::Contiguous => self.addressed_view_mut::<W>(),
             Storage::Strided | Storage::Tiled(_) => {
                 let base = self.base();
                 let window = self.window().with_guard(guard);
@@ -786,34 +770,9 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// The layout of a window inside one storage tile, relative to its origin: its own extent,
-    /// each coordinate addressed by the stride of its innermost fragment, no digit to split. Sits
-    /// over the run from [`window_offset`](MemData::window_offset) on, like a fragment load.
-    fn contiguous_layout(&self) -> GmemLayout {
-        comptime!(assert!(
-            !self.access.overhang.masks(),
-            "MemData: a window inside one storage tile reads unmasked; a storage-tiled tensor is \
-             padded to whole storage tiles"
-        ));
-        let positional = comptime!(self.layout.projection.clone());
-        let rank = comptime!(positional.coordinate_rank());
-        let mut strides = Coords::<u32>::new();
-        #[unroll]
-        for c in 0..rank {
-            let axis = comptime!(positional.logical_axes()[c]);
-            let inner = comptime!(*positional.carriers(axis).last().unwrap());
-            strides.push(self.layout.physical_strides.at(inner));
-        }
-        GmemLayout {
-            physical_shape: self.window.extent.clone(),
-            physical_strides: strides,
-            projection: comptime!(Projection::direct(positional.logical_axes())),
-        }
-    }
-
     /// [`lines`](MemData::lines) with the buffer re-typed to the quantized storage
     /// element `I` it truly holds (see [`QuantInfo`]).
-    fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
+    pub(super) fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
         let storage = unsafe { self.store.buffer().downcast_unchecked::<I>() };
         storage.as_vectorized().with_vector_size::<W>()
     }
@@ -826,125 +785,9 @@ impl<T: Numeric> MemData<T> {
         storage.as_vectorized_mut().with_vector_size_mut::<W>()
     }
 
-    /// The window as one dense run of lines: index `i` addresses line `origin + i`, one add and no
-    /// layout walk. Legal only on a physically contiguous, row-major window (untiled, unmasked,
-    /// unquantized); the comptime-checkable parts assert, contiguity is the caller's guarantee.
-    pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
-        self.assert_dense();
-        let all = self.lines::<W>();
-        let start = self.window_start.fcast::<usize>();
-        all.slice(start, all.len())
-    }
-
-    /// The mutable twin of [`dense_lines`](MemData::dense_lines).
-    pub(crate) fn dense_lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.assert_dense();
-        let start = self.window_start.fcast::<usize>();
-        let all = self.lines_mut::<W>();
-        let end = all.len();
-        all.slice_mut(start, end)
-    }
-
-    /// Refuse a window that is not one dense run of lines: the comptime half of
-    /// [`dense_lines`](MemData::dense_lines)'s contract.
-    fn assert_dense(&self) {
-        comptime!(assert!(
-            !self.access.overhang.masks(),
-            "MemData::dense_lines: a dense window cannot mask an overhang"
-        ));
-        comptime!(assert!(
-            !self.layout.projection.is_tiled(),
-            "MemData::dense_lines: a storage-tiled window is not dense"
-        ));
-        comptime!(assert!(
-            self.projection.is_direct(),
-            "MemData::dense_lines: a gathered window is not dense (sibling windows overlap)"
-        ));
-        comptime!(assert!(
-            self.store.packing == Packing::Plain,
-            "MemData::dense_lines: a packed store is served through its packed views"
-        ));
-    }
-
-    /// The buffer from this window's origin on: the base a cmma load/store addresses, rows
-    /// stepping by the scalar [`row_stride`](MemData::row_stride). Requires an unmasked store
-    /// whose window does not split rows across storage tiles.
-    pub(crate) fn window_slice(&self) -> &[T] {
-        let offset = self.window_offset();
-        self.store.buffer().slice(offset, self.store.buffer().len())
-    }
-
-    /// The mutable twin of [`window_slice`](MemData::window_slice).
-    pub(crate) fn window_slice_mut(&mut self) -> &mut [T] {
-        let offset = self.window_offset();
-        let end = self.store.buffer().len();
-        self.store.buffer_mut().slice_mut(offset, end)
-    }
-
     /// Whether this store was opened with a landing ([`Tile::with_landing`]).
     pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
         comptime!(self.lands)
-    }
-
-    /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
-    /// one contiguous region, so on a tiled store it must lie inside one storage tile, which is
-    /// what [`Storage`] says of it.
-    fn window_offset(&self) -> usize {
-        comptime!(assert!(
-            !self.access.overhang.masks(),
-            "MemData::window_offset: cmma cannot mask an overhang"
-        ));
-        // Reading a window above its storage tile from a base and a row stride would walk straight
-        // through a storage tile boundary and return another tile's cells, silently. The layout
-        // walk addresses them correctly; a fragment load cannot, and says so.
-        match comptime!(self.access.storage) {
-            Storage::Strided => {}
-            Storage::Contiguous => {}
-            Storage::Tiled(Some(level)) => panic!(
-                "MemData::window_offset: this window sits above its storage tile (the tile of \
-                 level {level}), spanning several, so it is not one contiguous region; descend \
-                 through that level first, or read the operand through its layout"
-            ),
-            Storage::Tiled(None) => panic!(
-                "MemData::window_offset: this operand's storage tile is the tile of no level of \
-                 the kernel's nest, so no window is known to lie inside one; read it through its \
-                 layout, or stage it"
-            ),
-        }
-        // A raw window serves the buffer at the element it was erased to, so a quantized store
-        // would hand its stored bytes over as served values. Every other door refuses the same way.
-        if comptime!(self.store.packing != Packing::Plain) {
-            panic!(
-                "MemData::window_slice: a packed store has no raw element window; a fragment \
-                 load reads it through Tile::matrix_transparent"
-            )
-        }
-        self.window_start.fcast::<usize>()
-    }
-
-    /// Scalar stride between matrix rows: the line-unit physical stride of the leaf
-    /// tile's row axis, widened back to scalars; a constant on a static store.
-    pub(crate) fn row_stride(&self) -> u32 {
-        let rank = comptime!(self.layout.projection.physical_rank());
-        self.row_stride_at(comptime!(rank - 2))
-    }
-
-    /// [`row_stride`](MemData::row_stride) with the row axis stated: the logical position a matrix
-    /// reader takes as its rows ([`MatrixAxes::edges`]), the physical one on a direct, untiled
-    /// store. Any other keeps its own row: its tile's if storage-tiled, else the dim above a fold.
-    pub(crate) fn row_stride_at(&self, #[comptime] row: usize) -> u32 {
-        let rank = comptime!(self.layout.projection.physical_rank());
-        let row = comptime!(
-            if self.projection.is_direct() && !self.layout.projection.is_tiled() {
-                row
-            } else {
-                rank - 2
-            }
-        );
-        self.layout
-            .physical_strides
-            .at(row)
-            .fmul(comptime!(self.store.vector_size as u32).runtime())
     }
 
     /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
@@ -1566,8 +1409,8 @@ impl<T: Numeric> MemData<T> {
             }
         }
 
-        // The line route, which `dense_lines` and the matrix view read, moves by the same
-        // elements: one axis step at edge `1`.
+        // Masked from here down, the window has no [`WindowAddress`] to read this; it still moves
+        // with the origin, one axis step at edge `1`, so it stays true of the window.
         let start = self.window_start.fadd(from.fcast::<u32>().fmul(step_offset(
             comptime!(self.layout.projection.clone()),
             comptime!(Axis(at as u8)),

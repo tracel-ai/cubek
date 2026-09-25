@@ -111,7 +111,7 @@ impl<T: Numeric> CmmaData<T> {
     /// Fill this fragment from `mem`'s *window*: `A`/`B` use `cmma::load`, an
     /// `Accumulator` uses `load_with_layout`. Rows step by the store's physical row
     /// stride, so a window into a larger stage loads like a whole buffer.
-    pub(crate) fn load_window(&mut self, mem: &MemData<T>, #[comptime] row: usize) {
+    pub(crate) fn load_window(&mut self, mem: &MemData<T>, #[comptime] space: &Space) {
         let dequant_at = mem.dequant_at();
         comptime!(assert!(
             dequant_at == DequantAt::Load,
@@ -119,7 +119,7 @@ impl<T: Numeric> CmmaData<T> {
              decode a quantized source as it reads; serve that operand by its load \
              (DequantAt::Load) or stage it into shared memory first"
         ));
-        let stride = mem.row_stride_at(row);
+        let stride = mem.row_stride(space);
         match comptime!(self.ident) {
             MatrixIdent::Accumulator => cmma::load_with_layout(
                 &mut self.matrix,
@@ -132,8 +132,8 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// Drain this fragment into `mem`'s *window* (origin offset, physical row stride).
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] row: usize) {
-        let stride = mem.row_stride_at(row);
+    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: &Space) {
+        let stride = mem.row_stride(space);
         cmma::store(
             mem.window_slice_mut(),
             &self.matrix,
@@ -231,9 +231,9 @@ impl<T: Numeric> CmmaData<T> {
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
         mem: &mut MemData<Out>,
-        #[comptime] row: usize,
+        #[comptime] space: &Space,
     ) {
-        let stride = mem.row_stride_at(row);
+        let stride = mem.row_stride(space);
         let casted: Matrix<Out> = cmma::cast(&self.matrix);
         cmma::store(
             mem.window_slice_mut(),

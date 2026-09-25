@@ -161,7 +161,11 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                         "mma: a packed stage reaches a fragment through a landing; open the \
                          operand with `with_landing`"
                     ));
-                    cmma::load(frag, m.window_slice(), m.row_stride())
+                    cmma::load(
+                        frag,
+                        m.window_slice(),
+                        m.row_stride(comptime!(&values.space)),
+                    )
                 }
                 TileKind::Gmem(_) => panic!(
                     "mma: a fragment loads a window as it lies and a gmem layout is unchecked; \
@@ -225,11 +229,11 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             comptime!(out.clone()),
             acc_axes,
         );
-        // The window's lines, the innermost axis counted in lines; and where each one lands,
-        // dense over the window's axes in scalars.
+        // The window's lines, the innermost axis counted in lines; and where each one lands, the
+        // scalar stage's own address (dense over the window's axes, its lines scalars).
         let line_extents = comptime!(line_extents(&space, vw, 0, rank));
         let lines = comptime!(line_extents.iter().product::<usize>() as u32);
-        let strides = comptime!(dense_strides(&space));
+        let address = landing.mem("landed").window_address();
         let by_shuffle = scales.by_shuffle();
         if comptime!(by_shuffle) {
             // A scale held in the plane's lanes is fetched by shuffle, which the whole plane must
@@ -243,7 +247,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                 let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
                 let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
                 if mine < lines {
-                    let base = offset_of(&coords, comptime!(strides.clone()));
+                    let base = offset_of(&coords, &address);
                     #[unroll]
                     for j in 0..vw {
                         window[base + j] = landed.extract(j);
@@ -254,7 +258,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             for line in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
                 let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
                 let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
-                let base = offset_of(&coords, comptime!(strides.clone()));
+                let base = offset_of(&coords, &address);
                 #[unroll]
                 for j in 0..vw {
                     window[base + j] = landed.extract(j);
@@ -316,17 +320,6 @@ fn accumulator_axes(side: Side, out: &Space, own: &Space) -> MatrixAxes {
     }
 }
 
-/// Row-major scalar strides over `space`: where a coordinate lands in a dense copy of it.
-fn dense_strides(space: &Space) -> Vec<usize> {
-    let rank = space.rank();
-    let mut strides = vec![1; rank];
-    for p in (0..rank - 1).rev() {
-        let below = strides[p + 1] * space.extent_at(p + 1);
-        strides[p] = below;
-    }
-    strides
-}
-
 /// The scalar coordinate of the `line`-th line of a window whose innermost axis counts in
 /// `vw`-wide lines: one entry per axis, the line's first value.
 #[cube]
@@ -365,15 +358,14 @@ fn as_dyn(coords: &Coords<u32>, #[comptime] vw: usize) -> CoordsDyn {
     at
 }
 
-/// Where `coords` lands in a dense copy: the scalar offset under `strides`.
+/// Where scalar `coords` land in a scalar stage: the offset under its `address`.
 #[cube]
-#[allow(clippy::needless_range_loop)]
-fn offset_of(coords: &Coords<u32>, #[comptime] strides: Vec<usize>) -> usize {
+fn offset_of(coords: &Coords<u32>, address: &WindowAddress) -> usize {
     let n = coords.len();
-    let mut offset = 0u32.runtime();
+    let mut offset = address.origin;
     #[unroll]
     for p in 0..n {
-        offset = offset.fadd(coords.at(p).fmul(comptime!(strides[p] as u32)));
+        offset = offset.fadd(coords.at(p).fmul(address.strides.at(p)));
     }
     offset as usize
 }
