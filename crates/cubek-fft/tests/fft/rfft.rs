@@ -11,7 +11,10 @@ use cubek_test_utils::{
 use cubek_fft::eval::cpu_reference::rfft_ref;
 
 fn test_launch(client: Client, signal_shape: Vec<usize>, dim: usize) {
-    let dtype = f32::elem_type_native();
+    test_launch_with(client, signal_shape, dim, f32::elem_type_native());
+}
+
+fn test_launch_with(client: Client, signal_shape: Vec<usize>, dim: usize, dtype: ElemType) {
     let mut spectrum_shape = signal_shape.clone();
     spectrum_shape[dim] = signal_shape[dim] / 2 + 1;
 
@@ -250,6 +253,12 @@ fn rfft_light_axis_last() {
     let signal_shape = [1, 8].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
+}
+
+#[test]
+fn rfft_light_f64() {
+    let client = cubecl::test_device().client();
+    test_launch_with(client, [2, 8].to_vec(), 1, f64::elem_type_native());
 }
 
 #[test]
