@@ -1,6 +1,6 @@
 //! Which transport moves one memory tile's cells into another's, and the copy that runs it.
 //!
-//! Every cooperative fill under this module deals its lines out over `CUBE_DIM` workers indexed
+//! Every cooperative fill under this module distributes its lines out over `CUBE_DIM` workers indexed
 //! by `UNIT_POS`, assuming every unit of the cube runs it. A walk that sets planes aside to fill
 //! its stages ([`Levels::filled_by`](crate::Levels::filled_by)) breaks that: a wrong answer, not a
 //! hang. Such a walk is refused where the two meet, and only a bulk copy may be filled by planes

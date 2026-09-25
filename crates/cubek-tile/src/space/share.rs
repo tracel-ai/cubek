@@ -1,4 +1,4 @@
-//! What the hardware instances are to a tile's cells, once a level has been dealt out.
+//! What the hardware instances are to a tile's cells, once a level has been distributed out.
 //!
 //! Two questions, at two scopes. A plane's lanes share registers and combine there, so a folding
 //! drain asks what each lane holds of a cell ([`LaneShare`]), and folds the partials with
@@ -11,9 +11,9 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Carrier, Count, Level, Monoid, Space, Takers};
+use crate::{Axis, Carrier, ComputeScope, Count, Coverage, Level, Monoid, Space};
 
-/// What the plane's lanes each hold of a tile's cells, once a lanes level is dealt out. An axis
+/// What the plane's lanes each hold of a tile's cells, once a lanes level is distributed out. An axis
 /// the tile does not span is *folded* (lanes cover disjoint slices, each holds a partial); one it
 /// does span is *carried* (each lane gets a different cell). The case says how a partial drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -37,17 +37,17 @@ impl LaneShare {
     /// axis the operand does not span is folded (lanes hold partials), one it spans is carried.
     /// A level that is not the lanes' leaves the lanes as they were ([`Repeated`](Self::Repeated)).
     pub fn new(level: &Level, spanned: &Space) -> LaneShare {
-        if level.takers() != Takers::Lanes {
+        if level.coverage() != Coverage::Distribute(ComputeScope::Unit) {
             return LaneShare::Repeated;
         }
         // Innermost first, so `weight` is the axis's stride in the lane index as it is reached,
         // the same least-significant-last ordering the walk decodes with.
         let (mut weight, mut fold_mask) = (1usize, 0usize);
         for axis in level.axes().into_iter().rev() {
-            // Dealt to however many lanes the launch runs, and the level's only lane axis:
+            // Distributed to however many lanes the launch runs, and the level's only lane axis:
             // carried where the operand spans it, and where it does not, every lane holds a
             // partial of the same cell.
-            if let Count::Dealt(_) = level.cut(axis).count {
+            if let Count::Distributed(_) = level.cut(axis).count {
                 match spanned.contains(axis) {
                     true => continue,
                     false => return LaneShare::Plane,
@@ -100,7 +100,7 @@ impl LaneShare {
         matches!(self, LaneShare::Plane | LaneShare::Group { .. })
     }
 
-    /// The lanes over which `axis` of a lanes level is dealt, as a share: the whole plane where
+    /// The lanes over which `axis` of a lanes level is distributed, as a share: the whole plane where
     /// they are all of it, a group otherwise. What a row-owning verb asks of the lanes level it
     /// runs under.
     pub fn of_lanes(lanes: usize, plane: usize) -> LaneShare {
@@ -190,18 +190,19 @@ pub enum SplitShare {
 
 impl SplitShare {
     /// What one instance of an operand spanning `spanned` holds of its cells after `level` is
-    /// dealt out over `space`: [`Partial`](SplitShare::Partial) where a plane or cube axis the
-    /// operand does not span is dealt across several instances, so each contracts a slice.
+    /// distributed out over `space`: [`Partial`](SplitShare::Partial) where a plane or cube axis the
+    /// operand does not span is distributed across several instances, so each contracts a slice.
     ///
     /// Asked with the level's whole space, not the operand's projection: a projection has dropped
     /// the contracted axis and so cannot tell a split from a cut whose edge is the whole axis.
     /// Conservative where the count is not comptime: whole would lose every partial but one.
     pub fn new(level: &Level, space: &Space, spanned: &Space) -> SplitShare {
-        match level.takers() {
-            Takers::Walk | Takers::Lanes => return SplitShare::Whole,
-            Takers::Planes | Takers::Cubes => {}
+        match level.coverage() {
+            Coverage::Walk | Coverage::Distribute(ComputeScope::Unit) => return SplitShare::Whole,
+            Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::Cube) => {}
         }
-        // A grid shared as one index is not dealt by axis: a share of it covers part of a cell
+        // A grid shared as one index is not distributed by axis: a share of it covers part of a cell
         // whenever the index runs over an axis the operand does not span, and which part is not
         // something the per-axis cuts record.
         if level.shared_by().is_some() {
@@ -249,7 +250,7 @@ mod tests {
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
 
-    /// A contraction dealt out across cubes leaves each of them a slice of every output cell.
+    /// A contraction distributed out across cubes leaves each of them a slice of every output cell.
     /// Read off the *output's* subspace, which does not span `K`, against the level's whole
     /// space, which still names it.
     #[test]
@@ -269,7 +270,7 @@ mod tests {
     }
 
     /// The same at plane scope: planes of one cube share no registers either, so a contraction
-    /// dealt out across them leaves each holding a slice, exactly as cubes do.
+    /// distributed out across them leaves each holding a slice, exactly as cubes do.
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
@@ -299,7 +300,7 @@ mod tests {
         assert_eq!(SplitShare::new(&level, &space, &space), SplitShare::Whole);
     }
 
-    /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.
+    /// A cube cut whose edge is the whole axis distributes out one tile, so it is not a split at all.
     /// The level's whole space is asked because a mapping parameterised by its split count writes
     /// the same cut at `splits` one, and refusing it refuses the control it is compared against.
     #[test]
@@ -330,12 +331,12 @@ mod tests {
     fn a_lanes_level_folds_what_the_operand_does_not_span() {
         let space = Space::new(&[(M, 4), (N, 8), (K, 32)]);
         let out = space.subspace(&[M, N]);
-        let plane = Levels::leaf(&[(K, 1)]).lanes(&[(K, 32)]).level();
+        let plane = Levels::leaf(&[(K, 1)]).units(&[(K, 32)]).level();
         assert_eq!(LaneShare::new(&plane, &out), LaneShare::Plane);
-        let whole = Levels::leaf(&[(N, 1)]).lanes(&[(N, 8)]).level();
+        let whole = Levels::leaf(&[(N, 1)]).units(&[(N, 8)]).level();
         assert_eq!(LaneShare::new(&whole, &out), LaneShare::Whole);
         let team = Levels::leaf(&[(N, 1), (K, 1)])
-            .lanes(&[(N, 8), (K, 4)])
+            .units(&[(N, 8), (K, 4)])
             .level();
         assert_eq!(
             LaneShare::new(&team, &out),

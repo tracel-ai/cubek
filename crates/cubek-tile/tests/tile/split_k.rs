@@ -336,7 +336,7 @@ fn atomic_split_matmul<E: Numeric>(
     acc.drained_into(&c);
 }
 
-/// The same, with the columns dealt out to the plane's lanes: one level more, and the lane level
+/// The same, with the columns distributed out to the plane's lanes: one level more, and the lane level
 /// is walked like any other. A lane's block is then its own columns, which is what makes every
 /// lane a writer on the drain.
 #[cube(launch)]
@@ -365,7 +365,7 @@ fn atomic_split_matmul_by_lane<E: Numeric>(
     acc.drained_into(&c);
 }
 
-/// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.
+/// `a·b` with `K` distributed out over `splits` cubes, folded atomically into a zeroed output.
 fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
@@ -531,7 +531,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
             Levels::leaf(&[(N, per_lane), (K, k / splits)])
-                .lanes(&[(N, plane_size)])
+                .units(&[(N, plane_size)])
                 .cubes(&[K])
                 .build(),
         ),
@@ -838,7 +838,7 @@ fn folds_fragments(client: &cubecl::client::Client) -> bool {
     cmma && adds
 }
 
-/// `a·b` in fragments with `K` dealt to `splits` cubes, folded atomically into a zeroed output.
+/// `a·b` in fragments with `K` distributed to `splits` cubes, folded atomically into a zeroed output.
 fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
@@ -859,7 +859,7 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    // One plane per cube, the whole output per cube, `K` dealt in runs of one stage.
+    // One plane per cube, the whole output per cube, `K` distributed in runs of one stage.
     let launcher = implied(
         &client,
         Partitioning::new(

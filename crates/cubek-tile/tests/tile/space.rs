@@ -238,7 +238,7 @@ fn overhangs_dynamic_axis_panics() {
 
 // ---- Level constructors ----------------------------------------------------------
 
-/// The tiles of several axes dealt as one index: the shares ride the cubes even though no axis
+/// The tiles of several axes distributed as one index: the shares ride the cubes even though no axis
 /// does, so the launch grid is their count.
 #[test]
 fn shared_tiles_launch_their_instances() {
@@ -299,7 +299,7 @@ fn batches_are_a_dial_each() {
     assert!(matches!(one_line.cube_count(), CubeCount::Static(4, 2, 6)));
 }
 
-/// One axis is a box whatever the count, so `across` on it deals the axis's own tiles over the
+/// One axis is a box whatever the count, so `across` on it distributes the axis's own tiles over the
 /// scope, which is what a cut has always meant: no work is stated.
 #[test]
 fn one_axis_across_a_count_is_a_dial() {
@@ -321,7 +321,7 @@ fn one_axis_across_a_count_is_a_dial() {
 
 /// Nothing named is nothing said: a level that names no axis cuts every cube the whole space.
 #[test]
-fn a_level_naming_no_axis_deals_everything_to_one_cube() {
+fn a_level_naming_no_axis_distributes_everything_to_one_cube() {
     let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
@@ -347,7 +347,7 @@ fn a_level_naming_no_axis_deals_everything_to_one_cube() {
 #[should_panic = "combine in registers"]
 fn sharing_tiles_across_lanes_is_refused() {
     let _ = Levels::leaf(&[(M, 16), (N, 32), (K, 16)])
-        .lanes(&[(M, 4), (N, 4), (K, 4)])
+        .units(&[(M, 4), (N, 4), (K, 4)])
         .shared_by(4)
         .build();
 }

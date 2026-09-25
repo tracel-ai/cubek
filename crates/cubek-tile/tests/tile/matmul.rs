@@ -1444,12 +1444,12 @@ fn matmul_one_tile_per_cube() {
     );
 }
 
-/// Cubes dealt their boxes in a swizzled order whose strips the grid does not divide: a 3x5 grid
+/// Cubes distributed their boxes in a swizzled order whose strips the grid does not divide: a 3x5 grid
 /// in strips of 2 and of 4 along either axis, the last strip narrower than the rest. Each box must
-/// still go to exactly one cube: one dealt twice doubles its product, one dealt to no cube keeps
+/// still go to exactly one cube: one distributed twice doubles its product, one distributed to no cube keeps
 /// the poison `c` came in with.
 #[test]
-fn matmul_ragged_swizzle_deals_every_box_once() {
+fn matmul_ragged_swizzle_distributes_every_box_once() {
     for order in [
         CubeOrder::SwizzleRow(2),
         CubeOrder::SwizzleCol(2),
@@ -1555,7 +1555,7 @@ fn matmul_interleaved_m_across_cubes() {
 }
 
 /// A count the tile grid does not divide: four tiles across three cubes are runs of two, two
-/// and nothing; dealt three each they are a run of three and a run of one; in turns they are
+/// and nothing; distributed three each they are a run of three and a run of one; in turns they are
 /// two, one and one. Every tile is visited once either way, none twice.
 #[test]
 fn matmul_m_across_cubes_that_do_not_divide() {
@@ -1669,7 +1669,7 @@ fn check_matmul_scheduled(
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
     // The cube's units, stated on each operand as `Launcher::arg` states them: a stage fetched
-    // into registers deals its lines over them at expansion. The buffer is bound scalar: the
+    // into registers distributes its lines over them at expansion. The buffer is bound scalar: the
     // kernel's line type carries the width, and the metadata stays in elements.
     let bound = |input: &TileInput| {
         let mut spec = input.spec();
@@ -2123,7 +2123,7 @@ fn matmul_cpu_cores_split_m_planes() {
 
 // Short runs across a cube's planes (four tiles over three planes, three each, in turns) cannot be
 // stated any more: a plane level says how many planes take one tile each, and a run of tiles is a
-// walk below it, taken whole by every plane; only a cube level deals runs (`Levels::across`).
+// walk below it, taken whole by every plane; only a cube level distributes runs (`Levels::across`).
 
 /// The register leaf reads both operands where they lie: nothing is materialized and the walk is
 /// the plain loop. `levels` is the worker level over the walk, with a run of boxes between them
@@ -2243,7 +2243,7 @@ fn register_matmul_unit_spread_n() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(N, nr)]).lanes(&[(N, plane_size)]).build(),
+            Levels::leaf(&[(N, nr)]).units(&[(N, plane_size)]).build(),
         ),
         Form::Static,
     );
@@ -3732,7 +3732,7 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
         Partitioning::new(
             Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
             Levels::leaf(&[(M, 1), (K, edge)])
-                .lanes(&[(M, groups), (K, group_lanes)])
+                .units(&[(M, groups), (K, group_lanes)])
                 .interleaved(K)
                 .build(),
         ),

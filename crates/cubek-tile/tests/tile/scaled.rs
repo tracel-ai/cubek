@@ -2129,7 +2129,7 @@ fn check_chunked(arm: Arm, scales: TileScales, read: LaneRead) {
     if matches!(arm, Arm::Landing) && !require_cmma_8x8x8_f32(&client) {
         return;
     }
-    // The register arm deals a tile's columns by two blocks to the plane's lanes.
+    // The register arm distributes a tile's columns by two blocks to the plane's lanes.
     if matches!(arm, Arm::Registers) && skip_unless_plane_holds(&client, (w.tile * 2) as u32) {
         return;
     }
@@ -2144,7 +2144,7 @@ fn check_chunked(arm: Arm, scales: TileScales, read: LaneRead) {
     // loop is a level's.
     let levels = match arm {
         Arm::Registers => Levels::leaf(&[(M, rows), (NI, 1), (KB, 1), (KI, w.tile)])
-            .lanes(&[(NI, w.tile), (KB, 2)])
+            .units(&[(NI, w.tile), (KB, 2)])
             .walk(&[(KB, chunk / 2)])
             .walk_every(&[KB])
             .planes(&[(NB, 1)])

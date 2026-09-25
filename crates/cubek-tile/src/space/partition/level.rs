@@ -9,7 +9,7 @@
 //!
 //! A level states; it does not answer for its consumers. What the plane's lanes are to an
 //! operand's cells is [`LaneShare::new`](crate::LaneShare), what one instance holds of them
-//! [`SplitShare::new`](crate::SplitShare), how a walk deals an axis `AxisDeal::new`: each asker
+//! [`SplitShare::new`](crate::SplitShare), how a walk distributes an axis `AxisDistribution::new`: each asker
 //! reads the statement and derives its own answer.
 
 use super::CubeOrder;
@@ -17,10 +17,10 @@ use crate::{Axis, AxisMap, Extent, Space};
 
 /// One decomposition level of a space: who takes its tiles, the axes it names (each cut to a tile,
 /// a count and a spread), and the cube level's statements (its batch axes, whether its grid is
-/// shared as one index, the order it is dealt in). An axis it does not name is handed down whole.
+/// shared as one index, the order it is distributed in). An axis it does not name is handed down whole.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
-    takers: Takers,
+    coverage: Coverage,
     cuts: AxisMap<Cut>,
     /// Axes a cube level hands one tile of, riding the grid's `Z` ([`batching`](Level::batching)).
     batches: Vec<Axis>,
@@ -30,13 +30,13 @@ pub struct Level {
     /// Planes that fill this walk's stages and take no tile of any level
     /// ([`filling`](Level::filling)).
     fillers: usize,
-    /// The order a cube level deals its boxes to the grid ([`dealt_in`](Level::dealt_in)).
+    /// The order a cube level distributes its boxes to the grid ([`distributed_in`](Level::distributed_in)).
     /// [`RowMajor`](CubeOrder::RowMajor) everywhere else, which is what every level that
     /// states nothing gets.
     order: CubeOrder,
 }
 
-/// One axis of a level: the tile it steps in, how many, and how the takers spread them.
+/// One axis of a level: the tile it steps in, how many, and how its instances spread them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct Cut {
     pub(crate) tile: usize,
@@ -53,15 +53,15 @@ pub enum Count {
     /// Every tile the level above hands down, one per step or per worker: the count only the
     /// launch knows, and the one place a tile can reach past the extent.
     All,
-    /// Every tile, dealt across this many workers in runs: a closed axis returning to the cube
+    /// Every tile, distributed across this many workers in runs: a closed axis returning to the cube
     /// level to be split, and the one run whose length the kernel computes.
     AllAcross(usize),
     /// This many tiles, stated, taken in turns by the plane's lanes, however many the launch
     /// runs: a lane count the kernel reads rather than one it is compiled against, so the plane
     /// width never enters the kernel. A lane takes tiles `lane`, `lane + lanes`, and so on, and
-    /// one past the count takes none. Only lanes take it, and a level taking it deals nothing
+    /// one past the count takes none. Only lanes take it, and a level taking it distributes nothing
     /// else to them.
-    Dealt(usize),
+    Distributed(usize),
 }
 
 /// What a walk counts along one axis of a level: a constant, or the extent handed down in
@@ -72,17 +72,35 @@ pub(crate) enum GridCount {
     Extent(usize),
 }
 
-/// Who takes a level's tiles: the loop verb that states it. One instance walks a level's grid
-/// whole; the plane's lanes, the cube's planes or the launch's cubes each take a share of it.
+/// The hardware a level's tiles can go to: each unit, each plane, or each cube of the launch.
+/// Ordered inner to outer, as cubecl orders its own scopes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub enum Takers {
-    Walk,
-    Lanes,
-    Planes,
-    Cubes,
+pub enum ComputeScope {
+    Unit,
+    Plane,
+    Cube,
 }
 
-/// How a dealt axis's tiles are handed to its takers. Disjoint either way, differing only in
+/// How a level covers its tiles.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub enum Coverage {
+    /// One instance steps the tiles in sequence.
+    Walk,
+    /// The tiles are distributed over the instances of a scope.
+    Distribute(ComputeScope),
+}
+
+impl Coverage {
+    /// The scope the tiles are distributed over, or `None` where one instance walks them.
+    pub fn scope(self) -> Option<ComputeScope> {
+        match self {
+            Coverage::Walk => None,
+            Coverage::Distribute(scope) => Some(scope),
+        }
+    }
+}
+
+/// How a distributed axis's tiles are handed to a scope's instances. Disjoint either way, differing only in
 /// locality.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Spread {
@@ -102,13 +120,13 @@ pub enum CubeAxis {
 }
 
 impl Count {
-    /// The workers the tiles are dealt to, where that is a stated number: `Stated` and
-    /// `AllAcross` state it, `All` deals one worker a tile of a grid the launch counts, and
-    /// `Dealt` deals to as many lanes as the launch runs.
+    /// The workers the tiles are distributed to, where that is a stated number: `Stated` and
+    /// `AllAcross` state it, `All` distributes one worker a tile of a grid the launch counts, and
+    /// `Distributed` distributes to as many lanes as the launch runs.
     pub(crate) fn stated(self) -> Option<usize> {
         match self {
             Count::Stated(n) | Count::AllAcross(n) => Some(n),
-            Count::All | Count::Dealt(_) => None,
+            Count::All | Count::Distributed(_) => None,
         }
     }
 
@@ -116,7 +134,7 @@ impl Count {
     /// or every tile the extent holds, the last one partial where it does not divide.
     pub(crate) fn tiles(self, extent: usize, tile: usize) -> usize {
         match self {
-            Count::Stated(n) | Count::Dealt(n) => n,
+            Count::Stated(n) | Count::Distributed(n) => n,
             Count::All | Count::AllAcross(_) => extent.div_ceil(tile),
         }
     }
@@ -125,7 +143,7 @@ impl Count {
     /// every tile of a [`Dynamic`](Extent::Dynamic) axis is the launch's to count.
     pub(crate) fn tiles_const(self, extent: Extent, tile: usize) -> Option<usize> {
         match (self, extent) {
-            (Count::Stated(n) | Count::Dealt(n), _) => Some(n),
+            (Count::Stated(n) | Count::Distributed(n), _) => Some(n),
             (_, Extent::Static(extent)) => Some(self.tiles(extent, tile)),
             (_, Extent::Dynamic) => None,
         }
@@ -135,7 +153,7 @@ impl Count {
     /// is handed, in that tile.
     pub(crate) fn grid(self, tile: usize) -> GridCount {
         match self {
-            Count::Stated(n) | Count::Dealt(n) => GridCount::Const(n),
+            Count::Stated(n) | Count::Distributed(n) => GridCount::Const(n),
             Count::All | Count::AllAcross(_) => GridCount::Extent(tile),
         }
     }
@@ -149,17 +167,17 @@ impl Level {
             .iter()
             .map(|&(axis, tile)| (axis, tile, Count::All, Spread::Contiguous))
             .collect();
-        Level::new(Takers::Walk, &cuts)
+        Level::new(Coverage::Walk, &cuts)
     }
 
-    /// A level `takers` take over `cuts`, each `(axis, tile, count, spread)`. The builder's
+    /// A level covered as `coverage` says over `cuts`, each `(axis, tile, count, spread)`. The builder's
     /// constructor: [`Levels`](crate::Levels) is the only other caller, and it states the tile
     /// as the product of the levels below.
     ///
     /// What each taker can state: a walk steps a stated count or every tile; lanes and planes
     /// take a stated count each, since their number is the device's; cubes take every tile, or
-    /// every tile dealt across a stated number of them.
-    pub(crate) fn new(takers: Takers, cuts: &[(Axis, usize, Count, Spread)]) -> Level {
+    /// every tile distributed across a stated number of them.
+    pub(crate) fn new(coverage: Coverage, cuts: &[(Axis, usize, Count, Spread)]) -> Level {
         for (i, &(axis, ..)) in cuts.iter().enumerate() {
             assert!(
                 !cuts[..i].iter().any(|&(a, ..)| a == axis),
@@ -168,37 +186,44 @@ impl Level {
         }
         for &(axis, tile, count, _) in cuts {
             assert!(tile > 0, "Level: {axis:?} has a tile of nothing");
-            match (takers, count) {
-                (Takers::Cubes, Count::AllAcross(_)) => {}
+            match (coverage, count) {
+                (Coverage::Distribute(ComputeScope::Cube), Count::AllAcross(_)) => {}
                 (_, Count::AllAcross(_)) => {
-                    panic!("Level: {axis:?} is dealt across workers in runs, which only cubes take")
+                    panic!(
+                        "Level: {axis:?} is distributed across workers in runs, which only cubes take"
+                    )
                 }
-                (Takers::Lanes | Takers::Planes, Count::All) => panic!(
+                (
+                    Coverage::Distribute(ComputeScope::Unit)
+                    | Coverage::Distribute(ComputeScope::Plane),
+                    Count::All,
+                ) => panic!(
                     "Level: {axis:?} takes every tile on a plane's workers, whose count is the \
                      device's; state how many"
                 ),
-                (Takers::Lanes, Count::Dealt(_)) => assert!(
+                (Coverage::Distribute(ComputeScope::Unit), Count::Distributed(_)) => assert!(
                     matches!(
                         cuts.iter().find(|&&(a, ..)| a == axis).map(|&(.., s)| s),
                         Some(Spread::Interleaved)
                     ),
-                    "Level: {axis:?} is dealt in turns to however many lanes the launch runs, so \
+                    "Level: {axis:?} is distributed in turns to however many lanes the launch runs, so \
                      the lanes take it interleaved"
                 ),
-                (_, Count::Dealt(_)) => panic!(
-                    "Level: {axis:?} is dealt in turns to however many lanes the launch runs, \
+                (_, Count::Distributed(_)) => panic!(
+                    "Level: {axis:?} is distributed in turns to however many lanes the launch runs, \
                      which only a plane's lanes can be"
                 ),
                 _ => {}
             }
         }
-        let dealt = cuts
+        let distributed = cuts
             .iter()
-            .any(|&(_, _, count, _)| matches!(count, Count::Dealt(_)));
+            .any(|&(_, _, count, _)| matches!(count, Count::Distributed(_)));
         assert!(
-            !dealt || (takers == Takers::Lanes && cuts.len() == 1),
-            "Level: an axis dealt to however many lanes the launch runs takes all of them, so \
-             the level deals no other axis to the lanes; it deals {}",
+            !distributed
+                || (coverage == Coverage::Distribute(ComputeScope::Unit) && cuts.len() == 1),
+            "Level: an axis distributed to however many lanes the launch runs takes all of them, so \
+             the level distributes no other axis to the lanes; it distributes {}",
             cuts.len()
         );
         let cuts: Vec<_> = cuts
@@ -215,7 +240,7 @@ impl Level {
             })
             .collect();
         Level {
-            takers,
+            coverage,
             cuts: AxisMap::new(&cuts),
             batches: Vec::new(),
             shared_by: None,
@@ -228,9 +253,9 @@ impl Level {
     /// cube level.
     pub(crate) fn batching(mut self, axes: &[Axis]) -> Level {
         assert!(
-            self.takers == Takers::Cubes,
+            self.coverage == Coverage::Distribute(ComputeScope::Cube),
             "Level::batching: batches ride cubes; this level's tiles are taken by {:?}",
-            self.takers
+            self.coverage
         );
         for &axis in axes {
             self.push(
@@ -253,13 +278,14 @@ impl Level {
     /// Not for lanes: they combine in registers, which needs them in lockstep, and lanes holding
     /// different shares never are.
     pub(crate) fn sharing(mut self, n: usize) -> Level {
-        match self.takers {
-            Takers::Cubes | Takers::Planes => {}
-            Takers::Lanes => panic!(
+        match self.coverage {
+            Coverage::Distribute(ComputeScope::Cube)
+            | Coverage::Distribute(ComputeScope::Plane) => {}
+            Coverage::Distribute(ComputeScope::Unit) => panic!(
                 "Level::sharing: the plane's lanes combine in registers, which needs them in \
                  lockstep, and lanes holding different shares never are"
             ),
-            Takers::Walk => panic!("Level::sharing: a walk has no workers to share its tiles"),
+            Coverage::Walk => panic!("Level::sharing: a walk has no workers to share its tiles"),
         }
         assert!(
             self.shared_by.is_none(),
@@ -285,24 +311,24 @@ impl Level {
     /// count off the level and hands the two roles their own halves of each slot.
     pub(crate) fn filling(mut self, n: usize) -> Level {
         assert!(
-            self.takers == Takers::Walk,
+            self.coverage == Coverage::Walk,
             "Level::filling: only a walk's regions are staged, and this level's tiles are taken \
              by {:?}",
-            self.takers
+            self.coverage
         );
         self.fillers = n;
         self
     }
 
-    /// The order this cube level deals its boxes to the grid ([`CubeOrder`]). Only cubes take
+    /// The order this cube level distributes its boxes to the grid ([`CubeOrder`]). Only cubes take
     /// one: the order permutes which *instance* holds which box, and the grid is the one place
     /// instances are handed out by hardware position rather than by a loop the kernel writes.
-    pub(crate) fn dealt_in(mut self, order: CubeOrder) -> Level {
+    pub(crate) fn distributed_in(mut self, order: CubeOrder) -> Level {
         assert!(
-            self.takers == Takers::Cubes,
-            "Level::dealt_in: only a cube level is dealt to a grid, and this level's tiles are \
+            self.coverage == Coverage::Distribute(ComputeScope::Cube),
+            "Level::distributed_in: only a cube level is distributed to a grid, and this level's tiles are \
              taken by {:?}",
-            self.takers
+            self.coverage
         );
         self.order = order.canonicalize();
         self
@@ -323,8 +349,8 @@ impl Level {
     }
 
     /// Who takes this level's tiles.
-    pub fn takers(&self) -> Takers {
-        self.takers
+    pub fn coverage(&self) -> Coverage {
+        self.coverage
     }
 
     /// The axes this level names, in the order it named them.
@@ -343,7 +369,7 @@ impl Level {
         self.cuts.contains(axis).then(|| self.cuts.get(axis).count)
     }
 
-    /// How the takers spread `axis`'s tiles among themselves, where the level names it.
+    /// How the instances spread `axis`'s tiles among themselves, where the level names it.
     pub fn spread(&self, axis: Axis) -> Option<Spread> {
         self.cuts.contains(axis).then(|| self.cuts.get(axis).spread)
     }
@@ -353,17 +379,17 @@ impl Level {
         self.cuts.get(axis)
     }
 
-    /// Whether this level deals `axis`'s tiles to its takers one by one: it names the axis, its
-    /// takers are hardware, and its grid is not shared as one index. A walk deals nothing; a
-    /// shared level deals its whole index rather than any one axis.
-    pub fn deals(&self, axis: Axis) -> bool {
-        self.takers != Takers::Walk && self.shared_by.is_none() && self.cuts.contains(axis)
+    /// Whether this level distributes `axis`'s tiles over its scope one by one: it names the axis, it
+    /// is distributed rather than walked, and its grid is not shared as one index. A walk distributes nothing; a
+    /// shared level distributes its whole index rather than any one axis.
+    pub fn distributes(&self, axis: Axis) -> bool {
+        self.coverage != Coverage::Walk && self.shared_by.is_none() && self.cuts.contains(axis)
     }
 
     /// The grid dimension `axis` rides on a cube level: batches on `Z`, the others `X`, `Y`, `Z`
     /// in the order named. `None` on any other level, or an axis the level does not name.
     pub fn cube_axis(&self, axis: Axis) -> Option<CubeAxis> {
-        if self.takers != Takers::Cubes || !self.cuts.contains(axis) {
+        if self.coverage != Coverage::Distribute(ComputeScope::Cube) || !self.cuts.contains(axis) {
             return None;
         }
         if self.batches.contains(&axis) {
@@ -390,7 +416,7 @@ impl Level {
         self.fillers
     }
 
-    /// The order this level deals its boxes to the grid, which only a cube level ever states.
+    /// The order this level distributes its boxes to the grid, which only a cube level ever states.
     pub fn order(&self) -> CubeOrder {
         self.order
     }
@@ -453,14 +479,14 @@ impl Level {
         }
     }
 
-    /// How many workers `axis` is dealt out to at this level, where comptime: the stated count, or
+    /// How many workers `axis` is distributed out to at this level, where comptime: the stated count, or
     /// the tiles an every-level takes over a static extent. `None` where the grid is unknown here:
     /// a [`Dynamic`](Extent::Dynamic) extent, `space` a projection dropping the axis (a drain), or
-    /// an axis [`Dealt`](Count::Dealt) to as many lanes as the launch runs.
+    /// an axis [`Distributed`](Count::Distributed) to as many lanes as the launch runs.
     pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),
-            Some(Count::Dealt(_)) => None,
+            Some(Count::Distributed(_)) => None,
             Some(count) => match count.stated() {
                 Some(n) => Some(n),
                 None if !space.contains(axis) => None,

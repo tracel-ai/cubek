@@ -238,7 +238,7 @@ impl<T: Numeric> Memory<T> {
         let write = comptime!(operand.write);
         // The one projection: the kernel's space narrowed to this operand's axes. What the
         // instances and lanes are to these cells is stamped level by level on the way down
-        // ([`Memory::at`]): a fresh tile has been dealt out by nothing yet.
+        // ([`Memory::at`]): a fresh tile has been distributed out by nothing yet.
         let split_share = comptime!(SplitShare::Whole);
         let space = comptime!(space.subspace(spec.axes()));
         let projection = comptime!(spec.projection.clone());

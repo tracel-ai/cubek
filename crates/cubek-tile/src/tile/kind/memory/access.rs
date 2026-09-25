@@ -1,7 +1,7 @@
 //! Touching a [`Memory`]: filling one from another (the cooperative copy), the views a leaf
 //! reads and writes it through, and [`at`](Memory::at), which windows it down to a region.
 //!
-//! Every cooperative fill here deals its elements out over `CUBE_DIM` workers indexed by
+//! Every cooperative fill here distributes its elements out over `CUBE_DIM` workers indexed by
 //! `UNIT_POS`, assuming every unit of the cube runs it. A walk that sets planes aside to fill its
 //! stages ([`Level::filled_by`](crate::Level::filled_by)) breaks that: a wrong answer, not a hang.
 //!

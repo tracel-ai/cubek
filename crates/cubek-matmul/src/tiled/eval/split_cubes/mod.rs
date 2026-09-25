@@ -231,7 +231,7 @@ impl Mapping {
                 let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
                     Levels::leaf(&[(N, COLS), (K, k / splits / plane_size)])
-                        .lanes(&[(K, plane_size)])
+                        .units(&[(K, plane_size)])
                         .cubes(&[N, K])
                         .build(),
                 );

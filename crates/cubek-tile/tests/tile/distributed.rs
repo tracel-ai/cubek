@@ -1,4 +1,4 @@
-//! Lanes that take their tiles in turns, however many the launch runs ([`Count::Dealt`]).
+//! Lanes that take their tiles in turns, however many the launch runs ([`Count::Distributed`]).
 //!
 //! The partitioning states how many tiles a plane's lanes share and nothing of how many lanes
 //! there are: the kernel reads that off the launch. So one compiled kernel is right at any lane
@@ -20,7 +20,7 @@ const BLOCK: [usize; 3] = [2, 2, 4];
 
 /// `c = a · b`, every lane summing its blocks in registers.
 #[cube(launch)]
-fn dealt_block_matmul<E: Numeric>(
+fn distributed_block_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
@@ -62,8 +62,8 @@ fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-/// `a · b` with each plane's `dealt` blocks along `n` taken in turns by `lanes` lanes.
-fn run(m: usize, n: usize, k: usize, dealt: usize, lanes: u32) -> HostData {
+/// `a · b` with each plane's `distributed` blocks along `n` taken in turns by `lanes` lanes.
+fn run(m: usize, n: usize, k: usize, distributed: usize, lanes: u32) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
@@ -88,7 +88,7 @@ fn run(m: usize, n: usize, k: usize, dealt: usize, lanes: u32) -> HostData {
         Space::new(&[(M, m), (N, n), (K, k)]),
         Levels::leaf(&[(M, rows), (N, columns), (K, depth)])
             .walk_every(&[K])
-            .lanes_dealt(N, dealt)
+            .units_distributed(N, distributed)
             .planes(&[(M, 2)])
             .cubes(&[M, N])
             .build(),
@@ -102,7 +102,7 @@ fn run(m: usize, n: usize, k: usize, dealt: usize, lanes: u32) -> HostData {
     let space = partitioning.space().clone();
     let launcher = Launcher::new(&client, partitioning, &space, grid);
 
-    dealt_block_matmul::launch(
+    distributed_block_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -152,7 +152,7 @@ fn every_block_is_taken_once_at_any_lane_count() {
 /// A shape that tiles by nothing: the cubes overhang both axes of the output and the walk
 /// overhangs `K`, and the lanes still take every block inside once.
 #[test]
-fn dealt_blocks_mask_a_ragged_edge() {
+fn distributed_blocks_mask_a_ragged_edge() {
     let (m, n, k) = (7, 29, 11);
     for lanes in [4, 16] {
         assert_matches(&run(m, n, k, 6, lanes), m, n, k);

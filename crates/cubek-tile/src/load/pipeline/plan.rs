@@ -50,7 +50,7 @@ impl StagePlan {
     /// # Panics
     ///
     /// A walk that sets planes aside to fill stages one of its operands fills cooperatively: the
-    /// cooperative fill deals its elements out over every unit position of the cube, so planes
+    /// cooperative fill distributes its elements out over every unit position of the cube, so planes
     /// that are not there leave their share of the stage unwritten, and quietly — the slot
     /// publishes on schedule and the wrong bytes are read.
     pub(crate) fn new(operands: &[StageOperand], op_space: &Space, level: &Level) -> StagePlan {

@@ -37,9 +37,9 @@ impl<T: Numeric> Memory<T> {
         let s = src.flat_transparent::<I, WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
-        // One line per unit, striding by the cube: **the deal is disjoint**, which a folding
-        // destination rests on. A repeated deal would be invisible under `Write::Replace`
-        // and land once per repeat under `Write::Accumulate`; any future deal owes the same.
+        // One line per unit, striding by the cube: **the distribution is disjoint**, which a folding
+        // destination rests on. A repeated distribution would be invisible under `Write::Replace`
+        // and land once per repeat under `Write::Accumulate`; any future distribution owes the same.
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {

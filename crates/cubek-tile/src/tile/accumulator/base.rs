@@ -108,7 +108,7 @@ impl Scratch {
     ///
     /// **Forced for a destination that folds**: the intrinsic's store overwrites, so the cells must
     /// become addressable before they can be added. A replacing destination may want it too, since
-    /// a bounced drain writes lines the lanes deal between them; which is faster is a measurement.
+    /// a bounced drain writes lines the lanes distribute between them; which is faster is a measurement.
     pub fn bounces(self) -> bool {
         !matches!(self, Scratch::None)
     }
@@ -123,8 +123,8 @@ impl Scratch {
     }
 }
 
-/// The planes `levels` deal `space` across: the product, over every level dealt on the cube's
-/// planes, of the instances its plane-dealt axes take. One where no level rides the planes.
+/// The planes `levels` distribute `space` across: the product, over every level distributed on the cube's
+/// planes, of the instances its plane-distributed axes take. One where no level rides the planes.
 ///
 /// Each level's count is read against the space its parents hand it, so a count that is
 /// only known at runtime is refused here rather than read as one.
@@ -133,10 +133,12 @@ pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     let mut planes = 1;
     for level in levels {
         for axis in level.axes() {
-            if level.takers() == Takers::Planes && level.deals(axis) {
+            if level.coverage() == Coverage::Distribute(ComputeScope::Plane)
+                && level.distributes(axis)
+            {
                 planes *= level.instances_along(&handed, axis).unwrap_or_else(|| {
                     panic!(
-                        "Tile::with_scratch: {axis:?} is dealt across the cube's planes at a \
+                        "Tile::with_scratch: {axis:?} is distributed across the cube's planes at a \
                          count only the launch knows, so the plane's windows cannot be sized"
                     )
                 });
@@ -469,7 +471,7 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
 ///
 /// **The levels the grid was read off are the levels the drain walks** ([`GridShape::new`]), which
 /// is what makes the leaf one tile: a level that cuts the grid hands out one region per tile, a
-/// level that deals hands out this instance's own window, and a level the destination does not
+/// level that distributes hands out this instance's own window, and a level the destination does not
 /// span hands out one region and narrows nothing. A contraction the accumulator outlives is of
 /// that last kind, so it is walked once here however many steps it takes.
 #[cube]
@@ -485,8 +487,8 @@ fn drain_below<Acc: Numeric, Out: Numeric>(
     } else {
         let level = comptime!(levels[i].clone());
         // A walked level's regions select fragments, so its coordinates must fold to constants;
-        // a dealt one selects nothing and is one region whatever its count.
-        if comptime!(level.takers() == Takers::Walk) {
+        // a distributed one selects nothing and is one region whatever its count.
+        if comptime!(level.coverage() == Coverage::Walk) {
             for region in dest.over(&level).unrolled() {
                 drain_below::<Acc, Out>(
                     &acc.at(&region),

@@ -1,6 +1,6 @@
 //! Distributing a level's work as one index, which is stream-K.
 //!
-//! Dealing each axis on its own gives a cube the product of its per-axis runs, which is a box of
+//! Distributing each axis on its own gives a cube the product of its per-axis runs, which is a box of
 //! the grid. A share of the work is not a box: it is a range of the index the axes make together,
 //! and may start in one tile and end in another; no box of a four by two grid holds three regions.
 //!
@@ -182,7 +182,7 @@ fn runs_dividing_the_grid_cover_it_once() {
 
 #[test]
 fn runs_that_do_not_divide_the_grid_still_cover_it_once() {
-    // 8 regions over 3 cubes: 2, 3, 3. The case a per-axis deal cannot express, since no
+    // 8 regions over 3 cubes: 2, 3, 3. The case a per-axis distribute cannot express, since no
     // rectangle of a 4 by 2 grid has three regions in it.
     runs_cover_the_grid(3);
     // And one region each for five of eight, which leaves three cubes with an empty run.
@@ -486,7 +486,7 @@ fn a_stream_of_one_run_is_the_whole_contraction() {
     stream_k_agrees_with_the_whole(1);
 }
 
-/// Runs that end on a tile boundary: the same work a split of `K` would do, reached by dealing a
+/// Runs that end on a tile boundary: the same work a split of `K` would do, reached by distributing a
 /// line rather than by cutting an axis.
 #[test]
 fn runs_that_end_on_a_tile_do_the_split_a_cut_would() {
@@ -595,7 +595,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 Space::new(&[(MM, m), (NN, n), (KK, k)]),
                 Levels::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, 1)])
                     .walk(&[(KK, k / plane_size)])
-                    .lanes(&[(KK, plane_size)])
+                    .units(&[(KK, plane_size)])
                     .cubes(&[MM, NN, KK])
                     .shared_by(runs)
                     .build(),

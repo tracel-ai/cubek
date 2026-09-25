@@ -49,7 +49,7 @@ pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) ->
         (KB, problem.scales_per_word()),
         (KI, problem.block),
     ])
-    .lanes(&[(M, bp.groups()), (KB, bp.block_lanes)])
+    .units(&[(M, bp.groups()), (KB, bp.block_lanes)])
     .interleaved(KB)
     .walk_every(&[KB])
     .planes(&[(M, bp.rows_per_cube / bp.rows_per_plane)])

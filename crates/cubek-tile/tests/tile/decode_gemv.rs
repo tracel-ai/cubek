@@ -149,7 +149,7 @@ fn a_lane_level_that_cuts_nothing_hands_every_lane_the_plane() {
     serving_geometry(false, false);
 }
 
-/// `promoted`: where the accumulator lives. `lanes_cut`: whether the lane level deals rows and
+/// `promoted`: where the accumulator lives. `lanes_cut`: whether the lane level distributes rows and
 /// words to the lanes, or names no axis and hands every lane the plane's box.
 fn serving_geometry(promoted: bool, lanes_cut: bool) {
     let field = QuantValue::Q8S;
@@ -215,11 +215,11 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
             match lanes_cut {
                 true => Levels::leaf(&[(M, rows_per_lane), (KI, factor), (KB, 1)])
                     .walk_every(&[KB])
-                    .lanes(&[(M, groups), (KI, group_lanes)])
+                    .units(&[(M, groups), (KI, group_lanes)])
                     .interleaved(KI),
                 false => Levels::leaf(&[(M, rows_per_plane), (KB, 1)])
                     .walk_every(&[KB])
-                    .lanes(&[]),
+                    .units(&[]),
             }
             .planes(&[(M, num_planes)])
             .cubes(&[M])

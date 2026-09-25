@@ -1235,7 +1235,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            Levels::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).build(),
+            Levels::leaf(&[(K, kr)]).units(&[(K, plane_size)]).build(),
         ),
         Form::Static,
     );
@@ -1270,7 +1270,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            Levels::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).build(),
+            Levels::leaf(&[(K, kr)]).units(&[(K, plane_size)]).build(),
         ),
         Form::Static,
     );
@@ -1307,7 +1307,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            Levels::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).build(),
+            Levels::leaf(&[(K, kr)]).units(&[(K, plane_size)]).build(),
         ),
         Form::Static,
     );
@@ -1377,7 +1377,7 @@ fn resident_max_over_lane_split_k() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).build(),
+            Levels::leaf(&[(K, kr)]).units(&[(K, plane_size)]).build(),
         ),
         Form::Static,
     );
@@ -1451,7 +1451,7 @@ fn resident_max_over_lane_group_k() {
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
             Levels::leaf(&[(M, 1), (K, kr)])
-                .lanes(&[(M, groups), (K, group_lanes)])
+                .units(&[(M, groups), (K, group_lanes)])
                 .interleaved(K)
                 .build(),
         ),

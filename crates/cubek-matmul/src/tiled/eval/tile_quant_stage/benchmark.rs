@@ -140,7 +140,7 @@ impl TileQuantStageBench {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
         Levels::leaf(&[(N, un), (K, self.tk)])
-            .lanes(&[(N, plane_size)])
+            .units(&[(N, plane_size)])
             .walk_every(&[K])
             .cubes(&[N])
             .build()

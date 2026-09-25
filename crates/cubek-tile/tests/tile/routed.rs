@@ -502,7 +502,7 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
         Partitioning::new(
             Space::new(&[(EXPERT, lanes)]),
             Levels::leaf(&[(EXPERT, 1)])
-                .lanes(&[(EXPERT, lanes)])
+                .units(&[(EXPERT, lanes)])
                 .build(),
         ),
         Form::Static,

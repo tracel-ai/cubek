@@ -145,7 +145,7 @@ impl<T: Numeric> CmmaData<T> {
     /// second half of a bounce. The intrinsic's store replaces and elects no writer; the scratch is
     /// what gives each cell one owner.
     ///
-    /// Lines of the store's width rather than scalars, and the lanes deal them between
+    /// Lines of the store's width rather than scalars, and the lanes distribute them between
     /// themselves, so every cell has exactly one owner and lands once.
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
@@ -165,7 +165,7 @@ impl<T: Numeric> CmmaData<T> {
         let lines = comptime!(m * lines_per_row);
         let axes = comptime!(MatrixAxes::trailing(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
-        // The plane's own width, which the hardware states, so the lanes deal the lines
+        // The plane's own width, which the hardware states, so the lanes distribute the lines
         // between them whatever shape the launch gave the cube.
         let lanes = PLANE_DIM as usize;
         let mut line = UNIT_POS_PLANE as usize;

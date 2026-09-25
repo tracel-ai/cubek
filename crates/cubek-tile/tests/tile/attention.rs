@@ -321,7 +321,7 @@ fn fold_prefill_gqa_causal() {
 /// rows, where a leaf reading `UNIT_POS_X` and `CUBE_DIM_X` would give every row of the cube the
 /// first row's columns and leave the rows past it unreduced.
 ///
-/// The last case is the shape a kernel whose levels deal the team launches: a cube read off a
+/// The last case is the shape a kernel whose levels distribute the team launches: a cube read off a
 /// partitioning is a plane wide whatever the team is, so here the cube is 32 units wide and a
 /// team of 64 spans two rows of it.
 #[test]

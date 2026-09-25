@@ -37,6 +37,12 @@ const RETIRED: &[&str] = &[
     "unravel_const",
     "concat3",
     "within_2d",
+    "AxisDeal",
+    "Dealt",
+    "DealtToLanes",
+    "deal",
+    "deals",
+    "dealt",
 ];
 
 #[test]

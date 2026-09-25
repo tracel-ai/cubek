@@ -124,7 +124,7 @@ impl DepthwiseSpace {
             "DepthwiseSpace: {plane_size} lanes of {width} channels do not divide a tile of {tile_c}"
         );
         let lanes = Levels::leaf(&[(C, width), (OW, cols), (OH, 1)])
-            .lanes(&[(C, plane_size)])
+            .units(&[(C, plane_size)])
             .interleaved(C);
         let lines = match tile_c / plane_c {
             1 => lanes,

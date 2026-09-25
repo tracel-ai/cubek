@@ -77,7 +77,7 @@ impl Path {
 
 /// The path a kernel's loops took to a box: the levels from a root space down, outermost first,
 /// and the coordinates each loop handed out. A tile at any depth applies the steps below it.
-/// Iterating deals the next level.
+/// Iterating distributes the next level.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Region {

@@ -1,11 +1,11 @@
-//! This instance's share of a level dealt as one flat index ([`Level::sharing`](crate::Level)):
+//! This instance's share of a level distributed as one flat index ([`Level::sharing`](crate::Level)):
 //! the regions it touches and, for the first and last, how much of their walk below is its own.
 
 use cubecl::prelude::*;
 
-use crate::{CubeAxis, Level, Region, Takers, Walk, WalkExpand};
+use crate::{ComputeScope, Coverage, CubeAxis, Level, Region, Walk, WalkExpand};
 
-/// This instance's portion of a level dealt as one index: the regions it touches and, for the
+/// This instance's portion of a level distributed as one index: the regions it touches and, for the
 /// first and last, how much of their walk below is its own. Counted in the level below's steps,
 /// the ones its instances take *together*, however that level cuts the plane.
 #[derive(CubeType)]
@@ -46,22 +46,24 @@ impl Portion {
 
 #[cube]
 impl Walk {
-    /// This instance's portion of the index this level deals as one, counted in steps of `below`,
+    /// This instance's portion of the index this level distributes as one, counted in steps of `below`,
     /// the level each region is walked with. Two divisions rather than a length each: the portions
     /// abut, cover the work once, and differ in length by at most one.
     pub fn portion(self, #[comptime] below: Level) -> Portion {
         let instances = comptime!(
             self.level
                 .shared_by()
-                .expect("Walk::portion: this level deals no grid as one; say `shared_by`")
+                .expect("Walk::portion: this level distributes no grid as one; say `shared_by`")
         );
         let stride = self.region(0).over(&below).total();
         let steps = self.total() * stride;
-        // A shared grid rides its takers' first dimension: the cubes' `X`, or the planes.
-        let pos = match comptime!(self.level.takers()) {
-            Takers::Cubes => CubeAxis::position(CubeAxis::X),
-            Takers::Planes => Takers::position(Takers::Planes),
-            Takers::Lanes | Takers::Walk => {
+        // A shared grid rides its scope's first dimension: the cubes' `X`, or the planes.
+        let pos = match comptime!(self.level.coverage()) {
+            Coverage::Distribute(ComputeScope::Cube) => CubeAxis::position(CubeAxis::X),
+            Coverage::Distribute(ComputeScope::Plane) => {
+                ComputeScope::position(ComputeScope::Plane)
+            }
+            Coverage::Distribute(ComputeScope::Unit) | Coverage::Walk => {
                 panic!("Walk::portion: only cubes or planes share a grid as one index")
             }
         };

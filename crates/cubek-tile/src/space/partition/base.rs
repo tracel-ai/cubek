@@ -2,7 +2,10 @@
 
 use cubecl::{prelude::*, unexpanded};
 
-use crate::{Axis, Count, CubeAxis, Level, LevelTable, Region, RegionExpand, Space, Takers, Walk};
+use crate::{
+    Axis, ComputeScope, Count, Coverage, CubeAxis, Level, LevelTable, Region, RegionExpand, Space,
+    Walk,
+};
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
 ///
@@ -15,7 +18,7 @@ use crate::{Axis, Count, CubeAxis, Level, LevelTable, Region, RegionExpand, Spac
 /// accumulator, what it stages, which instruction its leaf runs under — stays the kernel's own.
 ///
 /// What a kernel is handed ([`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg)),
-/// and what its loops iterate: `for cube in space` deals the first level, `for plane in cube` the
+/// and what its loops iterate: `for cube in space` distributes the first level, `for plane in cube` the
 /// next, down to the leaf. Levels are comptime; the space's dynamic extents are the runtime half.
 #[derive(CubeType, CubeLaunch, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Partitioning {
@@ -185,18 +188,21 @@ impl Partitioning {
             .collect()
     }
 
-    /// The one level whose tiles `takers` take, if any. A partitioning has at most one lanes,
+    /// The one level covered as `coverage` says, if any. A partitioning has at most one units,
     /// planes and cubes level; its walks may be several ([`walks`](Self::walks)).
-    pub fn level_of(&self, takers: Takers) -> Option<&Level> {
+    pub fn level_of(&self, coverage: Coverage) -> Option<&Level> {
         assert!(
-            takers != Takers::Walk,
+            coverage != Coverage::Walk,
             "Partitioning::level_of: a partitioning may walk several levels; ask `walks`"
         );
-        let mut found = self.levels.iter().filter(|level| level.takers() == takers);
+        let mut found = self
+            .levels
+            .iter()
+            .filter(|level| level.coverage() == coverage);
         let level = found.next();
         assert!(
             found.next().is_none(),
-            "Partitioning::level_of: two levels are taken by {takers:?}"
+            "Partitioning::level_of: two levels are taken by {coverage:?}"
         );
         level
     }
@@ -205,22 +211,23 @@ impl Partitioning {
     pub fn walks(&self) -> impl Iterator<Item = &Level> + '_ {
         self.levels
             .iter()
-            .filter(|level| level.takers() == Takers::Walk)
+            .filter(|level| level.coverage() == Coverage::Walk)
     }
 
-    /// Instances `takers` deal the space to: the product, over every level they take, of the
-    /// instance count of each axis it deals, or of the workers sharing its grid as one. Cubes
+    /// Instances `coverage` distributes the space to: the product, over every such level, of the
+    /// instance count of each axis it distributes, or of the workers sharing its grid as one. Cubes
     /// count per grid dimension ([`cube_instances`](Self::cube_instances)).
-    pub(crate) fn instances(&self, takers: Takers) -> u32 {
-        match takers {
-            Takers::Cubes => [CubeAxis::X, CubeAxis::Y, CubeAxis::Z]
+    pub(crate) fn instances(&self, coverage: Coverage) -> u32 {
+        match coverage {
+            Coverage::Distribute(ComputeScope::Cube) => [CubeAxis::X, CubeAxis::Y, CubeAxis::Z]
                 .into_iter()
                 .map(|dim| self.cube_instances(dim))
                 .product(),
-            Takers::Planes | Takers::Lanes => {
-                self.count_instances(|level| level.takers() == takers, |_, _| true)
+            Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::Unit) => {
+                self.count_instances(|level| level.coverage() == coverage, |_, _| true)
             }
-            Takers::Walk => 1,
+            Coverage::Walk => 1,
         }
     }
 
@@ -229,7 +236,7 @@ impl Partitioning {
     fn cube_instances(&self, dim: CubeAxis) -> u32 {
         self.count_instances(
             |level| {
-                level.takers() == Takers::Cubes
+                level.coverage() == Coverage::Distribute(ComputeScope::Cube)
                     && (level.shared_by().is_none() || dim == CubeAxis::X)
             },
             |level, axis| level.cube_axis(axis) == Some(dim),
@@ -237,7 +244,7 @@ impl Partitioning {
     }
 
     /// The product over the `levels` selected of the workers sharing the grid as one, or of the
-    /// tiles each `axes` selected is dealt in. Each level's count is read against the space its
+    /// tiles each `axes` selected is distributed in. Each level's count is read against the space its
     /// parents hand it; `tiles` is `ceil`, so an indivisible axis adds the instance for its
     /// partial tile.
     fn count_instances(
@@ -253,12 +260,12 @@ impl Partitioning {
                     Some(workers) => total *= workers as u32,
                     None => {
                         for axis in space.axes() {
-                            if level.deals(axis) && axes(level, axis) {
+                            if level.distributes(axis) && axes(level, axis) {
                                 total *= match level.count(axis) {
                                     Some(Count::AllAcross(workers)) => workers,
-                                    // Tiles dealt to as many lanes as the launch runs ask for
+                                    // Tiles distributed to as many lanes as the launch runs ask for
                                     // none of their own.
-                                    Some(Count::Dealt(_)) => 1,
+                                    Some(Count::Distributed(_)) => 1,
                                     _ => level.tiles(&space, axis),
                                 } as u32;
                             }
@@ -271,7 +278,7 @@ impl Partitioning {
         total
     }
 
-    /// The grid these levels deal to: cube dimension `d` gets the instance count of whichever
+    /// The grid these levels distribute to: cube dimension `d` gets the instance count of whichever
     /// axis is `Spatial { Cube(d), .. }`, at any level, else 1.
     pub fn cube_count(&self) -> CubeCount {
         CubeCount::Static(
@@ -283,7 +290,7 @@ impl Partitioning {
 
     /// Planes one cube holds: the levels' plane cuts, plus any that only fill.
     pub fn planes_per_cube(&self) -> u32 {
-        self.instances(Takers::Planes) + self.fillers()
+        self.instances(Coverage::Distribute(ComputeScope::Plane)) + self.fillers()
     }
 
     /// Planes the cube holds that fill a walk's stages and take no tile
@@ -298,9 +305,9 @@ impl Partitioning {
 
     /// Lanes one instance holds, read off the levels' unit cuts. `1` where no level cuts to
     /// units, which is a plan whose leaf the whole plane runs, or where the lanes take their
-    /// tiles in turns ([`Count::Dealt`]), however many the launch runs.
+    /// tiles in turns ([`Count::Distributed`]), however many the launch runs.
     pub fn lanes(&self) -> u32 {
-        self.instances(Takers::Lanes)
+        self.instances(Coverage::Distribute(ComputeScope::Unit))
     }
 
     /// The cube this partitioning asks for at `plane_size`: the plane width by the planes a
@@ -341,7 +348,7 @@ mod tests {
         assert_eq!(plain.cube_dim(32), CubeDim::new_2d(32, 4));
     }
 
-    /// The cube is wider by the count and nothing else moves: the instances a level deals, and
+    /// The cube is wider by the count and nothing else moves: the instances a level distributes, and
     /// so every position decoded below it, are the ones they were.
     #[test]
     fn a_filling_plane_widens_the_cube_and_nothing_else() {
@@ -352,8 +359,8 @@ mod tests {
         assert_eq!(filled.cube_dim(32), CubeDim::new_2d(32, 5));
 
         assert_eq!(
-            filled.instances(Takers::Planes),
-            plain.instances(Takers::Planes)
+            filled.instances(Coverage::Distribute(ComputeScope::Plane)),
+            plain.instances(Coverage::Distribute(ComputeScope::Plane))
         );
         assert_eq!(filled.lanes(), plain.lanes());
         for dim in [CubeAxis::X, CubeAxis::Y, CubeAxis::Z] {
@@ -369,7 +376,7 @@ mod tests {
     /// Only a walk's regions are staged, so only a walk can say who fills them.
     #[test]
     #[should_panic(expected = "only a walk's regions are staged")]
-    fn a_level_that_deals_its_tiles_cannot_be_filled_by_anyone() {
+    fn a_level_that_distributes_its_tiles_cannot_be_filled_by_anyone() {
         Levels::leaf(&[(M, 64)])
             .planes(&[(M, 2)])
             .filled_by(1)

@@ -127,7 +127,7 @@ impl<E: Float> RowState<E> {
     }
 
     /// [`of`](RowState::of) for a worker whose place in its team the caller states — what a
-    /// kernel whose levels deal the team reads off them.
+    /// kernel whose levels distribute the team reads off them.
     pub fn in_team(
         #[comptime] space: Space,
         #[comptime] share: RowShare,

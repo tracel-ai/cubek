@@ -4,16 +4,16 @@
 //! the tile block what one of those tiles holds. A row's tile is the row below times the count
 //! beside it, axis by axis: a row that fails to multiply out is a partitioning that answers wrong.
 //!
-//! The level column is the takers' glyph and what they take: how many cubes, planes a cube or
+//! The level column is the coverage's glyph and what it covers: how many cubes, planes a cube or
 //! lanes, or how many steps a walk, with the spread and the filling planes where stated.
 
 use std::fmt::{self, Display, Formatter};
 
-use crate::{Axis, Level, Partitioning, Space, Spread, Takers};
+use crate::{Axis, ComputeScope, Coverage, Level, Partitioning, Space, Spread};
 
 /// The leaf row's glyph: the tile the levels reach, which no level of its own cuts.
 const LEAF: char = '◦';
-/// The left margin, and the gap after the level's glyph, before what its takers take.
+/// The left margin, and the gap after the level's glyph, before what it covers.
 const MARGIN: &str = "  ";
 const LEVEL: &str = "  ";
 /// Between two axes of a block, and between the blocks.
@@ -77,19 +77,19 @@ impl<'a> LevelTable<'a> {
     }
 }
 
-/// The glyph a level's takers print as.
-fn glyph(takers: Takers) -> char {
-    match takers {
-        Takers::Cubes => '▣',
-        Takers::Planes => '▤',
-        Takers::Lanes => '▪',
-        Takers::Walk => '↻',
+/// The glyph a level's coverage prints as.
+fn glyph(coverage: Coverage) -> char {
+    match coverage {
+        Coverage::Distribute(ComputeScope::Cube) => '▣',
+        Coverage::Distribute(ComputeScope::Plane) => '▤',
+        Coverage::Distribute(ComputeScope::Unit) => '▪',
+        Coverage::Walk => '↻',
     }
 }
 
-/// What a level's takers take, in words: the instances the level deals to (or the steps a walk
+/// What a level covers, in words: the instances the level distributes to (or the steps a walk
 /// takes) multiplied over its axes, with the spread and the filling planes where it states them.
-fn takers(level: &Level, space: &Space) -> String {
+fn coverage(level: &Level, space: &Space) -> String {
     let counts: Vec<Option<usize>> = level
         .axes()
         .iter()
@@ -106,17 +106,17 @@ fn takers(level: &Level, space: &Space) -> String {
         .axes()
         .iter()
         .any(|&axis| level.spread(axis) == Some(Spread::Interleaved));
-    let mut note = match level.takers() {
-        Takers::Cubes => match level.shared_by() {
+    let mut note = match level.coverage() {
+        Coverage::Distribute(ComputeScope::Cube) => match level.shared_by() {
             Some(cubes) => format!("{cubes} cubes sharing {many} boxes"),
             None => format!("{many} cubes"),
         },
-        Takers::Planes => match level.shared_by() {
+        Coverage::Distribute(ComputeScope::Plane) => match level.shared_by() {
             Some(planes) => format!("{planes} planes sharing {many} boxes"),
             None => format!("{many} planes a cube"),
         },
-        Takers::Lanes => format!("{many} lanes"),
-        Takers::Walk => format!("{many} steps"),
+        Coverage::Distribute(ComputeScope::Unit) => format!("{many} lanes"),
+        Coverage::Walk => format!("{many} steps"),
     };
     if interleaved {
         note += " interleaved";
@@ -133,7 +133,7 @@ fn takers(level: &Level, space: &Space) -> String {
 /// regions holds.
 struct Row {
     glyph: char,
-    takers: String,
+    coverage: String,
     counts: Vec<String>,
     tile: Vec<String>,
 }
@@ -141,8 +141,8 @@ struct Row {
 impl Row {
     fn of(level: &Level, space: &Space, axes: &[Axis]) -> Row {
         Row {
-            glyph: glyph(level.takers()),
-            takers: takers(level, space),
+            glyph: glyph(level.coverage()),
+            coverage: coverage(level, space),
             counts: axes.iter().map(|&axis| count(level, space, axis)).collect(),
             tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
         }
@@ -152,7 +152,7 @@ impl Row {
     fn leaf(space: &Space, axes: &[Axis]) -> Row {
         Row {
             glyph: LEAF,
-            takers: String::new(),
+            coverage: String::new(),
             counts: axes.iter().map(|_| "·".to_string()).collect(),
             tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
         }
@@ -214,14 +214,14 @@ impl Display for LevelTable<'_> {
         let tiles = widths(&header, rows.iter().map(|row| row.tile.clone()));
         let (counts_wide, counts_pad) = padded(&counts, "count");
         let (tiles_wide, tiles_pad) = padded(&tiles, "tile");
-        // The takers column, plus the gap before the count block.
-        let takers_wide = rows
+        // The coverage column, plus the gap before the count block.
+        let coverage_wide = rows
             .iter()
-            .map(|row| row.takers.chars().count())
+            .map(|row| row.coverage.chars().count())
             .max()
             .unwrap_or(0)
             + GAP.chars().count();
-        let indent = format!("{MARGIN} {LEVEL}{:takers_wide$}", "");
+        let indent = format!("{MARGIN} {LEVEL}{:coverage_wide$}", "");
 
         writeln!(
             f,
@@ -233,9 +233,9 @@ impl Display for LevelTable<'_> {
         for row in &rows {
             writeln!(
                 f,
-                "{MARGIN}{}{LEVEL}{:takers_wide$}{counts_pad}{}{GAP}{tiles_pad}{}",
+                "{MARGIN}{}{LEVEL}{:coverage_wide$}{counts_pad}{}{GAP}{tiles_pad}{}",
                 row.glyph,
-                row.takers,
+                row.coverage,
                 block(&row.counts, &counts),
                 block(&row.tile, &tiles)
             )?;

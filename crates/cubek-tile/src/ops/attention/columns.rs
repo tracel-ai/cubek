@@ -1,7 +1,7 @@
 //! Attention's matmul leaves at column ownership, the arm the software instruction runs: each
 //! unit owns every `team.units`-th column of the output, so a K or V block streamed along that
 //! axis is read from gmem once per team. The team is the caller's ([`TeamUnit`]): a kernel whose
-//! levels deal it reads the unit's place off them, one that lays it on the cube's x dim passes
+//! levels distribute it reads the unit's place off them, one that lays it on the cube's x dim passes
 //! [`TeamUnit::along_x`].
 //!
 //! The hardware form is the general contraction on a plane-resident accumulator

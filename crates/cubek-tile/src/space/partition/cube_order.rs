@@ -6,11 +6,11 @@
 //! [`CubeOrder`] permutes which *instance* holds which box: the positions the walk decodes from
 //! the hardware.
 
-use crate::{AxisDeal, Coords, CubeAxis, Integer, IntegerExpand, Level, Space};
+use crate::{AxisDistribution, Coords, CubeAxis, Integer, IntegerExpand, Level, Space};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
-/// The order a cube level deals its boxes to the grid.
+/// The order a cube level distributes its boxes to the grid.
 ///
 /// The grid's own order runs a wave of cubes along one axis: a band of one operand as wide as the
 /// whole other axis. A swizzle folds it into a square-ish patch, so cubes running together share
@@ -170,7 +170,7 @@ fn snake(
     (step_index, pos_in_step + strip_offset)
 }
 
-/// The two in-plane positions of a cube level that deals its boxes in an order other than the
+/// The two in-plane positions of a cube level that distributes its boxes in an order other than the
 /// grid's own, decoded together from the flat dispatch index ([`CubeOrder`]).
 ///
 /// Zeros where no order is stated, which is every other level and every walk: the branch is
@@ -212,14 +212,14 @@ pub(crate) fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
         assert_eq!(
             found.len(),
             1,
-            "Walk: a {:?} cube level deals the grid's {wanted:?} dimension to {} of its axes, \
+            "Walk: a {:?} cube level distributes the grid's {wanted:?} dimension to {} of its axes, \
              and a swizzle can put back only an axis that owns a whole dimension",
             level.order(),
             found.len()
         );
         let p = found[0];
         assert_eq!(
-            AxisDeal::unspanned_weight(level, space, space.axis_at(p)),
+            AxisDistribution::unspanned_weight(level, space, space.axis_at(p)),
             1,
             "Walk: a {:?} cube level shares the grid's {wanted:?} dimension with an axis this \
              space does not span, whose digit a swizzle has no way to put back",

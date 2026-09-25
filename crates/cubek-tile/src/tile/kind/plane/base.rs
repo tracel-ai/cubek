@@ -409,7 +409,7 @@ impl<T: Numeric> PlanePartition<T> {
         }
         let cells = comptime!(m * n);
         // The plane's own width and this unit's place in it, both the hardware's: the lanes
-        // deal the cells between them whatever shape the launch gave the cube.
+        // distribute the cells between them whatever shape the launch gave the cube.
         let lanes = PLANE_DIM as usize;
         let lane = UNIT_POS_PLANE as usize;
         #[unroll]
@@ -704,10 +704,10 @@ pub(crate) struct MatrixGrid {
 }
 
 impl MatrixGrid {
-    /// A dealt level spreads its tiles across hardware and cuts the partition nothing: only a
+    /// A distributed level spreads its tiles across hardware and cuts the partition nothing: only a
     /// walked level's grid is a grid of fragments.
     pub(crate) fn new(level: &Level, space: &Space) -> Self {
-        if level.takers() != Takers::Walk {
+        if level.coverage() != Coverage::Walk {
             return MatrixGrid { rows: 1, cols: 1 };
         }
         let edges = MatrixAxes::edges(space);
@@ -731,7 +731,7 @@ impl MatrixGrid {
     }
 
     /// Whether the level cuts the partition into more than one fragment, so each region must be
-    /// selected by a comptime coordinate. A dealt level and a degenerate 1×1 partition (a k-step
+    /// selected by a comptime coordinate. A distributed level and a degenerate 1×1 partition (a k-step
     /// walk) both cut nothing.
     pub(crate) fn cuts(&self) -> bool {
         (self.rows, self.cols) != (1, 1)

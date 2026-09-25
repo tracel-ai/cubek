@@ -23,7 +23,7 @@ const K: Axis = Axis(2);
 
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
-/// One box per cube, its `K` dealt to the cube's planes, each plane's slice added into shared
+/// One box per cube, its `K` distributed to the cube's planes, each plane's slice added into shared
 /// memory and the sum stored once.
 #[cube(launch)]
 fn smem_split_matmul<E: Numeric>(
@@ -69,7 +69,7 @@ fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-/// `a·b` over boxes of `box_m × box_n`, each box's `K` dealt to `planes` planes of its cube.
+/// `a·b` over boxes of `box_m × box_n`, each box's `K` distributed to `planes` planes of its cube.
 fn run(m: usize, n: usize, k: usize, (box_m, box_n): (usize, usize), planes: usize) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();

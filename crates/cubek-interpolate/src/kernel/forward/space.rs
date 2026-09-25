@@ -90,7 +90,7 @@ impl InterpolateSpace {
             (CHANNEL, geometry.channel_block),
             (OUTPUT_H, geometry.rows_per_plane),
         ])
-        .lanes(&lanes)
+        .units(&lanes)
         .planes(&[(OUTPUT_H, geometry.planes_per_cube)])
         .walk_every(&[CHANNEL])
         .cubes(&[OUTPUT_W, OUTPUT_H])

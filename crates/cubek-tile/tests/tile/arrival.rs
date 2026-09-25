@@ -31,7 +31,7 @@ fn softmax_denominator(
     #[comptime] cubes: u32,
     #[comptime] units: u32,
 ) {
-    // The grid is `(split, row)`: x deals a row's cubes, y the rows, so each row's cubes share
+    // The grid is `(split, row)`: x distributes a row's cubes, y the rows, so each row's cubes share
     // a counter and nothing else.
     let row = CUBE_POS_Y;
     let split = CUBE_POS_X;
