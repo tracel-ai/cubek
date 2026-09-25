@@ -286,7 +286,7 @@ fn contract_staged<E: Numeric>(
 
 /// Which of the ring's schedules a staged test kernel drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Schedule {
+pub(super) enum Schedule {
     /// [`pipelined`]: the next region's slot filled ahead of the contraction.
     AheadInSlots,
     /// [`pipelined_through_registers`]: the next region read into registers across the
@@ -790,7 +790,8 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
                 std::slice::from_ref(&level).to_vec()
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -899,7 +900,8 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
                 vec![outer.clone(), inner.clone()]
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -951,7 +953,8 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
                 vec![stage.clone(), plane.clone(), fragment.clone()]
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -1018,7 +1021,8 @@ fn cmma_matmul_five_levels<E: Numeric>(
                 ]
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -2514,6 +2518,7 @@ impl StageLayout {
         match self {
             StageLayout::Tiled => StageStorage::Tiled {
                 block: launcher.partitioning().leaf().extents(),
+                chunks: RowChunks::InOrder,
             },
             StageLayout::Strided => StageStorage::Strided,
         }

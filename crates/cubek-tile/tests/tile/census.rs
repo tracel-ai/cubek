@@ -13,7 +13,11 @@ use std::path::{Path, PathBuf};
 /// Counts what the crate compiles: a file no `mod` declares is not part of the surface, and one
 /// left behind by a merge was inflating this by 33 until it was deleted. Phase 10 sets the
 /// target the facade lands on.
-const PUB_ITEMS: usize = 761;
+///
+/// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
+/// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
+/// memory counts it.
+const PUB_ITEMS: usize = 763;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 36;

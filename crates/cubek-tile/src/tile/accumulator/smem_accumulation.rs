@@ -46,7 +46,13 @@ impl<T: Numeric> Tile<T> {
     /// planes compute in, a line is added one element at a time.
     pub fn smem_accumulation<A: Numeric>(&self) -> SmemAccumulation<A, T> {
         let space = comptime!(self.place.space.clone());
-        let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
+        let elem_bytes = A::size().comptime();
+        let form = comptime!(StageForm::dense(
+            &space,
+            1,
+            StageStorage::Strided,
+            LineBytes(elem_bytes)
+        ));
         let cells = comptime!(form.cells());
         let values = Shared::<[Atomic<A>]>::new_slice(cells);
         // The previous open from this call site may still be read; let it finish first.

@@ -22,6 +22,7 @@ mod recursive;
 mod reduce;
 mod references;
 mod routed;
+mod row_placement;
 mod scaled;
 mod separable;
 mod smem_accumulation;

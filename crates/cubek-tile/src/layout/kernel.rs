@@ -153,6 +153,14 @@ pub(crate) fn fold_physical(
     out
 }
 
+/// Digit `j` of flat line `x` under `shape`'s row-major suffix strides.
+#[cube]
+pub(crate) fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
+    let plen = shape.len();
+    x.divided_by(shape.product(comptime!(((j + 1)..plen).collect::<Vec<_>>())))
+        .remainder(shape.at(j))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

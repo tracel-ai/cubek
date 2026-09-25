@@ -283,6 +283,10 @@ impl<T: Numeric> Memory<T> {
             "Memory: a window inside one storage tile reads unmasked; a storage-tiled tensor is \
              padded to whole storage tiles"
         ));
+        comptime!(self.layout.rows.assert_in_order(
+            "Memory::contiguous_layout",
+            "a window inside one storage tile is addressed as one run"
+        ));
         let positional = comptime!(self.layout.projection.clone());
         let rank = comptime!(positional.coordinate_rank());
         let mut strides = Coords::<u32>::new();
@@ -296,6 +300,7 @@ impl<T: Numeric> Memory<T> {
             physical_shape: self.window.extent.clone(),
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
+            rows: RowPlacement::InOrder,
         }
     }
 
@@ -399,6 +404,12 @@ impl<T: Numeric> Memory<T> {
                  layout, or stage it"
             ),
         }
+        // A raw window addresses a row as a base and a stride, which a swizzled row is not.
+        comptime!(
+            self.layout
+                .rows
+                .assert_rows_are_runs("Memory::window_slice")
+        );
         // A raw window serves the buffer at the element it was erased to, so a quantized store
         // would hand its stored bytes over as served values. Every other door refuses the same way.
         if comptime!(self.store.packing != Packing::Plain) {

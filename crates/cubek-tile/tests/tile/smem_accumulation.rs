@@ -217,6 +217,7 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
             &b_cube,
             comptime!(StageStorage::Tiled {
                 block: vec![(M, 16), (N, 16), (K, 16)],
+                chunks: RowChunks::InOrder,
             }),
             1usize,
         );

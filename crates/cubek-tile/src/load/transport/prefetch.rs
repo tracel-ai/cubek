@@ -124,6 +124,7 @@ impl<T: Numeric> Memory<T> {
         comptime!(fill_extent(&space, w, w, check));
         let shape = self.layout.physical_shape.clone();
         let projection = comptime!(self.layout.projection.clone());
+        let rows = comptime!(self.layout.rows);
         let lines = self.unit_lines();
         let total = self.stage_lines();
         let s = Masked::new(
@@ -136,7 +137,7 @@ impl<T: Numeric> Memory<T> {
             if in_stage(i, total, t, comptime!(lines)) {
                 fetched[t] = read_stage_line::<T, W, W>(
                     &s,
-                    &physical_pos(comptime!(projection.clone()), i, &shape),
+                    &physical_pos(comptime!(projection.clone()), rows, i, &shape),
                     comptime!(None),
                 );
             }
@@ -151,12 +152,15 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         let lines = self.unit_lines();
         let total = self.stage_lines();
+        let rows = comptime!(self.layout.rows);
+        let shape = self.layout.physical_shape.clone();
+        let strides = self.layout.physical_strides.clone();
         let d = self.lines_storage_mut::<T, W>();
         #[unroll]
         for t in 0..comptime!(lines.tasks()) {
             let i = task_line(t, comptime!(lines));
             if in_stage(i, total, t, comptime!(lines)) {
-                d[i] = fetched[t];
+                d[stage_offset(rows, i, &shape, &strides)] = fetched[t];
             }
         }
     }

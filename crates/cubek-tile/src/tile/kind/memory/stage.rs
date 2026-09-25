@@ -35,7 +35,13 @@ impl<T: Numeric> Memory<T> {
         #[comptime] units: usize,
         #[comptime] alignment: usize,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::dense(&space, vector_size, storage));
+        let elem_bytes = T::size().comptime();
+        let form = comptime!(StageForm::dense(
+            &space,
+            vector_size,
+            storage,
+            LineBytes(vector_size * elem_bytes)
+        ));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         Memory::smem_with_form(
             space,
@@ -141,7 +147,13 @@ impl<T: Numeric> Memory<T> {
         #[comptime] units: usize,
         #[comptime] packing: Packing,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::dense(&space, vector_size, storage));
+        let word_bytes = u32::size().comptime();
+        let form = comptime!(StageForm::dense(
+            &space,
+            vector_size,
+            storage,
+            LineBytes(packing.physical(vector_size) * word_bytes)
+        ));
         let size!(WP) = comptime!(packing.physical(vector_size));
         let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
@@ -174,7 +186,13 @@ impl<T: Numeric> Memory<T> {
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
         // the layout and window below are the same grid either way.
-        let form = comptime!(StageForm::dense(&space, vector_size, storage));
+        let stored_bytes = I::size().comptime();
+        let form = comptime!(StageForm::dense(
+            &space,
+            vector_size,
+            storage,
+            LineBytes(vector_size / scheme.num_quants() * stored_bytes)
+        ));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
@@ -264,6 +282,7 @@ impl<T: Numeric> Memory<T> {
                     physical_shape,
                     physical_strides,
                     projection: gmem_projection,
+                    rows: comptime!(form.rows),
                 },
                 // Stage origins are never negative and smem never overhangs (`Overhang::Never`
                 // below), so the boundary policy is never consulted.
@@ -312,7 +331,13 @@ impl<T: Numeric> Memory<T> {
         let end = start + cells;
         let window =
             Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);
-        let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
+        let elem_bytes = T::size().comptime();
+        let form = comptime!(StageForm::dense(
+            &space,
+            1,
+            StageStorage::Strided,
+            LineBytes(elem_bytes)
+        ));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let tile = Memory::smem_over(
             space,
@@ -495,16 +520,32 @@ pub(crate) struct StageForm {
     /// What a stage coordinate is multiplied by to land on the source, per physical axis. All `1`
     /// for a dense stage, which is a copy of the tile and shares its coordinates.
     steps: SmallVec<[usize; Space::MAX_RANK]>,
+    /// Where each line of a block row is kept.
+    pub(crate) rows: RowPlacement,
 }
 
 impl StageForm {
     /// A materialized dense copy of the logical tile: what every direct operand stages into. An
     /// empty `nesting` is a plain row-major buffer; each block in it adds a `[grid…, block…]`
     /// split, so the buffer lays the innermost block down contiguously.
-    pub(crate) fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
+    ///
+    /// `line` is a physical line's size, which is what a block's rows are placed by
+    /// ([`RowPlacement`]).
+    pub(crate) fn dense(
+        space: &Space,
+        vector_size: usize,
+        stage: StageStorage,
+        line: LineBytes,
+    ) -> StageForm {
         let nesting = stage.nesting(space);
+        let extents = StageForm::dense_extents(space, vector_size, &nesting);
+        let rows = match stage {
+            StageStorage::Tiled { chunks, .. } => RowPlacement::new(chunks, &extents, line),
+            StageStorage::Strided | StageStorage::Lines { .. } => RowPlacement::InOrder,
+        };
         StageForm {
-            extents: StageForm::dense_extents(space, vector_size, &nesting),
+            extents,
+            rows,
             positional: Projection::of_tiling(StorageTiling::uniform(space.rank(), nesting.len())),
             // A dense stage is a copy of the tile itself, so it addresses its own buffer directly
             // whatever the operand it stages was gathered through.
@@ -532,6 +573,7 @@ impl StageForm {
         let compaction = Compaction::new(projection, vector_size, |axis| space.extent(axis));
         let extents = compaction.line_extents(vector_size);
         StageForm {
+            rows: RowPlacement::InOrder,
             positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
             projection: compaction.projection().clone(),
             steps: compaction.steps().iter().copied().collect(),
@@ -546,14 +588,26 @@ impl StageForm {
     }
 
     pub(crate) fn cells(&self) -> usize {
-        self.extents.iter().product()
+        self.pitched().iter().product()
     }
 
-    /// Row-major suffix-product strides over [`extents`](StageForm::extents).
+    /// Row-major suffix-product strides over [`extents`](StageForm::extents), a row pitched past
+    /// its padding.
     fn strides(&self) -> Vec<usize> {
-        (0..self.extents.len())
-            .map(|p| self.extents[p + 1..].iter().product())
+        let pitched = self.pitched();
+        (0..pitched.len())
+            .map(|p| pitched[p + 1..].iter().product())
             .collect()
+    }
+
+    /// [`extents`](StageForm::extents) with each row widened by the lines its placement pads it
+    /// with: what the buffer lays down, where the extents are what it holds.
+    fn pitched(&self) -> Vec<usize> {
+        let mut pitched = self.extents.clone();
+        if let Some(last) = pitched.last_mut() {
+            *last += self.rows.padding();
+        }
+        pitched
     }
 
     /// A dense stage's physical line extents: `[extents…]` flat, or `[grid…, …, block…]`, one grid
@@ -629,7 +683,7 @@ impl StageStorage {
             StageStorage::Lines { .. } => {
                 panic!("StageStorage::Lines: the plane's units are not shared memory")
             }
-            StageStorage::Tiled { block } => {
+            StageStorage::Tiled { block, .. } => {
                 let nested = Space::new(
                     &space
                         .axes()
@@ -717,7 +771,7 @@ mod tests {
     #[test]
     fn a_form_strides_row_major() {
         let (space, levels) = space();
-        let form = StageForm::dense(&space, 4, StageStorage::Strided);
+        let form = StageForm::dense(&space, 4, StageStorage::Strided, LineBytes(16));
         assert_eq!(form.extents, vec![16, 4]);
         assert_eq!(form.strides(), vec![4, 1]);
         assert_eq!(form.cells(), space.cells() / 4);
@@ -727,10 +781,59 @@ mod tests {
             1,
             StageStorage::Tiled {
                 block: space.leaf(&levels).extents(),
+                chunks: RowChunks::InOrder,
             },
+            LineBytes(4),
         );
         assert_eq!(tiled.extents, vec![4, 4, 4, 4]);
         assert_eq!(tiled.strides(), vec![64, 16, 4, 1]);
+    }
+
+    /// A swizzled block keeps the extents and strides of one in order, and resolves the swizzle
+    /// off its innermost block: rows of four 4-byte lines are one chunk each, left in order; rows
+    /// of four 16-byte lines are permuted, their rows and lines on the last two physical axes.
+    #[test]
+    fn a_swizzled_block_is_laid_out_as_one_in_order() {
+        let (space, levels) = space();
+        let swizzled = |line_bytes| {
+            let line = LineBytes(line_bytes);
+            StageForm::dense(
+                &space,
+                1,
+                StageStorage::Tiled {
+                    block: space.leaf(&levels).extents(),
+                    chunks: RowChunks::Swizzled,
+                },
+                line,
+            )
+        };
+        assert_eq!(swizzled(4).extents, vec![4, 4, 4, 4]);
+        assert_eq!(swizzled(4).strides(), vec![64, 16, 4, 1]);
+        assert_eq!(swizzled(4).rows, RowPlacement::InOrder);
+        let RowPlacement::Swizzled(swizzle) = swizzled(16).rows else {
+            panic!("rows of four 16-byte lines are swizzled")
+        };
+        assert_eq!((swizzle.row_axis(), swizzle.line_axis()), (2, 3));
+    }
+
+    /// A padded block keeps its extents, and its rows are pitched one chunk further apart: the
+    /// strides and the size grow, the window does not.
+    #[test]
+    fn a_padded_block_pitches_its_rows_past_a_chunk() {
+        let (space, levels) = space();
+        let padded = StageForm::dense(
+            &space,
+            1,
+            StageStorage::Tiled {
+                block: space.leaf(&levels).extents(),
+                chunks: RowChunks::Padded,
+            },
+            LineBytes(16),
+        );
+        assert_eq!(padded.extents, vec![4, 4, 4, 4]);
+        assert_eq!(padded.rows, RowPlacement::Padded { lines: 1 });
+        assert_eq!(padded.strides(), vec![80, 20, 5, 1]);
+        assert_eq!(padded.cells(), 320);
     }
 
     /// A gathered stage is the compacted window, not the logical tile: `M` and `N` here map onto
@@ -771,6 +874,7 @@ mod tests {
             1,
             StageStorage::Tiled {
                 block: vec![(M, 4), (N, 4), (K, 4)],
+                chunks: RowChunks::InOrder,
             },
             &projection,
         );
@@ -792,6 +896,7 @@ mod tests {
         let (space, levels) = space();
         let tiled = StageStorage::Tiled {
             block: space.leaf(&levels).extents(),
+            chunks: RowChunks::InOrder,
         };
         assert!(tiled.nesting(&space)[0] == space.leaf(&levels));
         assert!(StageStorage::Strided.nesting(&space).is_empty());

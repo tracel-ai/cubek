@@ -333,6 +333,7 @@ impl<T: Numeric> Memory<T> {
                 physical_shape,
                 physical_strides,
                 projection: gmem_projection,
+                rows: RowPlacement::InOrder,
             },
             window: Window::new(
                 origin,

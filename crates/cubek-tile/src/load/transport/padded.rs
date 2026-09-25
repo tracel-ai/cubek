@@ -28,6 +28,7 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 #[cube]
 pub(crate) fn physical_pos(
     #[comptime] projection: Projection,
+    #[comptime] rows: RowPlacement,
     i: usize,
     shape: &Coords<u32>,
 ) -> CoordsDyn {
@@ -37,7 +38,9 @@ pub(crate) fn physical_pos(
     for j in 0..shape.len() {
         digits.push(line_digit(x, shape, j));
     }
-    fold_physical(comptime!(projection), &digits, shape)
+    // Line `i` of a swizzled stage holds the line its row's key moved there; the XOR is its own
+    // inverse, so the same placement finds it.
+    fold_physical(comptime!(projection), &placed_digits(rows, &digits), shape)
 }
 
 /// Assemble one padded destination line from adjacent scalar source cells.
@@ -123,12 +126,4 @@ pub(crate) fn widened_shape(
         }
     }
     out
-}
-
-/// Digit `j` of flat line `x` under `shape`'s row-major suffix strides.
-#[cube]
-pub(crate) fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
-    let plen = shape.len();
-    x.divided_by(shape.product(comptime!(((j + 1)..plen).collect::<Vec<_>>())))
-        .remainder(shape.at(j))
 }

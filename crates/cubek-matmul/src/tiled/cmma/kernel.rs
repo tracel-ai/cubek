@@ -11,7 +11,7 @@
 use cubecl::prelude::*;
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, DeliveryFamily, Level, Levels, Monoid, Partitioning,
-    PlanePartition, Semiring, Space, StageStorage, Stages, TileArg,
+    PlanePartition, RowChunks, Semiring, Space, StageStorage, Stages, TileArg,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -135,7 +135,8 @@ pub fn cmma_kernel<
             &a,
             &b,
             comptime!(StageStorage::Tiled {
-                block: block.clone()
+                block: block.clone(),
+                chunks: RowChunks::InOrder,
             }),
             depth,
         );
