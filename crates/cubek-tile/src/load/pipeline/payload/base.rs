@@ -14,6 +14,8 @@ pub(crate) struct StageOperand {
     pub(crate) space: Space,
 }
 
+impl CubeDebug for StageOperand {}
+
 /// What a slot's buffers are shaped by: the level one region of the walk sits at, the depth the
 /// stage is placed at, how it lays its cells out, and the line it is served in where the caller
 /// states one rather than taking the operand's.

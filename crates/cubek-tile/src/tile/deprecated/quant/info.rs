@@ -25,6 +25,7 @@ pub enum DequantAt {
     /// amortized over whatever reuse the leaf has.
     Read,
 }
+impl CubeDebug for DequantAt {}
 
 /// Quantization a tile's store carries, so reads dequantize on their own: the scale `buffer` plus
 /// per-axis `strides`, a running `window_start` and comptime `block` sizes, which [`ScaleLayout`]
