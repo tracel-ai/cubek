@@ -511,8 +511,8 @@ impl<T: Numeric> Tile<T> {
                 .dim()
         );
         let raw = match &self.kind {
-            TileKind::Memory(g) => g.window.bound.at(p).retyped::<usize>(),
-            TileKind::TmaGmem(t) => t.bound[p].retyped::<usize>(),
+            TileKind::Memory(g) => g.window.bound.at(p).cast::<usize>(),
+            TileKind::TmaGmem(t) => t.bound[p].cast::<usize>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::runtime_extent: a plane tile has no extent")
             }
@@ -1289,7 +1289,7 @@ impl<S: Numeric> Tile<S> {
         }
         let line = self.nd_packed::<W>(comptime!(Guard::Checked)).read(at);
         if comptime!(width > 1) {
-            line.extract_dynamic(field.retyped::<usize>())
+            line.extract_dynamic(field.cast::<usize>())
         } else {
             line.extract(0usize)
         }

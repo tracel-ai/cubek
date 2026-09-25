@@ -344,7 +344,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                 // the launch decides the cube's shape, and a team wider than a plane puts two
                 // planes on one of its rows.
                 let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
-                let plane = PLANE_POS.retyped::<usize>() * comptime!(cells * slots);
+                let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
                 let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
                 // **Every fragment carries its own slot.** One taken off the grid by `at` then
                 // bounces on its own, and, where the whole grid is resident, no two fragments

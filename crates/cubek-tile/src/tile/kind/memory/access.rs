@@ -35,6 +35,29 @@ impl<T: Numeric> Tile<T> {
         g.window_view::<W>(comptime!(Guard::Checked))
     }
 
+    /// Scalars of this stage one unit holds in registers across a contraction
+    /// ([`MemData::fetched_scalars`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
+        self.mem("fetched_scalars").fetched_scalars()
+    }
+
+    /// This unit's share of filling this stage from `src`, read into `fetched` and not yet
+    /// written ([`MemData::fetch_straight`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn fetch_from<W: Size>(&self, src: &Tile<T>, fetched: &mut Array<Vector<T, W>>) {
+        let space = comptime!(self.place.space.clone());
+        self.mem("fetch_from")
+            .fetch_straight(src.mem("fetch_from"), space, fetched);
+    }
+
+    /// Write what [`fetch_from`](Tile::fetch_from) read into this stage
+    /// ([`MemData::store_fetched`]).
+    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
+        self.mem_mut("store_fetched").store_fetched(fetched);
+    }
+
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem_mut("view_mut");
         if comptime!(g.store.quant.is_some()) {
@@ -199,7 +222,7 @@ impl<T: Numeric> Memory<T> {
     fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
-                let start = self.window_start.retyped::<usize>();
+                let start = self.window_start.cast::<usize>();
                 let all = self.lines::<W>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
@@ -217,7 +240,7 @@ impl<T: Numeric> Memory<T> {
     ) -> View<'_, Vector<I, WP>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
-                let start = self.window_start.retyped::<usize>();
+                let start = self.window_start.cast::<usize>();
                 let all = self.lines_storage::<I, WP>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
@@ -237,7 +260,7 @@ impl<T: Numeric> Memory<T> {
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
-                let start = self.window_start.retyped::<usize>();
+                let start = self.window_start.cast::<usize>();
                 let layout = self.contiguous_layout();
                 let all = self.lines_mut::<W>();
                 let len = all.len();
@@ -297,14 +320,14 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.assert_dense();
         let all = self.lines::<W>();
-        let start = self.window_start.retyped::<usize>();
+        let start = self.window_start.cast::<usize>();
         all.slice(start, all.len())
     }
 
     /// The mutable twin of [`dense_lines`](Memory::dense_lines).
     pub(crate) fn dense_lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.assert_dense();
-        let start = self.window_start.retyped::<usize>();
+        let start = self.window_start.cast::<usize>();
         let all = self.lines_mut::<W>();
         let end = all.len();
         all.slice_mut(start, end)
@@ -379,7 +402,7 @@ impl<T: Numeric> Memory<T> {
                  load reads it through Tile::matrix_transparent"
             )
         }
-        self.window_start.retyped::<usize>()
+        self.window_start.cast::<usize>()
     }
 
     /// Scalar stride between matrix rows: the line-unit physical stride of the leaf
@@ -796,7 +819,7 @@ impl<T: Numeric> Memory<T> {
         let mut origin_u32 = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            origin_u32.push(origin.at(p).retyped::<u32>());
+            origin_u32.push(origin.at(p).cast::<u32>());
         }
         let quant = #[comptime]
         match &self.store.quant {
@@ -908,10 +931,10 @@ impl<T: Numeric> Memory<T> {
                     self.window
                         .origin
                         .at(p)
-                        .plus(index.times(edge).retyped::<u32>().retyped::<i32>()),
+                        .plus(index.times(edge).cast::<u32>().cast::<i32>()),
                 );
                 extent.push(comptime!(edge as u32).runtime());
-                advances.push(index.retyped::<u32>().times(step_offset(
+                advances.push(index.cast::<u32>().times(step_offset(
                     comptime!(self.layout.projection.clone()),
                     comptime!(Axis(p as u8)),
                     edge,
@@ -939,7 +962,7 @@ impl<T: Numeric> Memory<T> {
             let (moved, residue, span) =
                 gathered_axis_descent(comptime!(self.projection.clone()), step, &self.map, w, pa);
             // The move only goes forward, so it adds directly to the signed origin.
-            origin.push(self.window.origin.at(pa).plus(moved.retyped::<i32>()));
+            origin.push(self.window.origin.at(pa).plus(moved.cast::<i32>()));
             residues.push(residue);
             extent.push(span);
             // `Projection::validate` pins a gathered operand to untiled storage (bare gmem, or
@@ -1017,8 +1040,8 @@ impl<T: Numeric> Memory<T> {
         #[unroll]
         for p in 0..rank {
             if comptime!(p == at) {
-                origin.push(self.window.origin.at(p).plus(from.retyped::<i32>()));
-                bound.push(self.window.bound.at(p).min_with(until.retyped::<u32>()));
+                origin.push(self.window.origin.at(p).plus(from.cast::<i32>()));
+                bound.push(self.window.bound.at(p).min_with(until.cast::<u32>()));
             } else {
                 origin.push(self.window.origin.at(p));
                 bound.push(self.window.bound.at(p));
@@ -1027,15 +1050,13 @@ impl<T: Numeric> Memory<T> {
 
         // The line route, which `dense_lines` and the matrix view read, moves by the same
         // elements: one axis step at edge `1`.
-        let start = self
-            .window_start
-            .plus(from.retyped::<u32>().times(step_offset(
-                comptime!(self.layout.projection.clone()),
-                comptime!(Axis(at as u8)),
-                1usize,
-                &self.layout.physical_shape,
-                &self.layout.physical_strides,
-            )));
+        let start = self.window_start.plus(from.cast::<u32>().times(step_offset(
+            comptime!(self.layout.projection.clone()),
+            comptime!(Axis(at as u8)),
+            1usize,
+            &self.layout.physical_shape,
+            &self.layout.physical_strides,
+        )));
 
         self.moved_to(
             Window::new(
@@ -1155,7 +1176,7 @@ fn gathered_axis_descent(
                 } else {
                     edge * s
                 });
-                terms.push(cut.coord(term.axis).times(step).retyped::<u32>());
+                terms.push(cut.coord(term.axis).times(step).cast::<u32>());
                 spans.push(comptime!(((edge - 1) * s) as u32).runtime());
             }
             // The line division above never meets a runtime coefficient: the innermost physical
@@ -1167,7 +1188,7 @@ fn gathered_axis_descent(
                     .at(comptime!(projection.dynamic_scale_index(pa, t).unwrap()));
                 terms.push(
                     cut.coord(term.axis)
-                        .retyped::<u32>()
+                        .cast::<u32>()
                         .times(comptime!(edge as u32).runtime())
                         .times(coefficient),
                 );

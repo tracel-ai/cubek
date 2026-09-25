@@ -13,3 +13,4 @@ mod transport;
 pub use base::*;
 pub use pipeline::*;
 pub use rendezvous::*;
+pub use transport::*;

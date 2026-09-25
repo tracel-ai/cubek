@@ -1,6 +1,6 @@
 //! The order a [`Walk`](crate::Walk)'s steps visit the odometer.
 
-use crate::{Known, KnownExpand};
+use crate::{Integer, IntegerExpand};
 use cubecl::prelude::*;
 
 /// The direction a walk's steps take through its grid. A new order is a new variant here plus a

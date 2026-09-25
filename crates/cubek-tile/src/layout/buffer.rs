@@ -57,7 +57,7 @@ impl Layout for BufferLayout {
         }
         terms
             .sum(comptime!((0..rank).collect::<Vec<_>>()))
-            .retyped::<usize>()
+            .cast::<usize>()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

@@ -47,7 +47,7 @@ impl Layout for FlatLayout {
         let rank = self.shape.len();
         self.shape
             .product(comptime!((0..rank).collect::<Vec<_>>()))
-            .retyped::<usize>()
+            .cast::<usize>()
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {

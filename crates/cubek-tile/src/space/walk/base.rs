@@ -16,7 +16,7 @@
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Axis, Coords, Known, KnownExpand, Level, Region, RegionExpand, Space};
+use crate::{Axis, Coords, Integer, IntegerExpand, Level, Region, RegionExpand, Space};
 
 use super::deal::AxisDeal;
 use crate::space::partition::{GridCount, in_plane_axes, swizzled_positions};
@@ -241,7 +241,7 @@ impl Walk {
                 // instance's share of them and would clamp every lane to its first.
                 let last = comptime!(self.level.tiles(&self.space, axis) - 1).runtime();
                 counts.push(1usize);
-                route.push(coord.min_with(last).retyped::<u32>());
+                route.push(coord.min_with(last).cast::<u32>());
             } else {
                 counts.push(self.counts.at(p));
                 route.push(self.route.at(p));
@@ -295,7 +295,7 @@ impl Walk {
             if comptime!(self.routed_at.contains(&p)) {
                 coords.push(self.route.at(p));
             } else {
-                coords.push(self.fold(self.digit(idx, p), p).retyped::<u32>());
+                coords.push(self.fold(self.digit(idx, p), p).cast::<u32>());
             }
         }
         coords

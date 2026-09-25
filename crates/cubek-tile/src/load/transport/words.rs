@@ -101,7 +101,7 @@ impl<T: Numeric> Memory<T> {
         let workers = CUBE_DIM as usize;
         let mut bl = UNIT_POS as usize;
         while bl < count {
-            let x = bl.retyped::<u32>();
+            let x = bl.cast::<u32>();
             let mut src_idx = sinfo.window_start;
             #[unroll]
             for p in 0..rank {
@@ -114,9 +114,7 @@ impl<T: Numeric> Memory<T> {
             // The grid holds *effective* scales: a two-level source's global level folds in here,
             // once per block per stage, so everything below the stage serves a one-level scheme
             // and no global scale threads past this point.
-            dst_scales[bl] = sinfo
-                .known
-                .effective(src_scales[src_idx.retyped::<usize>()]);
+            dst_scales[bl] = sinfo.known.effective(src_scales[src_idx.cast::<usize>()]);
             bl += workers;
         }
     }

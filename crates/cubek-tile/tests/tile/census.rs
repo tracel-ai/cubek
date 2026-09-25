@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 /// Public items declared anywhere in `src/`: types, traits, functions, constants, modules,
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
 ///
-/// Raised by the merge of upstream's shared-memory accumulator and dealt levels, whose own
-/// surface this count now includes. Phase 10 sets the target the facade lands on.
-const PUB_ITEMS: usize = 786;
+/// Raised by the merges of upstream's shared-memory accumulator, its dealt levels, and its
+/// register-staged fill, whose own surfaces this count now includes. Phase 10 sets the target
+/// the facade lands on.
+const PUB_ITEMS: usize = 792;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 37;

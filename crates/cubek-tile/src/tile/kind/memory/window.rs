@@ -80,11 +80,11 @@ impl Window {
     /// The scalar physical-axis check behind [`axes_in_bounds`](Self::axes_in_bounds).
     pub(crate) fn axis_in_bounds(&self, pos: u32, #[comptime] axis: usize) -> bool {
         if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
-            let abs = self.origin.at(axis).plus(pos.retyped::<i32>());
+            let abs = self.origin.at(axis).plus(pos.cast::<i32>());
             if comptime!(self.signed) {
-                abs >= 0i32 && abs.retyped::<u32>() < self.bound.at(axis)
+                abs >= 0i32 && abs.cast::<u32>() < self.bound.at(axis)
             } else {
-                abs.retyped::<u32>() < self.bound.at(axis)
+                abs.cast::<u32>() < self.bound.at(axis)
             }
         } else {
             true.runtime()
@@ -155,12 +155,12 @@ impl SourceWindow {
     ) -> bool {
         if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
             let step = comptime!(self.steps.get(axis).copied().unwrap_or(1) as i32);
-            let cell = (stage_origin + pos.retyped::<i32>()) * step;
+            let cell = (stage_origin + pos.cast::<i32>()) * step;
             let abs = self.origin.at(axis) + cell;
             if comptime!(self.signed) {
-                abs >= 0i32 && abs.retyped::<u32>() < self.bound.at(axis)
+                abs >= 0i32 && abs.cast::<u32>() < self.bound.at(axis)
             } else {
-                abs.retyped::<u32>() < self.bound.at(axis)
+                abs.cast::<u32>() < self.bound.at(axis)
             }
         } else {
             true.runtime()
@@ -201,13 +201,13 @@ impl Layout for Window {
 
         #[unroll]
         for i in 0..self.origin.len() {
-            let abs = self.origin.at(i).plus(pos[i].retyped::<i32>());
+            let abs = self.origin.at(i).plus(pos[i].cast::<i32>());
             // Clamp negative coordinates to 0 before bounds masking. Branchless: this runs per
             // tap of every gathered read, where a diamond would cost more than the cast it skips.
             let shifted = if comptime!(self.signed) {
-                select(abs >= 0i32, abs.retyped::<u32>(), 0u32)
+                select(abs >= 0i32, abs.cast::<u32>(), 0u32)
             } else {
-                abs.retyped::<u32>()
+                abs.cast::<u32>()
             };
             // Under `Clamp`, fold this coordinate onto its axis's edge cell rather than
             // leaving it for the mask.

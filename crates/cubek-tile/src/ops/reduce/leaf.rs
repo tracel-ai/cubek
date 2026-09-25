@@ -118,7 +118,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
         for lane_idx in 0..comptime!(ws) {
             let a = line_idx * comptime!(ws) + comptime!(lane_idx);
             let acc_coords =
-                Coords::constant(comptime!(layout.acc_extents.clone())).unravel(a.retyped::<u32>());
+                Coords::constant(comptime!(layout.acc_extents.clone())).unravel(a.cast::<u32>());
 
             let seed = seed_vec.extract(comptime!(lane_idx));
             let curr_val: Acc = element::<Acc, In, V>(
@@ -200,7 +200,7 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
     let mut acc_vec = Vector::<Acc, V>::cast_from(Monoid::identity::<Acc>(monoid));
     for p in 0..comptime!(layout.kc / contracted_per_step) {
         let reduce_coords = Coords::constant(comptime!(layout.reduce_extents.clone()))
-            .unravel((p * comptime!(contracted_per_step)).retyped::<u32>());
+            .unravel((p * comptime!(contracted_per_step)).cast::<u32>());
 
         let in_coords = resolve_nd_coords(
             comptime!(in_space.clone()),
@@ -249,7 +249,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
     let kc = comptime!(layout.kc);
     for p in 0..kc {
         let reduce_coords =
-            Coords::constant(comptime!(layout.reduce_extents.clone())).unravel(p.retyped::<u32>());
+            Coords::constant(comptime!(layout.reduce_extents.clone())).unravel(p.cast::<u32>());
 
         let in_coords = resolve_nd_coords(
             comptime!(in_space.clone()),
@@ -349,7 +349,5 @@ fn resolve_reduce_in_lane(
         let pos = comptime!(reduce_axes.iter().position(|&r| r == fastest_axis).unwrap());
         reduce_coords.at(comptime!(pos))
     };
-    raw_coord
-        .remainder(comptime!(width as u32))
-        .retyped::<usize>()
+    raw_coord.remainder(comptime!(width as u32)).cast::<usize>()
 }

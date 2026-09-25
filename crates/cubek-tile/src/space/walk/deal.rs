@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Count, CubeAxis, Extent, Known, KnownExpand, Level, Space, Spread, Takers};
+use crate::{Axis, Count, CubeAxis, Extent, Integer, IntegerExpand, Level, Space, Spread, Takers};
 
 /// One axis of a level, as a walk deals it: walked whole by every instance, or dealt to the
 /// level's takers.

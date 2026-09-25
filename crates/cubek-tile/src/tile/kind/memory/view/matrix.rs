@@ -139,7 +139,7 @@ pub(crate) fn batch_matrix(
     let extents = leading_extents(bound, comptime!(space), gathered, comptime!(axes.row_split));
 
     TileMatrix::new(
-        extents.unravel(i.retyped::<u32>()),
+        extents.unravel(i.cast::<u32>()),
         Coords::constant(comptime!(line_extents(
             space,
             vector_size,
@@ -176,7 +176,7 @@ pub(crate) fn matrix_coords(
             .map(|p| space.extent_at(p))
             .collect::<Vec<_>>()
     ))
-    .unravel(i.retyped::<u32>());
+    .unravel(i.cast::<u32>());
     #[unroll]
     for p in 0..batches.len() {
         coords.push(batches.at(p));

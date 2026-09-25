@@ -522,6 +522,42 @@ fn cmma_refuses_stored_operands_that_disagree_on_k() {
     }
 }
 
+/// A strip of no boxes is refused as a plan, where the kernel would only assert it at expansion.
+#[test]
+fn cmma_rejects_a_strip_of_no_boxes() {
+    use cubek_matmul::{
+        definition::MatmulSetupError,
+        tiled::{
+            cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
+    use cubek_tile::CubeOrder;
+
+    for order in [CubeOrder::SwizzleRow(0), CubeOrder::SwizzleCol(0)] {
+        let blueprint = CmmaBlueprint {
+            instruction: InstructionShape {
+                m: 16,
+                n: 16,
+                k: 16,
+            },
+            partition: Partition { m: 1, n: 1 },
+            planes: PlaneGrid { m: 1, n: 1 },
+            stage_k: 16,
+            buffering: 2,
+            delivery: CmmaDelivery::Copy,
+            order,
+        };
+        match blueprint.validate(&rect(48, 64, 64, f16_elems())) {
+            Err(MatmulSetupError::InvalidConfig(msg)) => {
+                let msg = msg.to_string();
+                assert!(msg.contains("no boxes"), "wrong rejection: {msg}");
+            }
+            other => panic!("expected {order:?} refused, got {other:?}"),
+        }
+    }
+}
+
 /// The same plan with its cubes taking the output's boxes in a swizzled order, which is the one
 /// thing a [`CubeOrder`] changes: every box is still held by exactly one cube, and it still
 /// holds the same box's worth of the product.
@@ -558,24 +594,19 @@ fn cmma_swizzled_cube_order_f32() {
     }
 }
 
-/// A strip width the grid does not divide runs its last strip past the grid, so two boxes
-/// answer to one cube and a third to none. Refused at blueprint time, where the shape is known
-/// — the kernel cannot check it, because a `Space` carries its extents as runtime values.
+/// A strip width the grid does not divide deals a ragged last strip, every box to one cube: the
+/// blueprint takes it rather than fit a width to each grid. Validated alone, since the plan is
+/// what is judged and a device without the instruction turns down every blueprint whatever it is.
 #[test]
-fn cmma_rejects_a_strip_the_grid_does_not_divide() {
-    use cubek_matmul::{
-        definition::{AvailableVectorSizes, MatmulSetupError},
-        routine::DeviceSettings,
-        tiled::{
-            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition, StoredTiles},
-            cpu_gemm::{InstructionShape, PlaneGrid},
-        },
+fn cmma_takes_a_strip_the_grid_does_not_divide() {
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
     };
     use cubek_tile::CubeOrder;
 
-    let client = client();
-    // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which no strip of 2
-    // divides.
+    // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
+    // leaves ragged.
     let blueprint = CmmaBlueprint {
         instruction: InstructionShape {
             m: 16,
@@ -590,26 +621,7 @@ fn cmma_rejects_a_strip_the_grid_does_not_divide() {
         order: CubeOrder::SwizzleRow(2),
     };
     let problem = rect(48, 64, 64, f16_elems());
-    let device_settings = DeviceSettings {
-        plane_dim: client.properties().hardware.plane_size_max,
-        max_cube_count: client.properties().hardware.max_cube_count,
-        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, 4, 4, 4)
-            .pick_max()
-            .unwrap(),
-        client,
-    };
-    match CmmaRoutine::blueprint(
-        &BlueprintStrategy::Forced(blueprint),
-        &problem,
-        &device_settings,
-        problem.global_dtypes.out,
-        StoredTiles::default(),
-    ) {
-        Err(MatmulSetupError::InvalidConfig(msg)) => {
-            let msg = msg.to_string();
-            assert!(msg.contains("SwizzleRow"), "wrong rejection: {msg}");
-        }
-        Err(other) => panic!("expected a strip-width rejection, got {other:?}"),
-        Ok(_) => panic!("expected a strip-width rejection, got a blueprint"),
+    if let Err(err) = blueprint.validate(&problem) {
+        panic!("expected a blueprint over a ragged strip, got {err:?}");
     }
 }

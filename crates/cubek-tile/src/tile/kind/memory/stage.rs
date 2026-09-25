@@ -308,7 +308,7 @@ impl<T: Numeric> Memory<T> {
                 .map(|p| space.extent_at(p))
                 .product::<usize>()
         );
-        let start = PLANE_POS.retyped::<usize>() * cells;
+        let start = PLANE_POS.cast::<usize>() * cells;
         let end = start + cells;
         let window =
             Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);

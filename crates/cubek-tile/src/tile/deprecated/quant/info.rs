@@ -143,7 +143,7 @@ impl QuantInfo {
     /// meaningful where [`uniform`](QuantInfoExpand::uniform) holds; one load for the whole tile.
     pub(crate) fn uniform_scale(&self) -> f32 {
         self.known
-            .effective(self.buffer[self.window_start.retyped::<usize>()])
+            .effective(self.buffer[self.window_start.cast::<usize>()])
     }
 
     /// The [`DequantView`] over a values/scales view pair on the same coordinates. Shared by

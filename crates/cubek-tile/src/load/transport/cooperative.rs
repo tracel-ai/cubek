@@ -45,7 +45,7 @@ impl<T: Numeric> Memory<T> {
         let plen = shape.len().comptime();
         let total = shape
             .product(comptime!((0..plen).collect::<Vec<_>>()))
-            .retyped::<usize>();
+            .cast::<usize>();
         let projection = comptime!(self.layout.projection.clone());
         // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
         // the same agreement between the two boxes.

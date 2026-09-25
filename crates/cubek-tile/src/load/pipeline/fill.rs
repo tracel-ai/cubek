@@ -184,6 +184,98 @@ impl<T: Numeric> Stages<Tile<T>> {
     }
 }
 
+// The widths of the lines a register-staged fill holds of each operand, scope-registered sizes as
+// `RA` is: bound by `fetch_buffers`, read by `fetch` and `store`, never part of the stages' type.
+define_size!(pub(crate) FL);
+define_size!(pub(crate) FR);
+
+/// The registers one unit holds a register-staged fill of both operands in, a line a slot.
+pub(crate) type FetchBuffers<Lhs, Rhs> = (Array<Vector<Lhs, FL>>, Array<Vector<Rhs, FR>>);
+
+/// Bind the fetched line widths `FL` and `FR` for the rest of the kernel's scope.
+#[cube]
+fn register_fetched_widths(#[comptime] lhs: usize, #[comptime] rhs: usize) {
+    intrinsic!(|scope| {
+        scope.register_size::<FL>(lhs);
+        scope.register_size::<FR>(rhs);
+    });
+}
+
+#[cube]
+impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+    /// The registers one unit holds a fill of both operands' stages in, across a contraction
+    /// ([`prefetched`](Stages::prefetched)): whole lines at each stage's width, at most
+    /// [`MOST_FETCHED_SCALARS`] scalars between them.
+    #[allow(dead_code)] // Reached through its expand, from `prefetched`.
+    pub(crate) fn fetch_buffers(&self) -> FetchBuffers<Lhs, Rhs> {
+        let staged = self.slots.index(FIRST_SLOT);
+        let lhs = staged.data.lhs.fetched_scalars();
+        let rhs = staged.data.rhs.fetched_scalars();
+        comptime!(assert!(
+            lhs + rhs <= MOST_FETCHED_SCALARS,
+            "Stages: a fill fetched into registers holds {lhs} + {rhs} scalars a unit, past the \
+             {MOST_FETCHED_SCALARS} a unit keeps beside its contraction"
+        ));
+        let lhs_width = staged.data.lhs.vector_size();
+        let rhs_width = staged.data.rhs.vector_size();
+        register_fetched_widths(lhs_width, rhs_width);
+        (
+            Array::<Vector<Lhs, FL>>::new(comptime!(lhs / lhs_width)),
+            Array::<Vector<Rhs, FR>>::new(comptime!(rhs / rhs_width)),
+        )
+    }
+
+    /// This unit's share of filling slot `slot` for `region`, read into `lhs` and `rhs` and not
+    /// yet written: the loads a schedule issues before a contraction and lands after it.
+    #[allow(dead_code)] // Reached through its expand, from `prefetched`.
+    pub(crate) fn fetch(
+        &self,
+        #[comptime] slot: usize,
+        region: &Region,
+        lhs: &mut Array<Vector<Lhs, FL>>,
+        rhs: &mut Array<Vector<Rhs, FR>>,
+    ) {
+        let staged = self.slots.index(slot);
+        staged
+            .data
+            .lhs
+            .fetch_from(&self.sources.lhs.at(region), lhs);
+        staged
+            .data
+            .rhs
+            .fetch_from(&self.sources.rhs.at(region), rhs);
+    }
+
+    /// Write what [`fetch`](Stages::fetch) read into slot `slot`. The caller owns the rendezvous.
+    #[allow(dead_code)] // Reached through its expand, from `prefetched`.
+    pub(crate) fn store(
+        &mut self,
+        #[comptime] slot: usize,
+        lhs: &Array<Vector<Lhs, FL>>,
+        rhs: &Array<Vector<Rhs, FR>>,
+    ) {
+        let slot = self.slot_mut(slot);
+        slot.data.lhs.store_fetched(lhs);
+        slot.data.rhs.store_fetched(rhs);
+    }
+
+    /// Refuse stages a register-staged schedule cannot drive: ones filled by planes of their own,
+    /// by the TMA engine, whose copies land on a barrier rather than in a unit's registers, or
+    /// from a procedural source, which has no memory to read a line of.
+    #[allow(dead_code)] // Reached through its expand, from `prefetched`.
+    pub(crate) fn assert_copied_by_every_unit(&self) {
+        let lhs = self.sources.lhs.delivery();
+        let rhs = self.sources.rhs.delivery();
+        comptime!(assert!(
+            self.fillers == 0 && lhs == Delivery::Copy && rhs == Delivery::Copy,
+            "Stages: a register-staged schedule fills its slots with every unit's own copy of \
+             memory; these stages are filled by {} plane(s) of their own, or their sources are \
+             delivered {lhs:?} and {rhs:?}",
+            self.fillers
+        ));
+    }
+}
+
 // `consume` takes a closure so the body stays caller-defined, which is why it is spelled per
 // payload shape: inference resolves the pair's concrete `TileExpand` fields, not `P::ExpandType`.
 impl<Lhs: Numeric, Rhs: Numeric> Slot<OperandPair<Lhs, Rhs>> {

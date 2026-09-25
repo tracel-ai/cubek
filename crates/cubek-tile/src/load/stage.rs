@@ -26,7 +26,7 @@ impl<T: Numeric> Memory<T> {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            let pos = shape.unravel(i.retyped::<u32>());
+            let pos = shape.unravel(i.cast::<u32>());
             // TODO: staging cannot see its consumer, so this masked fill uses Procedural's
             // zero fallback, not every reduction's identity (Max on negatives, Min on positives).
             // A reduction-aware contract must carry validity or the consumer's identity here.

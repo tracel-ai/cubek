@@ -81,7 +81,7 @@ impl<T: Numeric> Procedural<T> {
             match comptime!(step.level.tile(axis)) {
                 Some(tile) => {
                     let tile = comptime!(tile as u32);
-                    origin.push(self.origin.at(p) + step.coord(axis).retyped::<u32>() * tile);
+                    origin.push(self.origin.at(p) + step.coord(axis).cast::<u32>() * tile);
                 }
                 None => origin.push(self.origin.at(p)),
             }

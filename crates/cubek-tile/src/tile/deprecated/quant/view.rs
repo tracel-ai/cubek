@@ -12,7 +12,7 @@ use crate::*;
 /// ([`QuantInfo`]); no window straddles one ([`quantized`](crate::Arg::quantized)).
 ///
 /// Per-tensor never leaves index `0`: its strides are `0`, so every term folds away
-/// ([`times`](crate::Known::times) annihilates) and a read is a constant-index broadcast.
+/// ([`times`](crate::Integer::times) annihilates) and a read is a constant-index broadcast.
 #[derive(CubeType, Clone)]
 pub struct ScaleLayout {
     strides: Coords<u32>,
@@ -78,11 +78,11 @@ impl Layout for ScaleLayout {
         let kept = terms.len();
         if comptime!(kept == 0) {
             // Every axis holds one scale: the window's own, already in `window_start`.
-            self.window_start.retyped::<usize>()
+            self.window_start.cast::<usize>()
         } else {
             self.window_start
                 .plus(terms.sum(comptime!((0..kept).collect::<Vec<_>>())))
-                .retyped::<usize>()
+                .cast::<usize>()
         }
     }
 

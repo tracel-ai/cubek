@@ -60,8 +60,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     );
 
     for mat in 0..matrices {
-        let batch =
-            Coords::constant(comptime!(batch_extents.clone())).unravel(mat.retyped::<u32>());
+        let batch = Coords::constant(comptime!(batch_extents.clone())).unravel(mat.cast::<u32>());
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
@@ -211,7 +210,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                     for p in 0..kc {
                         let reduce_coords =
                             Coords::constant(comptime!(problem.block.reduce_extents.clone()))
-                                .unravel(p.retyped::<u32>());
+                                .unravel(p.cast::<u32>());
                         let weight = tap_weight::<EL>(
                             &block_weights,
                             &row_weights,
@@ -254,7 +253,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                 for p in 0..kc {
                     let reduce_coords =
                         Coords::constant(comptime!(problem.block.reduce_extents.clone()))
-                            .unravel(p.retyped::<u32>());
+                            .unravel(p.cast::<u32>());
                     let weight = Vector::<E, V>::cast_from(row_cached_tap_weight::<EL>(
                         &block_weights,
                         &row_weights,
@@ -521,7 +520,7 @@ fn factor_tap(
     reduce_coords
         .at(factor)
         .plus(comptime!(offset as u32))
-        .retyped::<usize>()
+        .cast::<usize>()
 }
 
 #[cube]

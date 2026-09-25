@@ -6,7 +6,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::unexpanded;
 
-use crate::algebra::{Known, KnownExpand, fold_add, fold_mul};
+use crate::algebra::{Integer, IntegerExpand, fold_add, fold_mul};
 
 /// An immutable coordinate/extent list: [`CoordsDyn`]'s stored-data sibling, whose expand's
 /// `IntoMut` is the identity. Elements are never reassigned, so a `let mut` holder (a staging

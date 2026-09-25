@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Axis, Coords, Known, KnownExpand, KnownSeq, KnownSeqExpand, Projection};
+use crate::{Axis, Coords, Integer, IntegerExpand, IntegerSeq, IntegerSeqExpand, Projection};
 
 /// What a [`Projection`] cannot state at comptime: the values its [`Dynamic`](crate::Scale)
 /// coefficients and divisors carry, and the phase its window origin sits at under a
@@ -16,7 +16,7 @@ use crate::{Axis, Coords, Known, KnownExpand, KnownSeq, KnownSeqExpand, Projecti
 /// phase at once, and a descent ([`Memory::at`](crate::Memory)) advances both.
 ///
 /// No coefficients and an all-zero phase is the whole of it for a fully-`Static` integer mapping,
-/// which is every operand but a runtime-strided or fractionally scaled gather; [`Known`] passes
+/// which is every operand but a runtime-strided or fractionally scaled gather; [`Integer`] passes
 /// that through, so carrying it costs nothing where it says nothing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]

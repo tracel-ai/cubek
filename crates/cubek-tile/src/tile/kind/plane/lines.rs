@@ -139,7 +139,7 @@ impl<T: Numeric> Lines<T> {
             LaneRead::PlaneShared => {
                 let planes = comptime!(plane_windows(&operand.place.space, &operand.place.levels));
                 let cells = comptime!(lines * words);
-                let start = PLANE_POS.retyped::<usize>() * cells;
+                let start = PLANE_POS.cast::<usize>() * cells;
                 let end = start + cells;
                 ComptimeOption::new_Some(
                     Shared::<[u32]>::new_slice(comptime!(cells * planes))
@@ -286,7 +286,7 @@ impl<T: Numeric> Lines<T> {
             origin.push(
                 self.origin
                     .at(p)
-                    .plus(step.coord(axis).times(edge).retyped::<u32>()),
+                    .plus(step.coord(axis).times(edge).cast::<u32>()),
             );
         }
         Lines::<T> {
@@ -337,7 +337,7 @@ impl<T: Numeric> Lines<T> {
                     got.insert(j, plane_shuffle(mine.extract(j), line));
                 }
                 if comptime!(words > 1) {
-                    got.extract_dynamic(word.retyped::<usize>())
+                    got.extract_dynamic(word.cast::<usize>())
                 } else {
                     got.extract(0usize)
                 }

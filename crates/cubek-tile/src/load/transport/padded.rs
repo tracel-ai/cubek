@@ -31,7 +31,7 @@ pub(crate) fn physical_pos(
     i: usize,
     shape: &Coords<u32>,
 ) -> CoordsDyn {
-    let x = i.retyped::<u32>();
+    let x = i.cast::<u32>();
     let mut digits = Coords::<u32>::new();
     #[unroll]
     for j in 0..shape.len() {

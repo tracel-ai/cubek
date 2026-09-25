@@ -3,7 +3,11 @@
 //!
 //! Single and double buffering are this schedule at `depth` 1 and 2. At depth 1 a region's fill is
 //! the last event before its read, so the consume publishes it; deeper, the fill a lap ahead does.
-//! That, prologue and drain are the protocol ([`pipelined`](Stages::pipelined)); a kernel supplies stages and consume.
+//! That, prologue and drain are the protocol ([`pipelined`](Stages::pipelined)); a kernel
+//! supplies the stages and the consume.
+//!
+//! [`prefetched`](Stages::prefetched) is the same walk with each region's fill split around the
+//! contraction before it, the next region's loads held in the units' registers meanwhile.
 
 use cubecl::frontend::branch::{if_else_expand, if_expand};
 use cubecl::ir::Scope;
@@ -28,7 +32,8 @@ pub enum Role {
 pub struct Stages<T: CubeType> {
     pub(crate) slots: Sequence<Slot<T>>,
     pub(crate) sources: T,
-    // Read by the schedule ([`pipelined`](Stages::pipelined)) at expand level only.
+    // Read by the two schedules ([`pipelined`](Stages::pipelined),
+    // [`prefetched`](Stages::prefetched)) at expand level only.
     #[allow(dead_code)]
     #[cube(comptime)]
     pub(crate) depth: usize,
@@ -181,6 +186,119 @@ where
     }
 }
 
+/// The register-staged schedule, over the two operands of a contraction.
+impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+    /// [`pipelined`](Stages::pipelined)'s walk with each region's fill split around the
+    /// contraction before it: a unit reads its share of the next region's stage into registers,
+    /// the slot is contracted, and the registers are written into the next slot. The next stage's
+    /// global loads are in flight while the contraction runs, rather than issued after the
+    /// barrier that frees their slot.
+    ///
+    /// One slot costs two cube barriers a region (the contraction's reads are done, then the
+    /// write is published); two or more cost one, since the slot written is one the last barrier
+    /// already freed. Only one region is ever held ahead, so stages deeper than two slots are
+    /// refused: their slots past the second would hold shared memory and never a stage.
+    ///
+    /// Only a stage copied by every unit of the cube, straight, from a plain operand, both
+    /// operands holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way;
+    /// anything else is refused at expansion. Stages holding an operand the walk leaves fixed
+    /// take [`pipelined`](Stages::pipelined)'s schedule, at any depth: the fetch moves both
+    /// operands of a slot at once, and a fixed one is filled once, above the loop.
+    pub fn prefetched<F>(&mut self, _walk: Walk, _compute: F)
+    where
+        F: FnMut(&mut Slot<OperandPair<Lhs, Rhs>>, &Region),
+    {
+        unexpanded!()
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
+    pub fn __expand_prefetched_method<F>(&mut self, scope: &Scope, walk: WalkExpand, compute: F)
+    where
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+    {
+        // An operand the walk leaves fixed is filled once, above the loop: there is no next
+        // region of it to fetch, and the ordinary schedule is the whole walk.
+        if self.has_fixed(scope) {
+            return self.__expand_pipelined_method(scope, walk, compute);
+        }
+        self.__expand_assert_copied_by_every_unit_method(scope);
+        assert!(
+            self.depth <= 2,
+            "Stages::prefetched: {} slots hold one region ahead, so the slots past a second \
+             would sit idle; build them with a depth of 1 or 2",
+            self.depth
+        );
+        let total = walk.__expand_total_method(scope);
+        self.prime(scope, &walk, &total);
+        self.prefetching_laps(scope, walk, total, compute);
+    }
+
+    /// The first region, filled and published before any contraction: what the first lap reads
+    /// while it fetches the second.
+    fn prime(&mut self, scope: &Scope, walk: &WalkExpand, total: &NativeExpand<usize>) {
+        let any = 0usize.into_expand(scope).__expand_lt_method(scope, total);
+        if_expand(scope, any, |scope| {
+            let first = walk.__expand_region_method(scope, FIRST_SLOT.into_expand(scope));
+            self.fill_streamed(scope, FIRST_SLOT, &first);
+            self.publish(scope, FIRST_SLOT);
+        });
+    }
+
+    /// The walk itself: each lap fetches the next region into registers, contracts the slot it
+    /// already holds, then writes the registers into the slot the contraction just freed.
+    fn prefetching_laps<F>(
+        &mut self,
+        scope: &Scope,
+        walk: WalkExpand,
+        total: NativeExpand<usize>,
+        mut compute: F,
+    ) where
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+    {
+        let depth = self.depth;
+        let unroll = walk.unroll;
+        let (mut lhs, mut rhs) = self.__expand_fetch_buffers_method(scope);
+        let laps = total
+            .__expand_plus_method(scope, (depth - 1).into_expand(scope))
+            .__expand_divided_by_method(scope, depth.into_expand(scope));
+        let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
+            for j in 0..depth {
+                let target = (j + 1) % depth;
+                let region_idx = lap
+                    .__expand_times_method(scope, depth.into_expand(scope))
+                    .__expand_plus_method(scope, j.into_expand(scope));
+                let next = region_idx.__expand_plus_method(scope, 1usize.into_expand(scope));
+                let in_walk = region_idx.__expand_lt_method(scope, &total);
+                if_expand(scope, in_walk, |scope| {
+                    let prefetching = next.__expand_lt_method(scope, &total);
+                    if_expand(scope, prefetching, |scope| {
+                        let upcoming = walk.__expand_region_method(scope, next);
+                        self.__expand_fetch_method(scope, target, &upcoming, &mut lhs, &mut rhs);
+                    });
+                    let region = walk.__expand_region_method(scope, region_idx);
+                    let slot = self.__expand_slot_mut_method(scope, j);
+                    compute(scope, slot, &region);
+                    if_expand(scope, prefetching, |scope| {
+                        // One slot: every unit has read it before any overwrites it.
+                        if depth == 1 {
+                            self.publish(scope, FIRST_SLOT);
+                        }
+                        self.__expand_store_method(scope, target, &lhs, &rhs);
+                        self.publish(scope, target);
+                    });
+                });
+            }
+        };
+        let range = RangeExpand::new(0usize.into_expand(scope), laps);
+        if unroll {
+            range.expand_unroll(scope, &mut body);
+        } else {
+            range.expand(scope, &mut body);
+        }
+    }
+}
+
 /// The one schedule both entries drive: prologue, then a lap that prefetches one region ahead of
 /// the one it computes, with the drain publishing what no later fill will.
 ///
@@ -239,22 +357,23 @@ mod schedule {
                     let ahead =
                         region_idx.__expand_plus_method(scope, (depth - 1).into_expand(scope));
                     let prefetching = ahead.__expand_lt_method(scope, &total);
-                    let draining = region_idx.__expand_lt_method(scope, &total);
+                    let in_walk = region_idx.__expand_lt_method(scope, &total);
+                    // The compute is emitted once, after the branch on the fill: it is the whole
+                    // unrolled contraction, its accumulator live across whatever branch holds it.
                     if_else_expand(scope, prefetching, |scope| {
                         let prefetch = walk.__expand_region_method(scope, ahead);
                         fill(scope, stages, (j + depth - 1) % depth, &prefetch);
-                        let region = walk.__expand_region_method(scope, region_idx);
-                        let slot = stages.__expand_slot_mut_method(scope, j);
-                        compute(scope, slot, &region);
                     })
                     .or_else(scope, |scope| {
                         // The walk is draining: no fill follows, so this consume publishes.
-                        if_expand(scope, draining, |scope| {
-                            let region = walk.__expand_region_method(scope, region_idx);
+                        if_expand(scope, in_walk, |scope| {
                             stages.publish(scope, j);
-                            let slot = stages.__expand_slot_mut_method(scope, j);
-                            compute(scope, slot, &region);
                         });
+                    });
+                    if_expand(scope, in_walk, |scope| {
+                        let region = walk.__expand_region_method(scope, region_idx);
+                        let slot = stages.__expand_slot_mut_method(scope, j);
+                        compute(scope, slot, &region);
                     });
                 }
             }

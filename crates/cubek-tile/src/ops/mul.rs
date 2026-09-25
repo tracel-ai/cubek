@@ -48,10 +48,7 @@ impl<T: Numeric> Tile<T> {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            let group = group_line(
-                &extents.unravel(i.retyped::<u32>()),
-                comptime!(split.clone()),
-            );
+            let group = group_line(&extents.unravel(i.cast::<u32>()), comptime!(split.clone()));
             let (a_base, b_base) = bases(
                 &group,
                 comptime!(space.clone()),

@@ -284,7 +284,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
             let elem_idx = i * vector_size + e;
             let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
             let line = view.read((row, col / width));
-            vector.insert(e, line.extract_dynamic((col % width).retyped::<usize>()));
+            vector.insert(e, line.extract_dynamic((col % width).cast::<usize>()));
         }
         fragment[i] = vector;
     }
