@@ -105,6 +105,9 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 ) {
     let output_vector_size = global.vector_size().comptime();
 
+    // Lanes read vectors other lanes stored.
+    sync_plane();
+
     let unit_step = plane_dim * output_vector_size as u32;
     let num_unit_writes = elements_in_tile.div_ceil(unit_step);
     let balanced_workload = elements_in_tile.is_multiple_of(unit_step);
@@ -122,6 +125,9 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
             }
         }
     }
+
+    // The next tile is stored into the same memory.
+    sync_plane();
 }
 
 #[cube]
