@@ -103,11 +103,8 @@ impl<T: Numeric> RegisterData<T> {
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
 
-        // Each factor as the block reads it: its values' matrix, and its scales looked up at
-        // every line's own coordinates. The rhs and the block share the width `RA` (asserted
-        // above, `vw == self.vector_size`).
-        let lhs_mat = lhs_values.matrix_packed::<L>(lhs_axes, 0usize);
-        let rhs_mat = rhs_values.matrix_packed::<RA>(rhs_axes, 0usize);
+        // Each factor's scales, looked up at every line's own coordinates. The rhs and the block
+        // share the width `RA` (asserted above, `vw == self.vector_size`).
         let lhs_scales = lhs.lookup(
             lhs_axes,
             0usize,
@@ -124,11 +121,13 @@ impl<T: Numeric> RegisterData<T> {
         );
 
         block::contract::<T, EL, L, LS, ER, RA, RS>(
-            &lhs_mat,
+            &lhs_values,
             &lhs_scales,
-            &rhs_mat,
+            &rhs_values,
             &rhs_scales,
             &mut self.data,
+            lhs_axes,
+            rhs_axes,
             lw,
             fold,
             mr,

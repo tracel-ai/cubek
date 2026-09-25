@@ -230,6 +230,13 @@ impl MatrixAxes {
         axes
     }
 
+    /// Whether each edge is one coordinate of a `rank`-coordinate window, with none above: the
+    /// rows are coordinate `row_split`, the columns `col_split`, so a window's stride per
+    /// coordinate ([`WindowAddress`]) is a stride per edge.
+    pub(crate) fn edges_are_coordinates(&self, rank: usize) -> bool {
+        self.row_split + 1 == self.col_split && self.col_split + 1 == rank
+    }
+
     /// [`find`](Self::find) where the caller has already established that the matrix exists.
     pub fn of(space: &Space, rows: usize, cols: usize) -> Self {
         MatrixAxes::find(space, rows, cols).unwrap_or_else(|| {

@@ -9,18 +9,98 @@ use cubecl::prelude::*;
 use crate::instruction::registers::horizontal;
 use crate::*;
 
-/// `c += lhs · rhs` over the block, one line of the contraction at a time.
-///
-/// Each factor is its values' matrix and the scales riding it, looked up at every line's own
-/// coordinates ([`ScaleLookup`]): a factor carrying none goes through as it lies, and the walk
-/// is the same either way — the lines of the contraction, in order.
+/// `c += lhs · rhs` over the block, one line of the contraction at a time, each factor its
+/// values' tile and the scales riding it, looked up at every line's own coordinates
+/// ([`ScaleLookup`]): a factor carrying none goes through as it lies.
 ///
 /// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line along the
 /// contracted axis and the block's lanes are one cell's partials, folded by [`commit`]. At one, the
 /// rhs lines along the accumulator and the lhs is read lane by lane (comptime under `lane_fanout`).
+///
+/// A folded step over operands that each have a [`WindowAddress`] reads through it
+/// ([`contract_by_address`]), anything else through the operands' matrix views
+/// ([`contract_by_view`]).
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn contract<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    LS: Numeric,
+    ER: Numeric,
+    V: Size,
+    RS: Numeric,
+>(
+    lhs: &Tile<EL>,
+    lhs_scales: &ScaleLookup<LS>,
+    rhs: &Tile<ER>,
+    rhs_scales: &ScaleLookup<RS>,
+    c: &mut Array<Vector<E, V>>,
+    #[comptime] lhs_axes: MatrixAxes,
+    #[comptime] rhs_axes: MatrixAxes,
+    #[comptime] lw: usize,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] lane_fanout: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let lhs_mem = lhs.mem("contract");
+    let rhs_mem = rhs.mem("contract");
+    let lhs_by_axes = lhs_mem.addressed_by_axes();
+    let rhs_by_axes = rhs_mem.addressed_by_axes();
+    let by_address = comptime!(
+        contracted_per_step > 1
+            && kc.is_multiple_of(contracted_per_step)
+            && lhs_by_axes
+            && lhs_axes.edges_are_coordinates(lhs.space.rank())
+            && rhs_by_axes
+            && rhs_axes.edges_are_coordinates(rhs.space.rank())
+    );
+    if comptime!(by_address) {
+        contract_by_address::<E, EL, L, LS, ER, V, RS>(
+            lhs_mem,
+            lhs_scales,
+            rhs_mem,
+            rhs_scales,
+            c,
+            lhs_axes,
+            rhs_axes,
+            contracted_per_step,
+            mr,
+            nr,
+            kc,
+            unroll,
+            semiring,
+        );
+    } else {
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, 0usize);
+        contract_by_view::<E, EL, L, LS, ER, V, RS>(
+            &lhs_mat,
+            lhs_scales,
+            &rhs_mat,
+            rhs_scales,
+            c,
+            lw,
+            contracted_per_step,
+            mr,
+            nr,
+            kc,
+            unroll,
+            lane_fanout,
+            semiring,
+        );
+    }
+}
+
+/// [`contract`] over each operand's matrix view, which derives every read's offset from its
+/// coordinates. What a caller holding views rather than tiles calls directly.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn contract_by_view<
     E: Numeric,
     EL: Numeric,
     L: Size,
@@ -144,6 +224,81 @@ pub(crate) fn contract<
     }
 }
 
+/// [`contract`] at a folded step, each operand read through its [`WindowAddress`].
+///
+/// Folding a view's per-read offset into a running index is left to the backend, which does so
+/// only when enough of the arithmetic is constant: under a dynamic extent it multiplies on every
+/// read. Here each operand's walk is one running index per loop, so a read costs an add.
+///
+/// Each operand reads as `(row, k_line)` off its [`MatrixAxes`], whose rows and columns are the
+/// last two coordinates of its window, one each, which is what lets them index its strides.
+/// [`contract`], its one caller, states those conditions.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn contract_by_address<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    LS: Numeric,
+    ER: Numeric,
+    V: Size,
+    RS: Numeric,
+>(
+    lhs: &MemData<EL>,
+    lhs_scales: &ScaleLookup<LS>,
+    rhs: &MemData<ER>,
+    rhs_scales: &ScaleLookup<RS>,
+    c: &mut Array<Vector<E, V>>,
+    #[comptime] lhs_axes: MatrixAxes,
+    #[comptime] rhs_axes: MatrixAxes,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let a_lines = lhs.addressed_lines::<L>();
+    let b_lines = rhs.addressed_lines::<V>();
+    let a_address = lhs.window_address();
+    let b_address = rhs.window_address();
+    let (a_row, a_step) = (
+        a_address.strides.at(comptime!(lhs_axes.row_split)),
+        a_address.strides.at(comptime!(lhs_axes.col_split)),
+    );
+    let (b_row, b_step) = (
+        b_address.strides.at(comptime!(rhs_axes.row_split)),
+        b_address.strides.at(comptime!(rhs_axes.col_split)),
+    );
+
+    let mut b = Array::<Vector<E, V>>::new(nr);
+    let mut a_at = a_address.origin;
+    let mut b_at = b_address.origin;
+    for line in 0..comptime!(kc / contracted_per_step) {
+        let k_line = line as u32;
+        let mut b_ptr = b_at;
+        #[unroll(unroll)]
+        for n in 0..nr {
+            let pos = (n as u32, k_line);
+            let value = b_lines[b_ptr as usize];
+            b[n] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(value), pos);
+            b_ptr += b_row;
+        }
+        let mut a_ptr = a_at;
+        #[unroll(unroll)]
+        for i in 0..mr {
+            let pos = (i as u32, k_line);
+            let value = a_lines[a_ptr as usize];
+            let line_value = lhs_scales.apply::<E, L>(Vector::<E, L>::cast_from(value), pos);
+            let a = Vector::<E, V>::cast_from(line_value);
+            accumulate_row::<E, V>(c, &mut b, a, i, nr, unroll, semiring);
+            a_ptr += a_row;
+        }
+        a_at += a_step;
+        b_at += b_step;
+    }
+}
+
 /// One step `c += outer(A[:, k], B[k, :])`, at scalar contraction step `k` off the `k_line`-th
 /// K-line of each lhs row, each line under the scale covering it.
 ///
@@ -210,13 +365,30 @@ fn rank1_update<
         } else {
             Vector::<E, V>::cast_from(line.extract_dynamic(lane))
         };
-        #[unroll(unroll)]
-        for n in 0..nr {
-            // One step of the semiring, a single `fma` for the ordinary one: `+= a * b` would
-            // lower to a separate mul + dependent add (no fast-math contraction on the CPU
-            // backend), doubling the FP instruction count and serializing the accumulate.
-            c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
-        }
+        accumulate_row::<E, V>(c, b, a, i, nr, unroll, semiring);
+    }
+}
+
+/// `c[i, :] += a ⊗ b`: the block row `i` takes one lhs value against every rhs line.
+///
+/// `b` is only read, but a `&mut` argument does not pass as `&` through the macro's `Into` on
+/// each argument, and both callers hold it mutably to fill it.
+#[cube]
+fn accumulate_row<E: Numeric, V: Size>(
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    a: Vector<E, V>,
+    i: usize,
+    #[comptime] nr: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    #[unroll(unroll)]
+    for n in 0..nr {
+        // One step of the semiring, a single `fma` for the ordinary one: `+= a * b` would lower
+        // to a separate mul + dependent add (no fast-math contraction on the CPU backend),
+        // doubling the FP instruction count and serializing the accumulate.
+        c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
     }
 }
 

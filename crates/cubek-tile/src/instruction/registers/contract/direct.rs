@@ -268,7 +268,7 @@ fn body<
     #[comptime] semiring: Semiring,
 ) {
     let mut c = block::seed::<E, V, A>(acc, contracted_per_step, 1usize, aw, mr, nr, cols, unroll);
-    block::contract::<E, EL, L, LS, ER, V, RS>(
+    block::contract_by_view::<E, EL, L, LS, ER, V, RS>(
         lhs,
         lhs_scales,
         rhs,
