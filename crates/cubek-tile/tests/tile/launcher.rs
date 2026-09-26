@@ -13,10 +13,6 @@ use cubek_tile::{
     Projection, Scale, Space, Storage, StorageTiling, TileSpec,
 };
 
-/// The plane width these tests reason on. Stated, not read off a device: nothing here
-/// launches, and a launch's geometry is the same arithmetic whatever plane runs it.
-const PLANE: u32 = 32;
-
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
@@ -34,8 +30,9 @@ fn launcher_geometry_matches_concrete_space() {
         CubeCount::Static(x, y, z) => assert_eq!((x, y, z), (4, 2, 1)),
         _ => panic!("launcher geometry should be static"),
     }
-    // Planes: within a 16×32 cube tile, 2×4 leaves of 8×8.
-    assert_eq!(launch.cube_dim(), CubeDim::new_2d(PLANE, 8));
+    // Planes: within a 16×32 cube tile, 2×1 leaves of 8×32, each as wide as the device's plane.
+    let plane = client.properties().hardware.plane_size_max;
+    assert_eq!(launch.cube_dim(), CubeDim::new_2d(plane, 2));
 }
 
 #[test]
@@ -118,13 +115,14 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
 }
 
 /// A cpu_gemm-shaped scheme: two batch axes riding one-per-cube on Z, 16×32 cube tiles on
-/// X/Y, 8×8 plane leaves with `leaf_k = 4`.
+/// X/Y, 8×32 plane leaves with `leaf_k = 4`. Two planes a cube, so the cube fits a device
+/// whose cube holds as few units as a small CPU runner's cores.
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> (Space, Vec<Level>) {
     (
         Space::new(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)]),
-        cubek_tile::Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
+        cubek_tile::Levels::leaf(&[(M, 8), (N, 32), (K, 4)])
             .walk_every(&[K])
-            .planes(&[(M, 2), (N, 4)])
+            .planes(&[(M, 2)])
             .cubes(&[M, N])
             .batches(&[B0, B1])
             .build(),
@@ -796,7 +794,7 @@ fn arg_gathered_cancelling_divisor_stages() {
 #[test]
 fn vector_size_picks_widest_qualifying_line() {
     let client = cubecl::test_device().client();
-    // Everything divides: N's leaf edge is 8, both inner extents are 64.
+    // Everything divides: N's leaf edge is 32, both inner extents are 64.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
@@ -807,14 +805,14 @@ fn vector_size_picks_widest_qualifying_line() {
     let out = Geometry::from(&binding(&client, &[64, 64]));
 
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], size_of::<f32>());
-    // The gate passed, so the pick is the hardware's widest line fitting the leaf edge (8).
+    // The gate passed, so the pick is the hardware's widest line fitting the leaf edge (32).
     let expected = client
         .io_optimized_vector_sizes(size_of::<f32>())
-        .filter(|&v| 8 % v == 0)
+        .filter(|&v| 32 % v == 0)
         .max()
         .unwrap_or(1);
     assert_eq!(v, expected);
-    assert_eq!(8 % v, 0);
+    assert_eq!(32 % v, 0);
     assert_eq!(64 % v, 0);
 }
 
