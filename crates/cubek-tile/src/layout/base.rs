@@ -11,7 +11,8 @@
 //! one they reach at a divisor of its count.
 //!
 //! A layout is read off a binding ([`Layout::of`]), or stated leaf-up for a buffer about to be
-//! written ([`Layout::storage`]): the storage tile's levels, then the order of the grid of tiles.
+//! written ([`Layout::tile`]): each tile made of the one below it, then the order of the grid of
+//! tiles.
 
 use core::fmt::{self, Display, Formatter};
 
@@ -59,9 +60,9 @@ impl Layout {
         Layout { dense, outer }
     }
 
-    /// A layout stated leaf-up for a buffer about to be written: `tile` is the storage tile's
-    /// finest level, `(axis, count)` finest first, in values.
-    pub fn storage(tile: &[(Axis, usize)]) -> LayoutBuilder {
+    /// A layout stated leaf-up for a buffer about to be written: `tile` is its finest tile,
+    /// `(axis, count)` finest first, in values.
+    pub fn tile(tile: &[(Axis, usize)]) -> LayoutBuilder {
         LayoutBuilder {
             levels: vec![tile.to_vec()],
         }
@@ -151,17 +152,17 @@ impl Layout {
     }
 }
 
-/// A [`Layout`] being stated leaf-up: the storage tile's levels, finest first, before the grid
-/// of tiles says in which order they follow one another.
+/// A [`Layout`] being stated leaf-up: its tiles, finest first, each made of the one below it,
+/// before the grid says in which order the coarsest follow one another.
 #[derive(Clone, Debug)]
 pub struct LayoutBuilder {
     levels: Vec<Vec<(Axis, usize)>>,
 }
 
 impl LayoutBuilder {
-    /// A coarser storage level: `(axis, count)` finest first, each count how many of the level
-    /// below one step holds.
-    pub fn storage(mut self, level: &[(Axis, usize)]) -> Self {
+    /// A coarser tile: `(axis, count)` finest first, each count how many of the tile below one
+    /// step holds.
+    pub fn tile(mut self, level: &[(Axis, usize)]) -> Self {
         self.levels.push(level.to_vec());
         self
     }
@@ -371,7 +372,7 @@ mod tests {
     /// always written for a row-major grid of tiles: the same dims, the same strides.
     #[test]
     fn a_row_major_grid_is_the_buffer_cubek_writes() {
-        let layout = Layout::storage(&[(N, 32), (M, 16)])
+        let layout = Layout::tile(&[(N, 32), (M, 16)])
             .grid(&[N, M])
             .over(&[(M, 64), (N, 64)])
             .unwrap();
@@ -388,7 +389,7 @@ mod tests {
     /// dims keep cubecl's order and only the strides move.
     #[test]
     fn a_k_first_grid_moves_the_strides_not_the_dims() {
-        let layout = Layout::storage(&[(N, 16), (K, 32)])
+        let layout = Layout::tile(&[(N, 16), (K, 32)])
             .grid(&[K, N])
             .over(&[(K, 128), (N, 64)])
             .unwrap();
@@ -400,11 +401,11 @@ mod tests {
         );
     }
 
-    /// Two storage levels and a grid: every size a product, the extents divided once, at the top.
+    /// Two tiles and a grid: every size a product, the extents divided once, at the top.
     #[test]
     fn levels_multiply_and_only_the_grid_divides() {
-        let layout = Layout::storage(&[(K, 8)])
-            .storage(&[(K, 4), (N, 16)])
+        let layout = Layout::tile(&[(K, 8)])
+            .tile(&[(K, 4), (N, 16)])
             .grid(&[K, N])
             .over(&[(K, 256), (N, 32)])
             .unwrap();
@@ -412,7 +413,7 @@ mod tests {
             &layout.dense[..],
             &[(K, 8), (K, 4), (N, 16), (K, 8), (N, 2)]
         );
-        let refused = Layout::storage(&[(K, 8)])
+        let refused = Layout::tile(&[(K, 8)])
             .grid(&[K, N])
             .over(&[(K, 12), (N, 4)]);
         assert_eq!(

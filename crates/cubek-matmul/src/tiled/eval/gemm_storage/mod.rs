@@ -97,7 +97,7 @@ impl Weight {
                     rhs,
                     [K, N],
                     dtype,
-                    Layout::storage(&[(N, stage_n), (K, blueprint.stage_k)]).grid(&[N, K]),
+                    Layout::tile(&[(N, stage_n), (K, blueprint.stage_k)]).grid(&[N, K]),
                 )
                 .map(TensorHandle::binding)
                 .map_err(|e| format!("{e:?}"))

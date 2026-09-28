@@ -126,7 +126,7 @@ fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
         .dtype(dtype)
         .uniform(4242, 10., 100.)
         .generate_without_host_data();
-    let layout = Layout::storage(&[(N, 64), (K, 32)]).grid(&[N, K]);
+    let layout = Layout::tile(&[(N, 64), (K, 32)]).grid(&[N, K]);
     let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
 
     let mut elems = dtypes.clone();

@@ -1,10 +1,10 @@
 //! Storing a matrix in storage tiles, and laying it back out.
 //!
-//! A storage-tiled tensor is stored one tile at a time, as the [`Layout`] it was stored in states:
-//! its storage levels, finest first, then the grid of tiles. Its binding carries how many pieces
-//! each dim is stored in (its `tiling`, `[.., R/tr, C/tc, tr, tc]` for one level) and the order
-//! they follow one another in (its strides). A routine that reads storage tiles (cmma's stage)
-//! moves a tile as one contiguous run.
+//! A storage-tiled tensor is stored one tile at a time, as the [`Layout`] it was stored in
+//! states: its tiles, finest first, each made of the one below, then the grid of tiles. Its
+//! binding carries how many pieces each dim is stored in (its `tiling`, `[.., R/tr, C/tc, tr, tc]`
+//! for one level) and the order they follow one another in (its strides). A routine that reads
+//! storage tiles (cmma's stage) moves a tile as one contiguous run.
 //!
 //! Tiling is a relayout on the tile DSL: a space over the matrix with exactly one level, the
 //! outermost storage tile, one cube per tile. Whichever side is storage-tiled is read or written
@@ -78,13 +78,13 @@ const ROWS: Axis = Axis(0);
 const COLS: Axis = Axis(1);
 
 /// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `layout`
-/// states: its storage levels, finest first, and the order of the grid of tiles, all in the
+/// states: its tiles, finest first, and the order of the grid of tiles, all in the
 /// caller's axes. The result's metadata states the tiling, so its binding says how it is stored
 /// and any routine folds its logical shape back; the order is in its strides.
 ///
 /// ```ignore
 /// // A [k, n] weight in 16 x 32 tiles, rows of each tile first, the next tile along k.
-/// let layout = Layout::storage(&[(N, 32), (K, 16)]).grid(&[K, N]);
+/// let layout = Layout::tile(&[(N, 32), (K, 16)]).grid(&[K, N]);
 /// let stored = tile(&client, weight.binding(), [K, N], dtype, layout)?;
 /// ```
 ///

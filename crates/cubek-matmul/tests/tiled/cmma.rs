@@ -363,7 +363,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
                 TileOrder::AlongN => [N, K],
                 TileOrder::AlongK => [K, N],
             };
-            let layout = Layout::storage(&[(N, stage_n), (K, stage_k)]).grid(&grid);
+            let layout = Layout::tile(&[(N, stage_n), (K, stage_k)]).grid(&grid);
             let tiled = tile(c, rhs.clone().binding(), [K, N], dtype, layout)?;
 
             launch_ref(
@@ -485,7 +485,7 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
     let (tile_k, tile_n) = storage_tile;
-    let layout = Layout::storage(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
+    let layout = Layout::tile(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
     let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
 
     for m in [64, 512] {
@@ -725,9 +725,9 @@ fn cmma_refuses_the_storage_it_cannot_read() {
     let rhs = input(problem.rhs_shape.clone(), 2);
     let out = input(problem.out_shape.clone(), 3);
 
-    let column_first = Layout::storage(&[(K, 32), (N, 32)]).grid(&[N, K]);
-    let nested = Layout::storage(&[(N, 16), (K, 16)])
-        .storage(&[(N, 2), (K, 2)])
+    let column_first = Layout::tile(&[(K, 32), (N, 32)]).grid(&[N, K]);
+    let nested = Layout::tile(&[(N, 16), (K, 16)])
+        .tile(&[(N, 2), (K, 2)])
         .grid(&[N, K]);
     for (layout, says) in [
         (column_first, "not stored a row at a time"),
