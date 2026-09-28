@@ -1,144 +1,370 @@
-//! What the hardware instances are to a tile's cells, once a level has been dealt out.
+//! What the hardware instances are to a tile's cells, once a level has been distributed out.
 //!
-//! Two questions, at two scopes. A plane's lanes share registers, so they combine there and a
-//! folding drain must know *which* lanes hold a cell ([`LaneShare`]) and how many run the work
-//! ([`LaneWork`]). Planes and cubes share none, so each folds its own contribution into the
-//! destination and the answer is only whether it holds a whole cell ([`SplitShare`]).
+//! Two questions, at two scopes. A plane's units share registers and combine there, so a reducing
+//! drain asks what each unit holds of a cell ([`UnitShare`]), and reduces the partials with
+//! [`UnitShare::reduce`]. Planes and cubes share none; the one question is whether an instance holds
+//! a whole cell ([`SplitShare`]).
 //!
-//! The vocabulary and the [`Space`] descent that derives it, together: the enums are only ever
-//! read off a space, and the descent is only ever read as one of them.
+//! Both are read off a [`Level`] against the space an operand spans, level by level on the way
+//! down a partitioning ([`under`](UnitShare::under)), since the level that spreads an axis is only
+//! known then.
 
-/// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
-/// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
-/// does span is *carried* (each lane gets a different cell). Which case a tile is in says how a
-/// partial drains.
+use cubecl::prelude::*;
+
+use crate::{Axis, Carrier, ComputeScope, Count, Coverage, Level, Monoid, Space};
+
+/// What the plane's units each hold of a tile's cells, once a units level is distributed out. An axis
+/// the tile does not span is *reduced* (units cover disjoint slices, each holds a partial); one it
+/// does span is *carried* (each unit gets a different cell). The case says how a partial drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum LaneShare {
-    /// Nothing folded: the lane's cells are whole, so they read and write as they are.
+pub enum UnitShare {
+    /// Nothing rides the units, so every unit repeats the same work over the same whole cells: a
+    /// store lands the same value however many make it, a reduction must land once.
+    Repeated,
+    /// The units carry cells of their own and reduce nothing: each reads and writes as it is.
     Whole,
-    /// Nothing carried either, so every lane of the plane holds a partial of the *same* cell and
-    /// the plane's own reduction is the drain.
+    /// Nothing carried, everything reduced: every unit of the plane holds a partial of the *same*
+    /// cell, and the plane's own reduction is the drain.
     Plane,
     /// Both, so the plane splits into groups: one cell each, several cells in flight at once.
-    /// `fold_mask` is the set of lane-index bits the folded axes occupy, so a cell's partials
-    /// live on exactly the lanes that agree outside it and differ inside.
-    Group { fold_mask: usize },
+    /// `unit_bits` is the set of unit-index bits the reduced axes occupy, so a cell's partials
+    /// live on exactly the units that agree outside it and differ inside.
+    Group { unit_bits: usize },
 }
 
-/// A descent's share, given the parent's and the level's: the folds compose, since each level
-/// takes its own bits of the lane index. [`LaneShare::Plane`] already spans every lane, so nothing
-/// folds under it, and nothing builds that: [`Space::cube_dim`](crate::Space::cube_dim) caps the
-/// tree's `Unit` instance product at the plane width.
-pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare {
-    match (parent, level) {
-        (LaneShare::Whole, share) | (share, LaneShare::Whole) => share,
-        (LaneShare::Group { fold_mask: a }, LaneShare::Group { fold_mask: b }) => {
-            LaneShare::Group { fold_mask: a | b }
+impl UnitShare {
+    /// What `level` makes the plane's units to the cells of an operand spanning `spanned`: an
+    /// axis the operand does not span is reduced (units hold partials), one it spans is carried.
+    /// A level that is not the units' leaves the units as they were ([`Repeated`](Self::Repeated)).
+    pub fn new(level: &Level, spanned: &Space) -> UnitShare {
+        if level.coverage() != Coverage::Distribute(ComputeScope::Unit) {
+            return UnitShare::Repeated;
         }
-        _ => panic!("join_lane_share: {parent:?} under {level:?}: nothing folds under a plane"),
+        // Innermost first, so `weight` is the axis's stride in the unit index as it is reached,
+        // the same least-significant-last ordering the walk decodes with.
+        let (mut weight, mut unit_bits) = (1usize, 0usize);
+        for axis in level.axes().into_iter().rev() {
+            // Distributed to however many units the launch runs, and the level's only unit axis:
+            // carried where the operand spans it, and where it does not, every unit holds a
+            // partial of the same cell.
+            if let Count::Distributed(_) = level.cut(axis).count {
+                match spanned.contains(axis) {
+                    true => continue,
+                    false => return UnitShare::Plane,
+                }
+            }
+            let plane_units = level
+                .cut(axis)
+                .count
+                .stated()
+                .expect("Level::new: a units level carries stated counts");
+            if plane_units == 1 {
+                continue;
+            }
+            assert!(
+                plane_units.is_power_of_two(),
+                "UnitShare: {axis:?} rides {plane_units} units, which is not a power of two, so its \
+                 partials are not a bit range"
+            );
+            if !spanned.contains(axis) {
+                unit_bits |= (plane_units - 1) * weight;
+            }
+            weight *= plane_units;
+        }
+        match unit_bits {
+            // Nothing rides the units at all when every count is one.
+            0 if weight == 1 => UnitShare::Repeated,
+            0 => UnitShare::Whole,
+            // Every unit's bit reduced: nothing is carried, so the plane shares the one cell.
+            mask if mask == weight - 1 => UnitShare::Plane,
+            unit_bits => UnitShare::Group { unit_bits },
+        }
+    }
+
+    /// This share under `parent`'s: the reductions compose, since each level takes its own bits of the
+    /// unit index, and units that once carried cells of their own keep doing so.
+    /// [`Plane`](Self::Plane) spans every unit, so nothing reduces under it.
+    pub fn under(self, parent: UnitShare) -> UnitShare {
+        match (parent, self) {
+            (UnitShare::Repeated, share) | (share, UnitShare::Repeated) => share,
+            (UnitShare::Whole, share) | (share, UnitShare::Whole) => share,
+            (UnitShare::Group { unit_bits: a }, UnitShare::Group { unit_bits: b }) => {
+                UnitShare::Group { unit_bits: a | b }
+            }
+            _ => {
+                panic!("UnitShare::under: {self:?} under {parent:?}: nothing reduces under a plane")
+            }
+        }
+    }
+
+    /// Whether a cell's partials sit on several units, so a drain has to reduce before it writes.
+    pub fn reduces(self) -> bool {
+        matches!(self, UnitShare::Plane | UnitShare::Group { .. })
+    }
+
+    /// The units over which `axis` of a units level is distributed, as a share: the whole plane where
+    /// they are all of it, a group otherwise. What a row-owning verb asks of the units level it
+    /// runs under.
+    pub fn of_units(plane_units: usize, plane: usize) -> UnitShare {
+        match plane_units {
+            1 => UnitShare::Repeated,
+            n if n == plane => UnitShare::Plane,
+            n => {
+                assert!(
+                    n.is_power_of_two() && n < plane,
+                    "UnitShare::of_units: a group of {n} units in a plane of {plane} is not a bit \
+                     range of the unit index"
+                );
+                UnitShare::Group { unit_bits: n - 1 }
+            }
+        }
     }
 }
 
-/// A descent's split share, given the parent's and the level's: partial stays partial.
-pub(crate) fn join_split_share(parent: SplitShare, level: SplitShare) -> SplitShare {
-    match (parent, level) {
-        (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
-        (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
+#[cube]
+impl UnitShare {
+    /// Combine the partials of one cell under `monoid`, leaving every unit that holds one holding
+    /// the total: the plane instruction where the whole plane shares the cell, a butterfly over the
+    /// group's unit bits where a group does, `value` itself where nothing is reduced.
+    ///
+    /// One butterfly step per bit of the group's mask. A cell's partials sit on the units that
+    /// agree outside the mask and differ inside it, so an xor by a single mask bit stays within the
+    /// group: every group reduces at once, each over its own cell, with no guard and no branch.
+    pub fn reduce_of<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
+        value: T,
+        #[comptime] share: UnitShare,
+        #[comptime] monoid: Monoid,
+    ) -> T {
+        match comptime!(share) {
+            UnitShare::Repeated | UnitShare::Whole => value,
+            UnitShare::Plane => match comptime!(monoid) {
+                Monoid::Sum => plane_sum(value),
+                Monoid::Prod => plane_prod(value),
+                Monoid::Max => plane_max(value),
+                Monoid::Min => plane_min(value),
+            },
+            UnitShare::Group { unit_bits } => {
+                let mut total = value;
+                #[unroll]
+                for bit in 0..comptime!(usize::BITS - unit_bits.leading_zeros()) {
+                    if comptime!(unit_bits & (1 << bit) != 0) {
+                        total = monoid
+                            .combine::<T>(total, plane_shuffle_xor(total, comptime!(1u32 << bit)));
+                    }
+                }
+                total
+            }
+        }
     }
 }
 
-/// A descent's lane work, given the parent's and whether the level rides lanes: once something
-/// does, every lane below has its own share.
-pub(crate) fn join_lane_work(parent: LaneWork, rides: bool) -> LaneWork {
-    match (parent, rides) {
-        (LaneWork::Own, _) | (_, true) => LaneWork::Own,
-        (LaneWork::Repeated, false) => LaneWork::Repeated,
+impl UnitShare {
+    /// [`reduce_of`](Self::reduce_of) as a method on the share.
+    pub fn reduce<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
+        self,
+        value: T,
+        monoid: Monoid,
+    ) -> T {
+        UnitShare::reduce_of::<T>(value, self, monoid)
     }
-}
 
-/// How many of the plane's lanes run one tile's work. A space distributing nothing at `Unit` scope
-/// still launches a full plane, every lane running the same code over the same cells. Identical
-/// stores land the same value however many lanes make them, but a fold is not idempotent, so a
-/// folding drain elects one lane. Distinct from [`LaneShare`], which says what a lane holds of a
-/// cell rather than how many lanes hold it.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum LaneWork {
-    /// Something rides the lanes, so each has its own share and a cell is written once.
-    Own,
-    /// Nothing does, so every lane repeats the same work and a cell is written once per lane.
-    Repeated,
-}
-
-/// What the plane's lanes are to a tile's cells: what each holds of one ([`LaneShare`]), and how
-/// many hold it ([`LaneWork`]). Two answers to one question, derived from the same space and read
-/// together on drain, where neither settles who writes on its own.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Lanes {
-    pub share: LaneShare,
-    pub work: LaneWork,
+    pub fn __expand_reduce_method<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
+        self,
+        scope: &Scope,
+        value: T::ExpandType,
+        monoid: Monoid,
+    ) -> T::ExpandType {
+        UnitShare::__expand_reduce_of::<T>(scope, value, self, monoid)
+    }
 }
 
 /// What one instance holds of a tile's cells, across the scopes whose instances can only meet in
-/// the destination: `Plane` and `Cube`. [`LaneShare`]'s counterpart, and deliberately coarser: a
-/// plane's lanes share registers and must elect a writer, hence a mask, but planes and cubes share
-/// none, so each folds its own contribution and there is nothing to elect between them.
+/// the destination: `Plane` and `Cube`. Coarser than [`UnitShare`], whose units share registers
+/// and elect a writer (a mask); planes and cubes share none, so each reduces its own contribution.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SplitShare {
     /// Every cell this instance writes is its own outright, so the drain is a store.
     Whole,
-    /// Several instances hold partials of the same cell, so the drain has to fold rather than
+    /// Several instances hold partials of the same cell, so the drain has to reduce rather than
     /// store. A contraction cut at plane or cube scope is the way to get here.
     Partial,
 }
 
 impl SplitShare {
-    /// Refuse an accumulation this share leaves in pieces, unless the destination adds them
-    /// together. Called where an accumulator is opened and where one is written, the two places a
-    /// partial can escape. A destination that replaces is wrong twice over and silently: a
-    /// register drain stores, so the last instance erases the rest, and one accumulating in place
-    /// loses the update. [`Write::Accumulate`](crate::Write) is the case this lets through.
-    pub(crate) fn validate(self, write: crate::Write, site: &str) {
-        match (self, write) {
-            (SplitShare::Whole, _) | (SplitShare::Partial, crate::Write::Accumulate) => {}
-            (SplitShare::Partial, crate::Write::Replace) => panic!(
-                "{site}: this accumulator's cells are split across planes or cubes and its \
-                 destination replaces rather than accumulates, so every partial but one would be \
-                 lost. \
-                 A contracted axis distributed across planes or cubes gives each instance a \
-                 slice of the contraction, and none of them holds a whole cell. \
-                 Drain into an accumulating destination (bind it as an `AccumulateArg`), \
-                 distribute the contraction across the plane's lanes instead \
-                 (`distribute(lanes(n), ..)`, combined in the plane's registers), or give the \
-                 output an axis of its own for the split."
-            ),
+    /// What one instance of an operand spanning `spanned` holds of its cells after `level` is
+    /// distributed out over `space`: [`Partial`](SplitShare::Partial) where a plane or cube axis the
+    /// operand does not span is distributed across several instances, so each contracts a slice.
+    ///
+    /// Asked with the level's whole space, not the operand's projection: a projection has dropped
+    /// the contracted axis and so cannot tell a split from a cut whose edge is the whole axis.
+    /// Conservative where the count is not comptime: whole would lose every partial but one.
+    pub fn new(level: &Level, space: &Space, spanned: &Space) -> SplitShare {
+        match level.coverage() {
+            Coverage::Walk | Coverage::Distribute(ComputeScope::Unit) => return SplitShare::Whole,
+            Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::Cube) => {}
         }
+        // A grid shared as one index is not distributed by axis: a share of it covers part of a cell
+        // whenever the index runs over an axis the operand does not span, and which part is not
+        // something the per-axis cuts record.
+        if level.shared_by().is_some() {
+            let unspanned = level.axes().iter().any(|axis| !spanned.contains(*axis));
+            return match unspanned {
+                true => SplitShare::Partial,
+                false => SplitShare::Whole,
+            };
+        }
+        // An axis the operand spans is carried, not split: it gives each instance a cell of its
+        // own rather than a slice of one.
+        let split = level.axes().into_iter().any(|axis: Axis| {
+            !spanned.contains(axis) && level.instances_along(space, axis) != Some(1)
+        });
+        match split {
+            true => SplitShare::Partial,
+            false => SplitShare::Whole,
+        }
+    }
+
+    /// This share under `parent`'s: partial stays partial.
+    pub fn under(self, parent: SplitShare) -> SplitShare {
+        match (parent, self) {
+            (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
+            (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
+        }
+    }
+}
+
+/// A count a units level states along an axis, as the units it takes.
+impl From<Count> for usize {
+    fn from(count: Count) -> usize {
+        count
+            .stated()
+            .expect("a units level's count is stated; every tile is the launch's")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Write;
+    use crate::{Levels, Space};
 
-    /// A destination that replaces cannot take a cell several instances hold slices of. The
-    /// guard is the only thing between that mistake and a wrong number: nothing about it shows up
-    /// at compile time or in a crash.
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    /// A contraction distributed out across cubes leaves each of them a slice of every output cell.
+    /// Read off the *output's* subspace, which does not span `K`, against the level's whole
+    /// space, which still names it.
     #[test]
-    #[should_panic(expected = "split across planes or cubes")]
-    fn a_partial_cell_may_not_be_stored() {
-        SplitShare::Partial.validate(Write::Replace, "test");
+    fn a_cube_cut_contraction_is_partial_to_the_output() {
+        let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
+        let level = Levels::leaf(&[(K, 4)]).cubes(&[K]).level();
+        assert_eq!(
+            SplitShare::new(&level, &space, &space.subspace(&[M, N])),
+            SplitShare::Partial
+        );
+        // The operands span `K`, so their own cells are whole: nothing about a split is
+        // visible from a space that covers the axis being split.
+        assert_eq!(
+            SplitShare::new(&level, &space, &space.subspace(&[M, K])),
+            SplitShare::Whole
+        );
     }
 
-    /// A destination that accumulates is exactly the case it exists to let through.
+    /// The same at plane scope: planes of one cube share no registers either, so a contraction
+    /// distributed out across them leaves each holding a slice, exactly as cubes do.
     #[test]
-    fn a_partial_cell_may_be_accumulated() {
-        SplitShare::Partial.validate(Write::Accumulate, "test");
+    fn a_plane_cut_contraction_is_partial_to_the_output() {
+        let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
+        let level = Levels::leaf(&[(K, 4)]).planes(&[(K, 2)]).level();
+        assert_eq!(
+            SplitShare::new(&level, &space, &space.subspace(&[M, N])),
+            SplitShare::Partial
+        );
     }
 
-    /// A whole cell is nobody else's business, whichever way it is written.
+    /// A grid shared as one index is not an axis, and the index runs over the contraction: a share
+    /// of it can start and end inside a cell's contraction, so the output is partial even though
+    /// no axis of the level rides the cubes.
     #[test]
-    fn a_whole_cell_is_written_either_way() {
-        SplitShare::Whole.validate(Write::Replace, "test");
-        SplitShare::Whole.validate(Write::Accumulate, "test");
+    fn a_shared_grid_is_partial_to_the_output() {
+        let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+        let level = Levels::leaf(&[(M, 4), (N, 4), (K, 8)])
+            .cubes(&[M, N, K])
+            .shared_by(3)
+            .level();
+        assert_eq!(
+            SplitShare::new(&level, &space, &space.subspace(&[M, N])),
+            SplitShare::Partial
+        );
+        // An operand spanning every axis of the grid holds whole cells of its own, the same way
+        // it does under a cut.
+        assert_eq!(SplitShare::new(&level, &space, &space), SplitShare::Whole);
+    }
+
+    /// A cube cut whose edge is the whole axis distributes out one tile, so it is not a split at all.
+    /// The level's whole space is asked because a mapping parameterised by its split count writes
+    /// the same cut at `splits` one, and refusing it refuses the control it is compared against.
+    #[test]
+    fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
+        let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
+        let level = Levels::leaf(&[(N, 1), (K, 8)]).cubes(&[N, K]).level();
+        assert_eq!(
+            SplitShare::new(&level, &space, &space.subspace(&[M, N])),
+            SplitShare::Whole
+        );
+    }
+
+    /// The same cut on an axis the output *does* span is a plain output split: each cube owns
+    /// its columns outright and there is nothing to combine.
+    #[test]
+    fn a_cube_cut_output_axis_stays_whole() {
+        let space = Space::new(&[(M, 4), (N, 8), (K, 4)]);
+        let level = Levels::leaf(&[(N, 4)]).cubes(&[N]).level();
+        assert_eq!(
+            SplitShare::new(&level, &space, &space.subspace(&[M, N])),
+            SplitShare::Whole
+        );
+    }
+
+    /// A units level over the contraction alone reduces every unit's bit: the plane shares the cell.
+    /// One over an axis the operand spans carries; a units level naming both is a group per cell.
+    #[test]
+    fn a_units_level_reduces_what_the_operand_does_not_span() {
+        let space = Space::new(&[(M, 4), (N, 8), (K, 32)]);
+        let out = space.subspace(&[M, N]);
+        let plane = Levels::leaf(&[(K, 1)]).units(&[(K, 32)]).level();
+        assert_eq!(UnitShare::new(&plane, &out), UnitShare::Plane);
+        let whole = Levels::leaf(&[(N, 1)]).units(&[(N, 8)]).level();
+        assert_eq!(UnitShare::new(&whole, &out), UnitShare::Whole);
+        let team = Levels::leaf(&[(N, 1), (K, 1)])
+            .units(&[(N, 8), (K, 4)])
+            .level();
+        assert_eq!(
+            UnitShare::new(&team, &out),
+            UnitShare::Group { unit_bits: 3 }
+        );
+        let walk = Levels::leaf(&[(K, 8)]).walk_every(&[K]).level();
+        assert_eq!(UnitShare::new(&walk, &out), UnitShare::Repeated);
+    }
+
+    /// Descending composes the reductions and keeps the carry.
+    #[test]
+    fn shares_compose_level_by_level() {
+        let group = UnitShare::Group { unit_bits: 3 };
+        assert_eq!(group.under(UnitShare::Repeated), group);
+        assert_eq!(UnitShare::Whole.under(group), group);
+        assert_eq!(
+            UnitShare::Group { unit_bits: 12 }.under(group),
+            UnitShare::Group { unit_bits: 15 }
+        );
+        assert_eq!(
+            UnitShare::Repeated.under(UnitShare::Whole),
+            UnitShare::Whole
+        );
+        assert_eq!(
+            SplitShare::Whole.under(SplitShare::Partial),
+            SplitShare::Partial
+        );
     }
 }

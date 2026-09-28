@@ -1,10 +1,9 @@
-//! `dst.mul(&a, &b)`: the elementwise product of two tiles, each broadcasting over the axes it
+//! `dst.product(&a, &b)`: the elementwise product of two tiles, each broadcasting over the axes it
 //! omits.
 //!
-//! Not a quantization verb. A scale is a tile that spans fewer axes than the values it multiplies,
-//! and "one scale per block" is what its axes say rather than what any arithmetic does; dequantizing
-//! is this operation with a packed operand on one side. Written alone, and tested alone, because a
-//! mechanism that only works inside the contraction is not a mechanism.
+//! Not a quantization verb. A scale is a tile spanning fewer axes than the values it multiplies,
+//! "one scale per block" being what its axes say, not arithmetic; dequantizing is this operation
+//! with a packed operand on one side. Written and tested alone, so the mechanism stands by itself.
 //!
 //! Both operands are read at the destination's logical coordinate through their own
 //! [`Projection`](crate::Projection), so an axis an operand does not address costs it nothing and
@@ -12,63 +11,60 @@
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
+use crate::ops::matmul::leaf::memory::resolve_nd_coords;
 use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
     ///
-    /// The transport alone, like [`copy`](Tile::copy): every unit of the cube fills the whole
-    /// tile, and the levels a product is split across are the kernel's own loops.
-    pub fn mul<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
+    /// The transport alone, like [`copy_from`](Tile::copy_from): every unit of the cube fills the
+    /// whole tile, and the levels a product is split across are the kernel's own loops.
+    pub fn product<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         self.mul_from(a, b)
     }
 
     /// The transport: every unit of the cube strides the destination's groups, reading `b` once
-    /// per group and taking a lane of it per fold.
+    /// per group and taking a unit of it per fold.
     ///
     /// Each operand is addressed over *its own* axes, so an axis it does not span costs it nothing
-    /// and one of its values serves every position of that axis. A packed operand serves a whole
-    /// stored word per line, which is why the walk moves in lines at all: there is no
-    /// cell-at-a-time reading of a tensor whose values share a word.
+    /// and one value serves every position of it. A packed operand serves a whole stored word per
+    /// line, hence the walk in lines: values sharing a word cannot be read cell by cell.
     fn mul_from<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
-        let space = comptime!(self.space.clone());
+        let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let folds = b.vector_size();
-        let split = comptime!(FoldWalk::of(&space, &b.space, width, folds));
+        let split = comptime!(FoldWalk::of(&space, &b.place.space, width, folds));
         let size!(W) = width;
         let size!(F) = folds;
-        let a_reader = a.nd_split_packed::<W>();
-        let b_reader = b.nd_split_packed::<F>();
+        let a_reader = a.nd_split::<W>();
+        let b_reader = b.nd_split::<F>();
 
-        let a_fold_at = comptime!(a.space.position(split.axis));
-        let extents = const_coords(comptime!(split.groups.clone()));
+        let a_fold_at = comptime!(a.place.space.position(split.axis));
+        let extents = Coords::constant(comptime!(split.groups.clone()));
         let total = comptime!(split.groups.iter().product::<usize>());
 
         let mut dst = self.nd_mut::<W>();
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            let group = group_line(
-                &unravel(&extents, i.fcast::<u32>()),
-                comptime!(split.clone()),
-            );
+            let group = group_line(&extents.unravel(i.cast::<u32>()), comptime!(split.clone()));
             let (a_base, b_base) = bases(
                 &group,
                 comptime!(space.clone()),
-                comptime!(a.space.clone()),
-                comptime!(b.space.clone()),
+                comptime!(a.place.space.clone()),
+                comptime!(b.place.space.clone()),
                 width,
                 folds,
             );
 
-            // The fold is a *lane* of `b`'s read, not a step of it, so its address is the group's
-            // and the read happens here rather than once per lane.
+            // The fold is a *unit* of `b`'s read, not a step of it, so its address is the group's
+            // and the read happens here rather than once per unit.
             let scales = b_reader
                 .view
                 .read(b_reader.map.anchor(b_base, comptime!(Vec::new())));
             // `a`'s address does step with the fold, so its map folds once here and each step is
-            // the addition [`advance`](crate::AxisProjection::advance) puts back.
+            // the addition [`advance`](crate::ProjectionInKernel::advance) puts back.
             let moving = comptime!(vec![split.axis]);
             let a_anchor = a_reader
                 .map
@@ -91,10 +87,10 @@ impl<T: Numeric> Tile<T> {
 }
 
 /// How a product's walk divides: one read of the broadcast operand per group, and the folds inside
-/// a group taken as lanes of it.
+/// a group taken as units of it.
 ///
-/// The fold is the walk's unrolled dimension because a lane index is not addressable at runtime,
-/// and the runs under one fold are not, because only the lane has to be a constant.
+/// The fold is the walk's unrolled dimension because a unit index is not addressable at runtime,
+/// and the runs under one fold are not, because only the unit has to be a constant.
 #[derive(Clone, Debug)]
 struct FoldWalk {
     /// The axis the fold steps: the one the broadcast operand's own lines run along.
@@ -143,7 +139,7 @@ fn group_line(at: &Coords<u32>, #[comptime] split: FoldWalk) -> CoordsDyn {
     #[unroll]
     for p in 0..comptime!(split.groups.len()) {
         let coord = match comptime!(p == split.at) {
-            true => at.at(p).fmul(comptime!(split.folds as u32)),
+            true => at.at(p).times(comptime!(split.folds as u32)),
             false => at.at(p),
         };
         out.push(coord);
@@ -166,7 +162,7 @@ fn bases(
     let mut cells = Coords::<u32>::new();
     #[unroll]
     for p in 0..comptime!(dst.rank()) {
-        cells.push(group[p].fmul(comptime!(match p == dst.rank() - 1 {
+        cells.push(group[p].times(comptime!(match p == dst.rank() - 1 {
             true => width as u32,
             false => 1u32,
         })));

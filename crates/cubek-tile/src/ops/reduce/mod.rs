@@ -2,6 +2,10 @@
 //!
 //! Provides [`Tile::reduce_axis`](crate::Tile::reduce_axis), which reduces an input tile across
 //! its contracted axes into an accumulator tile at a final tile, through the register nest
-//! ([`instruction::registers::reduce`](crate::instruction::registers::reduce)).
+//! (`leaf`).
 
-mod lower;
+mod arrival;
+mod base;
+mod leaf;
+
+pub use arrival::Arrival;

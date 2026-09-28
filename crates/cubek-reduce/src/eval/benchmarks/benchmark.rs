@@ -68,6 +68,57 @@ fn two_launch_configs(
     }
 }
 
+/// How the benchmark orders its input along the reduce axis, from
+/// `CUBEK_BENCH_INPUT`.
+///
+/// Top-k rejects a candidate that cannot reach its weakest slot, so its cost
+/// depends on the order it meets values in, and the two sorted orders are the
+/// bounds either side of the random one. Neither is a workload: code that knows
+/// its input is sorted takes the last `k` and never calls a reduction.
+#[derive(Copy, Clone, PartialEq)]
+enum InputOrder {
+    Uniform,
+    Ascending,
+    Descending,
+}
+
+impl InputOrder {
+    fn from_env() -> Self {
+        match std::env::var("CUBEK_BENCH_INPUT").as_deref() {
+            Ok("ascending") => InputOrder::Ascending,
+            Ok("descending") => InputOrder::Descending,
+            Ok("uniform") | Err(_) => InputOrder::Uniform,
+            Ok(other) => {
+                panic!("CUBEK_BENCH_INPUT takes uniform, ascending or descending, got {other:?}")
+            }
+        }
+    }
+
+    /// The coordinate along `axis`, or its mirror, as the value at every
+    /// position.
+    ///
+    /// Built from the coordinate rather than from the linear index so that the
+    /// values stay whole numbers a f32 holds exactly: a 67 M element `arange`
+    /// runs past 2^24, where consecutive integers collide and a row meant to be
+    /// sorted is mostly ties.
+    fn data(self, shape: &[usize], axis: usize) -> Vec<f32> {
+        let axis_len = shape[axis];
+        let inner: usize = shape[axis + 1..].iter().product();
+        let last = (axis_len - 1) as f32;
+
+        (0..shape.iter().product::<usize>())
+            .map(|linear| {
+                let coordinate = (linear / inner) % axis_len;
+                match self {
+                    InputOrder::Ascending => coordinate as f32,
+                    InputOrder::Descending => last - coordinate as f32,
+                    InputOrder::Uniform => unreachable!("uniform does not build its data here"),
+                }
+            })
+            .collect()
+    }
+}
+
 struct ReduceBench {
     shape: Vec<usize>,
     axis: usize,
@@ -92,10 +143,13 @@ impl Benchmark for ReduceBench {
         let elem = self.value_dtype;
         let output_elem = crate::eval::cpu_reference::output_dtype_for(&self.config, elem);
 
-        let input = TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
-            .dtype(elem)
-            .uniform(0, 0., 1.)
-            .generate_without_host_data();
+        let builder =
+            TestInput::builder(client.clone(), Shape::from(self.shape.clone())).dtype(elem);
+        let input = match InputOrder::from_env() {
+            InputOrder::Uniform => builder.uniform(0, 0., 1.),
+            order => builder.custom(order.data(&self.shape, self.axis)),
+        }
+        .generate_without_host_data();
         let mut shape_out = self.shape.clone();
         let reduce_len = match self.config {
             ReduceOperationConfig::ArgTopK(len) => len,
@@ -209,5 +263,52 @@ impl Benchmark for ReduceBench {
 
     fn sync(&self) {
         future::block_on(self.client.sync()).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InputOrder;
+
+    /// Rows along the reduce axis, for a shape whose reduce axis is not the
+    /// innermost, so a generator that walked the linear index would fail here.
+    fn rows(order: InputOrder, shape: &[usize], axis: usize) -> Vec<Vec<f32>> {
+        let data = order.data(shape, axis);
+        let inner: usize = shape[axis + 1..].iter().product();
+        let outer: usize = shape[..axis].iter().product();
+
+        let mut rows = Vec::new();
+        for o in 0..outer {
+            for i in 0..inner {
+                let start = o * shape[axis] * inner + i;
+                rows.push((0..shape[axis]).map(|c| data[start + c * inner]).collect());
+            }
+        }
+        rows
+    }
+
+    #[test]
+    fn ascending_rises_along_the_reduce_axis() {
+        for row in rows(InputOrder::Ascending, &[2, 3, 4], 1) {
+            assert_eq!(row, vec![0.0, 1.0, 2.0]);
+        }
+    }
+
+    #[test]
+    fn descending_falls_along_the_reduce_axis() {
+        for row in rows(InputOrder::Descending, &[2, 3, 4], 1) {
+            assert_eq!(row, vec![2.0, 1.0, 0.0]);
+        }
+    }
+
+    #[test]
+    fn every_value_in_a_row_is_distinct_at_the_benchmark_shape() {
+        let shape = [32, 512, 4095];
+        let data = InputOrder::Ascending.data(&shape, 2);
+        let row: Vec<f32> = data[shape[2] * 700..shape[2] * 701].to_vec();
+
+        assert!(row.windows(2).all(|w| w[1] > w[0]));
+        assert_eq!(row[0], 0.0);
+        assert_eq!(row[shape[2] - 1], (shape[2] - 1) as f32);
     }
 }

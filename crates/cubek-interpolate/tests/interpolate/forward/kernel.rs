@@ -176,7 +176,7 @@ fn test_interpolate_kernel_geometry_configurations() {
     }
 }
 
-/// The channel run the lane takes. The problem's four channels solve to a block of four, so the
+/// The channel run the unit takes. The problem's four channels solve to a block of four, so the
 /// narrower splits are reachable only by stating them, and each one moves the accumulator's
 /// innermost extent under the same contraction.
 #[test]
@@ -196,7 +196,7 @@ fn test_interpolate_kernel_channel_block_configurations() {
 /// line ever lands on a row boundary and the operand must be read scalar. A shared-memory stage
 /// has no such constraint: pinning the channel block to `4` pads the axis to one whole line, and
 /// the contraction runs `4` wide against an output still addressed one scalar at a time. The
-/// fourth lane is padding, dropped by the sink's own overhang mask, so the result has to equal the
+/// fourth unit is padding, dropped by the sink's own overhang mask, so the result has to equal the
 /// reference exactly as the unpadded block of `3` does.
 #[test]
 fn test_interpolate_kernel_padded_channel_stage() {
@@ -274,7 +274,7 @@ fn test_interpolate_kernel_resampling_directions() {
     }
 }
 
-/// A channel axis wide enough that the lanes cover the channels and never ride the columns, which
+/// A channel axis wide enough that the units cover the channels and never ride the columns, which
 /// is the opposite end of the split from the padded stages above.
 #[test]
 fn test_interpolate_kernel_wide_channel_axis() {

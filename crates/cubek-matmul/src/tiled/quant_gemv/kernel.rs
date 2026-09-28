@@ -1,7 +1,9 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{Cut, Level, Partitioning, RegisterBlock, Semiring, Space, TileArg, scale_tile};
+use cubek_tile::{
+    Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::scale_tile,
+};
 
 use crate::tiled::{
     M, N,
@@ -17,11 +19,11 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 
 /// The routine's three-level space, every axis static: the extents fold the address arithmetic
 /// to constants, which is what a plan built out of the shape is for. A strip of output rows per
-/// cube walking all of `K`, one plane per group of rows, then the fold: `rows_per_lane` rows per
-/// aligned lane group, the group's lanes interleaving the contraction between them. Each takes
+/// cube walking all of `K`, one plane per group of rows, then the fold: `rows_per_unit` rows per
+/// aligned unit group, the group's units interleaving the contraction between them. Each takes
 /// one stored word of `KI`, and where a group reaches past one block it takes whole blocks of
 /// `KB` (a distribution cuts one axis or the other and cannot straddle two). The partials the
-/// lanes hold drain inside the plane.
+/// units hold drain inside the plane.
 pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
     Space::new(&[
         (M, problem.d_out),
@@ -31,9 +33,28 @@ pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
     ])
 }
 
-/// The routine's three levels, outermost first, each a method on the blueprint.
+/// The routine's levels, stated **from the leaf up, in counts**: one unit's turn, its rows
+/// against every block one word of scales covers, whole; the units of a plane, taking those
+/// turns between them; the walk over the blocks past the plane's turn; the planes of a cube; a
+/// cube per strip.
+///
+/// The walk is the level the old statement did not have: its units level both distributed the
+/// contraction to the units *and* was the walk the plane made over what was left of it. Leaf up
+/// a level says only how many of the thing below, so the walk is its own level, above the units.
+/// Below them there is none: a unit's turn is one tile, and stepping it in single blocks would
+/// read a word of scales in halves.
 pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
-    vec![bp.cubes(), bp.planes(), bp.lanes(problem)]
+    Levels::leaf(&[
+        (M, bp.rows_per_unit),
+        (KB, problem.scales_per_word()),
+        (KI, problem.block),
+    ])
+    .units(&[(M, bp.groups()), (KB, bp.block_units)])
+    .interleaved(KB)
+    .walk_every(&[KB])
+    .planes(&[(M, bp.rows_per_cube / bp.rows_per_plane)])
+    .cubes(&[M])
+    .build()
 }
 
 impl QuantGemvBlueprint {
@@ -43,7 +64,7 @@ impl QuantGemvBlueprint {
     }
 
     /// The grid this launch runs on: a cube per strip of rows, a plane per group of them, every
-    /// lane of the plane.
+    /// unit of the plane.
     pub fn grid(&self, problem: &QuantGemvProblem, plane_size: u32) -> (CubeCount, CubeDim) {
         (
             CubeCount::Static(problem.d_out.div_ceil(self.rows_per_cube) as u32, 1, 1),
@@ -54,35 +75,18 @@ impl QuantGemvBlueprint {
         )
     }
 
-    /// A strip of output rows per cube, `K` whole.
-    pub fn cubes(&self) -> Level {
-        Level::cubes(&[(M, self.rows_per_cube)])
-    }
-
-    /// One plane per group of rows, `K` whole.
-    pub fn planes(&self) -> Level {
-        Level::planes(&[(M, self.rows_per_plane)])
-    }
-
-    /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving the
-    /// contraction between them. Interleaved on `(KB, KI)`, so the lanes of a group read
-    /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
-    /// plane width: their product with the row groups is exactly it.
-    pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
-        Level::lanes(&[
-            Cut::new(M, self.rows_per_lane).across(self.groups()),
-            Cut::new(KB, 1).across(self.block_lanes).interleaved(),
-            Cut::new(KI, problem.factor())
-                .across(self.inside_lanes)
-                .interleaved(),
-        ])
+    /// The fold's level: `rows_per_unit` rows per aligned unit group, the group's units taking
+    /// turns at the contraction, a word of scales each. What the zeroing and the drain name
+    /// beside their loops, read off the list rather than stated twice.
+    pub fn units(&self, problem: &QuantGemvProblem) -> Level {
+        quant_gemv_levels(self, problem)[3].clone()
     }
 }
 
-/// The register block the leaf runs under: one scalar accumulator per row a lane owns, per
+/// The register block the leaf runs under: one scalar accumulator per row a unit owns, per
 /// value of the word it takes a step.
 pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> RegisterBlock {
-    RegisterBlock::new(bp.rows_per_lane * problem.factor())
+    RegisterBlock::new(bp.rows_per_unit * problem.factor())
 }
 
 /// `y = (W ⊗ s) · x`.
@@ -97,12 +101,12 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 /// Every operand keeps its own element: `EC` is what the words decode to, `EX` what the
 /// activation buffer holds, `ES` the scales', `EO` the output's, and the leaf casts each into
 /// the accumulator as it always does. The activation is served in `VX`-wide lines along the
-/// contraction, one stored word's worth a step, and the output scalar, because each lane holds
+/// contraction, one stored word's worth a step, and the output scalar, because each unit holds
 /// a partial of its group's cell.
 ///
-/// Three levels, each one region per instance: the cube's strip of rows, the plane's group of
-/// rows, and the lane's rows against its share of the contraction, which the leaf folds across
-/// the plane's lanes as it writes.
+/// Four levels, each one region per instance: the cube's strip of rows, the plane's group of
+/// rows, the plane's walk over the blocks, and the unit's rows against its turn at them, which
+/// the leaf folds across the plane's units as it writes.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
@@ -122,20 +126,20 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     let config = comptime!(register_block(&bp, &problem));
     let w = w
         .tile_as::<EC>(comptime!(space.clone()))
-        .scaled(&ComptimeOption::new_Some(
-            block_scale.tile_as::<ES>(comptime!(space.clone())),
-        ))
-        .scaled(&scale_tile::<ES>(global_scale, comptime!(space.clone())));
+        .mul(&block_scale.tile_as::<ES>(comptime!(space.clone())))
+        .mul_bound(&scale_tile::<ES>(global_scale, comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    // Each lane zeroes the window it owns: the output folds every step into what it holds.
+    // Each unit zeroes the window it owns: the output folds every step into what it holds.
+    // The output spans no contraction, so the units level is named rather than descended to.
+    let plane_units = comptime!(bp.units(&problem));
     for cube in &out {
         let out_cube = out.at(&cube);
         for plane in cube {
             let out_plane = out_cube.at(&plane);
-            for lane in plane {
-                let mut out_lane = out_plane.at(&lane);
-                out_lane.zero();
+            for unit in out_plane.over(&comptime!(plane_units.clone())) {
+                let mut out_unit = out_plane.at(&unit);
+                out_unit.zero();
             }
         }
     }
@@ -148,15 +152,18 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
             let out_plane = out_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
-            // The lane's share of the blocks, one stored word a step.
-            for lane in plane {
-                let mut out_lane = out_plane.at(&lane);
-                out_lane.mma_scaled_with(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane).plain(),
-                    config,
-                    Semiring::SUM_PROD,
-                );
+            // The plane's walk over the turns its units take, then the unit's own, the blocks
+            // its word of scales covers.
+            for turn in plane {
+                for unit in turn {
+                    let mut out_unit = out_plane.at(&unit);
+                    out_unit.mma_with(
+                        &w_plane.at(&unit),
+                        &x_plane.at(&unit),
+                        config,
+                        Semiring::SUM_PROD,
+                    );
+                }
             }
         }
     }

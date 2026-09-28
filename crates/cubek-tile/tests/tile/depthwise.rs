@@ -2,20 +2,19 @@
 //! the channel axis *batched* rather than contracted.
 //!
 //! A dense convolution contracts input channels into output channels, so `CI` appears in the two
-//! operands and not in the accumulator. A depthwise one has no such pairing: each channel carries
-//! its own filter and reaches exactly one output channel, so the single channel axis `C` appears
-//! in *all three* operands. That is the whole difference. `C` is then a batch axis (an axis the
-//! walk splits and the leaf never folds), and the contraction is over the window taps `RH`/`RW`
-//! alone.
+//! operands and not in the accumulator. Depthwise, each channel has its own filter and its own
+//! output channel, so one axis `C` appears in *all three* operands. That is the whole difference.
+//!
+//! `C` is then a batch axis (an axis the walk splits and the leaf never folds), and the
+//! contraction is over the window taps `RH`/`RW` alone.
 //!
 //! Stating it that way is what keeps this a space-and-projection change rather than a new kernel:
 //! the input's [`Projection`] is the same `Ih = Oh*stride + Rh*dilation` gather, the weight drops
 //! to `[RH, RW, C]`, and the accumulator keeps `C`. Nothing here re-derives a level hierarchy.
 //!
 //! Why it matters: `groups != 1` is refused outright by every accelerated convolution routine, so
-//! a depthwise layer has exactly one implementation to fall back on. Expressing it here gives the
-//! DSL a path that keeps channels innermost, which is the layout a depthwise kernel wants: it is
-//! bandwidth-bound, and coalescing across `C` is the whole game.
+//! a depthwise layer has exactly one implementation to fall back on. This path keeps channels
+//! innermost, which a bandwidth-bound depthwise kernel needs: coalescing across `C` is the game.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -24,10 +23,13 @@ use cubecl::{
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
+use super::{Form, implied};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 /// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
-/// specialization, no lane fan-out: the lines here run along the channel, not along `K`.
+/// specialization, no unit fan-out: the lines here run along the channel, not along `K`.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 // Output positions, window taps, and the one channel axis every operand shares.
@@ -131,7 +133,7 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[
@@ -142,13 +144,14 @@ impl Depthwise {
                     (RH, self.rh),
                     (RW, self.rw),
                 ]),
-                vec![
-                    Level::cubes(&[(C, tile_c), (OW, tile_ow), (OH, tile_oh)]).batches(&[B]),
-                    Level::planes(&[(C, 1)]),
-                    Level::walk(&[(OW, 1), (OH, 1)]),
-                ],
+                Levels::leaf(&[(C, 1), (OW, 1), (OH, 1)])
+                    .walk(&[(OW, tile_ow), (OH, tile_oh)])
+                    .planes(&[(C, tile_c)])
+                    .cubes(&[C, OW, OH])
+                    .batches(&[B])
+                    .build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
@@ -171,7 +174,7 @@ impl Depthwise {
                 PhysicalAxisMap::of(C),
             ],
         ))
-        .checked(true);
+        .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
         let (got, want) = self.run(launcher, in_spec);
         for b in 0..self.b {

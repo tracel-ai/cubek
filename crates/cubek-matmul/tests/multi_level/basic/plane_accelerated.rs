@@ -241,3 +241,17 @@ fn ordered_double_mma() {
         MultiLevel::OrderedDoubleMma(Default::default()).into(),
     );
 }
+
+#[test]
+fn simple_cyclic_cmma_small_k_and_partial_line_width_rows_stay_correct() {
+    use crate::harness::{f32_elems, rect};
+    for _ in 0..20 {
+        for (m, n, k) in [(382, 10, 1), (382, 10, 3), (4096, 14, 5)] {
+            test_matmul_strategy(
+                client(),
+                rect(m, n, k, f32_elems()),
+                MultiLevel::SimpleCyclicCmma(Default::default()).into(),
+            );
+        }
+    }
+}

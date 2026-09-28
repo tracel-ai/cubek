@@ -2,22 +2,29 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Cut, Fragments, Level, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, RegisterBlock,
+    Semiring, Space, TileArg,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
 
 /// The register block the software instruction runs under on a CPU backend: a wide scalar
-/// register budget to unroll against and the dual-path edge specialization, with no lanes to
+/// register budget to unroll against and the dual-path edge specialization, with no units to
 /// fan out over. Stated here because the kernel is what runs it.
 pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 
-/// The routine's three levels, outermost first: the cube grid (a serial loop on CPU), the plane
-/// split (the parallel worker threads), and the plane's block stepped through `K` in the
-/// instruction's depth. The kernel's loops state them one by one; the blueprint reads its leaf
-/// and its overhangs off the same list.
+/// The routine's three levels, stated **from the leaf up, in counts**: the register block,
+/// every step of `K` in its depth, the planes a cube holds (the parallel worker threads), and a
+/// cube per box of the output (a serial loop on CPU). The kernel's loops state them one by one
+/// and read their leaf and overhangs off the same list.
 pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
-    vec![bp.cubes(batch), bp.planes(), bp.k_steps()]
+    let (leaf, p) = (bp.instruction, bp.planes);
+    Levels::leaf(&[(M, leaf.m), (N, leaf.n), (K, leaf.k)])
+        .walk_every(&[K])
+        .planes(&[(M, p.m), (N, p.n)])
+        .cubes(&[M, N])
+        .batches(batch)
+        .build()
 }
 
 impl CpuGemmBlueprint {
@@ -40,28 +47,6 @@ impl CpuGemmBlueprint {
             ),
             CubeDim::new_2d(plane_size, (self.planes.m * self.planes.n) as u32),
         )
-    }
-
-    /// The cube grid: a box of the output per cube, one of every batch axis.
-    pub fn cubes(&self, batch: &[Axis]) -> Level {
-        let leaf = self.instruction;
-        let cube_m = self.planes.m * leaf.m;
-        let cube_n = self.planes.n * leaf.n;
-        Level::cubes(&[(M, cube_m), (N, cube_n)]).batches(batch)
-    }
-
-    /// The cube's box across the blueprint's planes, one register block each.
-    pub fn planes(&self) -> Level {
-        let (leaf, p) = (self.instruction, self.planes);
-        Level::planes(&[
-            Cut::new(M, leaf.m).across(p.m),
-            Cut::new(N, leaf.n).across(p.n),
-        ])
-    }
-
-    /// The plane's block stepped through `K` in the instruction's depth.
-    pub fn k_steps(&self) -> Level {
-        Level::walk(&[(K, self.instruction.k)])
     }
 }
 
@@ -92,7 +77,6 @@ pub fn cpu_gemm_kernel<
     b: &TileArg<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
     space: Partitioning,
-    #[comptime] bp: CpuGemmBlueprint,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
     #[define(E)] _acc_dtype: ElemType,
@@ -102,23 +86,13 @@ pub fn cpu_gemm_kernel<
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
 
-    // One block per plane, the instruction's shape.
-    let leaf = comptime!(bp.instruction);
-    let fragments = comptime!(Fragments {
-        m_tiles: 1,
-        n_tiles: 1,
-        m: leaf.m,
-        n: leaf.n,
-        k: leaf.k,
-    });
-
     for cube in space {
         for plane in cube {
             let a = a.at(&plane);
             let b = b.at(&plane);
             let mut c = c.at(&plane);
-            let mut acc =
-                c.block_accumulator::<EA, EL, ER>(&a, &b, fragments, REGISTER_BLOCK, Monoid::Sum);
+            // One block per plane, the instruction's shape, read off the levels below the plane.
+            let mut acc = c.block_accumulator::<EA, EL, ER>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
             acc.zero();
             for step in plane {
                 let mut acc_step = acc.at(&step);

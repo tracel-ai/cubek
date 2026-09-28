@@ -16,6 +16,11 @@ use crate::{
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
+/// How many candidate slots a top-k thread may keep across its vector components
+/// before the reduce reads its input scalar instead: `k * vector_size` values
+/// and as many coordinates live per thread.
+const TOPK_VECTOR_SLOTS: usize = 32;
+
 #[derive(Clone, Copy, Debug)]
 pub struct ReduceDtypes {
     pub input: ElemType,
@@ -96,7 +101,7 @@ fn prepare_reduce_launch(
         &strategy.vectorization,
     );
     // The rolled top-k selection network (`k * k > TOPK_UNROLL_BUDGET`) keeps
-    // per-lane accumulator and finalize arrays whose dynamic indexing places
+    // per-component accumulator and finalize arrays whose dynamic indexing places
     // them in per-thread local memory, and their footprint scales with
     // `k * vector_size` (about 48 bytes per slot at width 8). Past roughly
     // 4 KiB per thread the NVIDIA Vulkan driver corrupts memory around the
@@ -107,9 +112,17 @@ fn prepare_reduce_launch(
     // dominated by the k-slot selection network, not the input read - so the
     // slots shrink about six-fold, which holds k = 300, the object-detection
     // case that exposed this, comfortably below the fault threshold.
+    //
+    // Past a handful of slots the vector costs even where the rolled path is not
+    // taken: every component of it keeps its own `k` candidates, values and
+    // coordinates, so width 8 at `k = 20` is 320 accumulator registers a thread.
+    // The kernel spills and the cube shrinks to a single plane; scalar, the
+    // same top-20 of a 151936-wide row (a vocabulary, the sampler's case) ran
+    // 2.4x faster on GP100 (4.4 ms -> 1.8 ms).
     let (vector_size_input, vector_size_output) = match &problem.instruction {
         ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k)
-            if *k * *k > crate::components::instructions::TOPK_UNROLL_BUDGET =>
+            if *k * vector_size_input > TOPK_VECTOR_SLOTS
+                || *k * *k > crate::components::instructions::TOPK_UNROLL_BUDGET =>
         {
             (1, 1)
         }

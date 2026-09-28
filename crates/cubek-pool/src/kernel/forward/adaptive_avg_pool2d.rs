@@ -1,7 +1,7 @@
 use super::{
     super::{
-        adaptive_end_index as end_index, adaptive_start_index as start_index, decompose_linear,
-        shape_divmod,
+        accumulator_dtype, adaptive_end_index as end_index, adaptive_start_index as start_index,
+        decompose_linear, shape_divmod,
     },
     pool2d::{Position, view4d},
 };
@@ -14,13 +14,16 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+/// One over the sum and its tap: the read is memory bound, and wider vectors measured slower.
+const LIVE_VECTORS: usize = 3;
 #[cube(launch, address_type = "dynamic")]
-fn adaptive_avg_pool2d_direct<E: Numeric, N: Size>(
+fn adaptive_avg_pool2d_direct<E: Numeric, EA: Numeric, N: Size>(
     input: &Tensor<Vector<E, N>>,
     mut output: ViewMut<'_, Vector<E, N>, Position>,
     out_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
     #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
 ) {
     if ABSOLUTE_POS >= working_units {
         terminate!();
@@ -38,7 +41,7 @@ fn adaptive_avg_pool2d_direct<E: Numeric, N: Size>(
     let iw_start = start_index(ow, out_w, in_w);
     let iw_end = end_index(ow, out_w, in_w);
 
-    let mut sum = Vector::zero();
+    let mut sum = Vector::<EA, N>::zero();
 
     let index_input_base = b * input.stride(0) + c * input.stride(3);
 
@@ -49,14 +52,15 @@ fn adaptive_avg_pool2d_direct<E: Numeric, N: Size>(
             let index_input_3 = iw * in_stride_w;
 
             let index_input = index_input_base + index_input_2 + index_input_3;
-            sum += input[index_input / input.vector_size()];
+            sum += Vector::cast_from(input[index_input / input.vector_size()]);
         }
     }
 
     let num_ih = ih_end - ih_start;
     let num_iw = iw_end - iw_start;
 
-    output.write((b, oh, ow, c), sum / Vector::cast_from(num_ih * num_iw));
+    let average = sum / Vector::cast_from(num_ih * num_iw);
+    output.write((b, oh, ow, c), Vector::cast_from(average));
 }
 
 pub(crate) fn adaptive_avg_pool2d_launch(
@@ -66,8 +70,11 @@ pub(crate) fn adaptive_avg_pool2d_launch(
     _options: AdaptiveAvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
+    let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -92,6 +99,7 @@ pub(crate) fn adaptive_avg_pool2d_launch(
         shape_divmod(&output),
         working_units,
         dtype,
+        acc_dtype,
     );
 
     Ok(())

@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::multi_level::tile::{
     StridedTile,
-    variants::{LoadMethod, MmaIOConfig},
+    variants::{LoadMethod, MmaIo},
 };
 use cubek_std::{MatrixLayout, as_cmma_layout};
 
@@ -25,7 +25,7 @@ pub fn mma_load_strided<
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] config: MmaIOConfig,
+    #[comptime] config: MmaIo,
 ) {
     let vector_layout = def.vector_layout(ident);
 
@@ -63,7 +63,7 @@ fn load_manual_transposed<
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
-    let lane_id = UNIT_POS_PLANE;
+    let unit_id = UNIT_POS_PLANE;
 
     let stride = tile.unvectorized_stride();
     let tile = tile.with_vector_size::<Const<1>>();
@@ -79,7 +79,7 @@ fn load_manual_transposed<
         #[unroll]
         for n in 0..vector_size {
             let elem_idx = i * vector_size + n;
-            let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
+            let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
@@ -108,7 +108,7 @@ fn load_manual_plain<
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = N::value();
 
-    let lane_id = UNIT_POS_PLANE;
+    let unit_id = UNIT_POS_PLANE;
     let stride = tile.unvectorized_stride();
     // Supported on all targets that support manual MMA
     let tile = tile.with_vector_size::<N>();
@@ -121,7 +121,7 @@ fn load_manual_plain<
     #[unroll]
     for i in 0..num_vectors {
         let elem_idx = i * vector_size;
-        let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
+        let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
         let offset = row * stride_row + col * stride_col;
         let stage_offset = tile.stage_offset(offset / vector_size as u32);
 
@@ -163,7 +163,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     }
 }
 
-/// Where in the stage lane `UNIT_POS_PLANE` starts its `ldmatrix` row.
+/// Where in the stage unit `UNIT_POS_PLANE` starts its `ldmatrix` row.
 #[cube]
 pub(crate) fn ldmatrix_offset<A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
@@ -179,19 +179,19 @@ pub(crate) fn ldmatrix_offset<A: Numeric, B: Numeric, CD: Numeric>(
 
     let num_regs = def.vectors_per_lane(ident).comptime() as u32;
     let vector_size = def.vector_size(ident).comptime() as u32;
-    // Lanes are divided into blocks of 8, one per row of the sub-matrix.
+    // Units are divided into blocks of 8, one per row of the sub-matrix.
     let height = 8;
 
     //  Indices are wrapped for < 4 registers.
-    let lane = UNIT_POS_PLANE;
-    let sub_lane = lane % height;
-    let nth_matrix = lane / height % num_regs;
+    let unit = UNIT_POS_PLANE;
+    let sub_unit = unit % height;
+    let nth_matrix = unit / height % num_regs;
 
     let (row_offs, col_offs) = def.position_of_nth(0, nth_matrix * vector_size, ident);
 
     let (row, col) = match layout {
-        MatrixLayout::RowMajor => (row_offs + sub_lane, col_offs),
-        MatrixLayout::ColMajor => (row_offs, col_offs + sub_lane),
+        MatrixLayout::RowMajor => (row_offs + sub_unit, col_offs),
+        MatrixLayout::ColMajor => (row_offs, col_offs + sub_unit),
     };
 
     let start = row * stride_row + col * stride_col;

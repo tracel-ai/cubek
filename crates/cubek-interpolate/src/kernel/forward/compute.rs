@@ -5,8 +5,8 @@ use super::{
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Partitioning, Phase, Region, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg,
-    affine_along, pipelined, separable_product, sum_of,
+    Axis, Partitioning, Region, RegisterBlock, Semiring, StageStorage, Stages, Tile, TileArg,
+    procedural::{Factors, Phase, Procedural, affine_along, sum_of},
 };
 
 /// The distance from a tap to the source coordinate the output position lands on.
@@ -61,18 +61,19 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     let mut factors = Sequence::new();
     factors.push(F::Filter::<E>::along(row));
     factors.push(F::Filter::<E>::along(col));
-    let weights = Tile::<E>::procedural_separable::<SeparableWeights<E, F::Filter<E>>>(
+    let weights = Procedural::<E>::separable::<SeparableWeights<E, F::Filter<E>>>(
         comptime!(
             space
                 .space()
-                .project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])
+                .subspace(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])
         ),
-        separable_product(factors),
+        Factors::new(factors),
     );
     let weights = match comptime!(F::NORMALIZATION) {
-        Some((mask, guard)) => weights.normalized(comptime!(mask), comptime!(guard)),
+        Some((taps, guard)) => weights.normalized(comptime!(taps), comptime!(guard)),
         None => weights,
-    };
+    }
+    .tile();
 
     let output = output.tile(comptime!(space.clone()));
 
@@ -83,9 +84,9 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         let blocks = cube.walk();
         match comptime!(stage) {
             InputStage::Smem => {
-                let mut ring =
-                    Ring::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
-                pipelined(blocks, &mut ring, |slot, block| {
+                let mut stages =
+                    Stages::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
+                stages.pipelined(blocks, |slot, block| {
                     let output_block = output.at(block);
                     let weights_block = weights.at(block);
                     slot.consume(|input_block| {
@@ -114,7 +115,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     }
 }
 
-/// One block of the cube's walk: this plane's rows, then this lane's columns and channel
+/// One block of the cube's walk: this plane's rows, then this unit's columns and channel
 /// lines, each output cell contracting its whole tap window at the leaf under `config`.
 #[cube]
 fn interpolate_block<E: Float>(

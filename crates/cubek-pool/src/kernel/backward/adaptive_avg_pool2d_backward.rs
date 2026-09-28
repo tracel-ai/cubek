@@ -1,6 +1,6 @@
 use super::super::{
-    adaptive_end_index as end_index, adaptive_start_index as start_index, decompose_linear,
-    shape_divmod,
+    accumulator_dtype, adaptive_end_index as end_index, adaptive_start_index as start_index,
+    decompose_linear, shape_divmod,
 };
 use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
 use crate::kernel::forward::{Position, view4d};
@@ -12,13 +12,16 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+/// The gradient sum and the scaled tap: the divisor is a single splat.
+const LIVE_VECTORS: usize = 2;
 #[cube(launch, address_type = "dynamic")]
-fn adaptive_avg_pool2d_backward_direct<E: Numeric, N: Size>(
+fn adaptive_avg_pool2d_backward_direct<E: Numeric, EA: Numeric, N: Size>(
     grad: &Tensor<Vector<E, N>>,
     mut output: ViewMut<'_, Vector<E, N>, Position>,
     out_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
     #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
 ) {
     if ABSOLUTE_POS >= working_units {
         terminate!();
@@ -36,7 +39,7 @@ fn adaptive_avg_pool2d_backward_direct<E: Numeric, N: Size>(
     let ow_start = start_index(iw, out_w, grad_w);
     let ow_end = end_index(iw, out_w, grad_w);
 
-    let mut grad_acc = Vector::zero();
+    let mut grad_acc = Vector::<EA, N>::zero();
 
     let index_base = b * grad.stride(0) + (c * grad.stride(3));
 
@@ -54,14 +57,14 @@ fn adaptive_avg_pool2d_backward_direct<E: Numeric, N: Size>(
                     let num_iw = iw_end - iw_start;
 
                     let index = index_base + (oh * grad_stride_h) + (ow * grad_stride_w);
-                    grad_acc +=
-                        grad[index / grad.vector_size()] / Vector::cast_from(num_iw * num_ih);
+                    grad_acc += Vector::<EA, N>::cast_from(grad[index / grad.vector_size()])
+                        / Vector::cast_from(num_iw * num_ih);
                 }
             }
         }
     }
 
-    output.write((b, ih, iw, c), grad_acc);
+    output.write((b, ih, iw, c), Vector::cast_from(grad_acc));
 }
 
 pub(crate) fn adaptive_avg_pool2d_backward_launch(
@@ -72,8 +75,11 @@ pub(crate) fn adaptive_avg_pool2d_backward_launch(
     _options: AdaptiveAvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
+    let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -98,6 +104,7 @@ pub(crate) fn adaptive_avg_pool2d_backward_launch(
         shape_divmod(&output),
         working_units,
         dtype,
+        acc_dtype,
     );
 
     Ok(())

@@ -107,18 +107,18 @@ fn assert_plane_topk_custom_values(
 ) {
     let mut expected_topk = vec![0.0; k * vector_size];
 
-    // Sort each lane independently
-    for lane in 0..vector_size {
-        let mut lane_values = Vec::new();
+    // Sort each unit independently
+    for plane_unit in 0..vector_size {
+        let mut unit_values = Vec::new();
         for i in 0..(num_threads * k) {
-            lane_values.push(input_host[i * vector_size + lane]);
+            unit_values.push(input_host[i * vector_size + plane_unit]);
         }
 
-        // Sort descending for this specific lane
-        lane_values.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        // Sort descending for this specific unit
+        unit_values.sort_by(|a, b| b.partial_cmp(a).unwrap());
 
         for i in 0..k {
-            expected_topk[i * vector_size + lane] = lane_values[i];
+            expected_topk[i * vector_size + plane_unit] = unit_values[i];
         }
     }
 
@@ -196,7 +196,7 @@ fn test_topk_plane_topk_insert() {
     let bytes = client.read_one(acc_handle.handle).unwrap();
     let actual = f32::from_bytes(&bytes);
 
-    assert_lane_topk_insert(&acc_data, &item_data, actual, num_threads, k, vector_size);
+    assert_unit_topk_insert(&acc_data, &item_data, actual, num_threads, k, vector_size);
 }
 
 #[cube(launch)]
@@ -208,25 +208,25 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     #[define(S)] _vector_size: usize,
 ) {
     let mut elements = Array::new(k);
-    let lane = UNIT_POS_X as usize;
-    let offset = lane * k;
+    let plane_unit = UNIT_POS_X as usize;
+    let offset = plane_unit * k;
 
-    // The launch rounds the requested unit count up to a full plane, so lanes past the
+    // The launch rounds the requested unit count up to a full plane, so units past the
     // input data read out of bounds. Read at a clamped index and mask them to the
     // reduction identity (min_value) so they never win the plane-wide top-k, mirroring
     // the null_input masking the production reader does.
-    let valid = lane < new_item.len();
+    let valid = plane_unit < new_item.len();
     let valid_v = Vector::new(valid);
     let null = Vector::new(N::min_value());
     let safe_offset = offset * usize::cast_from(valid);
-    let safe_lane = lane * usize::cast_from(valid);
+    let safe_unit = plane_unit * usize::cast_from(valid);
 
     #[unroll]
     for i in 0..k {
         elements[i] = select_many(valid_v, accumulator[safe_offset + i], null);
     }
 
-    let item = select_many(valid_v, new_item[safe_lane], null);
+    let item = select_many(valid_v, new_item[safe_unit], null);
     let args = Value::new_None();
     let mut coordinates = Value::new_None();
 
@@ -240,7 +240,7 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     }
 }
 
-fn assert_lane_topk_insert(
+fn assert_unit_topk_insert(
     initial_acc: &[f32],
     new_items: &[f32],
     actual_gpu: &[f32],
@@ -248,10 +248,10 @@ fn assert_lane_topk_insert(
     k: usize,
     vector_size: usize,
 ) {
-    let mut plane_items_per_lane: Vec<Vec<f32>> = vec![Vec::new(); vector_size];
+    let mut plane_items_per_unit: Vec<Vec<f32>> = vec![Vec::new(); vector_size];
     for unit in 0..num_threads {
         for s in 0..vector_size {
-            plane_items_per_lane[s].push(new_items[unit * vector_size + s]);
+            plane_items_per_unit[s].push(new_items[unit * vector_size + s]);
         }
     }
 
@@ -263,17 +263,17 @@ fn assert_lane_topk_insert(
                 candidates.push(initial_acc[(unit * k + i) * vector_size + s]);
             }
 
-            candidates.extend_from_slice(&plane_items_per_lane[s]);
+            candidates.extend_from_slice(&plane_items_per_unit[s]);
 
             candidates.sort_by(|a, b| b.partial_cmp(a).unwrap());
-            let expected_lane_topk = &candidates[..k];
+            let expected_unit_topk = &candidates[..k];
 
             for i in 0..k {
                 let actual_val = actual_gpu[(unit * k + i) * vector_size + s];
                 assert_eq!(
-                    actual_val, expected_lane_topk[i],
-                    "Mismatch at Thread {}, Lane {}, Rank {}. Expected {}, got {}",
-                    unit, s, i, expected_lane_topk[i], actual_val
+                    actual_val, expected_unit_topk[i],
+                    "Mismatch at Thread {}, Unit {}, Rank {}. Expected {}, got {}",
+                    unit, s, i, expected_unit_topk[i], actual_val
                 );
             }
         }

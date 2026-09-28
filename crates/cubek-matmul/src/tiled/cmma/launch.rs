@@ -7,7 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Cooperative, Geometry, KernelForm, Launcher, Space, TensorDelivery, Tma, TmaTileArgLaunch,
+    Axis, Geometry, Launcher, Space,
+    launch::{Grid, InputArgs, TmaBox, TmaTileArgLaunch},
 };
 
 use crate::{
@@ -70,7 +71,7 @@ fn validate_storage_tiled(
     if tile != stage {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
-             tile names the stage, so pack the tensor to the plan's stage or plan for the tile"
+             tile names the stage, so tile the tensor to the plan's stage or plan for the tile"
         ))));
     }
     Ok(())
@@ -209,12 +210,20 @@ pub fn launch_ref(
     // and what a storage-tiled input's storage tile is the tile of.
     let space = Space::new(&extents);
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::partitioned(
-        client,
-        blueprint.partitioning(&space, &batch_axes),
-        blueprint.grid(&space, &batch_axes, plane_size),
-        KernelForm::Dynamic,
-    );
+    let launch = {
+        let partitioning = blueprint.partitioning(&space, &batch_axes);
+        let concrete = partitioning.space().clone();
+        let (cube_count, cube_dim) = blueprint.grid(&space, &batch_axes, plane_size);
+        Launcher::new(
+            client,
+            partitioning.all_dynamic(),
+            &concrete,
+            Grid::Stated {
+                cube_count,
+                cube_dim,
+            },
+        )
+    };
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 
@@ -227,10 +236,10 @@ pub fn launch_ref(
         acc,
     };
 
-    // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
-    // Every path runs the same kernel body and never branches on the delivery again.
+    // The delivery decides how the inputs are bound; the kernel reads the variant at expansion
+    // and never branches on it at run time.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided::<Cooperative>(
+        CmmaDelivery::Copy => launch_strided(
             client,
             &launch,
             cube_count,
@@ -276,7 +285,7 @@ struct Elems {
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
 /// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
 #[allow(clippy::too_many_arguments)]
-fn launch_strided<D>(
+fn launch_strided(
     client: &Client,
     launch: &Launcher,
     cube_count: CubeCount,
@@ -288,39 +297,37 @@ fn launch_strided<D>(
     rhs: TensorBinding,
     out: TensorBinding,
     out_batch_axes: &[Axis],
-) where
-    D: TensorDelivery,
-{
+) {
     let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
     let a = launch
         .arg(lhs)
-        .subspace(&[M, K])
+        .axes(&[M, K])
         .batches(out_batch_axes)
         .vectorize(v_a)
         .build();
     let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
     let b = launch
         .arg(rhs)
-        .subspace(&[K, N])
+        .axes(&[K, N])
         .batches(out_batch_axes)
         .vectorize(v_b)
         .build();
     let v_c = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
         .arg(out)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_c)
         .build();
-    cmma_kernel::launch::<D>(
+    cmma_kernel::launch(
         client,
         cube_count,
         cube_dim,
         a.vector_size,
         b.vector_size,
         c.vector_size,
-        D::operand(a),
-        D::operand(b),
+        a.input(),
+        b.input(),
         c.arg(),
         launch.partitioning_arg(),
         blueprint.clone(),
@@ -358,21 +365,21 @@ fn launch_tma(
     // refused it otherwise), so the descriptor's box is one storage tile and each stage is one
     // contiguous run. A plain operand is collapsed to the descriptor's `(batch, row, col)` and
     // its box is the stage cut out of rows.
-    fn operand<E: Numeric>(
+    fn operand<E: Numeric, V: Size>(
         axes: &[Axis],
         dtype: ElemType,
         binding: TensorBinding,
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
-    ) -> TmaTileArgLaunch<E> {
+    ) -> InputArgs<'static, E, V> {
         if binding.tiling.is_tiled() {
             let map = tma_operand_tiled(binding, box_dims, dtype, TensorMapSwizzle::None);
-            return TmaTileArgLaunch::tensor_map_stored(
+            return InputArgs::TensorMap(TmaTileArgLaunch::tensor_map_stored(
                 map,
                 axes,
                 (rows, cols),
                 (box_dims.0 as u32, box_dims.1 as u32),
-            );
+            ));
         }
         let (map, transposed) = tma_operand(
             binding,
@@ -382,7 +389,16 @@ fn launch_tma(
             dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(map, axes, (1, rows, cols), transposed)
+        InputArgs::TensorMap(TmaTileArgLaunch::tensor_map(
+            map,
+            axes,
+            TmaBox {
+                rows,
+                cols,
+                batch: None,
+                transposed,
+            },
+        ))
     }
     let a = operand(
         &[M, K],
@@ -401,11 +417,11 @@ fn launch_tma(
     let v_out = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
         .arg(out)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();
-    cmma_kernel::launch::<Tma>(
+    cmma_kernel::launch(
         client,
         cube_count,
         cube_dim,

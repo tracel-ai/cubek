@@ -44,8 +44,8 @@ fn case(routine: RoutineStrategy, parallel_output_vectorization: bool) -> TestCa
 }
 
 /// `Eager` folds every candidate into the plane-wide accumulator as it arrives,
-/// which is `plane_topk_insert`; `Lazy` accumulates per lane and merges the
-/// lanes once at the end, which is `plane_topk_merge`. Both are forced, since an
+/// which is `plane_topk_insert`; `Lazy` accumulates per unit and merges the
+/// units once at the end, which is `plane_topk_merge`. Both are forced, since an
 /// inferred blueprint picks one of them and would leave the other uncovered.
 fn plane(plane_merge_strategy: PlaneMergeStrategy) -> RoutineStrategy {
     RoutineStrategy::Plane(BlueprintStrategy::Forced(
@@ -112,7 +112,7 @@ fn plane_lazy_topk_past_unroll_limit() {
 
 // Output vectorization is what routes the accumulator out through
 // `topk_finalize_with_coords` / `topk_finalize_values`, whose `k`-by-`k` nest
-// runs once more per lane of the vector.
+// runs once more per component of the vector.
 #[test]
 fn vectorized_topk_with_indices_past_unroll_limit() {
     case(unit(), true).test_topk_with_indices(K);

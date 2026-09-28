@@ -2,11 +2,10 @@
 //!
 //! A convolution's window axes are not physical axes of the input. They address the same physical
 //! axis its output axes address, at their own coefficient: `Ih = Oh*stride + Rh*dilation`. So the
-//! input tile spans more logical axes than its buffer has physical ones, consecutive tiles overlap
-//! by the receptive field,
-//! and one input element is read by several output positions. That mapping is the operand's
-//! [`Projection`]; everything else (the space, the walk, `Tile::at`, the leaf) is the same
-//! machinery matmul runs on.
+//! input tile spans more logical axes than its buffer has physical ones, and tiles overlap.
+//!
+//! That mapping is the operand's [`Projection`]; everything else (the space, the walk, `Tile::at`,
+//! the leaf) is the same machinery matmul runs on.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -15,7 +14,17 @@ use cubecl::{
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
+use super::{Form, implied};
+use cubek_tile::kind::Guard;
+use cubek_tile::layout::Divisor;
+use cubek_tile::layout::Offset;
+use cubek_tile::layout::PhysicalAxisMap;
+use cubek_tile::layout::Scale;
+use cubek_tile::ops::matmul::LoadMethod;
+use cubek_tile::ops::matmul::MmaIo;
+use cubek_tile::space::Coords;
 use cubek_tile::*;
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 // Output positions, output channels, window taps, input channels. `OW`/`RW` are the second
 // spatial pair the 2-D case adds.
@@ -27,7 +36,7 @@ const OW: Axis = Axis(4);
 const RW: Axis = Axis(5);
 
 /// The software instruction the leaves here run under unless a test states another: a 16-cell
-/// budget, no edge split, no lane fan-out.
+/// budget, no edge split, no unit fan-out.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// Where a kernel reads its inputs from: where they lie, or a shared-memory stage it fills per
@@ -40,10 +49,8 @@ enum Stage {
 }
 
 /// The same body matmul runs: the operands' spaces say what is contracted, their projections say
-/// how they are addressed, and the leaf does the rest. One level, read where the operands lie.
-/// `V` is the input's line width: the gathered operand lines along its fastest contracted axis,
-/// which is the one the leaf splits into a line index and a lane, so the width has to be a real
-/// one somewhere to exercise that fold at all.
+/// how they are addressed, and the leaf does the rest. `V` is the input's line width along its
+/// fastest contracted axis, which the leaf splits into line index and unit; a real width is needed.
 #[cube(launch)]
 fn conv_kernel<E: Numeric, V: Size>(
     input: &TileArg<'_, E, V>,
@@ -70,8 +77,7 @@ fn conv_kernel<E: Numeric, V: Size>(
 
 /// [`conv_kernel`] with both inputs staged into shared memory per region. A gathered operand's
 /// region is copied into a stage shaped like the physical *window* it reads, compacted onto the
-/// lattice its stride and dilation reach, and the leaf gathers out of the stage exactly as it
-/// gathered out of gmem.
+/// lattice its stride and dilation reach, and the leaf gathers out of the stage as out of gmem.
 #[cube(launch)]
 fn conv_kernel_smem<E: Numeric, V: Size>(
     input: &TileArg<'_, E, V>,
@@ -87,8 +93,8 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         slot.consume(|input, weight| {
             out_region.mm_with(input, weight, config, Semiring::SUM_PROD);
@@ -114,14 +120,14 @@ fn conv_kernel_smem_padded<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem_single_at(
+    let mut stages = Stages::smem_single_at(
         &walk,
         &input,
         StageStorage::Strided,
         comptime!(Some(width)),
         depth,
     );
-    pipelined(walk, &mut ring, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         let weight = weight.at(region);
         slot.consume(|input| {
@@ -180,8 +186,8 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&outer);
-    let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
+    stages.pipelined(walk, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
             for inner in region.over(&inner) {
@@ -245,7 +251,7 @@ fn run(
     let cube_count = launcher.cube_count();
     let cube_dim = launcher.cube_dim();
     // The kernel that walks this space: one loop per level, the stage where `stage` says.
-    match (launcher.levels().len(), stage) {
+    match (launcher.partitioning().levels().len(), stage) {
         (1, Stage::InPlace) => conv_kernel::launch(
             &client,
             cube_count,
@@ -256,7 +262,7 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             f32_ty,
         ),
         (1, Stage::Smem { depth, width: None }) => conv_kernel_smem::launch(
@@ -270,7 +276,7 @@ fn run(
             config,
             depth,
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             f32_ty,
         ),
         (
@@ -295,7 +301,7 @@ fn run(
                 depth,
                 width,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             )
         }
@@ -309,8 +315,8 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
             f32_ty,
         ),
         (2, Stage::Smem { depth, width: None }) => conv_kernel_two_levels_smem::launch(
@@ -324,8 +330,8 @@ fn run(
             config,
             depth,
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
             f32_ty,
         ),
         (levels, stage) => panic!("conv: no kernel walks {levels} levels under {stage:?}"),
@@ -380,9 +386,8 @@ impl Conv1d {
     }
 
     /// `check` with the input served in `in_v`-wide lines and, when `checked`, both the input and
-    /// the output bounds-masked: the two axes of the gather path a plain `check` leaves at their
-    /// degenerate values. `stage` says whether the leaf gathers straight out of gmem or out of a
-    /// compacted stage, and how deeply that stage is buffered.
+    /// the output bounds-masked: the two gather-path axes a plain `check` leaves degenerate.
+    /// `stage` picks gathering from gmem or from a compacted stage, and how deeply it is buffered.
     fn check_at(&self, tile_oh: usize, tile_co: usize, in_v: usize, checked: bool, stage: Stage) {
         self.check_at_with_block(
             tile_oh,
@@ -405,18 +410,15 @@ impl Conv1d {
         stage: Stage,
         config: RegisterBlock,
     ) {
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
@@ -428,7 +430,11 @@ impl Conv1d {
                 PhysicalAxisMap::of(CI),
             ],
         ))
-        .checked(checked);
+        .boundary(if checked {
+            BoundaryPolicy::Every(Boundary::Zero)
+        } else {
+            BoundaryPolicy::Unchecked
+        });
 
         let (got, input, weight) = run(
             shape![self.in_len(), self.ci],
@@ -436,7 +442,11 @@ impl Conv1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO]).checked(checked),
+            TileSpec::direct(&[OH, CO]).boundary(if checked {
+                BoundaryPolicy::Every(Boundary::Zero)
+            } else {
+                BoundaryPolicy::Unchecked
+            }),
             launcher.clone(),
             in_v,
             config,
@@ -555,13 +565,15 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -574,7 +586,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -582,7 +594,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -634,13 +646,15 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -653,7 +667,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .with_boundary(Some(Boundary::Clamp));
+    .boundary(BoundaryPolicy::Every(Boundary::Clamp));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -661,7 +675,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -709,13 +723,15 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -728,7 +744,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -736,7 +752,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -778,7 +794,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
 }
 
 /// The gathered operand in two-wide lines. Its innermost axis is `CI`, the fastest contracted one,
-/// so the leaf splits each reduce step into the line index it reads and the lane it broadcasts:
+/// so the leaf splits each reduce step into the line index it reads and the unit it broadcasts:
 /// the one arithmetic on the gather path that a width of `1` leaves dead.
 #[test]
 fn conv1d_vectorized_input() {
@@ -793,7 +809,7 @@ fn conv1d_vectorized_input() {
     .check_at(4, 4, 2, false, Stage::InPlace);
 }
 
-/// The GPU specialization uses fixed lane extracts. Exercise that path on the CPU test runtime as
+/// The GPU specialization uses fixed unit extracts. Exercise that path on the CPU test runtime as
 /// well, even though production CPU launches select the compact flat walk.
 #[test]
 fn conv1d_vectorized_input_fanout() {
@@ -811,7 +827,7 @@ fn conv1d_vectorized_input_fanout() {
         2,
         false,
         Stage::InPlace,
-        RegisterBlock::new(16).lane_fanout(),
+        RegisterBlock::new(16).component_fanout(),
     );
 }
 
@@ -831,9 +847,8 @@ fn conv1d_vectorized_strided_and_dilated() {
 }
 
 /// An output extent the tile edge does not divide: the last tile's receptive field runs past the
-/// input's real length. The masking happens under the projection, so the tap that overhangs must
-/// read `0` and the output cell that does not exist must not be written, leaving every valid
-/// position equal to the reference.
+/// input's real length. The masking happens under the projection, so the overhanging tap must
+/// read `0` and the nonexistent output cell must not be written; every valid position matches.
 #[test]
 fn conv1d_masked_overhang() {
     Conv1d {
@@ -868,6 +883,7 @@ impl Conv1d {
     /// [`check_at`](Conv1d::check_at) driven end to end by [`Launcher`]: the input reaches the
     /// launch through [`StridedTileSource::gathered`] instead of a hand-built [`TileSpec`], so the
     /// kernel projects from the kernel-form nest and one compiled kernel serves every shape.
+    ///
     /// `padding` shifts the window's origin, which the builder's derived check has to arm on by
     /// itself. `dynamic` is the axis set the kernel takes at runtime, `None` for all of them.
     fn check_launched_over(
@@ -881,18 +897,15 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // Padding shortens the input by exactly what it shifts the window back by, so the last
@@ -920,15 +933,21 @@ impl Conv1d {
         // by the output, which maps it identically, and `RH` by the weight. Only an axis no
         // operand witnesses has to stay static, which is what `dynamic` narrows to.
         let launch = match dynamic {
-            Some(axes) => Launcher::implied(
+            Some(axes) => implied(
                 &client,
-                Partitioning::new(launcher.space().clone(), launcher.levels().to_vec()),
-                KernelForm::DynamicAlong(axes),
+                Partitioning::new(
+                    launcher.space().clone(),
+                    launcher.partitioning().levels().to_vec(),
+                ),
+                Form::DynamicAlong(axes),
             ),
-            None => Launcher::implied(
+            None => implied(
                 &client,
-                Partitioning::new(launcher.space().clone(), launcher.levels().to_vec()),
-                KernelForm::Dynamic,
+                Partitioning::new(
+                    launcher.space().clone(),
+                    launcher.partitioning().levels().to_vec(),
+                ),
+                Form::Dynamic,
             ),
         };
         let in_arg = launch
@@ -944,13 +963,10 @@ impl Conv1d {
                 ],
             ))
             .build();
-        let w_arg = launch
-            .arg(w_handle.binding())
-            .subspace(&[RH, CI, CO])
-            .build();
+        let w_arg = launch.arg(w_handle.binding()).axes(&[RH, CI, CO]).build();
         let out_arg = launch
             .arg(out_handle.clone().binding())
-            .subspace(&[OH, CO])
+            .axes(&[OH, CO])
             .build();
 
         match stage {
@@ -964,7 +980,7 @@ impl Conv1d {
                 out_arg.arg(),
                 RegisterBlock::new(16),
                 launch.partitioning_arg(),
-                launch.level(0),
+                launch.partitioning().level(0),
                 f32_ty,
             ),
             Stage::Smem { depth, width: None } => conv_kernel_smem::launch(
@@ -978,7 +994,7 @@ impl Conv1d {
                 RegisterBlock::new(16),
                 depth,
                 launch.partitioning_arg(),
-                launch.level(0),
+                launch.partitioning().level(0),
                 f32_ty,
             ),
             Stage::Smem { width: Some(_), .. } => {
@@ -1006,9 +1022,8 @@ impl Conv1d {
 }
 
 /// The two axes the input gathers over, `OH` and `RH`, kept static while the rest goes runtime:
-/// the launch a gathered operand was restricted to before any operand could state a gathered axis'
-/// size. It has to keep working, since an axis no operand witnesses still has to reach the kernel
-/// static.
+/// the launch a gathered operand was restricted to before any operand could state a gathered
+/// axis' size. It must keep working: an axis no operand witnesses still reaches the kernel static.
 #[test]
 fn conv1d_launched_static_window() {
     Conv1d {
@@ -1149,18 +1164,15 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         let in_spec = TileSpec::new(Projection::new(
@@ -1208,7 +1220,7 @@ impl Conv1d {
             self.stride as u32,
             self.dilation as u32,
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             f32_ty,
         );
 
@@ -1306,8 +1318,8 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         slot.consume(|input, weight| {
             out_region.mm_with(input, weight, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -1373,8 +1385,8 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         slot.consume(|input, weight| {
             out_region.mm_with(input, weight, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -1414,8 +1426,7 @@ impl Conv1d {
 
     /// A padded convolution whose padding is an `Offset::Dynamic`, so the window origin is placed
     /// at runtime and the underflow guard is armed without knowing the sign. `dynamic_scales` also
-    /// hands the stride and the dilation over at runtime. `staged` reads both inputs out of a
-    /// shared-memory stage instead of where they lie.
+    /// hands stride and dilation over at runtime; `staged` reads both inputs out of a smem stage.
     fn check_dynamic_padded(
         &self,
         tile_oh: usize,
@@ -1428,18 +1439,15 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         let gathered = if dynamic_scales {
@@ -1460,7 +1468,7 @@ impl Conv1d {
             &[OH, RH, CI],
             &[gathered, PhysicalAxisMap::of(CI)],
         ))
-        .checked(true);
+        .boundary(BoundaryPolicy::Every(Boundary::Zero));
         let w_spec = TileSpec::direct(&[RH, CI, CO]);
 
         let in_shape = shape![in_len, self.ci];
@@ -1485,7 +1493,7 @@ impl Conv1d {
         let w_binding = w_handle.binding();
         let out_binding = out_handle.clone().binding();
         let offset = -(padding as i32);
-        let out_spec = TileSpec::direct(&[OH, CO]).checked(true);
+        let out_spec = TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero));
         let cube_count = launcher.cube_count();
         let cube_dim = launcher.cube_dim();
         match (dynamic_scales, staged) {
@@ -1500,7 +1508,7 @@ impl Conv1d {
                 self.dilation as u32,
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
             (true, true) => conv_kernel_all_dynamic_smem::launch(
@@ -1514,7 +1522,7 @@ impl Conv1d {
                 self.dilation as u32,
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
             (false, false) => conv_kernel_dynamic_padding::launch(
@@ -1526,7 +1534,7 @@ impl Conv1d {
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
             (false, true) => conv_kernel_dynamic_padding_smem::launch(
@@ -1538,7 +1546,7 @@ impl Conv1d {
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
         }
@@ -1673,7 +1681,7 @@ impl Conv2d {
     /// `check` under `stage`: `InPlace` gathers straight out of gmem, `Smem` compacts the two
     /// gathered physical axes into a dense stage first.
     fn check_at(&self, tile_oh: usize, tile_ow: usize, tile_co: usize, stage: Stage) {
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[
@@ -1684,16 +1692,18 @@ impl Conv2d {
                     (RW, self.rw),
                     (CI, self.ci),
                 ]),
-                vec![Level::walk(&[
+                Levels::leaf(&[
                     (OH, tile_oh),
                     (OW, tile_ow),
                     (CO, tile_co),
                     (RH, self.rh),
                     (RW, self.rw),
                     (CI, self.ci),
-                ])],
+                ])
+                .walk_every(&[OH, OW, CO, RH, RW, CI])
+                .build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
@@ -1791,10 +1801,11 @@ fn conv2d_single_tile() {
 // ---- staged ----------------------------------------------------------------
 
 // The same convolutions with the input staged in shared memory. A gathered operand's region is
-// copied into a shared-memory tile shaped like the physical *window* it reads (`span(oh, rh) × ci`),
-// compacted onto the lattice its stride and dilation reach, so each input element is stored once. The
-// stage keeps the operand's own projection, so the leaf gathers out of smem exactly as it gathered
-// out of gmem, and every case here must agree with its direct (in-place) twin.
+// copied into a shared-memory tile shaped like the physical *window* it reads, `span(oh, rh) × ci`,
+// compacted onto the lattice its stride and dilation reach, so each input element is stored once.
+//
+// The stage keeps the operand's own projection, so the leaf gathers out of smem exactly as it
+// gathered out of gmem, and every case here must agree with its direct (in-place) twin.
 
 /// Stride 1: consecutive windows overlap by `rh - 1`, so the window the stage holds
 /// (`oh + rh - 1`) is smaller than the `oh × rh` logical cells reading it.
@@ -1987,9 +1998,8 @@ fn conv1d_staged_masked_overhang_strided() {
 }
 
 /// A single tap at stride 2 reaches only every second input position, so the stage keeps half of
-/// the window it spans and the fill steps by two. One of the three non-unit-step cases, with
-/// `conv1d_staged_vectorized_strided_and_dilated` (`gcd(2, 2) = 2`, above) and
-/// `conv2d_staged_mixed_steps`.
+/// the window it spans and the fill steps by two. One of the three non-unit-step cases:
+/// `conv2d_staged_mixed_steps`, `conv1d_staged_vectorized_strided_and_dilated` (`gcd(2, 2) = 2`).
 #[test]
 fn conv1d_staged_single_tap_strided() {
     Conv1d {
@@ -2116,7 +2126,7 @@ fn conv2d_staged_asymmetric_stride_and_dilation() {
 
 /// One compacted physical axis per step: `h` has `gcd(2, 2) = 2`, so its stage keeps every second
 /// row and the fill steps through it, while `w` is dense and steps by one. The only case where
-/// `StepUp` carries more than one distinct step, so a transposed or broadcast step shows up here.
+/// `CompactionStep` carries more than one distinct step, so a transposed or broadcast step shows up here.
 #[test]
 fn conv2d_staged_mixed_steps() {
     Conv2d {
@@ -2145,9 +2155,8 @@ fn conv2d_staged_mixed_steps() {
 // ---- the projected 2-D view ------------------------------------------------
 
 /// Reads a gathered operand through [`Tile::matrix`] and writes every batch matrix out flat, so
-/// the host can check the projected layout against the same gather done by hand. The 2-D door for
-/// an operand whose logical axes outnumber its buffer's physical ones: the matrix coordinate
-/// resolves through the leading axes first, then folds onto the window through the projection.
+/// the host can check the projected layout against the gather done by hand. The 2-D door for an
+/// operand with more logical than physical axes: leading axes first, then the window projection.
 #[cube(launch)]
 fn projected_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2195,19 +2204,15 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
-            vec![Level::walk(&[
-                (OH, oh),
-                (OW, ow),
-                (RH, rh),
-                (RW, rw),
-                (CI, ci),
-            ])],
+            Levels::leaf(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+                .walk_every(&[OH, OW, RH, RW, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2240,6 +2245,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 
 /// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
 /// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
+///
 /// Three pinned axes is what makes this worth running: the unravel's weights are a product of
 /// several extents, and reading those off the window instead of the nest would silently pick up
 /// the receptive field's span (`IH`, `IW`) rather than the logical edges.
@@ -2275,7 +2281,7 @@ fn conv2d_projected_matrix_view() {
 
     let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
     for m in 0..matrices {
-        // The pinned axes, unraveled the way the layout unravels them: row-major over `[OH, OW, RH]`.
+        // The pinned axes, unraveled as the layout unravels them: row-major over `[OH, OW, RH]`.
         let (o_h, o_w, r_h) = (m / (ow * rh), (m / rh) % ow, m % rh);
         for r_w in 0..rows {
             for c_i in 0..cols {
@@ -2293,8 +2299,7 @@ fn conv2d_projected_matrix_view() {
 
 /// Reads a gathered operand through [`Tile::fragment_matrix`] and writes the whole matrix out, so
 /// the host can check it against the im2col expansion done by hand. This is the face an mma
-/// fragment reads: the output positions flattened into the row edge, the taps and channels into
-/// the column edge, resolved onto the compact window underneath.
+/// fragment reads: output positions on the row edge, taps and channels on the column edge.
 #[cube(launch)]
 fn fragment_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2368,16 +2373,15 @@ fn conv2d_fragment_matrix_view() {
 
 // ---- the manual-mma leaf ---------------------------------------------------
 
-/// The resident promote, zero, mma, drain kernel of the matmul tests, with a *gathered* lhs.
-/// The accumulator is sized by the whole contraction (taps times channels), both inputs stage
-/// into shared memory (the input into its compacted window), and the fragment load flattens the
-/// tap and channel axes back into the `k` edge as it reads that window.
+/// The resident promote, zero, mma, drain kernel of the matmul tests, with a *gathered* lhs. The
+/// accumulator is sized by the whole contraction (taps times channels), both inputs stage into
+/// smem (the input into its compacted window); the fragment load folds tap and channel into `k`.
 #[cube(launch)]
 fn conv_mma_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] io: MmaIo,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -2385,21 +2389,12 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let mut acc = out.mma_accumulator::<E, E>(
-        &input,
-        comptime!(Fragments::new(
-            &out.space,
-            &input.space,
-            std::slice::from_ref(&level)
-        )),
-        io,
-        Monoid::Sum,
-    );
+    let mut acc = out.mma_accumulator::<E, E>(&input, io, Monoid::Sum);
     acc.zero();
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
-    let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    stages.pipelined(walk, |slot, region| {
         let mut acc_region = acc.at(region);
         slot.consume(|input, weight| {
             acc_region.mma(input, weight, Semiring::SUM_PROD);
@@ -2413,23 +2408,22 @@ fn conv_mma_kernel<E: Numeric>(
 
 #[test]
 fn conv1d_mma_leaf() {
-    conv1d_mma_leaf_with(MmaIOConfig::manual());
+    conv1d_mma_leaf_with(MmaIo::manual());
 }
 
 #[test]
 fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
-    conv1d_mma_leaf_with(MmaIOConfig {
+    conv1d_mma_leaf_with(MmaIo {
         lhs_load_method: LoadMethod::LoadMatrix,
-        ..MmaIOConfig::manual()
+        ..MmaIo::manual()
     });
 }
 
-fn conv1d_mma_leaf_with(io: MmaIOConfig) {
+fn conv1d_mma_leaf_with(io: MmaIo) {
     let client = cubecl::test_device().client();
-    // The *shape*, not just the feature: a backend can advertise manual mma and
-    // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
-    // instruction the hardware does not have: it reads back zeros, which looks
-    // like a leaf bug and is a missing guard.
+    // The *shape*, not just the feature: a backend can advertise manual mma and offer only
+    // `16x16x16` (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
+    // not have: it reads back zeros, which looks like a leaf bug and is a missing guard.
     let f32_native = f32::elem_type_native();
     let offers_8x8x8 = client.properties().features.matmul.mma.iter().any(|c| {
         c.a_type == f32_native
@@ -2450,13 +2444,15 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
+            Levels::leaf(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2499,7 +2495,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         ),
         io,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -2565,32 +2561,33 @@ impl Resize1d {
         out
     }
 
-    /// One level per entry, each cutting `OH` at that edge and keeping the other axes whole: two
-    /// entries nest a second descent, which is where a rational window's leftover phase has to
-    /// accumulate rather than restart.
-    fn space(&self, oh_edges: &[usize]) -> Launcher {
-        let levels = oh_edges
-            .iter()
-            .map(|&edge| Level::walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]))
-            .collect();
-        Launcher::implied(
+    /// `OH` cut at `oh` under the leaf and the other axes whole, then one walk per count above
+    /// it: a count nests a second descent, which is where a rational window's leftover phase has
+    /// to accumulate rather than restart.
+    fn space(&self, oh: usize, oh_counts: &[usize]) -> Launcher {
+        let leaf = Levels::leaf(&[(OH, oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        let tiling = oh_counts.iter().fold(leaf, |tiling, &count| {
+            tiling.walk(&[(OH, count), (CO, 1), (RH, 1), (CI, 1)])
+        });
+        implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                levels,
+                tiling.walk_every(&[OH, CO, RH, CI]).build(),
             ),
-            KernelForm::Static,
+            Form::Static,
         )
     }
 
-    fn check(&self, oh_edges: &[usize]) {
-        self.check_with(oh_edges, 1, Stage::InPlace);
+    fn check(&self, oh: usize, oh_counts: &[usize]) {
+        self.check_with(oh, oh_counts, 1, Stage::InPlace);
     }
 
     /// The scalar operand staged into `width`-wide padded shared-memory lines.
-    fn check_padded(&self, oh_edges: &[usize], width: usize) {
+    fn check_padded(&self, oh: usize, oh_counts: &[usize], width: usize) {
         self.check_with(
-            oh_edges,
+            oh,
+            oh_counts,
             1,
             Stage::Smem {
                 depth: 1,
@@ -2599,7 +2596,7 @@ impl Resize1d {
         );
     }
 
-    fn check_with(&self, oh_edges: &[usize], vector_size: usize, stage: Stage) {
+    fn check_with(&self, oh: usize, oh_counts: &[usize], vector_size: usize, stage: Stage) {
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
@@ -2611,7 +2608,7 @@ impl Resize1d {
                 PhysicalAxisMap::of(CI),
             ],
         ))
-        .checked(true);
+        .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
         let (got, input, weight) = run(
             shape![self.in_len, self.ci],
@@ -2619,8 +2616,8 @@ impl Resize1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO]).checked(true),
-            self.space(oh_edges),
+            TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+            self.space(oh, oh_counts),
             vector_size,
             RegisterBlock::new(16),
             stage,
@@ -2632,7 +2629,7 @@ impl Resize1d {
                 assert_eq!(
                     got.get_f32(&[o, c]),
                     want[o * self.co + c],
-                    "resize1d {}/{} offset {} edges {oh_edges:?} v {vector_size} {stage:?}: \
+                    "resize1d {}/{} offset {} oh {oh} x {oh_counts:?} v {vector_size} {stage:?}: \
                      wrong at ({o}, {c})",
                     self.scale,
                     self.divisor,
@@ -2657,7 +2654,7 @@ fn resize1d_staged_padded_stage_width() {
         offset: -2,
         divisor: 6,
     }
-    .check_padded(&[2], 4);
+    .check_padded(2, &[], 4);
 }
 
 /// The tap axis carries the divisor as its coefficient, so it survives the division whole: the
@@ -2676,7 +2673,7 @@ fn resize1d_rational_static() {
         offset: -2,
         divisor: 6,
     }
-    .check(&[2]);
+    .check(2, &[]);
 }
 
 /// The same resample staged: the input tile stages uncompacted into shared
@@ -2695,7 +2692,8 @@ fn resize1d_staged_static() {
         divisor: 6,
     }
     .check_with(
-        &[2],
+        2,
+        &[],
         1,
         Stage::Smem {
             depth: 1,
@@ -2719,7 +2717,8 @@ fn resize1d_staged_double_buffered() {
         divisor: 6,
     }
     .check_with(
-        &[2],
+        2,
+        &[],
         1,
         Stage::Smem {
             depth: 2,
@@ -2744,8 +2743,8 @@ fn resize1d_rational_fractional_taps() {
         offset: -2,
         divisor: 3,
     };
-    resize.check(&[3]);
-    resize.check(&[3, 1]);
+    resize.check(3, &[]);
+    resize.check(1, &[3]);
 }
 
 /// Staged rational gather with fractional taps.
@@ -2763,7 +2762,8 @@ fn resize1d_staged_fractional_taps() {
         divisor: 3,
     };
     resize.check_with(
-        &[3],
+        3,
+        &[],
         1,
         Stage::Smem {
             depth: 1,
@@ -2771,7 +2771,8 @@ fn resize1d_staged_fractional_taps() {
         },
     );
     resize.check_with(
-        &[3, 1],
+        1,
+        &[3],
         1,
         Stage::Smem {
             depth: 1,
@@ -2795,7 +2796,8 @@ fn resize1d_staged_vectorized() {
         divisor: 6,
     }
     .check_with(
-        &[2],
+        2,
+        &[],
         2,
         Stage::Smem {
             depth: 1,
@@ -2853,7 +2855,7 @@ fn resize1d_rational_dynamic() {
         offset: -2,
         divisor: 6,
     };
-    let launcher = resize.space(&[2]);
+    let launcher = resize.space(2, &[]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2868,7 +2870,7 @@ fn resize1d_rational_dynamic() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let in_data = ramp(resize.in_len * resize.ci, 7);
     let w_data = ramp(resize.rh * resize.ci * resize.co, 5);
@@ -2897,12 +2899,12 @@ fn resize1d_rational_dynamic() {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[OH, CO]).checked(true),
+            TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         resize.divisor as u32,
         resize.offset as i32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -2920,7 +2922,7 @@ fn resize1d_rational_dynamic() {
 }
 
 /// A rational gathered stage born with dynamic coefficients can be addressed before fill
-/// without tripping AxisProjection's dynamic coefficient count assert.
+/// without tripping ProjectionInKernel's dynamic coefficient count assert.
 #[cube(launch)]
 fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2936,12 +2938,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     offsets.push(offset);
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let stage = MemData::stage(
-        &input,
-        comptime!(level.clone()),
-        StageStorage::Strided,
-        comptime!(None),
-    );
+    let stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
     let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 
@@ -2961,7 +2958,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         offset: -2,
         divisor: 6,
     };
-    let launcher = resize.space(&[2]);
+    let launcher = resize.space(2, &[]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2976,7 +2973,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
         .dtype(f32_ty)
@@ -2991,16 +2988,16 @@ fn resize1d_dynamic_stage_read_before_fill() {
         resize.divisor as u32,
         resize.offset as i32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 }
 
 /// A gathered convolution with multiple reduce axes (`[RH, CI]`, where `RH = 3, CI = 3`),
-/// with the gathered input staged at line width 4. The flat walk must extract lanes using the
+/// with the gathered input staged at line width 4. The flat walk must extract units using the
 /// fastest contracted axis (`CI`) coordinate, not flat step `p`.
 #[test]
-fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
+fn conv1d_staged_padded_multi_axis_reduce_component_indexing() {
     let oh = 6;
     let co = 4;
     let rh = 3;
@@ -3010,13 +3007,15 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -3029,7 +3028,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -3037,7 +3036,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -3078,22 +3077,24 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     }
 }
 
-/// A staged padded conv with `lane_fanout = true` requested on the register block.
+/// A staged padded conv with `component_fanout = true` requested on the register block.
 /// The innermost reduction extent `CI = 3` is not divisible by stage line width `4`,
-/// so it correctly falls back to the coordinate-decoded flat walk rather than corrupting lanes.
+/// so it correctly falls back to the coordinate-decoded flat walk rather than corrupting units.
 #[test]
-fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
+fn conv1d_staged_padded_multi_axis_reduce_component_fanout() {
     let (in_len, ci, co, rh) = (16, 3, 4, 3);
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -3106,7 +3107,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -3114,10 +3115,10 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
-        RegisterBlock::new(16).lane_fanout(),
+        RegisterBlock::new(16).component_fanout(),
         Stage::Smem {
             depth: 1,
             width: Some(4),
@@ -3149,7 +3150,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
             assert_eq!(
                 got.get_f32(&[o, c]),
                 want[o * co + c],
-                "conv1d_staged_padded_multi_axis_reduce_lane_fanout: wrong at ({o}, {c})"
+                "conv1d_staged_padded_multi_axis_reduce_component_fanout: wrong at ({o}, {c})"
             );
         }
     }

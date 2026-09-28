@@ -194,8 +194,8 @@ macro_rules! testgen_reduce {
             );
         }
 
-        /// The goal of that test is to limit the size of a cube to `plane_size` to validate multiple planes
-        /// arithmetic.
+        /// The goal of that test is to limit the size of a cube to `plane_size` to validate
+        /// multiple planes arithmetic.
         mod full_plane_single_plane {
             use super::*;
             use cubek_reduce::{routines::PlaneReduceBlueprint, {BoundChecks, IdleMode}};
@@ -535,7 +535,7 @@ mod reduce_dim {
     }
 
     // One small point per axis the light suite collapses, so that the halves it
-    // drops (`f16`, unvectorized output, a 64-lane plane) stay covered. Under
+    // drops (`f16`, unvectorized output, a 64-unit plane) stay covered. Under
     // `extended` the full cross product already contains all three.
     #[cfg(not(feature = "extended"))]
     mod collapsed_axis_coverage {

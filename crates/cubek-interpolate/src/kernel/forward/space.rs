@@ -2,7 +2,8 @@ use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
 use cubek_tile::{
-    Axis, Compaction, Cut, Level, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Space,
+    Axis, Level, Levels, Partitioning, Projection, RegisterBlock, Space,
+    layout::{Compaction, PhysicalAxisMap},
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -12,11 +13,25 @@ pub const TAP_H: Axis = Axis(3);
 pub const TAP_W: Axis = Axis(4);
 pub const CHANNEL: Axis = Axis(5);
 
+/// What a partitioning over these axes prints as ([`Partitioning::labelled`]): an [`Axis`] is an
+/// index, and only the kernel that assigned it knows what it stands for.
+///
+/// Only tests print one today. It widens when a caller does.
+#[cfg(test)]
+const LABELS: [(Axis, &str); 6] = [
+    (BATCH, "b"),
+    (OUTPUT_H, "oh"),
+    (OUTPUT_W, "ow"),
+    (TAP_H, "th"),
+    (TAP_W, "tw"),
+    (CHANNEL, "c"),
+];
+
 /// The register block the leaf runs under, which the device decides.
 pub fn register_block(client: &Client) -> RegisterBlock {
     match client.properties().hardware.num_cpu_cores {
         Some(_) => RegisterBlock::new(256).split_edge(),
-        None => RegisterBlock::new(64).lane_fanout(),
+        None => RegisterBlock::new(64).component_fanout(),
     }
 }
 
@@ -48,15 +63,39 @@ impl InterpolateSpace {
     }
 
     /// Four levels, outermost first: the cube grid, the channel blocks a cube walks (one region
-    /// below `lanes * 4` channels), this plane's rows, then this lane's columns and channel
+    /// below `units * 4` channels), this plane's rows, then this unit's columns and channel
     /// lines.
+    /// The levels, stated **from the leaf up, in counts**: one unit's columns by its channel
+    /// block by a plane's rows, the units of a plane across columns and channels, the planes of
+    /// a cube across rows, every channel block the cube's box holds, and a cube per box. The
+    /// geometry was already a product — `rows_per_cube` is planes by rows, `cols_per_cube` units
+    /// by columns — so this states the counts it holds rather than the sizes it multiplied them
+    /// into. A unit split of one along an axis is no split, and the axis is handed down whole.
     pub fn levels(&self) -> Vec<Level> {
-        vec![
-            self.cubes(),
-            self.channel_blocks(),
-            self.planes(),
-            self.lanes(),
+        let (geometry, plane_size) = (self.geometry, self.plane_size);
+        assert!(
+            geometry.unit_cols * geometry.unit_channels == plane_size,
+            "InterpolateSpace: the unit split covers {} of the plane's {plane_size} units",
+            geometry.unit_cols * geometry.unit_channels
+        );
+        let plane_units: Vec<(Axis, usize)> = [
+            (OUTPUT_W, geometry.unit_cols),
+            (CHANNEL, geometry.unit_channels),
         ]
+        .into_iter()
+        .filter(|&(_, plane_units)| plane_units > 1)
+        .collect();
+        Levels::leaf(&[
+            (OUTPUT_W, geometry.cols_per_unit),
+            (CHANNEL, geometry.channel_block),
+            (OUTPUT_H, geometry.rows_per_plane),
+        ])
+        .units(&plane_units)
+        .planes(&[(OUTPUT_H, geometry.planes_per_cube)])
+        .walk_every(&[CHANNEL])
+        .cubes(&[OUTPUT_W, OUTPUT_H])
+        .batches(&[BATCH])
+        .build()
     }
 
     pub fn space(&self) -> Space {
@@ -80,50 +119,6 @@ impl InterpolateSpace {
             ),
             CubeDim::new_2d(self.plane_size as u32, geometry.planes_per_cube as u32),
         )
-    }
-
-    /// This cube's box of the output, the taps whole.
-    pub fn cubes(&self) -> Level {
-        let geometry = self.geometry;
-        Level::cubes(&[
-            (OUTPUT_W, geometry.cols_per_cube()),
-            (OUTPUT_H, geometry.rows_per_cube()),
-        ])
-        .batches(&[BATCH])
-    }
-
-    /// The cube's box walked one channel block at a time.
-    pub fn channel_blocks(&self) -> Level {
-        Level::walk(&[(CHANNEL, self.geometry.channels_per_cube())])
-    }
-
-    /// The cube's rows across its planes.
-    pub fn planes(&self) -> Level {
-        let geometry = self.geometry;
-        Level::planes(&[
-            Cut::new(OUTPUT_H, geometry.rows_per_plane).across(geometry.planes_per_cube)
-        ])
-    }
-
-    /// This lane's columns and channel lines. The interpolation splits the plane across two
-    /// axes, so the counts are stated outright; one lane along an axis is no split at all, and
-    /// the axis is handed down whole.
-    pub fn lanes(&self) -> Level {
-        let (geometry, plane_size) = (self.geometry, self.plane_size);
-        assert!(
-            geometry.lane_cols * geometry.lane_channels == plane_size,
-            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
-            geometry.lane_cols * geometry.lane_channels
-        );
-        let cuts: Vec<Cut> = [
-            (OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane),
-            (CHANNEL, geometry.lane_channels, geometry.channel_block),
-        ]
-        .into_iter()
-        .filter(|&(_, instances, _)| instances > 1)
-        .map(|(axis, instances, edge)| Cut::new(axis, edge).across(instances))
-        .collect();
-        Level::lanes(&cuts)
     }
 }
 
@@ -162,9 +157,79 @@ pub fn stage_window_bytes(
         other => panic!("stage_window_bytes: {other:?} is not an axis of the interpolation space"),
     };
     let window_vectors: usize =
-        Compaction::of(&input_projection(row, col, radius), vector_size, extent_of)
+        Compaction::new(&input_projection(row, col, radius), vector_size, extent_of)
             .extents()
             .iter()
             .product();
     window_vectors * vector_size * elem_size
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{InputStage, definition::InterpolateBlueprint};
+
+    /// A bicubic resize to a `128x128` map on a 32-unit plane, four planes of two rows each and
+    /// four output columns a unit. The channel count is what the caller varies: it is the axis
+    /// the units cover first, so it decides the whole split and the cube grid with it.
+    fn plan(channels: usize) -> InterpolateSpace {
+        InterpolateSpace {
+            batch: 2,
+            height: 128,
+            width: 128,
+            channels,
+            plane_size: 32,
+            taps: 4,
+            geometry: TileGeometry::from_blueprint(
+                InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 4),
+                channels,
+                32,
+            ),
+        }
+    }
+
+    /// The four levels as a table, leaf up: each row's tile is the row below it times the count
+    /// beside it, so a tiling that stops dividing an axis where it meant to keep going shows up
+    /// as a row that no longer multiplies out. The taps never divide: they are the reduction,
+    /// and every tap of one output position accumulates into the same register.
+    #[test]
+    fn the_interpolate_routine_states_four_levels() {
+        assert_eq!(
+            plan(16).partitioning().table(&LABELS).to_string(),
+            [
+                "                        b × oh × ow × th × tw × c    b ×  oh ×  ow × th × tw ×  c",
+                "",
+                "  ◦                     · ×  · ×  · ×  · ×  · × ·    1 ×   2 ×   4 ×  4 ×  4 ×  4",
+                "  ▪  32 units           · ×  · ×  8 ×  · ×  · × 4    1 ×   2 ×  32 ×  4 ×  4 × 16",
+                "  ▤  4 planes a cube    · ×  4 ×  · ×  · ×  · × ·    1 ×   8 ×  32 ×  4 ×  4 × 16",
+                "  ↻  1 steps            · ×  · ×  · ×  · ×  · × 1    1 ×   8 ×  32 ×  4 ×  4 × 16",
+                "  ▣  128 cubes          2 × 16 ×  4 ×  · ×  · × ·    2 × 128 × 128 ×  4 ×  4 × 16",
+                "",
+                "                        └─ count ───────────────┘    └─ tile ───────────────────┘",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// A channel axis wider than one pass of the plane is what the walk above the planes is
+    /// for: every unit rides the channels, and the blocks past the first are the cube's steps.
+    /// The columns pay for it, so the same map takes eight times the cubes along `ow`.
+    #[test]
+    fn a_channel_axis_wider_than_a_plane_walks_its_blocks() {
+        assert_eq!(
+            plan(256).partitioning().table(&LABELS).to_string(),
+            [
+                "                        b × oh × ow × th × tw ×  c    b ×  oh ×  ow × th × tw ×   c",
+                "",
+                "  ◦                     · ×  · ×  · ×  · ×  · ×  ·    1 ×   2 ×   4 ×  4 ×  4 ×   4",
+                "  ▪  32 units           · ×  · ×  · ×  · ×  · × 32    1 ×   2 ×   4 ×  4 ×  4 × 128",
+                "  ▤  4 planes a cube    · ×  4 ×  · ×  · ×  · ×  ·    1 ×   8 ×   4 ×  4 ×  4 × 128",
+                "  ↻  2 steps            · ×  · ×  · ×  · ×  · ×  2    1 ×   8 ×   4 ×  4 ×  4 × 256",
+                "  ▣  1024 cubes         2 × 16 × 32 ×  · ×  · ×  ·    2 × 128 × 128 ×  4 ×  4 × 256",
+                "",
+                "                        └─ count ────────────────┘    └─ tile ────────────────────┘",
+            ]
+            .join("\n")
+        );
+    }
 }

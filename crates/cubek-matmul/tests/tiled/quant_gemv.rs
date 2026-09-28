@@ -1,7 +1,12 @@
 //! The quantized decode gemv, end to end: packed words in, one scale per block folded at the
 //! contraction, no scale ever widened on the way.
 
-use cubecl::{bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle};
+use cubecl::{
+    bytes::Bytes,
+    prelude::*,
+    quant::scheme::{QuantValue, ScaleDtype},
+    std::tensor::TensorHandle,
+};
 use cubek_matmul::{
     routine::BlueprintStrategy,
     tiled::quant_gemv::{QuantGemvBindings, QuantGemvElems, QuantGemvProblem, launch_ref},
@@ -65,6 +70,7 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
         rows,
         field,
         block,
+        scales: ScaleDtype::F16,
     };
     launch_ref(
         &client,
@@ -85,7 +91,7 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
         QuantGemvElems {
             served: f32::elem_type_native(),
             x: f16::elem_type_native(),
-            scales: f16::elem_type_native(),
+            tensor_scale: f32::elem_type_native(),
             out: f32::elem_type_native(),
         },
     )
@@ -124,7 +130,7 @@ fn four_bit_weights_decode_against_f16_scales() {
 }
 
 /// More than one activation row against the one weight stream: `N` is sequential at every
-/// level, so a lane holds that many partials against the line it already read.
+/// level, so a unit holds that many partials against the line it already read.
 #[test]
 fn several_activation_rows_share_one_weight_stream() {
     decode_gemv_matches_the_reference(QuantValue::Q4S, 32, 3);
@@ -156,7 +162,8 @@ fn a_second_scale_level_is_one_more_binding() {
     let s: Vec<f16> = (0..d_out * blocks)
         .map(|i| f16::from_f32((i % 9) as f32 / 4.0 + 0.25))
         .collect();
-    let g = vec![f16::from_f32(0.5)];
+    // One scale, stored as the word it fills.
+    let g = vec![0.5f32];
 
     let out = handle(&client, vec![0f32; d_out * rows], [d_out, rows]);
     let written = out.handle.clone();
@@ -167,6 +174,7 @@ fn a_second_scale_level_is_one_more_binding() {
         rows,
         field,
         block,
+        scales: ScaleDtype::F16,
     };
     launch_ref(
         &client,
@@ -189,7 +197,7 @@ fn a_second_scale_level_is_one_more_binding() {
         QuantGemvElems {
             served: f32::elem_type_native(),
             x: f16::elem_type_native(),
-            scales: f16::elem_type_native(),
+            tensor_scale: f32::elem_type_native(),
             out: f32::elem_type_native(),
         },
     )
@@ -203,7 +211,7 @@ fn a_second_scale_level_is_one_more_binding() {
                 .map(|k| {
                     w[m * d_in + k] as f32
                         * s[m * blocks + k / block].to_f32()
-                        * g[0].to_f32()
+                        * g[0]
                         * x[r * d_in + k].to_f32()
                 })
                 .sum();

@@ -124,7 +124,7 @@ pub fn rfft_launch_padded(
         return Ok(());
     }
 
-    if n_fft > max_shared_fft_n(client) {
+    if n_fft > max_shared_fft_n(client, dtype) {
         return rfft_large_launch(
             client,
             signal,
@@ -142,7 +142,7 @@ pub fn rfft_launch_padded(
     let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
     let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
 
-    rfft_kernel::launch::<f32>(
+    rfft_kernel::launch(
         client,
         cube_count,
         cube_dim,
@@ -155,6 +155,7 @@ pub fn rfft_launch_padded(
         log2_n,
         threads_per_cube,
         dim,
+        dtype,
     );
     Ok(())
 }
@@ -170,6 +171,7 @@ fn rfft_kernel<F: Float>(
     #[comptime] log2_n: usize,
     #[comptime] threads_per_cube: usize,
     #[comptime] dim: usize,
+    #[define(F)] _dtype: ElemType,
 ) {
     let window_index = CUBE_POS;
     if (window_index as u32) >= num_windows {

@@ -1,3 +1,4 @@
+use crate::tile::{Form, implied, uncut};
 use cubecl::{
     features::TypeUsage, ir::ElemType, prelude::*, std::tensor::layout::linear::linear_view,
     zspace::Shape,
@@ -7,10 +8,12 @@ use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
     ValidationResult, assert_equals_approx,
 };
+use cubek_tile::quant::Quantization;
 use cubek_tile::{
-    Axis, DequantAt, KernelForm, Launcher, Level, Partitioning, QuantTileArg, QuantTileArgLaunch,
-    Space, TileArg, TileArgLaunch, TileSpec,
+    Axis, Levels, Partitioning, Space, TileArg, TileArgLaunch, TileSpec,
+    quant::{DequantAt, QuantTileArg, QuantTileArgLaunch},
 };
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -34,7 +37,7 @@ fn copy_non_quantized_matches_reference() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -52,13 +55,16 @@ fn copy_non_quantized_matches_reference() {
 fn copy_spread_across_cubes_and_planes_matches_reference() {
     let (m, n) = (4, 512);
     let client = cubecl::test_device().client();
-    let launch = Launcher::implied(
+    let launch = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n)]),
-            vec![Level::cubes(&[(N, 128), (M, 1)]), Level::planes(&[(N, 32)])],
+            Levels::leaf(&[(N, 32), (M, 1)])
+                .planes(&[(N, 4)])
+                .cubes(&[N, M])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let space = launch.space().clone();
 
@@ -134,7 +140,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             DequantAt::Read,
         ),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         input_dtype,
         out_dtype,
     );
@@ -197,16 +203,21 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
     let space = Space::new(&[(M, m), (N, n)]);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(space.clone(), vec![]),
-        KernelForm::Static,
+        Form::Static,
     );
     let input_op = launcher
         .arg(input.binding())
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .vectorize(v)
-        .quantized(&[scales.binding()], scheme, DequantAt::Read)
+        .quantized(Quantization::new(
+            scales.binding(),
+            None,
+            scheme,
+            DequantAt::Read,
+        ))
         .build();
 
     let out_dtype = f32::elem_type_native();
@@ -216,7 +227,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
         launcher.cube_dim(),
         input_op.bound_width(),
         v,
-        input_op.arg(),
+        input_op.quant_arg(),
         output.arg(),
         launcher.partitioning_arg(),
         input_dtype,
@@ -268,16 +279,21 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(space.clone(), vec![]),
-        KernelForm::Static,
+        Form::Static,
     );
     let input_op = launcher
         .arg(input.tile.handle().binding())
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .vectorize(pack)
-        .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
+        .quantized(Quantization::new(
+            input.scales_binding(),
+            None,
+            scheme,
+            DequantAt::Read,
+        ))
         .build();
 
     let input_dtype = u32::elem_type_native();
@@ -288,7 +304,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         launcher.cube_dim(),
         input_op.bound_width(),
         pack,
-        input_op.arg(),
+        input_op.quant_arg(),
         output.arg(),
         launcher.partitioning_arg(),
         input_dtype,
@@ -312,9 +328,8 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
 }
 
 /// Block-quantized: each `bm×bn` block carries its own scale, and one flat fill spans the whole
-/// grid: the per-line lookup picks each line's scale. The last case's tiles overhang the tensor,
-/// running the checked path; only the valid region is asserted, so it pins that masking leaves
-/// live values (and their scales) intact, not that the overhang itself is suppressed.
+/// grid, the per-line lookup picking each line's scale. The last case's tiles overhang the tensor
+/// (checked path); only the valid region is asserted: masking must not touch live values or scales.
 #[test]
 fn copy_quantized_block_matches_reference() {
     run_quantized_block(8, 8, 4, 4, None); // square 2×2 grid of blocks
@@ -329,10 +344,11 @@ fn copy_quantized_block_matches_reference() {
 /// so it runs on every backend.
 ///
 /// Each case's inner block is a multiple of the served line, as the launch requires (a line may
-/// not split a `u32`, nor straddle two scales). A whole word is one served line, so a scheme's
-/// packing factor must fit the device's vector width: a case that doesn't is skipped loudly,
-/// the same gate a selector applies when it picks widths from the device (only WGSL-bound
-/// targets cap at 4; cpu/cuda serve any width).
+/// not split a `u32`, nor straddle two scales).
+///
+/// A whole word is one served line, so a scheme's packing factor must fit the device's vector
+/// width: a case that doesn't is skipped loudly, the same gate a selector applies when it picks
+/// widths from the device (only WGSL-bound targets cap at 4; cpu/cuda serve any width).
 #[test]
 fn copy_quantized_packed_u32_matches_reference() {
     // Q8S packs 4 values per u32.
@@ -345,10 +361,10 @@ fn copy_quantized_packed_u32_matches_reference() {
 }
 
 /// Packed-u32 lookup-quantized ([`QuantMode::Lookup`]): each 4-bit field is an index into a
-/// 16-entry table, so `out == table[q] * scale[i/bm, j/bn]`. The table is deliberately not
-/// affine in the index: a decode that fell back to the integer cast would reconstruct the
-/// index itself and miss every entry. Block scales beside it pin that the two lookups (block →
-/// scale, field → entry) stay independent.
+/// 16-entry table, so `out == table[q] * scale[i/bm, j/bn]`. The table is deliberately not affine
+/// in the index: a decode that fell back to the integer cast would miss every entry.
+///
+/// Block scales beside it pin that the two lookups (block → scale, field → entry) stay independent.
 #[test]
 fn copy_quantized_lookup_matches_reference() {
     let (m, n, bm, bn) = (8usize, 8usize, 4usize, 8usize);
@@ -391,7 +407,7 @@ fn copy_quantized_lookup_matches_reference() {
         pack,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -419,9 +435,10 @@ fn copy_quantized_lookup_matches_reference() {
 
 /// Sub-word packed-u32: the output's line is **narrower than a word**, so the source serves
 /// one-line-per-word (a scalar `u32` binding) and the fill unpacks each word across
-/// `num_quants / w` lines (`scan_words`). This is the regime a vec4 device reads 4- and 2-bit
-/// caches in; it needs no width skip, which is the point. The innermost block covers whole
-/// words, `scan_words`' scale rule.
+/// `num_quants / w` lines (`scan_words`), whose scale rule is that a block covers whole words.
+///
+/// This is the regime a vec4 device reads 4- and 2-bit caches in; it needs no width skip, which
+/// is the point.
 #[test]
 fn copy_quantized_subword_matches_reference() {
     run_quantized_subword(8, 8, QuantValue::Q4S, 4, 8, 4); // 8 per word, 2 lines each
@@ -456,7 +473,7 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
         w,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -514,7 +531,7 @@ fn copy_quantized_subword_lookup_matches_reference() {
         w,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -583,7 +600,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         pack,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         input_dtype,
         out_dtype,
     );
@@ -646,7 +663,7 @@ fn copy_quantized_two_level_matches_reference() {
     run_quantized_block(16, 8, 4, 4, Some(0.25));
     run_quantized_block(6, 8, 4, 4, Some(0.5)); // M's last block is half-filled: masked overhang
     // The whole window fits inside one block: `QuantInfo::uniform()` holds, so this exercises
-    // `uniform_scale()`'s whole-scale fold instead of the per-position one under `KnownScale::Global`.
+    // `uniform_scale()`'s whole-scale fold, not the per-position one under `KnownScale::Global`.
     run_quantized_block(4, 4, 4, 4, Some(0.5));
 }
 
@@ -659,8 +676,7 @@ fn copy_quantized_two_level_zero_global_scale_zeroes_output() {
 
 /// A two-level scheme with no global binding is refused by the builder, host-side and on the
 /// caller's thread: a missing per-tensor scale would otherwise reconstruct every value short by
-/// that factor. (The kernel-side backstop in `QuantTileArg::tile` cannot be pinned here: it fires
-/// on the compile server, where a panic is swallowed rather than propagated.)
+/// that factor. (`QuantTileArg::tile`'s backstop fires on the compile server, which swallows it.)
 #[test]
 #[should_panic(expected = "takes as many scale bindings")]
 fn two_level_without_global_scale_refused_by_the_builder() {
@@ -678,15 +694,20 @@ fn two_level_without_global_scale_refused_by_the_builder() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(space.clone(), vec![]),
-        KernelForm::Dynamic,
+        Form::Dynamic,
     );
     launcher
         .arg(input.binding())
-        .subspace(&[M, N])
-        .quantized(&[scales.binding()], scheme, DequantAt::Read)
+        .axes(&[M, N])
+        .quantized(Quantization::new(
+            scales.binding(),
+            None,
+            scheme,
+            DequantAt::Read,
+        ))
         .build();
 }
 
@@ -700,8 +721,7 @@ fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
 
 /// Copy a `bm×bn` block-scaled Q8S input and check each element used its own block's scale:
 /// `out == q * scale[i/bm, j/bn]`, or with `global` set (two-level), `out == q * scale[..] *
-/// global`, the global scale bound as a third 1-element tensor. The space tiles into block-sized
-/// leaves, so a tensor that doesn't fill its last block overhangs it.
+/// global`, bound as a third 1-element tensor; block-sized leaves, so a short last block overhangs.
 fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<f32>) {
     let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -730,13 +750,15 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .generate_with_f32_host_data();
 
     // A nest that tiles into `bm×bn` blocks, one cube walking them.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n)]),
-            vec![Level::walk(&[(M, bm), (N, bn)])],
+            Levels::leaf(&[(M, bm), (N, bn)])
+                .walk_every(&[M, N])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
@@ -772,7 +794,14 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
             scheme,
             DequantAt::Read,
         ),
-        TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
+        TileArgLaunch::new(
+            output.tensor_arg(1),
+            output.spec().boundary(if check {
+                BoundaryPolicy::Every(Boundary::Zero)
+            } else {
+                BoundaryPolicy::Unchecked
+            }),
+        ),
         launcher.partitioning_arg(),
         input_dtype,
         out_dtype,

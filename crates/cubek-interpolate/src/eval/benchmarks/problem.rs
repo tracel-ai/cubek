@@ -10,7 +10,7 @@ use crate::definition::{
 ///
 /// Only the spatial axes shrink. Batch and channel counts carry the regimes the catalogue exists
 /// to separate (RGB against a plane-filling channel count), and the tile geometry is derived from
-/// channels and lanes rather than from height and width, so dividing those would compare a
+/// channels and units rather than from height and width, so dividing those would compare a
 /// different shape rather than the same one faster.
 pub fn problems_scaled(divisor: usize) -> Vec<CatalogEntry<InterpolateProblem>> {
     assert!(divisor > 0, "problems_scaled: the divisor is a denominator");

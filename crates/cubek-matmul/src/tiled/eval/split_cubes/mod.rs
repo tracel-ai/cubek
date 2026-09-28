@@ -1,7 +1,7 @@
 //! Splitting the contraction across *cubes*, and the two ways of putting the pieces back
 //! together.
 //!
-//! The sibling category [`split_k`](super::split_k) spends a plane's lanes on `K`. This one
+//! The sibling category [`split_k`](super::split_k) spends a plane's units on `K`. This one
 //! spends cubes on it, which is the lever that matters once a shape has too few output tiles to
 //! fill the device: `m = 1, n = 64` is 64 cubes however deep `K` is, and a GPU with more cores
 //! than that idles through the whole contraction no matter how well each cube is written.
@@ -35,9 +35,10 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Cut, Fragments, KernelForm, Launcher, Level, Monoid,
-    Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, TileSpec,
+    Accumulate, AccumulateExpand, Axis, Launcher, Levels, Monoid, Partitioning, Projection,
+    RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    launch::{AccumulateArg, AccumulateArgLaunch, Grid},
+    layout::PhysicalAxisMap,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -93,22 +94,17 @@ fn atomic_matmul<E: Numeric>(
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc = c_cube.block_accumulator::<E, E, E>(
-            &a_cube,
-            &b_cube,
-            comptime!(Fragments::below(&c_cube, &a_cube)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc =
+            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
         acc.mm(&a_cube, &b_cube, Semiring::SUM_PROD);
         c_cube.copy_cast_from(&acc);
     }
 }
 
-/// [`atomic_matmul`] with the cube's slice cut again across the plane's lanes: each lane
+/// [`atomic_matmul`] with the cube's slice cut again across the plane's units: each unit
 /// contracts its own slice into the block, the plane combines in registers at the drain.
 #[cube(launch)]
-fn atomic_matmul_lanes<E: Numeric>(
+fn atomic_matmul_units<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
@@ -122,17 +118,12 @@ fn atomic_matmul_lanes<E: Numeric>(
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let mut acc = c_cube.block_accumulator::<E, E, E>(
-            &a_cube,
-            &b_cube,
-            comptime!(Fragments::below(&c_cube, &a_cube)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc =
+            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
-        for lane in cube {
-            let mut acc_lane = acc.at(&lane);
-            acc_lane.mma(&a_cube.at(&lane), &b_cube.at(&lane), Semiring::SUM_PROD);
+        for unit in cube {
+            let mut acc_unit = acc.at(&unit);
+            acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit), Semiring::SUM_PROD);
         }
         for r0 in c_cube.walk().unrolled() {
             let mut c_cube_w = c_cube.at(&r0);
@@ -164,15 +155,15 @@ pub enum Mapping {
     Workspace { splits: usize },
     /// `K` cut at cube scope, the drain folding atomically.
     Atomic { splits: usize },
-    /// [`Atomic`](Mapping::Atomic) with the lanes given work of their own: each cube's slice of
-    /// `K` is cut again across the plane, so the lanes contract disjoint slices and combine in
+    /// [`Atomic`](Mapping::Atomic) with the units given work of their own: each cube's slice of
+    /// `K` is cut again across the plane, so the units contract disjoint slices and combine in
     /// registers before one fold per cube reaches memory.
     ///
-    /// The other mappings put nothing on the lanes, and a cube launches a full plane whatever the
-    /// nest says, so their 32 lanes all run the same code over the same numbers and 31 of them
+    /// The other mappings put nothing on the units, and a cube launches a full plane whatever the
+    /// nest says, so their 32 units all run the same code over the same numbers and 31 of them
     /// are waste. That is not what a split should look like, and this is the comparison that says
     /// what it costs.
-    AtomicLanes { splits: usize },
+    AtomicUnits { splits: usize },
 }
 
 impl Mapping {
@@ -181,7 +172,7 @@ impl Mapping {
             Mapping::DataParallel => 1,
             Mapping::Workspace { splits }
             | Mapping::Atomic { splits }
-            | Mapping::AtomicLanes { splits } => splits,
+            | Mapping::AtomicUnits { splits } => splits,
         }
     }
 
@@ -190,7 +181,7 @@ impl Mapping {
             Mapping::DataParallel => "data_parallel".to_string(),
             Mapping::Workspace { splits } => format!("workspace_s{splits}"),
             Mapping::Atomic { splits } => format!("atomic_s{splits}"),
-            Mapping::AtomicLanes { splits } => format!("atomic_lanes_s{splits}"),
+            Mapping::AtomicUnits { splits } => format!("atomic_units_s{splits}"),
         }
     }
 
@@ -201,8 +192,8 @@ impl Mapping {
                 format!("K split {splits} ways, partials buffer + fold pass")
             }
             Mapping::Atomic { splits } => format!("K split {splits} ways, atomic drain"),
-            Mapping::AtomicLanes { splits } => {
-                format!("K split {splits} ways over cubes then again over lanes, atomic drain")
+            Mapping::AtomicUnits { splits } => {
+                format!("K split {splits} ways over cubes then again over units, atomic drain")
             }
         }
     }
@@ -213,56 +204,63 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::DataParallel | Mapping::Atomic { .. } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
-                ),
-                KernelForm::Static,
-            ),
-            Mapping::Workspace { .. } => Launcher::implied(
-                client,
-                Partitioning::new(
+                    Levels::leaf(&[(N, COLS), (K, k / splits)])
+                        .cubes(&[N, K])
+                        .build(),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
+            Mapping::Workspace { .. } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
-                    vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
-                ),
-                KernelForm::Static,
-            ),
-            // The cube's slice of K cut again across the plane: each lane contracts its own
-            // sixteenth (or whatever the lane count makes it), the plane combines in registers,
+                    Levels::leaf(&[(N, COLS)])
+                        .cubes(&[N])
+                        .batches(&[KB])
+                        .build(),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
+            // The cube's slice of K cut again across the plane: each unit contracts its own
+            // sixteenth (or whatever the unit count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::AtomicUnits { .. } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![
-                        Level::cubes(&[(N, COLS), (K, k / splits)]),
-                        Level::lanes(&[Cut::new(K, k / splits / plane_size).across(plane_size)]),
-                    ],
-                ),
-                KernelForm::Static,
-            ),
+                    Levels::leaf(&[(N, COLS), (K, k / splits / plane_size)])
+                        .units(&[(K, plane_size)])
+                        .cubes(&[N, K])
+                        .build(),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
         }
     }
 
     /// The fold pass's nest, for the mapping that has one.
     fn fold_space(self, client: &Client, problem: Problem) -> Launcher {
         let Problem { m, n, .. } = problem;
-        Launcher::implied(
-            client,
-            Partitioning::new(
+        {
+            let partitioning = Partitioning::new(
                 Space::new(&[(M, m), (N, n), (KB, self.splits())]),
-                vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],
-            ),
-            KernelForm::Static,
-        )
+                Levels::leaf(&[(M, 1), (N, FOLD_COLS)])
+                    .cubes(&[M, N])
+                    .build(),
+            );
+            let concrete = partitioning.space().clone();
+            Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+        }
     }
 
     /// The lhs spec: `[M, K]` in memory either way, addressed by one logical axis or two.
     fn lhs_spec(self, inside: usize) -> TileSpec {
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } | Mapping::AtomicLanes { .. } => {
+            Mapping::DataParallel | Mapping::Atomic { .. } | Mapping::AtomicUnits { .. } => {
                 TileSpec::direct(&[M, K])
             }
             Mapping::Workspace { .. } => TileSpec::new(Projection::new(
@@ -277,7 +275,7 @@ impl Mapping {
 
     fn rhs_spec(self, inside: usize) -> TileSpec {
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } | Mapping::AtomicLanes { .. } => {
+            Mapping::DataParallel | Mapping::Atomic { .. } | Mapping::AtomicUnits { .. } => {
                 TileSpec::direct(&[K, N])
             }
             Mapping::Workspace { .. } => TileSpec::new(Projection::new(
@@ -332,11 +330,11 @@ const RHS_SEED: u64 = 1;
 
 impl Bound {
     fn new(client: &Client, mapping: Mapping, problem: Problem) -> Self {
-        let lanes = client.properties().hardware.plane_size_max as usize;
+        let plane_units = client.properties().hardware.plane_size_max as usize;
         let Problem { m, n, k } = problem;
         let splits = mapping.splits();
         let inside = k / splits;
-        let launcher = mapping.launcher(client, problem, lanes);
+        let launcher = mapping.launcher(client, problem, plane_units);
         let fold_space = mapping.fold_space(client, problem);
 
         let a = TileInput::builder(client, Space::new(&[(M, m), (K, k)]))
@@ -407,8 +405,8 @@ impl Bound {
                     dtype,
                 );
             }
-            Mapping::AtomicLanes { .. } => {
-                atomic_matmul_lanes::launch(
+            Mapping::AtomicUnits { .. } => {
+                atomic_matmul_units::launch(
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
@@ -496,10 +494,10 @@ impl Benchmark for Bound {
 /// shape first. The trap this one is really guarding is the atomic drain onto a buffer that was
 /// not zeroed, which reads as a plausible number rather than as garbage.
 fn verify(client: &Client, mapping: Mapping) -> Result<(), String> {
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let plane_units = client.properties().hardware.plane_size_max as usize;
     // Big enough that every mapping's cuts divide it: each cube's slice of `K` has to survive
     // being cut again across the plane.
-    let (m, n, k) = (2usize, FOLD_COLS, mapping.splits() * lanes * 2);
+    let (m, n, k) = (2usize, FOLD_COLS, mapping.splits() * plane_units * 2);
     let problem = Problem { m, n, k };
     let bound = Bound::new(client, mapping, problem);
     bound.launch();
@@ -541,12 +539,12 @@ pub fn bench(
             problem.k
         ));
     }
-    let lanes = client.properties().hardware.plane_size_max as usize;
-    if let Mapping::AtomicLanes { .. } = mapping
-        && !(problem.k / splits).is_multiple_of(lanes)
+    let plane_units = client.properties().hardware.plane_size_max as usize;
+    if let Mapping::AtomicUnits { .. } = mapping
+        && !(problem.k / splits).is_multiple_of(plane_units)
     {
         return Err(format!(
-            "each cube's K slice ({}) must divide across the plane's {lanes} lanes",
+            "each cube's K slice ({}) must divide across the plane's {plane_units} units",
             problem.k / splits
         ));
     }
@@ -558,7 +556,7 @@ pub fn bench(
     }
     if matches!(
         mapping,
-        Mapping::Atomic { .. } | Mapping::AtomicLanes { .. }
+        Mapping::Atomic { .. } | Mapping::AtomicUnits { .. }
     ) && !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -600,9 +598,9 @@ const SHAPES: &[(&str, &str, usize, usize, usize)] = &[
 
 const MAPPINGS: &[Mapping] = &[
     Mapping::DataParallel,
-    Mapping::AtomicLanes { splits: 1 },
-    Mapping::AtomicLanes { splits: 4 },
-    Mapping::AtomicLanes { splits: 16 },
+    Mapping::AtomicUnits { splits: 1 },
+    Mapping::AtomicUnits { splits: 4 },
+    Mapping::AtomicUnits { splits: 16 },
     Mapping::Workspace { splits: 1 },
     Mapping::Workspace { splits: 4 },
     Mapping::Workspace { splits: 16 },

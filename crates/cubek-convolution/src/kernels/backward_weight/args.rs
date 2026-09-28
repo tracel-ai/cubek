@@ -26,6 +26,8 @@ use cubek_std::{
     launch::tma::{remap_storage_for_tma, tma_meta_tiled},
 };
 
+use crate::kernels::forward::args::calculate_upper_corner;
+
 use crate::components::{
     ConvolutionParams, ConvolutionProblem,
     global::{
@@ -60,8 +62,8 @@ impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeA
         _blueprint: &A::Blueprint,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
-        let load_width = client.properties().hardware.load_width;
-        let channel_align = load_width as usize / dtypes.lhs_global.size_bits();
+        let io_width = client.properties().io_width();
+        let channel_align = io_width as usize / dtypes.lhs_global.size_bits();
         let padded_channels = problem.channels.next_multiple_of(channel_align);
         let shape_n = problem.kernel_size.iter().product::<u32>() as usize * padded_channels;
 
@@ -265,11 +267,7 @@ impl<
         let rhs = TensorMapArg::new(
             Im2colArgs {
                 pixel_box_lower_corner: calculate_lower_corner(&problem.padding),
-                pixel_box_upper_corner: calculate_upper_corner(
-                    &problem.padding,
-                    &problem.kernel_size,
-                    &problem.dilation,
-                ),
+                pixel_box_upper_corner: calculate_upper_corner(problem),
                 channels_per_pixel,
                 pixels_per_column: stage_k,
             },
@@ -315,15 +313,4 @@ impl<
 
 fn calculate_lower_corner(padding: &[i32]) -> Vec<i32> {
     padding.iter().map(|padding| -*padding).collect()
-}
-
-fn calculate_upper_corner(padding: &[i32], kernel_size: &[u32], dilation: &[u32]) -> Vec<i32> {
-    padding
-        .iter()
-        .zip(kernel_size)
-        .zip(dilation)
-        .map(|((padding, kernel_size), dilation)| {
-            *padding - (*kernel_size - 1) as i32 * *dilation as i32
-        })
-        .collect()
 }

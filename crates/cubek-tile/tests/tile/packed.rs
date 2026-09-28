@@ -1,9 +1,8 @@
 //! `TileSpec::packed`: an operand whose values are fields of a stored word, said on its own.
 //!
 //! A packed tensor is *values*, stored small. Saying so takes one fact (how wide a field is and
-//! how it reads back), and that fact belongs to the values, not to a quantization scheme: there
-//! are no scales here, no block grid, no scale binding, nothing for a scheme to carry. The tile
-//! serves what the words hold ([`TileArg::tile_as`]) and the read unpacks.
+//! how it reads back) that belongs to the values, not to a quantization scheme: there are no
+//! scales here. The tile serves what the words hold ([`TileArg::tile_as`]) and the read unpacks.
 //!
 //! What a *quantized* operand adds on top is its scales, which are their own tensor and their own
 //! operand; folding them in is a verb the kernel writes ([`Tile::mm_scaled`], see
@@ -18,10 +17,16 @@ use cubecl::{
 };
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+
+use crate::tile::uncut;
+use cubek_tile::Instruction;
+use cubek_tile::kind::Field;
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 use half::f16;
 
 use super::matmul::require_cmma_8x8x8_f32;
+use super::{Form, implied};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -52,10 +57,10 @@ fn packed_copy<O: Numeric, V: Size>(
 /// `c = (w ⊗ s) · x` with `w` packed: the q4 kernel in this spelling. Three tensors, three
 /// operands, one verb.
 #[cube(launch)]
-fn packed_matmul<E: Numeric>(
+fn packed_matmul<E: Numeric, SW: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, Const<1>>,
-    scale: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
@@ -63,17 +68,15 @@ fn packed_matmul<E: Numeric>(
 ) {
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .scaled(&ComptimeOption::new_Some(
-            scale.tile(comptime!(space.clone())),
-        ));
+        .mul(&scale.tile(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
+        c_r.mma_with(
             &w.at(&region),
-            &x.at(&region).plain(),
+            &x.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -95,20 +98,16 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     // Two levels, said twice: the blocks, then the factor over the whole tensor.
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .scaled(&ComptimeOption::new_Some(
-            blocks.tile(comptime!(space.clone())),
-        ))
-        .scaled(&ComptimeOption::new_Some(
-            global.tile(comptime!(space.clone())),
-        ));
+        .mul(&blocks.tile(comptime!(space.clone())))
+        .mul(&global.tile(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
+        c_r.mma_with(
             &w.at(&region),
-            &x.at(&region).plain(),
+            &x.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -119,16 +118,14 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 /// one factor over the whole tensor.
 ///
 /// The only thing standing between this and the format itself is where the block scales are
-/// *stored*: `nvfp4` puts them in `ue4m3`, which needs a device that loads it. Everything the design
-/// has to get right is here: the value decode, two levels in order, the coarser one spanning no
-/// axis, and a block of sixteen against words of eight.
+/// *stored*: `nvfp4` puts them in `ue4m3`, which needs a device that loads it. Everything else is
+/// here: the decode, two ordered levels, the coarser spanning no axis, 16-blocks on 8-value words.
 ///
 /// Nothing in the kernel names the format, the block, or the number of levels.
 ///
-/// Every operand here is bound one element wide, so unlike the read tests below this asks nothing
-/// of the device's vector cap and runs everywhere. That matters: the decode it covers is the one
-/// that lowers differently per backend, so a device that skipped this would be the device most
-/// worth running it on.
+/// Every operand is bound one element wide, so unlike the read tests below this asks nothing of
+/// the device's vector cap and runs everywhere. That matters: the decode it covers lowers
+/// differently per backend, so a device that skipped this is the one most worth running it on.
 #[test]
 fn nvfp4_shaped_decode() {
     let (field, rows, cols, block, blocks) = (QuantValue::E2M1, 4, 4, 16, 2);
@@ -175,13 +172,15 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     nvfp4_shaped_matmul::launch(
@@ -227,7 +226,7 @@ fn nvfp4_shaped_decode() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -265,15 +264,13 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let x = x.tile(comptime!(space.clone()));
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .scaled(&ComptimeOption::new_Some(
-            scale.tile(comptime!(space.clone())),
-        ));
+        .mul(&scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
-            &x.at(&region).plain(),
+        c_r.mma_with(
+            &x.at(&region),
             &w.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
@@ -283,8 +280,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
 /// at all. The binding says `i8`, the tile serves `i8`, and the contraction casts each value into
-/// the accumulator's element as it always does: a value is whatever its tensor holds, for the
-/// same reason a scale is.
+/// the accumulator's element as always: a value is whatever its tensor holds, as a scale is.
 #[cube(launch)]
 fn native_matmul<E: Numeric>(
     w: &TileArg<'_, i8, Const<1>>,
@@ -297,16 +293,14 @@ fn native_matmul<E: Numeric>(
 ) {
     let w = w.tile(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let w = w.scaled(&ComptimeOption::new_Some(
-        scale.tile(comptime!(space.clone())),
-    ));
+    let w = w.mul(&scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
+        c_r.mma_with(
             &w.at(&region),
-            &x.at(&region).plain(),
+            &x.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -327,9 +321,7 @@ fn packed_gemv<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.scaled(&ComptimeOption::new_Some(
-        scale.tile(comptime!(space.clone())),
-    ));
+    let w = values.mul(&scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let x = x.at(&cube);
@@ -337,17 +329,11 @@ fn packed_gemv<E: Numeric, V: Size>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let mut acc = c.block_accumulator::<E, E, E>(
-            &x,
-            &values,
-            comptime!(Fragments::below(&c, &x)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma_scaled(&x.at(&step).plain(), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
         for r0 in c.walk().unrolled() {
             let mut c_w = c.at(&r0);
@@ -370,17 +356,15 @@ fn packed_matmul_byte_scales<E: Numeric>(
 ) {
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .scaled(&ComptimeOption::new_Some(
-            scale.tile_as::<E>(comptime!(space.clone())),
-        ));
+        .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
+        c_r.mma_with(
             &w.at(&region),
-            &x.at(&region).plain(),
+            &x.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -399,26 +383,18 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.scaled(&ComptimeOption::new_Some(
-        scale.tile_as::<E>(comptime!(space.clone())),
-    ));
+    let w = values.mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let x = x.at(&cube);
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(
-            &x,
-            &values,
-            comptime!(Fragments::below(&c, &x)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma_scaled(&x.at(&step).plain(), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
         for r0 in c.walk().unrolled() {
             let mut c_w = c.at(&r0);
@@ -428,7 +404,7 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
 }
 
 /// The prefill shape on the tensor cores: a packed weight on the rhs with byte scales, landed
-/// unpacked and scaled by the plane's lanes, contracted through the plain cmma instruction.
+/// unpacked and scaled by the plane's units, contracted through the plain cmma instruction.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn packed_cmma_rhs<E: Numeric>(
@@ -438,33 +414,24 @@ fn packed_cmma_rhs<E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] planes: usize,
-    #[comptime] lanes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
+    // Both factors land: a fragment loads a window as it lies, and a gmem layout is unchecked.
+    let x = x
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_landing(planes, lanes)
-        .scaled(&ComptimeOption::new_Some(
-            scale.tile_as::<E>(comptime!(space.clone())),
-        ));
+        .landed_for(Instruction::Cmma)
+        .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(
-        &x,
-        comptime!(Fragments::new(
-            &c.space,
-            &x.space,
-            std::slice::from_ref(&level)
-        )),
-        Monoid::Sum,
-    );
+    let mut acc = c.cmma_accumulator::<E, E>(&x, Monoid::Sum);
     acc.zero();
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
     for region in space.over(&level).unrolled() {
         let mut acc_r = acc.at(&region);
-        acc_r.mma_scaled(&x.at(&region).plain(), &w.at(&region), Semiring::SUM_PROD);
+        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
@@ -531,7 +498,7 @@ fn eight_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -604,7 +571,7 @@ fn four_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -624,9 +591,8 @@ fn four_bit_fields_unpack_on_read() {
 /// Eight `e2m1` codes per word, reinterpreted rather than sign-extended.
 ///
 /// The field of `nvfp4` and `mxfp4`. Its bits are an index into the format's sixteen values, not a
-/// small integer, so reading it as one would answer plausible nonsense — `0b0111` is `6.0`, and as
-/// a signed nibble it is `7`. Nothing here states a scheme: the packing names the field, and the
-/// values a word holds are whatever that field decodes to.
+/// small integer, so reading it as one would answer plausible nonsense (`0b0111` is `6.0`, and as
+/// a signed nibble `7`). Nothing states a scheme: the packing names the field, which decodes.
 #[test]
 fn fp4_codes_unpack_on_read() {
     let (field, rows, cols) = (QuantValue::E2M1, 4, 32);
@@ -679,7 +645,7 @@ fn fp4_codes_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -752,7 +718,7 @@ fn two_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -825,19 +791,22 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
+        1,
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -872,7 +841,7 @@ fn a_packed_operand_contracts_against_its_scales() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -944,19 +913,22 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
+        1,
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -990,7 +962,133 @@ fn eight_bit_fields_contract_against_their_scales() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| w[m * depth + k] as f32 * s[m * blocks + k / block] * x[k * cols + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// **The folded walk takes its scales several at a time.** A packed line folds a whole word per
+/// step, so nothing walks the contraction one value at a time, which used to force the scales to
+/// be read singly. Here they are read two to a line, each field covering a block the walk picks.
+#[test]
+fn a_folded_walk_takes_its_scales_several_at_a_time() {
+    let (field, rows, cols, block, blocks) = (QuantValue::Q4S, 4, 4, 8, 4);
+    let depth = block * blocks;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    let span = 1i32 << bits;
+    let w: Vec<i32> = (0..rows * depth)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = w
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+    let x: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Halves, so an f16 scale would be exact too.
+    let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let dtype = f32::elem_type_native();
+    let w_tensor = TensorHandle::new_contiguous(
+        vec![rows, depth],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let (s_tensor, _) = TestInput::builder(client.clone(), shape![rows, blocks])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // A region sits inside one block, and the packed line is one word of it.
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 2), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    packed_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        2,
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                ],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            // One scale per `(row, block)`, two blocks a read: the width lands on `KB`.
+            TileSpec::new(Projection::new(
+                &[M, KB],
+                &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
+            )),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1068,7 +1166,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1078,15 +1176,11 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks_n),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Levels::leaf(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul_rhs::launch(
@@ -1136,7 +1230,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1214,7 +1308,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1224,15 +1318,11 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks_n),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Levels::leaf(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul_rhs::launch(
@@ -1282,7 +1372,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1303,11 +1393,9 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     }
 }
 
-/// A block covering both lines: several lines share a scale, which is the direction that is
-/// always sound. The other one (a block narrower than the line reading it) is refused by the
-/// contraction (`mm_scaled: ... scale blocks must cover whole lines`), and that refusal is a
-/// comptime panic inside the kernel, so it lands on a worker thread rather than in a
-/// `should_panic` test.
+/// A block covering both lines: several lines share a scale, the direction that is always sound.
+/// The other one (a block narrower than the line reading it) is refused by the contraction
+/// (`mm_scaled: scale blocks must cover whole lines`), a comptime kernel panic on a worker thread.
 #[test]
 fn several_lines_may_share_one_scale() {
     let (field, rows, block_k, blocks_k) = (QuantValue::Q8S, 4, 8, 4);
@@ -1365,7 +1453,7 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1375,15 +1463,11 @@ fn several_lines_may_share_one_scale() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks_n),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Levels::leaf(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul_rhs::launch(
@@ -1433,7 +1517,7 @@ fn several_lines_may_share_one_scale() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1494,13 +1578,15 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     native_matmul::launch(
@@ -1539,7 +1625,7 @@ fn an_i8_operand_contracts_against_its_scales() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1559,9 +1645,8 @@ fn an_i8_operand_contracts_against_its_scales() {
 }
 
 /// **The q4 decode gemv, end to end.** A packed weight tensor read in place, its scales as their
-/// own operand, one row of activations, `N` across cubes, and the partials living in registers for
-/// the whole `K` walk. Every piece of it is a thing the plan had to build: packed values with no
-/// scheme, a scales operand, the rhs side, and a promoted accumulator.
+/// own operand, one row of activations, `N` across cubes, and the partials in registers for the
+/// whole `K` walk: schemeless packed values, a scales operand, the rhs side, a promoted block.
 #[test]
 fn a_packed_decode_gemv_runs_in_this_spelling() {
     let (field, block_k, blocks_k) = (QuantValue::Q4S, 8, 4);
@@ -1619,7 +1704,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1629,9 +1714,12 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+            Levels::leaf(&[(NB, 1), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[NB])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv::launch(
@@ -1754,7 +1842,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1764,9 +1852,12 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+            Levels::leaf(&[(NB, 1), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[NB])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv::launch(
@@ -1849,13 +1940,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(
-            &x,
-            &w,
-            comptime!(Fragments::below(&c, &x)),
-            REGISTER_BLOCK,
-            Monoid::Sum,
-        );
+        let mut acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);
@@ -1872,8 +1957,9 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 ///
 /// [`a_packed_decode_gemv_runs_in_this_spelling`] runs this block with the scales folded in, and
 /// the two reach the same `block::contract` through the same `RegisterData`, so if a packed rhs
-/// were what a promoted accumulator could not drain, the gemv could not be spelled either. What
-/// makes both work is the accumulator being declared at the *served* width (`V = factor`); a
+/// were what a promoted accumulator could not drain, the gemv could not be spelled either.
+///
+/// What makes both work is the accumulator being declared at the *served* width (`V = factor`); a
 /// narrower one is refused by the width assert, and that is the only thing packing owes here.
 #[test]
 fn a_packed_rhs_drains_from_a_promoted_accumulator() {
@@ -1924,13 +2010,16 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
-            vec![Level::cubes(&[(N, bn)]), Level::walk(&[(KB, 1)])],
+            Levels::leaf(&[(N, bn), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[N])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv_unscaled::launch(
@@ -2034,7 +2123,7 @@ fn e4m3_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -2052,20 +2141,13 @@ fn e4m3_fields_unpack_on_read() {
 }
 
 /// **Scales stored as `ue8m0` bytes are read in their own width.** Four codes to a word, the
-/// scales operand bound one word wide and served one scale at a time
-/// ([`TileSpec::subword`]), on the lhs of the memory-backed leaf, which steps the block index at
-/// runtime. A `ue8m0` code is a bare exponent, so the scales are powers of two and the answer is
-/// exact.
+/// scales operand bound one word wide and served one scale at a time ([`TileSpec::packed`]), on
+/// the lhs of the memory-backed leaf, which steps the block index at runtime.
+///
+/// A `ue8m0` code is a bare exponent, so the scales are powers of two and the answer is exact.
 #[test]
 fn ue8m0_scales_are_read_as_bytes() {
     check_ue8m0_scales(8, 4);
-}
-
-/// The same with two blocks a row: a row of scales is half a word, so a word straddles two
-/// rows and the slot is the line's index through the whole layout, not its column.
-#[test]
-fn byte_scale_rows_need_no_word_alignment() {
-    check_ue8m0_scales(16, 2);
 }
 
 fn check_ue8m0_scales(block: usize, blocks: usize) {
@@ -2124,13 +2206,16 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            // Four scales a word, so a region is the four blocks one read of them covers.
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 4), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let w_projection = Projection::new(
@@ -2160,14 +2245,14 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            TileSpec::new(w_projection.scales_per(KB)).subword(Fp8Format::UE8M0, 1),
+            TileSpec::new(w_projection.scales_per(KB)).packed(Fp8Format::UE8M0),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -2269,13 +2354,21 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            // A region is the blocks one word of scales covers.
+            Levels::leaf(&[
+                (M, rows),
+                (N, cols),
+                (KB, Field::of_float(kind).per_word()),
+                (KI, factor),
+            ])
+            .walk_every(&[M, N, KB, KI])
+            .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let w_projection = Projection::new(
@@ -2305,14 +2398,14 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            TileSpec::new(w_projection.scales_per(KB)).subword(kind, 1),
+            TileSpec::new(w_projection.scales_per(KB)).packed(kind),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -2350,7 +2443,7 @@ fn e4m3_scales_reach_the_promoted_block() {
         .enforce();
         return;
     }
-    // Four cubes of one packed line each, so a row of the scales is one word of four codes.
+    // Four packed lines of columns, so a row of the scales is one word of four codes.
     let (cols, bn) = (factor * 4, factor);
     let blocks_n = cols / bn;
 
@@ -2393,7 +2486,7 @@ fn e4m3_scales_reach_the_promoted_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -2403,9 +2496,13 @@ fn e4m3_scales_reach_the_promoted_block() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+            // One read of the scales is four column blocks, so one cube owns all four.
+            Levels::leaf(&[(NB, 4), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[NB])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv_byte_scales::launch(
@@ -2440,7 +2537,7 @@ fn e4m3_scales_reach_the_promoted_block() {
                 &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             ))
-            .subword(QuantValue::E4M3, 1),
+            .packed(QuantValue::E4M3),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -2470,9 +2567,8 @@ fn e4m3_scales_reach_the_promoted_block() {
 }
 
 /// **A packed rhs with byte scales reaches the tensor cores.** Eight activation rows against a
-/// `q8` weight packed along its columns, `e4m3` scales per `(block of K, block of N)` read one
-/// at a time, the weight landed unpacked and scaled and loaded as the `B` fragment of the M2's
-/// `8x8x8` instruction. The prefill shape, one fragment a region.
+/// `q8` weight packed along its columns, `e4m3` scales per `(K block, N block)` read one at a time,
+/// the weight unpacked and scaled into the `8x8x8` `B` fragment. Prefill: one fragment a region.
 #[test]
 fn a_packed_rhs_reaches_the_tensor_cores() {
     let (field, rows, block_k, blocks_k) = (QuantValue::Q8S, 8, 8, 4);
@@ -2492,7 +2588,6 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         .enforce();
         return;
     }
-    let lanes = client.properties().hardware.plane_size_min as usize;
     // Four column blocks of one packed line each; a fragment covers two of them.
     let (cols, bn) = (factor * 4, factor);
     let blocks_n = cols / bn;
@@ -2514,7 +2609,15 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
     let s: Vec<f32> = (0..blocks_k * blocks_n)
         .map(|i| (i as f32 + 1.0) / 2.0)
         .collect();
-    let codes: Vec<u8> = s.iter().map(|&v| e4m3::from_f32(v).to_bits()).collect();
+    // Halves, two to a word: one read of the scales is the region's two column blocks, and the
+    // landing builds both blocks' lines under it.
+    let scale_words: Vec<u32> = s
+        .chunks(2)
+        .map(|pair| {
+            (f16::from_f32(pair[0]).to_bits() as u32)
+                | ((f16::from_f32(pair[1]).to_bits() as u32) << 16)
+        })
+        .collect();
 
     let dtype = f32::elem_type_native();
     let (x_tensor, _) = TestInput::builder(client.clone(), shape![rows, depth])
@@ -2528,7 +2631,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
     );
     let s_tensor = TensorHandle::new_contiguous(
         vec![blocks_k, blocks_n],
-        client.create(Bytes::from_elems(words_of_bytes(&codes))),
+        client.create(Bytes::from_elems(scale_words)),
         u32::elem_type_native(),
     );
     let c = TestInput::builder(client.clone(), shape![rows, cols])
@@ -2536,7 +2639,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -2546,15 +2649,11 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, 8 / bn),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Levels::leaf(&[(M, rows), (NB, 8 / bn), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_cmma_rhs::launch(
@@ -2588,7 +2687,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             ))
-            .subword(QuantValue::E4M3, 1),
+            .packed(FloatKind::F16),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -2601,9 +2700,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        1,
-        lanes,
+        launcher.partitioning().level(0),
         dtype,
     );
 

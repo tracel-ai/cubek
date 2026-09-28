@@ -34,7 +34,7 @@ pub struct MmaTile<N: Numeric> {
     #[cube(comptime)]
     pub tile_size: TileSize,
     #[cube(comptime)]
-    pub mma_io_config: MmaIOConfig,
+    pub mma_io_config: MmaIo,
 }
 
 #[derive(CubeType)]
@@ -48,7 +48,7 @@ pub enum MmaFragment<N: Numeric> {
 /// Determined once per `(device, dtypes)` and carried by the tile because the
 /// fragment readers/writers branch on it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct MmaIOConfig {
+pub struct MmaIo {
     pub lhs_load_method: LoadMethod,
     pub rhs_load_method: LoadMethod,
     pub acc_load_method: LoadMethod,
@@ -67,7 +67,7 @@ pub enum StoreMethod {
     StoreMatrix,
 }
 
-impl MmaIOConfig {
+impl MmaIo {
     pub fn new(
         device_props: &DeviceProperties,
         lhs_stage: ElemType,
@@ -139,7 +139,7 @@ pub fn mma_register_vector_sizes<L: Numeric, R: Numeric, A: Numeric>(def: MmaDef
 pub fn mma_allocate_lhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) -> Tile<L, Sc> {
     let def = make_mma_definition::<L, R, A>(tile_size);
     mma_register_vector_sizes(def);
@@ -157,7 +157,7 @@ pub fn mma_allocate_lhs<L: Numeric, R: Numeric, A: Numeric, Sc: TileScope>(
 pub fn mma_allocate_rhs<R: Numeric, L: Numeric, A: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) -> Tile<R, Sc> {
     let def = make_mma_definition::<L, R, A>(tile_size);
     mma_register_vector_sizes(def);
@@ -175,7 +175,7 @@ pub fn mma_allocate_rhs<R: Numeric, L: Numeric, A: Numeric, Sc: TileScope>(
 pub fn mma_allocate_acc<A: Numeric, L: Numeric, R: Numeric, Sc: TileScope>(
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) -> Tile<A, Sc> {
     let def = make_mma_definition::<L, R, A>(tile_size);
     mma_register_vector_sizes(def);
@@ -329,7 +329,7 @@ pub fn mma_load_lhs_from_shared<E: Numeric, ES: Size, L: Numeric, R: Numeric, A:
     fragment: &mut Array<Vector<L, NL>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) {
     let shared = shared.view::<ES>();
     let def = make_mma_definition::<L, R, A>(tile_size);
@@ -349,7 +349,7 @@ pub fn mma_load_rhs_from_shared<E: Numeric, ES: Size, R: Numeric, L: Numeric, A:
     fragment: &mut Array<Vector<R, NR>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) {
     let shared = shared.view::<ES>();
     let def = make_mma_definition::<L, R, A>(tile_size);
@@ -369,7 +369,7 @@ pub fn mma_load_acc_from_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R:
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) {
     let shared = shared.view::<ES>();
     let def = make_mma_definition::<L, R, A>(tile_size);
@@ -388,7 +388,7 @@ pub fn mma_load_acc_zeros<A: Numeric, L: Numeric, R: Numeric>(
     fragment: &mut Array<Vector<A, NA>>,
     #[comptime] matrix_layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) {
     let _ = (matrix_layout, mma_io_config);
     let def = make_mma_definition::<L, R, A>(tile_size);
@@ -405,7 +405,7 @@ pub fn mma_write_to_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R: Nume
     shared: &mut SharedTile<E>,
     fragment: &Array<Vector<A, NA>>,
     #[comptime] tile_size: TileSize,
-    #[comptime] mma_io_config: MmaIOConfig,
+    #[comptime] mma_io_config: MmaIo,
 ) {
     let mut shared = shared.view::<ES>();
     let def = make_mma_definition::<L, R, A>(tile_size);

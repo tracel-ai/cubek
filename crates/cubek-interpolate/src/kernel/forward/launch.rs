@@ -11,7 +11,10 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{client::Client, ir::ElemType, prelude::*};
-use cubek_tile::{Geometry, KernelForm, Launcher};
+use cubek_tile::{
+    Geometry, Launcher,
+    launch::{BoundaryPolicy, Grid},
+};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
@@ -122,12 +125,12 @@ fn dispatch<F: SeparableFilterFamily>(
     );
     let row = Rational::of(get_transform(input_h, output_h, options));
     let col = Rational::of(get_transform(input_w, output_w, options));
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let units = client.properties().hardware.plane_size_max as usize;
 
     // Cheap to check before any of the space/vectorization work below: a cube this wide is
     // refused outright rather than built and then rejected by the device at dispatch.
     let max_units = client.properties().hardware.max_units_per_cube as usize;
-    let units_per_cube = geometry.planes_per_cube.saturating_mul(lanes);
+    let units_per_cube = geometry.planes_per_cube.saturating_mul(units);
     if units_per_cube > max_units {
         return Err(InterpolateError::UnitsPerCubeExceeded {
             requested: units_per_cube,
@@ -140,14 +143,22 @@ fn dispatch<F: SeparableFilterFamily>(
         height: output_h,
         width: output_w,
         channels: output.shape[3],
-        plane_size: lanes,
+        plane_size: units,
         taps: F::mode_properties().taps,
         geometry,
     };
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch =
-        Launcher::partitioned(client, plan.partitioning(), plan.grid(), KernelForm::Static);
+    let (cube_count, cube_dim) = plan.grid();
+    let launch = Launcher::new(
+        client,
+        plan.partitioning(),
+        &plan.space(),
+        Grid::Stated {
+            cube_count,
+            cube_dim,
+        },
+    );
 
     let vector_size = launch.vector_size(
         CHANNEL,
@@ -162,7 +173,7 @@ fn dispatch<F: SeparableFilterFamily>(
     let in_bounds = tap_range_in_bounds(row, output_h, input_h, properties.taps, F::radius())
         && tap_range_in_bounds(col, output_w, input_w, properties.taps, F::radius());
 
-    // The channel block is the lane's channel run, so it is the width the contraction wants its
+    // The channel block is the unit's channel run, so it is the width the contraction wants its
     // lines in. Where the tensor's own channel count cannot serve them (`C = 3` has no 4-aligned
     // row start, so `vector_size` above is 1), a shared-memory stage still can: it pads the axis
     // out to whole lines, and the contraction runs `4` wide against a scalar output. Only a width
@@ -174,7 +185,7 @@ fn dispatch<F: SeparableFilterFamily>(
             .any(|v| v == geometry.channel_block))
     .then_some(geometry.channel_block);
 
-    // A padded stage reads the lanes past the real channel count, so those reads have to be the
+    // A padded stage reads the units past the real channel count, so those reads have to be the
     // masked kind whatever the taps do: unchecked they would take the next pixel's channels, and
     // run off the buffer entirely on the last one. Their values never reach the output (the sink's
     // own overhang mask drops those columns), but the reads still have to be in bounds.
@@ -204,13 +215,15 @@ fn dispatch<F: SeparableFilterFamily>(
     let input_arg = launch
         .arg(input)
         .gathered(space::input_projection(row, col, F::radius()))
-        .checked(checked)
-        .with_boundary(checked.then_some(properties.boundary))
+        .boundary(match checked {
+            true => BoundaryPolicy::Every(properties.boundary),
+            false => BoundaryPolicy::Unchecked,
+        })
         .vectorize(vector_size)
         .build();
     let output_arg = launch
         .arg(output)
-        .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
+        .axes(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
         .build();
     interpolate_tile_kernel::launch::<F>(

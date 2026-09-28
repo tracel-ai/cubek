@@ -1,7 +1,6 @@
-//! CPU references for the tiled-arange tests. Each operand's physical buffer holds
-//! an arange in tiled `[grid…, tile…]` order, so the value at a logical coordinate
-//! equals its physical flat index. These recompute the expected matmul (or physical
-//! index) in that same order, to compare against the kernel output.
+//! CPU references for the tiled-arange tests. Each operand's physical buffer holds an arange in
+//! tiled `[grid…, tile…]` order, so the value at a logical coordinate equals its physical flat
+//! index. These recompute the expected matmul (or physical index) in that same order.
 #![allow(dead_code)]
 
 pub fn tiled_index(row: usize, col: usize, cols: usize, edge: usize) -> usize {

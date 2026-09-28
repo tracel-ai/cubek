@@ -2,13 +2,13 @@
 //!
 //! Sequences of different lengths packed end to end on one axis. The kernel walks that axis with
 //! [`Walk::window`], whose base and length are runtime values, so a sequence steps its own tokens
-//! and nothing else: no operand carries a side channel, no window origin is displaced behind a
-//! read, and `at` is the same call it is everywhere else.
+//! and nothing else: no side channel on an operand, no displaced window origin, `at` unchanged.
 //!
 //! The reduce is the shape that isolates it: the output omits the packed axis, so nothing but the
 //! walk's bounds decides which tokens a sequence folds.
 #![allow(non_snake_case)]
 
+use super::{Form, implied};
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -45,7 +45,7 @@ fn ragged_sum_kernel<E: Numeric>(
 
         // The whole of it: the walk over the packed axis takes `end - start` steps from `start`,
         // so an empty sequence takes none and a short one never reads its neighbour's tokens.
-        let tokens = sequence.over(&token).window(start, end - start);
+        let tokens = sequence.over(&token).range(start, end - start);
         for pos in tokens {
             let mut cell = out.at(&pos);
             cell.reduce_axis_accumulate(&packed.at(&pos), comptime!(Monoid::Sum));
@@ -76,13 +76,16 @@ fn run() -> HostData {
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
-            vec![Level::walk(&[(B, 1)]), Level::walk(&[(P, 1)])],
+            Levels::leaf(&[(B, 1), (P, 1)])
+                .walk_every(&[P])
+                .walk_every(&[B])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (packed_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
@@ -115,8 +118,8 @@ fn run() -> HostData {
         ),
         ends_handle.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         f32_ty,
     );
 
@@ -189,7 +192,7 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
 
         for blk in sequence
             .over(&token)
-            .window(0, (end - start).div_ceil(BLOCK))
+            .range(0, (end - start).div_ceil(BLOCK))
         {
             let mut cell = out.at(&blk);
             cell.reduce_axis_accumulate(&seq_view.at(&blk), comptime!(Monoid::Sum));
@@ -202,13 +205,16 @@ fn run_blocked(ends: &[u32]) -> HostData {
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
-            vec![Level::walk(&[(B, 1)]), Level::walk(&[(P, BLOCK)])],
+            Levels::leaf(&[(B, 1), (P, BLOCK)])
+                .walk_every(&[P])
+                .walk_every(&[B])
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (packed_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
@@ -238,8 +244,8 @@ fn run_blocked(ends: &[u32]) -> HostData {
         ),
         ends_handle.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         f32_ty,
     );
 
