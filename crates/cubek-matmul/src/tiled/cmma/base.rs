@@ -38,13 +38,13 @@ const BUFFERING: usize = 2;
 /// contend for one register file and the stage stops paying for the planes that fill it.
 const MAX_UNITS_PER_CUBE: usize = 256;
 
-/// Accumulator bytes one lane holds, where the device reports a register file this family's
-/// size ([`reuse`]). Half of 256 32-bit registers a lane, the other half left to the operand
+/// Accumulator bytes one unit holds, where the device reports a register file this family's
+/// size ([`reuse`]). Half of 256 32-bit registers a unit, the other half left to the operand
 /// fragments, the addresses and the fill.
 ///
 /// A budget and not a count, because a count means a different thing at each instruction: the
-/// same 16 fragments are 512 bytes a lane at `16x16` accumulating in `f32` and 128 at `8x8`.
-const ACCUMULATOR_LANE_BYTES: usize = 512;
+/// same 16 fragments are 512 bytes a unit at `16x16` accumulating in `f32` and 128 at `8x8`.
+const ACCUMULATOR_UNIT_BYTES: usize = 512;
 
 /// The widest strip a swizzled cube order is given.
 ///
@@ -163,7 +163,7 @@ impl CmmaBlueprint {
             CubeOrder::SwizzleRow(0) | CubeOrder::SwizzleCol(0)
         ) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Cmma: a {:?} cube order deals strips of no boxes",
+                "Cmma: a {:?} cube order distributes strips of no boxes",
                 self.order
             ))));
         }
@@ -318,7 +318,7 @@ fn grow(tiles: usize, grid: (usize, usize)) -> (usize, usize) {
 /// The plan for a device that pays for per-plane reuse: `(part_m, part_n, planes_m, planes_n)`.
 ///
 /// Two counts decide it and the rest is arithmetic. **The fragments a plane holds** is
-/// [`ACCUMULATOR_LANE_BYTES`] over what one fragment costs a lane, since the accumulator is
+/// [`ACCUMULATOR_UNIT_BYTES`] over what one fragment costs a unit, since the accumulator is
 /// resident across the whole `K` walk and a plane that spills reads its own sums back from
 /// memory. **The planes a cube runs** is `budget`, the units it is given over a plane's width.
 ///
@@ -336,8 +336,8 @@ fn reuse(
     machine: Machine,
 ) -> (usize, usize, usize, usize) {
     let ((im, inn), (grid_m, grid_n)) = (instruction, grid);
-    let fragment_lane_bytes = (im * inn * acc.size()).div_ceil(plane_dim).max(1);
-    let fragments = (ACCUMULATOR_LANE_BYTES / fragment_lane_bytes).max(1);
+    let fragment_unit_bytes = (im * inn * acc.size()).div_ceil(plane_dim).max(1);
+    let fragments = (ACCUMULATOR_UNIT_BYTES / fragment_unit_bytes).max(1);
     let planes = budget.max(1);
 
     // Grow the stage by doubling the shorter axis, skipping a doubling the grid does not
@@ -537,7 +537,7 @@ impl CmmaRoutine {
         // What a plane keeps resident and how many planes tile the cube's stage — the one
         // trade this routine makes, and a trade whose answer is the device's.
         //
-        // A plane's accumulator lives in its lanes' registers, so how many fragments are
+        // A plane's accumulator lives in its units' registers, so how many fragments are
         // worth holding is a register budget: inside one, each lhs fragment is read `part_n`
         // times and each rhs fragment `part_m` times before it is dropped, and the stage
         // those counts build reads that many fewer bytes per product. Where the device
@@ -698,7 +698,7 @@ mod reuse_tests {
         boxes: 1,
     };
 
-    /// An L4: a `16x16` instruction accumulating in `f32` over 32-lane planes, eight planes a
+    /// An L4: a `16x16` instruction accumulating in `f32` over 32-unit planes, eight planes a
     /// cube, a square grid wide enough to take any stage. The sweep's winner on every shape
     /// it ran — `4x4` fragments a plane over a `4x2` plane grid, a 256x128 stage — falls out
     /// of the two budgets and nothing else.
@@ -707,11 +707,11 @@ mod reuse_tests {
         assert_eq!(reuse((16, 16), F32, 32, 8, (256, 256), ROOMY), (4, 4, 4, 2));
     }
 
-    /// The accumulator is budgeted in bytes a lane, not in fragments: the same budget holds
+    /// The accumulator is budgeted in bytes a unit, not in fragments: the same budget holds
     /// four times as many `8x8` fragments as `16x16` ones, because one costs a quarter as
     /// much. A count stated here would mean a different register load at each instruction.
     #[test]
-    fn the_budget_is_bytes_a_lane_so_a_smaller_instruction_holds_more_of_them() {
+    fn the_budget_is_bytes_a_unit_so_a_smaller_instruction_holds_more_of_them() {
         let (pm, pn, gm, gn) = reuse((16, 16), F32, 32, 8, (256, 256), ROOMY);
         let (qm, qn, hm, hn) = reuse((8, 8), F32, 32, 8, (256, 256), ROOMY);
         assert_eq!(

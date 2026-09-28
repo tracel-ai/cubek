@@ -512,7 +512,7 @@ impl Strategy {
             ),
             // Ordered loading carries a hard divisibility constraint on the
             // *device's* plane size (each loading plane must own a whole
-            // number of vectors per lane), so a selection recorded on one
+            // number of vectors per unit), so a selection recorded on one
             // device (or under an older selector) can be invalid on
             // another. The entry stays reliable by degrading to the universal
             // unit kernel on an invalid config, like the gemv/gemm routines

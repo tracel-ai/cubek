@@ -22,8 +22,8 @@ pub enum InterpolateError {
     #[error("Interpolation config must use at least one row per plane")]
     ZeroRowsPerPlane,
 
-    #[error("Interpolation config must use at least one column per lane")]
-    ZeroColsPerLane,
+    #[error("Interpolation config must use at least one column per unit")]
+    ZeroColsPerUnit,
 
     #[error("Interpolation config channel block must contain at least one channel")]
     ZeroChannelBlock,

@@ -14,9 +14,9 @@
 //! and `Tile::mma` is the whole body.
 //!
 //! Everything about the layout follows from that one axis. Channels stay innermost (NHWC) and are
-//! what the lanes are spent on, so consecutive lanes read consecutive channels of one pixel and
+//! what the units are spent on, so consecutive units read consecutive channels of one pixel and
 //! the read coalesces; and they are what every operand is *lined* along, so one instruction moves
-//! a lane's whole cell. A depthwise pass has too little arithmetic per byte to be anything but
+//! a unit's whole cell. A depthwise pass has too little arithmetic per byte to be anything but
 //! bandwidth-bound, and both of those are what let it reach the bandwidth.
 
 use cubecl::{
@@ -34,7 +34,7 @@ use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 /// 64 scalars is the register budget, which at four channels to a line is the same sixteen cells
 /// every tiling here blocks into. The edge split earns its second copy of the walk because a
 /// window this wide leaves most instances clear of the padded border, and they should not pay a
-/// guard for the few that straddle it. Lane fan-out does not: the lines run along the channel,
+/// guard for the few that straddle it. Unit fan-out does not: the lines run along the channel,
 /// not along `K`.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64).split_edge();
 
@@ -94,20 +94,20 @@ impl DepthwiseSpace {
     /// Three levels, outermost first. The first separates the output across the launch grid: an
     /// all-`sequential` level would put the whole convolution in one instance, which is a
     /// correct kernel and a useless one. The next two separate what one cube took across the
-    /// cube's own threads: rows go to planes, channels to lanes. The taps stay whole
+    /// cube's own threads: rows go to planes, channels to units. The taps stay whole
     /// throughout: they are the contraction, and every tap of one output position accumulates
     /// into the same register.
-    /// The levels, stated **from the leaf up, in counts**: one lane's channel line by the
-    /// cube's columns by one row; the plane's lanes across channels, in turns; the channel lines
-    /// a lane holds past its first, where the tile is wider than the plane; the cube's rows
+    /// The levels, stated **from the leaf up, in counts**: one unit's channel line by the
+    /// cube's columns by one row; the plane's units across channels, in turns; the channel lines
+    /// a unit holds past its first, where the tile is wider than the plane; the cube's rows
     /// across its planes; and a cube per box, the taps whole. The channel axis takes `X` so
     /// that the fastest-moving cube index is the one memory is contiguous along.
     ///
-    /// Round-robin across the lanes, so a lane holding several channel lines takes every
+    /// Round-robin across the units, so a unit holding several channel lines takes every
     /// `plane_size`-th rather than a contiguous run: a contiguous run puts a stride between
-    /// what neighbouring lanes read and breaks the coalescing the whole NHWC layout is for.
-    /// Columns stay whole: they are the register block, not a split. The walk over a lane's
-    /// further lines is stated only where there are any — the old lanes level was that walk
+    /// what neighbouring units read and breaks the coalescing the whole NHWC layout is for.
+    /// Columns stay whole: they are the register block, not a split. The walk over a unit's
+    /// further lines is stated only where there are any — the old units level was that walk
     /// as well, its length found by dividing the tile.
     pub fn levels(&self) -> Vec<Level> {
         let Self {
@@ -121,14 +121,14 @@ impl DepthwiseSpace {
         let plane_c = width * plane_size;
         assert!(
             tile_c.is_multiple_of(plane_c),
-            "DepthwiseSpace: {plane_size} lanes of {width} channels do not divide a tile of {tile_c}"
+            "DepthwiseSpace: {plane_size} units of {width} channels do not divide a tile of {tile_c}"
         );
-        let lanes = Levels::leaf(&[(C, width), (OW, cols), (OH, 1)])
+        let plane_units = Levels::leaf(&[(C, width), (OW, cols), (OH, 1)])
             .units(&[(C, plane_size)])
             .interleaved(C);
         let lines = match tile_c / plane_c {
-            1 => lanes,
-            further => lanes.walk(&[(C, further)]),
+            1 => plane_units,
+            further => plane_units.walk(&[(C, further)]),
         };
         lines
             .planes(&[(OH, rows)])
@@ -160,7 +160,8 @@ impl DepthwiseSpace {
     }
 }
 
-/// `out[b, oh, ow, c] = Σ_{rh, rw} w[rh, rw, c] · input[b, oh*sh + rh*dh - ph, ow*sw + rw*dw - pw, c]`
+/// `out[b, oh, ow, c] = Σ_{rh, rw} w[rh, rw, c] · input[b, oh*sh + rh*dh - ph, ow*sw + rw*dw - pw,
+/// c]`
 ///
 /// The same leaf the dense convolution runs. `C` being one of the accumulator's own axes is what
 /// makes it batched rather than contracted; the leaf reads that off the spaces.
@@ -171,7 +172,7 @@ impl DepthwiseSpace {
 /// needs and what `V > 1` is.
 ///
 /// Three levels: this cube's box of the output with the taps whole, this plane's row of it, then
-/// this lane's channel lines, whose column block the leaf walks with the whole tap window at
+/// this unit's channel lines, whose column block the leaf walks with the whole tap window at
 /// each cell.
 #[cube(launch)]
 fn depthwise_kernel<E: Numeric, V: Size>(
@@ -185,31 +186,31 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    // Three levels, or four where a lane holds channel lines past its first: then the plane's
-    // walk is over those lines and the lanes sit under it.
-    let lines_below_the_lanes = comptime!(space.levels().len() > 3);
+    // Three levels, or four where a unit holds channel lines past its first: then the plane's
+    // walk is over those lines and the units sit under it.
+    let lines_below_the_units = comptime!(space.levels().len() > 3);
     for cube in space {
         let out = out.at(&cube);
         let weight = weight.at(&cube);
         let input = input.at(&cube);
         for plane in cube {
             for step in plane {
-                if lines_below_the_lanes {
-                    for lane in step {
-                        let mut out = out.at(&lane);
+                if lines_below_the_units {
+                    for unit in step {
+                        let mut out = out.at(&unit);
                         out.mm_with(
-                            &weight.at(&lane),
-                            &input.at(&lane),
+                            &weight.at(&unit),
+                            &input.at(&unit),
                             REGISTER_BLOCK,
                             Semiring::SUM_PROD,
                         );
                     }
                 } else {
-                    let lane = step;
-                    let mut out = out.at(&lane);
+                    let unit = step;
+                    let mut out = out.at(&unit);
                     out.mm_with(
-                        &weight.at(&lane),
-                        &input.at(&lane),
+                        &weight.at(&unit),
+                        &input.at(&unit),
                         REGISTER_BLOCK,
                         Semiring::SUM_PROD,
                     );
@@ -224,14 +225,15 @@ fn depthwise_kernel<E: Numeric, V: Size>(
 /// The three numbers are three different jobs, which is why they are not one "tile size":
 ///
 /// - `rows` is the plane count. One plane per output row, so it is what fills the cube.
-/// - `cols` is the accumulator block one lane keeps in registers. Every column of it re-reads
+/// - `cols` is the accumulator block one unit keeps in registers. Every column of it re-reads
 ///   the same filter and overlapping input, so it is what amortises both.
-/// - `chans` is how many channel *lines* one lane owns. Lanes are dealt lines interleaved, so
-///   whatever this is, consecutive lanes still read consecutive channels and the read coalesces.
+/// - `chans` is how many channel *lines* one unit owns. The lines are distributed to the units
+///   interleaved, so whatever this is, consecutive units still read consecutive channels and the
+///   read coalesces.
 /// - `lines` is how many channels one of those lines covers — the width every operand is served
 ///   in. It is the one knob that trades the two things a depthwise pass is limited by against
 ///   each other, which is why it is stated and not derived: a wider line is fewer instructions
-///   per channel, and also more registers per lane and a wider channel tile, so fewer lanes with
+///   per channel, and also more registers per unit and a wider channel tile, so fewer units with
 ///   anything to do when the block is narrow. It is a ceiling, not a demand — the launch drops to
 ///   what the buffers can actually be served in.
 ///
@@ -245,7 +247,7 @@ pub struct DepthwiseTiling {
 }
 
 impl Default for DepthwiseTiling {
-    /// Four planes of one row each, four output columns per lane, scalar channels.
+    /// Four planes of one row each, four output columns per unit, scalar channels.
     ///
     /// Small on both spatial axes on purpose: the window overlaps, so a cube's halo is what it
     /// re-reads, but a *wide* tile is also what pushes its far corner past the padded border and
@@ -272,13 +274,13 @@ impl DepthwiseTiling {
     /// ...and the channel axis has to stay wide enough to fill the grid once a wide line has
     /// divided its parallelism. Below this many cube-widths of channels, widening starves the
     /// grid instead of the bus.
-    const WIDE_BLOCK_LANE_MULTIPLE: usize = 8;
+    const WIDE_BLOCK_UNIT_MULTIPLE: usize = 8;
 
     /// The tiling to run a problem of this shape under.
     ///
     /// Only [`lines`](Self::lines) is decided here, and it is close to a single question: is this
     /// convolution short of instructions or short of bandwidth? A wide line is four times fewer
-    /// instructions per channel, and also four times the registers per lane and a four-times
+    /// instructions per channel, and also four times the registers per unit and a four-times
     /// wider channel tile. A deep window over a wide block is instruction-bound and takes the
     /// trade; everything else is already reading memory as fast as the device will read it, and
     /// pays the registers for nothing.
@@ -287,9 +289,9 @@ impl DepthwiseTiling {
     /// hardware puts it, so this is a derivation a device is allowed to disagree with. The
     /// `depthwise` benchmark catalogue is the instrument that settles it: running its `Fixed`
     /// entries against `Routine` is what says whether this rule still picks the right line.
-    pub fn for_problem(channels: usize, taps: usize, lanes: usize) -> Self {
+    pub fn for_problem(channels: usize, taps: usize, plane_units: usize) -> Self {
         let deep_window = taps >= Self::INSTRUCTION_BOUND_TAPS;
-        let wide_block = channels >= Self::WIDE_BLOCK_LANE_MULTIPLE * lanes;
+        let wide_block = channels >= Self::WIDE_BLOCK_UNIT_MULTIPLE * plane_units;
 
         Self {
             lines: match deep_window && wide_block {
@@ -314,21 +316,21 @@ impl DepthwiseTiling {
 
     /// The channel edge one cube owns, checked because every factor is public configuration or
     /// runtime hardware data.
-    fn channel_tile(self, lanes: usize, width: usize) -> Result<usize, ConvSetupError> {
-        let tile = lanes
+    fn channel_tile(self, plane_units: usize, width: usize) -> Result<usize, ConvSetupError> {
+        let tile = plane_units
             .checked_mul(width)
             .and_then(|tile| tile.checked_mul(self.chans))
             .ok_or_else(|| {
                 ConvSetupError::InvalidConfig(Box::new(format!(
-                    "depthwise channel tile overflows: {lanes} lanes * {width} channels/line * {} \
-                     lines/lane",
+                    "depthwise channel tile overflows: {plane_units} units * {width} channels/line * {} \
+                     lines/unit",
                     self.chans
                 )))
             })?;
         if tile == 0 {
             return Err(ConvSetupError::InvalidConfig(Box::new(format!(
-                "depthwise channel tile must be non-zero, got {lanes} lanes * {width} \
-                 channels/line * {} lines/lane",
+                "depthwise channel tile must be non-zero, got {plane_units} units * {width} \
+                 channels/line * {} lines/unit",
                 self.chans
             ))));
         }
@@ -340,7 +342,7 @@ impl DepthwiseTiling {
     fn plan(
         &self,
         geometry: &Geometry,
-        lanes: usize,
+        plane_units: usize,
         tile_c: usize,
         width: usize,
     ) -> DepthwiseSpace {
@@ -355,7 +357,7 @@ impl DepthwiseTiling {
             cols: self.cols,
             tile_c,
             width,
-            plane_size: lanes,
+            plane_size: plane_units,
         }
     }
 }
@@ -400,10 +402,10 @@ pub fn launch_depthwise(
     strategy: DepthwiseStrategy,
 ) -> Result<(), ConvSetupError> {
     let geometry = Geometry::new(&tensors, args, groups)?;
-    let lanes = plane_lanes(client);
+    let plane_units = plane_units(client);
     let tiling = match strategy {
         DepthwiseStrategy::Routine => {
-            DepthwiseTiling::for_problem(geometry.c, geometry.taps(), lanes)
+            DepthwiseTiling::for_problem(geometry.c, geometry.taps(), plane_units)
         }
         DepthwiseStrategy::Fixed(tiling) => tiling,
     }
@@ -426,8 +428,8 @@ pub fn launch_depthwise(
         tiling.lines,
         &[&input, &weight, &out],
     );
-    let tile_c = tiling.channel_tile(lanes, width)?;
-    let plan = tiling.plan(&geometry, lanes, tile_c, width);
+    let tile_c = tiling.channel_tile(plane_units, width)?;
+    let plan = tiling.plan(&geometry, plane_units, tile_c, width);
     let launch = {
         let partitioning = plan.partitioning();
         let concrete = partitioning.space().clone();
@@ -447,7 +449,7 @@ pub fn launch_depthwise(
     // terminal tile is still the full comptime size — so the cells past the end are addressed and
     // have to be guarded. Per axis, because the guard is real work per access and the axes that
     // need one are rarely the same: a 48x48 map divides evenly by any tile here while a
-    // 24-channel block never fills one lane-width.
+    // 24-channel block never fills one plane's width of channels.
     let ragged_c = !geometry.c.is_multiple_of(tile_c);
     let ragged_oh = !geometry.oh.is_multiple_of(tiling.rows);
     let ragged_ow = !geometry.ow.is_multiple_of(tiling.cols);
@@ -644,15 +646,15 @@ fn spatial_bounds_required(
 ///
 /// `plane_size_max` deliberately, and it is only safe because this kernel issues no plane
 /// instruction: the leaf is [`Instruction::Registers`], the taps contract into a register rather
-/// than across lanes, and `planes()`/[`Coverage::PlaneLanes`] here distribute work rather than
+/// than across units, and `planes()`/[`Coverage::PlaneUnits`] here distribute work rather than
 /// cooperate. So the width is a coalescing decision, and a device honouring a narrower one still
-/// gets every lane of the tile from a real thread — `Space::cube_dim` sizes the launch from the
+/// gets every unit of the tile from a real thread — `Space::cube_dim` sizes the launch from the
 /// same number.
 ///
 /// The moment a plane reduction appears in this kernel that stops being true: wgpu reports a
 /// range on AMD RDNA (32/64) and Intel (8/32), and a reduction sized to the max would cover a
 /// fraction of its row on a device honouring the min.
-fn plane_lanes(client: &Client) -> usize {
+fn plane_units(client: &Client) -> usize {
     client.properties().hardware.plane_size_max as usize
 }
 
@@ -698,8 +700,8 @@ mod tests {
     use super::*;
 
     /// A `5x5` pass over a `56x56` map of 512 channels, four planes of one row, four output
-    /// columns a lane, on a 32-lane plane. The channel tile is what the caller varies: it is
-    /// `plane_size * width * chans`, and it alone decides whether a lane holds one channel line
+    /// columns a unit, on a 32-unit plane. The channel tile is what the caller varies: it is
+    /// `plane_size * width * chans`, and it alone decides whether a unit holds one channel line
     /// or several.
     fn plan(width: usize, chans: usize) -> DepthwiseSpace {
         DepthwiseSpace {
@@ -726,36 +728,36 @@ mod tests {
         assert_eq!(
             plan(1, 1).partitioning().table(&LABELS).to_string(),
             [
-                "        b × oh × ow ×  c × rh × rw    b × oh × ow ×   c × rh × rw",
+                "                             b × oh × ow ×  c × rh × rw    b × oh × ow ×   c × rh × rw",
                 "",
-                "  ◦     · ×  · ×  · ×  · ×  · ×  ·    1 ×  1 ×  4 ×   1 ×  5 ×  5",
-                "  ▪     · ×  · ×  · × 32 ×  · ×  ·    1 ×  1 ×  4 ×  32 ×  5 ×  5",
-                "  ▤     · ×  4 ×  · ×  · ×  · ×  ·    1 ×  4 ×  4 ×  32 ×  5 ×  5",
-                "  ▣     2 × 14 × 14 × 16 ×  · ×  ·    2 × 56 × 56 × 512 ×  5 ×  5",
+                "  ◦                          · ×  · ×  · ×  · ×  · ×  ·    1 ×  1 ×  4 ×   1 ×  5 ×  5",
+                "  ▪  32 units interleaved    · ×  · ×  · × 32 ×  · ×  ·    1 ×  1 ×  4 ×  32 ×  5 ×  5",
+                "  ▤  4 planes a cube         · ×  4 ×  · ×  · ×  · ×  ·    1 ×  4 ×  4 ×  32 ×  5 ×  5",
+                "  ▣  6272 cubes              2 × 14 × 14 × 16 ×  · ×  ·    2 × 56 × 56 × 512 ×  5 ×  5",
                 "",
-                "        └─ count ────────────────┘    └─ tile ──────────────────┘",
+                "                             └─ count ────────────────┘    └─ tile ──────────────────┘",
             ]
             .join("\n")
         );
     }
 
     /// A channel tile wider than one pass of the plane's lines adds a fourth level, which is the
-    /// walk the kernel's `lines_below_the_lanes` branch runs: the lanes sit under it, and a lane
+    /// walk the kernel's `lines_below_the_units` branch runs: the units sit under it, and a unit
     /// takes every 32nd line rather than a contiguous run.
     #[test]
-    fn a_lane_holding_several_channel_lines_walks_them() {
+    fn a_unit_holding_several_channel_lines_walks_them() {
         assert_eq!(
             plan(4, 2).partitioning().table(&LABELS).to_string(),
             [
-                "        b × oh × ow ×  c × rh × rw    b × oh × ow ×   c × rh × rw",
+                "                             b × oh × ow ×  c × rh × rw    b × oh × ow ×   c × rh × rw",
                 "",
-                "  ◦     · ×  · ×  · ×  · ×  · ×  ·    1 ×  1 ×  4 ×   4 ×  5 ×  5",
-                "  ▪     · ×  · ×  · × 32 ×  · ×  ·    1 ×  1 ×  4 × 128 ×  5 ×  5",
-                "  ↻     · ×  · ×  · ×  2 ×  · ×  ·    1 ×  1 ×  4 × 256 ×  5 ×  5",
-                "  ▤     · ×  4 ×  · ×  · ×  · ×  ·    1 ×  4 ×  4 × 256 ×  5 ×  5",
-                "  ▣     2 × 14 × 14 ×  2 ×  · ×  ·    2 × 56 × 56 × 512 ×  5 ×  5",
+                "  ◦                          · ×  · ×  · ×  · ×  · ×  ·    1 ×  1 ×  4 ×   4 ×  5 ×  5",
+                "  ▪  32 units interleaved    · ×  · ×  · × 32 ×  · ×  ·    1 ×  1 ×  4 × 128 ×  5 ×  5",
+                "  ↻  2 steps                 · ×  · ×  · ×  2 ×  · ×  ·    1 ×  1 ×  4 × 256 ×  5 ×  5",
+                "  ▤  4 planes a cube         · ×  4 ×  · ×  · ×  · ×  ·    1 ×  4 ×  4 × 256 ×  5 ×  5",
+                "  ▣  784 cubes               2 × 14 × 14 ×  2 ×  · ×  ·    2 × 56 × 56 × 512 ×  5 ×  5",
                 "",
-                "        └─ count ────────────────┘    └─ tile ──────────────────┘",
+                "                             └─ count ────────────────┘    └─ tile ──────────────────┘",
             ]
             .join("\n")
         );

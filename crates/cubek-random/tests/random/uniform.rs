@@ -33,9 +33,9 @@ fn runs_test() {
     assert_wald_wolfowitz_runs_test(&output_data, 0., 1.);
 }
 
-/// Every lane of a vector draws its own stream.
+/// Every component of a vector draws its own stream.
 ///
-/// A state seeded per unit rather than per lane leaves the lanes of one vector
+/// A state seeded per unit rather than per component leaves the components of one vector
 /// repeating a single value, which the distribution tests still accept: the values are
 /// uniform, there are just `line_size` times fewer of them. The row length is a
 /// multiple of every line size a device can pick, so the whole output is written by

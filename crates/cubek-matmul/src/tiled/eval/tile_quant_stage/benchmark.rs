@@ -14,7 +14,7 @@ use super::problem::TileQuantStageProblem;
 
 use super::strategy::StageDepth;
 
-/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
+/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
 /// fan-out, so the numbers measure the staging, not the instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 
@@ -23,7 +23,7 @@ const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
 /// `C = A · dequant(B)`, `B` the packed weight staged in its stored form: both inputs stage
-/// into shared memory per cube region, the plane's lanes read windows of the stage.
+/// into shared memory per cube region, the plane's units read windows of the stage.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
@@ -46,11 +46,11 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
         stages.pipelined(steps, |slot, step| {
             let c_step = c.at(step);
             slot.consume(|a_s, b_s| {
-                for lane in step {
-                    let mut c_lane = c_step.at(&lane);
-                    c_lane.mma_with(
-                        &a_s.at(&lane),
-                        &b_s.at(&lane),
+                for unit in step {
+                    let mut c_unit = c_step.at(&unit);
+                    c_unit.mma_with(
+                        &a_s.at(&unit),
+                        &b_s.at(&unit),
                         REGISTER_BLOCK,
                         Semiring::SUM_PROD,
                     );
@@ -125,7 +125,7 @@ struct TileQuantStageBench {
 }
 
 impl TileQuantStageBench {
-    /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's lanes,
+    /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's units,
     /// one served line each, so the leaf is `mr = m`, `nr = 1`: unrolled while `m <= 64` (the
     /// `mr·nr` cliff), keeping the unroll state constant as depth varies. The kernel stages both
     /// inputs at L0 and reads windows of the stage at L1, which is the staging this bench
@@ -135,7 +135,7 @@ impl TileQuantStageBench {
     }
 
     /// Three levels: a strip of `tn` columns per cube, `K` in `tk` steps, then `un` columns per
-    /// lane.
+    /// unit.
     fn levels(&self) -> Vec<Level> {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;

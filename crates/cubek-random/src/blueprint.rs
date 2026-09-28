@@ -68,7 +68,7 @@ impl PrngLaunchSettings {
     fn interleaved(client: &Client, output: &TensorBinding, dtype: ElemType) -> Self {
         let size = output.size();
 
-        // Every lane already draws its own decorrelated stream (see `PrngState::seeded`),
+        // Every component already draws its own decorrelated stream (see `PrngState::seeded`),
         // so nothing but the output layout bounds the line.
         let line_size = tensor_vector_size_parallel(
             client.io_optimized_vector_sizes(dtype.size()),

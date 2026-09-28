@@ -594,8 +594,8 @@ fn cmma_swizzled_cube_order_f32() {
     }
 }
 
-/// A strip width the grid does not divide deals a ragged last strip, every box to one cube: the
-/// blueprint takes it rather than fit a width to each grid. Validated alone, since the plan is
+/// A strip width the grid does not divide distributes a ragged last strip, every box to one cube:
+/// the blueprint takes it rather than fit a width to each grid. Validated alone, since the plan is
 /// what is judged and a device without the instruction turns down every blueprint whatever it is.
 #[test]
 fn cmma_takes_a_strip_the_grid_does_not_divide() {

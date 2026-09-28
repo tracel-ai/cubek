@@ -228,7 +228,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
 
 impl<P: ReducePrecision> ReduceWithIndices<P> for Min {}
 
-/// Collapse the vectorized accumulator lanes down to the final minimum and its
+/// Collapse the vectorized accumulator components down to the final minimum and its
 /// coordinate, for the parallel layout.
 ///
 /// Ties break towards the lower coordinate, matching the CPU reference. The

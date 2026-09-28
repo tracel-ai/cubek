@@ -6,9 +6,9 @@
 //! and nothing carries a quantization scheme — a scale is an ordinary operand, bound as the
 //! stored words it lies in and read in its own width, whatever that width is.
 //!
-//! Scalar, though, and that is the orientation rather than a default worth tuning: a lane owns
-//! `rows_per_lane` output rows against one block, and those scales sit a row apart in the scales
-//! buffer. A wide read wants a lane owning consecutive blocks, which is the opposite of the
+//! Scalar, though, and that is the orientation rather than a default worth tuning: a unit owns
+//! `rows_per_unit` output rows against one block, and those scales sit a row apart in the scales
+//! buffer. A wide read wants a unit owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
 use cubecl::prelude::ComptimeOptionArgs;
@@ -136,7 +136,7 @@ pub fn launch_ref(
             "QuantGemv: a scale is a float, got {other:?}"
         )))),
     };
-    // Stated once, by the problem: the plan dealt the blocks in words of this field, and the
+    // Stated once, by the problem: the plan distributed the blocks in words of this field, and the
     // binding reads them in the same one.
     let block_field = problem.scale_field();
     let tensor_field = field_of(dtypes.tensor_scale)?;
@@ -178,8 +178,8 @@ pub fn launch_ref(
             }
         }
         let projection = Projection::new(&[M, KB], &maps);
-        // Every scale a word holds, a read: the lane that reads the word owns the blocks of every
-        // field in it, which the plan dealt on the problem's own count of them.
+        // Every scale a word holds, a read: the unit that reads the word owns the blocks of every
+        // field in it, which the plan distributed on the problem's own count of them.
         levels.push(
             launch
                 .arg(binding)
@@ -194,7 +194,7 @@ pub fn launch_ref(
         Some(global) => ComptimeOptionArgs::Some(global.arg()),
         None => ComptimeOptionArgs::None,
     };
-    // Each lane holds a partial of its group's cell, so the accumulator stays scalar: the fold
+    // Each unit holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
     let out_op = launch.arg(out).axes(&[M, N]).build();
 

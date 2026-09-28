@@ -122,12 +122,12 @@ fn dispatch<F: SeparableFilterFamily>(
     );
     let row = Rational::of(get_transform(input_h, output_h, options));
     let col = Rational::of(get_transform(input_w, output_w, options));
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let units = client.properties().hardware.plane_size_max as usize;
 
     // Cheap to check before any of the space/vectorization work below: a cube this wide is
     // refused outright rather than built and then rejected by the device at dispatch.
     let max_units = client.properties().hardware.max_units_per_cube as usize;
-    let units_per_cube = geometry.planes_per_cube.saturating_mul(lanes);
+    let units_per_cube = geometry.planes_per_cube.saturating_mul(units);
     if units_per_cube > max_units {
         return Err(InterpolateError::UnitsPerCubeExceeded {
             requested: units_per_cube,
@@ -140,7 +140,7 @@ fn dispatch<F: SeparableFilterFamily>(
         height: output_h,
         width: output_w,
         channels: output.shape[3],
-        plane_size: lanes,
+        plane_size: units,
         taps: F::mode_properties().taps,
         geometry,
     };
@@ -170,7 +170,7 @@ fn dispatch<F: SeparableFilterFamily>(
     let in_bounds = tap_range_in_bounds(row, output_h, input_h, properties.taps, F::radius())
         && tap_range_in_bounds(col, output_w, input_w, properties.taps, F::radius());
 
-    // The channel block is the lane's channel run, so it is the width the contraction wants its
+    // The channel block is the unit's channel run, so it is the width the contraction wants its
     // lines in. Where the tensor's own channel count cannot serve them (`C = 3` has no 4-aligned
     // row start, so `vector_size` above is 1), a shared-memory stage still can: it pads the axis
     // out to whole lines, and the contraction runs `4` wide against a scalar output. Only a width
@@ -182,7 +182,7 @@ fn dispatch<F: SeparableFilterFamily>(
             .any(|v| v == geometry.channel_block))
     .then_some(geometry.channel_block);
 
-    // A padded stage reads the lanes past the real channel count, so those reads have to be the
+    // A padded stage reads the units past the real channel count, so those reads have to be the
     // masked kind whatever the taps do: unchecked they would take the next pixel's channels, and
     // run off the buffer entirely on the last one. Their values never reach the output (the sink's
     // own overhang mask drops those columns), but the reads still have to be in bounds.

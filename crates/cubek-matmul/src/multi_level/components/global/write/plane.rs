@@ -105,7 +105,7 @@ pub fn plane_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 ) {
     let output_vector_size = global.vector_size().comptime();
 
-    // Lanes read vectors other lanes stored.
+    // Units read vectors other units stored.
     sync_plane();
 
     let unit_step = plane_dim * output_vector_size as u32;
