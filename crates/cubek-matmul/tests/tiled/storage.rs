@@ -4,10 +4,13 @@
 use cubecl::{ir::ElemType, prelude::*, zspace::Shape};
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{COLS, ROWS, tile, untile},
+    tiled::storage::{Layout, tile, untile},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
-use cubek_tile::{Axis, Layout};
+use cubek_tile::Axis;
+
+const ROWS: Axis = Axis(0);
+const COLS: Axis = Axis(1);
 
 /// Tile, check every cell sits in its tile, untile, check every cell is back. `grid` orders the
 /// tiles, finest first.
@@ -29,7 +32,7 @@ fn round_trip(
         .generate_with_f32_host_data();
 
     let layout = Layout::storage(&[(COLS, tc), (ROWS, tr)]).grid(grid);
-    let tiled = tile(&client, src.binding(), dtype, layout).unwrap();
+    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
     let physical: Vec<usize> = batches
         .iter()
         .copied()
@@ -104,7 +107,7 @@ fn tiling_orders_the_grid_as_the_layout_states() {
         .custom((0..64 * 96).map(|i| i as f32).collect())
         .generate_with_f32_host_data();
     let layout = Layout::storage(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
-    let tiled = tile(&client, src.binding(), dtype, layout).unwrap();
+    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
     // [64/16, 96/32, 16, 32]: a tile is 512 values, the next down the rows 512 on, across 2048.
     assert_eq!(tiled.metadata.strides().to_vec(), vec![512, 2048, 32, 1]);
 }
@@ -136,6 +139,7 @@ fn tiling_refuses_a_tile_that_does_not_divide() {
         tile(
             &client,
             src.binding(),
+            [ROWS, COLS],
             dtype,
             Layout::storage(&[(COLS, 32), (ROWS, 32)]).grid(&[COLS, ROWS])
         ),
@@ -158,6 +162,7 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
     let tiled = tile(
         &client,
         src.binding(),
+        [ROWS, COLS],
         dtype,
         Layout::storage(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS]),
     )
@@ -166,9 +171,80 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
         tile(
             &client,
             tiled.binding(),
+            [ROWS, COLS],
             dtype,
             Layout::storage(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS])
         ),
         Err(MatmulSetupError::InvalidConfig(_))
     ));
+}
+
+/// Tile as `layout` states, find every cell where `stored_at` says the layout put it, untile, and
+/// read back the matrix it started as; the stored buffer's dims and strides are returned for the
+/// caller to check.
+fn tiles_and_comes_back(
+    layout: cubek_tile::GridLayout,
+    rows: usize,
+    cols: usize,
+    stored_at: impl Fn(usize, usize) -> Vec<usize>,
+) -> (Vec<usize>, Vec<usize>) {
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let data: Vec<f32> = (0..rows * cols).map(|i| i as f32).collect();
+    let (src, _) = TestInput::builder(client.clone(), Shape::from(vec![rows, cols]))
+        .dtype(dtype)
+        .custom(data.clone())
+        .generate_with_f32_host_data();
+    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
+    let stored = (
+        tiled.shape().as_slice().to_vec(),
+        tiled.metadata.strides().to_vec(),
+    );
+    let raw = HostData::from_tensor_handle(&client, tiled.clone(), HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            let at = stored_at(r, c);
+            assert_eq!(
+                raw.get_f32(&at),
+                data[r * cols + c],
+                "cell ({r}, {c}) at {at:?}"
+            );
+        }
+    }
+    let back = untile(&client, tiled.binding(), dtype).unwrap();
+    let got = HostData::from_tensor_handle(&client, back, HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            assert_eq!(got.get_f32(&[r, c]), data[r * cols + c], "cell ({r}, {c})");
+        }
+    }
+    stored
+}
+
+/// Two storage levels: 2 x 4 blocks, 4 x 2 of them to a tile, the tiles down the rows first.
+/// Each dim is stored in three pieces, listed coarsest first, and the relayout walks one outer
+/// tile per cube whatever lies inside it.
+#[test]
+fn tiling_nests_two_levels() {
+    let layout = Layout::storage(&[(COLS, 4), (ROWS, 2)])
+        .storage(&[(COLS, 2), (ROWS, 4)])
+        .grid(&[ROWS, COLS]);
+    // rows = grid 4 x 4 x 2, cols = grid 6 x 2 x 4, each dim's pieces listed coarsest first.
+    let (shape, strides) = tiles_and_comes_back(layout, 32, 48, |r, c| {
+        vec![r / 8, c / 8, r / 2 % 4, c / 4 % 2, r % 2, c % 4]
+    });
+    assert_eq!(shape, vec![4, 6, 4, 2, 2, 4]);
+    // Finest first: cols 4 (1), rows 2 (4), cols 2 (8), rows 4 (16), grid rows 4 (64), cols 6
+    // (256), listed back in the tiling's coarsest-first order.
+    assert_eq!(strides, vec![64, 256, 16, 8, 4, 1]);
+}
+
+/// A tile stored a column at a time: its rows are the finest entry, and only the strides say so.
+#[test]
+fn tiling_stores_a_tile_column_first() {
+    let layout = Layout::storage(&[(ROWS, 16), (COLS, 32)]).grid(&[COLS, ROWS]);
+    let (shape, strides) =
+        tiles_and_comes_back(layout, 64, 96, |r, c| vec![r / 16, c / 32, r % 16, c % 32]);
+    assert_eq!(shape, vec![4, 3, 16, 32]);
+    assert_eq!(strides, vec![1536, 512, 1, 16]);
 }

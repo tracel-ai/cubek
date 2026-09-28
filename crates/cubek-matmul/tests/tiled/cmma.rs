@@ -249,12 +249,14 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            storage::{COLS, ROWS, tile},
+            storage::{Layout, tile},
         },
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
-    use cubek_tile::Layout;
+    use cubek_tile::Axis;
+    const K: Axis = Axis(0);
+    const N: Axis = Axis(1);
 
     use crate::harness::assert_result;
 
@@ -303,8 +305,8 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
             let stage_k = blueprint.stage_k;
 
             // The weight, tiled to the plan's stage.
-            let layout = Layout::storage(&[(COLS, stage_n), (ROWS, stage_k)]).grid(&[COLS, ROWS]);
-            let tiled = tile(c, rhs.clone().binding(), dtype, layout)?;
+            let layout = Layout::storage(&[(N, stage_n), (K, stage_k)]).grid(&[N, K]);
+            let tiled = tile(c, rhs.clone().binding(), [K, N], dtype, layout)?;
 
             launch_ref(
                 c,
@@ -385,12 +387,14 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            storage::{COLS, ROWS, tile},
+            storage::{Layout, tile},
         },
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
-    use cubek_tile::Layout;
+    use cubek_tile::Axis;
+    const K: Axis = Axis(0);
+    const N: Axis = Axis(1);
 
     use crate::harness::assert_result;
 
@@ -423,8 +427,8 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
     let (tile_k, tile_n) = storage_tile;
-    let layout = Layout::storage(&[(COLS, tile_n), (ROWS, tile_k)]).grid(&[COLS, ROWS]);
-    let tiled = tile(&client, rhs.binding(), dtype, layout).unwrap();
+    let layout = Layout::storage(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
+    let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());

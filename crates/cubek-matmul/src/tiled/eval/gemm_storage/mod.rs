@@ -32,11 +32,11 @@ use crate::{
     eval::cpu_reference::{cpu_reference_result, matmul_epsilon, produce_with},
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::{
+        K, N,
         cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
-        storage::{COLS, ROWS, tile},
+        storage::{Layout, tile},
     },
 };
-use cubek_tile::Layout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Precision {
@@ -95,9 +95,9 @@ impl Weight {
                 tile(
                     client,
                     rhs,
+                    [K, N],
                     dtype,
-                    Layout::storage(&[(COLS, stage_n), (ROWS, blueprint.stage_k)])
-                        .grid(&[COLS, ROWS]),
+                    Layout::storage(&[(N, stage_n), (K, blueprint.stage_k)]).grid(&[N, K]),
                 )
                 .map(TensorHandle::binding)
                 .map_err(|e| format!("{e:?}"))

@@ -1,13 +1,14 @@
 //! Storing a matrix in storage tiles, and laying it back out.
 //!
-//! A storage-tiled tensor is stored one tile at a time, `[.., R/tr, C/tc, tr, tc]`, the tile the
-//! innermost two dims; its binding says so through its `tiling`, and the order the tiles follow
-//! one another in through its strides, as the [`Layout`](cubek_tile::Layout) it was stored in
-//! states. The tile is a level of whatever
-//! routine reads it (cmma's stage), so a weight tiled to the plan's stage moves as one
-//! contiguous run per stage. Tiling is a relayout on the tile DSL: a space over the matrix with
-//! exactly one level, the storage tile, one cube per tile. Whichever side is storage-tiled is
-//! read or written as a run; the other through its layout.
+//! A storage-tiled tensor is stored one tile at a time, as the [`Layout`] it was stored in states:
+//! its storage levels, finest first, then the grid of tiles. Its binding carries how many pieces
+//! each dim is stored in (its `tiling`, `[.., R/tr, C/tc, tr, tc]` for one level) and the order
+//! they follow one another in (its strides). A routine that reads storage tiles (cmma's stage)
+//! moves a tile as one contiguous run.
+//!
+//! Tiling is a relayout on the tile DSL: a space over the matrix with exactly one level, the
+//! outermost storage tile, one cube per tile. Whichever side is storage-tiled is read or written
+//! through its layout, however many levels lie inside that tile.
 
 use cubecl::{
     client::Client,
@@ -17,13 +18,12 @@ use cubecl::{
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
 use cubek_tile::{
-    Axis, Geometry, Grid, GridLayout, Launcher, Level, Levels, Partitioning, Space, StorageTiling,
-    TileArg,
+    Geometry, Grid, GridLayout, Launcher, Level, Levels, Partitioning, Space, TileArg,
 };
 
 use crate::{
     definition::MatmulSetupError,
-    tiled::{batch_axis, logical_dims, storage_tile},
+    tiled::{batch_axis, logical_dims},
 };
 
 /// The storage tile `(rows, cols)` a matrix is stored in: what its innermost two physical
@@ -71,28 +71,35 @@ fn relayout<E: Numeric, V: Size>(
     }
 }
 
-/// What [`tile`] is told: how the tiles are laid out, stated leaf-up.
-pub use cubek_tile::Layout;
+/// What [`tile`] is told: how the tiles are laid out, stated leaf-up, over axes the caller names.
+pub use cubek_tile::{Axis, Layout};
 
-/// The stored matrix's rows, one of the two axes a storage [`Layout`] over it names.
-pub const ROWS: Axis = Axis(0);
-/// The stored matrix's columns, the other.
-pub const COLS: Axis = Axis(1);
+/// The stored matrix's rows and columns as the relayout's own space names them. A caller states
+/// its layout in its own axes; only the tile's extents cross over.
+const ROWS: Axis = Axis(0);
+const COLS: Axis = Axis(1);
 
-/// Store a plain matrix (leading batch dims, trailing `rows x cols`) as `layout` states: one
-/// storage level over [`ROWS`] and [`COLS`], and the order of the grid of tiles. The result's
-/// metadata states the tiling, so its binding says how it is stored and any routine folds its
-/// logical shape back; the grid's order is in its strides.
+/// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `layout`
+/// states: its storage levels, finest first, and the order of the grid of tiles, all in the
+/// caller's axes. The result's metadata states the tiling, so its binding says how it is stored
+/// and any routine folds its logical shape back; the order is in its strides.
+///
+/// ```ignore
+/// // A [k, n] weight in 16 x 32 tiles, rows of each tile first, the next tile along k.
+/// let layout = Layout::storage(&[(N, 32), (K, 16)]).grid(&[K, N]);
+/// let stored = tile(&client, weight.binding(), [K, N], dtype, layout)?;
+/// ```
 ///
 /// # Errors
 ///
-/// A source that is already storage-tiled (untile it first), a shape the tile does not divide (a
-/// routine reading storage tiles reads whole ones, and a padded buffer would change the logical
-/// shape), or a layout of more than one storage level, which the relayout does not write.
+/// A source that is already storage-tiled (untile it first), a layout that does not close the
+/// matrix in whole tiles (a routine reading storage tiles reads whole ones, and a padded buffer
+/// would change the logical shape), or one deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn tile(
     client: &Client,
     src: TensorBinding,
+    axes: [Axis; 2],
     dtype: ElemType,
     layout: GridLayout,
 ) -> Result<TensorHandle, MatmulSetupError> {
@@ -104,16 +111,9 @@ pub fn tile(
     }
     let (batches, rows, cols) = logical_dims(&src);
     let layout = layout
-        .over(&[(ROWS, rows), (COLS, cols)])
+        .over(&[(axes[0], rows), (axes[1], cols)])
         .map_err(|misfit| refused(misfit.to_string()))?;
-    let (matrix, tiling) = layout.physical(&[ROWS, COLS]);
-    if tiling != StorageTiling::uniform(2, 1) {
-        return Err(refused(format!(
-            "{layout:?} is not one storage level over the rows and columns, which is what the \
-             relayout writes"
-        )));
-    }
-    let tile = (matrix.shape()[2], matrix.shape()[3]);
+    let (matrix, tiling) = layout.physical(&axes);
     // Batch dims stay plain and coarsest, each a whole run of the matrices finer than it.
     let mut shape: Vec<usize> = batches.clone();
     let mut strides = vec![0; batches.len()];
@@ -124,15 +124,19 @@ pub fn tile(
     }
     shape.extend_from_slice(matrix.shape());
     strides.extend_from_slice(matrix.strides());
-    let fragments: Vec<usize> = batches.iter().map(|_| 1).chain([2, 2]).collect();
+    let fragments: Vec<usize> = batches
+        .iter()
+        .map(|_| 1)
+        .chain([tiling.fragments(0), tiling.fragments(1)])
+        .collect();
     let config = |e| refused(format!("{e:?}"));
     let tiling = Tiling::new(&fragments).map_err(config)?;
-    let mut dst = TensorHandle::empty(client, Shape::from(shape.clone()), dtype);
-    dst.metadata = Box::new(
-        Metadata::new(Shape::from(shape), Strides::from(strides))
-            .with_tiling(tiling)
-            .map_err(config)?,
-    );
+    let metadata = Metadata::new(Shape::from(shape.clone()), Strides::from(strides))
+        .with_tiling(tiling)
+        .map_err(config)?;
+    let mut dst = TensorHandle::empty(client, Shape::from(shape), dtype);
+    dst.metadata = Box::new(metadata);
+    let tile = outermost_tile(&dst.clone().binding()).map_err(refused)?;
     relayout_launch(
         client,
         src,
@@ -149,18 +153,18 @@ pub fn tile(
 ///
 /// # Errors
 ///
-/// A source that is not storage-tiled, or tiled in a way [`storage_tile`] cannot read.
+/// A source that is not storage-tiled, or one that stores a batch dim in pieces.
 #[allow(clippy::result_large_err)]
 pub fn untile(
     client: &Client,
     src: TensorBinding,
     dtype: ElemType,
 ) -> Result<TensorHandle, MatmulSetupError> {
-    let Some(tile) = storage_tile(&src, "untile")? else {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "untile: the source is not storage-tiled".to_string(),
-        )));
-    };
+    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("untile: {why}")));
+    if !src.tiling.is_tiled() {
+        return Err(refused("the source is not storage-tiled".to_string()));
+    }
+    let tile = outermost_tile(&src).map_err(refused)?;
     let (batches, rows, cols) = logical_dims(&src);
     let shape: Vec<usize> = batches.iter().copied().chain([rows, cols]).collect();
     let dst = TensorHandle::empty(client, Shape::from(shape), dtype);
@@ -176,8 +180,32 @@ pub fn untile(
     Ok(dst)
 }
 
-/// The one launch both directions share: the matrix's space cut by one level, the storage
-/// tile, a cube of one plane per tile. Each side's binding says whether it is the tiled one.
+/// The outermost storage tile of a storage-tiled matrix, `(rows, cols)`: each matrix dim's
+/// extent over its grid's count. The grid is each dim's coarsest piece, which a tiling lists
+/// first, so both sit right after the batch dims however many levels lie under them.
+fn outermost_tile(binding: &TensorBinding) -> Result<(usize, usize), String> {
+    let rank = binding.shape.len();
+    let logical_rank = binding
+        .tiling
+        .logical_rank(rank)
+        .map_err(|e| format!("{e:?}"))?;
+    let fragments = binding.tiling.fragments(logical_rank);
+    let batches = logical_rank - 2;
+    if fragments[..batches].iter().any(|&n| n != 1) {
+        return Err(format!(
+            "batch dims are stored plain, got {fragments:?} pieces per dim"
+        ));
+    }
+    let (_, rows, cols) = logical_dims(binding);
+    Ok((
+        rows / binding.shape[batches],
+        cols / binding.shape[batches + 1],
+    ))
+}
+
+/// The one launch both directions share: the matrix's space cut by one level, the outermost
+/// storage tile, a cube of one plane per tile; the levels inside it are the tiled side's to
+/// decode. Each side's binding says whether it is the tiled one.
 fn relayout_launch(
     client: &Client,
     src: TensorBinding,
