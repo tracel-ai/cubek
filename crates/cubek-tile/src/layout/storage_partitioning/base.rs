@@ -146,6 +146,29 @@ impl StoragePartitioning {
         Ok(())
     }
 
+    /// The tiles, finest first, a window can be addressed inside with one stride per axis: every
+    /// run of pieces over a tensor of `extents` from the finest up, stated or the rest of an axis,
+    /// in which each axis's pieces sit next to one another, so a coordinate along it is one
+    /// offset times one stride. Each tile is its extent per axis it spans.
+    pub(crate) fn contiguous_tiles(&self, extents: &[(Axis, usize)]) -> Vec<Vec<(Axis, usize)>> {
+        let Ok(pieces) = self.pieces(extents) else {
+            return Vec::new();
+        };
+        let mut tiles = Vec::new();
+        let mut tile: Vec<(Axis, usize)> = Vec::new();
+        for piece in pieces.into_iter().filter(|piece| piece.count > 1) {
+            let continues = tile.last().is_some_and(|&(axis, _)| axis == piece.axis);
+            match tile.iter_mut().find(|(axis, _)| *axis == piece.axis) {
+                // An axis met again after another one sat between: no longer one run per axis.
+                Some(_) if !continues => break,
+                Some((_, extent)) => *extent *= piece.count,
+                None => tile.push((piece.axis, piece.count)),
+            }
+            tiles.push(tile.clone());
+        }
+        tiles
+    }
+
     /// The buffer this partitioning stores a tensor of `extents` in, the axes in its logical order:
     /// its physical dims as cubecl's storage tiling lists them (level-major, coarsest first), each
     /// `(extent, stride)`, and the piece count per axis that [`StorageTiling`] reads back.

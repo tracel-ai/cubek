@@ -152,6 +152,38 @@ fn a_piece_of_one_is_no_piece() {
     );
 }
 
+/// A window is one run with one stride per axis inside every tile whose axes each sit in one
+/// piece of memory: a stored read fuses into the tile it starts, a grid ordered down `K` runs the
+/// tile down `K` with it, and pieces that interleave the axes stop the run where an axis returns.
+#[test]
+fn a_window_is_one_run_inside_the_tiles_whose_axes_do_not_interleave() {
+    let with_read = StorageLevels::new(&[(N, 4)])
+        .tile(&[(N, 8), (K, 32)])
+        .grid(&[N, K]);
+    assert_eq!(
+        with_read.contiguous_tiles(&[(K, 64), (N, 64)]),
+        vec![vec![(N, 4)], vec![(N, 32)], vec![(N, 32), (K, 32)]]
+    );
+
+    let down_k = StorageLevels::new(&[(N, 16), (K, 32)]).grid(&[K, N]);
+    assert_eq!(
+        down_k.contiguous_tiles(&[(K, 128), (N, 64)]),
+        vec![
+            vec![(N, 16)],
+            vec![(N, 16), (K, 32)],
+            vec![(N, 16), (K, 128)]
+        ]
+    );
+
+    let interleaved = StorageLevels::new(&[(N, 16), (K, 2)])
+        .tile(&[(N, 2), (K, 16)])
+        .grid(&[N, K]);
+    assert_eq!(
+        interleaved.contiguous_tiles(&[(K, 64), (N, 64)]),
+        vec![vec![(N, 16)], vec![(N, 16), (K, 2)]]
+    );
+}
+
 /// The tiling a buffer's metadata carries for a [`StorageTiling`] over its axes.
 fn tiled(tiling: &StorageTiling) -> cubecl::zspace::Tiling {
     let fragments: Vec<usize> = (0..tiling.rank()).map(|i| tiling.fragments(i)).collect();

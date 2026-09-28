@@ -7,10 +7,10 @@ use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::zspace::Tiling;
 
-use super::analysis::{Boundaries, Labels, Refusal, StorageLevel};
+use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
     Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, QuantTileArgLaunch,
-    Quantization, Storage, StorageTiling, TileArgLaunch, TileSpec,
+    Quantization, Storage, StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -292,9 +292,12 @@ fn stride_ordered(
     }
 }
 
-/// The operand's storage tiling, read off its binding, and the level whose tile it is: a storage
-/// tile is the tile of one of the kernel's levels, or the operand is refused. A gathered operand
-/// (`labelled == false`) states its own mapping and reads no tiling.
+/// The operand's storage tiling, read off its binding, and what its storage tiles are to the
+/// kernel's levels: the coarsest tile its [storage partitioning](StoragePartitioning) can address
+/// a window inside with one stride per axis, where a level cuts to exactly that tile, makes the
+/// windows below that level [`Contiguous`](Storage::Contiguous); every other window is walked
+/// through the layout. Matched on the labelled axes alone: a batch dim is one physical dim. A
+/// gathered operand (`labelled == false`) states its own mapping and reads no tiling.
 fn storage_of(
     geometry: &Geometry,
     axes: &[Axis],
@@ -306,14 +309,26 @@ fn storage_of(
         return Ok((None, Storage::Strided));
     }
     let tiling = StorageTiling::stored(stored, axes.len(), geometry.rank());
-    let level = StorageLevel::new(
-        geometry,
-        axes,
-        &tiling,
-        launch.space(),
-        launch.partitioning().levels(),
-    );
-    Ok((Some(tiling), level.storage()))
+    let labels = tiling.order(axes);
+    let tiles = StoragePartitioning::new(geometry, &labels)
+        .map(|storage| storage.contiguous_tiles(&geometry.extents(&labels)))
+        .unwrap_or_default();
+    let (space, levels) = (launch.space(), launch.partitioning().levels());
+    let cuts_to = |level: usize, tile: &[(Axis, usize)]| {
+        let leaf = space.leaf(&levels[..=level]);
+        axes.iter().all(|&axis| {
+            let stored = tile
+                .iter()
+                .find(|&&(a, _)| a == axis)
+                .map_or(1, |&(_, e)| e);
+            leaf.extent(axis) == stored
+        })
+    };
+    let level = tiles
+        .iter()
+        .rev()
+        .find_map(|tile| (0..levels.len()).find(|&level| cuts_to(level, tile)));
+    Ok((Some(tiling), Storage::Tiled(level)))
 }
 
 /// The binding as the arg ships it: the settled geometry, whose derivation may have dropped

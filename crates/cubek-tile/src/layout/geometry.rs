@@ -140,7 +140,7 @@ impl Geometry {
 
     /// Each labelled axis's extent: the product of the dims it labels, pieces of a tiled axis
     /// included.
-    fn extents(&self, labels: &[Axis]) -> Vec<(Axis, usize)> {
+    pub(crate) fn extents(&self, labels: &[Axis]) -> Vec<(Axis, usize)> {
         let unlabelled = self.rank().saturating_sub(labels.len());
         let mut extents: Vec<(Axis, usize)> = Vec::new();
         for (dim, extent) in self.shape.iter().copied().enumerate().skip(unlabelled) {
