@@ -6,6 +6,7 @@ use super::{
     },
 };
 use crate::definition::{AvgPoolOptions, PoolError};
+use crate::kernel::accumulator_dtype;
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
@@ -14,6 +15,8 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+/// The running sum and the tap it adds: the divisor is a single splat.
+const LIVE_VECTORS: usize = 2;
 struct AvgPoolStrategy;
 
 impl Pool2dDirectStrategyFamily for AvgPoolStrategy {
@@ -100,7 +103,9 @@ pub(crate) fn avg_pool2d_launch(
     let dilation = 1;
 
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(accumulator_dtype(dtype).size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
