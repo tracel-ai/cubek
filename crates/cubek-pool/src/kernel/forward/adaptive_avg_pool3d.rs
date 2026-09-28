@@ -14,7 +14,7 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
-/// One over the sum and its tap: the read is memory bound, wider lanes measured slower.
+/// One over the sum and its tap: the read is memory bound, and wider vectors measured slower.
 const LIVE_VECTORS: usize = 3;
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool3d_direct<EI: Float, EA: Float, N: Size>(

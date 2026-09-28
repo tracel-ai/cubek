@@ -12,7 +12,7 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
-/// The gradient sum and the scaled tap: the divisor is one splat shared by every lane.
+/// The gradient sum and the scaled tap: the divisor is a single splat.
 const LIVE_VECTORS: usize = 2;
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool3d_backward_direct<EI: Float, EA: Float, N: Size>(
