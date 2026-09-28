@@ -10,7 +10,7 @@ use cubecl::std::tensor::{
 
 use crate::*;
 
-/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor owns the
+/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] (the descriptor owns the
 /// box, the [`TmaDynLayout`] the coordinate rules) with its comptime [`TileSpec`]; [`TileArg`]'s
 /// twin. Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]

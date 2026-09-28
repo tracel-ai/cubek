@@ -49,7 +49,7 @@ impl Scale {
 
 /// The constant term of one physical axis's affine combination. Mirrors [`Scale`]: `Static` is a
 /// comptime constant [`may_underflow`](crate::Projection::may_underflow) can check the sign of,
-/// `Dynamic` a runtime padding or placement riding the tile's signed offset carrier.
+/// `Dynamic` a runtime padding or placement riding the tile's signed offset array.
 ///
 /// Unlike [`Scale::Dynamic`], an `Offset::Dynamic` needs no bound to be staged: `span` is
 /// offset-invariant and [`Compaction`](crate::Compaction) drops the offset, so it costs no window
