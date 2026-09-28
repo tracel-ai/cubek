@@ -60,9 +60,9 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
 #[cube]
 impl<'a, T: CubePrimitive, C: Coordinates + 'static> Masked<'a, T, C> {
     /// The buffer from where `pos` is placed on, spanning `size`: what an instruction that takes
-    /// an address rather than a value (`ldmatrix`) reads, the
-    /// stage's placement — padded or swizzled — applied to `pos` as a read applies it. The lines
-    /// must lie together in the buffer, which a placement keeps within one chunk.
+    /// an address rather than a value (`ldmatrix`) reads, with the stage's placement — padded or
+    /// swizzled — applied to `pos` as a read applies it. The lines must lie together in the
+    /// buffer, which a placement keeps within one chunk.
     ///
     /// # Panics
     ///

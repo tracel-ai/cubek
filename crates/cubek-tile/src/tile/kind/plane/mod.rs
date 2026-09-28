@@ -4,6 +4,7 @@
 mod base;
 mod cmma;
 mod lines;
+mod load_matrix;
 mod mma;
 mod registers;
 

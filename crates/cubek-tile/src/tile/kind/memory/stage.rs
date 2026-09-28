@@ -26,8 +26,11 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`smem`](Memory::smem) with a minimum byte alignment on the shared
-    /// buffer. A TMA-filled stage needs one ([`TMA_STAGE_ALIGNMENT`]); `0`
-    /// leaves the buffer at its element alignment.
+    /// buffer. A TMA-filled stage needs one ([`TMA_STAGE_ALIGNMENT`]); every
+    /// stage is aligned to at least one chunk ([`RowChunks::CHUNK_BYTES`]),
+    /// which a padded or swizzled row assumes and an `ldmatrix` row address
+    /// requires: at the element's own alignment, a shared allocation declared
+    /// before the stage could leave its rows off 16 bytes.
     pub fn smem_aligned(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
@@ -35,6 +38,7 @@ impl<T: Numeric> Memory<T> {
         #[comptime] units: usize,
         #[comptime] alignment: usize,
     ) -> Tile<T> {
+        let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let elem_bytes = T::size().comptime();
         let form = comptime!(StageForm::dense(
             &space,

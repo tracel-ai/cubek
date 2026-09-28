@@ -1,11 +1,12 @@
 //! A stage whose block rows are swizzled ([`RowChunks::Swizzled`]) or padded
 //! ([`RowChunks::Padded`]) holds the same product as one whose rows lie in order: filled whole,
-//! filled through registers, and read by the manual mma transport — or, padded, by the cmma one —
-//! a row-major rhs and a weight stored `{n, k}` alike.
+//! filled through registers, and read by the manual mma transport a cell at a time or through
+//! `ldmatrix` — or, padded, by the cmma one — a row-major rhs and a weight stored `{n, k}` alike.
+//! The `ldmatrix` transport is also held to what it cannot read: a global window, read manually.
 //!
-//! In `f16` summed in `f32`, at `16×16×16` where the device offers it and at the shape it does
-//! otherwise (NVIDIA's manual mma is `16×8×16`); a device with no such instruction reports the
-//! test skipped. Lines of
+//! In `f16` (and `bf16` through `ldmatrix`) summed in `f32`, at `16×16×16` where the device offers
+//! it and at the shape it does otherwise (NVIDIA's manual mma is `16×8×16`); a device with no such
+//! instruction, or no `ldmatrix` for the element, reports the test skipped. Lines of
 //! other byte widths (a 4-byte element's, a packed word's) are placed by the same rule, held on
 //! the host by `RowPlacement`'s and `ChunkSwizzle`'s own tests.
 
@@ -19,6 +20,18 @@ use super::{Form, implied};
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
+
+/// Where the fragments are read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Staging {
+    /// A shared-memory stage, filled a step of `K` at a time.
+    Stage,
+    /// The same stage, with a 4-byte shared allocation declared before it: at the element's own
+    /// alignment the stage's rows would start off 16 bytes.
+    StageAfterSmallAllocation,
+    /// No stage: the fragments are read straight out of the global tiles.
+    Global,
+}
 
 /// Which transport reads a stage's fragments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,6 +59,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
     #[comptime] depth: usize,
     #[comptime] schedule: Schedule,
     #[comptime] leaf: Leaf,
+    #[comptime] staging: Staging,
     #[define(EI)] _input: ElemType,
     #[define(EA)] _sum: ElemType,
 ) {
@@ -67,7 +81,56 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
     };
     acc.zero();
     let walk = space.over(&outer);
-    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    if comptime!(staging == Staging::Global) {
+        for region in walk {
+            let acc_o = acc.at(&region);
+            for fragment in region.over(&inner).unrolled() {
+                let mut acc_f = acc_o.at(&fragment);
+                acc_f.mma(&a.at(&fragment), &b.at(&fragment), Semiring::SUM_PROD);
+            }
+        }
+    } else {
+        staged::<EI, EA>(
+            &a,
+            &b,
+            &mut acc,
+            walk,
+            comptime!(inner.clone()),
+            storage,
+            depth,
+            schedule,
+            staging,
+        );
+    }
+    for r0 in c.over(&outer).unrolled() {
+        for r1 in r0.over(&inner).unrolled() {
+            let mut c_w = c.at(&r1);
+            c_w.copy_cast_from(&acc.at(&r1));
+        }
+    }
+}
+
+/// The walk through a shared-memory stage, `staging` saying what is declared before it.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn staged<EI: Numeric, EA: Numeric>(
+    a: &Tile<EI>,
+    b: &Tile<EI>,
+    acc: &mut Tile<EA>,
+    walk: Walk,
+    #[comptime] inner: Level,
+    #[comptime] storage: StageStorage,
+    #[comptime] depth: usize,
+    #[comptime] schedule: Schedule,
+    #[comptime] staging: Staging,
+) {
+    if comptime!(staging == Staging::StageAfterSmallAllocation) {
+        let mut small = Shared::<[u32]>::new_slice(1usize);
+        if UNIT_POS == 0 {
+            small[0] = 1u32;
+        }
+    }
+    let mut stages = Stages::smem(&walk, a, b, storage, depth);
     match comptime!(schedule) {
         Schedule::AheadInSlots => {
             stages.pipelined(walk, |slot, region| {
@@ -92,20 +155,17 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
             });
         }
     }
-    for r0 in c.over(&outer).unrolled() {
-        for r1 in r0.over(&inner).unrolled() {
-            let mut c_w = c.at(&r1);
-            c_w.copy_cast_from(&acc.at(&r1));
-        }
-    }
 }
 
 /// The `m × n × k` shape this device offers `leaf` at in `f16` summed in `f32`: `16×16×16` where
 /// it does, else the first other it lists (NVIDIA's manual mma is `16×8×16`), so the stages are
 /// read by the instruction each device has. Reported rather than silently passed where it has
 /// none.
-fn f16_shape(client: &cubecl::client::Client, leaf: Leaf) -> Option<(usize, usize, usize)> {
-    let f16 = half::f16::elem_type_native();
+fn f16_shape(
+    client: &cubecl::client::Client,
+    leaf: Leaf,
+    f16: ElemType,
+) -> Option<(usize, usize, usize)> {
     let f32 = f32::elem_type_native();
     let matmul = &client.properties().features.matmul;
     let configs = match leaf {
@@ -113,9 +173,9 @@ fn f16_shape(client: &cubecl::client::Client, leaf: Leaf) -> Option<(usize, usiz
         Leaf::Cmma => &matmul.cmma,
     };
     if leaf == Leaf::MmaLoadMatrix && !matmul.ldmatrix.contains(&f16) {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "device has no f16 ldmatrix".to_string(),
-        ))
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device has no {f16:?} ldmatrix"
+        )))
         .enforce();
         return None;
     }
@@ -131,7 +191,7 @@ fn f16_shape(client: &cubecl::client::Client, leaf: Leaf) -> Option<(usize, usiz
         .or_else(|| shapes.first().copied());
     if shape.is_none() {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device has no f16 {leaf:?} summed in f32"
+            "device has no {f16:?} {leaf:?} summed in f32"
         )))
         .enforce();
     }
@@ -162,6 +222,10 @@ struct Case {
     depth: usize,
     schedule: Schedule,
     leaf: Leaf,
+    /// Where the fragments are read from.
+    staging: Staging,
+    /// The operands' element, `f16` or `bf16`, summed in `f32`.
+    input: ElemType,
 }
 
 impl Case {
@@ -176,6 +240,8 @@ impl Case {
         depth: 1,
         schedule: Schedule::AheadInSlots,
         leaf: Leaf::Mma,
+        staging: Staging::Stage,
+        input: ElemType::Float(cubecl::ir::FloatKind::F16),
     };
 }
 
@@ -189,9 +255,11 @@ fn check(case: Case) {
         depth,
         schedule,
         leaf,
+        staging,
+        input,
     } = case;
     let client = cubecl::test_device().client();
-    let Some((edge_m, edge_n, edge_k)) = f16_shape(&client, leaf) else {
+    let Some((edge_m, edge_n, edge_k)) = f16_shape(&client, leaf, input) else {
         return;
     };
     let (m, n, k) = (mn, mn, 128usize);
@@ -208,7 +276,6 @@ fn check(case: Case) {
         stage_k.is_multiple_of(edge_k),
         "{case:?}: a stage {stage_k} deep is not whole {edge_k}-deep steps"
     );
-    let input = half::f16::elem_type_native();
     let a = values(m * k, 0);
     let b = values(k * n, 5);
     let expected: Vec<f32> = (0..m * n)
@@ -276,6 +343,7 @@ fn check(case: Case) {
         depth,
         schedule,
         leaf,
+        staging,
         input,
         f32::elem_type_native(),
     );
@@ -503,5 +571,53 @@ fn the_ldmatrix_transport_reads_wide_lines_manually() {
             leaf: Leaf::MmaLoadMatrix,
             ..Case::DEFAULT
         });
+    }
+}
+
+/// A stage behind a 4-byte shared allocation still starts its rows on 16 bytes, which an
+/// `ldmatrix` row address needs: the stage is aligned to a chunk whatever is declared before it.
+/// In-order lines of every width a row holds whole.
+#[test]
+fn the_ldmatrix_transport_reads_a_stage_declared_after_another_allocation() {
+    for v in [2, 4, 8] {
+        for transposed in [false, true] {
+            check(Case {
+                v,
+                transposed,
+                staging: Staging::StageAfterSmallAllocation,
+                leaf: Leaf::MmaLoadMatrix,
+                ..Case::DEFAULT
+            });
+        }
+    }
+}
+
+/// Fragments read straight out of global memory, which `ldmatrix` cannot address: the transport
+/// reads them manually whatever it was asked, a row-major rhs and a weight stored `{n, k}` alike.
+#[test]
+fn the_ldmatrix_transport_reads_a_global_window_manually() {
+    for transposed in [false, true] {
+        check(Case {
+            transposed,
+            staging: Staging::Global,
+            leaf: Leaf::MmaLoadMatrix,
+            ..Case::DEFAULT
+        });
+    }
+}
+
+/// `bf16` operands through `ldmatrix`, placed every way a lane can address.
+#[test]
+fn the_ldmatrix_transport_reads_bf16() {
+    for chunks in [RowChunks::InOrder, RowChunks::Swizzled, RowChunks::Padded] {
+        for transposed in [false, true] {
+            check(Case {
+                chunks,
+                transposed,
+                input: ElemType::Float(cubecl::ir::FloatKind::BF16),
+                leaf: Leaf::MmaLoadMatrix,
+                ..Case::DEFAULT
+            });
+        }
     }
 }

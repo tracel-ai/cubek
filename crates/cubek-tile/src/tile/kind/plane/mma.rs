@@ -7,6 +7,7 @@ use cubecl::{
     prelude::*,
 };
 
+use super::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
 use crate::*;
 
 // Per-role fragment register widths, bound at allocation via `scope.register_size` to match
@@ -230,19 +231,28 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] io: MmaIo,
     #[comptime] edges: (usize, usize),
 ) {
-    // Fall back to manual loading for gathered operands, and for lines wider than the 16 bytes
-    // one `ldmatrix` row reads: a row would start inside a line, which has no address of its own.
+    // `ldmatrix` reads 16-byte rows of 16-bit cells out of shared memory, for an operand: it
+    // serves a window only where every one of those holds, and the manual load serves the rest.
+    // A gathered window has no row a lane could address, a line wider than a row starts one
+    // inside it, and a global window, a 4-byte cell or the accumulator is not what the instruction
+    // reads at all.
     let gathered = src.gathered();
+    let shared = src.is_shared();
     let served = src.vector_size();
     // An element's size read at expansion, where the launch has registered it: inside
     // `comptime!` the call would size the generic placeholder instead.
     let elem_size = T::size().comptime();
-    let row_cells = comptime!(16 / elem_size);
-    let wide_lines = comptime!(!row_cells.is_multiple_of(served));
-    let method = comptime!(if gathered || wide_lines {
-        LoadMethod::Manual
-    } else {
-        io.load_method(ident)
+    let row_cells = comptime!(LDMATRIX_ROW_BYTES / elem_size);
+    let ldmatrix_serves = comptime!(
+        shared
+            && !gathered
+            && elem_size == 2
+            && ident != MatrixIdent::Accumulator
+            && row_cells.is_multiple_of(served)
+    );
+    let method = comptime!(match ldmatrix_serves {
+        true => io.load_method(ident),
+        false => LoadMethod::Manual,
     });
     match method {
         LoadMethod::Manual => {
@@ -253,74 +263,6 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
             let size!(W) = src.vector_size();
             load_ldmatrix::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
         }
-    }
-}
-
-/// `ldmatrix` load: each lane hands the instruction the address of one 16-byte row of one of the
-/// fragment's 8×8 matrices, and the instruction deals every lane its cells. Lane `l` addresses
-/// row `l % 8` of matrix `l / 8`, and the matrices lie where the fragment's registers do
-/// ([`MmaDefinition::position_of_nth`] of lane 0), so the rows a lane addresses are the rows the
-/// manual load would read its cells from, taken 16 bytes at a time.
-///
-/// The address is the window's own placement of that row ([`Masked::line_slice`]): a padded or a
-/// swizzled stage is read where its fill wrote it, which a base and a row stride could not say of
-/// a swizzled one. The instruction transposes where the window's order is not the one the
-/// fragment's register vectors run along: a col weight bound as `{n, k}` beside a `B` whose
-/// vectors run along `k` needs none.
-#[cube]
-fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
-    src: &Tile<T>,
-    fragment: &mut Array<Vector<T, N>>,
-    def: &MmaDefinition<A, B, CD>,
-    #[comptime] ident: MatrixIdent,
-    #[comptime] layout: MatrixLayout,
-    #[comptime] edges: (usize, usize),
-) {
-    let served = src.vector_size();
-    let width = comptime!(served);
-    // Lines that tile a 16-byte row: [`load_fragment`] reads wider ones manually.
-    let elem_size = T::size().comptime();
-    let row_cells = comptime!(16 / elem_size);
-    let (rows, cols) = comptime!(edges);
-    let transposed = comptime!(match layout {
-        MatrixLayout::RowMajor => false,
-        MatrixLayout::ColMajor => true,
-        MatrixLayout::Undefined => {
-            panic!("MmaData::load: an ldmatrix load reads a row- or col-major window")
-        }
-    });
-    let view = if comptime!(transposed) {
-        src.fragment_matrix_packed::<W>(cols, rows)
-    } else {
-        src.fragment_matrix_packed::<W>(rows, cols)
-    };
-
-    let num_regs = def.vectors_per_lane(ident);
-    let vector_size = def.vector_size(ident);
-    let vector_layout = def.vector_layout(ident);
-    let trans = comptime!(vector_layout != layout);
-    // Lanes are dealt out eight to a matrix, wrapping where the fragment holds fewer than four.
-    let lane = UNIT_POS_PLANE;
-    let sub_lane = lane % 8;
-    let nth_matrix = lane / 8 % comptime!(num_regs as u32);
-    let (row, col) = def.position_of_nth(0, nth_matrix * comptime!(vector_size as u32), ident);
-    // The lane's row runs along the window's lines, and the next lane's starts a line-row on.
-    let (line_row, cell) = if comptime!(transposed) {
-        (col + sub_lane, row)
-    } else {
-        (row + sub_lane, col)
-    };
-    let row_slice = view.line_slice(
-        (line_row, cell / comptime!(width as u32)),
-        (
-            1u32.runtime(),
-            comptime!((row_cells / width) as u32).runtime(),
-        ),
-    );
-    let regs = def.load_matrix::<Vector<T, W>, N>(row_slice, ident, num_regs, trans);
-    #[unroll]
-    for i in 0..num_regs {
-        fragment[i] = regs[i];
     }
 }
 
