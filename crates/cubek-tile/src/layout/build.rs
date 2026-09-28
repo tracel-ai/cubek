@@ -29,7 +29,9 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Composition, PhysicalAxisMap, Projection, Space};
+#[cfg(test)]
+use crate::Composition;
+use crate::{Axis, PhysicalAxisMap, Projection, Space};
 
 /// A [`Projection`] under construction: the dims stated so far, and any axis the operand is
 /// defined over but addresses with no dim.
@@ -48,7 +50,7 @@ impl DimsBuilder {
         }
     }
 
-    /// The next buffer dim, coarsest first: an [`Axis`], a [`split`], or a [`stencil`].
+    /// The next buffer dim, coarsest first: an [`Axis`] or a [`split`].
     pub fn dim(mut self, dim: impl Into<PhysicalAxisMap>) -> Self {
         self.physical.push(dim.into());
         self
@@ -119,7 +121,7 @@ impl From<Axis> for PhysicalAxisMap {
 ///
 /// The coefficients are derived, each axis stepping by the product of the extents finer than it,
 /// so the caller states sizes it knows and never a stride-within-a-dim, and no two positions can
-/// share a cell: [`Composition::Disjoint`] by construction, keeping every window dense.
+/// share a cell: [`Composition::Disjoint`](crate::layout::Composition::Disjoint) by construction, keeping every window dense.
 ///
 /// # Panics
 ///
@@ -146,7 +148,11 @@ pub fn split(extents: &[(Axis, usize)]) -> PhysicalAxisMap {
 ///
 /// Consecutive windows may overlap — that is what a receptive field is — so this is
 /// [`Composition::Overlapping`], and the aliasing checks leave it alone.
-pub fn stencil(coefficients: &[(Axis, usize)]) -> StencilDim {
+///
+/// Test-only: no launch states a stencil yet; the projection's overlapping reading is checked
+/// through it.
+#[cfg(test)]
+pub(crate) fn stencil(coefficients: &[(Axis, usize)]) -> StencilDim {
     StencilDim {
         coefficients: SmallVec::from_slice(coefficients),
         pad: 0,
@@ -155,21 +161,24 @@ pub fn stencil(coefficients: &[(Axis, usize)]) -> StencilDim {
 
 /// A [`stencil`] before its padding is stated. Converts into the dim's map directly, at zero
 /// padding, or after [`pad`](Self::pad).
+#[cfg(test)]
 #[derive(Clone, Debug)]
-pub struct StencilDim {
+pub(crate) struct StencilDim {
     coefficients: SmallVec<[(Axis, usize); Space::MAX_RANK]>,
     pad: usize,
 }
 
+#[cfg(test)]
 impl StencilDim {
     /// How many cells before the buffer's first this window's origin sits: the padding, which
     /// a boundary guard reads as zero.
-    pub fn pad(mut self, pad: usize) -> Self {
+    pub(crate) fn pad(mut self, pad: usize) -> Self {
         self.pad = pad;
         self
     }
 }
 
+#[cfg(test)]
 impl From<StencilDim> for PhysicalAxisMap {
     fn from(window: StencilDim) -> Self {
         let map = PhysicalAxisMap::affine_with_offset(&window.coefficients, -(window.pad as isize));

@@ -11,7 +11,7 @@ impl<EA: Float> Tile<EA> {
     /// `self = self * scale`, masked entries driven to `min_value` (below the
     /// masked-logit threshold), per owned row. A row is read and written a
     /// line at a time, the tile's vector width of adjacent columns.
-    pub fn scale_and_mask(
+    pub(crate) fn scale_and_mask(
         &mut self,
         scale: EA,
         probe: &MaskProbe,
@@ -47,7 +47,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Per owned row max into `acc`, seeded from the running max `state.m`.
-    pub fn row_max(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
+    pub(crate) fn row_max(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -75,7 +75,7 @@ impl<EA: Float> Tile<EA> {
 
     /// `self = exp(self - rowwise)` per owned row, with the fully-masked
     /// guard: a row whose max is below the threshold goes entirely to zero.
-    pub fn exp_diff(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
+    pub(crate) fn exp_diff(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -106,7 +106,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Per owned row sum into `acc`.
-    pub fn row_sum(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
+    pub(crate) fn row_sum(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
