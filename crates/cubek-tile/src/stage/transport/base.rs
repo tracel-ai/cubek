@@ -29,6 +29,9 @@ pub(crate) struct StoreForm {
     pub(crate) gathered: bool,
     /// Whether a read past the logical bound masks to zero.
     pub(crate) masks: bool,
+    /// Whether the store has an address: a buffer, rather than an erased call that only stores
+    /// or loads through its layout.
+    pub(crate) addressed: bool,
 }
 
 /// Which transport moves a memory tile's cells into another memory tile's.
@@ -44,7 +47,8 @@ pub(crate) enum TransportKind {
     /// The packed words verbatim, and nothing beside them: the scales are an operand of their own.
     Packed,
     /// Every line in the destination's own physical order, the source decoded once per line. The
-    /// write is linear, which is why only a whole, unmasked destination that replaces takes it.
+    /// write is linear, which is why only a whole, unmasked destination that replaces takes it,
+    /// and only one with an address: a sink is written through its layout, so it scans.
     Straight,
     /// Source and destination each read as a flat run of its own window, which pairs them only
     /// where the two are the same box. What the source hands out per line names the read.
@@ -112,6 +116,7 @@ impl TransportKind {
             && !access.overhang.masks()
             && src.packing == Packing::Plain
             && access.write == Write::Replace
+            && dst.addressed
         {
             // A padded stage is served in lines its source cannot hand out whole, so each
             // destination line is assembled unit by unit out of scalar source cells.
@@ -148,6 +153,8 @@ impl<T: Numeric> Memory<T> {
             }
             ComptimeOption::None => {}
         }
+        let addressed = self.store.has_address();
+        let src_addressed = src.store.has_address();
         let transport = comptime!(TransportKind::new(
             StoreForm {
                 scheme: self.store.quant.is_some(),
@@ -155,6 +162,7 @@ impl<T: Numeric> Memory<T> {
                 width: self.store.vector_size,
                 gathered: !self.projection.is_direct(),
                 masks: self.access.overhang.masks(),
+                addressed,
             },
             StoreForm {
                 scheme: src.store.quant.is_some(),
@@ -162,6 +170,7 @@ impl<T: Numeric> Memory<T> {
                 width: src.store.vector_size,
                 gathered: !src.projection.is_direct(),
                 masks: src.access.overhang.masks(),
+                addressed: src_addressed,
             },
             &self.access,
             &space
@@ -261,6 +270,7 @@ mod tests {
             width,
             gathered: false,
             masks: false,
+            addressed: true,
         }
     }
 
@@ -321,6 +331,20 @@ mod tests {
                 "{access:?}"
             );
         }
+    }
+
+    /// A whole destination with no address, a sink, is written through its layout: the straight
+    /// fill's linear write needs the buffer a call does not have.
+    #[test]
+    fn a_whole_sink_scans() {
+        let sink = StoreForm {
+            addressed: false,
+            ..plain(4)
+        };
+        assert_eq!(
+            kind(sink, plain(4), &access()),
+            TransportKind::Scanned(Scan::Element)
+        );
     }
 
     /// A stage carrying the scheme stages the words verbatim and the scales beside them, and the
