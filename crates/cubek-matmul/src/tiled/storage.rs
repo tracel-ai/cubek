@@ -1,7 +1,9 @@
 //! Storing a matrix in storage tiles, and laying it back out.
 //!
 //! A storage-tiled tensor is stored one tile at a time, `[.., R/tr, C/tc, tr, tc]`, the tile the
-//! innermost two dims; its binding says so through its `tiling`. The tile is a level of whatever
+//! innermost two dims; its binding says so through its `tiling`, and the order the tiles follow
+//! one another in through its strides, as the [`Layout`](cubek_tile::Layout) it was stored in
+//! states. The tile is a level of whatever
 //! routine reads it (cmma's stage), so a weight tiled to the plan's stage moves as one
 //! contiguous run per stage. Tiling is a relayout on the tile DSL: a space over the matrix with
 //! exactly one level, the storage tile, one cube per tile. Whichever side is storage-tiled is
@@ -12,13 +14,16 @@ use cubecl::{
     ir::ElemType,
     prelude::*,
     std::tensor::{TensorHandle, layout::CoordsDyn},
-    zspace::{Shape, Tiling},
+    zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
-use cubek_tile::{Axis, Geometry, Grid, Launcher, Level, Levels, Partitioning, Space, TileArg};
+use cubek_tile::{
+    Axis, Geometry, Grid, GridLayout, Launcher, Level, Levels, Partitioning, Space, StorageTiling,
+    TileArg,
+};
 
 use crate::{
     definition::MatmulSetupError,
-    tiled::{M, N, batch_axis, logical_dims, storage_tile},
+    tiled::{batch_axis, logical_dims, storage_tile},
 };
 
 /// The storage tile `(rows, cols)` a matrix is stored in: what its innermost two physical
@@ -66,49 +71,62 @@ fn relayout<E: Numeric, V: Size>(
     }
 }
 
-/// Store a plain matrix (leading batch dims, trailing `rows x cols`) in `tile` storage tiles.
-/// The result's metadata states the tiling, so its binding says how it is stored and any
-/// routine folds its logical shape back.
+/// The stored matrix's rows, one of the two axes a storage [`Layout`] over it names.
+pub const ROWS: Axis = Axis(0);
+/// The stored matrix's columns, the other.
+pub const COLS: Axis = Axis(1);
+
+/// Store a plain matrix (leading batch dims, trailing `rows x cols`) as `layout` states: one
+/// storage level over [`ROWS`] and [`COLS`], and the order of the grid of tiles. The result's
+/// metadata states the tiling, so its binding says how it is stored and any routine folds its
+/// logical shape back; the grid's order is in its strides.
 ///
 /// # Errors
 ///
-/// A source that is already storage-tiled (untile it first), or a shape `tile` does not divide:
-/// a routine reading storage tiles reads whole ones, and a padded buffer would change the
-/// logical shape.
+/// A source that is already storage-tiled (untile it first), a shape the tile does not divide (a
+/// routine reading storage tiles reads whole ones, and a padded buffer would change the logical
+/// shape), or a layout of more than one storage level, which the relayout does not write.
 #[allow(clippy::result_large_err)]
 pub fn tile(
     client: &Client,
     src: TensorBinding,
     dtype: ElemType,
-    tile: StorageTile,
+    layout: GridLayout,
 ) -> Result<TensorHandle, MatmulSetupError> {
+    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("tile: {why}")));
     if src.tiling.is_tiled() {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "tile: the source is already storage-tiled; untile it first".to_string(),
-        )));
+        return Err(refused(
+            "the source is already storage-tiled; untile it first".to_string(),
+        ));
     }
     let (batches, rows, cols) = logical_dims(&src);
-    let (tr, tc) = tile;
-    if !rows.is_multiple_of(tr) || !cols.is_multiple_of(tc) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "tile: a {rows}x{cols} matrix is not whole {tr}x{tc} storage tiles; a routine reads \
-             whole tiles, so state a tile that divides it"
-        ))));
+    let layout = layout
+        .over(&[(ROWS, rows), (COLS, cols)])
+        .map_err(|misfit| refused(misfit.to_string()))?;
+    let (matrix, tiling) = layout.physical(&[ROWS, COLS]);
+    if tiling != StorageTiling::uniform(2, 1) {
+        return Err(refused(format!(
+            "{layout:?} is not one storage level over the rows and columns, which is what the \
+             relayout writes"
+        )));
     }
-    let physical: Vec<usize> = batches
-        .iter()
-        .copied()
-        .chain([rows / tr, cols / tc, tr, tc])
-        .collect();
-    // The tiling the result carries: its batch dims plain, both matrix dims one nesting deep.
+    let tile = (matrix.shape()[2], matrix.shape()[3]);
+    // Batch dims stay plain and coarsest, each a whole run of the matrices finer than it.
+    let mut shape: Vec<usize> = batches.clone();
+    let mut strides = vec![0; batches.len()];
+    let mut run = rows * cols;
+    for (b, &extent) in batches.iter().enumerate().rev() {
+        strides[b] = run;
+        run *= extent;
+    }
+    shape.extend_from_slice(matrix.shape());
+    strides.extend_from_slice(matrix.strides());
     let fragments: Vec<usize> = batches.iter().map(|_| 1).chain([2, 2]).collect();
-    let config = |e| MatmulSetupError::InvalidConfig(Box::new(format!("tile: {e:?}")));
+    let config = |e| refused(format!("{e:?}"));
     let tiling = Tiling::new(&fragments).map_err(config)?;
-    let mut dst = TensorHandle::empty(client, Shape::from(physical), dtype);
+    let mut dst = TensorHandle::empty(client, Shape::from(shape.clone()), dtype);
     dst.metadata = Box::new(
-        dst.metadata
-            .as_ref()
-            .clone()
+        Metadata::new(Shape::from(shape), Strides::from(strides))
             .with_tiling(tiling)
             .map_err(config)?,
     );
@@ -177,12 +195,12 @@ fn relayout_launch(
     let extents: Vec<(Axis, usize)> = batch
         .iter()
         .copied()
-        .chain([(M, rows), (N, cols)])
+        .chain([(ROWS, rows), (COLS, cols)])
         .collect();
     let space = Space::new(&extents);
     // One level, leaf up: the tile is the leaf and there is a cube for every one of them.
-    let level = Levels::leaf(&[(M, tr), (N, tc)])
-        .cubes(&[M, N])
+    let level = Levels::leaf(&[(ROWS, tr), (COLS, tc)])
+        .cubes(&[ROWS, COLS])
         .batches(&batch_axes)
         .build()
         .remove(0);
@@ -204,22 +222,22 @@ fn relayout_launch(
         )
     };
     let v = launch.vector_size(
-        N,
+        COLS,
         &[
-            (&Geometry::from(&src), &[M, N]),
-            (&Geometry::from(&dst), &[M, N]),
+            (&Geometry::from(&src), &[ROWS, COLS]),
+            (&Geometry::from(&dst), &[ROWS, COLS]),
         ],
         dtype.size(),
     );
     let s = launch
         .arg(src)
-        .axes(&[M, N])
+        .axes(&[ROWS, COLS])
         .batches(&all_batch_axes)
         .vectorize(v)
         .build();
     let d = launch
         .arg(dst)
-        .axes(&[M, N])
+        .axes(&[ROWS, COLS])
         .batches(&all_batch_axes)
         .vectorize(v)
         .build();

@@ -33,9 +33,10 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::{
         cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
-        storage::tile,
+        storage::{COLS, ROWS, tile},
     },
 };
+use cubek_tile::Layout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Precision {
@@ -91,9 +92,15 @@ impl Weight {
             Weight::RowMajor => Ok(rhs),
             Weight::Tiled => {
                 let (_, stage_n) = blueprint.stage();
-                tile(client, rhs, dtype, (blueprint.stage_k, stage_n))
-                    .map(TensorHandle::binding)
-                    .map_err(|e| format!("{e:?}"))
+                tile(
+                    client,
+                    rhs,
+                    dtype,
+                    Layout::storage(&[(COLS, stage_n), (ROWS, blueprint.stage_k)])
+                        .grid(&[COLS, ROWS]),
+                )
+                .map(TensorHandle::binding)
+                .map_err(|e| format!("{e:?}"))
             }
         }
     }

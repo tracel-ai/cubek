@@ -4,12 +4,20 @@
 use cubecl::{ir::ElemType, prelude::*, zspace::Shape};
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{tile, untile},
+    tiled::storage::{COLS, ROWS, tile, untile},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
+use cubek_tile::{Axis, Layout};
 
-/// Tile, check every cell sits in its tile, untile, check every cell is back.
-fn round_trip(batches: &[usize], rows: usize, cols: usize, (tr, tc): (usize, usize)) {
+/// Tile, check every cell sits in its tile, untile, check every cell is back. `grid` orders the
+/// tiles, finest first.
+fn round_trip(
+    batches: &[usize],
+    rows: usize,
+    cols: usize,
+    (tr, tc): (usize, usize),
+    grid: &[Axis],
+) {
     let client = client();
     let dtype: ElemType = f32::elem_type_native();
     let shape: Vec<usize> = batches.iter().copied().chain([rows, cols]).collect();
@@ -20,7 +28,8 @@ fn round_trip(batches: &[usize], rows: usize, cols: usize, (tr, tc): (usize, usi
         .custom(data.clone())
         .generate_with_f32_host_data();
 
-    let tiled = tile(&client, src.binding(), dtype, (tr, tc)).unwrap();
+    let layout = Layout::storage(&[(COLS, tc), (ROWS, tr)]).grid(grid);
+    let tiled = tile(&client, src.binding(), dtype, layout).unwrap();
     let physical: Vec<usize> = batches
         .iter()
         .copied()
@@ -80,22 +89,39 @@ fn round_trip(batches: &[usize], rows: usize, cols: usize, (tr, tc): (usize, usi
 
 #[test]
 fn tiling_stores_one_tile_at_a_time() {
-    round_trip(&[], 64, 96, (16, 32));
+    round_trip(&[], 64, 96, (16, 32), &[COLS, ROWS]);
+}
+
+/// A grid ordered rows first puts the next tile down the rows right after this one: the dims are
+/// the same, the grid's strides are swapped, and the round trip still holds.
+#[test]
+fn tiling_orders_the_grid_as_the_layout_states() {
+    round_trip(&[], 64, 96, (16, 32), &[ROWS, COLS]);
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let (src, _) = TestInput::builder(client.clone(), Shape::from(vec![64, 96]))
+        .dtype(dtype)
+        .custom((0..64 * 96).map(|i| i as f32).collect())
+        .generate_with_f32_host_data();
+    let layout = Layout::storage(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
+    let tiled = tile(&client, src.binding(), dtype, layout).unwrap();
+    // [64/16, 96/32, 16, 32]: a tile is 512 values, the next down the rows 512 on, across 2048.
+    assert_eq!(tiled.metadata.strides().to_vec(), vec![512, 2048, 32, 1]);
 }
 
 #[test]
 fn tiling_takes_a_narrow_column_run() {
-    round_trip(&[], 128, 64, (32, 8));
+    round_trip(&[], 128, 64, (32, 8), &[COLS, ROWS]);
 }
 
 #[test]
 fn tiling_keeps_batches_plain() {
-    round_trip(&[3], 32, 64, (16, 16));
+    round_trip(&[3], 32, 64, (16, 16), &[COLS, ROWS]);
 }
 
 #[test]
 fn tiling_keeps_two_batch_dims_plain() {
-    round_trip(&[2, 3], 32, 32, (8, 16));
+    round_trip(&[2, 3], 32, 32, (8, 16), &[COLS, ROWS]);
 }
 
 #[test]
@@ -107,7 +133,12 @@ fn tiling_refuses_a_tile_that_does_not_divide() {
         .custom((0..48 * 64).map(|i| i as f32).collect())
         .generate_with_f32_host_data();
     assert!(matches!(
-        tile(&client, src.binding(), dtype, (32, 32)),
+        tile(
+            &client,
+            src.binding(),
+            dtype,
+            Layout::storage(&[(COLS, 32), (ROWS, 32)]).grid(&[COLS, ROWS])
+        ),
         Err(MatmulSetupError::InvalidConfig(_))
     ));
 }
@@ -124,9 +155,20 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
         untile(&client, src.clone().binding(), dtype),
         Err(MatmulSetupError::InvalidConfig(_))
     ));
-    let tiled = tile(&client, src.binding(), dtype, (16, 16)).unwrap();
+    let tiled = tile(
+        &client,
+        src.binding(),
+        dtype,
+        Layout::storage(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS]),
+    )
+    .unwrap();
     assert!(matches!(
-        tile(&client, tiled.binding(), dtype, (16, 16)),
+        tile(
+            &client,
+            tiled.binding(),
+            dtype,
+            Layout::storage(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS])
+        ),
         Err(MatmulSetupError::InvalidConfig(_))
     ));
 }

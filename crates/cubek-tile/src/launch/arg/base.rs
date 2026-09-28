@@ -9,7 +9,7 @@ use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal, StorageLevel};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, Packing, Projection, QuantTileArgLaunch,
+    Axis, Boundary, Field, Geometry, Launcher, Layout, Packing, Projection, QuantTileArgLaunch,
     Quantization, Storage, StorageTiling, TileArgLaunch, TileSpec,
 };
 
@@ -232,8 +232,8 @@ impl<'a> Arg<'a, Labelled> {
         // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
         // destination the negotiation never saw) is gated here: `stride / width` truncates
         // silently.
-        geometry
-            .serves_lines(width)
+        Layout::of(&geometry, &projection.dense_labels())
+            .cut(width)
             .map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();
         let boundaries = Boundaries::new(

@@ -17,8 +17,10 @@ use std::path::{Path, PathBuf};
 /// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
 /// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
 /// memory counts it. The attention walk moving to its client and the resampling filters to
-/// cubek-interpolate took it down to 746.
-const PUB_ITEMS: usize = 746;
+/// cubek-interpolate took it down to 746. `Layout` raised it by ten: the type, its two builder
+/// stages (`storage` then `grid`, then `over` the extents), `physical`, and the misfit a stated
+/// layout is refused with, since a caller writing a storage-tiled buffer states how it is laid out.
+const PUB_ITEMS: usize = 756;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;

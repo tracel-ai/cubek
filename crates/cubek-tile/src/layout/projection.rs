@@ -269,6 +269,23 @@ impl Projection {
                 .all(|(map, &axis)| map.is_identity(axis))
     }
 
+    /// The logical axis each trailing physical axis carries, up to the innermost one that carries
+    /// none: the labels a [`Layout`](crate::Layout) reads the buffer's dense part under, right-
+    /// aligned to its dims.
+    pub(crate) fn dense_labels(&self) -> Vec<Axis> {
+        let mut labels: Vec<Axis> = self
+            .physical
+            .iter()
+            .rev()
+            .map_while(|map| match map.addressed() {
+                Addressed::By(axis) => Some(axis),
+                Addressed::Broadcast => None,
+            })
+            .collect();
+        labels.reverse();
+        labels
+    }
+
     pub fn physical_rank(&self) -> usize {
         self.physical.len()
     }

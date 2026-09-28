@@ -6,7 +6,7 @@ use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
 
 use crate::{
-    Arg, Axis, Geometry, Partitioning, PartitioningLaunch, Space, SpaceLaunch, Unlabelled,
+    Arg, Axis, Geometry, Layout, Partitioning, PartitioningLaunch, Space, SpaceLaunch, Unlabelled,
 };
 
 /// How many cubes of how many units the launch runs: stated by a blueprint, or read off the
@@ -193,7 +193,7 @@ impl Launcher {
         }
         // The one gate that is about the tiles rather than the geometry: a masked access reports
         // its length in lines and would wrongly clip, so an overhanging operand is served scalar
-        // whatever its extents and strides would allow. `serves_lines` below answers the rest.
+        // whatever its extents and strides would allow. `Layout::cut` below answers the rest.
         let overhangs = self.overhangs();
         let masked = operands
             .iter()
@@ -206,10 +206,10 @@ impl Launcher {
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
                 leaf.is_multiple_of(v)
-                    // The same gates `Geometry::serves_lines` refuses a stated width on: the
-                    // innermost extent counts in lines and every coarser stride re-expresses
-                    // as `stride / v`, which truncates when `v` does not divide it.
-                    && operands.iter().all(|(g, _)| g.serves_lines(v).is_ok())
+                    // The same cut a stated width is refused on: the innermost extent counts in
+                    // lines and every coarser stride re-expresses as `stride / v`, which
+                    // truncates when `v` does not divide it.
+                    && operands.iter().all(|(g, axes)| Layout::of(g, axes).cut(v).is_ok())
             })
             .max()
             .unwrap_or(1)

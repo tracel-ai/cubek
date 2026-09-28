@@ -249,11 +249,12 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            storage::tile,
+            storage::{COLS, ROWS, tile},
         },
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+    use cubek_tile::Layout;
 
     use crate::harness::assert_result;
 
@@ -302,7 +303,8 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
             let stage_k = blueprint.stage_k;
 
             // The weight, tiled to the plan's stage.
-            let tiled = tile(c, rhs.clone().binding(), dtype, (stage_k, stage_n))?;
+            let layout = Layout::storage(&[(COLS, stage_n), (ROWS, stage_k)]).grid(&[COLS, ROWS]);
+            let tiled = tile(c, rhs.clone().binding(), dtype, layout)?;
 
             launch_ref(
                 c,
@@ -383,11 +385,12 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            storage::tile,
+            storage::{COLS, ROWS, tile},
         },
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+    use cubek_tile::Layout;
 
     use crate::harness::assert_result;
 
@@ -419,7 +422,9 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     .dtype(dtype)
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
-    let tiled = tile(&client, rhs.binding(), dtype, storage_tile).unwrap();
+    let (tile_k, tile_n) = storage_tile;
+    let layout = Layout::storage(&[(COLS, tile_n), (ROWS, tile_k)]).grid(&[COLS, ROWS]);
+    let tiled = tile(&client, rhs.binding(), dtype, layout).unwrap();
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());
