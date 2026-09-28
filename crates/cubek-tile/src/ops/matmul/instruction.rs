@@ -7,11 +7,12 @@ use crate::{MmaIo, RegisterBlock};
 /// manual form because it comes from a device query, which cannot run in-kernel.
 ///
 /// **A kernel states this once and hands it to both sides** rather than picking a constructor
-/// per form: [`Tile::accumulator`](crate::Tile::accumulator) opens what a plane sums into and
+/// per form: [`Tile::accumulator`](crate::Accumulate::accumulator) opens what a plane sums into and
 /// [`PlanePartition::operand`](crate::PlanePartition::operand) loads what it sums, form-agnostic.
 ///
 /// A kernel with a static form may instead call
-/// [`Tile::cmma_accumulator`](crate::Tile::cmma_accumulator) or a sibling, the form written out.
+/// [`Tile::cmma_accumulator`](crate::Accumulate::cmma_accumulator) or a sibling, the form written
+/// out.
 ///
 /// The point of the pair is a kernel whose form is *data* — elected by a derivation from what the
 /// device offers — which would otherwise match on it at every site that touches a fragment, and

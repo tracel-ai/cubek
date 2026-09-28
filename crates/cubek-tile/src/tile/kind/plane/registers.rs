@@ -22,7 +22,7 @@ define_size!(pub(crate) RA);
 ///
 /// Its lines are the rhs's. Lined along the accumulator, a line is `RA` neighbouring cells; lined
 /// along the contraction (a weight stored along `K`), it is `RA` partials of *one* cell
-/// ([`fold`](Self::fold)), collapsed on drain so that sum, too, stays in `T` across the walk.
+/// (`fold`), collapsed on drain so that sum, too, stays in `T` across the walk.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RegisterData<T: Numeric> {

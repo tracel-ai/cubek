@@ -119,11 +119,11 @@ pub struct Quantization {
     /// The innermost level's scales, the only ones addressed per position.
     pub scales: TensorArg,
     /// The global level's scale, one for the whole tensor, present exactly when the scheme has a
-    /// second level ([`validate`](Self::validate) holds the two together).
+    /// second level (`validate` holds the two together).
     pub global: Option<TensorBinding>,
     /// A lookup scheme's `2^bits`-entry table, present exactly under
     /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode);
-    /// [`validate`](Self::validate) holds the two together.
+    /// `validate` holds the two together.
     pub table: Option<BufferArg>,
     pub scheme: QuantScheme,
     pub dequant_at: DequantAt,
@@ -132,7 +132,7 @@ pub struct Quantization {
 impl Quantization {
     /// `inner` holds the innermost level's scales, addressed per position; `global` the whole
     /// tensor's, read once from its first element, present exactly when the scheme has a second
-    /// level ([`validate`](Self::validate) holds the two together).
+    /// level (`validate` holds the two together).
     pub fn new(
         inner: TensorBinding,
         global: Option<TensorBinding>,

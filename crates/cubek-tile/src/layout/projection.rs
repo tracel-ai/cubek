@@ -48,7 +48,7 @@ impl Projection {
     }
 
     /// The same operand in *coordinate* space: an axis's storage fragments merged back into the one
-    /// coordinate they are digits of, one entry per coordinate [`BufferLayout`](crate::BufferLayout)
+    /// coordinate they are digits of, one entry per coordinate `BufferLayout`
     /// consumes; the other half of [`positional`](Projection::positional). Untiled: its own map.
     pub fn untiled(&self) -> Projection {
         let carried = self.carried_groups();
@@ -68,7 +68,7 @@ impl Projection {
 
     /// The same buffer addressed by physical position, not this operand's axes: each physical axis
     /// relabeled with its synthetic [`Axis`] at coefficient `1`. Tiling survives, a gather does not
-    /// (resolved a layer up); the map [`BufferLayout`](crate::BufferLayout) splits coordinates through.
+    /// (resolved a layer up); the map `BufferLayout` splits coordinates through.
     pub fn positional(&self) -> Projection {
         let carried = self.carried_groups();
         let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
@@ -349,7 +349,7 @@ impl Projection {
     /// where every physical axis is partitioned by the axes addressing it, so a position
     /// determines a cell and no two share one; [`Overlapping`] where any axis may not.
     ///
-    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one, one
+    /// The question every dense path asks. `is_direct` is the narrower one, one
     /// axis per physical axis in order, and a [`Disjoint`] projection of higher logical rank
     /// answers the same for the same reason: nothing aliases, every window is a box.
     ///
@@ -810,8 +810,9 @@ mod tests {
     }
 
     /// A spec built from a realized tiled layout is honest about its buffer: its physical rank *is*
-    /// the rank a memory tile reads shape and strides over, its positional relabeling the layout's own
-    /// synthetic map; the declared twin (`TileSpec::new` plus tiled `Storage`) describes the same.
+    /// the rank a memory tile reads shape and strides over, its positional relabeling the layout's
+    /// own synthetic map; the declared twin (`TileSpec::new` plus tiled `Storage`) describes the
+    /// same.
     #[test]
     fn a_tiled_spec_matches_its_buffer() {
         use crate::TileSpec;

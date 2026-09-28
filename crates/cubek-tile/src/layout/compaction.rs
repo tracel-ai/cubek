@@ -126,7 +126,7 @@ impl Compaction {
     }
 
     /// The step per physical axis: what a stage coordinate is multiplied by to land on the source
-    /// coordinate it was filled from. All `1` exactly when [`is_dense`](Compaction::is_dense).
+    /// coordinate it was filled from. All `1` exactly when `is_dense`.
     pub fn steps(&self) -> &[usize] {
         &self.steps
     }

@@ -277,7 +277,7 @@ pub struct PlanePartition<T: Numeric> {
     /// [`with_scratch`](Tile::with_scratch); a partition without one contracts and drains only.
     pub scratch: ComptimeOption<Shared<[T]>>,
     /// How much of this grid the scratch holds, which is what tells a drain whether it may hoist
-    /// its barriers out of the per-tile loop ([`DrainPlan`](crate::DrainPlan)).
+    /// its barriers out of the per-tile loop (`DrainPlan`).
     #[cube(comptime)]
     pub held: Scratch,
 }
@@ -731,8 +731,8 @@ impl MatrixGrid {
     }
 
     /// Whether the level cuts the partition into more than one fragment, so each region must be
-    /// selected by a comptime coordinate. A distributed level and a degenerate 1×1 partition (a k-step
-    /// walk) both cut nothing.
+    /// selected by a comptime coordinate. A distributed level and a degenerate 1×1 partition (a
+    /// k-step walk) both cut nothing.
     pub(crate) fn cuts(&self) -> bool {
         (self.rows, self.cols) != (1, 1)
     }

@@ -27,7 +27,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         .tile(comptime!(space.levels().to_vec()))
     }
 
-    /// [`tile`](Self::tile) with the element stated instead of inferred: `E` is what the binding
+    /// [`tile`](TileArg::tile) with the element stated instead of inferred: `E` is what the binding
     /// *stores* and `O` what the tile reads out of it, unpacked where the binding states a
     /// [`packing`](TileSpec::packed); a packed element is the word, so `O` cannot be read off it.
     ///
@@ -43,9 +43,10 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         .tile(comptime!(space.levels().to_vec()))
     }
 
-    /// [`tile`](Self::tile) for a partly runtime gather map: `coefficients` holds one value per
+    /// [`tile`](TileArg::tile) for a partly runtime gather map: `coefficients` holds one value per
     /// [`Scale::Dynamic`](crate::Scale) term and [`Divisor::Dynamic`](crate::Divisor) axis, and
-    /// `offsets` one per [`Offset::Dynamic`](crate::Offset), in [`GlobalOperand::gathered`]'s order.
+    /// `offsets` one per [`Offset::Dynamic`](crate::Offset), in [`GlobalOperand::gathered`]'s
+    /// order.
     pub fn tile_gathered(
         &self,
         #[comptime] space: Partitioning,

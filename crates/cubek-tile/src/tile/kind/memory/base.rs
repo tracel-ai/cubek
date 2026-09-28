@@ -9,7 +9,7 @@ use cubecl::{
 
 use crate::*;
 
-/// A lifetime-erased buffer, how to address it ([`layout`](BufferLayout)), and which part of it this
+/// A lifetime-erased buffer, how to address it (`layout`), and which part of it this
 /// tile is looking at ([`window`](Window)). The layout is fixed at construction, so a staged smem
 /// sub-tile keeps addressing its whole buffer after [`at`](Tile::at) windows it down.
 #[derive(CubeType, Clone)]

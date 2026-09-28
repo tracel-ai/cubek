@@ -7,17 +7,18 @@
 //! touches; the rest pass down whole. [`Level::every`], a walk over a region, is the one level
 //! built directly.
 //!
-//! A level states; it does not answer for its consumers. What the plane's units are to an
-//! operand's cells is [`UnitShare::new`](crate::UnitShare), what one instance holds of them
-//! [`SplitShare::new`](crate::SplitShare), how a walk distributes an axis `AxisDistribution::new`: each asker
-//! reads the statement and derives its own answer.
+//! A level states; it does not answer for its consumers. What the plane's units are to an operand's
+//! cells is [`UnitShare::new`](crate::UnitShare), what one instance holds of them
+//! [`SplitShare::new`](crate::SplitShare), how a walk distributes an axis `AxisDistribution::new`:
+//! each asker reads the statement and derives its own answer.
 
 use super::CubeOrder;
 use crate::{Axis, AxisMap, Extent, Space};
 
 /// One decomposition level of a space: who takes its tiles, the axes it names (each cut to a tile,
 /// a count and a spread), and the cube level's statements (its batch axes, whether its grid is
-/// shared as one index, the order it is distributed in). An axis it does not name is handed down whole.
+/// shared as one index, the order it is distributed in). An axis it does not name is handed down
+/// whole.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
     coverage: Coverage,
@@ -30,9 +31,9 @@ pub struct Level {
     /// Planes that fill this walk's stages and take no tile of any level
     /// ([`filling`](Level::filling)).
     fillers: usize,
-    /// The order a cube level distributes its boxes to the grid ([`distributed_in`](Level::distributed_in)).
-    /// [`RowMajor`](CubeOrder::RowMajor) everywhere else, which is what every level that
-    /// states nothing gets.
+    /// The order a cube level distributes its boxes to the grid
+    /// ([`distributed_in`](Level::distributed_in)). [`RowMajor`](CubeOrder::RowMajor) everywhere
+    /// else, which is what every level that states nothing gets.
     order: CubeOrder,
 }
 
@@ -53,8 +54,8 @@ pub enum Count {
     /// Every tile the level above hands down, one per step or per worker: the count only the
     /// launch knows, and the one place a tile can reach past the extent.
     All,
-    /// Every tile, distributed across this many workers in runs: a closed axis returning to the cube
-    /// level to be split, and the one run whose length the kernel computes.
+    /// Every tile, distributed across this many workers in runs: a closed axis returning to the
+    /// cube level to be split, and the one run whose length the kernel computes.
     AllAcross(usize),
     /// This many tiles, stated, taken in turns by the plane's units, however many the launch
     /// runs: a unit count the kernel reads rather than one it is compiled against, so the plane
@@ -100,8 +101,8 @@ impl Coverage {
     }
 }
 
-/// How a distributed axis's tiles are handed to a scope's instances. Disjoint either way, differing only in
-/// locality.
+/// How a distributed axis's tiles are handed to a scope's instances. Disjoint either way, differing
+/// only in locality.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Spread {
     /// Instance `i` owns a contiguous run (cube 0 → `{0,1}`, cube 1 → `{2,3}`).
@@ -170,9 +171,9 @@ impl Level {
         Level::new(Coverage::Walk, &cuts)
     }
 
-    /// A level covered as `coverage` says over `cuts`, each `(axis, tile, count, spread)`. The builder's
-    /// constructor: [`Levels`](crate::Levels) is the only other caller, and it states the tile
-    /// as the product of the levels below.
+    /// A level covered as `coverage` says over `cuts`, each `(axis, tile, count, spread)`. The
+    /// builder's constructor: [`Levels`](crate::Levels) is the only other caller, and it states the
+    /// tile as the product of the levels below.
     ///
     /// What each taker can state: a walk steps a stated count or every tile; units and planes
     /// take a stated count each, since their number is the device's; cubes take every tile, or
@@ -379,9 +380,9 @@ impl Level {
         self.cuts.get(axis)
     }
 
-    /// Whether this level distributes `axis`'s tiles over its scope one by one: it names the axis, it
-    /// is distributed rather than walked, and its grid is not shared as one index. A walk distributes nothing; a
-    /// shared level distributes its whole index rather than any one axis.
+    /// Whether this level distributes `axis`'s tiles over its scope one by one: it names the axis,
+    /// it is distributed rather than walked, and its grid is not shared as one index. A walk
+    /// distributes nothing; a shared level distributes its whole index rather than any one axis.
     pub fn distributes(&self, axis: Axis) -> bool {
         self.coverage != Coverage::Walk && self.shared_by.is_none() && self.cuts.contains(axis)
     }
@@ -405,13 +406,13 @@ impl Level {
         Some(dims[position])
     }
 
-    /// The workers taking this level's grid as one flat index ([`sharing`](Level::sharing)),
+    /// The workers taking this level's grid as one flat index (`sharing`),
     /// `None` where each takes a box of it.
     pub fn shared_by(&self) -> Option<usize> {
         self.shared_by
     }
 
-    /// Planes that fill this level's stages and do nothing else ([`filling`](Level::filling)).
+    /// Planes that fill this level's stages and do nothing else (`filling`).
     pub fn fillers(&self) -> usize {
         self.fillers
     }
@@ -479,10 +480,10 @@ impl Level {
         }
     }
 
-    /// How many workers `axis` is distributed out to at this level, where comptime: the stated count, or
-    /// the tiles an every-level takes over a static extent. `None` where the grid is unknown here:
-    /// a [`Dynamic`](Extent::Dynamic) extent, `space` a projection dropping the axis (a drain), or
-    /// an axis [`Distributed`](Count::Distributed) to as many units as the launch runs.
+    /// How many workers `axis` is distributed out to at this level, where comptime: the stated
+    /// count, or the tiles an every-level takes over a static extent. `None` where the grid is
+    /// unknown here: a `Dynamic` extent, `space` a projection dropping the axis (a drain), or an
+    /// axis [`Distributed`](Count::Distributed) to as many units as the launch runs.
     pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),

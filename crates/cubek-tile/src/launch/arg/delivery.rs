@@ -75,7 +75,7 @@ impl Delivery {
 ///
 /// A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled, TMA or accumulating
 /// unchanged; the launch entry picks the family. One family covers both operands, since
-/// [`Rendezvous::for_deliveries`](crate::Rendezvous::for_deliveries) rejects a mixed pair anyway.
+/// `Rendezvous::for_deliveries` rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.
@@ -101,8 +101,9 @@ pub trait DeliveryLaunch: DeliveryFamily {
 }
 
 /// [`Delivery::Copy`]'s family: a tensor + spec ([`TileArg`]), the cube's units moving it, tiled
-/// in-kernel by [`GlobalOperand::tile`](crate::GlobalOperand::tile). Serves plain and storage-tiled operands alike: the spec's [`Storage`]
-/// says which; a storage tile only makes each stage one contiguous run instead of a row at a time.
+/// in-kernel by [`GlobalOperand::tile`](crate::GlobalOperand::tile). Serves plain and storage-tiled
+/// operands alike: the spec's [`Storage`] says which; a storage tile only makes each stage one
+/// contiguous run instead of a row at a time.
 pub struct Cooperative;
 
 /// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.

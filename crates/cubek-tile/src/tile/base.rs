@@ -324,9 +324,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile can state `axis`'s runtime size: it spans it [`Dynamic`](crate::Extent),
-    /// has a buffer to read a bound off, and the bound is the axis's own extent ([`bound_states`]).
-    /// An operation sizes a `Dynamic` axis from any operand witnessing it ([`witnessed_space`]).
+    /// Whether this tile can state `axis`'s runtime size: it spans it `Dynamic`,
+    /// has a buffer to read a bound off, and the bound is the axis's own extent (`bound_states`).
+    /// An operation sizes a `Dynamic` axis from any operand witnessing it (`witnessed_space`).
     pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
         let bounded = self.bounded();
         let projection = self.projection();
@@ -575,7 +575,7 @@ impl<T: Numeric> Tile<T> {
     ///
     /// A scale covering everything the accumulator sums belongs here rather than on the terms: one
     /// multiply per cell instead of one per value read. A scale that does *not* cover everything
-    /// summed cannot come here at all and rides its factor instead ([`Tile::scaled`]).
+    /// summed cannot come here at all and rides its factor instead (`Tile::scaled`).
     pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
         #[comptime]
         match factor {
@@ -630,7 +630,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's own width): index `i`
-    /// reads line `origin + i`, one add and no layout walk. See [`Memory::dense_lines`] for the
+    /// reads line `origin + i`, one add and no layout walk. See `Memory::dense_lines` for the
     /// caller-owned contiguity contract; the streaming fold's operands satisfy it by construction.
     pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
         self.mem("dense").dense_lines::<W>()
@@ -707,7 +707,7 @@ impl<T: Numeric> Tile<T> {
     /// accumulating in a narrower element drains through, register to register, without
     /// touching memory.
     ///
-    /// The resident counterpart of [`copy_cast_from`](Self::copy_cast_from), which drains a block
+    /// The resident counterpart of [`copy_cast_from`](Tile::copy_cast_from), which drains a block
     /// *out* to its sink. It lets a leaf contract in the operands' own element while the sum across
     /// leaf calls stays wide, bounding the error by the leaf's own depth.
     ///
@@ -716,7 +716,7 @@ impl<T: Numeric> Tile<T> {
     /// it end to end stops advancing part way through.
     ///
     /// Both sides are register blocks over one sink, so the add is line for line
-    /// ([`RegisterData::add_cast_from`]). A partition promotes cell by cell.
+    /// (`RegisterData::add_cast_from`). A partition promotes cell by cell.
     pub fn add_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         match (&mut self.kind, &src.kind) {
             (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => d.add_cast_from(s),
@@ -733,13 +733,13 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`copy_from`](Self::copy_from) with a cast: a resident fragment `src`, wider than this
+    /// [`copy_from`](Tile::copy_from) with a cast: a resident fragment `src`, wider than this
     /// memory window, stored down to `T`. How an accumulator's cells reach an output of the
     /// output's own type, one fragment per call, from the loop the kernel writes over its cells.
     ///
     /// Into a destination that folds ([`Write::Accumulate`]) or a window the problem's edge cuts
     /// short, a cmma fragment drains through the scratch its accumulator was opened with, cell by
-    /// cell, since its intrinsic's store can neither add nor mask. [`copy_from`](Self::copy_from)
+    /// cell, since its intrinsic's store can neither add nor mask. [`copy_from`](Tile::copy_from)
     /// drains the same way.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
@@ -753,7 +753,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Spill this plane-resident tile into its slot of the plane's scratch, the first half of a
-    /// bounce. [`drained_into`](Self::drained_into) owns the barriers around it.
+    /// bounce. [`drained_into`](Tile::drained_into) owns the barriers around it.
     pub fn spill_to_scratch(&self) {
         match &self.kind {
             TileKind::PlaneTile(t) => t.spill_to_scratch(),

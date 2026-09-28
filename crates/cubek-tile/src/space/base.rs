@@ -10,7 +10,7 @@ use crate::{Axis, Extent, Level, Shape};
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
 ///
-/// The [`Shape`] is comptime, so static tile counts fold and the walk unrolls; the `sizes` are
+/// The `Shape` is comptime, so static tile counts fold and the walk unrolls; the `sizes` are
 /// the runtime half, one per axis (positional) where any axis is dynamic and empty otherwise.
 /// Only the top operation space carries sizes; a level's child is `Static`.
 #[derive(CubeType, CubeLaunch, Clone, Debug)]
@@ -117,7 +117,7 @@ impl Space {
         self.shape.extent_raw(axis)
     }
 
-    /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf
+    /// The axis's comptime size; panics on a `Dynamic` axis. The leaf
     /// and smem consumers all run on fully-divided (`Static`) spaces, so this is what they
     /// call.
     pub fn extent(&self, axis: Axis) -> usize {
@@ -194,7 +194,7 @@ impl Space {
         }
     }
 
-    /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), The
+    /// Flip the listed axes to `Dynamic`, The
     /// launch side computes geometry from the concrete (real-extent) space, then derives the
     /// kernel's space with this so distinct input shapes hit one compiled kernel.
     pub fn with_dynamic(mut self, axes: &[Axis]) -> Self {
@@ -245,7 +245,7 @@ impl Space {
     }
 
     /// The smallest space containing every `part`, axes in first-appearance order. A shared axis
-    /// is broadcast-merged via [`merge_level`] (`n ∪ n = n`, `1 ∪ n = n`, else conflict); an
+    /// is broadcast-merged via `merge_level` (`n ∪ n = n`, `1 ∪ n = n`, else conflict); an
     /// omitted axis broadcasts along all of it. E.g. `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
     pub fn merge(parts: &[&Space]) -> Space {
         let mut entries: SmallVec<[(Axis, Extent); Space::MAX_RANK]> = SmallVec::new();

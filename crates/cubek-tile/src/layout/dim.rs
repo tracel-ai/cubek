@@ -7,8 +7,8 @@ use cubecl::zspace::SmallVec;
 use crate::{Axis, Space};
 
 /// How far one unit of a logical axis's coordinate moves along one physical axis, mirroring
-/// [`Extent`](crate::Extent): `Static` folds as [`window_start`](crate::Memory) needs, `Dynamic`
-/// a runtime stride or dilation riding the tile ([`GlobalOperand::gathered`](crate::GlobalOperand::gathered)).
+/// `Extent`: `Static` folds as [`window_start`](crate::Memory) needs, `Dynamic` a runtime stride or
+/// dilation riding the tile ([`GlobalOperand::gathered`](crate::GlobalOperand::gathered)).
 ///
 /// A `Dynamic` coefficient still declares `max`, the largest value the launch may pass: the field
 /// is then a runtime value but its *bound* is not, which is all a stage needs. Overshoot is dead
@@ -48,12 +48,12 @@ impl Scale {
 }
 
 /// The constant term of one physical axis's affine combination. Mirrors [`Scale`]: `Static` is a
-/// comptime constant [`may_underflow`](crate::Projection::may_underflow) can check the sign of,
+/// comptime constant `may_underflow` can check the sign of,
 /// `Dynamic` a runtime padding or placement riding the tile's signed offset array.
 ///
 /// Unlike [`Scale::Dynamic`], an `Offset::Dynamic` needs no bound to be staged: `span` is
 /// offset-invariant and [`Compaction`](crate::Compaction) drops the offset, so it costs no window
-/// geometry, only a conservative [`may_underflow`](crate::Projection::may_underflow) guard.
+/// geometry, only a conservative `may_underflow` guard.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Offset {
     Static(isize),
@@ -129,7 +129,7 @@ impl From<usize> for Divisor {
 
 /// One logical axis's contribution to one physical axis: `digit * scale`, the digit being the
 /// whole coordinate unless the axis spreads over several physical axes; no constant is stored:
-/// [`Projection::digit`](crate::Projection::digit) reads the digit off the map's own shape.
+/// `Projection::digit` reads the digit off the map's own shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AxisTerm {
     pub axis: Axis,
@@ -196,7 +196,8 @@ impl PhysicalAxisMap {
     ///
     /// The same arithmetic as [`affine`](Self::affine), deliberately a different constructor: this
     /// one claims no two positions share a cell, which keeps every window dense and every read on
-    /// the direct path. A claim the extents contradict is refused when the tile is built ([`GlobalOperand`](crate::GlobalOperand)).
+    /// the direct path. A claim the extents contradict is refused when the tile is built
+    /// ([`GlobalOperand`](crate::GlobalOperand)).
     pub fn disjoint(terms: &[(Axis, usize)]) -> Self {
         let mut map = Self::affine(terms);
         map.composition = Composition::Disjoint;
@@ -261,7 +262,7 @@ impl PhysicalAxisMap {
     /// `affine_with_offset(&[(O, w_in), (R, w_out)], offset).over(w_out)`, `R`'s coefficient being
     /// the divisor precisely so the tap index survives the division whole.
     ///
-    /// A divisor the coefficients all cancel is [reduced](Self::reduced) away here, so
+    /// A divisor the coefficients all cancel is reduced away here, so
     /// [`is_rational`](Self::is_rational) means the mapping genuinely divides.
     pub fn over(mut self, divisor: impl Into<Divisor>) -> Self {
         let divisor = divisor.into();

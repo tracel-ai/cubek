@@ -12,7 +12,7 @@ use crate::*;
 
 /// The layout [`Tile::at`] applies: shift every axis to `origin` and crop it to
 /// `extent`. Same rank as the source; the rank-reducing 2-D slice is
-/// [`TileMatrix`](super::TileMatrix).
+/// `TileMatrix`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Window {

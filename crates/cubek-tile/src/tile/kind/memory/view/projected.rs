@@ -1,13 +1,13 @@
-//! The gathered read view over a [`Tile`](crate::Tile). [`ProjectionInKernel`] is the [`Layout`] that
-//! turns the tile's *logical* coordinate (one per axis of its [`Space`](crate::Space)) into the
-//! *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
+//! The gathered read view over a [`Tile`](crate::Tile). [`ProjectionInKernel`] is the [`Layout`]
+//! that turns the tile's *logical* coordinate (one per axis of its [`Space`](crate::Space)) into
+//! the *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
 //!
 //! Under the direct mapping the two coincide and this layout is never built; the matmul leaves read
 //! through [`TileMatrix`](super::TileMatrix). Under a gathering mapping they differ in rank: a 2-D
 //! convolution input has five logical axes over three physical, a step and a tap sharing one.
 //!
-//! [`CompactionStep`] is the other half, one level down: physical to physical, undoing the lattice a
-//! [`Compaction`] quotients a gathered window by, so a fill of the compacted stage lands on the
+//! [`CompactionStep`] is the other half, one level down: physical to physical, undoing the lattice
+//! a [`Compaction`] quotients a gathered window by, so a fill of the compacted stage lands on the
 //! source cells the stage keeps.
 
 use cubecl::{
@@ -42,8 +42,8 @@ pub(crate) trait TileLayout<C: Coordinates>:
 impl<C: Coordinates, L> TileLayout<C> for L where L: LogicalLayout + Layout<Coordinates = C> {}
 
 /// Any [`LogicalLayout`] with an operand's [`Projection`] applied under it: the inner layout
-/// resolves a reader's coordinate to the tile's *logical* one, then [`ProjectionInKernel`] folds that
-/// onto the window's *physical* one. Under the direct mapping the fold is the identity.
+/// resolves a reader's coordinate to the tile's *logical* one, then [`ProjectionInKernel`] folds
+/// that onto the window's *physical* one. Under the direct mapping the fold is the identity.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct Projected<L: LogicalLayout> {
@@ -127,7 +127,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`nd_packed`](Tile::nd_packed) at a stated storage element `I` and physical line `WP`.
+    /// `nd_packed` at a stated storage element `I` and physical line `WP`.
     pub fn nd<I: Numeric, WP: Size, W: Size>(
         &self,
         #[comptime] guard: Guard,

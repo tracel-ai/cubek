@@ -102,11 +102,11 @@ impl<'a> Arg<'a, Unlabelled> {
     /// An explicit affine [`Projection`] for a gathered operand (a convolution's input, a
     /// resample's source), from logical axes to buffer dims. Refuses a storage-tiled binding.
     ///
-    /// Checking follows [`may_underflow`](Projection::may_underflow); a window off the buffer's
+    /// Checking follows `may_underflow`; a window off the buffer's
     /// *tail* is not detected, so a gather that overruns (a rational mapping's last window always
     /// does) must state [`BoundaryPolicy::Every`].
     ///
-    /// An axis sharing a physical dim has no extent here, so a [`Dynamic`](crate::Extent) one needs
+    /// An axis sharing a physical dim has no extent here, so a `Dynamic` one needs
     /// another operand to witness it; dynamic scales, divisors and offsets declare a launch bound.
     pub fn gathered(mut self, projection: Projection) -> Arg<'a, Labelled> {
         self.data.projection = Some(projection);
@@ -230,7 +230,8 @@ impl<'a> Arg<'a, Labelled> {
         projection.validate(width);
         // The width against the *settled* geometry, the one the kernel re-expresses in lines.
         // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
-        // destination the negotiation never saw) is gated here: `stride / width` truncates silently.
+        // destination the negotiation never saw) is gated here: `stride / width` truncates
+        // silently.
         geometry
             .serves_lines(width)
             .map_err(|why| Refusal::WidthNotServed { width, why })?;
@@ -381,9 +382,9 @@ impl Bound {
     }
 }
 
-/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind: the
-/// comptime [`TileSpec`], the served width, and the geometry a bound `TensorArg` would ship,
-/// broadcast dims dropped; [`GlobalOperand::sink`](crate::GlobalOperand::sink) addresses through it.
+/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind: the comptime
+/// [`TileSpec`], the served width, and the geometry a bound `TensorArg` would ship, broadcast dims
+/// dropped; [`GlobalOperand::sink`](crate::GlobalOperand::sink) addresses through it.
 pub struct Unbound {
     pub spec: TileSpec,
     /// Served width (values per line).

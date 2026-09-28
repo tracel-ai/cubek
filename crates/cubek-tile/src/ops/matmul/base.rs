@@ -127,7 +127,7 @@ impl<E: Numeric> PlaneTile<E> {
     /// Contract this plane tile, each factor times whatever scales it carries.
     ///
     /// A hardware instruction eats its operands' format, so a scaled factor reaches one through
-    /// memory: [`CmmaData::mma`] lands it, unpacked and scaled, in the plane's own window and
+    /// memory: `CmmaData::mma` lands it, unpacked and scaled, in the plane's own window and
     /// loads the fragment from there. The manual-mma form has no landing, so it refuses one.
     pub fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
@@ -206,9 +206,10 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
     ));
 }
 
-/// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)`
-/// window, the transpose of the role's order, read as the same matrix along the contracted edge
-/// ([`PlanePartition::store`], [`rhs_layout`](crate::ops::matmul::leaf::rhs_layout)), like a folded step.
+/// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)` window,
+/// the transpose of the role's order, read as the same matrix along the contracted edge
+/// ([`PlanePartition::store`], [`rhs_layout`](crate::ops::matmul::leaf::rhs_layout)), like a folded
+/// step.
 #[cube]
 fn transposed_rhs<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,

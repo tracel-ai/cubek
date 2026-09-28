@@ -7,7 +7,7 @@ use crate::{Axis, Space};
 
 /// How many physical fragments each logical axis is split across, in the operand's own axis order.
 /// One fragment is an untiled axis; `n` make a coordinate along it an `n`-digit mixed radix number
-/// ([`Projection::digit`](crate::Projection::digit)); the radices are read off `physical_shape`.
+/// (`Projection::digit`); the radices are read off `physical_shape`.
 ///
 /// The physical order this induces is level-major, coarsest first: every axis contributes its
 /// level-0 fragment, then every axis still deep enough its level-1 fragment, down to the tile

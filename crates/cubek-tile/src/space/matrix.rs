@@ -35,7 +35,8 @@ impl MatrixAxes {
     ///
     /// An axis of extent one folds away, so a split contraction's block digit or a column tile's
     /// index does not stand between a fragment and its rows. What a fragment, a partition and a
-    /// trailing region read through, none of which knows a shape to [`find`](Self::find) one from.
+    /// trailing region read through, none of which knows a shape to [`find`](MatrixAxes::new) one
+    /// from.
     pub fn edges(space: &Space) -> Self {
         let rank = space.rank();
         let col_split = rank - 1;

@@ -7,7 +7,7 @@ use cubecl::quant::scheme::ScaleDtype;
 
 /// How an operand's values sit in memory.
 ///
-/// A leaf asks [`Tile::packing`](crate::Tile::packing) and reads through the matching view;
+/// A leaf asks `Tile::packing` and reads through the matching view;
 /// nothing outside the view constructors turns a factor back into a storage element.
 ///
 /// Self-describing: a packed operand names the field its values occupy, so the read unpacks from

@@ -26,7 +26,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`smem`](Memory::smem) with a minimum byte alignment on the shared
-    /// buffer. A TMA-filled stage needs one ([`TMA_STAGE_ALIGNMENT`]); `0`
+    /// buffer. A TMA-filled stage needs one (`TMA_STAGE_ALIGNMENT`); `0`
     /// leaves the buffer at its element alignment.
     pub fn smem_aligned(
         #[comptime] space: Space,
