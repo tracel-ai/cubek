@@ -50,9 +50,16 @@ impl GridLayout {
     ///
     /// An axis whose extent is not a whole number of tiles, or a grid that names an axis twice or
     /// leaves one out.
+    ///
+    /// A tile's piece of one holds nothing and is dropped; the grid keeps one piece per axis,
+    /// however few tiles it counts, since the buffer stores every axis it stands for.
     pub fn over(self, extents: &[(Axis, usize)]) -> Result<Layout, LayoutMisfit> {
-        let mut dense: SmallVec<[(Axis, usize); Space::MAX_RANK]> =
-            self.levels.into_iter().flatten().collect();
+        let mut dense: SmallVec<[(Axis, usize); Space::MAX_RANK]> = self
+            .levels
+            .into_iter()
+            .flatten()
+            .filter(|&(_, count)| count > 1)
+            .collect();
         let mut order = self.order.clone();
         order.sort_by_key(|a| a.0);
         order.dedup();

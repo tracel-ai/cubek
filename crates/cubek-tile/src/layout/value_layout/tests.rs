@@ -229,3 +229,19 @@ fn a_word_and_a_two_dimensional_read_are_whole_tiles() {
     assert!(values.refines(&Layout::wanted(&[(K, 16), (N, 2)])).is_ok());
     assert!(values.refines(&Layout::wanted(&[(K, 32)])).is_err());
 }
+
+/// A tile stated with a piece of one reads as the tile without it: a read as wide as the tile's
+/// row leaves nothing for the next piece along that axis.
+#[test]
+fn a_piece_of_one_is_no_piece() {
+    let with_one = Layout::tile(&[(N, 4)])
+        .tile(&[(N, 1), (K, 2)])
+        .grid(&[N, K])
+        .over(&[(K, 8), (N, 12)])
+        .unwrap();
+    let without = Layout::tile(&[(N, 4), (K, 2)])
+        .grid(&[N, K])
+        .over(&[(K, 8), (N, 12)])
+        .unwrap();
+    assert_eq!(with_one, without);
+}
