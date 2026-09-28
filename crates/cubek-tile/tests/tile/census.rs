@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 /// became the one public row op (its unit and plane arms crate-private) and the stencil builder
 /// test-only: 717. `Input` and `Output`, one launch argument each way, replaced the delivery
 /// families (`DeliveryFamily`, `DeliveryLaunch`, `Cooperative`, `Tma`, `Accumulated`): five
-/// concepts to two, but their `tile` and host builders count as lines, four more: 721. `Layout`
-/// raised it by sixteen: the type and its constructor, its builder stages (`LayoutBuilder::new`,
+/// concepts to two, but their `tile` and host builders count as lines, four more: 721. `StoragePartitioning`
+/// raised it by sixteen: the type and its constructor, its builder stages (`StorageLevels::new`,
 /// `grid`, `over` the extents), `physical`, `refines`, `pieces`, the misfits a stated layout and a
 /// reader are refused with, and the re-exports of its own folder, since a caller writing a
 /// storage-tiled buffer states how it is laid out and every reader of one asks whether it refines

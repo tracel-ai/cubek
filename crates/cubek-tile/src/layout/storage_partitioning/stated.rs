@@ -1,4 +1,4 @@
-//! A [`Layout`] stated leaf-up for a buffer about to be written: its tiles, finest first, then
+//! A [`StoragePartitioning`] stated leaf-up for a buffer about to be written: its tiles, finest first, then
 //! the grid of tiles, settled against the tensor's extents.
 
 use core::fmt::{self, Display, Formatter};
@@ -6,16 +6,16 @@ use core::fmt::{self, Display, Formatter};
 use cubecl::zspace::SmallVec;
 
 use super::base::Piece;
-use crate::{Axis, Layout, Space};
+use crate::{Axis, Space, StoragePartitioning};
 
-/// A [`Layout`] being stated leaf-up: its tiles, finest first, each made of the one below it,
+/// A [`StoragePartitioning`] being stated leaf-up: its tiles, finest first, each made of the one below it,
 /// before the grid says in which order the coarsest follow one another.
 #[derive(Clone, Debug)]
-pub struct LayoutBuilder {
+pub struct StorageLevels {
     levels: Vec<Vec<(Axis, usize)>>,
 }
 
-impl LayoutBuilder {
+impl StorageLevels {
     /// A layout stated leaf-up for a buffer about to be written: `tile` is its finest tile,
     /// `(axis, count)` finest first, in values.
     pub fn new(tile: &[(Axis, usize)]) -> Self {
@@ -61,7 +61,7 @@ impl GridLayout {
     ///
     /// A tile's piece of one holds nothing and is dropped; the grid keeps one piece per axis,
     /// however few tiles it counts, since the buffer stores every axis it stands for.
-    pub fn over(self, extents: &[(Axis, usize)]) -> Result<Layout, LayoutMisfit> {
+    pub fn over(self, extents: &[(Axis, usize)]) -> Result<StoragePartitioning, LayoutMisfit> {
         let mut dense: SmallVec<[(Axis, usize); Space::MAX_RANK]> = self
             .levels
             .into_iter()
@@ -106,7 +106,7 @@ impl GridLayout {
                 stored: i < tiles,
             })
             .collect();
-        Ok(Layout {
+        Ok(StoragePartitioning {
             dense,
             outer: SmallVec::new(),
         })

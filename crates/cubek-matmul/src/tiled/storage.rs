@@ -1,6 +1,6 @@
 //! Storing a matrix in storage tiles, and laying it back out.
 //!
-//! A storage-tiled tensor is stored one tile at a time, as the [`Layout`] it was stored in
+//! A storage-tiled tensor is stored one tile at a time, as the [`StoragePartitioning`] it was stored in
 //! states: its tiles, finest first, each made of the one below, then the grid of tiles. Its
 //! binding carries how many pieces each dim is stored in (its `tiling`, `[.., R/tr, C/tc, tr, tc]`
 //! for one level) and the order they follow one another in (its strides). A routine that reads
@@ -72,7 +72,7 @@ fn relayout<E: Numeric, V: Size>(
 /// What [`tile`] is told: how the tiles are laid out, stated leaf-up, over axes the caller names.
 pub use cubek_tile::{
     Axis,
-    layout::{GridLayout, Layout, LayoutBuilder},
+    layout::{GridLayout, StorageLevels, StoragePartitioning},
 };
 
 /// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `layout`
@@ -82,7 +82,7 @@ pub use cubek_tile::{
 ///
 /// ```ignore
 /// // A [k, n] weight in 16 x 32 tiles, rows of each tile first, the next tile along k.
-/// let layout = LayoutBuilder::new(&[(N, 32), (K, 16)]).grid(&[K, N]);
+/// let layout = StorageLevels::new(&[(N, 32), (K, 16)]).grid(&[K, N]);
 /// let stored = tile(&client, weight.binding(), [K, N], dtype, layout)?;
 /// ```
 ///

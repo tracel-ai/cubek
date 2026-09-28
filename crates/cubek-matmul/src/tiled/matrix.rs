@@ -6,7 +6,7 @@ use cubecl::{
 };
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Space,
-    layout::{Layout, StorageTiling},
+    layout::{StoragePartitioning, StorageTiling},
 };
 
 use crate::{definition::MatmulSetupError, tiled::labels};
@@ -88,7 +88,7 @@ impl<'a> MatrixBinding<'a> {
     /// Its outermost storage tile, when that tile is stored a row at a time: the pieces under it
     /// may be finer than a routine reads (a vector read, a packed word), and it is read the same
     /// as long as they fuse back into it a row at a time, the stored layout
-    /// [refining](Layout::refines) a row-first tile. The order the tiles themselves follow one
+    /// [refining](StoragePartitioning::refines) a row-first tile. The order the tiles themselves follow one
     /// another in is the strides', whatever it is.
     ///
     /// # Errors
@@ -99,8 +99,8 @@ impl<'a> MatrixBinding<'a> {
         let Some((rows, cols)) = self.tile()? else {
             return Ok(None);
         };
-        let stored = Layout::new(&Geometry::from(self.binding), &self.labels());
-        let row_first = Layout::from([(Self::COLS, cols), (Self::ROWS, rows)]);
+        let stored = StoragePartitioning::new(&Geometry::from(self.binding), &self.labels());
+        let row_first = StoragePartitioning::from([(Self::COLS, cols), (Self::ROWS, rows)]);
         stored.refines(&row_first).map_err(|why| {
             self.refused(format!(
                 "it is not stored in {rows}x{cols} tiles a row at a time: {why}"

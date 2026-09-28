@@ -9,8 +9,8 @@ use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal, StorageLevel};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, Layout, Packing, Projection, QuantTileArgLaunch,
-    Quantization, Storage, StorageTiling, TileArgLaunch, TileSpec,
+    Axis, Boundary, Field, Geometry, Launcher, Packing, Projection, QuantTileArgLaunch,
+    Quantization, Storage, StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -236,7 +236,7 @@ impl<'a> Arg<'a, Labelled> {
             .as_ref()
             .map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
         let geometry = geometry.with_tiling(settled);
-        Layout::new(&geometry, &projection.dense_labels())
+        StoragePartitioning::new(&geometry, &projection.dense_labels())
             .serves(width)
             .map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();

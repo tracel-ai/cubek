@@ -1,16 +1,16 @@
-//! [`Layout`]: where a buffer's values sit relative to one another, stated as counts from the
+//! [`StoragePartitioning`]: where a buffer's values sit relative to one another, stated as counts from the
 //! finest up.
 //!
 //! A buffer's dense part is one mixed-radix number: the finest piece says how many values run
 //! along its axis before the next piece steps, the next says how many of those runs it holds,
 //! and so on. Every size is a product of counts, so between two pieces nothing divides.
 //!
-//! A layout is read off a binding ([`Layout::new`]), or stated leaf-up for a buffer about to be
-//! written ([`LayoutBuilder`]): each tile made of the one below it, then the order of the grid of
+//! A layout is read off a binding ([`StoragePartitioning::new`]), or stated leaf-up for a buffer about to be
+//! written ([`StorageLevels`]): each tile made of the one below it, then the order of the grid of
 //! tiles.
 //!
 //! A reader states the coarsest layout it needs, and asks whether the stored one
-//! [refines](Layout::refines) it: whether every boundary it names is a boundary of the stored
+//! [refines](StoragePartitioning::refines) it: whether every boundary it names is a boundary of the stored
 //! layout. Pieces it does not name fuse, which only multiplies. A packed word, a vector read and
 //! a stage tile are all asked the same way; the one division left is a reader cutting its tile
 //! out of an extent, a count the tensor's size decided rather than a tile someone stored.
@@ -28,14 +28,14 @@ use crate::{Axis, Geometry, Space, StorageTiling};
 /// dense; a dim that breaks that (a gap, a broadcast, a dim no axis labels) ends it, and its
 /// stride and every coarser one are kept apart, since a read has to be a whole number of them.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Layout {
+pub struct StoragePartitioning {
     /// The dense part, finest first.
     pub(super) dense: SmallVec<[Piece; Space::MAX_RANK]>,
     /// The strides past the dense part, finest first, in values.
     pub(super) outer: SmallVec<[usize; Space::MAX_RANK]>,
 }
 
-impl Layout {
+impl StoragePartitioning {
     /// The layout a buffer is stored in: `geometry`'s dims from the finest up, while each one
     /// steps by the product of the extents finer than it.
     ///
@@ -80,7 +80,7 @@ impl Layout {
                 false => outer.push(stride),
             }
         }
-        Layout { dense, outer }
+        StoragePartitioning { dense, outer }
     }
 
     /// This layout seen at `wanted`'s pieces: whether every boundary `wanted` names is one of
@@ -95,7 +95,7 @@ impl Layout {
     ///
     /// Where the walk first breaks: another axis inside a wanted piece, a stored piece that
     /// overshoots it, an extent it does not divide, or no pieces left.
-    pub fn refines(&self, wanted: &Layout) -> Result<Layout, Unrefined> {
+    pub fn refines(&self, wanted: &StoragePartitioning) -> Result<StoragePartitioning, Unrefined> {
         let mut rest: Vec<Piece> = self.dense.iter().rev().copied().collect();
         let mut fused: SmallVec<[Piece; Space::MAX_RANK]> = SmallVec::new();
         for &want in &wanted.dense {
@@ -139,7 +139,7 @@ impl Layout {
             });
         }
         fused.extend(rest.into_iter().rev());
-        Ok(Layout {
+        Ok(StoragePartitioning {
             dense: fused,
             outer: self.outer.clone(),
         })
@@ -158,7 +158,7 @@ impl Layout {
                 None => LineMisfit::NoDims,
             });
         };
-        if let Err(why) = self.refines(&Layout::from([(finest.axis, values)])) {
+        if let Err(why) = self.refines(&StoragePartitioning::from([(finest.axis, values)])) {
             return Err(LineMisfit::Unrefined(why));
         }
         match self
@@ -183,7 +183,7 @@ impl Layout {
     pub fn physical(&self, axes: &[Axis]) -> (Geometry, StorageTiling) {
         assert!(
             self.outer.is_empty(),
-            "Layout::physical: only a dense layout describes a buffer to write"
+            "StoragePartitioning::physical: only a dense layout describes a buffer to write"
         );
         let fragments: Vec<usize> = axes
             .iter()
@@ -191,7 +191,7 @@ impl Layout {
             .collect();
         assert!(
             self.dense.iter().all(|p| axes.contains(&p.axis)) && fragments.iter().all(|&f| f >= 1),
-            "Layout::physical: the layout names {:?} but the buffer stands for {axes:?}",
+            "StoragePartitioning::physical: the layout names {:?} but the buffer stands for {axes:?}",
             self.dense.iter().map(|p| p.axis).collect::<Vec<_>>()
         );
         let tiling = StorageTiling::per_axis(&fragments);
@@ -232,10 +232,10 @@ impl Layout {
 }
 
 /// The layout a reader needs, stated finest first: its own tiles, before anything it does not
-/// care how is laid out. A read of `4` along `N` is `Layout::from([(N, 4)])`.
-impl<const P: usize> From<[(Axis, usize); P]> for Layout {
+/// care how is laid out. A read of `4` along `N` is `StoragePartitioning::from([(N, 4)])`.
+impl<const P: usize> From<[(Axis, usize); P]> for StoragePartitioning {
     fn from(pieces: [(Axis, usize); P]) -> Self {
-        Layout {
+        StoragePartitioning {
             dense: pieces
                 .into_iter()
                 .map(|(axis, count)| Piece {
@@ -249,7 +249,7 @@ impl<const P: usize> From<[(Axis, usize); P]> for Layout {
     }
 }
 
-/// Where a stored layout stops refining a wanted one ([`Layout::refines`]).
+/// Where a stored layout stops refining a wanted one ([`StoragePartitioning::refines`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unrefined {
     /// A piece of another axis sits inside a wanted piece: the wanted tile is not contiguous.
@@ -291,7 +291,7 @@ impl Display for Unrefined {
     }
 }
 
-/// Why a [`Layout`] cannot serve a cut of some width: the value that decided it, so a message
+/// Why a [`StoragePartitioning`] cannot serve a cut of some width: the value that decided it, so a message
 /// names the number a reader has to go looking for otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineMisfit {
