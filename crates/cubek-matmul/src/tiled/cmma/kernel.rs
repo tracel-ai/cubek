@@ -11,7 +11,7 @@
 use cubecl::prelude::*;
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Semiring, Space,
-    StageStorage, Stages, TileArg, launch::DeliveryFamily, stage::RowChunks, tile::PlanePartition,
+    StageStorage, Stages, TileArg, kind::PlanePartition, launch::DeliveryFamily, stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};

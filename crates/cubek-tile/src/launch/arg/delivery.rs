@@ -9,8 +9,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Rendezvous, Storage, Tile, TileArg,
-    TileArgLaunch, TmaOperand, TmaTileArg, TmaTileArgLaunch,
+    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Refusal, Rendezvous, Space, Storage,
+    Tile, TileArg, TileArgLaunch, TmaOperand, TmaTileArg, TmaTileArgLaunch,
 };
 
 /// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
@@ -29,24 +29,32 @@ pub enum Delivery {
 }
 
 /// CUDA caps each TMA box dimension at 256; a bulk copy fills one smem stage, so the
-/// stage edges are the box dims. A derivation sizes a stage to it through
-/// [`max_edge`](Delivery::max_edge) before [`validate_tma`](Delivery::validate_tma) refuses one
-/// past it.
-pub(crate) const TMA_MAX_BOX_DIM: usize = 256;
+/// stage edges are the box dims ([`Delivery::moves`]).
+const TMA_MAX_BOX_DIM: usize = 256;
 
 impl Delivery {
-    /// The longest stage edge one transfer of this delivery moves: a TMA box's per-axis limit, and
-    /// none where the cube's own units copy or compute the stage.
-    pub fn max_edge(self) -> Option<usize> {
+    /// Whether this delivery moves `stage`, one transfer a stage, and why not where it cannot.
+    ///
+    /// Only [`Tma`](Delivery::Tma) is bounded: its bulk copy fills a stage per box, so every stage
+    /// edge is a box edge, and the descriptor caps each. The cube's own units, copying or
+    /// computing, move any stage. A selector sizing a stage asks this of each candidate rather than
+    /// holding the limit itself.
+    pub fn moves(self, stage: &Space) -> Result<(), Refusal> {
         match self {
-            Delivery::Tma => Some(TMA_MAX_BOX_DIM),
-            Delivery::Copy | Delivery::Procedural => None,
+            Delivery::Copy | Delivery::Procedural => Ok(()),
+            Delivery::Tma => match stage
+                .extents()
+                .into_iter()
+                .find(|&(_, edge)| edge > TMA_MAX_BOX_DIM)
+            {
+                Some((axis, edge)) => Err(Refusal::BoxPastDescriptor {
+                    axis,
+                    edge,
+                    most: TMA_MAX_BOX_DIM,
+                }),
+                None => Ok(()),
+            },
         }
-    }
-
-    /// Whether a stage edge of `edge` is one this delivery moves ([`max_edge`](Delivery::max_edge)).
-    pub fn admits_edge(self, edge: usize) -> bool {
-        self.max_edge().is_none_or(|max| edge <= max)
     }
 
     pub fn is_tma(&self) -> bool {
@@ -59,28 +67,6 @@ impl Delivery {
             Delivery::Copy | Delivery::Procedural => Rendezvous::Cube,
             Delivery::Tma => Rendezvous::Barrier,
         }
-    }
-
-    /// Reject a plan the TMA descriptor path can't encode: a bad plan fails here as a clean error
-    /// instead of at descriptor encoding on the driver. `boxes` are the bulk-copy box dims (one
-    /// stage per box), `batched` any surviving batch dim. A no-op unless this is [`Delivery::Tma`].
-    pub fn validate_tma(&self, boxes: &[usize], batched: bool) -> Result<(), String> {
-        if !self.is_tma() {
-            return Ok(());
-        }
-        // The descriptor is 3-D `(batch, row, col)`; surviving batch dims need a
-        // batch-aware descriptor path not wired yet.
-        if batched {
-            return Err("TMA: batched problems are not supported yet".to_string());
-        }
-        if let Some(&max) = boxes.iter().max()
-            && max > TMA_MAX_BOX_DIM
-        {
-            return Err(format!(
-                "TMA: box {boxes:?} exceeds the {TMA_MAX_BOX_DIM}-per-axis box limit"
-            ));
-        }
-        Ok(())
     }
 }
 

@@ -15,7 +15,7 @@ use super::{Form, implied};
 use cubek_tile::procedural::AffineCoordinate;
 use cubek_tile::procedural::Procedural;
 use cubek_tile::*;
-use cubek_tile::{launch::BoundaryPolicy, tile::Boundary};
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);

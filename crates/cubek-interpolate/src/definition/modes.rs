@@ -1,5 +1,5 @@
 use super::InterpolateMode;
-use cubek_tile::tile::Boundary;
+use cubek_tile::kind::Boundary;
 
 /// Filter behavior shared by the forward kernel and the cost model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

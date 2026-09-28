@@ -13,7 +13,7 @@ use cubek_tile::{
     Axis, Levels, Partitioning, Space, TileArg, TileArgLaunch, TileSpec,
     quant::{DequantAt, QuantTileArg, QuantTileArgLaunch},
 };
-use cubek_tile::{launch::BoundaryPolicy, tile::Boundary};
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);

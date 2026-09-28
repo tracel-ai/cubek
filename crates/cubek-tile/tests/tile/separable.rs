@@ -24,7 +24,7 @@ use cubek_tile::procedural::sum_of;
 use cubek_tile::quant::DequantAt;
 use cubek_tile::quant::QuantTileArg;
 use cubek_tile::*;
-use cubek_tile::{launch::BoundaryPolicy, quant::Quantization, tile::Boundary};
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy, quant::Quantization};
 
 const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);

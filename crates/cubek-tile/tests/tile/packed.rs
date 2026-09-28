@@ -20,8 +20,8 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 
 use crate::tile::uncut;
 use cubek_tile::Instruction;
+use cubek_tile::kind::Field;
 use cubek_tile::layout::PhysicalAxisMap;
-use cubek_tile::tile::Field;
 use cubek_tile::*;
 use half::f16;
 

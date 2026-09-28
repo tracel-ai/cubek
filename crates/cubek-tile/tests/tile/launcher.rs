@@ -10,9 +10,9 @@ use cubek_tile::launch::BoundaryPolicy;
 use cubek_tile::quant::Quantization;
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
+    kind::{Boundary, Storage},
     layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageTiling},
     quant::DequantAt,
-    tile::{Boundary, Storage},
 };
 
 const M: Axis = Axis(0);

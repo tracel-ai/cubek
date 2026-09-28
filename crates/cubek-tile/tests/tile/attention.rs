@@ -13,8 +13,8 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Scratch, Semiring,
     Space, StageStorage, Tile, TileArg, TileArgLaunch, TileSpec,
+    kind::{Memory, Placement},
     ops::softmax::{MaskProbe, RowState},
-    tile::{Memory, Placement},
 };
 
 const G: Axis = Axis(0); // GQA group member

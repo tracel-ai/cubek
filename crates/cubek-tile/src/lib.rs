@@ -22,7 +22,13 @@ pub mod layout;
 pub mod ops;
 pub mod space;
 pub mod stage;
-pub mod tile;
+mod tile;
+
+/// What a [`Tile`] can be in the kernel: global or staged memory, plane fragments, register
+/// lines, and the accumulators and packed fields built over them.
+pub mod kind {
+    pub use crate::tile::*;
+}
 
 /// Tiles whose values are computed from their coordinates rather than read: a [`Recipe`]
 /// per element, or [`Factors`] combined along each axis.

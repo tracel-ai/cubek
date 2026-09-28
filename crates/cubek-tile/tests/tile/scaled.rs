@@ -22,12 +22,12 @@ use cubecl::{
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
 use cubek_tile::Instruction;
+use cubek_tile::kind::Field;
+use cubek_tile::kind::PlanePartition;
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::layout::split;
 use cubek_tile::ops::matmul::Side;
 use cubek_tile::stage::UnitRead;
-use cubek_tile::tile::Field;
-use cubek_tile::tile::PlanePartition;
 use cubek_tile::*;
 use half::f16;
 
