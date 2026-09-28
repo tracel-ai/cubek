@@ -17,7 +17,9 @@ use cubecl::{
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
-use cubek_tile::{Geometry, Grid, Launcher, Level, Levels, Partitioning, Space, TileArg};
+use cubek_tile::{
+    Geometry, Grid, Launcher, Level, Levels, Partitioning, Space, StorageTiling, TileArg,
+};
 
 use crate::{
     definition::MatmulSetupError,
@@ -201,6 +203,15 @@ fn outermost_tile(binding: &TensorBinding) -> Result<(usize, usize), String> {
     ))
 }
 
+/// The labels of a matrix binding's trailing dims: `[ROWS, COLS]`, or one per piece of a
+/// storage-tiled one, in the order its tiling lists them.
+fn labels_of(binding: &TensorBinding) -> Vec<Axis> {
+    match binding.tiling.is_tiled() {
+        true => StorageTiling::stored(binding.tiling, 2, binding.shape.len()).order(&[ROWS, COLS]),
+        false => vec![ROWS, COLS],
+    }
+}
+
 /// The one launch both directions share: the matrix's space cut by one level, the outermost
 /// storage tile, a cube of one plane per tile; the levels inside it are the tiled side's to
 /// decode. Each side's binding says whether it is the tiled one.
@@ -250,14 +261,20 @@ fn relayout_launch(
             },
         )
     };
-    let v = launch.vector_size(
-        COLS,
-        &[
-            (&Geometry::from(&src), &[ROWS, COLS]),
-            (&Geometry::from(&dst), &[ROWS, COLS]),
-        ],
-        dtype.size(),
-    );
+    // A line runs along the columns of both sides: a tiled side's pieces are labelled as its
+    // tiling lists them, so its width is the read it stored, taken whole.
+    let (src_labels, dst_labels) = (labels_of(&src), labels_of(&dst));
+    let v = match (src_labels.last(), dst_labels.last()) {
+        (Some(&COLS), Some(&COLS)) => launch.vector_size(
+            COLS,
+            &[
+                (&Geometry::from(&src), &src_labels),
+                (&Geometry::from(&dst), &dst_labels),
+            ],
+            dtype.size(),
+        ),
+        _ => 1,
+    };
     let s = launch
         .arg(src)
         .axes(&[ROWS, COLS])

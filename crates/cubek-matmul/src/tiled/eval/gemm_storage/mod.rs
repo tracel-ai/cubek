@@ -92,15 +92,18 @@ impl Weight {
             Weight::RowMajor => Ok(rhs),
             Weight::Tiled => {
                 let (_, stage_n) = blueprint.stage();
-                tile(
-                    client,
-                    rhs,
-                    [K, N],
-                    dtype,
-                    Layout::tile(&[(N, stage_n), (K, blueprint.stage_k)]).grid(&[N, K]),
-                )
-                .map(TensorHandle::binding)
-                .map_err(|e| format!("{e:?}"))
+                // Stored for the widest read the device serves, which a reader takes whole.
+                let read = client
+                    .io_optimized_vector_sizes(dtype.size())
+                    .filter(|&width| stage_n.is_multiple_of(width))
+                    .max()
+                    .unwrap_or(1);
+                let layout = Layout::tile(&[(N, read)])
+                    .tile(&[(N, stage_n / read), (K, blueprint.stage_k)])
+                    .grid(&[N, K]);
+                tile(client, rhs, [K, N], dtype, layout)
+                    .map(TensorHandle::binding)
+                    .map_err(|e| format!("{e:?}"))
             }
         }
     }
