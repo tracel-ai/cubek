@@ -13,8 +13,9 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Level, MaskProbe, Memory, Partitioning, RowState, Space, StageStorage, TileArg,
-    TileArgLaunch, TileSpec,
+    Axis, Level, Partitioning, Space, StageStorage, TileArg, TileArgLaunch, TileSpec,
+    kind::Memory,
+    ops::softmax::{MaskProbe, RowState},
 };
 
 const Q: Axis = Axis(0);

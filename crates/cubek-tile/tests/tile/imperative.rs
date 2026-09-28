@@ -5,6 +5,7 @@
 
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
+use cubek_tile::stage::Role;
 use cubek_tile::*;
 
 use super::references;

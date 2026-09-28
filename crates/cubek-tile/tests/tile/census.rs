@@ -17,14 +17,15 @@ use std::path::{Path, PathBuf};
 /// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
 /// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
 /// memory counts it. The attention walk moving to its client and the resampling filters to
-/// cubek-interpolate took it down to 746. `Layout` raised it by ten: the type, its two builder
-/// stages (`storage` then `grid`, then `over` the extents), `physical`, and the misfit a stated
-/// layout is refused with, since a caller writing a storage-tiled buffer states how it is laid out.
-/// Refinement raised it by four: `Layout::wanted`, `refines`, `pieces` and the `Unrefined` a
-/// reader is refused with, the one question every reader of a stored layout asks; and by two
-/// re-exports when `Layout` became a folder of its own, its tests apart, under the file ceiling.
-/// `Layout::of` public raised it by one: a routine outside the crate reads a stored layout back.
-const PUB_ITEMS: usize = 763;
+/// cubek-interpolate took it down to 746. The facade split the root into modules (a few more
+/// `pub mod` and root re-exports) and made crate-private what nothing outside named, and the
+/// questions a selector asks (`Prefetch`, `Delivery::moves`) replaced the limits it re-derived
+/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724. `Layout` raised
+/// it: the type, its builder stages (`tile`, then `grid`, then `over` the extents), `of`,
+/// `physical`, `wanted`, `refines`, `pieces`, the misfits a stated layout and a reader are refused
+/// with, and the re-exports of its own folder (+17: 741), since a caller writing a storage-tiled buffer states
+/// how it is laid out and every reader of one asks whether it refines the layout it needs.
+const PUB_ITEMS: usize = 741;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;

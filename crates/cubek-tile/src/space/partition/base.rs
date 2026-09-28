@@ -188,13 +188,11 @@ impl Partitioning {
             .collect()
     }
 
-    /// The one level covered as `coverage` says, if any. A partitioning has at most one units,
-    /// planes and cubes level; its walks may be several ([`walks`](Self::walks)).
-    pub fn level_of(&self, coverage: Coverage) -> Option<&Level> {
-        assert!(
-            coverage != Coverage::Walk,
-            "Partitioning::level_of: a partitioning may walk several levels; ask `walks`"
-        );
+    /// The one level distributed over `scope`'s workers (the cubes, a cube's planes or a plane's
+    /// units), if any. A partitioning distributes each scope at most once; its walks may be
+    /// several ([`walks`](Self::walks)).
+    pub fn level_distributed(&self, scope: ComputeScope) -> Option<&Level> {
+        let coverage = Coverage::Distribute(scope);
         let mut found = self
             .levels
             .iter()
@@ -202,7 +200,7 @@ impl Partitioning {
         let level = found.next();
         assert!(
             found.next().is_none(),
-            "Partitioning::level_of: two levels are taken by {coverage:?}"
+            "Partitioning::level_distributed: two levels distribute over {scope:?}"
         );
         level
     }

@@ -6,7 +6,7 @@ use cubecl::prelude::*;
 /// The direction a walk's steps take through its grid. A new order is a new variant here plus a
 /// `step` arm.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum StepOrder {
+pub(crate) enum StepOrder {
     /// Step `i` visits odometer index `i` (the identity).
     #[default]
     Forward,

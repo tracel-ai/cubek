@@ -8,6 +8,10 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
+use cubek_tile::launch::Grid;
+use cubek_tile::quant::DequantAt;
+use cubek_tile::quant::QuantTileArg;
+use cubek_tile::quant::Quantization;
 use cubek_tile::*;
 
 use super::problem::TileQuantStageProblem;

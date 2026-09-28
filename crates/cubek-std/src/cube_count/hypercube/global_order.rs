@@ -1,7 +1,7 @@
 /// The zigzag a swizzled order walks, which is a walk's own arithmetic and lives with the
-/// walk ([`cubek_tile::swizzle`]). Re-exported here because [`GlobalOrder`]'s swizzle arms
+/// walk ([`cubek_tile::space::swizzle`](fn@cubek_tile::space::swizzle)). Re-exported here because [`GlobalOrder`]'s swizzle arms
 /// are its one caller in this crate.
-pub use cubek_tile::swizzle;
+pub use cubek_tile::space::swizzle;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Describes the global traversal order as flattened cube position increases.

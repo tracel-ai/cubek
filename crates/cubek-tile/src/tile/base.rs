@@ -327,7 +327,7 @@ impl<T: Numeric> Tile<T> {
     /// Whether this tile can state `axis`'s runtime size: it spans it `Dynamic`,
     /// has a buffer to read a bound off, and the bound is the axis's own extent (`bound_states`).
     /// An operation sizes a `Dynamic` axis from any operand witnessing it (`witnessed_space`).
-    pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
+    pub(crate) fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
         let bounded = self.bounded();
         let projection = self.projection();
         comptime!(
@@ -754,7 +754,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Spill this plane-resident tile into its slot of the plane's scratch, the first half of a
     /// bounce. [`drained_into`](Tile::drained_into) owns the barriers around it.
-    pub fn spill_to_scratch(&self) {
+    pub(crate) fn spill_to_scratch(&self) {
         match &self.kind {
             TileKind::PlaneTile(t) => t.spill_to_scratch(),
             TileKind::PlanePartition(p) => p.fragment().spill_to_scratch(),
@@ -769,7 +769,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Add `src`'s spilled cells into this memory window, the second half of a bounce. Where this
     /// store folds, the add is its atomic one.
-    pub fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
+    pub(crate) fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
             (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch(d, space),
@@ -784,7 +784,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Whether this operand was opened with a landing ([`with_landing`](Tile::with_landing)),
     /// which is what lets a fragment load read it whatever its own window's layout is.
-    pub fn has_landing(&self) -> comptime_type!(bool) {
+    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
         match &self.kind {
             TileKind::Memory(g) => g.has_landing(),
             TileKind::PlaneTile(_)
@@ -806,7 +806,7 @@ impl<T: Numeric> Tile<T> {
     /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
     /// lands them the way a packed global window does, which is what keeps a deep stage the
     /// size of the words rather than of the values they unpack to.
-    pub fn with_landing(&self) -> Tile<T> {
+    pub(crate) fn with_landing(&self) -> Tile<T> {
         match &self.kind {
             TileKind::Memory(g) => Tile::new(
                 TileKind::new_Memory(g.clone().with_landing()),
@@ -824,9 +824,10 @@ impl<T: Numeric> Tile<T> {
 
     /// This operand landed where `instruction` needs it, and untouched where it does not.
     ///
-    /// A fragment loads a window as it lies, so a factor reaching one lands first
-    /// ([`with_landing`](Tile::with_landing)); a register block reads through its layout and lands
-    /// nothing. This crate knows which instructions land, so a kernel opens its operands once.
+    /// A fragment loads a window as it lies, so a factor reaching one lands first: a plane-owned
+    /// window of shared memory the values (and their scales) are written into, one per plane of the
+    /// cube, sized where it lands. A register block reads through its layout and lands nothing.
+    /// This crate knows which instructions land, so a kernel opens its operands once, here.
     pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<T> {
         match comptime!(instruction) {
             Instruction::Registers { .. } => self,

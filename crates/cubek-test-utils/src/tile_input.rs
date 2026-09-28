@@ -22,8 +22,9 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
-    TileSpec as CubekTileSpec,
+    Projection, Space, TileArgLaunch, TileSpec as CubekTileSpec,
+    layout::StorageTiling,
+    quant::{DequantAt, QuantTileArgLaunch},
 };
 
 use crate::{TestInput, TestInputBuilder};

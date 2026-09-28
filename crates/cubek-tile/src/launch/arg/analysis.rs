@@ -46,6 +46,13 @@ pub enum Refusal {
     /// A gathered operand cannot be quantized: its scale grid is shaped over its logical axes,
     /// which its buffer's dims no longer match.
     QuantizedGather,
+    /// A TMA box edge past what the descriptor encodes: the stage's `edge` along `axis`, where a
+    /// box holds at most `most` ([`Delivery::moves`](super::Delivery::moves)).
+    BoxPastDescriptor {
+        axis: Axis,
+        edge: usize,
+        most: usize,
+    },
 }
 
 impl Display for Refusal {
@@ -106,8 +113,17 @@ impl Display for Refusal {
                 "Arg::quantized: a gathered operand cannot be quantized; its scale grid is shaped \
                  over its logical axes, which its buffer's dims no longer match"
             ),
+            Refusal::BoxPastDescriptor { axis, edge, most } => box_past(f, *axis, *edge, *most),
         }
     }
+}
+
+/// [`Refusal::BoxPastDescriptor`]'s message.
+fn box_past(f: &mut Formatter<'_>, axis: Axis, edge: usize, most: usize) -> fmt::Result {
+    write!(
+        f,
+        "TMA: {edge} along {axis:?} exceeds the {most}-per-axis box limit"
+    )
 }
 
 impl std::error::Error for Refusal {}

@@ -62,7 +62,7 @@ fn swizzle_width_probe() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
-    use cubek_tile::CubeOrder;
+    use cubek_tile::space::CubeOrder;
 
     for id in [
         "square_1x8192_rr_f16",

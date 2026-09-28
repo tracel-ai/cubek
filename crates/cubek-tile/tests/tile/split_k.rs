@@ -27,6 +27,9 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
+use cubek_tile::launch::AccumulateArg;
+use cubek_tile::launch::AccumulateArgLaunch;
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 const M: Axis = Axis(0);

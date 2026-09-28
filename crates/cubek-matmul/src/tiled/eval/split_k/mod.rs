@@ -47,8 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Grid, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch,
+    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch,
+    launch::Grid,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit

@@ -24,8 +24,9 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 use super::{Form, implied};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
-use cubek_tile::{Boundary, BoundaryPolicy};
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 /// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
 /// specialization, no unit fan-out: the lines here run along the channel, not along `K`.

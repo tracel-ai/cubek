@@ -9,6 +9,9 @@
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
+use cubek_tile::kind::Boundary;
+use cubek_tile::launch::BoundaryPolicy;
+use cubek_tile::launch::Grid;
 use cubek_tile::*;
 
 const M: Axis = Axis(0);

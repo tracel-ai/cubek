@@ -131,7 +131,7 @@ impl From<usize> for Divisor {
 /// whole coordinate unless the axis spreads over several physical axes; no constant is stored:
 /// `Projection::digit` reads the digit off the map's own shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct AxisTerm {
+pub(crate) struct AxisTerm {
     pub axis: Axis,
     pub scale: Scale,
 }
@@ -163,7 +163,7 @@ pub struct PhysicalAxisMap {
 
 /// What a physical axis is addressed by.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Addressed {
+pub(crate) enum Addressed {
     /// The leading logical axis of this map's terms, which identifies the coordinate group the
     /// physical axis belongs to.
     By(Axis),
@@ -315,14 +315,14 @@ impl PhysicalAxisMap {
     /// What this physical axis is addressed by. A map with no terms resolves every position to the
     /// same element, how an operand says it does not distinguish this buffer axis. A real state (a
     /// per-tensor scale is exactly it), so it is named rather than read off an empty list.
-    pub fn addressed(&self) -> Addressed {
+    pub(crate) fn addressed(&self) -> Addressed {
         match self.terms().first() {
             Some(term) => Addressed::By(term.axis),
             None => Addressed::Broadcast,
         }
     }
 
-    pub fn terms(&self) -> &[AxisTerm] {
+    pub(crate) fn terms(&self) -> &[AxisTerm] {
         &self.terms
     }
 

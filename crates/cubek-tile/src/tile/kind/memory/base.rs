@@ -77,7 +77,7 @@ pub struct Memory<T: Numeric> {
 /// buffer is allocated to exactly its tile and so never overhangs, and a shared stage remembers
 /// the window it was filled from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum AddressSpace {
+pub(crate) enum AddressSpace {
     Global,
     Shared,
 }

@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, DeliveryFamily, Level, Levels, Monoid, Partitioning,
-    PlanePartition, RowChunks, Semiring, Space, StageStorage, Stages, TileArg,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Semiring, Space,
+    StageStorage, Stages, TileArg, kind::PlanePartition, launch::DeliveryFamily, stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -197,7 +197,7 @@ mod tests {
             stage_k: 32,
             buffering: 2,
             delivery: CmmaDelivery::Copy,
-            order: cubek_tile::CubeOrder::RowMajor,
+            order: cubek_tile::space::CubeOrder::RowMajor,
         }
     }
 
@@ -216,7 +216,7 @@ mod tests {
                 stage_k,
                 buffering: 2,
                 delivery: CmmaDelivery::Copy,
-                order: cubek_tile::CubeOrder::RowMajor,
+                order: cubek_tile::space::CubeOrder::RowMajor,
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);

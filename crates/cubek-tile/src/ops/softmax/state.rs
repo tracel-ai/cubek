@@ -60,7 +60,7 @@ impl RowShare {
 
 /// This unit's unit within its worker: its position in the plane, or zero for a unit.
 #[cube]
-pub fn owned_unit(#[comptime] share: RowShare) -> usize {
+pub(crate) fn owned_unit(#[comptime] share: RowShare) -> usize {
     match comptime!(share) {
         RowShare::Unit { rows: _ } => 0usize,
         RowShare::Plane {

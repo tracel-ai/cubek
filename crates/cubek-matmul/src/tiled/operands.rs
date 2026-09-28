@@ -4,7 +4,10 @@ use cubecl::{
     prelude::TensorBinding,
     zspace::{Tiling, metadata::Metadata},
 };
-use cubek_tile::{Axis, Geometry, Layout, Level, Partitioning, Space, StorageTiling};
+use cubek_tile::{
+    Axis, Geometry, Level, Partitioning, Space,
+    layout::{Layout, StorageTiling},
+};
 
 use crate::definition::MatmulSetupError;
 

@@ -19,12 +19,15 @@ use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
-use cubek_tile::CubeOrder;
+use cubek_tile::{Space, space::CubeOrder};
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
     routine::{BlueprintStrategy, DeviceSettings, Routine},
-    tiled::cpu_gemm::{InstructionShape, PlaneGrid},
+    tiled::{
+        cpu_gemm::{InstructionShape, PlaneGrid},
+        operands::{K, M, N},
+    },
 };
 
 /// Upper bound on planes along one stage axis; 2×4 or 4×2 tends to saturate without
@@ -70,7 +73,7 @@ const CUBES_PER_SM_FLOOR: usize = 3;
 const MAX_TILES_PER_AXIS: usize = 32;
 
 /// The CMMA routine's launch-time input transport choice. This is deliberately separate from
-/// [`cubek_tile::Delivery`], which describes an already-constructed tile's staging behavior.
+/// [`cubek_tile::launch::Delivery`], which describes an already-constructed tile's staging behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CmmaDelivery {
     /// The cube's units move each stage.
@@ -85,12 +88,19 @@ impl CmmaDelivery {
         matches!(self, CmmaDelivery::Tma)
     }
 
-    fn validate_tma(self, boxes: &[usize], batched: bool) -> Result<(), String> {
-        if self.is_tma() {
-            cubek_tile::Delivery::Tma.validate_tma(boxes, batched)
-        } else {
-            Ok(())
+    /// Whether TMA moves `stage` for this problem: cubek bounds the box
+    /// ([`Delivery::moves`](cubek_tile::launch::Delivery::moves)), and this routine's descriptor is
+    /// 3-D `(batch, row, col)`, so a surviving batch dim needs a batch-aware path not wired yet.
+    fn validate_tma(self, stage: &Space, batched: bool) -> Result<(), String> {
+        if !self.is_tma() {
+            return Ok(());
         }
+        if batched {
+            return Err("TMA: batched problems are not supported yet".to_string());
+        }
+        cubek_tile::launch::Delivery::Tma
+            .moves(stage)
+            .map_err(|refusal| refusal.to_string())
     }
 }
 
@@ -182,7 +192,10 @@ impl CmmaBlueprint {
         // The bulk-copy box is the stage; TMA owns which boxes it can encode.
         let batched = problem.out_batches.iter().any(|&b| b > 1);
         self.delivery
-            .validate_tma(&[stage_m, stage_n, self.stage_k], batched)
+            .validate_tma(
+                &Space::new(&[(M, stage_m), (N, stage_n), (K, self.stage_k)]),
+                batched,
+            )
             .map_err(|e| MatmulSetupError::InvalidConfig(Box::new(e)))?;
         Ok(())
     }

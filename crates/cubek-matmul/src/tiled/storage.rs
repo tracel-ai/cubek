@@ -18,7 +18,8 @@ use cubecl::{
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
 use cubek_tile::{
-    Geometry, Grid, Launcher, Level, Levels, Partitioning, Space, StorageTiling, TileArg,
+    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, launch::Grid,
+    layout::StorageTiling,
 };
 
 use crate::{
@@ -72,7 +73,10 @@ fn relayout<E: Numeric, V: Size>(
 }
 
 /// What [`tile`] is told: how the tiles are laid out, stated leaf-up, over axes the caller names.
-pub use cubek_tile::{Axis, GridLayout, Layout};
+pub use cubek_tile::{
+    Axis,
+    layout::{GridLayout, Layout},
+};
 
 /// The stored matrix's rows and columns as the relayout's own space names them. A caller states
 /// its layout in its own axes; only the tile's extents cross over.

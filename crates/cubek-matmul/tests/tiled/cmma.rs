@@ -78,7 +78,7 @@ fn cmma_partition_1x1_f32() {
         stage_k: 48,
         buffering: 2,
         delivery: CmmaDelivery::Copy,
-        order: cubek_tile::CubeOrder::RowMajor,
+        order: cubek_tile::space::CubeOrder::RowMajor,
     };
     test_matmul_strategy(
         client(),
@@ -137,7 +137,7 @@ fn cmma_tma_rejects_oversized_box() {
         stage_k: 16,
         buffering: 2,
         delivery: CmmaDelivery::Tma,
-        order: cubek_tile::CubeOrder::RowMajor,
+        order: cubek_tile::space::CubeOrder::RowMajor,
     };
     let problem = rect(64, 1024, 64, f16_elems());
     let device_settings = DeviceSettings {
@@ -615,7 +615,7 @@ fn cmma_rejects_a_strip_of_no_boxes() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
-    use cubek_tile::CubeOrder;
+    use cubek_tile::space::CubeOrder;
 
     for order in [CubeOrder::SwizzleRow(0), CubeOrder::SwizzleCol(0)] {
         let blueprint = CmmaBlueprint {
@@ -653,7 +653,7 @@ fn cmma_swizzled_cube_order_f32() {
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
-    use cubek_tile::CubeOrder;
+    use cubek_tile::space::CubeOrder;
 
     for order in [
         CubeOrder::RowMajor,
@@ -686,7 +686,7 @@ fn cmma_takes_a_strip_the_grid_does_not_divide() {
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
-    use cubek_tile::CubeOrder;
+    use cubek_tile::space::CubeOrder;
 
     // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
     // leaves ragged.

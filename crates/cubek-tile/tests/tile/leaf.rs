@@ -3,7 +3,7 @@
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{Monoid, UnitShare, logsumexp};
+use cubek_tile::{Monoid, ops::softmax::logsumexp, space::UnitShare};
 
 #[cube(launch)]
 fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {

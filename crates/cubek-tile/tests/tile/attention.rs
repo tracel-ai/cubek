@@ -11,9 +11,10 @@ use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Level, Levels, MaskProbe, Memory, Monoid, Partitioning,
-    Placement, RowState, Scratch, Semiring, Space, StageStorage, Tile, TileArg, TileArgLaunch,
-    TileSpec,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Scratch, Semiring,
+    Space, StageStorage, Tile, TileArg, TileArgLaunch, TileSpec,
+    kind::{Memory, Placement},
+    ops::softmax::{MaskProbe, RowState},
 };
 
 const G: Axis = Axis(0); // GQA group member

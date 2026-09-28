@@ -186,6 +186,64 @@ where
     }
 }
 
+/// Where a walk's next stage waits while the stage before it is contracted: the choice between
+/// [`pipelined`](Stages::pipelined) and [`prefetched`](Stages::prefetched), stated as a value so a
+/// kernel takes it as a comptime setting ([`Stages::walk`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Prefetch {
+    /// In its own slot: the whole fill runs before the contraction of the stage before it.
+    InSlots,
+    /// In registers: each unit reads its share of the next stage before the contraction and writes
+    /// it into its slot after, so the loads are in flight while the contraction runs. Holds at most
+    /// what [`fits`](Prefetch::fits) admits of both operands a unit.
+    InRegisters,
+}
+
+impl Prefetch {
+    /// Scalars one unit holds when the cube's `units` prefetch a stage of `elements` values read
+    /// `width` at a time: its share of the stage's lines, each `width` wide.
+    pub fn scalars(elements: usize, units: usize, width: usize) -> usize {
+        UnitLines::new(elements.div_ceil(width), units).scalars(width)
+    }
+
+    /// Whether a register prefetch holding `scalars` a unit, summed over both operands
+    /// ([`scalars`](Prefetch::scalars)), is one [`prefetched`](Stages::prefetched) runs; past it the
+    /// schedule is refused at expansion.
+    pub fn fits(scalars: usize) -> bool {
+        scalars <= MOST_FETCHED_SCALARS
+    }
+}
+
+/// Either schedule, chosen by a [`Prefetch`] setting.
+impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+    /// Walk `walk`'s stages, `compute` contracting each out of its slot, the next stage waiting
+    /// where `prefetch` says: [`pipelined`](Stages::pipelined) in slots,
+    /// [`prefetched`](Stages::prefetched) in registers.
+    pub fn walk<F>(&mut self, _walk: Walk, _prefetch: Prefetch, _compute: F)
+    where
+        F: FnMut(&mut Slot<OperandPair<Lhs, Rhs>>, &Region),
+    {
+        unexpanded!()
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
+    pub fn __expand_walk_method<F>(
+        &mut self,
+        scope: &Scope,
+        walk: WalkExpand,
+        prefetch: Prefetch,
+        compute: F,
+    ) where
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+    {
+        match prefetch {
+            Prefetch::InSlots => self.__expand_pipelined_method(scope, walk, compute),
+            Prefetch::InRegisters => self.__expand_prefetched_method(scope, walk, compute),
+        }
+    }
+}
+
 /// The register-staged schedule, over the two operands of a contraction.
 impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     /// [`pipelined`](Stages::pipelined)'s walk with each region's fill split around the
@@ -200,7 +258,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     /// refused: their slots past the second would hold shared memory and never a stage.
     ///
     /// Only a stage copied by every unit of the cube, straight, from a plain operand, both
-    /// operands holding at most [`MOST_FETCHED_SCALARS`] between them a unit, is filled this way;
+    /// operands holding what [`Prefetch::fits`] admits between them a unit, is filled this way;
     /// anything else is refused at expansion. Stages holding an operand the walk leaves fixed
     /// take [`pipelined`](Stages::pipelined)'s schedule, at any depth: the fetch moves both
     /// operands of a slot at once, and a fixed one is filled once, above the loop.

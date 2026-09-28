@@ -15,6 +15,7 @@
 use super::{Form, implied};
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 use half::f16;
 

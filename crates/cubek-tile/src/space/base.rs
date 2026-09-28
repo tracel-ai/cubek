@@ -272,11 +272,15 @@ impl Space {
     /// A line folds into one accumulator cell only where it runs along the fastest of
     /// `contracted`, absent from the accumulator, so its units are partials of one cell; skipping
     /// the test silently merges distinct cells. The width must divide the axis: no masked tail.
+    /// A dynamic extent is a launch's, and a launch serves an operand `width` wide along an axis
+    /// only where the axis holds whole lines of it, so there the division holds already.
     pub(crate) fn contracted_per_step(&self, contracted: &[Axis], width: usize) -> usize {
         let lined = self.axis_at(self.rank() - 1);
-        let folds = width > 1
-            && contracted.last() == Some(&lined)
-            && self.extent(lined).is_multiple_of(width);
+        let whole_lines = match self.extent_raw(lined) {
+            Extent::Static(extent) => extent.is_multiple_of(width),
+            Extent::Dynamic => true,
+        };
+        let folds = width > 1 && contracted.last() == Some(&lined) && whole_lines;
         if folds { width } else { 1 }
     }
 

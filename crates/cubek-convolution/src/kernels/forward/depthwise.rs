@@ -25,6 +25,9 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_std::InputBinding;
+use cubek_tile::kind::Boundary;
+use cubek_tile::launch::Grid;
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};

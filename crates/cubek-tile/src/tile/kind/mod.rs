@@ -4,9 +4,9 @@
 mod base;
 mod memory;
 mod plane;
-mod procedural;
+pub(crate) mod procedural;
 
 pub use base::*;
 pub use memory::*;
 pub use plane::*;
-pub use procedural::*;
+pub(crate) use procedural::*;

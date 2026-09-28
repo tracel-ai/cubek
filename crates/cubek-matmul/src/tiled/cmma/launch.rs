@@ -7,8 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Bound, Cooperative, DeliveryLaunch, Geometry, Grid, Launcher, Space, Tma, TmaBox,
-    TmaTileArgLaunch,
+    Axis, Geometry, Launcher, Space,
+    launch::{Bound, Cooperative, DeliveryLaunch, Grid, Tma, TmaBox, TmaTileArgLaunch},
 };
 
 use crate::{

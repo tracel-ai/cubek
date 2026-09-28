@@ -14,7 +14,7 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
 use cubek_tile::{
-    Axis, Grid, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
+    Axis, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, launch::Grid,
 };
 
 use super::Dims;

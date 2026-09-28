@@ -183,7 +183,7 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
 /// read back the matrix it started as; the stored buffer's dims and strides are returned for the
 /// caller to check.
 fn tiles_and_comes_back(
-    layout: cubek_tile::GridLayout,
+    layout: cubek_tile::layout::GridLayout,
     rows: usize,
     cols: usize,
     stored_at: impl Fn(usize, usize) -> Vec<usize>,

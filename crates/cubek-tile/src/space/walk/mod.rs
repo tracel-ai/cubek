@@ -7,5 +7,5 @@ mod portion;
 
 pub use base::*;
 pub(crate) use distribution::AxisDistribution;
-pub use order::*;
+pub(crate) use order::*;
 pub use portion::*;
