@@ -26,9 +26,9 @@ use crate::{
     tiled::{batch_axis, logical_dims},
 };
 
-/// The storage tile `(rows, cols)` a matrix is stored in: what its innermost two physical
-/// dims hold.
-pub type StorageTile = (usize, usize);
+/// A matrix's outermost storage tile, `(rows, cols)`: each dim over its grid's count, whatever
+/// finer pieces it holds.
+type StorageTile = (usize, usize);
 
 /// `dst = src` over their logical cells, one cube per region of `level`, the cube's units
 /// striding the region's lines. A side inside its storage tile is a run; the other walks its
