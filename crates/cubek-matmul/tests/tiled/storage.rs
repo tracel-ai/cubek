@@ -4,7 +4,7 @@
 use cubecl::{ir::ElemType, prelude::*, zspace::Shape};
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::pack::{pack, unpack},
+    tiled::storage::{pack, unpack},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
 

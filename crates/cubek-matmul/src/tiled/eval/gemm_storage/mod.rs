@@ -33,7 +33,7 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::{
         cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
-        pack::pack,
+        storage::pack,
     },
 };
 

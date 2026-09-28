@@ -249,7 +249,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            pack::pack,
+            storage::pack,
         },
     };
     use cubek_std::InputBinding;
@@ -383,7 +383,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            pack::pack,
+            storage::pack,
         },
     };
     use cubek_std::InputBinding;

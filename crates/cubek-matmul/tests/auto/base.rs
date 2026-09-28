@@ -100,7 +100,7 @@ fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
     use cubek_matmul::{
         definition::{MatmulElems, MatmulSetupError},
         launch::launch_ref,
-        tiled::pack::pack,
+        tiled::storage::pack,
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
