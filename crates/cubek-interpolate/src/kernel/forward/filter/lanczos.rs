@@ -1,8 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::Axis;
-
-use super::super::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand};
+use cubek_tile::{AffineCoordinate, Axis, Reads, Recipe, RecipeCoords, RecipeExpand};
 
 /// Windowed-sinc Lanczos filter over an [`AffineCoordinate`].
 pub type LanczosAxis<T> = Lanczos<AffineCoordinate<T>>;

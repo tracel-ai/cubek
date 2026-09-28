@@ -59,9 +59,8 @@ impl RecipeCoords {
 
 /// An N-dimensional scalar field evaluated at absolute logical coordinates.
 ///
-/// Recipes implement [`Recipe<T>`] for any numeric element type `T: Numeric` (integers and floats),
-/// though continuous interpolation and filtering recipes (such as [`Linear`](super::Linear),
-/// [`Cubic`](super::Cubic), [`Lanczos`](super::Lanczos)) are defined over [`Float`] elements.
+/// Recipes implement [`Recipe<T>`] for any numeric element type `T: Numeric` (integers and floats);
+/// one may ask for more, as a resampling filter (cubek-interpolate's) asks for [`Float`].
 #[cube(expand_base_traits = "ExpandTypeClone")]
 pub trait Recipe<T: Numeric> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T;

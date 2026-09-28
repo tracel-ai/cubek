@@ -1,8 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::Axis;
-
-use super::super::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand};
+use cubek_tile::{AffineCoordinate, Axis, Reads, Recipe, RecipeCoords, RecipeExpand};
 
 /// A [`Linear`] filter applied directly to an [`AffineCoordinate`].
 pub type LinearAxis<T> = Linear<AffineCoordinate<T>>;

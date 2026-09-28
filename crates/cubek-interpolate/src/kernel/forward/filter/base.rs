@@ -2,9 +2,10 @@ use crate::definition::{InterpolateMode, ModeProperties, mode_properties};
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 use cubek_tile::{
-    AffineCoordinate, Constant, Cubic, DivGuard, Factors, Lanczos, Linear, Phase, Reads, Recipe,
-    Sum, TapSupport,
+    AffineCoordinate, Constant, DivGuard, Factors, Phase, Reads, Recipe, Sum, TapSupport,
 };
+
+use super::{Cubic, Lanczos, Linear};
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
 type NearestAxis<E> = Constant<E>;
