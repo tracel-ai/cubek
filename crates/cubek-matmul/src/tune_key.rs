@@ -44,7 +44,7 @@ pub struct MatmulProblemDefinition {
     pub matrix_layout_lhs: MatrixBatchLayout,
     pub matrix_layout_rhs: MatrixBatchLayout,
     /// How lhs is stored: plain rows, or storage tiles, which name the stage a routine reads it
-    /// in. A packed tensor's strides are row-major over its physical dims, so nothing above
+    /// in. A tiled tensor's strides are row-major over its physical dims, so nothing above
     /// tells it from its plain twin.
     pub lhs_storage: StorageTileKey,
     pub rhs_storage: StorageTileKey,
@@ -326,11 +326,11 @@ mod tests {
         assert_ne!(key(64, 128, 64), key(1, 128, 64));
     }
 
-    /// A weight packed into storage tiles has row-major strides over its physical dims, so the
+    /// A weight stored in storage tiles has row-major strides over its physical dims, so the
     /// layout and stride factors cannot tell it from its plain twin: the key says how it is
     /// stored, and reads the logical dims off the tiling rather than the physical shape.
     #[test]
-    fn a_packed_operand_keys_apart_from_its_plain_twin() {
+    fn a_tiled_operand_keys_apart_from_its_plain_twin() {
         let (m, k, n, tk, tn) = (64usize, 256usize, 512usize, 16usize, 32usize);
         let plain = MatmulAutotuneKey::from_parts(
             &Shape::new([m, k]),
@@ -345,7 +345,7 @@ mod tests {
             None,
             None,
         );
-        let packed = MatmulAutotuneKey::from_parts(
+        let tiled = MatmulAutotuneKey::from_parts(
             &Shape::new([m, k]),
             &Shape::new([k / tk, n / tn, tk, tn]),
             &Strides::new(&[k, 1]),
@@ -358,20 +358,16 @@ mod tests {
             None,
             None,
         );
-        assert_ne!(plain, packed);
+        assert_ne!(plain, tiled);
         assert_eq!(
-            (
-                packed.definition.m,
-                packed.definition.n,
-                packed.definition.k
-            ),
+            (tiled.definition.m, tiled.definition.n, tiled.definition.k),
             (plain.definition.m, plain.definition.n, plain.definition.k)
         );
         assert_eq!(
-            packed.definition.rhs_storage,
+            tiled.definition.rhs_storage,
             StorageTileKey::Tiled { rows: tk, cols: tn }
         );
-        assert_eq!(packed.definition.lhs_storage, StorageTileKey::Plain);
+        assert_eq!(tiled.definition.lhs_storage, StorageTileKey::Plain);
     }
 
     /// The transposed (`MildlyPermuted`) arm must likewise use the actual column stride. The

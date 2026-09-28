@@ -259,7 +259,7 @@ impl Strategy {
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
         use TileMatmulKind::{Cmma, Mma};
-        // Every routine here reads rows off its operands' strides, and would read a packed
+        // Every routine here reads rows off its operands' strides, and would read a tiled
         // buffer's tiles as rows; a storage-tiled operand rides the tiled cmma routine.
         for (name, binding) in [("lhs", lhs.data()), ("rhs", rhs.data())] {
             if binding.tiling.is_tiled() {

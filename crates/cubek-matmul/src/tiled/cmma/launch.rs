@@ -71,7 +71,7 @@ fn validate_storage_tiled(
     if tile != stage {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
-             tile names the stage, so pack the tensor to the plan's stage or plan for the tile"
+             tile names the stage, so tile the tensor to the plan's stage or plan for the tile"
         ))));
     }
     Ok(())

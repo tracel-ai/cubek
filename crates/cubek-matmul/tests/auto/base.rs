@@ -95,12 +95,12 @@ fn reported_m_broadcast() {
 /// which stages to its tiles, whichever architecture it would have picked for the shape.
 #[cfg(feature = "tiled")]
 #[test]
-fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
+fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
     use cubecl::prelude::*;
     use cubek_matmul::{
         definition::{MatmulElems, MatmulSetupError},
         launch::launch_ref,
-        tiled::storage::pack,
+        tiled::storage::tile,
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
@@ -123,7 +123,7 @@ fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
         .dtype(dtype)
         .uniform(4242, 10., 100.)
         .generate_without_host_data();
-    let packed = pack(&client, rhs.binding(), dtype, (32, 64)).unwrap();
+    let tiled = tile(&client, rhs.binding(), dtype, (32, 64)).unwrap();
 
     let mut elems = dtypes.clone();
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
@@ -132,7 +132,7 @@ fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
                 &Strategy::Auto,
                 c,
                 InputBinding::Normal(lhs.clone().binding(), dtype),
-                InputBinding::Normal(packed.clone().binding(), dtype),
+                InputBinding::Normal(tiled.clone().binding(), dtype),
                 out.clone().binding(),
                 &mut elems,
             )

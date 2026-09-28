@@ -216,9 +216,9 @@ fn cmma_rejects_input_register_type() {
     }
 }
 
-/// The weight packed at load into blocks of exactly the plan's stage, beside a row-major
+/// The weight tiled at load into blocks of exactly the plan's stage, beside a row-major
 /// activation: the same product as the row-major run, read one contiguous block per stage. The
-/// pack is a copy through the two tiles' views, so the block layout the kernel reads is the one
+/// tiling is a copy through the two tiles' views, so the block layout the kernel reads is the one
 /// the tile engine itself describes.
 #[test]
 fn cmma_storage_tiled_weight_f16() {
@@ -232,7 +232,7 @@ fn cmma_storage_tiled_weight_f32() {
     storage_tiled_weight(f32::elem_type_native(), CmmaStrategy::default());
 }
 
-/// The same packed weight moved by the TMA engine instead of the cube's units. How an operand
+/// The same tiled weight moved by the TMA engine instead of the cube's units. How an operand
 /// is stored and who moves it are independent, so this pair is a plan like any other: the
 /// descriptor keeps the stored rank and boxes one storage tile, which is one contiguous run.
 /// On a backend without TMA it is `Unavailable`, which the strict test policy surfaces.
@@ -249,7 +249,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            storage::pack,
+            storage::tile,
         },
     };
     use cubek_std::InputBinding;
@@ -279,7 +279,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
         let launch = || -> Result<(), MatmulSetupError> {
             // The plan the selector picks for this problem: its stage is the block the weight
-            // is packed to, whichever delivery moves it.
+            // is tiled to, whichever delivery moves it.
             let acc = match dtype {
                 ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
                 other => other,
@@ -301,13 +301,13 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
             let (_, stage_n) = blueprint.stage();
             let stage_k = blueprint.stage_k;
 
-            // The weight, packed to the plan's stage.
-            let packed = pack(c, rhs.clone().binding(), dtype, (stage_k, stage_n))?;
+            // The weight, tiled to the plan's stage.
+            let tiled = tile(c, rhs.clone().binding(), dtype, (stage_k, stage_n))?;
 
             launch_ref(
                 c,
                 InputBinding::Normal(lhs.clone().binding(), dtype),
-                InputBinding::Normal(packed.binding(), dtype),
+                InputBinding::Normal(tiled.binding(), dtype),
                 out.clone().binding(),
                 &BlueprintStrategy::Forced(blueprint),
                 &elems,
@@ -326,13 +326,13 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
     .enforce()
 }
 
-/// A packed operand under TMA is a plan, not a mistake. It may be unavailable (no TMA on this
+/// A tiled operand under TMA is a plan, not a mistake. It may be unavailable (no TMA on this
 /// backend), but it is never refused as a bad config: how an operand is stored and who moves it
 /// are independent, and the only thing the storage tile decides is the stage.
 ///
 /// Runs on every backend, since it asserts what the refusal is *not*.
 #[test]
-fn cmma_never_refuses_a_packed_weight_under_tma() {
+fn cmma_never_refuses_a_tiled_weight_under_tma() {
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
@@ -370,20 +370,20 @@ fn cmma_never_refuses_a_packed_weight_under_tma() {
         }
         // No TMA here: a hardware fact, which is the only thing allowed to turn this pair down.
         Err(MatmulSetupError::Unavailable(_)) => {}
-        Err(other) => panic!("a packed weight under TMA was refused as a config error: {other:?}"),
+        Err(other) => panic!("a tiled weight under TMA was refused as a config error: {other:?}"),
     }
 }
 
-/// A weight is packed once and read at every `m`. Its storage tile names the stage: an inferred
+/// A weight is tiled once and read at every `m`. Its storage tile names the stage: an inferred
 /// plan stages to it, whatever this `m` would have chosen, and moves it under the Tiled delivery.
 #[test]
-fn cmma_packed_weight_names_the_stage_across_m() {
+fn cmma_tiled_weight_names_the_stage_across_m() {
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            storage::pack,
+            storage::tile,
         },
     };
     use cubek_std::InputBinding;
@@ -411,7 +411,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
 
     // A storage tile the selector would not have picked on its own: twice its stage depth and
     // stage width for an f32 weight.
-    let tile = (32, 64);
+    let storage_tile = (32, 64);
     let (rhs, rhs_data) = TestInput::builder(
         client.clone(),
         rect(64, n, k, dtypes.as_global_elems()).rhs_shape,
@@ -419,7 +419,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
     .dtype(dtype)
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
-    let packed = pack(&client, rhs.binding(), dtype, tile).unwrap();
+    let tiled = tile(&client, rhs.binding(), dtype, storage_tile).unwrap();
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());
@@ -438,7 +438,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
             dtype,
             StoredTiles {
                 lhs: None,
-                rhs: Some(tile),
+                rhs: Some(storage_tile),
             },
         )
         .unwrap();
@@ -446,8 +446,8 @@ fn cmma_packed_weight_names_the_stage_across_m() {
         // is a knob, how they are stored is a fact of the data.
         assert_eq!(free.delivery, CmmaDelivery::Copy);
         assert_eq!(held.delivery, CmmaDelivery::Copy);
-        assert_eq!((held.stage_k, held.stage().1), tile, "at m = {m}");
-        assert_ne!((free.stage_k, free.stage().1), tile, "at m = {m}");
+        assert_eq!((held.stage_k, held.stage().1), storage_tile, "at m = {m}");
+        assert_ne!((free.stage_k, free.stage().1), storage_tile, "at m = {m}");
 
         let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
             .dtype(dtype)
@@ -462,7 +462,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
                 launch_ref(
                     c,
                     InputBinding::Normal(lhs.clone().binding(), dtype),
-                    InputBinding::Normal(packed.clone().binding(), dtype),
+                    InputBinding::Normal(tiled.clone().binding(), dtype),
                     out.clone().binding(),
                     &BlueprintStrategy::Inferred(CmmaStrategy::default()),
                     &dtypes,

@@ -128,7 +128,7 @@ pub(crate) fn validate_stored_tile(
     let partitioning = Partitioning::new(space.clone(), levels.to_vec());
     Err(MatmulSetupError::InvalidConfig(Box::new(format!(
         "{name} is stored in {tile:?} storage tiles, which is the tile of no level of this \
-         routine's nest; pack the tensor to one of its tiles\n\n{}",
+         routine's nest; tile the tensor to one of its tiles\n\n{}",
         partitioning.table(&labels(space))
     ))))
 }

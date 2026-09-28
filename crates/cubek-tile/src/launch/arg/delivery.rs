@@ -4,7 +4,7 @@
 //!
 //! How the operand is *stored* is a separate fact, riding the spec's [`Storage`](crate::Storage):
 //! a storage-tiled operand states the level its tile is the tile of; every mover here serves it.
-//! Orthogonal on purpose, so a weight packed to the stage can move under TMA as well as the units.
+//! Orthogonal on purpose, so a weight tiled to the stage can move under TMA as well as the units.
 
 use cubecl::prelude::*;
 

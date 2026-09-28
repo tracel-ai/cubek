@@ -22,11 +22,11 @@ pub(crate) fn into_contiguous_if_highly_permuted(
     match matrix_batch_layout(&binding.data().strides, binding.scheme()) {
         MatrixBatchLayout::HighlyPermuted => {
             // A contiguous copy is a plain row-major buffer, so it would drop the storage tiles
-            // the binding states rather than carry them: the caller packs a plain tensor.
+            // the binding states rather than carry them: the caller tiles a plain tensor.
             if binding.data().tiling.is_tiled() {
                 return Err(MatmulSetupError::InvalidConfig(Box::new(
                     "a storage-tiled operand arrived highly permuted; making it contiguous would \
-                     drop its storage tiles, so unpack it, or pack a row-major tensor"
+                     drop its storage tiles, so untile it, or tile a row-major tensor"
                         .to_string(),
                 )));
             }

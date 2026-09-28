@@ -1,7 +1,7 @@
 //! The Cmma routine on a storage-tiled weight vs the same plan on a row-major one.
 //!
 //! The hypothesis under test: a `[stage_k x stage_n]` stage read from a row-major weight touches
-//! `stage_k` short runs, half of every cache line wasted at a narrow stage; packed into storage tiles of
+//! `stage_k` short runs, half of every cache line wasted at a narrow stage; stored in storage tiles of
 //! exactly the plan's stage, the stage is one contiguous run. Prefill shapes only (a tall `M`
 //! against a square-ish weight): decode is already at the bandwidth slope.
 //!
@@ -33,7 +33,7 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::{
         cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
-        storage::pack,
+        storage::tile,
     },
 };
 
@@ -78,8 +78,8 @@ impl Weight {
         }
     }
 
-    /// The weight as this storage holds it: plain, or packed to the plan's stage. Packing is a
-    /// real relayout of the data, so the packed weight computes the same product as the plain one.
+    /// The weight as this storage holds it: plain, or tiled to the plan's stage. Tiling is a
+    /// real relayout of the data, so the tiled weight computes the same product as the plain one.
     fn store(
         self,
         client: &Client,
@@ -91,7 +91,7 @@ impl Weight {
             Weight::RowMajor => Ok(rhs),
             Weight::Tiled => {
                 let (_, stage_n) = blueprint.stage();
-                pack(client, rhs, dtype, (blueprint.stage_k, stage_n))
+                tile(client, rhs, dtype, (blueprint.stage_k, stage_n))
                     .map(TensorHandle::binding)
                     .map_err(|e| format!("{e:?}"))
             }
@@ -106,7 +106,7 @@ pub struct StorageStrategy {
 
 /// The `m x n x k` problem and the plan the selector picks for it: one delivery, the cube's
 /// units, either way, so the weight's storage is the only variable. Nothing is stored at plan
-/// time, since the bench plans first and packs the weight to the stage the plan picked.
+/// time, since the bench plans first and tiles the weight to the stage the plan picked.
 fn plan(
     client: &Client,
     (m, n, k): (usize, usize, usize),
@@ -170,7 +170,7 @@ impl Benchmark for StorageBench {
             .dtype(dtype)
             .uniform(0, 0.0, 1.0)
             .generate_without_host_data();
-        // The weight, packed at load where the strategy stores it in tiles.
+        // The weight, tiled at load where the strategy stores it in tiles.
         let rhs = TestInput::builder(self.client.clone(), shape![k, n])
             .dtype(dtype)
             .uniform(1, 0.0, 1.0)
@@ -178,7 +178,7 @@ impl Benchmark for StorageBench {
         let rhs = self
             .weight
             .store(&self.client, rhs.binding(), dtype, &self.blueprint)
-            .expect("the proof packed this weight before the timing");
+            .expect("the proof tiled this weight before the timing");
         (lhs, rhs)
     }
 
@@ -352,7 +352,7 @@ pub fn strategies() -> Vec<CatalogEntry<StorageStrategy>> {
         ),
         CatalogEntry::new(
             "tiled",
-            "Cmma, weight packed to the stage",
+            "Cmma, weight tiled to the stage",
             StorageStrategy {
                 weight: Weight::Tiled,
             },

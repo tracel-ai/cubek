@@ -1,9 +1,9 @@
-//! Packing a matrix into storage tiles, and back.
+//! Storing a matrix in storage tiles, and laying it back out.
 //!
 //! A storage-tiled tensor is stored one tile at a time, `[.., R/tr, C/tc, tr, tc]`, the tile the
 //! innermost two dims; its binding says so through its `tiling`. The tile is a level of whatever
-//! routine reads it (cmma's stage), so a weight packed to the plan's stage moves as one
-//! contiguous run per stage. Packing is a relayout on the tile DSL: a space over the matrix with
+//! routine reads it (cmma's stage), so a weight tiled to the plan's stage moves as one
+//! contiguous run per stage. Tiling is a relayout on the tile DSL: a space over the matrix with
 //! exactly one level, the storage tile, one cube per tile. Whichever side is storage-tiled is
 //! read or written as a run; the other through its layout.
 
@@ -21,7 +21,7 @@ use crate::{
     tiled::{M, N, batch_axis, logical_dims, storage_tile},
 };
 
-/// The storage tile `(rows, cols)` a matrix is packed into: what its innermost two physical
+/// The storage tile `(rows, cols)` a matrix is stored in: what its innermost two physical
 /// dims hold.
 pub type StorageTile = (usize, usize);
 
@@ -66,17 +66,17 @@ fn relayout<E: Numeric, V: Size>(
     }
 }
 
-/// Pack a plain matrix (leading batch dims, trailing `rows x cols`) into `tile` storage tiles.
+/// Store a plain matrix (leading batch dims, trailing `rows x cols`) in `tile` storage tiles.
 /// The result's metadata states the tiling, so its binding says how it is stored and any
 /// routine folds its logical shape back.
 ///
 /// # Errors
 ///
-/// A source that is already storage-tiled (unpack it first), or a shape `tile` does not divide:
+/// A source that is already storage-tiled (untile it first), or a shape `tile` does not divide:
 /// a routine reading storage tiles reads whole ones, and a padded buffer would change the
 /// logical shape.
 #[allow(clippy::result_large_err)]
-pub fn pack(
+pub fn tile(
     client: &Client,
     src: TensorBinding,
     dtype: ElemType,
@@ -84,14 +84,14 @@ pub fn pack(
 ) -> Result<TensorHandle, MatmulSetupError> {
     if src.tiling.is_tiled() {
         return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "pack: the source is already storage-tiled; unpack it first".to_string(),
+            "tile: the source is already storage-tiled; untile it first".to_string(),
         )));
     }
     let (batches, rows, cols) = logical_dims(&src);
     let (tr, tc) = tile;
     if !rows.is_multiple_of(tr) || !cols.is_multiple_of(tc) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "pack: a {rows}x{cols} matrix is not whole {tr}x{tc} storage tiles; a routine reads \
+            "tile: a {rows}x{cols} matrix is not whole {tr}x{tc} storage tiles; a routine reads \
              whole tiles, so state a tile that divides it"
         ))));
     }
@@ -102,7 +102,7 @@ pub fn pack(
         .collect();
     // The tiling the result carries: its batch dims plain, both matrix dims one nesting deep.
     let fragments: Vec<usize> = batches.iter().map(|_| 1).chain([2, 2]).collect();
-    let config = |e| MatmulSetupError::InvalidConfig(Box::new(format!("pack: {e:?}")));
+    let config = |e| MatmulSetupError::InvalidConfig(Box::new(format!("tile: {e:?}")));
     let tiling = Tiling::new(&fragments).map_err(config)?;
     let mut dst = TensorHandle::empty(client, Shape::from(physical), dtype);
     dst.metadata = Box::new(
@@ -112,75 +112,32 @@ pub fn pack(
             .with_tiling(tiling)
             .map_err(config)?,
     );
-    pack_into(client, src, dst.clone().binding(), dtype)?;
+    relayout_launch(
+        client,
+        src,
+        dst.clone().binding(),
+        dtype,
+        &batches,
+        (rows, cols),
+        tile,
+    );
     Ok(dst)
 }
 
-/// [`pack`] into a destination the caller allocated: the same relayout, writing where it says.
-///
-/// What a caller assembling several regions into one allocation needs — a quantized weight is
-/// one buffer holding its values and, at an offset, its scales, and each is packed on its own
-/// — and it is what [`pack`] does once the allocation is out of the way.
-///
-/// `dst` states the tile: it is storage-tiled, and its two innermost dims are the tile the
-/// source is cut into.
-///
-/// # Errors
-///
-/// A source already storage-tiled, a destination that is not, or a pair whose logical shapes
-/// disagree — the relayout moves cells between two views of one matrix, so a destination
-/// standing for a different one is a caller's mistake rather than a shape to pad.
-#[allow(clippy::result_large_err)]
-pub fn pack_into(
-    client: &Client,
-    src: TensorBinding,
-    dst: TensorBinding,
-    dtype: ElemType,
-) -> Result<(), MatmulSetupError> {
-    if src.tiling.is_tiled() {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "pack: the source is already storage-tiled; unpack it first".to_string(),
-        )));
-    }
-    let Some(tile) = storage_tile(&dst, "pack")? else {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "pack: the destination is not storage-tiled, so it states no tile to pack into"
-                .to_string(),
-        )));
-    };
-    let (batches, rows, cols) = logical_dims(&src);
-    let (dst_batches, dst_rows, dst_cols) = logical_dims(&dst);
-    if (&batches, rows, cols) != (&dst_batches, dst_rows, dst_cols) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "pack: the destination stands for a {dst_batches:?} {dst_rows}x{dst_cols} matrix \
-             and the source for a {batches:?} {rows}x{cols} one"
-        ))));
-    }
-    let (tr, tc) = tile;
-    if !rows.is_multiple_of(tr) || !cols.is_multiple_of(tc) {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "pack: a {rows}x{cols} matrix is not whole {tr}x{tc} storage tiles; a routine reads \
-             whole tiles, so state a tile that divides it"
-        ))));
-    }
-    relayout_launch(client, src, dst, dtype, &batches, (rows, cols), tile);
-    Ok(())
-}
-
-/// Unpack a storage-tiled matrix back to a plain row-major one.
+/// Lay a storage-tiled matrix back out as a plain row-major one.
 ///
 /// # Errors
 ///
 /// A source that is not storage-tiled, or tiled in a way [`storage_tile`] cannot read.
 #[allow(clippy::result_large_err)]
-pub fn unpack(
+pub fn untile(
     client: &Client,
     src: TensorBinding,
     dtype: ElemType,
 ) -> Result<TensorHandle, MatmulSetupError> {
-    let Some(tile) = storage_tile(&src, "unpack")? else {
+    let Some(tile) = storage_tile(&src, "untile")? else {
         return Err(MatmulSetupError::InvalidConfig(Box::new(
-            "unpack: the source is not storage-tiled".to_string(),
+            "untile: the source is not storage-tiled".to_string(),
         )));
     };
     let (batches, rows, cols) = logical_dims(&src);

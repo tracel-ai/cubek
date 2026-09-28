@@ -127,7 +127,7 @@ pub struct CmmaBlueprint {
 
 impl CmmaBlueprint {
     /// The cube's stage edges along `m`/`n`: with [`stage_k`](Self::stage_k), the storage tile a
-    /// storage-tiled input is packed to.
+    /// storage-tiled input is tiled to.
     pub fn stage(&self) -> (usize, usize) {
         (
             self.planes.m * self.partition.m * self.instruction.m,
@@ -212,7 +212,7 @@ impl StoredTiles {
             (Some((_, lk)), Some((rk, _))) if lk != rk => {
                 return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                     "Cmma: lhs is stored in storage tiles {lk} deep along K and rhs {rk} deep; \
-                     both name stage_k, so pack them to the same depth"
+                     both name stage_k, so tile them to the same depth"
                 ))));
             }
             (Some((_, k)), _) | (None, Some((k, _))) => Some(k),
@@ -461,7 +461,7 @@ impl CmmaRoutine {
     /// the cube dim affords, snapped to divisors of the tile grid. A stage edge a stored
     /// operand fixes is taken as is: the instruction must divide it and the planes and
     /// partition are sized to realize it exactly, whatever this problem's `m` would have chosen,
-    /// since a weight is packed once and read at every `m`.
+    /// since a weight is tiled once and read at every `m`.
     #[allow(clippy::result_large_err)]
     fn select(
         problem: &MatmulProblem,
@@ -584,7 +584,7 @@ impl CmmaRoutine {
         // fragments is still this plan's to say.
         //
         // A reuse plan cuts them so the two multiply back exactly — a stage that lost a tile
-        // to a rounded division is not the tile the weight was packed to. The other arm hands
+        // to a rounded division is not the tile the weight was tiled to. The other arm hands
         // every tile to a plane, as it did before there was a partition to give them to, and
         // the budget check below is what catches a weight too tall for one cube.
         let (part_n, planes_n) = match (fixed_n, reuses) {

@@ -113,7 +113,7 @@ pub fn tma_operand(
 ///
 /// # Panics
 ///
-/// A binding whose innermost two dims are not `tile`, which is what packing produced and what
+/// A binding whose innermost two dims are not `tile`, which is what tiling produced and what
 /// the routine's own storage-tile check enforces.
 pub fn tma_operand_tiled(
     binding: TensorBinding,
@@ -172,8 +172,8 @@ mod tests {
 
     use super::*;
 
-    /// A weight packed to a 32x64 stage: `[256, 512]` stored as `[8, 8, 32, 64]`.
-    fn packed() -> TensorBinding {
+    /// A weight tiled to a 32x64 stage: `[256, 512]` stored as `[8, 8, 32, 64]`.
+    fn tiled() -> TensorBinding {
         let client = cubecl::test_device().client();
         let shape = shape![8, 8, 32, 64];
         let strides = strides![64 * 32 * 8, 64 * 32, 64, 1];
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn a_stored_descriptor_keeps_the_rank_and_boxes_one_storage_tile() {
         let arg = tma_operand_tiled(
-            packed(),
+            tiled(),
             (32, 64),
             f32::elem_type_native(),
             TensorMapSwizzle::None,
@@ -211,7 +211,7 @@ mod tests {
     #[should_panic(expected = "stored in (32, 64) tiles, not the (64, 64) asked for")]
     fn a_stored_descriptor_refuses_a_tile_the_buffer_does_not_hold() {
         tma_operand_tiled(
-            packed(),
+            tiled(),
             (64, 64),
             f32::elem_type_native(),
             TensorMapSwizzle::None,
