@@ -1,6 +1,6 @@
 //! The [`Meeting`]: the fill-vs-read rendezvous for one staging slot, and the [`Rendezvous`] strategy
 //! deduced from the operands' delivery. [`Barrier`](Rendezvous::Barrier) mirrors cubek-matmul's
-//! `specialized/matmul.rs`; [`Cube`](Rendezvous::Cube) and [`Solo`](Rendezvous::Solo) are degenerate cases.
+//! `specialized/matmul.rs`; [`Cube`](Rendezvous::Cube) is the degenerate case.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -11,8 +11,6 @@ use crate::*;
 /// from the operands' delivery.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Rendezvous {
-    /// One unit fills and reads its own slot: no collective (single-plane / CPU).
-    Solo,
     /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
     /// in `write` and covers both this slot's fill→read and the sibling's read→refill.
     Cube,
@@ -39,9 +37,6 @@ impl Rendezvous {
             match (sync, delivery.rendezvous()) {
                 (Rendezvous::Barrier, _) | (_, Rendezvous::Barrier) => Rendezvous::Barrier,
                 (Rendezvous::Cube, Rendezvous::Cube) => Rendezvous::Cube,
-                (Rendezvous::Solo, _) | (_, Rendezvous::Solo) => {
-                    unreachable!("source rendezvous is never Solo")
-                }
             }
         })
     }
@@ -64,8 +59,6 @@ pub enum Meeting {
     /// The variant (not a flag) carries the choice, so the dispatch is comptime and the
     /// rendezvous emits a bare barrier, never a branch-wrapped one.
     Cube,
-    /// A single unit fills and reads its own slot: no collective at all.
-    Solo,
     /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair, one parity each,
     /// so the fill overlaps compute. TMA motivates it, but the barrier itself is
     /// delivery-agnostic; see [`Meeting::fill`].
@@ -109,7 +102,6 @@ impl Meeting {
         #[comptime] fillers: usize,
     ) -> Meeting {
         match sync {
-            Rendezvous::Solo => Meeting::new_Solo(),
             Rendezvous::Cube => Meeting::new_Cube(),
             Rendezvous::Barrier => {
                 let full =
@@ -185,7 +177,7 @@ impl Meeting {
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
             },
-            Meeting::Cube | Meeting::Solo => dst.copy_from(src),
+            Meeting::Cube => dst.copy_from(src),
         }
     }
 }

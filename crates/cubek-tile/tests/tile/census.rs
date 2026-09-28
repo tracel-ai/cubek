@@ -20,8 +20,12 @@ use std::path::{Path, PathBuf};
 /// cubek-interpolate took it down to 746. The facade split the root into modules (a few more
 /// `pub mod` and root re-exports) and made crate-private what nothing outside named, and the
 /// questions a selector asks (`Prefetch`, `Delivery::moves`) replaced the limits it re-derived
-/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724.
-const PUB_ITEMS: usize = 724;
+/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724. `softmax`
+/// became the one public row op (its unit and plane arms crate-private) and the stencil builder
+/// test-only: 717. `Input` and `Output`, one launch argument each way, replaced the delivery
+/// families (`DeliveryFamily`, `DeliveryLaunch`, `Cooperative`, `Tma`, `Accumulated`): five
+/// concepts to two, but their `tile` and host builders count as lines, four more: 721.
+const PUB_ITEMS: usize = 721;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;
