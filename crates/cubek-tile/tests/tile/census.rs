@@ -16,11 +16,12 @@ use std::path::{Path, PathBuf};
 ///
 /// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
 /// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
-/// memory counts it.
-const PUB_ITEMS: usize = 763;
+/// memory counts it. The attention walk moving to its client and the resampling filters to
+/// cubek-interpolate took it down to 746.
+const PUB_ITEMS: usize = 746;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 36;
+const LONG_FNS: usize = 33;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
 const LONG_FILES: usize = 11;
@@ -41,12 +42,20 @@ const RETIRED: &[&str] = &[
     "unravel_const",
     "concat3",
     "within_2d",
-    "AxisDistribution",
-    "Distributed",
-    "DistributedToUnits",
-    "distribution",
-    "distributes",
-    "distributed",
+    // A level distributes its tiles over a compute scope ("distribution over deal"), and a
+    // plane is made of units, not lanes.
+    "Deal",
+    "Dealt",
+    "deal",
+    "dealt",
+    "deals",
+    "lane",
+    "lanes",
+    "Takers",
+    // A unit share reduces its partials; a stage's rows are arranged, not placed.
+    "fold_of",
+    "fold_mask",
+    "RowPlacement",
 ];
 
 #[test]

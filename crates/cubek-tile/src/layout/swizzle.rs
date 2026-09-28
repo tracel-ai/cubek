@@ -117,7 +117,7 @@ mod tests {
     }
 
     /// A 64-byte row, 8-wide f16 lines (the cmma `16×32` block): the eight rows one pass of eight
-    /// lanes reads start on eight distinct 16-byte slots of the bank period.
+    /// units reads start on eight distinct 16-byte slots of the bank period.
     #[test]
     fn eight_rows_of_a_64_byte_block_start_on_distinct_banks() {
         let swizzle = ChunkSwizzle::new(&[2, 16, 4], LineBytes(16)).unwrap();

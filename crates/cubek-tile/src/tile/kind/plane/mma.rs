@@ -251,12 +251,12 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// Manual load: each lane reads its own cells out of `src` through the matrix view, the window
+/// Manual load: each unit reads its own cells out of `src` through the matrix view, the window
 /// lying as the role's `edges` (`layout` row-major) or as their transpose (col-major, a weight
 /// stored `{n, k}`).
 ///
-/// Where a lane's register vector runs along the window's lines — the instruction's
-/// [`vector_layout`](MmaDefinition::vector_layout) is the window's — the lane reads whole lines,
+/// Where a unit's register vector runs along the window's lines — the instruction's
+/// [`vector_layout`](MmaDefinition::vector_layout) is the window's — the unit reads whole lines,
 /// one per `W` cells, rather than one line per cell: a load the device issues wide. Elsewhere
 /// each cell is read on its own.
 #[cube]
