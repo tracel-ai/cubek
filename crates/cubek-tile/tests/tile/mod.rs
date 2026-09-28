@@ -13,6 +13,7 @@ mod imperative;
 mod instruction;
 mod launcher;
 mod matmul;
+mod mb_timing;
 mod packed;
 mod paged;
 mod procedural;
