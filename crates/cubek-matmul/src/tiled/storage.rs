@@ -14,7 +14,9 @@ use cubecl::{
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Tiling},
 };
-use cubek_tile::{Axis, Geometry, Grid, Launcher, Level, Levels, Partitioning, Space, TileArg};
+use cubek_tile::{
+    Axis, Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, launch::Grid,
+};
 
 use crate::{
     definition::MatmulSetupError,

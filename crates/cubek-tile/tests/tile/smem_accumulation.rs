@@ -15,6 +15,8 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
+use cubek_tile::stage::RowChunks;
+use cubek_tile::tile::PlanePartition;
 use cubek_tile::*;
 
 const M: Axis = Axis(0);

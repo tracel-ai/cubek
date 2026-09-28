@@ -6,11 +6,13 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
     zspace::Tiling,
 };
-use cubek_tile::BoundaryPolicy;
-use cubek_tile::Quantization;
+use cubek_tile::launch::BoundaryPolicy;
+use cubek_tile::quant::Quantization;
 use cubek_tile::{
-    Axis, Boundary, DequantAt, Divisor, Geometry, Level, Offset, Partitioning, PhysicalAxisMap,
-    Projection, Scale, Space, Storage, StorageTiling, TileSpec,
+    Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
+    layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageTiling},
+    quant::DequantAt,
+    tile::{Boundary, Storage},
 };
 
 const M: Axis = Axis(0);

@@ -213,7 +213,7 @@ fn origin_of(scope: &Scope, space: &Space) -> CoordsExpand<u32> {
 /// the values lie: the multiply is comptime-absent.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct FactorReader {
+pub(crate) struct FactorReader {
     /// The innermost level, or nothing at all.
     pub(crate) inner: Factor,
     /// Every coarser level, already met.

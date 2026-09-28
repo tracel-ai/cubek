@@ -89,7 +89,7 @@ impl<Acc: Numeric> Tile<Acc> {
 /// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form. Each factor
 /// carries its own scales, or none.
 #[cube]
-pub fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
+pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,

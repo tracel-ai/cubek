@@ -1,4 +1,4 @@
-//! The logical coordinate space a tile lives in, and how a level of it splits ([`partition`]).
+//! The logical coordinate space a tile lives in, and how a level of it splits (`partition`).
 
 mod axis;
 mod base;
@@ -15,7 +15,7 @@ pub use axis::*;
 pub use base::*;
 pub use coords::*;
 pub(crate) use extent::*;
-pub use matrix::*;
+pub(crate) use matrix::*;
 pub use partition::*;
 pub(crate) use region::Step;
 pub use region::*;

@@ -205,7 +205,7 @@ fn register_fetched_widths(#[comptime] lhs: usize, #[comptime] rhs: usize) {
 impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     /// The registers one unit holds a fill of both operands' stages in, across a contraction
     /// ([`prefetched`](Stages::prefetched)): whole lines at each stage's width, at most
-    /// [`MOST_FETCHED_SCALARS`] scalars between them.
+    /// `MOST_FETCHED_SCALARS` scalars between them ([`Prefetch::fits`]).
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
     pub(crate) fn fetch_buffers(&self) -> FetchBuffers<Lhs, Rhs> {
         let staged = self.slots.index(FIRST_SLOT);

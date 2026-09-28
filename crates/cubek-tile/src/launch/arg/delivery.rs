@@ -29,11 +29,26 @@ pub enum Delivery {
 }
 
 /// CUDA caps each TMA box dimension at 256; a bulk copy fills one smem stage, so the
-/// stage edges are the box dims. Public so a derivation can size a stage to it before
-/// [`validate_tma`](Delivery::validate_tma) refuses one past it.
-pub const TMA_MAX_BOX_DIM: usize = 256;
+/// stage edges are the box dims. A derivation sizes a stage to it through
+/// [`max_edge`](Delivery::max_edge) before [`validate_tma`](Delivery::validate_tma) refuses one
+/// past it.
+pub(crate) const TMA_MAX_BOX_DIM: usize = 256;
 
 impl Delivery {
+    /// The longest stage edge one transfer of this delivery moves: a TMA box's per-axis limit, and
+    /// none where the cube's own units copy or compute the stage.
+    pub fn max_edge(self) -> Option<usize> {
+        match self {
+            Delivery::Tma => Some(TMA_MAX_BOX_DIM),
+            Delivery::Copy | Delivery::Procedural => None,
+        }
+    }
+
+    /// Whether a stage edge of `edge` is one this delivery moves ([`max_edge`](Delivery::max_edge)).
+    pub fn admits_edge(self, edge: usize) -> bool {
+        self.max_edge().is_none_or(|max| edge <= max)
+    }
+
     pub fn is_tma(&self) -> bool {
         matches!(self, Delivery::Tma)
     }

@@ -1,7 +1,10 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 
-use cubek_tile::{AffineCoordinate, Axis, Reads, Recipe, RecipeCoords, RecipeExpand};
+use cubek_tile::{
+    Axis,
+    procedural::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand},
+};
 
 /// Keys' cubic-convolution filter over an [`AffineCoordinate`].
 pub type CubicAxis<T> = Cubic<AffineCoordinate<T>>;

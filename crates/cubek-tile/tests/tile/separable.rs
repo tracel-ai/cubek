@@ -12,8 +12,19 @@ use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
 };
+use cubek_tile::layout::PhysicalAxisMap;
+use cubek_tile::procedural::AffineCoordinate;
+use cubek_tile::procedural::DivGuard;
+use cubek_tile::procedural::Factors;
+use cubek_tile::procedural::Procedural;
+use cubek_tile::procedural::Sum;
+use cubek_tile::procedural::TapSupport;
+use cubek_tile::procedural::affine_along;
+use cubek_tile::procedural::sum_of;
+use cubek_tile::quant::DequantAt;
+use cubek_tile::quant::QuantTileArg;
 use cubek_tile::*;
-use cubek_tile::{Boundary, BoundaryPolicy, Quantization};
+use cubek_tile::{launch::BoundaryPolicy, quant::Quantization, tile::Boundary};
 
 const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);

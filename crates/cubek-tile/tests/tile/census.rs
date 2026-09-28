@@ -17,8 +17,11 @@ use std::path::{Path, PathBuf};
 /// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
 /// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
 /// memory counts it. The attention walk moving to its client and the resampling filters to
-/// cubek-interpolate took it down to 746.
-const PUB_ITEMS: usize = 746;
+/// cubek-interpolate took it down to 746. The facade split the root into modules (a few more
+/// `pub mod` and root re-exports) and made crate-private what nothing outside named: 724. The
+/// queries a selector asks instead of re-deriving cubek's limits (`Prefetch`, `Delivery::max_edge`)
+/// replaced `MOST_FETCHED_SCALARS`, `UnitLines` and `TMA_MAX_BOX_DIM`, one more: 725.
+const PUB_ITEMS: usize = 725;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;

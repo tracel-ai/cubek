@@ -2,8 +2,8 @@ use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
 use cubek_tile::{
-    Axis, Compaction, Level, Levels, Partitioning, PhysicalAxisMap, Projection, RegisterBlock,
-    Space,
+    Axis, Level, Levels, Partitioning, Projection, RegisterBlock, Space,
+    layout::{Compaction, PhysicalAxisMap},
 };
 
 pub const BATCH: Axis = Axis(0);

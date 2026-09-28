@@ -1,4 +1,4 @@
-//! The [`Slot`] slot: a [`Payload`](crate::load::pipeline::payload::Payload) plus the [`Meeting`]
+//! The [`Slot`] slot: a [`Payload`](crate::stage::pipeline::payload::Payload) plus the [`Meeting`]
 //! sequencing its fill against its read. Generic slot mechanics only: the producer/consumer
 //! acquire/release and the final publish; what a payload is made of and how it is brought to a
 //! region are the payload's own.

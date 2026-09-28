@@ -12,7 +12,7 @@ impl<T: Numeric> Memory<T> {
     /// as a flat run of its own *window*, which pairs them only when they are the same box.
     ///
     /// `scan` is what the source hands out per line, read off the two forms once
-    /// ([`Scan`](crate::load::transport::base::Scan)); every claim this rests on was asserted there.
+    /// ([`Scan`](crate::stage::transport::base::Scan)); every claim this rests on was asserted there.
     pub(crate) fn fill_scanned<W: Size>(&mut self, src: &Memory<T>, #[comptime] scan: Scan) {
         match comptime!(scan) {
             // The source's served element, one line for one line.

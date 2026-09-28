@@ -21,12 +21,19 @@ use cubecl::{
 };
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
+use cubek_tile::Instruction;
+use cubek_tile::layout::PhysicalAxisMap;
+use cubek_tile::layout::split;
+use cubek_tile::ops::matmul::Side;
+use cubek_tile::stage::UnitRead;
+use cubek_tile::tile::Field;
+use cubek_tile::tile::PlanePartition;
 use cubek_tile::*;
 use half::f16;
 
 use super::matmul::require_cmma_8x8x8_f32;
 use super::{Form, implied};
-use cubek_tile::Bound;
+use cubek_tile::launch::Bound;
 
 /// Which factor a test kernel writes its scales on. The engine has no such enum: a kernel says
 /// which by where it writes `.mul()`, and these kernels serve both cases from one launch.
@@ -180,8 +187,12 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone())).with_landing();
-    let b = b.tile(comptime!(space.clone())).with_landing();
+    let a = a
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
+    let b = b
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
@@ -1660,13 +1671,15 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone())).with_landing();
+    let a = a
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut stage = b
         .stage(comptime!(level.clone()), StageStorage::Strided)
-        .with_landing();
+        .landed_for(Instruction::Cmma);
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     for region in space.over(&level) {
@@ -2234,8 +2247,12 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] read: UnitRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    let a = a.tile(comptime!(space.clone())).with_landing();
-    let b = b.tile_as::<E>(comptime!(space.clone())).with_landing();
+    let a = a
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
+    let b = b
+        .tile_as::<E>(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {

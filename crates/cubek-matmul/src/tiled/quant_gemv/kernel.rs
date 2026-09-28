@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, scale_tile,
+    Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::scale_tile,
 };
 
 use crate::tiled::{

@@ -114,7 +114,7 @@ pub enum Spread {
 
 /// One of the launch grid's three dimensions.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum CubeAxis {
+pub(crate) enum CubeAxis {
     X,
     Y,
     Z,
@@ -389,7 +389,7 @@ impl Level {
 
     /// The grid dimension `axis` rides on a cube level: batches on `Z`, the others `X`, `Y`, `Z`
     /// in the order named. `None` on any other level, or an axis the level does not name.
-    pub fn cube_axis(&self, axis: Axis) -> Option<CubeAxis> {
+    pub(crate) fn cube_axis(&self, axis: Axis) -> Option<CubeAxis> {
         if self.coverage != Coverage::Distribute(ComputeScope::Cube) || !self.cuts.contains(axis) {
             return None;
         }

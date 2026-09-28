@@ -7,6 +7,11 @@ use core::f32::consts::PI;
 use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubecl_common::{ComptimeFloat, Ratio};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_tile::launch::Grid;
+use cubek_tile::procedural::Procedural;
+use cubek_tile::procedural::Recipe;
+use cubek_tile::procedural::RecipeCoords;
+use cubek_tile::procedural::RecipeExpand;
 use cubek_tile::*;
 
 use super::{CubicAxis, LanczosAxis, Linear, LinearAxis, cubic_along, lanczos_along, linear_along};

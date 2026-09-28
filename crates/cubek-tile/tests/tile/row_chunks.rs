@@ -11,6 +11,8 @@
 
 use cubecl::{ir::ElemType, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+use cubek_tile::ops::matmul::MmaIo;
+use cubek_tile::stage::RowChunks;
 use cubek_tile::*;
 
 use super::matmul::Schedule;

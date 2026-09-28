@@ -35,9 +35,10 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    Accumulate, AccumulateArg, AccumulateArgLaunch, AccumulateExpand, Axis, Grid, Launcher, Levels,
-    Monoid, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, TileSpec,
+    Accumulate, AccumulateExpand, Axis, Launcher, Levels, Monoid, Partitioning, Projection,
+    RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    launch::{AccumulateArg, AccumulateArgLaunch, Grid},
+    layout::PhysicalAxisMap,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.

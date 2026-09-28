@@ -17,6 +17,16 @@ use cubek_test_utils::{
     assert_equals_approx, skip_unless_plane_holds,
 };
 
+use cubek_tile::launch::Grid;
+use cubek_tile::ops::matmul::MmaIo;
+use cubek_tile::quant::DequantAt;
+use cubek_tile::quant::QuantTileArg;
+use cubek_tile::quant::QuantTileArgLaunch;
+use cubek_tile::quant::Quantization;
+use cubek_tile::space::CubeOrder;
+use cubek_tile::stage::RowChunks;
+use cubek_tile::tile::CmmaData;
+use cubek_tile::tile::PlanePartition;
 use cubek_tile::*;
 
 use half::f16;

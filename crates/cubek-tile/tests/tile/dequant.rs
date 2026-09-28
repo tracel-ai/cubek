@@ -13,6 +13,7 @@ use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);

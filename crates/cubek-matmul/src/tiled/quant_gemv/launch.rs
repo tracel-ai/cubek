@@ -13,7 +13,7 @@
 
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{Field, Grid, Launcher, PhysicalAxisMap, Projection};
+use cubek_tile::{Launcher, Projection, launch::Grid, layout::PhysicalAxisMap, tile::Field};
 
 use crate::{
     definition::MatmulSetupError,

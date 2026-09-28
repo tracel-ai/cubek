@@ -8,12 +8,12 @@ use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
     ValidationResult, assert_equals_approx,
 };
-use cubek_tile::Quantization;
+use cubek_tile::quant::Quantization;
 use cubek_tile::{
-    Axis, DequantAt, Levels, Partitioning, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
-    TileArgLaunch, TileSpec,
+    Axis, Levels, Partitioning, Space, TileArg, TileArgLaunch, TileSpec,
+    quant::{DequantAt, QuantTileArg, QuantTileArgLaunch},
 };
-use cubek_tile::{Boundary, BoundaryPolicy};
+use cubek_tile::{launch::BoundaryPolicy, tile::Boundary};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);

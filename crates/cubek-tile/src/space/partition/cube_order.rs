@@ -17,7 +17,7 @@ use cubecl::std::tensor::layout::Coords2d;
 /// rows and columns in the last level cache: nothing while a band fits, everything once none does.
 ///
 /// **Any width serves any grid.** Where it does not divide the cube count of the axis it strips,
-/// the last strip is only as wide as the boxes left ([`swizzle_ragged`](fn@swizzle_ragged)), so a
+/// the last strip is only as wide as the boxes left (`swizzle_ragged`), so a
 /// width can stay what a plan asked for rather than one fitted to each grid's count: the order is
 /// part of what a kernel compiles, and a width that moved with the grid would compile a kernel per
 /// grid.
@@ -81,7 +81,7 @@ pub(crate) fn cube_positions(
 /// `index` lies in the grid, below `num_steps * strip_axis`; past it the position lands off the
 /// grid, without a division by zero or an overflow.
 #[cube]
-pub fn swizzle_ragged(
+pub(crate) fn swizzle_ragged(
     index: usize,
     num_steps: usize,
     #[comptime] step_length: u32,

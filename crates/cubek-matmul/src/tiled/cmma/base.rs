@@ -19,7 +19,7 @@ use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
-use cubek_tile::CubeOrder;
+use cubek_tile::space::CubeOrder;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -70,7 +70,7 @@ const CUBES_PER_SM_FLOOR: usize = 3;
 const MAX_TILES_PER_AXIS: usize = 32;
 
 /// The CMMA routine's launch-time input transport choice. This is deliberately separate from
-/// [`cubek_tile::Delivery`], which describes an already-constructed tile's staging behavior.
+/// [`cubek_tile::launch::Delivery`], which describes an already-constructed tile's staging behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CmmaDelivery {
     /// The cube's units move each stage.
@@ -87,7 +87,7 @@ impl CmmaDelivery {
 
     fn validate_tma(self, boxes: &[usize], batched: bool) -> Result<(), String> {
         if self.is_tma() {
-            cubek_tile::Delivery::Tma.validate_tma(boxes, batched)
+            cubek_tile::launch::Delivery::Tma.validate_tma(boxes, batched)
         } else {
             Ok(())
         }

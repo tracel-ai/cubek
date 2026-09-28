@@ -102,7 +102,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
 /// A load's box origin is tile-aligned (the storage tile is the stage, which the routine
 /// enforces), so the inner pair is always `0`.
 #[derive(CubeType, CubeLaunch, Clone)]
-pub struct TmaStoredLayout {
+pub(crate) struct TmaStoredLayout {
     /// Logical `(rows, cols)` of the operand.
     dims: (u32, u32),
     /// The storage tile `(rows, cols)`, which is the descriptor's box.
