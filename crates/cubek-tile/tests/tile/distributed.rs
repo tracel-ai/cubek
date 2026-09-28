@@ -18,6 +18,9 @@ const K: Axis = Axis(2);
 /// Rows and columns of the block one unit owns, and the depth one step of its walk reads.
 const BLOCK: [usize; 3] = [2, 2, 4];
 
+/// The planes a cube runs, each launched `units` wide.
+const PLANES: usize = 2;
+
 /// `c = a · b`, every unit summing its blocks in registers.
 #[cube(launch)]
 fn distributed_block_matmul<E: Numeric>(
@@ -89,7 +92,7 @@ fn run(m: usize, n: usize, k: usize, distributed: usize, units: u32) -> HostData
         Levels::leaf(&[(M, rows), (N, columns), (K, depth)])
             .walk_every(&[K])
             .units_distributed(N, distributed)
-            .planes(&[(M, 2)])
+            .planes(&[(M, PLANES)])
             .cubes(&[M, N])
             .build(),
     );
@@ -139,12 +142,33 @@ fn assert_matches(got: &HostData, m: usize, n: usize, k: usize) {
     }
 }
 
-/// Twelve blocks a plane, and as many units as fit the launch: four units take three each, eight
-/// take one or two, and sixteen leave four idle. The same partitioning every time.
+/// The unit counts of `wanted` whose cube the test device holds: a CPU runtime's cube holds as
+/// many units as the host has cores, and a small CI runner has four.
+fn fitting(wanted: &[u32]) -> Vec<u32> {
+    let max_units = cubecl::test_device()
+        .client()
+        .properties()
+        .hardware
+        .max_units_per_cube;
+    let fitting: Vec<u32> = wanted
+        .iter()
+        .copied()
+        .filter(|&units| units * PLANES as u32 <= max_units)
+        .collect();
+    assert!(
+        !fitting.is_empty(),
+        "no unit count of {wanted:?} fits a cube of {max_units} units"
+    );
+    fitting
+}
+
+/// Twelve blocks a plane, and as many units as fit the launch: one unit takes all twelve, two take
+/// six each, four take three each, eight take one or two, and sixteen leave four idle. The same
+/// partitioning every time.
 #[test]
 fn every_block_is_taken_once_at_any_unit_count() {
     let (m, n, k) = (8, 48, 12);
-    for units in [4, 8, 16] {
+    for units in fitting(&[1, 2, 4, 8, 16]) {
         assert_matches(&run(m, n, k, 12, units), m, n, k);
     }
 }
@@ -154,7 +178,7 @@ fn every_block_is_taken_once_at_any_unit_count() {
 #[test]
 fn distributed_blocks_mask_a_ragged_edge() {
     let (m, n, k) = (7, 29, 11);
-    for units in [4, 16] {
+    for units in fitting(&[2, 4, 16]) {
         assert_matches(&run(m, n, k, 6, units), m, n, k);
     }
 }

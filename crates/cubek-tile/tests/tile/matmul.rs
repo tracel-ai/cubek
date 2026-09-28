@@ -1704,7 +1704,8 @@ fn check_matmul_scheduled(
 /// on a few units of one plane, and on a cube of 70 units over stages of 256 elements, whose lines
 /// they do not divide: every unit fills its share and the last one contracts, so a missing or
 /// misplaced barrier lets it read what units of other planes have not written, or overwrite what
-/// it has not read.
+/// it has not read. A case whose cube the device cannot hold is not run: a CPU runtime's cube
+/// holds as many units as the host has cores, and a small CI runner has four.
 #[test]
 fn a_register_staged_ring_matches_a_slot_ahead_ring() {
     // A leaf `edge` wide on every axis, walked along `K`.
@@ -1716,12 +1717,20 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
     // (units, width, problem edge, leaf edge, the `K`s).
     let cases = [
         (1u32, 1, 8, 4, [16, 4]),
-        (6, 1, 8, 4, [16, 4]),
+        (3, 1, 8, 4, [16, 4]),
         (1, 4, 8, 4, [16, 4]),
         (70, 1, 32, 16, [64, 16]),
         (70, 4, 32, 16, [64, 16]),
     ];
+    let max_units = cubecl::test_device()
+        .client()
+        .properties()
+        .hardware
+        .max_units_per_cube;
     for (units, width, edge, leaf, ks) in cases {
+        if units > max_units {
+            continue;
+        }
         for k in ks {
             for depth in [1, 2] {
                 for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
