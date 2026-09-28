@@ -8,7 +8,7 @@
 
 use super::{Form, implied};
 use cubecl::{prelude::*, zspace::shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
 
 const M: Axis = Axis(0);
@@ -17,7 +17,6 @@ const K: Axis = Axis(2);
 
 const VECTOR: usize = 4;
 const STEP: usize = VECTOR * 4;
-const UNITS: usize = 32;
 const PLANES: usize = 4;
 
 const FORMS: [Form<'static>; 4] = [
@@ -71,8 +70,8 @@ fn w_value(j: usize, i: usize) -> f32 {
     ((j * 3 + i) % 5) as f32 - 2.0
 }
 
-/// `x · w` under `form`, read back as `m × n`.
-fn run(walk: Walk, m: usize, k: usize, n: usize, form: Form<'_>) -> Vec<f32> {
+/// `x · w` under `form` on a `plane`-unit plane, read back as `m × n`.
+fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -> Vec<f32> {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let input = |shape, values: Vec<f32>| {
@@ -93,10 +92,13 @@ fn run(walk: Walk, m: usize, k: usize, n: usize, form: Form<'_>) -> Vec<f32> {
     // A value no product reaches, so a cell no unit wrote shows.
     let out = input(shape![m, n], vec![-1e6; m * n]);
 
+    // A one-unit plane cuts nothing, and a level states only what it cuts; the split walk is
+    // then the whole-`K` one.
     let leaf = Levels::leaf(&[(M, m), (N, 1), (K, STEP)]);
-    let levels = match walk {
-        Walk::WholeKPerUnit => leaf.walk_every(&[K]).units(&[(N, UNITS)]),
-        Walk::KSplitAcrossUnits => leaf.units(&[(K, UNITS)]).interleaved(K).walk_every(&[K]),
+    let levels = match (walk, plane) {
+        (_, 1) => leaf.walk_every(&[K]).units(&[]),
+        (Walk::WholeKPerUnit, _) => leaf.walk_every(&[K]).units(&[(N, plane)]),
+        (Walk::KSplitAcrossUnits, _) => leaf.units(&[(K, plane)]).interleaved(K).walk_every(&[K]),
     };
     let space = Space::new(&[(M, m), (N, n), (K, k)]);
     let partitioning = Partitioning::new(space, levels.planes(&[(N, PLANES)]).cubes(&[N]).build());
@@ -147,6 +149,17 @@ fn run(walk: Walk, m: usize, k: usize, n: usize, form: Form<'_>) -> Vec<f32> {
 /// which is no power of two, on an `n` the whole-`K` walk's cubes overhang and one they tile.
 /// Reports every case that differs from the host rather than stopping at the first.
 fn check(walk: Walk) {
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if max < VECTOR {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {VECTOR}-wide weight lines"
+        )))
+        .enforce();
+        return;
+    }
+    let plane = client.properties().hardware.plane_size_max as usize;
+    let chunk = STEP * plane;
     let ns: &[usize] = match walk {
         Walk::WholeKPerUnit => &[2352, 2048],
         Walk::KSplitAcrossUnits => &[2048],
@@ -154,13 +167,13 @@ fn check(walk: Walk) {
     let mut failures = Vec::new();
     for form in FORMS {
         for m in [1, 8] {
-            for k in [1024, 1536] {
+            for k in [2 * chunk, 3 * chunk] {
                 for &n in ns {
                     let want = (0..m * n).map(|idx| {
                         let (r, j) = (idx / n, idx % n);
                         (0..k).map(|i| x_value(r, i) * w_value(j, i)).sum::<f32>()
                     });
-                    let wrong = run(walk, m, k, n, form)
+                    let wrong = run(walk, plane, m, k, n, form)
                         .iter()
                         .zip(want)
                         .filter(|(g, w)| (*g - w).abs() > 1e-3)
