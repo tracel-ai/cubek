@@ -1,4 +1,5 @@
 use super::super::{decompose_linear, shape_divmod};
+use crate::kernel::accumulator_dtype;
 use crate::{
     definition::{MaxPoolOptions, PoolError},
     kernel::backward::{PoolBackwardArgs, PoolBackwardArgsLaunch},
@@ -8,6 +9,8 @@ use cubecl::{
     std::FastDivmod, tensor_vector_size_parallel,
 };
 
+/// The gradient sum and the match mask: taps are operands, the current index a splat.
+const LIVE_VECTORS: usize = 2;
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn max_pool2d_with_indices_backward_kernel<E: Numeric, I: Int, N: Size>(
     grad: &Tensor<Vector<E, N>>,
@@ -104,7 +107,10 @@ pub(crate) fn max_pool2d_with_indices_backward_launch(
     indices_dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client.properties().vector_sizes_in_registers(
+            accumulator_dtype(dtype).size().max(indices_dtype.size()),
+            LIVE_VECTORS,
+        ),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

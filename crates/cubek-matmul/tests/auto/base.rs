@@ -100,10 +100,13 @@ fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
     use cubek_matmul::{
         definition::{MatmulElems, MatmulSetupError},
         launch::launch_ref,
-        tiled::storage::tile,
+        tiled::storage::{LayoutBuilder, tile},
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+    use cubek_tile::Axis;
+    const K: Axis = Axis(0);
+    const N: Axis = Axis(1);
 
     use crate::harness::assert_result;
 
@@ -123,7 +126,8 @@ fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
         .dtype(dtype)
         .uniform(4242, 10., 100.)
         .generate_without_host_data();
-    let tiled = tile(&client, rhs.binding(), dtype, (32, 64)).unwrap();
+    let layout = LayoutBuilder::new(&[(N, 64), (K, 32)]).grid(&[N, K]);
+    let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
 
     let mut elems = dtypes.clone();
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {

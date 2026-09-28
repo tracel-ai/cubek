@@ -94,6 +94,14 @@ impl StorageTiling {
         self.fragments.iter().copied().max().unwrap_or(0)
     }
 
+    /// This tiling as a buffer of `rank` dims records it: the dims ahead of its own axes stored
+    /// plain, one piece each.
+    pub(crate) fn over_rank(&self, rank: usize) -> Tiling {
+        let mut fragments = vec![1; rank - self.physical_rank()];
+        fragments.extend(self.fragments.iter().copied());
+        Tiling::new(&fragments).expect("a tiling a buffer held fits it with dims dropped ahead")
+    }
+
     /// The physical rank this induces, which is the buffer's own rank.
     pub fn physical_rank(&self) -> usize {
         self.fragments.iter().sum()

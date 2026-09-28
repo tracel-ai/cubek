@@ -12,6 +12,8 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+/// The gradient sum and the scaled tap: the divisor is a single splat.
+const LIVE_VECTORS: usize = 2;
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool2d_backward_direct<E: Numeric, EA: Numeric, N: Size>(
     grad: &Tensor<Vector<E, N>>,
@@ -75,7 +77,9 @@ pub(crate) fn adaptive_avg_pool2d_backward_launch(
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

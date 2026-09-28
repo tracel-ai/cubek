@@ -2,6 +2,7 @@ use core::result::Result::Ok;
 
 use super::super::{decompose_linear, shape_divmod};
 use crate::definition::{AvgPoolOptions, PoolError};
+use crate::kernel::accumulator_dtype;
 use crate::kernel::forward::{Position, view4d};
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
@@ -11,6 +12,8 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+/// The gradient sum, the tap and its divisor.
+const LIVE_VECTORS: usize = 3;
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct PoolBackwardArgs {
     pub stride_0: i32,
@@ -137,7 +140,9 @@ pub(crate) fn avg_pool2d_backward_launch(
     let dilation = 1;
 
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(accumulator_dtype(dtype).size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

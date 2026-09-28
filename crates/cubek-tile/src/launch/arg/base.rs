@@ -9,7 +9,7 @@ use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal, StorageLevel};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, Packing, Projection, QuantTileArgLaunch,
+    Axis, Boundary, Field, Geometry, Launcher, Layout, Packing, Projection, QuantTileArgLaunch,
     Quantization, Storage, StorageTiling, TileArgLaunch, TileSpec,
 };
 
@@ -232,8 +232,12 @@ impl<'a> Arg<'a, Labelled> {
         // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
         // destination the negotiation never saw) is gated here: `stride / width` truncates
         // silently.
-        geometry
-            .serves_lines(width)
+        let settled = tiling
+            .as_ref()
+            .map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
+        let geometry = geometry.with_tiling(settled);
+        Layout::new(&geometry, &projection.dense_labels())
+            .serves(width)
             .map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();
         let boundaries = Boundaries::new(
@@ -318,16 +322,7 @@ fn settled_tensor(
 ) -> TensorArg {
     binding.shape = geometry.shape().into();
     binding.strides = geometry.strides().into();
-    binding.tiling = match tiling {
-        Some(tiling) => {
-            let batch_dims = geometry.rank() - tiling.physical_rank();
-            let mut fragments = vec![1; batch_dims];
-            fragments.extend((0..tiling.rank()).map(|axis| tiling.fragments(axis)));
-            Tiling::new(&fragments)
-                .expect("the binding's own tiling fit, and this drops dims from it")
-        }
-        None => stored,
-    };
+    binding.tiling = tiling.map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
     binding.into_tensor_arg()
 }
 

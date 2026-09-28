@@ -32,8 +32,9 @@ use crate::{
     eval::cpu_reference::{cpu_reference_result, matmul_epsilon, produce_with},
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::{
+        K, N,
         cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
-        storage::tile,
+        storage::{LayoutBuilder, tile},
     },
 };
 
@@ -91,7 +92,16 @@ impl Weight {
             Weight::RowMajor => Ok(rhs),
             Weight::Tiled => {
                 let (_, stage_n) = blueprint.stage();
-                tile(client, rhs, dtype, (blueprint.stage_k, stage_n))
+                // Stored for the widest read the device serves, which a reader takes whole.
+                let read = client
+                    .io_optimized_vector_sizes(dtype.size())
+                    .filter(|&width| stage_n.is_multiple_of(width))
+                    .max()
+                    .unwrap_or(1);
+                let layout = LayoutBuilder::new(&[(N, read)])
+                    .tile(&[(N, stage_n / read), (K, blueprint.stage_k)])
+                    .grid(&[N, K]);
+                tile(client, rhs, [K, N], dtype, layout)
                     .map(TensorHandle::binding)
                     .map_err(|e| format!("{e:?}"))
             }
