@@ -50,7 +50,6 @@ impl<T: CubeType> Slot<T> {
         match &self.pipeline {
             Meeting::Barrier { empty, writes, .. } => empty.wait_parity(*writes ^ 1),
             Meeting::Cube => sync_cube(),
-            Meeting::Solo => {}
         }
     }
 
@@ -72,7 +71,7 @@ impl<T: CubeType> Slot<T> {
                 }
                 *writes ^= 1;
             }
-            Meeting::Cube | Meeting::Solo => {}
+            Meeting::Cube => {}
         }
     }
 
@@ -82,7 +81,7 @@ impl<T: CubeType> Slot<T> {
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {
             Meeting::Barrier { full, reads, .. } => full.wait_parity(*reads),
-            Meeting::Cube | Meeting::Solo => {}
+            Meeting::Cube => {}
         }
     }
 
@@ -95,7 +94,7 @@ impl<T: CubeType> Slot<T> {
                 empty.arrive();
                 *reads ^= 1;
             }
-            Meeting::Cube | Meeting::Solo => {}
+            Meeting::Cube => {}
         }
     }
 
@@ -105,7 +104,7 @@ impl<T: CubeType> Slot<T> {
     pub fn publish(&self) {
         match &self.pipeline {
             Meeting::Cube => sync_cube(),
-            Meeting::Solo | Meeting::Barrier { .. } => {}
+            Meeting::Barrier { .. } => {}
         }
     }
 }

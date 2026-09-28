@@ -20,12 +20,14 @@ use std::path::{Path, PathBuf};
 /// cubek-interpolate took it down to 746. The facade split the root into modules (a few more
 /// `pub mod` and root re-exports) and made crate-private what nothing outside named, and the
 /// questions a selector asks (`Prefetch`, `Delivery::moves`) replaced the limits it re-derived
-/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724. `Layout` raised
-/// it: the type, its builder stages (`tile`, then `grid`, then `over` the extents), `of`,
-/// `physical`, `wanted`, `refines`, `pieces`, the misfits a stated layout and a reader are refused
-/// with, and the re-exports of its own folder (+17: 741), since a caller writing a storage-tiled buffer states
-/// how it is laid out and every reader of one asks whether it refines the layout it needs.
-const PUB_ITEMS: usize = 741;
+/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724. `softmax`
+/// became the one public row op (its unit and plane arms crate-private) and the stencil builder
+/// test-only: 717. `Layout` raised it by seventeen: the type, its builder stages (`tile`, then
+/// `grid`, then `over` the extents), `of`, `physical`, `wanted`, `refines`, `pieces`, the misfits
+/// a stated layout and a reader are refused with, and the re-exports of its own folder, since a
+/// caller writing a storage-tiled buffer states how it is laid out and every reader of one asks
+/// whether it refines the layout it needs: 734.
+const PUB_ITEMS: usize = 734;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;
