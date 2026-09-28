@@ -40,10 +40,17 @@ fn auto_skinny_matvec() {
     test_matmul_strategy(client(), rect(256, 1, 256, f16_elems()), Strategy::Auto);
 }
 
+/// Skipped where the device has no f64, as on Metal: building the inputs alone launches an f64
+/// kernel the device refuses.
 #[cfg(feature = "heavy")]
 #[test]
 fn auto_medium_f64() {
-    test_matmul_strategy(client(), square(256, f64_elems()), Strategy::Auto);
+    use cubecl::{features::TypeUsage, prelude::*};
+    let client = client();
+    if !f64::supported_uses(&client).contains(TypeUsage::Arithmetic) {
+        return;
+    }
+    test_matmul_strategy(client, square(256, f64_elems()), Strategy::Auto);
 }
 
 /// Stride-0 coverage: an `extended`-tier check, like the rest of the broadcast table.
@@ -88,12 +95,12 @@ fn reported_m_broadcast() {
 /// which stages to its tiles, whichever architecture it would have picked for the shape.
 #[cfg(feature = "tiled")]
 #[test]
-fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
+fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
     use cubecl::prelude::*;
     use cubek_matmul::{
         definition::{MatmulElems, MatmulSetupError},
         launch::launch_ref,
-        tiled::pack::pack,
+        tiled::storage::tile,
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
@@ -116,7 +123,7 @@ fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
         .dtype(dtype)
         .uniform(4242, 10., 100.)
         .generate_without_host_data();
-    let packed = pack(&client, rhs.binding(), dtype, (32, 64)).unwrap();
+    let tiled = tile(&client, rhs.binding(), dtype, (32, 64)).unwrap();
 
     let mut elems = dtypes.clone();
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
@@ -125,7 +132,7 @@ fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
                 &Strategy::Auto,
                 c,
                 InputBinding::Normal(lhs.clone().binding(), dtype),
-                InputBinding::Normal(packed.clone().binding(), dtype),
+                InputBinding::Normal(tiled.clone().binding(), dtype),
                 out.clone().binding(),
                 &mut elems,
             )

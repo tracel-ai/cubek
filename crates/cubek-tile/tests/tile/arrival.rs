@@ -1,17 +1,15 @@
 //! The last cube in merges what the others left, for a merge no atomic add can spell.
 //!
 //! The shape under test is attention's: every cube reduces a slice of one row to a running max
-//! and the sum of the exponentials it implies, and combining two of those is not addition — the
-//! sums are on different scales until a common max is chosen and both are rescaled to it. Adding
-//! the partial sums straight gives a different, wrong answer, which is what makes this a test of
-//! [`last_cube_in`] rather than of the drain beside it.
+//! and the sum of the exponentials it implies. Two of those combine only after both are rescaled
+//! to a common max; adding the partial sums straight is wrong, so this tests [`Arrival`].
 //!
 //! Two rows run at once, each with a counter of its own, because that is how a real launch is
 //! shaped: the cubes fall into independent groups and every group's last cube merges its own.
-//! A `last_cube_in` that counted the grid instead of the group would leave one row unwritten.
+//! An `Arrival` that counted the grid instead of the group would leave one row unwritten.
 
 use cubecl::prelude::*;
-use cubek_tile::*;
+use cubek_tile::ops::reduce::Arrival;
 
 /// Cubes per row, units per cube, and the rows that run side by side.
 const CUBES: u32 = 16;
@@ -33,7 +31,7 @@ fn softmax_denominator(
     #[comptime] cubes: u32,
     #[comptime] units: u32,
 ) {
-    // The grid is `(split, row)`: x deals a row's cubes, y the rows, so each row's cubes share
+    // The grid is `(split, row)`: x distributes a row's cubes, y the rows, so each row's cubes share
     // a counter and nothing else.
     let row = CUBE_POS_Y;
     let split = CUBE_POS_X;
@@ -72,7 +70,7 @@ fn softmax_denominator(
 
     // Every unit reaches it: the release covers what unit zero just published, and the count is
     // taken once and read by the whole cube.
-    if last_cube_in(&counter[row as usize], cubes) && UNIT_POS == 0 {
+    if comptime!(Arrival::new(cubes)).count_in(&counter[row as usize]) && UNIT_POS == 0 {
         let base = row * cubes;
         let mut merged_max = maxes[base as usize];
         let mut c = 1u32;

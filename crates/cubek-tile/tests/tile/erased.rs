@@ -1,25 +1,31 @@
 //! A tile backed by an [`ErasedTensor`] reads and stores where a buffer-backed
 //! one reads and stores.
 //!
-//! The point of an erased backing is that the address is never formed: the tile
-//! walks its layout exactly as it would over memory, and what happens at the end
-//! of the walk is a call rather than a load or a store. So the property worth
-//! pinning is that the walk is *unchanged*: the same kernel, over the same
-//! space and the same spec, must touch the same place whichever backing it was
-//! given. That is what makes a fused operand a drop-in for the kernel it
-//! replaces, on either side: [`WriteOnly`] for fuse-on-write, [`ReadOnly`] for
-//! fuse-on-read.
+//! An erased backing never forms the address: the tile walks its layout exactly as over memory,
+//! and the walk ends in a call rather than a load or store. The property to pin is that the walk
+//! is *unchanged*: the same kernel over the same space and spec touches the same place either way.
+//!
+//! That is what makes a fused operand a drop-in for the kernel it replaces, on either side:
+//! [`WriteOnly`] for fuse-on-write, [`ReadOnly`] for fuse-on-read.
 //!
 //! The values are `row * COLS + col` rather than anything smooth, so a touch
 //! that lands one element over shows up as another cell's value instead of as a
 //! near miss.
 
+use super::{Form, implied};
 use cubecl::{
     prelude::*,
     std::tensor::{ErasedTensor, WriteOnly},
     zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput};
+use cubek_tile::kind::GlobalOperand;
+use cubek_tile::kind::Write;
+use cubek_tile::layout::RuntimeGeometry;
+use cubek_tile::procedural::Procedural;
+use cubek_tile::procedural::Recipe;
+use cubek_tile::procedural::RecipeCoords;
+use cubek_tile::procedural::RecipeExpand;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -47,7 +53,8 @@ fn buffer_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     let mut dst = out.tile(comptime!(space.clone()));
-    let src = Tile::<E>::procedural::<Position>(comptime!(space.space().clone()), Position {});
+    let src =
+        Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
     dst.copy_from(&src);
 }
 
@@ -65,15 +72,17 @@ fn sink_kernel<E: Float>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.tensor);
-    let mut dst = Tile::<E>::of_sink(
+    let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         comptime!(out.spec.clone()),
         Write::Replace,
-    );
-    let src = Tile::<E>::procedural::<Position>(comptime!(space.space().clone()), Position {});
+    )
+    .tile(comptime!(space.levels().to_vec()));
+    let src =
+        Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
     dst.copy_from(&src);
 }
 
@@ -90,14 +99,14 @@ macro_rules! output_arg {
 
 /// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
-fn space(form: KernelForm) -> Launcher {
-    Launcher::implied(
+fn space(form: Form) -> Launcher {
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
-            Tiling::leaf(&[(ROW, 2), (COL, 3)])
+            Levels::leaf(&[(ROW, 2), (COL, 3)])
                 .walk_every(&[ROW, COL])
-                .levels(),
+                .build(),
         ),
         form,
     )
@@ -106,7 +115,7 @@ fn space(form: KernelForm) -> Launcher {
 fn run(sink: bool) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = space(KernelForm::Static);
+    let launcher = space(Form::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -161,10 +170,9 @@ fn a_sink_stores_where_a_buffer_stores() {
 /// The same sink store, with the destination's [`TileSpec`] and geometry derived on the host by
 /// [`Launcher::geometry`] instead of stated at the call site.
 ///
-/// This is the pair a fused store actually reaches for. The kernels above take their spec off a
-/// `TileArg`, but a destination written through a call has no `TileArg` to take it off, which is
-/// the whole reason `geometry` exists: it runs the derivation a bound operand runs and hands
-/// both halves, the spec *and* the geometry it settled on, so neither is restated here.
+/// The pair a fused store actually reaches for. The kernels above take their spec off a `TileArg`,
+/// but a destination written through a call has none, which is why `geometry` exists: it runs the
+/// derivation a bound operand runs and hands both halves, the spec *and* the settled geometry.
 #[cube(launch)]
 fn derived_sink_kernel<E: Float>(
     out: &Tensor<Vector<E, Const<1>>>,
@@ -182,15 +190,17 @@ fn derived_sink_kernel<E: Float>(
     geometry.push(cols, col_stride);
 
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out);
-    let mut dst = Tile::<E>::of_sink(
+    let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         spec,
         Write::Replace,
-    );
-    let src = Tile::<E>::procedural::<Position>(comptime!(space.space().clone()), Position {});
+    )
+    .tile(comptime!(space.levels().to_vec()));
+    let src =
+        Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
     dst.copy_from(&src);
 }
 
@@ -201,7 +211,7 @@ fn derived_sink_kernel<E: Float>(
 fn a_launcher_derived_spec_addresses_the_sink() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = space(KernelForm::Static);
+    let launcher = space(Form::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -209,8 +219,8 @@ fn a_launcher_derived_spec_addresses_the_sink() {
 
     // What the destination would have been, had it been a tensor to bind.
     let derived = launcher
-        .geometry(&Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]))
-        .subspace(&[ROW, COL])
+        .unbound(&Geometry::new(&[(ROWS, COLS), (COLS, 1)]))
+        .axes(&[ROW, COL])
         .vectorize(1)
         .build_spec();
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
@@ -267,17 +277,7 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.space,
-            &a.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
@@ -310,25 +310,16 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
-    let c = Tile::<E>::of_sink(
+    let c = GlobalOperand::<E>::sink(
         sink,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         comptime!(c.spec.clone()),
         Write::Replace,
-    );
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.space,
-            &a.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
@@ -344,9 +335,8 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
 /// The same contraction again, this time reading its **lhs** through an erased source.
 ///
 /// The mirror of [`sink_matmul`], and the reason the read path had to become a view: an operand
-/// tile reads through `matrix_transparent`, which composes onto `MemData::read_view` exactly as
-/// the drain composes onto `write_view`. Nothing about the leaf changes: it asks the same layout
-/// for the same coordinates, and what answers is a call instead of a load.
+/// tile reads through `matrix_transparent`, composed onto `Memory::read_view` as the drain is
+/// onto `write_view`. The leaf asks the same layout for the same coordinates, and a call answers.
 #[cube(launch)]
 fn source_matmul<E: Numeric, EA: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -360,26 +350,17 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     // The geometry a source cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(a.tensor, 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.tensor);
-    let a = Tile::<E>::of_source(
+    let a = GlobalOperand::<E>::source(
         source,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         comptime!(a.spec.clone()),
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.space,
-            &a.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
@@ -407,15 +388,15 @@ enum Backed {
 /// accumulator, so the destination is touched exactly once, on the drain.
 fn matmul_space() -> Launcher {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    Launcher::implied(
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
                 .walk_every(&[M, N, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     )
 }
 
@@ -424,15 +405,15 @@ fn run_matmul(backed: Backed) -> HostData {
     let dtype = f32::elem_type_native();
     let launcher = matmul_space();
 
-    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held, and a drain
     // that folded the destination in instead of writing it would show up as the poison.
-    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -446,7 +427,7 @@ fn run_matmul(backed: Backed) -> HostData {
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             dtype,
             dtype,
         ),
@@ -458,7 +439,7 @@ fn run_matmul(backed: Backed) -> HostData {
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             dtype,
             dtype,
         ),
@@ -470,7 +451,7 @@ fn run_matmul(backed: Backed) -> HostData {
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             dtype,
             dtype,
         ),
@@ -541,17 +522,18 @@ const MASKED_ROWS: usize = 5;
 ///
 /// The two properties the aligned scalar spaces above cannot reach. Masking puts a guard between
 /// the walk and the write, and a served width of two makes the tile count its innermost extent in
-/// lines and re-express every coarser stride as `stride / 2`, arithmetic a stated geometry runs
-/// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
-/// innermost axis that can leave the buffer is refused outright.
-fn masked_space(form: KernelForm) -> Launcher {
-    Launcher::implied(
+/// lines and re-express every coarser stride as `stride / 2`, on numbers nobody read off a tensor.
+///
+/// The columns stay exact and in bounds, since a vectorized innermost axis that can leave the
+/// buffer is refused outright.
+fn masked_space(form: Form) -> Launcher {
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
-            Tiling::leaf(&[(ROW, 2), (COL, 2)])
+            Levels::leaf(&[(ROW, 2), (COL, 2)])
                 .walk_every(&[ROW, COL])
-                .levels(),
+                .build(),
         ),
         form,
     )
@@ -560,8 +542,8 @@ fn masked_space(form: KernelForm) -> Launcher {
 /// [`buffer_kernel`] at a served width of two.
 ///
 /// The source is a bound operand rather than [`Position`]: a procedural recipe is evaluated once
-/// per *line*, so at a width of two both lanes of a line would carry one value and the test could
-/// not tell a masked store from a store one lane wide.
+/// per *line*, so at a width of two both components of a line would carry one value and the test could
+/// not tell a masked store from a store one unit wide.
 #[cube(launch)]
 fn wide_buffer_kernel<E: Float>(
     input: &TileArg<'_, E, Const<2>>,
@@ -585,14 +567,15 @@ fn wide_sink_kernel<E: Float>(
     let src = input.tile(comptime!(space.clone()));
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.tensor);
-    let mut dst = Tile::<E>::of_sink(
+    let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
         2usize,
         comptime!(space.space().clone()),
         comptime!(out.spec.clone()),
         Write::Replace,
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     dst.copy_from(&src);
 }
 
@@ -607,13 +590,14 @@ fn wide_source_kernel<E: Float>(
 ) {
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.tensor, 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<2>>(input.tensor);
-    let src = Tile::<E>::of_source(
+    let src = GlobalOperand::<E>::source(
         source,
         geometry,
         2usize,
         comptime!(space.space().clone()),
         comptime!(input.spec.clone()),
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let mut dst = out.tile(comptime!(space.clone()));
     dst.copy_from(&src);
 }
@@ -632,7 +616,7 @@ enum Erased {
 fn run_masked(erased: Erased) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = masked_space(KernelForm::Dynamic);
+    let launcher = masked_space(Form::Dynamic);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
         .dtype(dtype)
         .arange()
@@ -645,12 +629,12 @@ fn run_masked(erased: Erased) -> HostData {
     // walks the tile the buffer kernel walks rather than one this test talked it into.
     let src = launcher
         .arg(input.binding())
-        .subspace(&[ROW, COL])
+        .axes(&[ROW, COL])
         .vectorize(2)
         .build();
     let out = launcher
         .arg(output.clone().binding())
-        .subspace(&[ROW, COL])
+        .axes(&[ROW, COL])
         .vectorize(2)
         .build();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
@@ -688,11 +672,9 @@ fn run_masked(erased: Erased) -> HostData {
 
 /// A masked store through a sink writes the cells a masked store through a buffer writes.
 ///
-/// The guard is the whole question. A sink's write ends in a call, so an overhanging lane a
-/// buffer would have clipped has nothing to clip it: the call happens or it does not, and a mask
-/// dropped between the walk and `write_view` hands the epilogue coordinates off the end of the
-/// product. The width is the other half: the tile counts its innermost extent in lines and
-/// re-expresses every coarser stride as `stride / 2`, on numbers nobody read off a tensor.
+/// The guard is the whole question: a sink's write ends in a call, so an overhanging unit a buffer
+/// would have clipped has nothing to clip it, and a mask dropped between the walk and `write_view`
+/// hands the epilogue coordinates off the product's end. The `stride / 2` width is the other half.
 #[test]
 fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
     let through_sink = run_masked(Erased::Sink);
@@ -717,11 +699,12 @@ fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
 /// A masked, vectorized read through a source reads the cells a buffer read reads.
 ///
 /// The read half of the same question, and not the same code: a buffer's masked read is the
-/// slice's, while an erased one is [`ErasedTensor`]'s own: it folds an out-of-bounds index to
-/// zero, reads *that* cell, and selects the mask value after. So a guard dropped between the walk
-/// and the call does not fault here either; it returns the wrong cell's value, which the
-/// `row * COLS + col` fill makes visible as another cell rather than as a near miss. The width is
-/// the other half, on a geometry stated rather than read.
+/// slice's, while [`ErasedTensor`]'s folds an out-of-bounds index to zero, reads *that* cell, and
+/// selects the mask value after.
+///
+/// So a guard dropped between the walk and the call does not fault here either; it returns the
+/// wrong cell's value, which the `row * COLS + col` fill makes visible as another cell rather than
+/// as a near miss. The width is the other half, on a geometry stated rather than read.
 #[test]
 fn a_masked_vectorized_source_reads_where_a_buffer_reads() {
     let through_source = run_masked(Erased::Source);

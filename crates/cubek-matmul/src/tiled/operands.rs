@@ -1,8 +1,6 @@
 //! The axes every tiled routine builds its space over.
 
 use cubecl::{prelude::TensorBinding, zspace::metadata::Metadata};
-#[cfg(test)]
-use cubek_tile::Contraction;
 use cubek_tile::{Axis, Level, Partitioning, Space};
 
 use crate::definition::MatmulSetupError;
@@ -17,17 +15,6 @@ pub(crate) const K: Axis = Axis(2);
 pub(crate) fn batch_axis(i: usize) -> Axis {
     Axis(3 + i as u8)
 }
-
-/// The three axes a partitioning over these is drawn from
-/// ([`Partitioning::quadrant`]): the lhs is `m × k`, the rhs `k × n`, the out `m × n`.
-///
-/// Only tests draw one today. It widens when a caller does.
-#[cfg(test)]
-pub(crate) const MNK: Contraction = Contraction {
-    down: M,
-    across: N,
-    over: K,
-};
 
 /// The space a routine's levels are stated over before any problem: every axis dynamic, so the
 /// counts a shape decides print as unknown and the tiling itself still reads. The axis order is
@@ -141,8 +128,8 @@ pub(crate) fn validate_stored_tile(
     let partitioning = Partitioning::new(space.clone(), levels.to_vec());
     Err(MatmulSetupError::InvalidConfig(Box::new(format!(
         "{name} is stored in {tile:?} storage tiles, which is the tile of no level of this \
-         routine's nest; pack the tensor to one of its tiles\n\n{}",
-        partitioning.labelled(&labels(space))
+         routine's nest; tile the tensor to one of its tiles\n\n{}",
+        partitioning.table(&labels(space))
     ))))
 }
 
@@ -170,11 +157,11 @@ mod tests {
     #[test]
     fn a_stored_tile_that_is_a_level_passes_and_one_that_is_none_is_refused() {
         let space = Space::new(&[(M, 64), (N, 64), (K, 32)]);
-        let levels = cubek_tile::Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+        let levels = cubek_tile::Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
             .walk_every(&[K])
             .planes(&[(M, 2), (N, 4)])
             .cubes(&[M, N])
-            .levels();
+            .build();
         let cube_tile = binding(&[2, 4, 16, 32], Tiling::new(&[2, 2]).unwrap());
         validate_stored_tile(&cube_tile, "out", &space, &levels, (M, N)).unwrap();
         let no_level = binding(&[4, 4, 16, 16], Tiling::new(&[2, 2]).unwrap());

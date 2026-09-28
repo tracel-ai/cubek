@@ -126,7 +126,7 @@ pub fn strategies() -> Vec<CatalogEntry<DepthwiseStrategy>> {
 
     // The cross product of the two spatial edges with the line width. Both matter and they trade
     // against each other — a wide line is fewer instructions per channel but more registers per
-    // lane and a wider channel tile, so a narrow block runs out of lanes to give it — and neither
+    // unit and a wider channel tile, so a narrow block runs out of units to give it — and neither
     // is predictable from the shape alone, which is what a sweep is for.
     for lines in [1, 2, 4] {
         for (rows, cols) in [

@@ -4,17 +4,19 @@
 //! orientation a decode step streams, where the contraction runs along the buffer's contiguous
 //! direction. `K` is spelled `(KB, KI)`, so one scale per block is the operand omitting `KI`.
 //!
-//! Two shapes, and the engine picks which by what it will accept. Where the accumulator sits in
-//! memory the activation is read one `K`-contiguous line a step, which is what lets a step fold
-//! whole lines; where it is promoted to registers the block lines its cells along the
-//! accumulator instead, so the activation has to be read cell by cell. Both compute the same
-//! answer and neither is a ladder rung of the other. [`cubek-matmul`'s QuantGemv routine] is
-//! built on the first.
+//! Two shapes, and the engine picks which by what it will accept. With the accumulator in memory
+//! the activation is read one `K`-contiguous line a step, which lets a step fold whole lines;
+//! promoted to registers, the block lines its cells along the accumulator, so reads are per cell.
+//!
+//! Both compute the same answer and neither is a ladder rung of the other.
+//! [`cubek-matmul`'s QuantGemv routine] is built on the first.
 
+use super::{Form, implied};
 use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 /// The weight's output dimension: rows of the lhs.
@@ -26,7 +28,7 @@ const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
 
 /// The partials fold through the sink's element between `K` steps. Three levels: this cube's
-/// strip of rows, this plane's group of rows, this lane's rows against its share of the
+/// strip of rows, this plane's group of rows, this unit's rows against its share of the
 /// contraction, the leaf running under a block of `budget` scalars.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -59,13 +61,11 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
-            for lane in plane {
-                let mut out_lane = out_plane.at(&lane);
-                out_lane.mma_scaled_with(
-                    &w_plane
-                        .at(&lane)
-                        .scaled(&ComptimeOption::new_Some(scale_plane.at(&lane))),
-                    &x_plane.at(&lane).plain(),
+            for unit in plane {
+                let mut out_unit = out_plane.at(&unit);
+                out_unit.mma_with(
+                    &w_plane.at(&unit).mul(&scale_plane.at(&unit)),
+                    &x_plane.at(&unit),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -79,8 +79,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ///
 /// The activation is read *scalar* here, and has to be: a promoted block lines its cells along
 /// the accumulator, so a rhs lined along the contraction folds a whole step into one cell and
-/// `RegisterData::mma_scaled` refuses it. Which is why the shipping shape below keeps its
-/// accumulator in memory: the two are a trade, not a ladder.
+/// `RegisterData::mma_scaled` refuses it; the shipping shape thus keeps its accumulator in memory.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
@@ -99,7 +98,6 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut acc = out.block_accumulator::<E, E, E>(
         &w,
         &x,
-        comptime!(Fragments::below(&out, &w)),
         comptime!(RegisterBlock::new(budget)),
         Monoid::Sum,
     );
@@ -114,13 +112,11 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
-            for lane in plane {
-                let mut acc_lane = acc_plane.at(&lane);
-                acc_lane.mma_scaled(
-                    &w_plane
-                        .at(&lane)
-                        .scaled(&ComptimeOption::new_Some(scale_plane.at(&lane))),
-                    &x_plane.at(&lane).plain(),
+            for unit in plane {
+                let mut acc_unit = acc_plane.at(&unit);
+                acc_unit.mma(
+                    &w_plane.at(&unit).mul(&scale_plane.at(&unit)),
+                    &x_plane.at(&unit),
                     Semiring::SUM_PROD,
                 );
             }
@@ -146,19 +142,17 @@ fn a_promoted_accumulator_spans_the_whole_decode_walk() {
     serving_geometry(true, true);
 }
 
-/// **A lane level that cuts nothing is a loop of one.** Every lane of the plane is handed the
-/// plane's own box, and the leaf runs on all of them alike: the plan of a kernel whose planes own
-/// their cells and deal nothing further down, written with the same three loops as the plan
-/// that does. What the walk hands each lane is the whole box, not an empty one, and the answer
-/// is the same as under a real lane cut.
+/// **A unit level that cuts nothing is a loop of one.** Every unit of the plane is handed the
+/// plane's whole box (not an empty one) and the leaf runs on all of them alike: planes that own
+/// their cells, written with the same three loops as a real unit cut, and giving the same answer.
 #[test]
-fn a_lane_level_that_cuts_nothing_hands_every_lane_the_plane() {
+fn a_unit_level_that_cuts_nothing_hands_every_unit_the_plane() {
     serving_geometry(false, false);
 }
 
-/// `promoted`: where the accumulator lives. `lanes_cut`: whether the lane level deals rows and
-/// words to the lanes, or names no axis and hands every lane the plane's box.
-fn serving_geometry(promoted: bool, lanes_cut: bool) {
+/// `promoted`: where the accumulator lives. `units_cut`: whether the unit level distributes rows and
+/// words to the units, or names no axis and hands every unit the plane's box.
+fn serving_geometry(promoted: bool, units_cut: bool) {
     let field = QuantValue::Q8S;
     let bits = field.size_bits();
     let factor = 32 / bits;
@@ -174,22 +168,22 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
     }
     let plane = client.properties().hardware.plane_size_max as usize;
 
-    // The block, and the geometry cut from it: a lane takes one stored word per step, so a
-    // group of `block / factor` lanes covers one block of `K`, and the rest of the plane
+    // The block, and the geometry cut from it: a unit takes one stored word per step, so a
+    // group of `block / factor` units covers one block of `K`, and the rest of the plane
     // carries rows.
     let (block, blocks) = (32, 4);
     let (d_in, n) = (block * blocks, 1);
-    let group_lanes = block / factor;
-    if !plane.is_multiple_of(group_lanes) {
+    let group_units = block / factor;
+    if !plane.is_multiple_of(group_units) {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "a {plane}-lane plane does not split into {group_lanes}-lane groups"
+            "a {plane}-unit plane does not split into {group_units}-unit groups"
         )))
         .enforce();
         return;
     }
-    let groups = plane / group_lanes;
-    let rows_per_lane = 2;
-    let rows_per_plane = groups * rows_per_lane;
+    let groups = plane / group_units;
+    let rows_per_unit = 2;
+    let rows_per_plane = groups * rows_per_unit;
     let num_planes = 2;
     let rows_per_cube = num_planes * rows_per_plane;
     let d_out = rows_per_cube * 2;
@@ -215,27 +209,27 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
-            match lanes_cut {
-                true => Tiling::leaf(&[(M, rows_per_lane), (KI, factor), (KB, 1)])
+            match units_cut {
+                true => Levels::leaf(&[(M, rows_per_unit), (KI, factor), (KB, 1)])
                     .walk_every(&[KB])
-                    .lanes(&[(M, groups), (KI, group_lanes)])
+                    .units(&[(M, groups), (KI, group_units)])
                     .interleaved(KI),
-                false => Tiling::leaf(&[(M, rows_per_plane), (KB, 1)])
+                false => Levels::leaf(&[(M, rows_per_plane), (KB, 1)])
                     .walk_every(&[KB])
-                    .lanes(&[]),
+                    .units(&[]),
             }
             .planes(&[(M, num_planes)])
             .cubes(&[M])
-            .levels(),
+            .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
-    // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
-    let budget = rows_per_lane * factor;
+    // The leaf's budget: one scalar per row a unit owns, per value of the word it takes a step.
+    let budget = rows_per_unit * factor;
 
     let w_tensor = TensorHandle::new_contiguous(
         vec![d_out, d_in],
@@ -295,11 +289,8 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
         .vectorize(if promoted { 1 } else { factor })
         .build();
     // One scale per `(row, block of K)`: `KI` is carried and addressed by nothing.
-    let s_op = launcher.arg(s_tensor.binding()).subspace(&[M, KB]).build();
-    let out_op = launcher
-        .arg(out.clone().binding())
-        .subspace(&[M, N])
-        .build();
+    let s_op = launcher.arg(s_tensor.binding()).axes(&[M, KB]).build();
+    let out_op = launcher.arg(out.clone().binding()).axes(&[M, N]).build();
 
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     if promoted {

@@ -2,8 +2,8 @@ use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
 use cubek_tile::{
-    Axis, Compaction, Level, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Space,
-    Tiling,
+    Axis, Level, Levels, Partitioning, Projection, RegisterBlock, Space,
+    layout::{Compaction, PhysicalAxisMap},
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -31,7 +31,7 @@ const LABELS: [(Axis, &str); 6] = [
 pub fn register_block(client: &Client) -> RegisterBlock {
     match client.properties().hardware.num_cpu_cores {
         Some(_) => RegisterBlock::new(256).split_edge(),
-        None => RegisterBlock::new(64).lane_fanout(),
+        None => RegisterBlock::new(64).component_fanout(),
     }
 }
 
@@ -63,39 +63,39 @@ impl InterpolateSpace {
     }
 
     /// Four levels, outermost first: the cube grid, the channel blocks a cube walks (one region
-    /// below `lanes * 4` channels), this plane's rows, then this lane's columns and channel
+    /// below `units * 4` channels), this plane's rows, then this unit's columns and channel
     /// lines.
-    /// The levels, stated **from the leaf up, in counts**: one lane's columns by its channel
-    /// block by a plane's rows, the lanes of a plane across columns and channels, the planes of
+    /// The levels, stated **from the leaf up, in counts**: one unit's columns by its channel
+    /// block by a plane's rows, the units of a plane across columns and channels, the planes of
     /// a cube across rows, every channel block the cube's box holds, and a cube per box. The
-    /// geometry was already a product — `rows_per_cube` is planes by rows, `cols_per_cube` lanes
+    /// geometry was already a product — `rows_per_cube` is planes by rows, `cols_per_cube` units
     /// by columns — so this states the counts it holds rather than the sizes it multiplied them
-    /// into. A lane split of one along an axis is no split, and the axis is handed down whole.
+    /// into. A unit split of one along an axis is no split, and the axis is handed down whole.
     pub fn levels(&self) -> Vec<Level> {
         let (geometry, plane_size) = (self.geometry, self.plane_size);
         assert!(
-            geometry.lane_cols * geometry.lane_channels == plane_size,
-            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
-            geometry.lane_cols * geometry.lane_channels
+            geometry.unit_cols * geometry.unit_channels == plane_size,
+            "InterpolateSpace: the unit split covers {} of the plane's {plane_size} units",
+            geometry.unit_cols * geometry.unit_channels
         );
-        let lanes: Vec<(Axis, usize)> = [
-            (OUTPUT_W, geometry.lane_cols),
-            (CHANNEL, geometry.lane_channels),
+        let plane_units: Vec<(Axis, usize)> = [
+            (OUTPUT_W, geometry.unit_cols),
+            (CHANNEL, geometry.unit_channels),
         ]
         .into_iter()
-        .filter(|&(_, lanes)| lanes > 1)
+        .filter(|&(_, plane_units)| plane_units > 1)
         .collect();
-        Tiling::leaf(&[
-            (OUTPUT_W, geometry.cols_per_lane),
+        Levels::leaf(&[
+            (OUTPUT_W, geometry.cols_per_unit),
             (CHANNEL, geometry.channel_block),
             (OUTPUT_H, geometry.rows_per_plane),
         ])
-        .lanes(&lanes)
+        .units(&plane_units)
         .planes(&[(OUTPUT_H, geometry.planes_per_cube)])
         .walk_every(&[CHANNEL])
         .cubes(&[OUTPUT_W, OUTPUT_H])
         .batches(&[BATCH])
-        .levels()
+        .build()
     }
 
     pub fn space(&self) -> Space {
@@ -157,7 +157,7 @@ pub fn stage_window_bytes(
         other => panic!("stage_window_bytes: {other:?} is not an axis of the interpolation space"),
     };
     let window_vectors: usize =
-        Compaction::of(&input_projection(row, col, radius), vector_size, extent_of)
+        Compaction::new(&input_projection(row, col, radius), vector_size, extent_of)
             .extents()
             .iter()
             .product();
@@ -169,9 +169,9 @@ mod tests {
     use super::*;
     use crate::{InputStage, definition::InterpolateBlueprint};
 
-    /// A bicubic resize to a `128x128` map on a 32-lane plane, four planes of two rows each and
-    /// four output columns a lane. The channel count is what the caller varies: it is the axis
-    /// the lanes cover first, so it decides the whole split and the cube grid with it.
+    /// A bicubic resize to a `128x128` map on a 32-unit plane, four planes of two rows each and
+    /// four output columns a unit. The channel count is what the caller varies: it is the axis
+    /// the units cover first, so it decides the whole split and the cube grid with it.
     fn plan(channels: usize) -> InterpolateSpace {
         InterpolateSpace {
             batch: 2,
@@ -195,39 +195,39 @@ mod tests {
     #[test]
     fn the_interpolate_routine_states_four_levels() {
         assert_eq!(
-            plan(16).partitioning().labelled(&LABELS).to_string(),
+            plan(16).partitioning().table(&LABELS).to_string(),
             [
-                "        b × oh × ow × th × tw × c    b ×  oh ×  ow × th × tw ×  c",
+                "                        b × oh × ow × th × tw × c    b ×  oh ×  ow × th × tw ×  c",
                 "",
-                "  ◦     · ×  · ×  · ×  · ×  · × ·    1 ×   2 ×   4 ×  4 ×  4 ×  4",
-                "  ▪     · ×  · ×  8 ×  · ×  · × 4    1 ×   2 ×  32 ×  4 ×  4 × 16",
-                "  ▤     · ×  4 ×  · ×  · ×  · × ·    1 ×   8 ×  32 ×  4 ×  4 × 16",
-                "  ↻     · ×  · ×  · ×  · ×  · × 1    1 ×   8 ×  32 ×  4 ×  4 × 16",
-                "  ▣     2 × 16 ×  4 ×  · ×  · × ·    2 × 128 × 128 ×  4 ×  4 × 16",
+                "  ◦                     · ×  · ×  · ×  · ×  · × ·    1 ×   2 ×   4 ×  4 ×  4 ×  4",
+                "  ▪  32 units           · ×  · ×  8 ×  · ×  · × 4    1 ×   2 ×  32 ×  4 ×  4 × 16",
+                "  ▤  4 planes a cube    · ×  4 ×  · ×  · ×  · × ·    1 ×   8 ×  32 ×  4 ×  4 × 16",
+                "  ↻  1 steps            · ×  · ×  · ×  · ×  · × 1    1 ×   8 ×  32 ×  4 ×  4 × 16",
+                "  ▣  128 cubes          2 × 16 ×  4 ×  · ×  · × ·    2 × 128 × 128 ×  4 ×  4 × 16",
                 "",
-                "        └─ count ───────────────┘    └─ tile ───────────────────┘",
+                "                        └─ count ───────────────┘    └─ tile ───────────────────┘",
             ]
             .join("\n")
         );
     }
 
     /// A channel axis wider than one pass of the plane is what the walk above the planes is
-    /// for: every lane rides the channels, and the blocks past the first are the cube's steps.
+    /// for: every unit rides the channels, and the blocks past the first are the cube's steps.
     /// The columns pay for it, so the same map takes eight times the cubes along `ow`.
     #[test]
     fn a_channel_axis_wider_than_a_plane_walks_its_blocks() {
         assert_eq!(
-            plan(256).partitioning().labelled(&LABELS).to_string(),
+            plan(256).partitioning().table(&LABELS).to_string(),
             [
-                "        b × oh × ow × th × tw ×  c    b ×  oh ×  ow × th × tw ×   c",
+                "                        b × oh × ow × th × tw ×  c    b ×  oh ×  ow × th × tw ×   c",
                 "",
-                "  ◦     · ×  · ×  · ×  · ×  · ×  ·    1 ×   2 ×   4 ×  4 ×  4 ×   4",
-                "  ▪     · ×  · ×  · ×  · ×  · × 32    1 ×   2 ×   4 ×  4 ×  4 × 128",
-                "  ▤     · ×  4 ×  · ×  · ×  · ×  ·    1 ×   8 ×   4 ×  4 ×  4 × 128",
-                "  ↻     · ×  · ×  · ×  · ×  · ×  2    1 ×   8 ×   4 ×  4 ×  4 × 256",
-                "  ▣     2 × 16 × 32 ×  · ×  · ×  ·    2 × 128 × 128 ×  4 ×  4 × 256",
+                "  ◦                     · ×  · ×  · ×  · ×  · ×  ·    1 ×   2 ×   4 ×  4 ×  4 ×   4",
+                "  ▪  32 units           · ×  · ×  · ×  · ×  · × 32    1 ×   2 ×   4 ×  4 ×  4 × 128",
+                "  ▤  4 planes a cube    · ×  4 ×  · ×  · ×  · ×  ·    1 ×   8 ×   4 ×  4 ×  4 × 128",
+                "  ↻  2 steps            · ×  · ×  · ×  · ×  · ×  2    1 ×   8 ×   4 ×  4 ×  4 × 256",
+                "  ▣  1024 cubes         2 × 16 × 32 ×  · ×  · ×  ·    2 × 128 × 128 ×  4 ×  4 × 256",
                 "",
-                "        └─ count ────────────────┘    └─ tile ────────────────────┘",
+                "                        └─ count ────────────────┘    └─ tile ────────────────────┘",
             ]
             .join("\n")
         );

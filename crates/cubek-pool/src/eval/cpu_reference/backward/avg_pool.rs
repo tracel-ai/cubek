@@ -65,7 +65,9 @@ pub fn run_avg_pool_backward<const N: usize>(
                         let grad_val = grad_output.get_f32(&out_coords);
 
                         if opts.count_include_pad {
-                            grad_acc += grad_val / (kernel_h * kernel_w) as f32;
+                            let padded_h = kernel_h.min(out_h + 2 * pad_h - oh * stride_h);
+                            let padded_w = kernel_w.min(out_w + 2 * pad_w - ow * stride_w);
+                            grad_acc += grad_val / (padded_h * padded_w) as f32;
                         } else {
                             let ih_diff = (ih_end - ih_start) as f32;
                             let iw_diff = (iw_end - iw_start) as f32;

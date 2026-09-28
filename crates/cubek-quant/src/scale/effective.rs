@@ -15,7 +15,7 @@ use cubecl::prelude::*;
 /// rounds it to zero.
 ///
 /// A one-level scheme has nothing to fold in, so it stays in the compute type. Widening there
-/// would cost the packed two-lane multiply a narrow type gets for free, which measures as a few
+/// would cost the packed two-value multiply a narrow type gets for free, which measures as a few
 /// percent on f16 output.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]

@@ -1,19 +1,18 @@
-//! The verbs a client runs over tiles: [`matmul`] (`mma`), [`mul`], [`softmax`], [`rows`] and
-//! [`copy`]. Each reads an already-structured [`Tile`](crate::Tile) and either walks its levels or
-//! runs at the leaf; the shared machinery they compose lives in [`crate::staging`].
-//! Dequantization is not a verb: a quantized store dequantizes under the plain
-//! [`Tile::copy`](crate::Tile::copy).
+//! The verbs a client runs over tiles: [`matmul`] (`mma`), `mul`, [`softmax`] and `rows`.
+//! Each reads an already-structured [`Tile`](crate::Tile) and either walks its levels or runs at
+//! the leaf; the shared machinery they compose lives in [`crate::stage`].
+//!
+//! Moving cells is no verb of its own: a tile is filled from another through
+//! [`Tile::copy_from`](crate::Tile::copy_from), which a quantized store dequantizes on the way.
 
-mod attention;
-mod copy;
-mod matmul;
+pub mod matmul;
 mod mul;
-mod normalize;
-mod reduce;
+pub mod reduce;
 mod rows;
-mod softmax;
+pub mod softmax;
+mod team;
 
-pub use attention::*;
-pub use normalize::*;
-pub use softmax::*;
-// mul, reduce and rows add `Tile` impls only; nothing to re-export.
+pub(crate) use matmul::*;
+pub(crate) use softmax::*;
+pub use team::*;
+// mul and rows add `Tile` impls only; nothing to re-export.

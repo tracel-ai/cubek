@@ -3,5 +3,8 @@ arange = "arange"
 Cpy = "Cpy"
 # N-dimensional: `Tile::nd`, `nd_transparent`.
 nd = "nd"
+# Partition counts along m and n: `(pm, pn, gm, gn)` in the tiled cmma
+# reuse tests.
+pn = "pn"
 # Unsigned exponent float formats: `QuantParam::UE8M0`, `UE4M3`.
 UE = "UE"

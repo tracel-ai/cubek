@@ -130,7 +130,7 @@ fn four_bit_weights_decode_against_f16_scales() {
 }
 
 /// More than one activation row against the one weight stream: `N` is sequential at every
-/// level, so a lane holds that many partials against the line it already read.
+/// level, so a unit holds that many partials against the line it already read.
 #[test]
 fn several_activation_rows_share_one_weight_stream() {
     decode_gemv_matches_the_reference(QuantValue::Q4S, 32, 3);

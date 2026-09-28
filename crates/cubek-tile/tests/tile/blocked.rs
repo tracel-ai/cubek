@@ -4,14 +4,18 @@
 //! logical position still determines a cell and every window is still a dense box. An operand
 //! spanning `(KB, KI)` must therefore read exactly as one spanning `K` does, and cost the same.
 //!
-//! Why an axis would be split at all: an axis exists when an operand *distinguishes* it. A
-//! quantized operand's scales vary over the block index and not over the position inside the
-//! block, so those are two axes. The first two tests pin a split *contracted* axis with no scales
-//! at all, then one adds them; the last two split an axis the *output* spans, which is the shape a
-//! per-column-block scale needs and the one the accumulator's edges had to be derived to allow.
+//! An axis exists when an operand *distinguishes* it: a quantized operand's scales vary over the
+//! block index and not over the position inside the block, so those are two axes, which is why an
+//! axis gets split at all.
+//!
+//! The first two tests split a *contracted* axis, without scales and then with them; the last two
+//! split an axis the *output* spans, the shape a per-column-block scale needs and the one the
+//! accumulator's edges had to be derived to allow.
 
+use super::{Form, implied};
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 use half::f16;
 
@@ -76,17 +80,15 @@ fn scaled_matmul<E: Numeric>(
     for region in space.over(&level) {
         let mut c_region = c.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => c_region.mma_scaled_with(
-                &a.at(&region)
-                    .scaled(&ComptimeOption::new_Some(scale.at(&region))),
-                &b.at(&region).plain(),
+            Scaled::Lhs => c_region.mma_with(
+                &a.at(&region).mul(&scale.at(&region)),
+                &b.at(&region),
                 BLOCK,
                 Semiring::SUM_PROD,
             ),
-            Scaled::Rhs => c_region.mma_scaled_with(
-                &a.at(&region).plain(),
-                &b.at(&region)
-                    .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+            Scaled::Rhs => c_region.mma_with(
+                &a.at(&region),
+                &b.at(&region).mul(&scale.at(&region)),
                 BLOCK,
                 Semiring::SUM_PROD,
             ),
@@ -118,15 +120,15 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (N, cols), (K, block)])
+            Levels::leaf(&[(M, rows), (N, cols), (K, block)])
                 .walk_every(&[M, N, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     matmul::launch(
@@ -140,7 +142,7 @@ fn one_contracted_axis_is_the_reference() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -182,15 +184,15 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
                 .walk_every(&[M, N, KB, KI])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     matmul::launch(
@@ -222,7 +224,7 @@ fn a_partitioned_axis_contracts_the_same() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -271,15 +273,15 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+            Levels::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
                 .walk_every(&[M, N, KB, KI])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -320,7 +322,7 @@ fn scales_omit_the_axis_inside_the_block() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         dtype,
     );
@@ -341,14 +343,12 @@ fn scales_omit_the_axis_inside_the_block() {
 }
 
 // A partition whose stride misses its block is refused where the projection and the nest first
-// meet (`Projection::validate_composition`). That refusal is unit-tested host-side in
-// `physical::projection::base`, not here: this one would fire inside the kernel, on a worker
-// thread, where `#[should_panic]` never sees it and the launch just returns zeros.
+// meet (`Projection::validate_composition`), unit-tested host-side in `physical::projection::base`
+// rather than here: in the kernel it fires on a worker thread `#[should_panic]` never sees.
 
 /// **An axis the output spans, split.** `N` is spelled `(NB, NI)` and the accumulator spans both,
-/// so its column edge is two axes rather than one. Reading the trailing axis alone would take `NB`
-/// for the row edge and contract against a matrix that is not there; the edge instead reaches out
-/// from the innermost axis for as long as the axes are not the lhs's, and here neither is.
+/// so its column edge is two axes. Reading the trailing axis alone would take `NB` for the row
+/// edge and contract against nothing; the edge instead spans every innermost axis not the lhs's.
 #[test]
 fn a_split_output_axis_contracts_the_same() {
     let (rows, blocks, inside, depth) = (4, 2, 4, 8);
@@ -372,15 +372,15 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     matmul::launch(
@@ -409,7 +409,7 @@ fn a_split_output_axis_contracts_the_same() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -462,15 +462,15 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -505,7 +505,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Rhs,
         dtype,
     );
@@ -570,15 +570,15 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_matmul::launch(
@@ -608,7 +608,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -643,23 +643,21 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region);
-        c_region.mma_scaled_with(
-            &a.at(&region).plain(),
-            &b.at(&region)
-                .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+        c_region.mma_with(
+            &a.at(&region),
+            &b.at(&region).mul(&scale.at(&region)),
             BLOCK,
             Semiring::SUM_PROD,
         );
     }
 }
 
-/// **The scales read as a line.** Their innermost axis is `NB`, the block index, which is an axis
-/// they actually vary over, so a read of four serves four *different* scales covering four blocks
-/// of columns. Which lane a value line takes is its ordinal along the shared edge, and the block
-/// walks its columns under a constant one.
+/// **The scales read as a line.** Their innermost axis is `NB`, the block index, an axis they
+/// actually vary over, so a read of four serves four *different* scales covering four blocks of
+/// columns. A value line's component is its ordinal along the shared edge, constant across the block.
 #[test]
 fn scales_are_served_several_at_a_time() {
-    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
     let client = cubecl::test_device().client();
@@ -686,22 +684,22 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_scaled_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        units,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -716,7 +714,7 @@ fn scales_are_served_several_at_a_time() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             // The block index alone, and it is innermost: the width lands on the axis the scales
-            // vary over, so one read serves `lanes` different scales.
+            // vary over, so one read serves `units` different scales.
             TileSpec::new(Projection::new(&[K, NB], &[PhysicalAxisMap::of(NB)])),
         ),
         TileArgLaunch::new(
@@ -730,7 +728,7 @@ fn scales_are_served_several_at_a_time() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -764,17 +762,7 @@ fn promoted_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.space,
-            &a.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
@@ -809,15 +797,15 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     promoted_matmul::launch(
@@ -846,7 +834,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -880,24 +868,13 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(
-        &a,
-        &b,
-        comptime!(Fragments::new(
-            &c.space,
-            &a.space,
-            std::slice::from_ref(&level)
-        )),
-        BLOCK,
-        Monoid::Sum,
-    );
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma_scaled(
-            &a.at(&region).plain(),
-            &b.at(&region)
-                .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+        acc_region.mma(
+            &a.at(&region),
+            &b.at(&region).mul(&scale.at(&region)),
             Semiring::SUM_PROD,
         );
     }
@@ -910,7 +887,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
 /// **The shape a decode gemv runs.** Scales read as a line against a register accumulator.
 #[test]
 fn a_promoted_accumulator_takes_scales_by_the_line() {
-    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
     let client = cubecl::test_device().client();
@@ -936,22 +913,22 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_scaled_promoted::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        units,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -978,7 +955,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1015,10 +992,9 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region);
-        c_region.mma_scaled_with(
-            &a.at(&region).plain(),
-            &b.at(&region)
-                .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+        c_region.mma_with(
+            &a.at(&region),
+            &b.at(&region).mul(&scale.at(&region)),
             BLOCK,
             Semiring::SUM_PROD,
         );
@@ -1030,7 +1006,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
 /// binding's, and neither is the values'.
 #[test]
 fn scales_keep_their_own_element_when_served_as_lines() {
-    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
     let client = cubecl::test_device().client();
@@ -1058,22 +1034,22 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+            Levels::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
                 .walk_every(&[M, NB, NI, K])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_typed_scaled_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        lanes,
+        units,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -1100,7 +1076,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         [dtype, scale_dtype],
     );
 

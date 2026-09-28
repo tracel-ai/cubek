@@ -1,23 +1,21 @@
 //! The table a [`Partitioning`] prints as: one row a level, leaf up.
 //!
-//! Two blocks of the same shape. The count block is how many tiles a level takes along each
-//! axis; the tile block is what one of those tiles holds. A row's tile is the row below it times the count
-//! beside it, axis by axis, so the arithmetic is checkable down the page and a row that fails to
-//! multiply out is a partitioning that will answer wrong.
+//! Two blocks of the same shape: the count block is how many tiles a level takes along each axis,
+//! the tile block what one of those tiles holds. A row's tile is the row below times the count
+//! beside it, axis by axis: a row that fails to multiply out is a partitioning that answers wrong.
 //!
-//! The level column is the scope's glyph alone: the count block already names the axes a level
-//! touches, and the glyph comes off [`LevelScope`] rather than off the per-axis distributions,
-//! which [`Level::shared_by`] rewrites to `Sequential`.
+//! The level column is the coverage's glyph and what it covers: how many cubes, planes a cube or
+//! units, or how many steps a walk, with the spread and the filling planes where stated.
 
 use std::fmt::{self, Display, Formatter};
 
-use crate::{Axis, Level, LevelScope, Partitioning, Space};
+use crate::{Axis, ComputeScope, Coverage, Level, Partitioning, Space, Spread};
 
 /// The leaf row's glyph: the tile the levels reach, which no level of its own cuts.
 const LEAF: char = '◦';
-/// The left margin, and the level column — one glyph wide — up to the first block.
+/// The left margin, and the gap after the level's glyph, before what it covers.
 const MARGIN: &str = "  ";
-const LEVEL: &str = "     ";
+const LEVEL: &str = "  ";
 /// Between two axes of a block, and between the blocks.
 const TIMES: &str = " × ";
 const GAP: &str = "    ";
@@ -38,14 +36,14 @@ fn count(level: &Level, space: &Space, axis: Axis) -> String {
 /// A [`Partitioning`] with a name for each of its axes, which is the one thing the value cannot
 /// supply: an [`Axis`] is a client-assigned index and the labels are the client's. An axis the
 /// labels do not name prints that index.
-pub struct Labelled<'a> {
+pub struct LevelTable<'a> {
     partitioning: &'a Partitioning,
     labels: &'a [(Axis, &'a str)],
 }
 
-impl<'a> Labelled<'a> {
+impl<'a> LevelTable<'a> {
     pub(crate) fn new(partitioning: &'a Partitioning, labels: &'a [(Axis, &'a str)]) -> Self {
-        Labelled {
+        LevelTable {
             partitioning,
             labels,
         }
@@ -68,7 +66,7 @@ impl<'a> Labelled<'a> {
             .levels()
             .iter()
             .map(|level| {
-                let row = Row::of(glyph(level.scope()), level, &space, &axes);
+                let row = Row::of(level, &space, &axes);
                 space = level.child(&space);
                 row
             })
@@ -79,28 +77,72 @@ impl<'a> Labelled<'a> {
     }
 }
 
-/// The glyph a level's scope prints as.
-pub(super) fn glyph(scope: LevelScope) -> char {
-    match scope {
-        LevelScope::Cubes => '▣',
-        LevelScope::Planes => '▤',
-        LevelScope::Lanes => '▪',
-        LevelScope::Sequential => '↻',
+/// The glyph a level's coverage prints as.
+fn glyph(coverage: Coverage) -> char {
+    match coverage {
+        Coverage::Distribute(ComputeScope::Cube) => '▣',
+        Coverage::Distribute(ComputeScope::Plane) => '▤',
+        Coverage::Distribute(ComputeScope::Unit) => '▪',
+        Coverage::Walk => '↻',
     }
+}
+
+/// What a level covers, in words: the instances the level distributes to (or the steps a walk
+/// takes) multiplied over its axes, with the spread and the filling planes where it states them.
+fn coverage(level: &Level, space: &Space) -> String {
+    let counts: Vec<Option<usize>> = level
+        .axes()
+        .iter()
+        .map(|&axis| level.tiles_const(space, axis))
+        .collect();
+    let total = counts
+        .iter()
+        .try_fold(1usize, |acc, count| count.map(|n| acc * n));
+    let many = match total {
+        Some(n) => n.to_string(),
+        None => "?".to_string(),
+    };
+    let interleaved = level
+        .axes()
+        .iter()
+        .any(|&axis| level.spread(axis) == Some(Spread::Interleaved));
+    let mut note = match level.coverage() {
+        Coverage::Distribute(ComputeScope::Cube) => match level.shared_by() {
+            Some(cubes) => format!("{cubes} cubes sharing {many} boxes"),
+            None => format!("{many} cubes"),
+        },
+        Coverage::Distribute(ComputeScope::Plane) => match level.shared_by() {
+            Some(planes) => format!("{planes} planes sharing {many} boxes"),
+            None => format!("{many} planes a cube"),
+        },
+        Coverage::Distribute(ComputeScope::Unit) => format!("{many} units"),
+        Coverage::Walk => format!("{many} steps"),
+    };
+    if interleaved {
+        note += " interleaved";
+    }
+    match level.fillers() {
+        0 => {}
+        1 => note += ", 1 filling plane",
+        n => note += &format!(", {n} filling planes"),
+    }
+    note
 }
 
 /// One line of the table: a level's glyph, what it cuts each axis into, and what one of its
 /// regions holds.
 struct Row {
     glyph: char,
+    coverage: String,
     counts: Vec<String>,
     tile: Vec<String>,
 }
 
 impl Row {
-    fn of(glyph: char, level: &Level, space: &Space, axes: &[Axis]) -> Row {
+    fn of(level: &Level, space: &Space, axes: &[Axis]) -> Row {
         Row {
-            glyph,
+            glyph: glyph(level.coverage()),
+            coverage: coverage(level, space),
             counts: axes.iter().map(|&axis| count(level, space, axis)).collect(),
             tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
         }
@@ -110,6 +152,7 @@ impl Row {
     fn leaf(space: &Space, axes: &[Axis]) -> Row {
         Row {
             glyph: LEAF,
+            coverage: String::new(),
             counts: axes.iter().map(|_| "·".to_string()).collect(),
             tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
         }
@@ -161,7 +204,7 @@ fn ruled(name: &str) -> usize {
     name.chars().count() + 6
 }
 
-impl Display for Labelled<'_> {
+impl Display for LevelTable<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let axes: Vec<Axis> = self.partitioning.space().axes().collect();
         let header: Vec<String> = axes.iter().map(|&axis| self.label(axis)).collect();
@@ -171,7 +214,14 @@ impl Display for Labelled<'_> {
         let tiles = widths(&header, rows.iter().map(|row| row.tile.clone()));
         let (counts_wide, counts_pad) = padded(&counts, "count");
         let (tiles_wide, tiles_pad) = padded(&tiles, "tile");
-        let indent = format!("{MARGIN} {LEVEL}");
+        // The coverage column, plus the gap before the count block.
+        let coverage_wide = rows
+            .iter()
+            .map(|row| row.coverage.chars().count())
+            .max()
+            .unwrap_or(0)
+            + GAP.chars().count();
+        let indent = format!("{MARGIN} {LEVEL}{:coverage_wide$}", "");
 
         writeln!(
             f,
@@ -183,8 +233,9 @@ impl Display for Labelled<'_> {
         for row in &rows {
             writeln!(
                 f,
-                "{MARGIN}{}{LEVEL}{counts_pad}{}{GAP}{tiles_pad}{}",
+                "{MARGIN}{}{LEVEL}{:coverage_wide$}{counts_pad}{}{GAP}{tiles_pad}{}",
                 row.glyph,
+                row.coverage,
                 block(&row.counts, &counts),
                 block(&row.tile, &tiles)
             )?;
@@ -212,17 +263,17 @@ fn spanned(widths: &[usize]) -> usize {
 }
 
 /// A partitioning prints its table with no axis named, which is all a value holding
-/// client-assigned indices can promise; [`Partitioning::labelled`] is the one worth reading.
+/// client-assigned indices can promise; [`Partitioning::table`] is the one worth reading.
 impl Display for Partitioning {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.labelled(&[]).fmt(f)
+        self.table(&[]).fmt(f)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Space, Tiling};
+    use crate::{Levels, Space};
 
     const B: Axis = Axis(0);
     const M: Axis = Axis(1);
@@ -234,14 +285,14 @@ mod tests {
     fn staged() -> Partitioning {
         Partitioning::new(
             Space::new(&[(B, 4), (M, 512), (N, 1024), (K, 4096)]),
-            Tiling::leaf(&[(M, 16), (N, 16), (K, 16)])
+            Levels::leaf(&[(M, 16), (N, 16), (K, 16)])
                 .walk(&[(M, 2), (N, 2)])
                 .walk(&[(K, 2)])
                 .planes(&[(M, 2), (N, 2)])
                 .walk_every(&[K])
                 .cubes(&[M, N])
                 .batches(&[B])
-                .levels(),
+                .build(),
         )
     }
 
@@ -250,18 +301,18 @@ mod tests {
         let labels = [(B, "b"), (M, "m"), (N, "n"), (K, "k")];
 
         assert_eq!(
-            staged().labelled(&labels).to_string(),
+            staged().table(&labels).to_string(),
             [
-                "        b × m ×  n ×   k    b ×   m ×    n ×    k",
+                "                        b × m ×  n ×   k    b ×   m ×    n ×    k",
                 "",
-                "  ◦     · × · ×  · ×   ·    1 ×  16 ×   16 ×   16",
-                "  ↻     · × 2 ×  2 ×   ·    1 ×  32 ×   32 ×   16",
-                "  ↻     · × · ×  · ×   2    1 ×  32 ×   32 ×   32",
-                "  ▤     · × 2 ×  2 ×   ·    1 ×  64 ×   64 ×   32",
-                "  ↻     · × · ×  · × 128    1 ×  64 ×   64 × 4096",
-                "  ▣     4 × 8 × 16 ×   ·    4 × 512 × 1024 × 4096",
+                "  ◦                     · × · ×  · ×   ·    1 ×  16 ×   16 ×   16",
+                "  ↻  4 steps            · × 2 ×  2 ×   ·    1 ×  32 ×   32 ×   16",
+                "  ↻  2 steps            · × · ×  · ×   2    1 ×  32 ×   32 ×   32",
+                "  ▤  4 planes a cube    · × 2 ×  2 ×   ·    1 ×  64 ×   64 ×   32",
+                "  ↻  128 steps          · × · ×  · × 128    1 ×  64 ×   64 × 4096",
+                "  ▣  512 cubes          4 × 8 × 16 ×   ·    4 × 512 × 1024 × 4096",
                 "",
-                "        └─ count ──────┘    └─ tile ────────────┘",
+                "                        └─ count ──────┘    └─ tile ────────────┘",
             ]
             .join("\n")
         );
@@ -281,26 +332,25 @@ mod tests {
     fn a_dynamic_axis_prints_a_question() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 512), (K, 4096)]).with_dynamic(&[K]),
-            Tiling::leaf(&[(M, 64), (K, 32)])
+            Levels::leaf(&[(M, 64), (K, 32)])
                 .walk_every(&[K])
                 .cubes(&[M])
-                .levels(),
+                .build(),
         );
-        let table = partitioning.labelled(&[(M, "m"), (K, "k")]).to_string();
+        let table = partitioning.table(&[(M, "m"), (K, "k")]).to_string();
 
         assert!(table.lines().any(|line| line.contains("× ?")), "{table}");
     }
 
-    /// A level whose tiles are shared reads `Sequential` on every axis, and only its
-    /// [`LevelScope`] still says it is the cube grid.
+    /// A level whose grid is shared still prints as the cube grid, and says who shares it.
     #[test]
     fn a_shared_level_still_prints_as_the_cube_grid() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 512), (N, 1024)]),
-            Tiling::leaf(&[(M, 64), (N, 64)])
+            Levels::leaf(&[(M, 64), (N, 64)])
                 .cubes(&[M, N])
                 .shared_by(8)
-                .levels(),
+                .build(),
         );
 
         assert!(partitioning.to_string().contains('▣'));
@@ -313,22 +363,22 @@ mod tests {
     fn an_overhanging_axis_counts_its_partial_tile() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 500), (K, 4096)]),
-            Tiling::leaf(&[(M, 128), (K, 32)])
+            Levels::leaf(&[(M, 128), (K, 32)])
                 .walk_every(&[K])
                 .cubes(&[M])
-                .levels(),
+                .build(),
         );
 
         assert_eq!(
-            partitioning.labelled(&[(M, "m"), (K, "k")]).to_string(),
+            partitioning.table(&[(M, "m"), (K, "k")]).to_string(),
             [
-                "            m ×   k      m ×    k",
+                "                      m ×   k      m ×    k",
                 "",
-                "  ◦         · ×   ·    128 ×   32",
-                "  ↻         · × 128    128 × 4096",
-                "  ▣         4 ×   ·    500 × 4096",
+                "  ◦                   · ×   ·    128 ×   32",
+                "  ↻  128 steps        · × 128    128 × 4096",
+                "  ▣  4 cubes          4 ×   ·    500 × 4096",
                 "",
-                "        └─ count ─┘    └─ tile ─┘",
+                "                  └─ count ─┘    └─ tile ─┘",
             ]
             .join("\n")
         );

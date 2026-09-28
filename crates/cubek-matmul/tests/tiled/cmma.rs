@@ -78,6 +78,7 @@ fn cmma_partition_1x1_f32() {
         stage_k: 48,
         buffering: 2,
         delivery: CmmaDelivery::Copy,
+        order: cubek_tile::space::CubeOrder::RowMajor,
     };
     test_matmul_strategy(
         client(),
@@ -136,6 +137,7 @@ fn cmma_tma_rejects_oversized_box() {
         stage_k: 16,
         buffering: 2,
         delivery: CmmaDelivery::Tma,
+        order: cubek_tile::space::CubeOrder::RowMajor,
     };
     let problem = rect(64, 1024, 64, f16_elems());
     let device_settings = DeviceSettings {
@@ -214,9 +216,9 @@ fn cmma_rejects_input_register_type() {
     }
 }
 
-/// The weight packed at load into blocks of exactly the plan's stage, beside a row-major
+/// The weight tiled at load into blocks of exactly the plan's stage, beside a row-major
 /// activation: the same product as the row-major run, read one contiguous block per stage. The
-/// pack is a copy through the two tiles' views, so the block layout the kernel reads is the one
+/// tiling is a copy through the two tiles' views, so the block layout the kernel reads is the one
 /// the tile engine itself describes.
 #[test]
 fn cmma_storage_tiled_weight_f16() {
@@ -230,7 +232,7 @@ fn cmma_storage_tiled_weight_f32() {
     storage_tiled_weight(f32::elem_type_native(), CmmaStrategy::default());
 }
 
-/// The same packed weight moved by the TMA engine instead of the cube's units. How an operand
+/// The same tiled weight moved by the TMA engine instead of the cube's units. How an operand
 /// is stored and who moves it are independent, so this pair is a plan like any other: the
 /// descriptor keeps the stored rank and boxes one storage tile, which is one contiguous run.
 /// On a backend without TMA it is `Unavailable`, which the strict test policy surfaces.
@@ -247,7 +249,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            pack::pack,
+            storage::tile,
         },
     };
     use cubek_std::InputBinding;
@@ -277,7 +279,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
         let launch = || -> Result<(), MatmulSetupError> {
             // The plan the selector picks for this problem: its stage is the block the weight
-            // is packed to, whichever delivery moves it.
+            // is tiled to, whichever delivery moves it.
             let acc = match dtype {
                 ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
                 other => other,
@@ -299,13 +301,13 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
             let (_, stage_n) = blueprint.stage();
             let stage_k = blueprint.stage_k;
 
-            // The weight, packed to the plan's stage.
-            let packed = pack(c, rhs.clone().binding(), dtype, (stage_k, stage_n))?;
+            // The weight, tiled to the plan's stage.
+            let tiled = tile(c, rhs.clone().binding(), dtype, (stage_k, stage_n))?;
 
             launch_ref(
                 c,
                 InputBinding::Normal(lhs.clone().binding(), dtype),
-                InputBinding::Normal(packed.binding(), dtype),
+                InputBinding::Normal(tiled.binding(), dtype),
                 out.clone().binding(),
                 &BlueprintStrategy::Forced(blueprint),
                 &elems,
@@ -324,13 +326,13 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
     .enforce()
 }
 
-/// A packed operand under TMA is a plan, not a mistake. It may be unavailable (no TMA on this
+/// A tiled operand under TMA is a plan, not a mistake. It may be unavailable (no TMA on this
 /// backend), but it is never refused as a bad config: how an operand is stored and who moves it
 /// are independent, and the only thing the storage tile decides is the stage.
 ///
 /// Runs on every backend, since it asserts what the refusal is *not*.
 #[test]
-fn cmma_never_refuses_a_packed_weight_under_tma() {
+fn cmma_never_refuses_a_tiled_weight_under_tma() {
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
@@ -368,20 +370,20 @@ fn cmma_never_refuses_a_packed_weight_under_tma() {
         }
         // No TMA here: a hardware fact, which is the only thing allowed to turn this pair down.
         Err(MatmulSetupError::Unavailable(_)) => {}
-        Err(other) => panic!("a packed weight under TMA was refused as a config error: {other:?}"),
+        Err(other) => panic!("a tiled weight under TMA was refused as a config error: {other:?}"),
     }
 }
 
-/// A weight is packed once and read at every `m`. Its storage tile names the stage: an inferred
+/// A weight is tiled once and read at every `m`. Its storage tile names the stage: an inferred
 /// plan stages to it, whatever this `m` would have chosen, and moves it under the Tiled delivery.
 #[test]
-fn cmma_packed_weight_names_the_stage_across_m() {
+fn cmma_tiled_weight_names_the_stage_across_m() {
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            pack::pack,
+            storage::tile,
         },
     };
     use cubek_std::InputBinding;
@@ -409,7 +411,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
 
     // A storage tile the selector would not have picked on its own: twice its stage depth and
     // stage width for an f32 weight.
-    let tile = (32, 64);
+    let storage_tile = (32, 64);
     let (rhs, rhs_data) = TestInput::builder(
         client.clone(),
         rect(64, n, k, dtypes.as_global_elems()).rhs_shape,
@@ -417,7 +419,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
     .dtype(dtype)
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
-    let packed = pack(&client, rhs.binding(), dtype, tile).unwrap();
+    let tiled = tile(&client, rhs.binding(), dtype, storage_tile).unwrap();
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());
@@ -436,7 +438,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
             dtype,
             StoredTiles {
                 lhs: None,
-                rhs: Some(tile),
+                rhs: Some(storage_tile),
             },
         )
         .unwrap();
@@ -444,8 +446,8 @@ fn cmma_packed_weight_names_the_stage_across_m() {
         // is a knob, how they are stored is a fact of the data.
         assert_eq!(free.delivery, CmmaDelivery::Copy);
         assert_eq!(held.delivery, CmmaDelivery::Copy);
-        assert_eq!((held.stage_k, held.stage().1), tile, "at m = {m}");
-        assert_ne!((free.stage_k, free.stage().1), tile, "at m = {m}");
+        assert_eq!((held.stage_k, held.stage().1), storage_tile, "at m = {m}");
+        assert_ne!((free.stage_k, free.stage().1), storage_tile, "at m = {m}");
 
         let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
             .dtype(dtype)
@@ -460,7 +462,7 @@ fn cmma_packed_weight_names_the_stage_across_m() {
                 launch_ref(
                     c,
                     InputBinding::Normal(lhs.clone().binding(), dtype),
-                    InputBinding::Normal(packed.clone().binding(), dtype),
+                    InputBinding::Normal(tiled.clone().binding(), dtype),
                     out.clone().binding(),
                     &BlueprintStrategy::Inferred(CmmaStrategy::default()),
                     &dtypes,
@@ -517,5 +519,109 @@ fn cmma_refuses_stored_operands_that_disagree_on_k() {
         }
         Err(other) => panic!("expected a stage_k disagreement, got {other:?}"),
         Ok(_) => panic!("expected a stage_k disagreement, got a blueprint"),
+    }
+}
+
+/// A strip of no boxes is refused as a plan, where the kernel would only assert it at expansion.
+#[test]
+fn cmma_rejects_a_strip_of_no_boxes() {
+    use cubek_matmul::{
+        definition::MatmulSetupError,
+        tiled::{
+            cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
+    use cubek_tile::space::CubeOrder;
+
+    for order in [CubeOrder::SwizzleRow(0), CubeOrder::SwizzleCol(0)] {
+        let blueprint = CmmaBlueprint {
+            instruction: InstructionShape {
+                m: 16,
+                n: 16,
+                k: 16,
+            },
+            partition: Partition { m: 1, n: 1 },
+            planes: PlaneGrid { m: 1, n: 1 },
+            stage_k: 16,
+            buffering: 2,
+            delivery: CmmaDelivery::Copy,
+            order,
+        };
+        match blueprint.validate(&rect(48, 64, 64, f16_elems())) {
+            Err(MatmulSetupError::InvalidConfig(msg)) => {
+                let msg = msg.to_string();
+                assert!(msg.contains("no boxes"), "wrong rejection: {msg}");
+            }
+            other => panic!("expected {order:?} refused, got {other:?}"),
+        }
+    }
+}
+
+/// The same plan with its cubes taking the output's boxes in a swizzled order, which is the one
+/// thing a [`CubeOrder`] changes: every box is still held by exactly one cube, and it still
+/// holds the same box's worth of the product.
+///
+/// The selector states a swizzle for most shapes, so every test above already runs one — this
+/// pins a stated width against the grid's own order rather than whatever the selector picked.
+#[test]
+fn cmma_swizzled_cube_order_f32() {
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
+    };
+    use cubek_tile::space::CubeOrder;
+
+    for order in [
+        CubeOrder::RowMajor,
+        CubeOrder::SwizzleRow(2),
+        CubeOrder::SwizzleCol(2),
+    ] {
+        let blueprint = CmmaBlueprint {
+            instruction: InstructionShape { m: 8, n: 8, k: 8 },
+            partition: Partition { m: 1, n: 2 },
+            planes: PlaneGrid { m: 2, n: 1 },
+            stage_k: 16,
+            buffering: 2,
+            delivery: CmmaDelivery::Copy,
+            order,
+        };
+        test_matmul_strategy(
+            client(),
+            rect(64, 64, 64, f32_elems()),
+            Tiled::Cmma(BlueprintStrategy::Forced(blueprint)).into(),
+        );
+    }
+}
+
+/// A strip width the grid does not divide distributes a ragged last strip, every box to one cube:
+/// the blueprint takes it rather than fit a width to each grid. Validated alone, since the plan is
+/// what is judged and a device without the instruction turns down every blueprint whatever it is.
+#[test]
+fn cmma_takes_a_strip_the_grid_does_not_divide() {
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
+    };
+    use cubek_tile::space::CubeOrder;
+
+    // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
+    // leaves ragged.
+    let blueprint = CmmaBlueprint {
+        instruction: InstructionShape {
+            m: 16,
+            n: 16,
+            k: 16,
+        },
+        partition: Partition { m: 1, n: 1 },
+        planes: PlaneGrid { m: 1, n: 1 },
+        stage_k: 16,
+        buffering: 2,
+        delivery: CmmaDelivery::Copy,
+        order: CubeOrder::SwizzleRow(2),
+    };
+    let problem = rect(48, 64, 64, f16_elems());
+    if let Err(err) = blueprint.validate(&problem) {
+        panic!("expected a blueprint over a ragged strip, got {err:?}");
     }
 }

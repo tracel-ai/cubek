@@ -1,7 +1,7 @@
 //! Transcendentals evaluated as polynomials over the domain a draw hands them.
 //!
 //! A GPU issues `ln`, `cos`, and `sin` as instructions. The CPU JIT has no vector math
-//! library behind them, so each one scalarizes into a libm call per lane and costs more
+//! library behind them, so each one scalarizes into a libm call per component and costs more
 //! than every other step of a draw together.
 
 use cubecl::prelude::*;
@@ -158,7 +158,8 @@ pub fn ln<N: Size>(x: Vector<f32, N>) -> Vector<f32, N> {
 mod tests {
     use super::*;
 
-    /// Each derived constant matches the f64 formula it computes (kernel accuracy is in `tests/random/polynomial.rs`).
+    /// Each derived constant matches the f64 formula it computes (kernel accuracy is in
+    /// `tests/random/polynomial.rs`).
     #[test]
     fn derived_constants_match_f64_formula() {
         let pi_half = std::f64::consts::PI / 2.0;

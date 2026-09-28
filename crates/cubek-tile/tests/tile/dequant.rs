@@ -1,19 +1,19 @@
 //! Dequantization on its own: `out = weights ⊗ scales`, no contraction anywhere.
 //!
 //! A quantized tensor is values stored small beside a coarser tensor of scales. Decoding it is not
-//! a matmul verb and not a quantization feature: it is the elementwise product of two tiles, where
-//! one spans fewer axes than the other and so spreads each of its values across every position of
-//! the axes it omits.
+//! a matmul verb and not a quantization feature: it is the elementwise product of two tiles, one
+//! spanning fewer axes than the other and so spreading each value across the axes it omits.
 //!
 //! Proven here with the axes doing all the work. `COL` is spelled `(CB, CI)`: which block of
-//! columns, and where inside it. The weights address both, and the scales address `CB` alone. One
-//! scale per block of columns is then a fact about which axes the operand distinguishes, with
-//! nothing dividing anything.
+//! columns, and where inside it. The weights address both and the scales address `CB` alone, so
+//! one scale per block is a fact about which axes the operand distinguishes; nothing divides.
 
+use super::{Form, implied};
 use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -34,12 +34,12 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     let weights = weights.tile_as::<E>(comptime!(space.clone()));
     let scales = scales.tile(comptime!(space.clone()));
     let mut out = out.tile(comptime!(space.clone()));
-    out.mul(&weights, &scales);
+    out.product(&weights, &scales);
 }
 
 #[test]
 fn a_packed_tensor_decodes_against_its_scales() {
-    let (rows, blocks, inside, scale_lanes) = (4, 4, 8, 4);
+    let (rows, blocks, inside, scale_units) = (4, 4, 8, 4);
     let cols = blocks * inside;
     let field = QuantValue::Q4S;
     let bits = field.size_bits();
@@ -67,15 +67,15 @@ fn a_packed_tensor_decodes_against_its_scales() {
 
     // The scales are an operand like the others, and the axis they omit is the whole statement
     // that one of their values covers a block of columns.
-    let launch = Launcher::implied(
+    let launch = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
-            Tiling::leaf(&[(ROW, rows), (CB, blocks), (CI, inside)])
+            Levels::leaf(&[(ROW, rows), (CB, blocks), (CI, inside)])
                 .walk_every(&[ROW, CB, CI])
-                .levels(),
+                .build(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     // Shape and strides count values; the packing says how many share a stored word.
@@ -104,10 +104,13 @@ fn a_packed_tensor_decodes_against_its_scales() {
             ],
         )
     };
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
-        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
-        KernelForm::Dynamic,
+        Partitioning::new(
+            launch.space().clone(),
+            launch.partitioning().levels().to_vec(),
+        ),
+        Form::Dynamic,
     );
     let w_op = launcher
         .arg(w_tensor.clone().binding())
@@ -115,12 +118,12 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .packed(field)
         .vectorize(factor)
         .build();
-    // Four scales per read: one read covers four blocks of columns, and each of its lanes is
+    // Four scales per read: one read covers four blocks of columns, and each of its units is
     // taken by the run of values that block holds.
     let s_op = launcher
         .arg(s_tensor.binding())
-        .subspace(&[ROW, CB])
-        .vectorize(scale_lanes)
+        .axes(&[ROW, CB])
+        .vectorize(scale_units)
         .build();
     let out_op = launcher
         .arg(out.clone().binding())
@@ -133,7 +136,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         launcher.cube_count(),
         launcher.cube_dim(),
         factor,
-        scale_lanes,
+        scale_units,
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),

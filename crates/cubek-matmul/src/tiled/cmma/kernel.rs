@@ -2,16 +2,16 @@
 //! level by level.
 //!
 //! The launch lists the level methods for the grid and hands the kernel its space; each loop
-//! here names the level it walks, so the two cannot drift. Each stage is a ring the kernel
+//! here names the level it walks, so the two cannot drift. Each stage is a slot the kernel
 //! allocates, and the accumulator a bracket the kernel opens before the `K` walk and drains
 //! after it. One body serves both delivery families (strided cooperative
-//! copy or TMA bulk copy; the output is always strided): the ring's pipeline is deduced from
+//! copy or TMA bulk copy; the output is always strided): the stages' pipeline is deduced from
 //! what the operands are.
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, DeliveryFamily, Fragments, Level, Monoid, Partitioning, PlanePartition, Ring, Semiring,
-    Space, StageStorage, TileArg, Tiling, pipelined,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Semiring, Space,
+    StageStorage, Stages, TileArg, kind::PlanePartition, launch::DeliveryFamily, stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -24,7 +24,7 @@ use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 /// list, so the two cannot drift.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     let (c, i, p) = (bp.partition, bp.instruction, bp.planes);
-    Tiling::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
+    Levels::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
         // The partition's grid of fragments, one instruction each.
         .walk(&[(M, c.m), (N, c.n)])
         // The instruction's `K` steps through the stage.
@@ -33,10 +33,12 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
         .planes(&[(M, p.m), (N, p.n)])
         // The cube's box walked through `K` one stage at a time.
         .walk_every(&[K])
-        // A box of the output per cube, one of every batch axis.
+        // A box of the output per cube, one of every batch axis, taken in the order the
+        // blueprint states.
         .cubes(&[M, N])
+        .ordered(bp.order)
         .batches(batch)
-        .levels()
+        .build()
 }
 
 impl CmmaBlueprint {
@@ -104,15 +106,7 @@ pub fn cmma_kernel<
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
     let depth = comptime!(bp.buffering);
-    let (i, c_grid) = comptime!((bp.instruction, bp.partition));
-    // This plane's fragments: the partition's grid of the instruction's tile.
-    let fragments = comptime!(Fragments {
-        m_tiles: c_grid.m,
-        n_tiles: c_grid.n,
-        m: i.m,
-        n: i.n,
-        k: i.k,
-    });
+    let i = comptime!(bp.instruction);
     // The block a tiled stage groups: the instruction's tile, one of every batch axis.
     let block = comptime!(
         batch
@@ -130,21 +124,23 @@ pub fn cmma_kernel<
         let b = b.at(&cube);
         let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
-        let mut acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
+        // The accumulator's grid is the partition's, read off the levels below the cube.
+        let mut acc = c.cmma_accumulator::<EA, EL>(&a, Monoid::Sum);
         acc.zero();
 
         // One stage of K per region, both inputs staged for it.
-        let stages = cube.walk();
-        let mut ring = Ring::smem(
-            &stages,
+        let steps = cube.walk();
+        let mut stages = Stages::smem(
+            &steps,
             &a,
             &b,
             comptime!(StageStorage::Tiled {
-                block: block.clone()
+                block: block.clone(),
+                chunks: RowChunks::InOrder,
             }),
             depth,
         );
-        pipelined(stages, &mut ring, |slot, stage| {
+        stages.pipelined(steps, |slot, stage| {
             let acc_stage = acc.at(stage);
             slot.consume(|a_s, b_s| {
                 for plane in stage {
@@ -186,7 +182,7 @@ mod tests {
     use super::*;
     use crate::tiled::cmma::{CmmaDelivery, Partition};
     use crate::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
-    use crate::tiled::{MNK, batch_axis, form_space, labels};
+    use crate::tiled::{batch_axis, form_space, labels};
 
     /// A `16x16x16` instruction, `2x2` fragments a plane, `2x2` planes a cube, stages `32` deep.
     fn blueprint() -> CmmaBlueprint {
@@ -201,6 +197,7 @@ mod tests {
             stage_k: 32,
             buffering: 2,
             delivery: CmmaDelivery::Copy,
+            order: cubek_tile::space::CubeOrder::RowMajor,
         }
     }
 
@@ -219,6 +216,7 @@ mod tests {
                 stage_k,
                 buffering: 2,
                 delivery: CmmaDelivery::Copy,
+                order: cubek_tile::space::CubeOrder::RowMajor,
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);
@@ -241,36 +239,21 @@ mod tests {
         let partitioning = blueprint().partitioning(&space, &batch);
 
         assert_eq!(
-            partitioning.labelled(&labels(&space)).to_string(),
+            partitioning.table(&labels(&space)).to_string(),
             [
-                "        b0 × m ×  n ×   k    b0 ×   m ×    n ×    k",
+                "                        b0 × m ×  n ×   k    b0 ×   m ×    n ×    k",
                 "",
-                "  ◦      · × · ×  · ×   ·     1 ×  16 ×   16 ×   16",
-                "  ↻      · × 2 ×  2 ×   ·     1 ×  32 ×   32 ×   16",
-                "  ↻      · × · ×  · ×   2     1 ×  32 ×   32 ×   32",
-                "  ▤      · × 2 ×  2 ×   ·     1 ×  64 ×   64 ×   32",
-                "  ↻      · × · ×  · × 128     1 ×  64 ×   64 × 4096",
-                "  ▣      4 × 8 × 16 ×   ·     4 × 512 × 1024 × 4096",
+                "  ◦                      · × · ×  · ×   ·     1 ×  16 ×   16 ×   16",
+                "  ↻  4 steps             · × 2 ×  2 ×   ·     1 ×  32 ×   32 ×   16",
+                "  ↻  2 steps             · × · ×  · ×   2     1 ×  32 ×   32 ×   32",
+                "  ▤  4 planes a cube     · × 2 ×  2 ×   ·     1 ×  64 ×   64 ×   32",
+                "  ↻  128 steps           · × · ×  · × 128     1 ×  64 ×   64 × 4096",
+                "  ▣  512 cubes           4 × 8 × 16 ×   ·     4 × 512 × 1024 × 4096",
                 "",
-                "        └─ count ───────┘    └─ tile ─────────────┘",
+                "                        └─ count ───────┘    └─ tile ─────────────┘",
             ]
             .join("\n")
         );
-    }
-
-    /// One figure a level, the lhs left of the out and the rhs above it. The batch axis the
-    /// figure does not span rides the cube level's header, since the drawing is one sheet of
-    /// however many it holds.
-    #[test]
-    fn the_cube_level_draws_a_band_a_band_and_the_cell_they_meet_in() {
-        let batch = [batch_axis(0)];
-        let space = Space::new(&[(batch[0], 4), (M, 512), (N, 1024), (K, 4096)]);
-        let drawing = blueprint()
-            .partitioning(&space, &batch)
-            .quadrant(MNK)
-            .to_string();
-
-        assert!(drawing.starts_with("  ▣ ×4\n"), "{drawing}");
     }
 
     /// The kernel form: the same blueprint over a space whose extents the launch stamps. The
@@ -285,7 +268,7 @@ mod tests {
         assert_eq!(partitioning.leaf().extent(M), 16);
         assert!(
             partitioning
-                .labelled(&labels(&space))
+                .table(&labels(&space))
                 .to_string()
                 .contains('?')
         );

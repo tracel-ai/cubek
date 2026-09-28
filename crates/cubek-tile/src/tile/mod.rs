@@ -1,35 +1,17 @@
-//! One operand's data in the kernel: the [`Tile`] itself ([`base`]), the backing stores it
-//! dispatches on (one file each), the views a leaf reads it through ([`view`]), and what a
-//! quantized store carries ([`quant`]). The launch surface (specs, deliveries, builder)
-//! lives in `physical/`; a kernel's first line is [`Tile::of`] on a plain tensor.
+//! One operand's data in the kernel: the [`Tile`] itself (`base`), the kinds it dispatches on
+//! (`kind`), how packed values decode (`packing`), the accumulators (`accumulator`), and
+//! the scale paths on their way out ([`quant`](crate::quant)).
 
 mod accumulator;
-mod atomic;
 mod base;
-mod cmma;
-mod lanes;
-mod mem;
-mod mma;
-mod operand;
+pub(crate) mod deprecated;
+pub(crate) mod kind;
 mod packing;
-mod plane;
-mod procedural;
-mod quant;
-mod register;
-mod tma;
-mod view;
+mod placement;
 
 pub use accumulator::*;
 pub use base::*;
-pub use cmma::*;
-pub use lanes::*;
-pub use mem::*;
-pub use mma::*;
-pub use operand::*;
+pub(crate) use deprecated::*;
+pub use kind::*;
 pub use packing::*;
-pub use plane::*;
-pub use procedural::*;
-pub use quant::*;
-pub use register::*;
-pub use tma::*;
-pub use view::*;
+pub use placement::*;

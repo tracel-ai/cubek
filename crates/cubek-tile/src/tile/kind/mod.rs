@@ -1,0 +1,12 @@
+//! The kinds of tile ([`base`]): an addressable buffer ([`memory`]), what one plane holds
+//! ([`plane`]), and a value computed from its coordinates ([`procedural`]).
+
+mod base;
+mod memory;
+mod plane;
+pub(crate) mod procedural;
+
+pub use base::*;
+pub use memory::*;
+pub use plane::*;
+pub(crate) use procedural::*;

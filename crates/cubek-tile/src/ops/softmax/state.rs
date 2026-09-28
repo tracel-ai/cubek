@@ -2,6 +2,7 @@
 
 use cubecl::prelude::*;
 
+use super::logsumexp;
 use crate::*;
 
 /// Logits at or below this are treated as masked (effectively -inf). Fits f16.
@@ -13,33 +14,29 @@ pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 /// `1/l`, exactly zero when `l` is numerically zero, so a fully-masked row
 /// drains to exact zeros instead of NaN.
 #[cube]
-pub(crate) fn masked_recip<E: Float>(l: E) -> E {
+pub fn masked_recip<E: Float>(l: E) -> E {
     let eps = E::new(FULLY_MASKED_ROW_THRESHOLD);
     E::cast_from(l >= eps) * clamp_min(l, eps).recip()
 }
 
 /// How the score rows are shared out, and therefore how a row reduction closes.
 ///
-/// The two arms compute the same softmax over the same cells; what differs is
-/// the worker. Stated once, here, because every op of the leaf has to agree
-/// with every other about who owns row `r` — and because the caller's own row
-/// loops ([`store_rows`](crate::Tile::store_rows)) have to agree with them too.
+/// The two arms compute the same softmax over the same cells; only the worker differs. Stated once,
+/// here, because every op of the leaf must agree with every other about who owns row `r`, and the
+/// caller's own row loops ([`store_rows`](crate::Tile::store_rows)) must agree with them too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RowShare {
     /// One **unit** per row-slice: the reduction runs in that unit's own
     /// registers over the whole row. No shuffles, no syncs, nothing asked of
     /// the hardware — the arm a device with no plane ops still runs.
     Unit { rows: usize },
-    /// One **plane** per row-slice: its lanes split the reduced axis and meet
-    /// in a plane reduction, so every lane leaves holding the row's state.
+    /// One **plane** per row-slice: its units split the reduced axis and meet
+    /// in a plane reduction, so every unit leaves holding the row's state.
     ///
-    /// Costs `lanes`× the workers on the same rows, which is the whole point:
-    /// a score tile of 8 rows keeps 8 units busy under `Unit` and a whole
-    /// 64-unit cube busy under `Plane`. In exchange the cube's x dim must be a
-    /// whole number of planes, and `lanes` must be the width the device
-    /// actually commits to — a plane reduction over a wrong width is silently
-    /// wrong rather than an error.
-    Plane { rows: usize, lanes: usize },
+    /// Costs `units`× the workers on the same rows, which is the point: a score tile of 8 rows
+    /// keeps 8 units busy under `Unit` and a 64-unit cube under `Plane`. In exchange the cube's x
+    /// dim must be whole planes and `units` the width the device commits to, else silently wrong.
+    Plane { rows: usize, units: usize },
 }
 
 impl RowShare {
@@ -51,51 +48,46 @@ impl RowShare {
     }
 
     /// Units one worker spans: one, or the plane's width.
-    pub fn lanes(&self) -> usize {
+    pub fn units(&self) -> usize {
         match self {
             RowShare::Unit { .. } => 1,
-            RowShare::Plane { lanes, .. } => *lanes,
+            RowShare::Plane {
+                units: plane_units, ..
+            } => *plane_units,
         }
     }
 }
 
-/// The row of the tile this worker's `ri`-th owned row is: the ownership rule, stated once.
-///
-/// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit along the cube's
-/// x dim. A plane owns every row of the tile it is handed: the kernel windows the tile per plane
-/// before the call, so no leaf indexes planes.
+/// This unit's unit within its worker: its position in the plane, or zero for a unit.
 #[cube]
-pub fn owned_row(#[comptime] share: RowShare, ri: usize) -> usize {
-    match comptime!(share) {
-        RowShare::Unit { rows } => UNIT_POS_X as usize * rows + ri,
-        RowShare::Plane { rows: _, lanes: _ } => ri,
-    }
-}
-
-/// This unit's lane within its worker: its position in the plane, or zero for a unit.
-#[cube]
-pub fn owned_lane(#[comptime] share: RowShare) -> usize {
+pub(crate) fn owned_unit(#[comptime] share: RowShare) -> usize {
     match comptime!(share) {
         RowShare::Unit { rows: _ } => 0usize,
-        RowShare::Plane { rows: _, lanes } => UNIT_POS_X as usize % lanes,
+        RowShare::Plane {
+            rows: _,
+            units: plane_units,
+        } => UNIT_POS_X as usize % plane_units,
     }
 }
 
-/// Per-row running state `(m, l)` of the online softmax, in the owning
-/// worker's registers. Its space is the softmax's kept axes; the score axis it
-/// omits is the reduced one. Allocated once before the walk, threaded through
-/// every [`Tile::softmax`](crate::Tile::softmax) call (or every
-/// [`absorb`](RowState::absorb) of a streamed fold), drained by the epilogue.
+/// Per-row running state `(m, l)` of the online softmax, in the owning worker's registers. Its
+/// space is the softmax's kept axes; the score axis it omits is the reduced one.
+///
+/// Allocated once before the walk, threaded through every [`Tile::softmax`](crate::Tile::softmax)
+/// call (or every [`absorb`](RowState::absorb) of a streamed fold), drained by the epilogue.
 #[derive(CubeType)]
 pub struct RowState<E: Float> {
     pub m: Array<E>,
     pub l: Array<E>,
     #[cube(comptime)]
     pub space: Space,
-    /// Who owns which rows. Under [`RowShare::Plane`] every lane of a plane
+    /// Who owns which rows. Under [`RowShare::Plane`] every unit of a plane
     /// holds the same `(m, l)`, since a plane-reduced score is plane-uniform.
     #[cube(comptime)]
     pub share: RowShare,
+    /// This unit's place in the team sharing the tile, which a unit-owned row is numbered from
+    /// ([`owned_row`](RowState::owned_row)). Unread under [`RowShare::Plane`].
+    pub team: TeamUnit,
 }
 
 /// What one streamed [`absorb`](RowState::absorb) tells the row's
@@ -114,27 +106,44 @@ impl<E: Float> RowState<E> {
     /// `space` is the kept axes; `units` the number of units sharing the
     /// tile, unit u owning rows `[u*rpu, (u+1)*rpu)`.
     pub fn new(#[comptime] space: Space, #[comptime] units: usize) -> RowState<E> {
-        let rows = comptime!(space.tile_size().div_ceil(units));
+        let rows = comptime!(space.cells().div_ceil(units));
         RowState::<E>::of(space, comptime!(RowShare::Unit { rows }))
     }
 
-    /// [`new`](RowState::new) at plane ownership: `units` units of `lanes`
-    /// each, so `units / lanes` planes share the tile and plane `p` owns rows
-    /// `[p*rpp, (p+1)*rpp)`, its lanes splitting each row's reduced axis.
+    /// [`new`](RowState::new) at plane ownership: `units` units of `units`
+    /// each, so `units / units` planes share the tile and plane `p` owns rows
+    /// `[p*rpp, (p+1)*rpp)`, its units splitting each row's reduced axis.
     ///
-    /// `lanes` must be the width the device commits to
-    /// (`plane_size_min == plane_size_max`, and plane ops offered); one lane is
-    /// the degenerate case and gives back [`new`](RowState::new)'s arm, which is
-    /// what a CPU runtime gets.
-    /// The state of a plane owning every row of `space`, its window of the score rows, `lanes`
+    /// The state of a plane owning every row of `space`, its window of the score rows, `units`
     /// wide.
-    pub fn over_plane(#[comptime] space: Space, #[comptime] lanes: usize) -> RowState<E> {
-        let rows = comptime!(space.tile_size());
-        RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
+    ///
+    /// `units` must be the width the device commits to (`plane_size_min == plane_size_max`, plane
+    /// ops offered); one unit is the degenerate case and gives back [`new`](RowState::new)'s arm,
+    /// which is what a CPU runtime gets.
+    pub fn over_plane(#[comptime] space: Space, #[comptime] plane_units: usize) -> RowState<E> {
+        let rows = comptime!(space.cells());
+        RowState::<E>::of(
+            space,
+            comptime!(RowShare::Plane {
+                rows,
+                units: plane_units
+            }),
+        )
     }
 
-    /// The state one worker holds, at whatever [`RowShare`] the caller states.
+    /// The state one worker holds, at whatever [`RowShare`] the caller states, its team laid
+    /// along the cube's x dim ([`TeamUnit::along_x`]).
     pub fn of(#[comptime] space: Space, #[comptime] share: RowShare) -> RowState<E> {
+        RowState::<E>::in_team(space, share, &TeamUnit::along_x())
+    }
+
+    /// [`of`](RowState::of) for a worker whose place in its team the caller states — what a
+    /// kernel whose levels distribute the team reads off them.
+    pub fn in_team(
+        #[comptime] space: Space,
+        #[comptime] share: RowShare,
+        team: &TeamUnit,
+    ) -> RowState<E> {
         let rows = comptime!(share.rows());
         let mut m = Array::new(rows);
         let mut l = Array::new(rows);
@@ -142,7 +151,25 @@ impl<E: Float> RowState<E> {
             m[i] = E::min_value();
             l[i] = E::from_int(0);
         }
-        RowState::<E> { m, l, space, share }
+        RowState::<E> {
+            m,
+            l,
+            space,
+            share,
+            team: team.clone(),
+        }
+    }
+
+    /// The row of the tile this worker's `ri`-th owned row is: the ownership rule, stated once.
+    ///
+    /// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit of its team,
+    /// the unit at `index` starting at `index * rows`. A plane owns every row of the tile it is
+    /// handed: the kernel windows the tile per plane before the call, so no leaf indexes planes.
+    pub fn owned_row(&self, ri: usize) -> usize {
+        match comptime!(self.share) {
+            RowShare::Unit { rows } => self.team.index * rows + ri,
+            RowShare::Plane { rows: _, units: _ } => ri,
+        }
     }
 
     /// Absorb one block's row maxes and sums: `m = max_buf`,
@@ -159,13 +186,11 @@ impl<E: Float> RowState<E> {
         corr
     }
 
-    /// Fold one streamed score into row `i`'s `(m, l)`: the per-position
-    /// reading of [`update`](RowState::update). The `min_value` identity
-    /// makes the first real score overwrite the state cleanly, and a row
-    /// that never absorbs keeps `l = 0` for the epilogue's masked guard.
+    /// Fold one streamed score into row `i`'s `(m, l)`: the per-position reading of
+    /// [`update`](RowState::update). The `min_value` identity makes the first real score overwrite
+    /// the state cleanly; a row that never absorbs keeps `l = 0` for the epilogue's masked guard.
     pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
-        let (m_new, l_new, correction, weight) =
-            instruction::logsumexp::step::<E>(self.m[i], self.l[i], score);
+        let (m_new, l_new, correction, weight) = logsumexp::step::<E>(self.m[i], self.l[i], score);
         self.m[i] = m_new;
         self.l[i] = l_new;
         Rescale::<E> { correction, weight }
@@ -186,10 +211,9 @@ impl<E: Float> RowState<E> {
 /// (kept, reduced) space: origin of its top-left element and the valid
 /// extents. Causal and materialized are comptime knobs.
 ///
-/// `q_rows` maps a score row to its query position: a GQA score tile stacks
-/// the group members over the same query block (group-major), so row `r` sits
-/// at query `origin_q + r % q_rows`. A group-free tile sets `q_rows` to its
-/// row count, and the modulo is the identity.
+/// `q_rows` maps a score row to its query position: a GQA score tile stacks the group members
+/// over the same query block (group-major), so row `r` sits at query `origin_q + r % q_rows`. A
+/// group-free tile sets `q_rows` to its row count, and the modulo is the identity.
 #[derive(CubeType)]
 pub struct MaskProbe {
     pub origin_q: usize,
@@ -219,8 +243,8 @@ impl MaskProbe {
         }
         if comptime!(self.materialized) {
             let size!(W) = mask.vector_size();
-            let rank = comptime!(mask.space.rank());
-            let cols = mask.runtime_extent(comptime!(mask.space.axis_at(rank - 1)));
+            let rank = comptime!(mask.place.space.rank());
+            let cols = mask.runtime_extent(comptime!(mask.place.space.axis_at(rank - 1)));
             masked = masked || mask.flat::<W>().read(q * cols + s).extract(0usize) != 0;
         }
         masked
@@ -229,15 +253,13 @@ impl MaskProbe {
     /// How many key positions this tile's rows can read: past it every score is masked, so a
     /// walk stops there rather than contracting blocks whose scores it will discard.
     ///
-    /// The operand's bound and the causal limit are one statement, differing only in where
-    /// they come from: the first is how much of the axis is real, the second how much of it
-    /// this tile's largest query may see. A materialized mask is not one of them, since an
-    /// arbitrary mask leaves no suffix that is masked throughout; it stays an element
-    /// predicate, and this stays an upper bound that is correct with or without it.
+    /// The operand's bound and the causal limit are one statement, differing only in origin: how
+    /// much of the axis is real, and how much this tile's largest query may see. A materialized
+    /// mask is not one: it leaves no fully-masked suffix, so it stays an element predicate.
     pub fn keys(&self) -> usize {
         let mut keys = self.bound_s;
         if comptime!(self.causal) {
-            keys = keys.fmin(self.origin_q.fadd(comptime!(self.q_rows).runtime()));
+            keys = keys.min_with(self.origin_q.plus(comptime!(self.q_rows).runtime()));
         }
         keys
     }

@@ -27,6 +27,8 @@ testing = ["dep:cubek-test-utils", "cubecl/test-runtime"]
 benchmarks = ["testing"]
 
 [dependencies]
+# For `swizzle`, which is walk arithmetic and lives with the walk.
+cubek-tile = { workspace = true }
 cubek-test-utils = { workspace = true, optional = true }
 
 cubecl = { workspace = true, features = ["stdlib"] }

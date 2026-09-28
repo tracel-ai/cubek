@@ -2,13 +2,14 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Fragments, Level, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg, Tiling,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, RegisterBlock,
+    Semiring, Space, TileArg,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
 
 /// The register block the software instruction runs under on a CPU backend: a wide scalar
-/// register budget to unroll against and the dual-path edge specialization, with no lanes to
+/// register budget to unroll against and the dual-path edge specialization, with no units to
 /// fan out over. Stated here because the kernel is what runs it.
 pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 
@@ -18,12 +19,12 @@ pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 /// and read their leaf and overhangs off the same list.
 pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
     let (leaf, p) = (bp.instruction, bp.planes);
-    Tiling::leaf(&[(M, leaf.m), (N, leaf.n), (K, leaf.k)])
+    Levels::leaf(&[(M, leaf.m), (N, leaf.n), (K, leaf.k)])
         .walk_every(&[K])
         .planes(&[(M, p.m), (N, p.n)])
         .cubes(&[M, N])
         .batches(batch)
-        .levels()
+        .build()
 }
 
 impl CpuGemmBlueprint {
@@ -76,7 +77,6 @@ pub fn cpu_gemm_kernel<
     b: &TileArg<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
     space: Partitioning,
-    #[comptime] bp: CpuGemmBlueprint,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
     #[define(E)] _acc_dtype: ElemType,
@@ -86,23 +86,13 @@ pub fn cpu_gemm_kernel<
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
 
-    // One block per plane, the instruction's shape.
-    let leaf = comptime!(bp.instruction);
-    let fragments = comptime!(Fragments {
-        m_tiles: 1,
-        n_tiles: 1,
-        m: leaf.m,
-        n: leaf.n,
-        k: leaf.k,
-    });
-
     for cube in space {
         for plane in cube {
             let a = a.at(&plane);
             let b = b.at(&plane);
             let mut c = c.at(&plane);
-            let mut acc =
-                c.block_accumulator::<EA, EL, ER>(&a, &b, fragments, REGISTER_BLOCK, Monoid::Sum);
+            // One block per plane, the instruction's shape, read off the levels below the plane.
+            let mut acc = c.block_accumulator::<EA, EL, ER>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
             acc.zero();
             for step in plane {
                 let mut acc_step = acc.at(&step);

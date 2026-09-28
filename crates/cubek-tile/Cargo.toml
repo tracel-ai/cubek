@@ -27,5 +27,7 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-quant = { workspace = true }
-cubek-test-utils = { workspace = true }
+# Omit versions so Cargo excludes these dev-dependencies when publishing;
+# both crates depend on cubek-tile and must be published after it.
+cubek-quant = { path = "../cubek-quant", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", default-features = false }
