@@ -107,9 +107,9 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     let val = (unit_id + 1u32) as f32; // Unit 0: 1.0, Unit 1: 2.0, Unit 2: 3.0, Unit 3: 4.0
 
     // Non-trivial 4-unit plane operations
-    let p_sum = comptime!(UnitShare::Plane).fold::<f32>(val, Monoid::Sum);
-    let p_max = comptime!(UnitShare::Plane).fold::<f32>(val, Monoid::Max);
-    let p_min = comptime!(UnitShare::Plane).fold::<f32>(val, Monoid::Min);
+    let p_sum = comptime!(UnitShare::Plane).reduce::<f32>(val, Monoid::Sum);
+    let p_max = comptime!(UnitShare::Plane).reduce::<f32>(val, Monoid::Max);
+    let p_min = comptime!(UnitShare::Plane).reduce::<f32>(val, Monoid::Min);
 
     // Non-trivial 4-unit butterfly group fold (mask 0b11 = folds all 4 units)
     let size!(W2) = 2;
@@ -117,25 +117,25 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     v2.insert(0usize, val);
     v2.insert(1usize, val * 2.0f32);
     let folded_full =
-        comptime!(UnitShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
+        comptime!(UnitShare::Group { unit_bits: 0b11 }).reduce::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // 2-unit sub-group butterfly fold (mask 0b01 = folds (0,1) and (2,3) separately)
     let folded_pair =
-        comptime!(UnitShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
+        comptime!(UnitShare::Group { unit_bits: 0b01 }).reduce::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // The same butterfly under max and min
     let max_full =
-        comptime!(UnitShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Max);
+        comptime!(UnitShare::Group { unit_bits: 0b11 }).reduce::<Vector<f32, W2>>(v2, Monoid::Max);
     let min_full =
-        comptime!(UnitShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
+        comptime!(UnitShare::Group { unit_bits: 0b11 }).reduce::<Vector<f32, W2>>(v2, Monoid::Min);
     let min_pair =
-        comptime!(UnitShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
+        comptime!(UnitShare::Group { unit_bits: 0b01 }).reduce::<Vector<f32, W2>>(v2, Monoid::Min);
 
     // 1-unit fallback paths (units = 1, mask = 0)
-    let s_fallback = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Sum);
-    let m_fallback = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Max);
-    let n_fallback = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Min);
-    let g_fallback = comptime!(UnitShare::Whole).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
+    let s_fallback = comptime!(UnitShare::Repeated).reduce::<f32>(val, Monoid::Sum);
+    let m_fallback = comptime!(UnitShare::Repeated).reduce::<f32>(val, Monoid::Max);
+    let n_fallback = comptime!(UnitShare::Repeated).reduce::<f32>(val, Monoid::Min);
+    let g_fallback = comptime!(UnitShare::Whole).reduce::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // Store per-unit results at unit_id * 15
     let base = (unit_id * 15u32) as usize;
@@ -167,11 +167,11 @@ fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
     v2.insert(1usize, val * 2.0f32);
 
     let base = (unit_id * 15u32) as usize;
-    output[base + 7] = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Sum);
-    output[base + 8] = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Max);
-    output[base + 9] = comptime!(UnitShare::Repeated).fold::<f32>(val, Monoid::Min);
+    output[base + 7] = comptime!(UnitShare::Repeated).reduce::<f32>(val, Monoid::Sum);
+    output[base + 8] = comptime!(UnitShare::Repeated).reduce::<f32>(val, Monoid::Max);
+    output[base + 9] = comptime!(UnitShare::Repeated).reduce::<f32>(val, Monoid::Min);
     output[base + 10] = comptime!(UnitShare::Whole)
-        .fold::<Vector<f32, W2>>(v2, Monoid::Sum)
+        .reduce::<Vector<f32, W2>>(v2, Monoid::Sum)
         .extract(0usize);
 }
 

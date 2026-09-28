@@ -306,14 +306,14 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             for g in 0..rows {
                 let m = self.state.m[g];
                 let teams = comptime!(UnitShare::Group {
-                    fold_mask: team_bits
+                    unit_bits: team_bits
                 });
                 let m_all = teams
-                    .fold::<Vector<EA, W1>>(Vector::cast_from(m), Monoid::Max)
+                    .reduce::<Vector<EA, W1>>(Vector::cast_from(m), Monoid::Max)
                     .extract(0usize);
                 let weight = (m - m_all).exp();
                 let l_all = teams
-                    .fold::<Vector<EA, W1>>(
+                    .reduce::<Vector<EA, W1>>(
                         Vector::cast_from(self.state.l[g] * weight),
                         Monoid::Sum,
                     )
@@ -322,7 +322,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                 self.state.l[g] = l_all;
                 #[unroll]
                 for p in 0..per_unit {
-                    self.acc[g * per_unit + p] = teams.fold::<Vector<EA, N>>(
+                    self.acc[g * per_unit + p] = teams.reduce::<Vector<EA, N>>(
                         self.acc[g * per_unit + p] * Vector::cast_from(weight),
                         Monoid::Sum,
                     );
@@ -475,11 +475,11 @@ fn team_fold<E: Float>(value: E, #[comptime] span: usize, #[comptime] monoid: Mo
     if comptime!(span.is_power_of_two()) {
         let size!(W1) = 1usize;
         comptime!(UnitShare::Group {
-            fold_mask: span - 1
+            unit_bits: span - 1
         })
-        .fold::<Vector<E, W1>>(Vector::cast_from(value), monoid)
+        .reduce::<Vector<E, W1>>(Vector::cast_from(value), monoid)
         .extract(0usize)
     } else {
-        comptime!(UnitShare::of_units(span, span)).fold::<E>(value, monoid)
+        comptime!(UnitShare::of_units(span, span)).reduce::<E>(value, monoid)
     }
 }

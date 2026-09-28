@@ -241,7 +241,7 @@ impl<T: Numeric> RegisterData<T> {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
                         let combined = UnitShare::Plane
-                            .fold::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
+                            .reduce::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
                         let cell = cell::<T, Out, A>(combined, fold, monoid);
                         if UNIT_POS_X == 0 {
                             sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
@@ -249,16 +249,16 @@ impl<T: Numeric> RegisterData<T> {
                     }
                 }
             }
-            Drain::GroupFold { fold_mask } =>
+            Drain::GroupFold { unit_bits } =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = comptime!(UnitShare::Group { fold_mask })
-                            .fold::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
+                        let combined = comptime!(UnitShare::Group { unit_bits })
+                            .reduce::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
                         let cell = cell::<T, Out, A>(combined, fold, monoid);
-                        let unit_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
+                        let unit_in_group = UNIT_POS_X & comptime!(unit_bits as u32);
                         if unit_in_group == 0 {
                             sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
                         }

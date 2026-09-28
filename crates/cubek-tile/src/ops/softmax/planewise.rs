@@ -92,7 +92,8 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = comptime!(UnitShare::of_units(units, units)).fold::<EA>(partial, Monoid::Max);
+            acc[ri] =
+                comptime!(UnitShare::of_units(units, units)).reduce::<EA>(partial, Monoid::Max);
         }
     }
 
@@ -169,7 +170,8 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = comptime!(UnitShare::of_units(units, units)).fold::<EA>(partial, Monoid::Sum);
+            acc[ri] =
+                comptime!(UnitShare::of_units(units, units)).reduce::<EA>(partial, Monoid::Sum);
         }
     }
 

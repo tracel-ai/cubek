@@ -106,14 +106,14 @@ pub(crate) enum Drain {
     PlaneFold,
     /// Groups of units each hold a partial of one cell: combine within the group, its first
     /// unit writes.
-    GroupFold { fold_mask: usize },
+    GroupFold { unit_bits: usize },
 }
 
 impl Drain {
     pub(crate) const fn of(units: UnitShare, write: Write) -> Self {
         match (units, write) {
             (UnitShare::Plane, _) => Drain::PlaneFold,
-            (UnitShare::Group { fold_mask }, _) => Drain::GroupFold { fold_mask },
+            (UnitShare::Group { unit_bits }, _) => Drain::GroupFold { unit_bits },
             // Nothing is folded across the units, so nothing has to be combined. Whether they may
             // all write is what a fold turns on: repeated units hold the same cells, so a store
             // lands the same value however many make it, but a fold lands it once per unit.
@@ -204,12 +204,12 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
         match comptime!(self.drain) {
             Drain::PlaneFold => {
-                let combined = self.units.fold::<Vector<E, V>>(value, self.monoid);
+                let combined = self.units.reduce::<Vector<E, V>>(value, self.monoid);
                 self.commit_shared(pos, combined, UNIT_POS_X == 0);
             }
-            Drain::GroupFold { fold_mask } => {
-                let combined = self.units.fold::<Vector<E, V>>(value, self.monoid);
-                let unit_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
+            Drain::GroupFold { unit_bits } => {
+                let combined = self.units.reduce::<Vector<E, V>>(value, self.monoid);
+                let unit_in_group = UNIT_POS_X & comptime!(unit_bits as u32);
                 self.commit_shared(pos, combined, unit_in_group == 0);
             }
             // Nothing to combine, but a fold from units that repeat each other's work would land
