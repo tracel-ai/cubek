@@ -4,11 +4,14 @@
 
 use cubecl::prelude::*;
 
+use cubecl::zspace::Tiling;
+
 use crate::Axis;
 
 use crate::Coords;
 
-/// One operand's physical extents and strides, in scalars, one entry per physical dim.
+/// One operand's physical extents and strides, in scalars, one entry per physical dim, and the
+/// storage tiling that says which dims are pieces of one logical dim.
 ///
 /// The two are one value because they are never separately true: apart, they are two `Vec<usize>`
 /// a caller can state at two ranks or swap in silence; here a dim is an `(extent, stride)` pair. A
@@ -17,6 +20,7 @@ use crate::Coords;
 pub struct Geometry {
     shape: Vec<usize>,
     strides: Vec<usize>,
+    tiling: Tiling,
 }
 
 impl Geometry {
@@ -25,7 +29,19 @@ impl Geometry {
         Self {
             shape: dims.iter().map(|&(extent, _)| extent).collect(),
             strides: dims.iter().map(|&(_, stride)| stride).collect(),
+            tiling: Tiling::UNTILED,
         }
+    }
+
+    /// This geometry with its dims stated as pieces of logical dims, as `tiling` says.
+    pub(crate) fn with_tiling(mut self, tiling: Tiling) -> Self {
+        self.tiling = tiling;
+        self
+    }
+
+    /// Which dims are pieces of one logical dim: untiled unless the binding said otherwise.
+    pub(crate) fn tiling(&self) -> Tiling {
+        self.tiling
     }
 
     /// The extents, coarsest first.
@@ -74,6 +90,7 @@ impl From<&TensorBinding> for Geometry {
         Self {
             shape: binding.shape.to_vec(),
             strides: binding.strides.to_vec(),
+            tiling: binding.tiling,
         }
     }
 }

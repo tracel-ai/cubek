@@ -3,7 +3,6 @@
 //! one another, as counts; the in-kernel halves evaluate both. A stage's
 //! block rows are placed across the banks by [`RowArrangement`] and [`ChunkSwizzle`].
 
-mod base;
 mod buffer;
 mod build;
 mod compaction;
@@ -15,8 +14,8 @@ mod projection;
 mod row_arrangement;
 mod storage_tiling;
 mod swizzle;
+mod value_layout;
 
-pub use base::*;
 pub(crate) use buffer::*;
 pub use build::*;
 pub use compaction::*;
@@ -29,3 +28,4 @@ pub(crate) use row_arrangement::{LineBytes, RowArrangement};
 pub use storage_tiling::*;
 pub(crate) use swizzle::ChunkSwizzle;
 pub(crate) use swizzle::swizzled_line;
+pub use value_layout::*;

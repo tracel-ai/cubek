@@ -232,8 +232,10 @@ impl<'a> Arg<'a, Labelled> {
         // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
         // destination the negotiation never saw) is gated here: `stride / width` truncates
         // silently.
+        let settled = settled_tiling(&geometry, tiling.as_ref(), stored);
+        let geometry = geometry.with_tiling(settled);
         Layout::of(&geometry, &projection.dense_labels())
-            .cut(width)
+            .serves(width)
             .map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();
         let boundaries = Boundaries::new(
@@ -318,7 +320,14 @@ fn settled_tensor(
 ) -> TensorArg {
     binding.shape = geometry.shape().into();
     binding.strides = geometry.strides().into();
-    binding.tiling = match tiling {
+    binding.tiling = settled_tiling(geometry, tiling, stored);
+    binding.into_tensor_arg()
+}
+
+/// The binding's tiling restated over the settled geometry's dims: batch dims plain, the
+/// subspace's axes as `tiling` splits them, or the binding's own where nothing labelled it.
+fn settled_tiling(geometry: &Geometry, tiling: Option<&StorageTiling>, stored: Tiling) -> Tiling {
+    match tiling {
         Some(tiling) => {
             let batch_dims = geometry.rank() - tiling.physical_rank();
             let mut fragments = vec![1; batch_dims];
@@ -327,8 +336,7 @@ fn settled_tensor(
                 .expect("the binding's own tiling fit, and this drops dims from it")
         }
         None => stored,
-    };
-    binding.into_tensor_arg()
+    }
 }
 
 /// A bound operand: its tensor argument (absent for an operand built over geometry alone), its

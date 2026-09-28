@@ -209,7 +209,7 @@ impl Launcher {
                     // The same cut a stated width is refused on: the innermost extent counts in
                     // lines and every coarser stride re-expresses as `stride / v`, which
                     // truncates when `v` does not divide it.
-                    && operands.iter().all(|(g, axes)| Layout::of(g, axes).cut(v).is_ok())
+                    && operands.iter().all(|(g, axes)| Layout::of(g, axes).serves(v).is_ok())
             })
             .max()
             .unwrap_or(1)

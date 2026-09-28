@@ -20,7 +20,10 @@ use std::path::{Path, PathBuf};
 /// cubek-interpolate took it down to 746. `Layout` raised it by ten: the type, its two builder
 /// stages (`storage` then `grid`, then `over` the extents), `physical`, and the misfit a stated
 /// layout is refused with, since a caller writing a storage-tiled buffer states how it is laid out.
-const PUB_ITEMS: usize = 756;
+/// Refinement raised it by four: `Layout::wanted`, `refines`, `pieces` and the `Unrefined` a
+/// reader is refused with, the one question every reader of a stored layout asks; and by two
+/// re-exports when `Layout` became a folder of its own, its tests apart, under the file ceiling.
+const PUB_ITEMS: usize = 762;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;
