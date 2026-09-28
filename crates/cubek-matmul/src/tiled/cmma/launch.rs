@@ -21,7 +21,7 @@ use crate::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, StoredTiles},
         kernel::cmma_kernel,
     },
-    tiled::{K, M, N, batch_axis, logical_dims, storage_tile},
+    tiled::{K, M, N, batch_axis, fused_to_tile, logical_dims, storage_tile},
 };
 
 /// A cmma operand must be row-major contiguous: the transport addresses each window
@@ -228,8 +228,10 @@ pub fn launch_ref(
             },
         )
     };
-    let lhs = lhs.into_data();
-    let rhs = rhs.into_data();
+    // A storage-tiled input is moved a whole tile at a time, so its tile is read as one piece,
+    // whatever finer pieces it was stored in.
+    let lhs = fused_to_tile(lhs.into_data(), "lhs")?;
+    let rhs = fused_to_tile(rhs.into_data(), "rhs")?;
 
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());

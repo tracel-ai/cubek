@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 /// Refinement raised it by four: `Layout::wanted`, `refines`, `pieces` and the `Unrefined` a
 /// reader is refused with, the one question every reader of a stored layout asks; and by two
 /// re-exports when `Layout` became a folder of its own, its tests apart, under the file ceiling.
-const PUB_ITEMS: usize = 762;
+/// `Layout::of` public raised it by one: a routine outside the crate reads a stored layout back.
+const PUB_ITEMS: usize = 763;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;

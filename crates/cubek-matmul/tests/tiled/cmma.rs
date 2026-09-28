@@ -253,6 +253,18 @@ fn cmma_storage_tiled_weight_along_k_f16() {
     );
 }
 
+/// A weight stored for a four-wide read: the read is each tile's finest piece, which fuses back
+/// into the tile a row at a time, so cmma reads the same tile it always did.
+#[test]
+fn cmma_storage_tiled_weight_with_a_stored_read_f32() {
+    use cubecl::frontend::Scalar;
+    storage_tiled_weight(
+        f32::elem_type_native(),
+        CmmaStrategy::default(),
+        TileOrder::AlongNWithRead,
+    );
+}
+
 #[test]
 fn cmma_storage_tiled_weight_along_k_f32() {
     use cubecl::frontend::Scalar;
@@ -289,11 +301,13 @@ fn cmma_storage_tiled_weight_along_k_tma_f16() {
     );
 }
 
-/// Which way a stored weight's next tile goes: along `N`, the row-major grid, or down `K`.
+/// How a stored weight is laid out: its tiles along `N` (the row-major grid) or down `K`, or
+/// along `N` with a four-wide read stored as each tile's finest piece.
 #[derive(Clone, Copy)]
 enum TileOrder {
     AlongN,
     AlongK,
+    AlongNWithRead,
 }
 
 fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrder) {
@@ -359,11 +373,13 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
             let stage_k = blueprint.stage_k;
 
             // The weight, tiled to the plan's stage, each tile stored a row at a time.
-            let grid = match order {
-                TileOrder::AlongN => [N, K],
-                TileOrder::AlongK => [K, N],
+            let layout = match order {
+                TileOrder::AlongN => Layout::tile(&[(N, stage_n), (K, stage_k)]).grid(&[N, K]),
+                TileOrder::AlongK => Layout::tile(&[(N, stage_n), (K, stage_k)]).grid(&[K, N]),
+                TileOrder::AlongNWithRead => Layout::tile(&[(N, 4)])
+                    .tile(&[(N, stage_n / 4), (K, stage_k)])
+                    .grid(&[N, K]),
             };
-            let layout = Layout::tile(&[(N, stage_n), (K, stage_k)]).grid(&grid);
             let tiled = tile(c, rhs.clone().binding(), [K, N], dtype, layout)?;
 
             launch_ref(
@@ -694,8 +710,8 @@ fn cmma_takes_a_strip_the_grid_does_not_divide() {
 }
 
 /// What cmma cannot read is refused by name before anything launches: a tile stored a column at
-/// a time (its rows would load as its columns), and tiles nested two levels deep (no stage is
-/// named by the inner ones).
+/// a time (its rows would load as its columns), and one whose pieces interleave its two dims, so
+/// no row of the tile is one run.
 #[test]
 fn cmma_refuses_the_storage_it_cannot_read() {
     use cubek_matmul::{
@@ -726,12 +742,12 @@ fn cmma_refuses_the_storage_it_cannot_read() {
     let out = input(problem.out_shape.clone(), 3);
 
     let column_first = Layout::tile(&[(K, 32), (N, 32)]).grid(&[N, K]);
-    let nested = Layout::tile(&[(N, 16), (K, 16)])
-        .tile(&[(N, 2), (K, 2)])
+    let interleaved = Layout::tile(&[(N, 16), (K, 2)])
+        .tile(&[(N, 2), (K, 16)])
         .grid(&[N, K]);
     for (layout, says) in [
         (column_first, "not stored a row at a time"),
-        (nested, "one level of storage tiles"),
+        (interleaved, "32x32 tiles a row at a time"),
     ] {
         let tiled = tile(&client, rhs.clone().binding(), [K, N], dtype, layout).unwrap();
         let refused = launch_ref(

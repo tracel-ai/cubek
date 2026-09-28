@@ -1,7 +1,10 @@
 //! The axes every tiled routine builds its space over.
 
-use cubecl::{prelude::TensorBinding, zspace::metadata::Metadata};
-use cubek_tile::{Axis, Level, Partitioning, Space};
+use cubecl::{
+    prelude::TensorBinding,
+    zspace::{Tiling, metadata::Metadata},
+};
+use cubek_tile::{Axis, Geometry, Layout, Level, Partitioning, Space, StorageTiling};
 
 use crate::definition::MatmulSetupError;
 
@@ -70,18 +73,23 @@ pub(crate) fn logical_dims(binding: &TensorBinding) -> (Vec<usize>, usize, usize
 }
 
 /// The storage tile a matrix operand's binding is stored in, `(rows, cols)`, when it is
-/// storage-tiled at one level on both matrix dims: the buffer's two innermost dims. `None` for
-/// a plain buffer. The order the tiles follow one another in is the strides', and a reader that
-/// cares checks it itself.
+/// storage-tiled: each matrix dim over its grid's count, the grid being each dim's coarsest
+/// piece, which a tiling lists first. `None` for a plain buffer.
+///
+/// The tile may be stored in finer pieces than a routine reads (a vector read, a packed word
+/// first), and it is read the same as long as they fuse back into it a row at a time: the stored
+/// layout has to [refine](cubek_tile::Layout::refines) a row-first `rows x cols` tile, and the
+/// order the tiles themselves follow one another in is the strides', whatever it is.
 ///
 /// # Errors
 ///
-/// A tiling this routine cannot read: a batch dim stored in pieces, or the matrix dims stored
-/// in more than one level of tiles, which no routine reading this names a stage for.
+/// A tiling this routine cannot read: a batch dim stored in pieces, or a tile that is not stored
+/// a row at a time.
 pub(crate) fn storage_tile(
     binding: &TensorBinding,
     name: &str,
 ) -> Result<Option<(usize, usize)>, MatmulSetupError> {
+    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("{name}: {why}")));
     if !binding.tiling.is_tiled() {
         return Ok(None);
     }
@@ -89,16 +97,65 @@ pub(crate) fn storage_tile(
     let logical_rank = binding
         .tiling
         .logical_rank(rank)
-        .map_err(|e| MatmulSetupError::InvalidConfig(Box::new(format!("{name}: {e:?}"))))?;
+        .map_err(|e| refused(format!("{e:?}")))?;
     let fragments = binding.tiling.fragments(logical_rank);
-    let (batches, matrix) = fragments.split_at(logical_rank - 2);
-    if batches.iter().any(|&n| n != 1) || matrix != [2, 2] {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "{name}: this routine reads one level of storage tiles over both matrix dims and plain \
-             batch dims, got {fragments:?} pieces per dim"
-        ))));
+    let batches = logical_rank - 2;
+    if fragments[..batches].iter().any(|&n| n != 1) {
+        return Err(refused(format!(
+            "batch dims are stored plain, got {fragments:?} pieces per dim"
+        )));
     }
-    Ok(Some((binding.shape[rank - 2], binding.shape[rank - 1])))
+    let (_, rows, cols) = logical_dims(binding);
+    let tile = (
+        rows / binding.shape[batches],
+        cols / binding.shape[batches + 1],
+    );
+    let labels = StorageTiling::stored(binding.tiling, 2, rank).order(&[TILE_ROWS, TILE_COLS]);
+    let stored = Layout::of(&Geometry::from(binding), &labels);
+    let row_first = Layout::wanted(&[(TILE_COLS, tile.1), (TILE_ROWS, tile.0)]);
+    stored.refines(&row_first).map_err(|why| {
+        refused(format!(
+            "it is not stored in {}x{} tiles a row at a time: {why}",
+            tile.0, tile.1
+        ))
+    })?;
+    Ok(Some(tile))
+}
+
+/// The labels a stored matrix's two dims take while its layout is read.
+const TILE_ROWS: Axis = Axis(0);
+const TILE_COLS: Axis = Axis(1);
+
+/// A storage-tiled binding as a routine that moves whole tiles sees it: the same buffer, its
+/// tile's pieces fused into one row-first `rows x cols` tile, `[.., R/tr, C/tc, tr, tc]` over its
+/// grid's own strides. A plain binding is returned as it is.
+///
+/// # Errors
+///
+/// What [`storage_tile`] refuses.
+pub(crate) fn fused_to_tile(
+    binding: TensorBinding,
+    name: &str,
+) -> Result<TensorBinding, MatmulSetupError> {
+    let Some((tr, tc)) = storage_tile(&binding, name)? else {
+        return Ok(binding);
+    };
+    let rank = binding.shape.len();
+    let logical_rank = binding
+        .tiling
+        .logical_rank(rank)
+        .expect("storage_tile read it");
+    let batches = logical_rank - 2;
+    let mut shape: Vec<usize> = binding.shape[..batches + 2].to_vec();
+    let mut strides: Vec<usize> = binding.strides[..batches + 2].to_vec();
+    shape.extend([tr, tc]);
+    strides.extend([tc, 1]);
+    let fragments: Vec<usize> = (0..batches).map(|_| 1).chain([2, 2]).collect();
+    let mut fused = binding;
+    fused.shape = shape.into();
+    fused.strides = strides.into();
+    fused.tiling = Tiling::new(&fragments).expect("one level over two dims fits any tiling");
+    Ok(fused)
 }
 
 /// Refuse, on the host, a storage-tiled matrix operand whose tile is the tile of none of

@@ -56,7 +56,7 @@ impl Layout {
     /// buffer is read innermost dim first; a storage-tiled one by stride, since its tiling lists
     /// its pieces coarsest first rather than in the order they sit in memory. Every piece of a
     /// tiled dim but its coarsest was stored; the coarsest, and every untiled dim, is an extent.
-    pub(crate) fn of(geometry: &Geometry, labels: &[Axis]) -> Self {
+    pub fn of(geometry: &Geometry, labels: &[Axis]) -> Self {
         let rank = geometry.rank();
         let unlabelled = rank.saturating_sub(labels.len());
         let tiling = geometry.tiling();
