@@ -27,6 +27,9 @@ enum Leaf {
     Mma,
     /// The vendor's fragment API, rows off a pointer and a stride.
     Cmma,
+    /// cubek's manual mma, both operands' fragments dealt by `ldmatrix` from each lane's
+    /// row address: the swizzle applied where the lane addresses its row.
+    MmaLoadMatrix,
 }
 
 /// `c = a · b` over a walk along `K` whose every region is one stage of `outer`'s tile, read a
@@ -51,6 +54,15 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
     let c = c.tile(comptime!(space.clone()));
     let mut acc = match comptime!(leaf) {
         Leaf::Mma => c.mma_accumulator::<EA, EI>(&a, comptime!(MmaIo::manual()), Monoid::Sum),
+        Leaf::MmaLoadMatrix => c.mma_accumulator::<EA, EI>(
+            &a,
+            comptime!(MmaIo {
+                lhs_load_method: LoadMethod::LoadMatrix,
+                rhs_load_method: LoadMethod::LoadMatrix,
+                ..MmaIo::manual()
+            }),
+            Monoid::Sum,
+        ),
         Leaf::Cmma => c.cmma_accumulator::<EA, EI>(&a, Monoid::Sum),
     };
     acc.zero();
@@ -97,9 +109,16 @@ fn f16_shape(client: &cubecl::client::Client, leaf: Leaf) -> Option<(usize, usiz
     let f32 = f32::elem_type_native();
     let matmul = &client.properties().features.matmul;
     let configs = match leaf {
-        Leaf::Mma => &matmul.mma,
+        Leaf::Mma | Leaf::MmaLoadMatrix => &matmul.mma,
         Leaf::Cmma => &matmul.cmma,
     };
+    if leaf == Leaf::MmaLoadMatrix && !matmul.ldmatrix.contains(&f16) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f16 ldmatrix".to_string(),
+        ))
+        .enforce();
+        return None;
+    }
     let shapes: Vec<(usize, usize, usize)> = configs
         .iter()
         .filter(|cfg| cfg.a_type == f16 && cfg.b_type == f16 && cfg.cd_type == f32)
@@ -178,7 +197,7 @@ fn check(case: Case) {
     let (m, n, k) = (mn, mn, 128usize);
     // A row-major rhs's lines run along `N`, and a fragment narrower than a line starts inside one,
     // which the manual mma load refuses: reported, not run.
-    if leaf == Leaf::Mma && !transposed && edge_n < v {
+    if leaf != Leaf::Cmma && !transposed && edge_n < v {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
             "a {v}-wide line runs past the {edge_n}-wide mma fragment along N"
         )))
@@ -415,6 +434,73 @@ fn the_fragment_api_reads_a_padded_stage_of_several_blocks() {
             mn: 32,
             transposed,
             leaf: Leaf::Cmma,
+            ..Case::DEFAULT
+        });
+    }
+}
+
+/// The `ldmatrix` transport reads every placement a lane can address, each lane handing the
+/// instruction its row where the stage placed it: in order, padded, and swizzled, a row-major rhs
+/// and a weight stored `{n, k}` alike, filled ahead and through registers.
+#[test]
+fn the_ldmatrix_transport_reads_every_placement() {
+    for chunks in [RowChunks::InOrder, RowChunks::Swizzled, RowChunks::Padded] {
+        for transposed in [false, true] {
+            for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
+                check(Case {
+                    chunks,
+                    transposed,
+                    depth: 2,
+                    schedule,
+                    leaf: Leaf::MmaLoadMatrix,
+                    ..Case::DEFAULT
+                });
+            }
+        }
+    }
+}
+
+/// Several blocks along `M` and `N`, rows one instruction deep, and lines narrower than a chunk:
+/// the row a lane addresses is still its own, whatever its block and however many lines it holds.
+#[test]
+fn the_ldmatrix_transport_reads_blocks_shallow_rows_and_narrow_lines() {
+    for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
+        for transposed in [false, true] {
+            check(Case {
+                chunks,
+                mn: 32,
+                transposed,
+                leaf: Leaf::MmaLoadMatrix,
+                ..Case::DEFAULT
+            });
+            check(Case {
+                chunks,
+                stage_k: 16,
+                transposed,
+                leaf: Leaf::MmaLoadMatrix,
+                ..Case::DEFAULT
+            });
+            check(Case {
+                chunks,
+                v: 2,
+                transposed,
+                leaf: Leaf::MmaLoadMatrix,
+                ..Case::DEFAULT
+            });
+        }
+    }
+}
+
+/// Lines wider than an `ldmatrix` row: the transport reads them manually, and the product holds.
+#[test]
+fn the_ldmatrix_transport_reads_wide_lines_manually() {
+    for chunks in [RowChunks::Swizzled, RowChunks::Padded] {
+        check(Case {
+            chunks,
+            v: 16,
+            stage_k: 64,
+            transposed: true,
+            leaf: Leaf::MmaLoadMatrix,
             ..Case::DEFAULT
         });
     }
