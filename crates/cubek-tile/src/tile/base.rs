@@ -219,7 +219,7 @@ impl<T: Numeric> Tile<T> {
     /// Whether this tile is backed by shared memory, which is what a `sync_cube()` between two
     /// units' accesses actually orders: the barrier covers the workgroup address space, so a
     /// tile a cube communicates *through* has to live there and not in a global buffer.
-    pub(crate) fn is_shared(&self) -> comptime_type!(bool) {
+    pub fn is_shared(&self) -> comptime_type!(bool) {
         match &self.kind {
             TileKind::Memory(m) => comptime!(m.address == AddressSpace::Shared),
             TileKind::Procedural(_)
@@ -637,7 +637,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The mutable twin of [`dense`](Tile::dense).
-    pub(crate) fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+    pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.mem_mut("dense_mut").dense_lines_mut::<W>()
     }
 

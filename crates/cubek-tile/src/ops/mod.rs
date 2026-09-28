@@ -5,7 +5,6 @@
 //! Moving cells is no verb of its own: a tile is filled from another through
 //! [`Tile::copy_from`](crate::Tile::copy_from), which a quantized store dequantizes on the way.
 
-mod attention;
 pub(crate) mod matmul;
 mod mul;
 mod reduce;
@@ -13,7 +12,6 @@ mod rows;
 mod softmax;
 mod team;
 
-pub use attention::*;
 pub use matmul::*;
 pub use reduce::*;
 pub use softmax::*;

@@ -14,7 +14,7 @@ pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 /// `1/l`, exactly zero when `l` is numerically zero, so a fully-masked row
 /// drains to exact zeros instead of NaN.
 #[cube]
-pub(crate) fn masked_recip<E: Float>(l: E) -> E {
+pub fn masked_recip<E: Float>(l: E) -> E {
     let eps = E::new(FULLY_MASKED_ROW_THRESHOLD);
     E::cast_from(l >= eps) * clamp_min(l, eps).recip()
 }
