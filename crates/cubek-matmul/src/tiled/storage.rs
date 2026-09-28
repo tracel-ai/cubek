@@ -71,6 +71,9 @@ fn relayout<E: Numeric, V: Size>(
     }
 }
 
+/// What [`tile`] is told: how the tiles are laid out, stated leaf-up.
+pub use cubek_tile::Layout;
+
 /// The stored matrix's rows, one of the two axes a storage [`Layout`] over it names.
 pub const ROWS: Axis = Axis(0);
 /// The stored matrix's columns, the other.
