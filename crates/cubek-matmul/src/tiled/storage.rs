@@ -17,9 +17,7 @@ use cubecl::{
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
-use cubek_tile::{
-    Geometry, Grid, GridLayout, Launcher, Level, Levels, Partitioning, Space, TileArg,
-};
+use cubek_tile::{Geometry, Grid, Launcher, Level, Levels, Partitioning, Space, TileArg};
 
 use crate::{
     definition::MatmulSetupError,
@@ -72,7 +70,7 @@ fn relayout<E: Numeric, V: Size>(
 }
 
 /// What [`tile`] is told: how the tiles are laid out, stated leaf-up, over axes the caller names.
-pub use cubek_tile::{Axis, Layout};
+pub use cubek_tile::{Axis, GridLayout, Layout};
 
 /// The stored matrix's rows and columns as the relayout's own space names them. A caller states
 /// its layout in its own axes; only the tile's extents cross over.

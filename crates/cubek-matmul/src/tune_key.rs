@@ -44,31 +44,46 @@ pub struct MatmulProblemDefinition {
     pub matrix_layout_lhs: MatrixBatchLayout,
     pub matrix_layout_rhs: MatrixBatchLayout,
     /// How lhs is stored: plain rows, or storage tiles, which name the stage a routine reads it
-    /// in. A tiled tensor's strides are row-major over its physical dims, so nothing above
-    /// tells it from its plain twin.
+    /// in and the order it reads them in. The layout and stride factors above read physical
+    /// strides as if they were a plain matrix's, so they cannot tell a tiled tensor apart.
     pub lhs_storage: StorageTileKey,
     pub rhs_storage: StorageTileKey,
 }
 
-/// How a matrix operand is stored, for the key: plain, or in `rows x cols` storage tiles.
+/// How a matrix operand is stored, for the key: plain, or in storage tiles.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum StorageTileKey {
     Plain,
-    Tiled { rows: usize, cols: usize },
+    Tiled {
+        /// The matrix dims' pieces under the grid, in the order the tiling lists them (each dim's
+        /// coarsest first, level by level): `[tr, tc]` for one level of `tr x tc` tiles.
+        tile: Vec<usize>,
+        /// Every matrix piece, the grid's included, from the one that steps fastest: an index
+        /// into the tiling's list. It is what tells a grid ordered down the rows, or a tile
+        /// stored a column at a time, from the row-major one.
+        order: Vec<u8>,
+    },
 }
 
 impl StorageTileKey {
-    /// Off a binding's physical shape and tiling: the innermost two dims are the storage tile.
-    fn of(shape: &Shape, tiling: Tiling) -> Self {
-        if tiling.is_tiled() {
-            let rank = shape.len();
-            StorageTileKey::Tiled {
-                rows: shape[rank - 2],
-                cols: shape[rank - 1],
-            }
-        } else {
-            StorageTileKey::Plain
+    /// Off a binding's physical shape, strides and tiling; batch dims, stored plain, are left to
+    /// the rest of the key.
+    fn of(shape: &Shape, strides: &Strides, tiling: Tiling) -> Self {
+        if !tiling.is_tiled() {
+            return StorageTileKey::Plain;
         }
+        let rank = shape.len();
+        let logical_rank = tiling
+            .logical_rank(rank)
+            .expect("a binding's tiling describes its own rank");
+        let fragments = tiling.fragments(logical_rank);
+        let matrix_pieces: usize = fragments[logical_rank - 2..].iter().sum();
+        let first = rank - matrix_pieces;
+        // The grid is each matrix dim's coarsest piece, the first two the tiling lists.
+        let tile = shape[first + 2..].to_vec();
+        let mut order: Vec<u8> = (0..matrix_pieces as u8).collect();
+        order.sort_by_key(|&p| strides[first + p as usize]);
+        StorageTileKey::Tiled { tile, order }
     }
 }
 
@@ -171,8 +186,8 @@ impl MatmulAutotuneKey {
         let m = lhs_logical[ndims - 2];
         let k = lhs_logical[ndims - 1];
         let n = rhs_logical[ndims - 1];
-        let lhs_storage = StorageTileKey::of(lhs_shape, lhs_tiling);
-        let rhs_storage = StorageTileKey::of(rhs_shape, rhs_tiling);
+        let lhs_storage = StorageTileKey::of(lhs_shape, lhs_strides, lhs_tiling);
+        let rhs_storage = StorageTileKey::of(rhs_shape, rhs_strides, rhs_tiling);
 
         let matrix_layout_lhs = matrix_batch_layout(lhs_strides, lhs_scheme);
         let matrix_layout_rhs = matrix_batch_layout(rhs_strides, rhs_scheme);
@@ -326,9 +341,9 @@ mod tests {
         assert_ne!(key(64, 128, 64), key(1, 128, 64));
     }
 
-    /// A weight stored in storage tiles has row-major strides over its physical dims, so the
-    /// layout and stride factors cannot tell it from its plain twin: the key says how it is
-    /// stored, and reads the logical dims off the tiling rather than the physical shape.
+    /// A weight stored in row-major storage tiles has row-major strides over its physical dims,
+    /// so the layout and stride factors cannot tell it from its plain twin: the key says how it
+    /// is stored, and reads the logical dims off the tiling rather than the physical shape.
     #[test]
     fn a_tiled_operand_keys_apart_from_its_plain_twin() {
         let (m, k, n, tk, tn) = (64usize, 256usize, 512usize, 16usize, 32usize);
@@ -365,9 +380,46 @@ mod tests {
         );
         assert_eq!(
             tiled.definition.rhs_storage,
-            StorageTileKey::Tiled { rows: tk, cols: tn }
+            StorageTileKey::Tiled {
+                tile: vec![tk, tn],
+                order: vec![3, 2, 1, 0],
+            }
         );
         assert_eq!(tiled.definition.lhs_storage, StorageTileKey::Plain);
+    }
+
+    /// The same tiles with the grid ordered down the rows: the same pieces, another order, so the
+    /// two tune apart.
+    #[test]
+    fn a_grid_order_keys_apart() {
+        let (m, k, n, tk, tn) = (64usize, 256usize, 512usize, 16usize, 32usize);
+        let key = |strides: &[usize]| {
+            MatmulAutotuneKey::from_parts(
+                &Shape::new([m, k]),
+                &Shape::new([k / tk, n / tn, tk, tn]),
+                &Strides::new(&[k, 1]),
+                &Strides::new(strides),
+                Tiling::UNTILED,
+                Tiling::new(&[2, 2]).unwrap(),
+                F32,
+                F32,
+                F32,
+                None,
+                None,
+            )
+            .definition
+            .rhs_storage
+        };
+        let across = key(&[n * tk, tk * tn, tn, 1]);
+        let down = key(&[tk * tn, k * tn, tn, 1]);
+        assert_ne!(across, down);
+        assert_eq!(
+            down,
+            StorageTileKey::Tiled {
+                tile: vec![tk, tn],
+                order: vec![3, 2, 0, 1],
+            }
+        );
     }
 
     /// The transposed (`MildlyPermuted`) arm must likewise use the actual column stride. The

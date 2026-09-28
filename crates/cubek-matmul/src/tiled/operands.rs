@@ -70,13 +70,14 @@ pub(crate) fn logical_dims(binding: &TensorBinding) -> (Vec<usize>, usize, usize
 }
 
 /// The storage tile a matrix operand's binding is stored in, `(rows, cols)`, when it is
-/// storage-tiled: one nesting on both matrix dims, whose tile fragments are the buffer's two
-/// innermost dims. `None` for a plain buffer.
+/// storage-tiled at one level on both matrix dims: the buffer's two innermost dims. `None` for
+/// a plain buffer. The order the tiles follow one another in is the strides', and a reader that
+/// cares checks it itself.
 ///
 /// # Errors
 ///
-/// A tiling this routine cannot read: a batch dim stored in fragments, or the matrix dims
-/// stored to different depths or deeper than one nesting.
+/// A tiling this routine cannot read: a batch dim stored in pieces, or the matrix dims stored
+/// in more than one level of tiles, which no routine reading this names a stage for.
 pub(crate) fn storage_tile(
     binding: &TensorBinding,
     name: &str,
@@ -93,8 +94,8 @@ pub(crate) fn storage_tile(
     let (batches, matrix) = fragments.split_at(logical_rank - 2);
     if batches.iter().any(|&n| n != 1) || matrix != [2, 2] {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "{name}: a storage-tiled operand stores both matrix dims one nesting deep and its \
-             batch dims plain, got {fragments:?} fragments"
+            "{name}: this routine reads one level of storage tiles over both matrix dims and plain \
+             batch dims, got {fragments:?} pieces per dim"
         ))));
     }
     Ok(Some((binding.shape[rank - 2], binding.shape[rank - 1])))

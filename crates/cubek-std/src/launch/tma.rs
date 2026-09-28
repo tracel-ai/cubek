@@ -113,8 +113,10 @@ pub fn tma_operand(
 ///
 /// # Panics
 ///
-/// A binding whose innermost two dims are not `tile`, which is what tiling produced and what
-/// the routine's own storage-tile check enforces.
+/// A binding whose innermost two dims are not `tile`, or whose tile is not stored a row at a
+/// time: the descriptor takes the innermost dim to step by one and each row to follow the last,
+/// so any other tile would load in silence as the wrong values. The routine's own checks refuse
+/// both first.
 pub fn tma_operand_tiled(
     binding: TensorBinding,
     tile: (usize, usize),
@@ -126,6 +128,14 @@ pub fn tma_operand_tiled(
     assert_eq!(
         stored, tile,
         "tma_operand_tiled: the binding is stored in {stored:?} tiles, not the {tile:?} asked for"
+    );
+    let inner = (binding.strides[rank - 2], binding.strides[rank - 1]);
+    assert_eq!(
+        inner,
+        (tile.1, 1),
+        "tma_operand_tiled: a box is one contiguous run only for a tile stored a row at a time, \
+         which steps ({}, 1); this one steps {inner:?}",
+        tile.1
     );
     // One box per storage tile: unit on every outer dim, the whole tile on the inner pair.
     let mut dims = vec![1usize; rank];

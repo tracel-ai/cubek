@@ -25,16 +25,20 @@ use crate::{
 };
 
 /// A cmma operand must be row-major contiguous: the transport addresses each window
-/// by a row stride off a scalar offset.
+/// by a row stride off a scalar offset. A storage-tiled one stores each tile a row at a time:
+/// a tile stored a column at a time is refused here, however its grid is ordered.
 #[allow(clippy::result_large_err)]
-fn validate_row_major(strides: &[usize]) -> Result<(), MatmulSetupError> {
-    if strides.last() == Some(&1) {
-        Ok(())
-    } else {
-        Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Cmma: operand is not row-major contiguous".to_string(),
-        )))
+fn validate_row_major(name: &str, binding: &TensorBinding) -> Result<(), MatmulSetupError> {
+    if binding.strides.last() == Some(&1) {
+        return Ok(());
     }
+    let why = match binding.tiling.is_tiled() {
+        true => "its storage tiles are not stored a row at a time",
+        false => "it is not row-major contiguous",
+    };
+    Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+        "Cmma: {name} cannot be read, {why}"
+    ))))
 }
 
 /// Cmma carries one type per input from global memory down to the fragment (the kernel's
@@ -97,9 +101,9 @@ fn setup(
             "Cmma does not support quantized inputs".to_string(),
         )));
     }
-    validate_row_major(&lhs.data().strides)?;
-    validate_row_major(&rhs.data().strides)?;
-    validate_row_major(&out.strides)?;
+    validate_row_major("lhs", lhs.data())?;
+    validate_row_major("rhs", rhs.data())?;
+    validate_row_major("out", out)?;
 
     validate_single_type(dtypes, MatmulIdent::Lhs)?;
     validate_single_type(dtypes, MatmulIdent::Rhs)?;

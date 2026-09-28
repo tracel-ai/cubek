@@ -355,8 +355,10 @@ mod tests {
         }
     }
 
-    /// A storage-tiled `[k, n]` read back: the tile's dims are the finest entries and the grid's
-    /// the coarsest, whatever order the physical dims are listed in.
+    /// A storage-tiled `[k, n]` in a row-major grid read back: the tile's dims are the finest
+    /// entries and the grid's the coarsest, though the tiling lists the grid first. A grid in
+    /// another order ends the dense part at the grid, as the physical dims are read in the order
+    /// they are listed; a cut stays inside the finest entry and never reaches it.
     #[test]
     fn a_tiled_binding_reads_as_its_entries() {
         // 64 x 64 in 16 x 32 tiles, row-major tiles: [k/16, n/32, 16, 32].
