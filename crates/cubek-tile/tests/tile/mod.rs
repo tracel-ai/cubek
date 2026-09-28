@@ -8,6 +8,7 @@ mod decode_gemv;
 mod depthwise;
 mod dequant;
 mod distributed;
+mod dynamic_contraction;
 mod erased;
 mod imperative;
 mod launcher;
