@@ -4,7 +4,7 @@
 use cubecl::{ir::ElemType, prelude::*, zspace::Shape};
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{Layout, tile, untile},
+    tiled::storage::{LayoutBuilder, tile, untile},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
 use cubek_tile::Axis;
@@ -31,7 +31,7 @@ fn round_trip(
         .custom(data.clone())
         .generate_with_f32_host_data();
 
-    let layout = Layout::tile(&[(COLS, tc), (ROWS, tr)]).grid(grid);
+    let layout = LayoutBuilder::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
     let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
     let physical: Vec<usize> = batches
         .iter()
@@ -106,7 +106,7 @@ fn tiling_orders_the_grid_as_the_layout_states() {
         .dtype(dtype)
         .custom((0..64 * 96).map(|i| i as f32).collect())
         .generate_with_f32_host_data();
-    let layout = Layout::tile(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
+    let layout = LayoutBuilder::new(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
     let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
     // [64/16, 96/32, 16, 32]: a tile is 512 values, the next down the rows 512 on, across 2048.
     assert_eq!(tiled.metadata.strides().to_vec(), vec![512, 2048, 32, 1]);
@@ -141,7 +141,7 @@ fn tiling_refuses_a_tile_that_does_not_divide() {
             src.binding(),
             [ROWS, COLS],
             dtype,
-            Layout::tile(&[(COLS, 32), (ROWS, 32)]).grid(&[COLS, ROWS])
+            LayoutBuilder::new(&[(COLS, 32), (ROWS, 32)]).grid(&[COLS, ROWS])
         ),
         Err(MatmulSetupError::InvalidConfig(_))
     ));
@@ -164,7 +164,7 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
         src.binding(),
         [ROWS, COLS],
         dtype,
-        Layout::tile(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS]),
+        LayoutBuilder::new(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS]),
     )
     .unwrap();
     assert!(matches!(
@@ -173,7 +173,7 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
             tiled.binding(),
             [ROWS, COLS],
             dtype,
-            Layout::tile(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS])
+            LayoutBuilder::new(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS])
         ),
         Err(MatmulSetupError::InvalidConfig(_))
     ));
@@ -226,7 +226,7 @@ fn tiles_and_comes_back(
 /// tile per cube whatever lies inside it.
 #[test]
 fn tiling_nests_two_levels() {
-    let layout = Layout::tile(&[(COLS, 4), (ROWS, 2)])
+    let layout = LayoutBuilder::new(&[(COLS, 4), (ROWS, 2)])
         .tile(&[(COLS, 2), (ROWS, 4)])
         .grid(&[ROWS, COLS]);
     // rows = grid 4 x 4 x 2, cols = grid 6 x 2 x 4, each dim's pieces listed coarsest first.
@@ -242,7 +242,7 @@ fn tiling_nests_two_levels() {
 /// A tile stored a column at a time: its rows are the finest entry, and only the strides say so.
 #[test]
 fn tiling_stores_a_tile_column_first() {
-    let layout = Layout::tile(&[(ROWS, 16), (COLS, 32)]).grid(&[COLS, ROWS]);
+    let layout = LayoutBuilder::new(&[(ROWS, 16), (COLS, 32)]).grid(&[COLS, ROWS]);
     let (shape, strides) =
         tiles_and_comes_back(layout, 64, 96, |r, c| vec![r / 16, c / 32, r % 16, c % 32]);
     assert_eq!(shape, vec![4, 3, 16, 32]);

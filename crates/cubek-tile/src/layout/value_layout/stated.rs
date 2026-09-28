@@ -12,10 +12,18 @@ use crate::{Axis, Layout, Space};
 /// before the grid says in which order the coarsest follow one another.
 #[derive(Clone, Debug)]
 pub struct LayoutBuilder {
-    pub(super) levels: Vec<Vec<(Axis, usize)>>,
+    levels: Vec<Vec<(Axis, usize)>>,
 }
 
 impl LayoutBuilder {
+    /// A layout stated leaf-up for a buffer about to be written: `tile` is its finest tile,
+    /// `(axis, count)` finest first, in values.
+    pub fn new(tile: &[(Axis, usize)]) -> Self {
+        Self {
+            levels: vec![tile.to_vec()],
+        }
+    }
+
     /// A coarser tile: `(axis, count)` finest first, each count how many of the tile below one
     /// step holds.
     pub fn tile(mut self, level: &[(Axis, usize)]) -> Self {

@@ -317,7 +317,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            storage::{Layout, tile},
+            storage::{LayoutBuilder, tile},
         },
     };
     use cubek_std::InputBinding;
@@ -374,9 +374,13 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
 
             // The weight, tiled to the plan's stage, each tile stored a row at a time.
             let layout = match order {
-                TileOrder::AlongN => Layout::tile(&[(N, stage_n), (K, stage_k)]).grid(&[N, K]),
-                TileOrder::AlongK => Layout::tile(&[(N, stage_n), (K, stage_k)]).grid(&[K, N]),
-                TileOrder::AlongNWithRead => Layout::tile(&[(N, 4)])
+                TileOrder::AlongN => {
+                    LayoutBuilder::new(&[(N, stage_n), (K, stage_k)]).grid(&[N, K])
+                }
+                TileOrder::AlongK => {
+                    LayoutBuilder::new(&[(N, stage_n), (K, stage_k)]).grid(&[K, N])
+                }
+                TileOrder::AlongNWithRead => LayoutBuilder::new(&[(N, 4)])
                     .tile(&[(N, stage_n / 4), (K, stage_k)])
                     .grid(&[N, K]),
             };
@@ -461,7 +465,7 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            storage::{Layout, tile},
+            storage::{LayoutBuilder, tile},
         },
     };
     use cubek_std::InputBinding;
@@ -501,7 +505,7 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
     let (tile_k, tile_n) = storage_tile;
-    let layout = Layout::tile(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
+    let layout = LayoutBuilder::new(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
     let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
 
     for m in [64, 512] {
@@ -718,7 +722,7 @@ fn cmma_refuses_the_storage_it_cannot_read() {
         definition::{MatmulElems, MatmulSetupError},
         tiled::{
             cmma::launch_ref,
-            storage::{Layout, tile},
+            storage::{LayoutBuilder, tile},
         },
     };
     use cubek_std::InputBinding;
@@ -741,8 +745,8 @@ fn cmma_refuses_the_storage_it_cannot_read() {
     let rhs = input(problem.rhs_shape.clone(), 2);
     let out = input(problem.out_shape.clone(), 3);
 
-    let column_first = Layout::tile(&[(K, 32), (N, 32)]).grid(&[N, K]);
-    let interleaved = Layout::tile(&[(N, 16), (K, 2)])
+    let column_first = LayoutBuilder::new(&[(K, 32), (N, 32)]).grid(&[N, K]);
+    let interleaved = LayoutBuilder::new(&[(N, 16), (K, 2)])
         .tile(&[(N, 2), (K, 16)])
         .grid(&[N, K]);
     for (layout, says) in [

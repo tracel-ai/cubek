@@ -34,7 +34,7 @@ use crate::{
     tiled::{
         K, N,
         cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
-        storage::{Layout, tile},
+        storage::{LayoutBuilder, tile},
     },
 };
 
@@ -98,7 +98,7 @@ impl Weight {
                     .filter(|&width| stage_n.is_multiple_of(width))
                     .max()
                     .unwrap_or(1);
-                let layout = Layout::tile(&[(N, read)])
+                let layout = LayoutBuilder::new(&[(N, read)])
                     .tile(&[(N, stage_n / read), (K, blueprint.stage_k)])
                     .grid(&[N, K]);
                 tile(client, rhs, [K, N], dtype, layout)

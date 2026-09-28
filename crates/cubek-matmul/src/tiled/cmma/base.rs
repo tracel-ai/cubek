@@ -201,9 +201,9 @@ impl CmmaBlueprint {
     }
 }
 
-/// The storage tiles the operands arrived in, read off their bindings
-/// ([`storage_tile`](crate::tiled::storage_tile)): each names the stage on its axes, since a
-/// routine reads whole storage tiles. A plain operand names nothing.
+/// The storage tiles the operands arrived in, each the outermost tile its binding stores a row at
+/// a time: each names the stage on its axes, since a routine reads whole storage tiles. A plain
+/// operand names nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StoredTiles {
     /// The lhs tile `(rows, cols)`, which is `(stage_m, stage_k)`.

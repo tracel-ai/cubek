@@ -17,14 +17,11 @@ use cubecl::{
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
-use cubek_tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, launch::Grid,
-    layout::StorageTiling,
-};
+use cubek_tile::{Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, launch::Grid};
 
 use crate::{
     definition::MatmulSetupError,
-    tiled::{batch_axis, logical_dims},
+    tiled::{MatrixBinding, batch_axis},
 };
 
 /// A matrix's outermost storage tile, `(rows, cols)`: each dim over its grid's count, whatever
@@ -75,13 +72,8 @@ fn relayout<E: Numeric, V: Size>(
 /// What [`tile`] is told: how the tiles are laid out, stated leaf-up, over axes the caller names.
 pub use cubek_tile::{
     Axis,
-    layout::{GridLayout, Layout},
+    layout::{GridLayout, Layout, LayoutBuilder},
 };
-
-/// The stored matrix's rows and columns as the relayout's own space names them. A caller states
-/// its layout in its own axes; only the tile's extents cross over.
-const ROWS: Axis = Axis(0);
-const COLS: Axis = Axis(1);
 
 /// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `layout`
 /// states: its tiles, finest first, and the order of the grid of tiles, all in the
@@ -90,7 +82,7 @@ const COLS: Axis = Axis(1);
 ///
 /// ```ignore
 /// // A [k, n] weight in 16 x 32 tiles, rows of each tile first, the next tile along k.
-/// let layout = Layout::tile(&[(N, 32), (K, 16)]).grid(&[K, N]);
+/// let layout = LayoutBuilder::new(&[(N, 32), (K, 16)]).grid(&[K, N]);
 /// let stored = tile(&client, weight.binding(), [K, N], dtype, layout)?;
 /// ```
 ///
@@ -113,7 +105,7 @@ pub fn tile(
             "the source is already storage-tiled; untile it first".to_string(),
         ));
     }
-    let (batches, rows, cols) = logical_dims(&src);
+    let (batches, rows, cols) = MatrixBinding::new(&src, "tile").dims();
     let layout = layout
         .over(&[(axes[0], rows), (axes[1], cols)])
         .map_err(|misfit| refused(misfit.to_string()))?;
@@ -140,7 +132,9 @@ pub fn tile(
         .map_err(config)?;
     let mut dst = TensorHandle::empty(client, Shape::from(shape), dtype);
     dst.metadata = Box::new(metadata);
-    let tile = outermost_tile(&dst.clone().binding()).map_err(refused)?;
+    let tile = MatrixBinding::new(&dst.clone().binding(), "tile")
+        .tile()?
+        .expect("the destination is storage-tiled");
     relayout_launch(
         client,
         src,
@@ -168,8 +162,9 @@ pub fn untile(
     if !src.tiling.is_tiled() {
         return Err(refused("the source is not storage-tiled".to_string()));
     }
-    let tile = outermost_tile(&src).map_err(refused)?;
-    let (batches, rows, cols) = logical_dims(&src);
+    let matrix = MatrixBinding::new(&src, "untile");
+    let tile = matrix.tile()?.expect("the source is storage-tiled");
+    let (batches, rows, cols) = matrix.dims();
     let shape: Vec<usize> = batches.iter().copied().chain([rows, cols]).collect();
     let dst = TensorHandle::empty(client, Shape::from(shape), dtype);
     relayout_launch(
@@ -182,38 +177,6 @@ pub fn untile(
         tile,
     );
     Ok(dst)
-}
-
-/// The outermost storage tile of a storage-tiled matrix, `(rows, cols)`: each matrix dim's
-/// extent over its grid's count. The grid is each dim's coarsest piece, which a tiling lists
-/// first, so both sit right after the batch dims however many levels lie under them.
-fn outermost_tile(binding: &TensorBinding) -> Result<(usize, usize), String> {
-    let rank = binding.shape.len();
-    let logical_rank = binding
-        .tiling
-        .logical_rank(rank)
-        .map_err(|e| format!("{e:?}"))?;
-    let fragments = binding.tiling.fragments(logical_rank);
-    let batches = logical_rank - 2;
-    if fragments[..batches].iter().any(|&n| n != 1) {
-        return Err(format!(
-            "batch dims are stored plain, got {fragments:?} pieces per dim"
-        ));
-    }
-    let (_, rows, cols) = logical_dims(binding);
-    Ok((
-        rows / binding.shape[batches],
-        cols / binding.shape[batches + 1],
-    ))
-}
-
-/// The labels of a matrix binding's trailing dims: `[ROWS, COLS]`, or one per piece of a
-/// storage-tiled one, in the order its tiling lists them.
-fn labels_of(binding: &TensorBinding) -> Vec<Axis> {
-    match binding.tiling.is_tiled() {
-        true => StorageTiling::stored(binding.tiling, 2, binding.shape.len()).order(&[ROWS, COLS]),
-        false => vec![ROWS, COLS],
-    }
 }
 
 /// The one launch both directions share: the matrix's space cut by one level, the outermost
@@ -239,12 +202,12 @@ fn relayout_launch(
     let extents: Vec<(Axis, usize)> = batch
         .iter()
         .copied()
-        .chain([(ROWS, rows), (COLS, cols)])
+        .chain([(MatrixBinding::ROWS, rows), (MatrixBinding::COLS, cols)])
         .collect();
     let space = Space::new(&extents);
     // One level, leaf up: the tile is the leaf and there is a cube for every one of them.
-    let level = Levels::leaf(&[(ROWS, tr), (COLS, tc)])
-        .cubes(&[ROWS, COLS])
+    let level = Levels::leaf(&[(MatrixBinding::ROWS, tr), (MatrixBinding::COLS, tc)])
+        .cubes(&[MatrixBinding::ROWS, MatrixBinding::COLS])
         .batches(&batch_axes)
         .build()
         .remove(0);
@@ -267,10 +230,11 @@ fn relayout_launch(
     };
     // A line runs along the columns of both sides: a tiled side's pieces are labelled as its
     // tiling lists them, so its width is the read it stored, taken whole.
-    let (src_labels, dst_labels) = (labels_of(&src), labels_of(&dst));
+    let src_labels = MatrixBinding::new(&src, "relayout").labels();
+    let dst_labels = MatrixBinding::new(&dst, "relayout").labels();
     let v = match (src_labels.last(), dst_labels.last()) {
-        (Some(&COLS), Some(&COLS)) => launch.vector_size(
-            COLS,
+        (Some(&MatrixBinding::COLS), Some(&MatrixBinding::COLS)) => launch.vector_size(
+            MatrixBinding::COLS,
             &[
                 (&Geometry::from(&src), &src_labels),
                 (&Geometry::from(&dst), &dst_labels),
@@ -281,13 +245,13 @@ fn relayout_launch(
     };
     let s = launch
         .arg(src)
-        .axes(&[ROWS, COLS])
+        .axes(&[MatrixBinding::ROWS, MatrixBinding::COLS])
         .batches(&all_batch_axes)
         .vectorize(v)
         .build();
     let d = launch
         .arg(dst)
-        .axes(&[ROWS, COLS])
+        .axes(&[MatrixBinding::ROWS, MatrixBinding::COLS])
         .batches(&all_batch_axes)
         .vectorize(v)
         .build();

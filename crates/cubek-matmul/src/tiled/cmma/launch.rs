@@ -21,25 +21,8 @@ use crate::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, StoredTiles},
         kernel::cmma_kernel,
     },
-    tiled::{K, M, N, batch_axis, fused_to_tile, logical_dims, storage_tile},
+    tiled::{K, M, MatrixBinding, N, batch_axis},
 };
-
-/// A cmma operand must be row-major contiguous: the transport addresses each window
-/// by a row stride off a scalar offset. A storage-tiled one stores each tile a row at a time:
-/// a tile stored a column at a time is refused here, however its grid is ordered.
-#[allow(clippy::result_large_err)]
-fn validate_row_major(name: &str, binding: &TensorBinding) -> Result<(), MatmulSetupError> {
-    if binding.strides.last() == Some(&1) {
-        return Ok(());
-    }
-    let why = match binding.tiling.is_tiled() {
-        true => "its storage tiles are not stored a row at a time",
-        false => "it is not row-major contiguous",
-    };
-    Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-        "Cmma: {name} cannot be read, {why}"
-    ))))
-}
 
 /// Cmma carries one type per input from global memory down to the fragment (the kernel's
 /// `EL`/`ER`), so a stage or register type of its own is a cast this routine does not emit.
@@ -59,26 +42,6 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
              {register:?} would need a cast it does not emit"
         ))))
     }
-}
-
-/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes.
-/// A plain input passes.
-#[allow(clippy::result_large_err)]
-fn validate_storage_tiled(
-    name: &str,
-    binding: &TensorBinding,
-    stage: (usize, usize),
-) -> Result<(), MatmulSetupError> {
-    let Some(tile) = storage_tile(binding, name)? else {
-        return Ok(());
-    };
-    if tile != stage {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
-             tile names the stage, so tile the tensor to the plan's stage or plan for the tile"
-        ))));
-    }
-    Ok(())
 }
 
 /// The derivation both entries share: reject what the routine can't run, build the
@@ -101,17 +64,21 @@ fn setup(
             "Cmma does not support quantized inputs".to_string(),
         )));
     }
-    validate_row_major("lhs", lhs.data())?;
-    validate_row_major("rhs", rhs.data())?;
-    validate_row_major("out", out)?;
+    let (lhs_matrix, rhs_matrix) = (
+        MatrixBinding::new(lhs.data(), "lhs"),
+        MatrixBinding::new(rhs.data(), "rhs"),
+    );
+    lhs_matrix.row_major()?;
+    rhs_matrix.row_major()?;
+    MatrixBinding::new(out, "out").row_major()?;
 
     validate_single_type(dtypes, MatmulIdent::Lhs)?;
     validate_single_type(dtypes, MatmulIdent::Rhs)?;
 
     // Logical dims off each operand, folded off a storage-tiled one's fragments: trailing two
     // axes are the matrix, leading dims its own (possibly broadcast) batch shape.
-    let (lhs_batches, m, k) = logical_dims(lhs.data());
-    let (rhs_batches, _, n) = logical_dims(rhs.data());
+    let (lhs_batches, m, k) = lhs_matrix.dims();
+    let (rhs_batches, _, n) = rhs_matrix.dims();
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -149,13 +116,13 @@ fn setup(
     // What the operands' storage tiles fix: an inferred plan stages to them, a forced one is
     // checked against them below.
     let stored = StoredTiles {
-        lhs: storage_tile(lhs.data(), "lhs")?,
-        rhs: storage_tile(rhs.data(), "rhs")?,
+        lhs: lhs_matrix.row_first_tile()?,
+        rhs: rhs_matrix.row_first_tile()?,
     };
     let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc, stored)?;
     let (stage_m, stage_n) = blueprint.stage();
-    validate_storage_tiled("lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
-    validate_storage_tiled("rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
+    lhs_matrix.stages((stage_m, blueprint.stage_k))?;
+    rhs_matrix.stages((blueprint.stage_k, stage_n))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -230,8 +197,8 @@ pub fn launch_ref(
     };
     // A storage-tiled input is moved a whole tile at a time, so its tile is read as one piece,
     // whatever finer pieces it was stored in.
-    let lhs = fused_to_tile(lhs.into_data(), "lhs")?;
-    let rhs = fused_to_tile(rhs.into_data(), "rhs")?;
+    let lhs = MatrixBinding::new(lhs.data(), "lhs").fused()?;
+    let rhs = MatrixBinding::new(rhs.data(), "rhs").fused()?;
 
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());

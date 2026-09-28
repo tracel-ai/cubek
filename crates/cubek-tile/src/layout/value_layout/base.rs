@@ -5,8 +5,8 @@
 //! along its axis before the next piece steps, the next says how many of those runs it holds,
 //! and so on. Every size is a product of counts, so between two pieces nothing divides.
 //!
-//! A layout is read off a binding ([`Layout::of`]), or stated leaf-up for a buffer about to be
-//! written ([`Layout::tile`]): each tile made of the one below it, then the order of the grid of
+//! A layout is read off a binding ([`Layout::new`]), or stated leaf-up for a buffer about to be
+//! written ([`LayoutBuilder`]): each tile made of the one below it, then the order of the grid of
 //! tiles.
 //!
 //! A reader states the coarsest layout it needs, and asks whether the stored one
@@ -19,19 +19,7 @@ use core::fmt::{self, Display, Formatter};
 
 use cubecl::zspace::SmallVec;
 
-use super::stated::LayoutBuilder;
 use crate::{Axis, Geometry, Space, StorageTiling};
-
-/// One piece of a layout: `count` of the piece below it, stepping along `axis`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(super) struct Piece {
-    pub(super) axis: Axis,
-    pub(super) count: usize,
-    /// Whether someone stored this piece as a tile, so a reader takes it whole; `false` for an
-    /// extent, a count the tensor's size decided (a grid, an untiled dim), which a reader may
-    /// cut its own tile out of.
-    pub(super) stored: bool,
-}
 
 /// Where a buffer's values sit relative to one another: its dense part as pieces, finest first,
 /// and the strides of whatever lies past it.
@@ -56,7 +44,7 @@ impl Layout {
     /// buffer is read innermost dim first; a storage-tiled one by stride, since its tiling lists
     /// its pieces coarsest first rather than in the order they sit in memory. Every piece of a
     /// tiled dim but its coarsest was stored; the coarsest, and every untiled dim, is an extent.
-    pub fn of(geometry: &Geometry, labels: &[Axis]) -> Self {
+    pub fn new(geometry: &Geometry, labels: &[Axis]) -> Self {
         let rank = geometry.rank();
         let unlabelled = rank.saturating_sub(labels.len());
         let tiling = geometry.tiling();
@@ -93,30 +81,6 @@ impl Layout {
             }
         }
         Layout { dense, outer }
-    }
-
-    /// A layout stated leaf-up for a buffer about to be written: `tile` is its finest tile,
-    /// `(axis, count)` finest first, in values.
-    pub fn tile(tile: &[(Axis, usize)]) -> LayoutBuilder {
-        LayoutBuilder {
-            levels: vec![tile.to_vec()],
-        }
-    }
-
-    /// The layout a reader needs, stated finest first: its own tiles, before anything it does not
-    /// care how is laid out. A read of `4` along `N` is `Layout::wanted(&[(N, 4)])`.
-    pub fn wanted(pieces: &[(Axis, usize)]) -> Self {
-        Layout {
-            dense: pieces
-                .iter()
-                .map(|&(axis, count)| Piece {
-                    axis,
-                    count,
-                    stored: true,
-                })
-                .collect(),
-            outer: SmallVec::new(),
-        }
     }
 
     /// This layout seen at `wanted`'s pieces: whether every boundary `wanted` names is one of
@@ -194,7 +158,7 @@ impl Layout {
                 None => LineMisfit::NoDims,
             });
         };
-        if let Err(why) = self.refines(&Layout::wanted(&[(finest.axis, values)])) {
+        if let Err(why) = self.refines(&Layout::from([(finest.axis, values)])) {
             return Err(LineMisfit::Unrefined(why));
         }
         match self
@@ -264,6 +228,24 @@ impl Layout {
     /// The pieces, finest first, as `(axis, count)`.
     pub fn pieces(&self) -> Vec<(Axis, usize)> {
         self.dense.iter().map(|p| (p.axis, p.count)).collect()
+    }
+}
+
+/// The layout a reader needs, stated finest first: its own tiles, before anything it does not
+/// care how is laid out. A read of `4` along `N` is `Layout::from([(N, 4)])`.
+impl<const P: usize> From<[(Axis, usize); P]> for Layout {
+    fn from(pieces: [(Axis, usize); P]) -> Self {
+        Layout {
+            dense: pieces
+                .into_iter()
+                .map(|(axis, count)| Piece {
+                    axis,
+                    count,
+                    stored: true,
+                })
+                .collect(),
+            outer: SmallVec::new(),
+        }
     }
 }
 
@@ -345,4 +327,15 @@ impl Display for LineMisfit {
             ),
         }
     }
+}
+
+/// One piece of a layout: `count` of the piece below it, stepping along `axis`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) struct Piece {
+    pub(super) axis: Axis,
+    pub(super) count: usize,
+    /// Whether someone stored this piece as a tile, so a reader takes it whole; `false` for an
+    /// extent, a count the tensor's size decided (a grid, an untiled dim), which a reader may
+    /// cut its own tile out of.
+    pub(super) stored: bool,
 }
