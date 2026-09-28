@@ -8,7 +8,6 @@ use crate::{
 };
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
-    ir::VectorRegisters,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
@@ -69,13 +68,17 @@ pub(crate) fn adaptive_avg_pool3d_launch(
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);
     let input_vector_size = tensor_vector_size_parallel(
-        VectorRegisters::vector_sizes(client.properties(), acc_dtype.size(), LIVE_VECTORS),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
     let output_vector_size = tensor_vector_size_parallel(
-        VectorRegisters::vector_sizes(client.properties(), acc_dtype.size(), LIVE_VECTORS),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &output.shape,
         &output.strides,
         output.shape.len() - 1,

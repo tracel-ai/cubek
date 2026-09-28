@@ -9,7 +9,6 @@ use crate::definition::{MaxPoolOptions, PoolError};
 use crate::kernel::accumulator_dtype;
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
-    ir::VectorRegisters,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::tensor::ViewMut,
@@ -125,11 +124,9 @@ pub(crate) fn max_pool2d_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        VectorRegisters::vector_sizes(
-            client.properties(),
-            accumulator_dtype(dtype).size(),
-            LIVE_VECTORS,
-        ),
+        client
+            .properties()
+            .vector_sizes_in_registers(accumulator_dtype(dtype).size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -182,8 +179,7 @@ pub(crate) fn max_pool2d_with_indices_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        VectorRegisters::vector_sizes(
-            client.properties(),
+        client.properties().vector_sizes_in_registers(
             accumulator_dtype(dtype)
                 .size()
                 .max(i32::elem_type_native().size()),

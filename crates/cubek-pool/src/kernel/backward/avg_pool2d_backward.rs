@@ -6,7 +6,6 @@ use crate::kernel::accumulator_dtype;
 use crate::kernel::forward::{Position, view4d};
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
-    ir::VectorRegisters,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
@@ -141,11 +140,9 @@ pub(crate) fn avg_pool2d_backward_launch(
     let dilation = 1;
 
     let vector_size = tensor_vector_size_parallel(
-        VectorRegisters::vector_sizes(
-            client.properties(),
-            accumulator_dtype(dtype).size(),
-            LIVE_VECTORS,
-        ),
+        client
+            .properties()
+            .vector_sizes_in_registers(accumulator_dtype(dtype).size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

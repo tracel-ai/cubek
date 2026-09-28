@@ -5,8 +5,8 @@ use crate::{
     kernel::backward::{PoolBackwardArgs, PoolBackwardArgsLaunch},
 };
 use cubecl::{
-    CubeDim, calculate_cube_count_elemwise, ir::VectorRegisters, num_traits::Zero,
-    prelude::TensorBinding, prelude::*, std::FastDivmod, tensor_vector_size_parallel,
+    CubeDim, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding, prelude::*,
+    std::FastDivmod, tensor_vector_size_parallel,
 };
 
 /// The gradient sum and the match mask: taps are operands, the current index a splat.
@@ -107,8 +107,7 @@ pub(crate) fn max_pool2d_with_indices_backward_launch(
     indices_dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        VectorRegisters::vector_sizes(
-            client.properties(),
+        client.properties().vector_sizes_in_registers(
             accumulator_dtype(dtype).size().max(indices_dtype.size()),
             LIVE_VECTORS,
         ),
