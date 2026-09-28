@@ -260,6 +260,7 @@ pub enum Boundary {
     /// Out-of-bounds reads/writes clamp to the edge cell.
     Clamp,
 }
+impl CubeDebug for Boundary {}
 
 impl Overhang {
     /// The flag a [`Masked`] is built with; the one place the states collapse to a bool.

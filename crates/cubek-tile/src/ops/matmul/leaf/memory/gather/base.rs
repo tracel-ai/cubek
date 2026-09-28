@@ -285,6 +285,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
          so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
     ));
     let factors = lhs.factors();
+
     let normalization = lhs.factor_normalization();
     let rhs_projection = rhs.projection();
     let rhs_boundaries = rhs.separable_boundaries();

@@ -34,6 +34,8 @@ pub struct UnitLines {
     lines: usize,
 }
 
+impl CubeDebug for UnitLines {}
+
 impl UnitLines {
     /// The lines of a stage of `lines` spread over `units`.
     ///

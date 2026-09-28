@@ -2,6 +2,7 @@
 
 use cubecl::ir::types::Fp8Format;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::prelude::CubeDebug;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::quant::scheme::ScaleDtype;
 
@@ -27,6 +28,7 @@ pub enum Packing {
         field: Field,
     },
 }
+impl CubeDebug for Packing {}
 
 /// The slot one packed value occupies.
 ///

@@ -2,7 +2,7 @@
 //! module doc derives, assembled from one [`PhysicalAxisMap`] per physical axis.
 
 use crate::Addressed;
-use cubecl::zspace::SmallVec;
+use cubecl::{prelude::CubeDebug, zspace::SmallVec};
 
 use crate::{
     Axis, Composition, DimsBuilder, Divisor, Geometry, Offset, PhysicalAxisMap, Scale, Space,
@@ -18,6 +18,7 @@ pub struct Projection {
     /// [`Space`](crate::Space) axis order, so the last entry is the vectorized axis.
     axes: SmallVec<[Axis; Space::MAX_RANK]>,
 }
+impl CubeDebug for Projection {}
 
 impl Projection {
     /// One logical axis per physical axis at coefficient `1`, logical order equal to buffer order:

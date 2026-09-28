@@ -17,6 +17,7 @@ pub(crate) enum InitFrom {
     /// never read and the result is written outright.
     Identity,
 }
+impl CubeDebug for InitFrom {}
 
 /// Where the cell's own value enters the result. Exactly one site reads it, or neither does, and
 /// both sites read this rather than deciding for themselves.

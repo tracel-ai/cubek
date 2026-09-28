@@ -22,6 +22,7 @@ pub enum ReduceOutputMode {
     Indices,
 }
 
+impl CubeDebug for ReduceOutputMode {}
 impl ReduceOutputMode {
     /// Whether coordinates must be tracked through the reduction.
     pub fn has_indices(&self) -> bool {
