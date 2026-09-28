@@ -4,10 +4,7 @@ use cubecl::{
     prelude::TensorBinding,
     zspace::{Tiling, metadata::Metadata},
 };
-use cubek_tile::{
-    Axis, Geometry, Level, Partitioning, Space,
-    layout::{StoragePartitioning, StorageTiling},
-};
+use cubek_tile::{Axis, Geometry, Level, Partitioning, Space, layout::StorageTiling};
 
 use crate::{definition::MatmulSetupError, tiled::labels};
 
@@ -21,7 +18,7 @@ pub(crate) struct MatrixBinding<'a> {
 }
 
 impl<'a> MatrixBinding<'a> {
-    /// The matrix's rows, as its layout is read.
+    /// The matrix's rows, as its storage is read.
     pub(crate) const ROWS: Axis = Axis(0);
     /// The matrix's columns.
     pub(crate) const COLS: Axis = Axis(1);
@@ -87,8 +84,8 @@ impl<'a> MatrixBinding<'a> {
 
     /// Its outermost storage tile, when that tile is stored a row at a time: the pieces under it
     /// may be finer than a routine reads (a vector read, a packed word), and it is read the same
-    /// as long as they fuse back into it a row at a time, the stored layout
-    /// [refining](StoragePartitioning::refines) a row-first tile. The order the tiles themselves follow one
+    /// as long as they fuse back into it a row at a time: the buffer
+    /// [serves](Geometry::serves) a row-first tile. The order the tiles themselves follow one
     /// another in is the strides', whatever it is.
     ///
     /// # Errors
@@ -99,13 +96,14 @@ impl<'a> MatrixBinding<'a> {
         let Some((rows, cols)) = self.tile()? else {
             return Ok(None);
         };
-        let stored = StoragePartitioning::new(&Geometry::from(self.binding), &self.labels());
-        let row_first = StoragePartitioning::from([(Self::COLS, cols), (Self::ROWS, rows)]);
-        stored.refines(&row_first).map_err(|why| {
-            self.refused(format!(
-                "it is not stored in {rows}x{cols} tiles a row at a time: {why}"
-            ))
-        })?;
+        let row_first = [(Self::COLS, cols), (Self::ROWS, rows)];
+        Geometry::from(self.binding)
+            .serves(&row_first, &self.labels())
+            .map_err(|why| {
+                self.refused(format!(
+                    "it is not stored in {rows}x{cols} tiles a row at a time: {why}"
+                ))
+            })?;
         Ok(Some((rows, cols)))
     }
 

@@ -126,8 +126,8 @@ fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
         .dtype(dtype)
         .uniform(4242, 10., 100.)
         .generate_without_host_data();
-    let layout = StorageLevels::new(&[(N, 64), (K, 32)]).grid(&[N, K]);
-    let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
+    let storage = StorageLevels::new(&[(N, 64), (K, 32)]).grid(&[N, K]);
+    let tiled = tile(&client, rhs.binding(), [K, N], dtype, storage).unwrap();
 
     let mut elems = dtypes.clone();
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {

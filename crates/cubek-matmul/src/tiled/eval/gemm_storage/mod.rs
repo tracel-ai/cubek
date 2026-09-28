@@ -98,10 +98,10 @@ impl Weight {
                     .filter(|&width| stage_n.is_multiple_of(width))
                     .max()
                     .unwrap_or(1);
-                let layout = StorageLevels::new(&[(N, read)])
+                let storage = StorageLevels::new(&[(N, read)])
                     .tile(&[(N, stage_n / read), (K, blueprint.stage_k)])
                     .grid(&[N, K]);
-                tile(client, rhs, [K, N], dtype, layout)
+                tile(client, rhs, [K, N], dtype, storage)
                     .map(TensorHandle::binding)
                     .map_err(|e| format!("{e:?}"))
             }

@@ -69,27 +69,28 @@ fn relayout<E: Numeric, V: Size>(
     }
 }
 
-/// What [`tile`] is told: how the tiles are laid out, stated leaf-up, over axes the caller names.
+/// What [`tile`] is told: how the matrix is laid down in memory, stated leaf-up over axes the
+/// caller names.
 pub use cubek_tile::{
     Axis,
-    layout::{GridLayout, StorageLevels, StoragePartitioning},
+    layout::{StorageLevels, StoragePartitioning},
 };
 
-/// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `layout`
-/// states: its tiles, finest first, and the order of the grid of tiles, all in the
+/// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `storage`
+/// states: its tiles, finest first, and the order the rest of each axis follows, all in the
 /// caller's axes. The result's metadata states the tiling, so its binding says how it is stored
 /// and any routine folds its logical shape back; the order is in its strides.
 ///
 /// ```ignore
 /// // A [k, n] weight in 16 x 32 tiles, rows of each tile first, the next tile along k.
-/// let layout = StorageLevels::new(&[(N, 32), (K, 16)]).grid(&[K, N]);
-/// let stored = tile(&client, weight.binding(), [K, N], dtype, layout)?;
+/// let storage = StorageLevels::new(&[(N, 32), (K, 16)]).grid(&[K, N]);
+/// let stored = tile(&client, weight.binding(), [K, N], dtype, storage)?;
 /// ```
 ///
 /// # Errors
 ///
-/// A source that is already storage-tiled (untile it first), a layout that does not close the
-/// matrix in whole tiles (a routine reading storage tiles reads whole ones, and a padded buffer
+/// A source that is already storage-tiled (untile it first), a partitioning that does not close
+/// the matrix in whole tiles (a routine reading storage tiles reads whole ones, and a padded buffer
 /// would change the logical shape), or one deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn tile(
@@ -97,7 +98,7 @@ pub fn tile(
     src: TensorBinding,
     axes: [Axis; 2],
     dtype: ElemType,
-    layout: GridLayout,
+    storage: StoragePartitioning,
 ) -> Result<TensorHandle, MatmulSetupError> {
     let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("tile: {why}")));
     if src.tiling.is_tiled() {
@@ -106,10 +107,9 @@ pub fn tile(
         ));
     }
     let (batches, rows, cols) = MatrixBinding::new(&src, "tile").dims();
-    let layout = layout
-        .over(&[(axes[0], rows), (axes[1], cols)])
+    let (matrix, tiling) = storage
+        .physical(&[(axes[0], rows), (axes[1], cols)])
         .map_err(|misfit| refused(misfit.to_string()))?;
-    let (matrix, tiling) = layout.physical(&axes);
     // Batch dims stay plain and coarsest, each a whole run of the matrices finer than it.
     let mut shape: Vec<usize> = batches.clone();
     let mut strides = vec![0; batches.len()];

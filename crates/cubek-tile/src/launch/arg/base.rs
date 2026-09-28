@@ -9,8 +9,8 @@ use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal, StorageLevel};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, Packing, Projection, QuantTileArgLaunch,
-    Quantization, Storage, StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
+    Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, QuantTileArgLaunch,
+    Quantization, Storage, StorageTiling, TileArgLaunch, TileSpec,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -236,9 +236,14 @@ impl<'a> Arg<'a, Labelled> {
             .as_ref()
             .map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
         let geometry = geometry.with_tiling(settled);
-        StoragePartitioning::new(&geometry, &projection.dense_labels())
-            .serves(width)
-            .map_err(|why| Refusal::WidthNotServed { width, why })?;
+        // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
+        let labels = projection.dense_labels();
+        let served = match labels.last() {
+            Some(&axis) => geometry.serves(&[(axis, width)], &labels),
+            None if width == 1 => Ok(()),
+            None => Err(LineMisfit::NoDims),
+        };
+        served.map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();
         let boundaries = Boundaries::new(
             data.boundary,

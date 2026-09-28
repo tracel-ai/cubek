@@ -1,203 +1,184 @@
-//! [`StoragePartitioning`]: where a buffer's values sit relative to one another, stated as counts from the
-//! finest up.
+//! [`StoragePartitioning`]: how a tensor's values are laid down in memory.
 //!
-//! A buffer's dense part is one mixed-radix number: the finest piece says how many values run
-//! along its axis before the next piece steps, the next says how many of those runs it holds,
-//! and so on. Every size is a product of counts, so between two pieces nothing divides.
+//! Memory is one line of values, and a tensor is folded onto it the way a kernel's space is cut
+//! for its workers: into nested tiles, leaf up, each holding `count` of the one below along its
+//! axis, the outermost of every axis holding whatever the extent leaves. A partitioning's digits
+//! say who takes a tile; these say where it sits.
 //!
-//! A layout is read off a binding ([`StoragePartitioning::new`]), or stated leaf-up for a buffer about to be
-//! written ([`StorageLevels`]): each tile made of the one below it, then the order of the grid of
-//! tiles.
+//! It holds only what was stated: the tiles, and the order the rest of each axis follows. The
+//! extents are the tensor's, and every question that needs them takes them, so one statement
+//! describes a tensor of any size ([`StorageLevels`]), and a bound buffer reads back as the
+//! statement it was written from ([`StoragePartitioning::new`]).
 //!
-//! A reader states the coarsest layout it needs, and asks whether the stored one
-//! [refines](StoragePartitioning::refines) it: whether every boundary it names is a boundary of the stored
-//! layout. Pieces it does not name fuse, which only multiplies. A packed word, a vector read and
-//! a stage tile are all asked the same way; the one division left is a reader cutting its tile
-//! out of an extent, a count the tensor's size decided rather than a tile someone stored.
+//! A reader asks whether a tile it needs is [held](StoragePartitioning::holds): made of whole
+//! stated tiles, in order, cutting only the rest of an axis. A packed word, a vector read and a
+//! stage are all asked the same way. Where a tile sits in memory, dense or padded, is the
+//! [`Geometry`]'s to answer ([`Geometry::serves`]).
+//!
+//! The order of a level's tiles is an order of axes: the strides a buffer carries state no other.
+//! A swizzled or space-filling order is not expressible.
 
 use core::fmt::{self, Display, Formatter};
 
-use cubecl::zspace::SmallVec;
+use crate::{Axis, Geometry, StorageTiling};
 
-use crate::{Axis, Geometry, Space, StorageTiling};
-
-/// Where a buffer's values sit relative to one another: its dense part as pieces, finest first,
-/// and the strides of whatever lies past it.
+/// How a tensor's values are laid down in memory: its stated tiles, finest first, then the order
+/// the rest of each axis follows.
 ///
-/// Each piece's stride is the product of the counts before it, which is what makes the part
-/// dense; a dim that breaks that (a gap, a broadcast, a dim no axis labels) ends it, and its
-/// stride and every coarser one are kept apart, since a read has to be a whole number of them.
+/// ```ignore
+/// // 32 x 32 tiles of a [k, n] weight, stored for a four-wide read, the tiles along N
+/// let storage = StorageLevels::new(&[(N, 4)])
+///     .tile(&[(N, 8), (K, 32)])
+///     .grid(&[N, K]);
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct StoragePartitioning {
-    /// The dense part, finest first.
-    pub(super) dense: SmallVec<[Piece; Space::MAX_RANK]>,
-    /// The strides past the dense part, finest first, in values.
-    pub(super) outer: SmallVec<[usize; Space::MAX_RANK]>,
+    /// Stated tiles, finest first: each `(axis, count)` holds `count` of the piece below it.
+    tiles: Vec<(Axis, usize)>,
+    /// The rest of each axis, finest first: which way the next outermost tile goes. Its counts
+    /// are what the tensor's extents leave.
+    order: Vec<Axis>,
 }
 
 impl StoragePartitioning {
-    /// The layout a buffer is stored in: `geometry`'s dims from the finest up, while each one
-    /// steps by the product of the extents finer than it.
+    /// The statement a bound buffer was written from, read off its dims by stride: every piece of
+    /// a storage-tiled axis but its coarsest was stated, and the coarsest, like every untiled dim,
+    /// is the rest of its axis. `labels` name the trailing dims, right-aligned to the geometry;
+    /// a dim they leave out, a broadcast one and one of extent one say nothing of the order.
     ///
-    /// `labels` name the trailing dims, right-aligned to the geometry: a leading dim they leave
-    /// out ends the dense part, as does a dim that does not step by that product. An untiled
-    /// buffer is read innermost dim first; a storage-tiled one by stride, since its tiling lists
-    /// its pieces coarsest first rather than in the order they sit in memory. Every piece of a
-    /// tiled dim but its coarsest was stored; the coarsest, and every untiled dim, is an extent.
-    pub fn new(geometry: &Geometry, labels: &[Axis]) -> Self {
+    /// `None` where the buffer's order is no partitioning: a stated piece coarser than the rest of
+    /// an axis.
+    pub fn new(geometry: &Geometry, labels: &[Axis]) -> Option<Self> {
         let rank = geometry.rank();
         let unlabelled = rank.saturating_sub(labels.len());
         let tiling = geometry.tiling();
         // A tiling lists every logical dim's coarsest piece first, so the dims past the logical
-        // rank are the stored ones.
-        let first_stored = match tiling.is_tiled() {
+        // rank were stated.
+        let first_stated = match tiling.is_tiled() {
             true => tiling.logical_rank(rank).unwrap_or(rank),
             false => rank,
         };
-        let mut dims: Vec<(usize, usize, usize)> = geometry
+        let mut dims: Vec<(usize, usize)> = geometry
             .dims()
             .enumerate()
-            .map(|(dim, (extent, stride))| (dim, extent, stride))
+            .filter(|&(dim, (extent, stride))| dim >= unlabelled && extent > 1 && stride > 0)
+            .map(|(dim, (_, stride))| (dim, stride))
             .collect();
-        match tiling.is_tiled() {
-            true => dims.sort_by_key(|&(dim, _, stride)| (stride, core::cmp::Reverse(dim))),
-            false => dims.reverse(),
+        dims.sort_by_key(|&(dim, stride)| (stride, core::cmp::Reverse(dim)));
+        let (stated, rest): (Vec<_>, Vec<_>) =
+            dims.iter().partition(|&&(dim, _)| dim >= first_stated);
+        let finest_rest = rest.first().map_or(usize::MAX, |&(_, stride)| stride);
+        if stated.iter().any(|&(_, stride)| stride > finest_rest) {
+            return None;
         }
-        let mut dense = SmallVec::new();
-        let mut outer = SmallVec::new();
-        let mut run = 1;
-        for (dim, extent, stride) in dims {
-            let continues = outer.is_empty() && dim >= unlabelled && stride == run;
-            match continues {
-                true => {
-                    dense.push(Piece {
-                        axis: labels[dim - unlabelled],
-                        count: extent,
-                        stored: dim >= first_stored,
-                    });
-                    run *= extent;
-                }
-                false => outer.push(stride),
-            }
-        }
-        StoragePartitioning { dense, outer }
+        Some(Self {
+            tiles: stated
+                .iter()
+                .map(|&(dim, _)| (labels[dim - unlabelled], geometry.shape()[dim]))
+                .collect(),
+            order: rest
+                .iter()
+                .map(|&(dim, _)| labels[dim - unlabelled])
+                .collect(),
+        })
     }
 
-    /// This layout seen at `wanted`'s pieces: whether every boundary `wanted` names is one of
-    /// this layout's, walking both finest first.
-    ///
-    /// Each of `wanted`'s pieces takes this layout's next pieces on the same axis until their
-    /// counts multiply to exactly its count, fusing them. A stored piece is taken whole or not
-    /// at all; an extent may be cut, `wanted`'s count split out of it, which is the only division
-    /// and has to come out whole. What `wanted` does not reach is kept as it is.
+    /// The stated tiles, finest first.
+    pub fn tiles(&self) -> &[(Axis, usize)] {
+        &self.tiles
+    }
+
+    /// The order the rest of each axis follows, finest first.
+    pub fn order(&self) -> &[Axis] {
+        &self.order
+    }
+
+    /// Whether `tile`, finest first, is held by this partitioning over a tensor of `extents`:
+    /// each of its pieces is this partitioning's next pieces along the same axis, their counts
+    /// multiplying to exactly its count. A stated tile is taken whole or not at all; the rest of an
+    /// axis may have the wanted count cut out of it, the one division, which has to come out whole.
     ///
     /// # Errors
     ///
-    /// Where the walk first breaks: another axis inside a wanted piece, a stored piece that
-    /// overshoots it, an extent it does not divide, or no pieces left.
-    pub fn refines(&self, wanted: &StoragePartitioning) -> Result<StoragePartitioning, Unrefined> {
-        let mut rest: Vec<Piece> = self.dense.iter().rev().copied().collect();
-        let mut fused: SmallVec<[Piece; Space::MAX_RANK]> = SmallVec::new();
-        for &want in &wanted.dense {
+    /// Where the walk first breaks: another axis inside a wanted piece, a stated tile it would
+    /// split, the rest of an axis it does not divide, or nothing left to take.
+    pub fn holds(
+        &self,
+        tile: &[(Axis, usize)],
+        extents: &[(Axis, usize)],
+    ) -> Result<(), TileMisfit> {
+        let mut pieces = self.pieces(extents)?;
+        pieces.reverse();
+        for &(axis, count) in tile {
             let mut run = 1;
-            while run < want.count {
-                let Some(mut piece) = rest.pop() else {
-                    return Err(Unrefined::RunsOut { wanted: want.axis });
+            while run < count {
+                let Some(mut piece) = pieces.pop() else {
+                    return Err(TileMisfit::RunsOut { wanted: axis });
                 };
                 if piece.count == 1 {
                     continue;
                 }
-                if piece.axis != want.axis {
-                    return Err(Unrefined::Interleaved {
-                        wanted: want.axis,
+                if piece.axis != axis {
+                    return Err(TileMisfit::Interleaved {
+                        wanted: axis,
                         found: piece.axis,
                     });
                 }
-                // What the wanted piece still lacks, a whole number since `run` only ever grows
+                // What the wanted piece still lacks: a whole number, since `run` only ever grows
                 // by counts that divide it.
-                let missing = want.count / run;
+                let missing = count / run;
                 if missing.is_multiple_of(piece.count) {
                     run *= piece.count;
                     continue;
                 }
-                // The piece reaches past the wanted boundary, or across it: only an extent may
-                // have the rest cut out of it, and only a whole number of times.
-                if piece.stored || !piece.count.is_multiple_of(missing) {
-                    return Err(Unrefined::Overshoots {
-                        axis: want.axis,
-                        wanted: want.count,
+                if piece.stated || !piece.count.is_multiple_of(missing) {
+                    return Err(TileMisfit::Overshoots {
+                        axis,
+                        wanted: count,
                         piece: piece.count,
                     });
                 }
                 piece.count /= missing;
-                rest.push(piece);
-                run = want.count;
+                pieces.push(piece);
+                run = count;
             }
-            fused.push(Piece {
-                stored: true,
-                ..want
-            });
         }
-        fused.extend(rest.into_iter().rev());
-        Ok(StoragePartitioning {
-            dense: fused,
-            outer: self.outer.clone(),
-        })
+        Ok(())
     }
 
-    /// Whether this buffer can be read `values` at a time along its finest axis: the read
-    /// [refines](Self::refines) it, and every stride past the dense part is a whole number of
-    /// reads, or a coarser step would land inside one.
-    pub(crate) fn serves(&self, values: usize) -> Result<(), LineMisfit> {
-        if values == 1 {
-            return Ok(());
-        }
-        let Some(finest) = self.dense.first() else {
-            return Err(match self.outer.first() {
-                Some(&stride) => LineMisfit::InnermostStrided(stride),
-                None => LineMisfit::NoDims,
+    /// The buffer this partitioning stores a tensor of `extents` in, the axes in its logical order:
+    /// its physical dims as cubecl's storage tiling lists them (level-major, coarsest first), each
+    /// `(extent, stride)`, and the piece count per axis that [`StorageTiling`] reads back.
+    ///
+    /// # Errors
+    ///
+    /// An axis the tiles do not close in whole tiles, or an order that does not name each of the
+    /// tensor's axes once.
+    pub fn physical(
+        &self,
+        extents: &[(Axis, usize)],
+    ) -> Result<(Geometry, StorageTiling), StorageMisfit> {
+        let axes: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
+        let named = |axis: &Axis| self.order.iter().filter(|&a| a == axis).count() == 1;
+        if self.order.len() != axes.len() || !axes.iter().all(named) {
+            return Err(StorageMisfit::Order {
+                order: self.order.clone(),
+                axes,
             });
-        };
-        if let Err(why) = self.refines(&StoragePartitioning::from([(finest.axis, values)])) {
-            return Err(LineMisfit::Unrefined(why));
         }
-        match self
-            .outer
-            .iter()
-            .rev()
-            .find(|stride| !stride.is_multiple_of(values))
-        {
-            Some(&stride) => Err(LineMisfit::StrideInsideLine(stride)),
-            None => Ok(()),
-        }
-    }
-
-    /// The buffer this layout stores `axes` in: its physical dims in the order cubecl's storage
-    /// tiling lists them (level-major, coarsest first), each `(extent, stride)`, and the piece
-    /// count per axis that [`StorageTiling`] reads back.
-    ///
-    /// # Panics
-    ///
-    /// When the layout names an axis `axes` does not, or leaves one of them out: a buffer stores
-    /// every axis it stands for.
-    pub fn physical(&self, axes: &[Axis]) -> (Geometry, StorageTiling) {
-        assert!(
-            self.outer.is_empty(),
-            "StoragePartitioning::physical: only a dense layout describes a buffer to write"
-        );
+        let pieces = self.pieces(extents).map_err(|misfit| match misfit {
+            TileMisfit::Unwhole { axis, extent, tile } => {
+                StorageMisfit::PartialTile { axis, extent, tile }
+            }
+            _ => unreachable!("only the rest of an axis is computed against its extent"),
+        })?;
         let fragments: Vec<usize> = axes
             .iter()
-            .map(|&axis| self.dense.iter().filter(|p| p.axis == axis).count())
+            .map(|&axis| pieces.iter().filter(|p| p.axis == axis).count())
             .collect();
-        assert!(
-            self.dense.iter().all(|p| axes.contains(&p.axis)) && fragments.iter().all(|&f| f >= 1),
-            "StoragePartitioning::physical: the layout names {:?} but the buffer stands for {axes:?}",
-            self.dense.iter().map(|p| p.axis).collect::<Vec<_>>()
-        );
         let tiling = StorageTiling::per_axis(&fragments);
         // Each piece's stride is the product of the counts finer than it.
-        let strides: Vec<usize> = self
-            .dense
+        let strides: Vec<usize> = pieces
             .iter()
             .scan(1, |run, piece| {
                 let stride = *run;
@@ -207,65 +188,121 @@ impl StoragePartitioning {
             .collect();
         // An axis's pieces coarsest first, so fragment `level` of `axis` is its `level`th from
         // the top, the order the tiling's level-major emission counts them in.
-        let of_axis = |axis: Axis| -> Vec<usize> {
-            (0..self.dense.len())
-                .rev()
-                .filter(|&e| self.dense[e].axis == axis)
-                .collect()
-        };
-        let per_axis: Vec<Vec<usize>> = axes.iter().map(|&axis| of_axis(axis)).collect();
-        let mut dims = Vec::with_capacity(self.dense.len());
+        let per_axis: Vec<Vec<usize>> = axes
+            .iter()
+            .map(|&axis| {
+                (0..pieces.len())
+                    .rev()
+                    .filter(|&p| pieces[p].axis == axis)
+                    .collect()
+            })
+            .collect();
+        let mut dims = Vec::with_capacity(pieces.len());
         for level in 0..tiling.max_fragments() {
-            for pieces in &per_axis {
-                if let Some(&e) = pieces.get(level) {
-                    dims.push((self.dense[e].count, strides[e]));
+            for of_axis in &per_axis {
+                if let Some(&p) = of_axis.get(level) {
+                    dims.push((pieces[p].count, strides[p]));
                 }
             }
         }
-        (Geometry::new(&dims), tiling)
+        Ok((Geometry::new(&dims), tiling))
     }
 
-    /// The pieces, finest first, as `(axis, count)`.
-    pub fn pieces(&self) -> Vec<(Axis, usize)> {
-        self.dense.iter().map(|p| (p.axis, p.count)).collect()
+    /// Every piece over a tensor of `extents`, finest first: the stated tiles, then the rest of
+    /// each axis in order, its count what the extent leaves.
+    fn pieces(&self, extents: &[(Axis, usize)]) -> Result<Vec<Piece>, TileMisfit> {
+        let mut pieces: Vec<Piece> = self
+            .tiles
+            .iter()
+            .map(|&(axis, count)| Piece {
+                axis,
+                count,
+                stated: true,
+            })
+            .collect();
+        for &axis in &self.order {
+            let extent = extents
+                .iter()
+                .find(|&&(a, _)| a == axis)
+                .map_or(1, |&(_, extent)| extent);
+            let tile: usize = self
+                .tiles
+                .iter()
+                .filter(|&&(a, _)| a == axis)
+                .map(|&(_, count)| count)
+                .product();
+            if !extent.is_multiple_of(tile) {
+                return Err(TileMisfit::Unwhole { axis, extent, tile });
+            }
+            pieces.push(Piece {
+                axis,
+                count: extent / tile,
+                stated: false,
+            });
+        }
+        Ok(pieces)
     }
 }
 
-/// The layout a reader needs, stated finest first: its own tiles, before anything it does not
-/// care how is laid out. A read of `4` along `N` is `StoragePartitioning::from([(N, 4)])`.
-impl<const P: usize> From<[(Axis, usize); P]> for StoragePartitioning {
-    fn from(pieces: [(Axis, usize); P]) -> Self {
+/// A [`StoragePartitioning`] being stated leaf-up: its tiles, finest first, each holding `count`
+/// of the one below, until [`grid`](Self::grid) says the order the rest of each axis follows.
+#[derive(Clone, Debug)]
+pub struct StorageLevels {
+    tiles: Vec<(Axis, usize)>,
+}
+
+impl StorageLevels {
+    /// The finest tile, `(axis, count)` finest first, in values.
+    pub fn new(tile: &[(Axis, usize)]) -> Self {
+        Self {
+            tiles: tile.to_vec(),
+        }
+    }
+
+    /// A coarser tile, each count how many of the tile below it holds.
+    pub fn tile(mut self, level: &[(Axis, usize)]) -> Self {
+        self.tiles.extend_from_slice(level);
+        self
+    }
+
+    /// The partitioning, the rest of each axis following `order`, finest first: `[K, N]` puts the
+    /// next tile along `K` right after this one. A tile's piece of one holds nothing and is
+    /// dropped.
+    pub fn grid(self, order: &[Axis]) -> StoragePartitioning {
         StoragePartitioning {
-            dense: pieces
+            tiles: self
+                .tiles
                 .into_iter()
-                .map(|(axis, count)| Piece {
-                    axis,
-                    count,
-                    stored: true,
-                })
+                .filter(|&(_, count)| count > 1)
                 .collect(),
-            outer: SmallVec::new(),
+            order: order.to_vec(),
         }
     }
 }
 
-/// Where a stored layout stops refining a wanted one ([`StoragePartitioning::refines`]).
+/// Where a tile stops being held by a [`StoragePartitioning`] ([`StoragePartitioning::holds`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unrefined {
-    /// A piece of another axis sits inside a wanted piece: the wanted tile is not contiguous.
+pub enum TileMisfit {
+    /// A piece of another axis sits inside a wanted piece: the wanted tile is not one run.
     Interleaved { wanted: Axis, found: Axis },
-    /// A piece reaches past the wanted count: a stored tile no reader may cut, or an extent the
-    /// wanted count does not divide.
+    /// A piece reaches past the wanted count: a stated tile no reader may split, or the rest of an
+    /// axis the wanted count does not divide.
     Overshoots {
         axis: Axis,
         wanted: usize,
         piece: usize,
     },
-    /// The dense part ends before the wanted piece closes.
+    /// The partitioning ends before the wanted piece closes.
     RunsOut { wanted: Axis },
+    /// The stated tiles do not close the axis's extent.
+    Unwhole {
+        axis: Axis,
+        extent: usize,
+        tile: usize,
+    },
 }
 
-impl Display for Unrefined {
+impl Display for TileMisfit {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Interleaved { wanted, found } => write!(
@@ -279,63 +316,54 @@ impl Display for Unrefined {
             } => write!(
                 f,
                 "a piece of {piece} along {axis:?} reaches past the {wanted} wanted, and is not \
-                 an extent it divides"
+                 the rest of the axis, which it would divide"
             ),
             Self::RunsOut { wanted } => {
-                write!(
-                    f,
-                    "the dense part ends before the piece wanted along {wanted:?}"
-                )
+                write!(f, "nothing is left along {wanted:?} for the piece wanted")
             }
+            Self::Unwhole { axis, extent, tile } => write!(
+                f,
+                "axis {axis:?} runs {extent}, which is not a whole number of {tile}-wide tiles"
+            ),
         }
     }
 }
 
-/// Why a [`StoragePartitioning`] cannot serve a cut of some width: the value that decided it, so a message
-/// names the number a reader has to go looking for otherwise.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineMisfit {
-    /// The innermost dim's own stride, when it is not 1: consecutive values are not one line.
-    InnermostStrided(usize),
-    /// The read does not refine the buffer's layout: see [`Unrefined`].
-    Unrefined(Unrefined),
-    /// A stride past the dense part, when re-expressing it as `stride / width` would land inside
-    /// a line.
-    StrideInsideLine(usize),
-    /// No dims at all: there is no innermost extent to count in lines, so no width but `1`
-    /// describes it. Carries nothing, because the misfit is the absence.
-    NoDims,
+/// Why a [`StoragePartitioning`] cannot store a tensor ([`StoragePartitioning::physical`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageMisfit {
+    /// The tiles along `axis` do not close its extent.
+    PartialTile {
+        axis: Axis,
+        extent: usize,
+        tile: usize,
+    },
+    /// The order does not name each of the tensor's axes once.
+    Order { order: Vec<Axis>, axes: Vec<Axis> },
 }
 
-impl Display for LineMisfit {
+impl Display for StorageMisfit {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InnermostStrided(stride) => write!(
+            Self::PartialTile { axis, extent, tile } => write!(
                 f,
-                "its innermost dim steps by {stride} rather than 1, so consecutive values are \
-                 not one line"
+                "axis {axis:?} runs {extent}, which is not a whole number of {tile}-wide tiles"
             ),
-            Self::Unrefined(why) => write!(f, "a line does not fit its layout: {why}"),
-            Self::StrideInsideLine(stride) => write!(
+            Self::Order { order, axes } => write!(
                 f,
-                "its stride {stride} is not a whole number of lines, so a coarser step lands \
-                 inside a line"
-            ),
-            Self::NoDims => write!(
-                f,
-                "it has no dims, so it has no innermost extent to count in lines"
+                "the tiles follow {order:?}, but the tensor's axes are {axes:?}: the order names \
+                 each once"
             ),
         }
     }
 }
 
-/// One piece of a layout: `count` of the piece below it, stepping along `axis`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(super) struct Piece {
-    pub(super) axis: Axis,
-    pub(super) count: usize,
-    /// Whether someone stored this piece as a tile, so a reader takes it whole; `false` for an
-    /// extent, a count the tensor's size decided (a grid, an untiled dim), which a reader may
-    /// cut its own tile out of.
-    pub(super) stored: bool,
+/// One piece of a partitioning over a tensor: `count` of the piece below it along `axis`.
+#[derive(Clone, Copy, Debug)]
+struct Piece {
+    axis: Axis,
+    count: usize,
+    /// Whether the count was stated, so a reader takes the piece whole; `false` for the rest of an
+    /// axis, which a reader may cut its own tile out of.
+    stated: bool,
 }

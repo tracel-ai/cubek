@@ -25,12 +25,12 @@ use std::path::{Path, PathBuf};
 /// test-only: 717. `Input` and `Output`, one launch argument each way, replaced the delivery
 /// families (`DeliveryFamily`, `DeliveryLaunch`, `Cooperative`, `Tma`, `Accumulated`): five
 /// concepts to two, but their `tile` and host builders count as lines, four more: 721. `StoragePartitioning`
-/// raised it by sixteen: the type and its constructor, its builder stages (`StorageLevels::new`,
-/// `grid`, `over` the extents), `physical`, `refines`, `pieces`, the misfits a stated layout and a
-/// reader are refused with, and the re-exports of its own folder, since a caller writing a
-/// storage-tiled buffer states how it is laid out and every reader of one asks whether it refines
-/// the layout it needs: 737.
-const PUB_ITEMS: usize = 737;
+/// raised it by fifteen: the type and what it answers (`new`, `tiles`, `order`, `holds`,
+/// `physical`), the `StorageLevels` it is stated with (`new`, `tile`, `grid`), the misfits a
+/// statement and a tile are refused with, `Geometry::serves` and the re-export of its folder,
+/// since a caller writing a storage-tiled buffer states how it is laid down and every reader asks
+/// whether it holds the tile the reader needs: 736.
+const PUB_ITEMS: usize = 736;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;

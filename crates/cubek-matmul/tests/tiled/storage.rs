@@ -31,8 +31,8 @@ fn round_trip(
         .custom(data.clone())
         .generate_with_f32_host_data();
 
-    let layout = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
-    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
+    let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
+    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, storage).unwrap();
     let physical: Vec<usize> = batches
         .iter()
         .copied()
@@ -98,7 +98,7 @@ fn tiling_stores_one_tile_at_a_time() {
 /// A grid ordered rows first puts the next tile down the rows right after this one: the dims are
 /// the same, the grid's strides are swapped, and the round trip still holds.
 #[test]
-fn tiling_orders_the_grid_as_the_layout_states() {
+fn tiling_orders_the_grid_as_the_storage_states() {
     round_trip(&[], 64, 96, (16, 32), &[ROWS, COLS]);
     let client = client();
     let dtype: ElemType = f32::elem_type_native();
@@ -106,8 +106,8 @@ fn tiling_orders_the_grid_as_the_layout_states() {
         .dtype(dtype)
         .custom((0..64 * 96).map(|i| i as f32).collect())
         .generate_with_f32_host_data();
-    let layout = StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
-    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
+    let storage = StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
+    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, storage).unwrap();
     // [64/16, 96/32, 16, 32]: a tile is 512 values, the next down the rows 512 on, across 2048.
     assert_eq!(tiled.metadata.strides().to_vec(), vec![512, 2048, 32, 1]);
 }
@@ -179,11 +179,11 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
     ));
 }
 
-/// Tile as `layout` states, find every cell where `stored_at` says the layout put it, untile, and
+/// Tile as `storage` states, find every cell where `stored_at` says it put it, untile, and
 /// read back the matrix it started as; the stored buffer's dims and strides are returned for the
 /// caller to check.
 fn tiles_and_comes_back(
-    layout: cubek_tile::layout::GridLayout,
+    storage: cubek_tile::layout::StoragePartitioning,
     rows: usize,
     cols: usize,
     stored_at: impl Fn(usize, usize) -> Vec<usize>,
@@ -195,7 +195,7 @@ fn tiles_and_comes_back(
         .dtype(dtype)
         .custom(data.clone())
         .generate_with_f32_host_data();
-    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, layout).unwrap();
+    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, storage).unwrap();
     let stored = (
         tiled.shape().as_slice().to_vec(),
         tiled.metadata.strides().to_vec(),
@@ -226,11 +226,11 @@ fn tiles_and_comes_back(
 /// tile per cube whatever lies inside it.
 #[test]
 fn tiling_nests_two_levels() {
-    let layout = StorageLevels::new(&[(COLS, 4), (ROWS, 2)])
+    let storage = StorageLevels::new(&[(COLS, 4), (ROWS, 2)])
         .tile(&[(COLS, 2), (ROWS, 4)])
         .grid(&[ROWS, COLS]);
     // rows = grid 4 x 4 x 2, cols = grid 6 x 2 x 4, each dim's pieces listed coarsest first.
-    let (shape, strides) = tiles_and_comes_back(layout, 32, 48, |r, c| {
+    let (shape, strides) = tiles_and_comes_back(storage, 32, 48, |r, c| {
         vec![r / 8, c / 8, r / 2 % 4, c / 4 % 2, r % 2, c % 4]
     });
     assert_eq!(shape, vec![4, 6, 4, 2, 2, 4]);
@@ -242,9 +242,9 @@ fn tiling_nests_two_levels() {
 /// A tile stored a column at a time: its rows are the finest entry, and only the strides say so.
 #[test]
 fn tiling_stores_a_tile_column_first() {
-    let layout = StorageLevels::new(&[(ROWS, 16), (COLS, 32)]).grid(&[COLS, ROWS]);
+    let storage = StorageLevels::new(&[(ROWS, 16), (COLS, 32)]).grid(&[COLS, ROWS]);
     let (shape, strides) =
-        tiles_and_comes_back(layout, 64, 96, |r, c| vec![r / 16, c / 32, r % 16, c % 32]);
+        tiles_and_comes_back(storage, 64, 96, |r, c| vec![r / 16, c / 32, r % 16, c % 32]);
     assert_eq!(shape, vec![4, 3, 16, 32]);
     assert_eq!(strides, vec![1536, 512, 1, 16]);
 }
