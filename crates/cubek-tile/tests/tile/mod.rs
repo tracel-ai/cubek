@@ -7,6 +7,7 @@ mod conv;
 mod decode_gemv;
 mod depthwise;
 mod dequant;
+mod destination;
 mod distributed;
 mod dynamic_contraction;
 mod erased;

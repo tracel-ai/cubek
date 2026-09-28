@@ -29,8 +29,11 @@ use std::path::{Path, PathBuf};
 /// `grid`, `over` the extents), `physical`, `refines`, `pieces`, the misfits a stated layout and a
 /// reader are refused with, and the re-exports of its own folder, since a caller writing a
 /// storage-tiled buffer states how it is laid out and every reader of one asks whether it refines
-/// the layout it needs: 737.
-const PUB_ITEMS: usize = 737;
+/// the layout it needs: 737. `Destination`, the seam a caller's own output plugs into (a fused
+/// epilogue's sink, which no enum here can name), raised it by four: the trait, its host half
+/// `DestinationLaunch`, `Buffered` (the one implementation, serving `Output`), and the module's
+/// re-export. One seam for outputs only, not the families back: 741.
+const PUB_ITEMS: usize = 741;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 33;
