@@ -98,44 +98,41 @@ fn leading_extents(
     out
 }
 
-/// The `i`-th matrix of a tile whose window is `bound`, over the axes [`MatrixAxes`] names.
+/// The `i`-th matrix of a tile whose window is `bound`, over the axes [`MatrixAxes`] names, each
+/// axis counted in `load`s: a run along the innermost axis for a plain buffer, and for one stored
+/// in tiles, every axis the load spans ([`VectorTile::counts`]).
 #[cube]
 pub(crate) fn batch_matrix(
     bound: &Coords<u32>,
     #[comptime] space: &Space,
     #[comptime] gathered: bool,
-    #[comptime] vector_size: usize,
+    #[comptime] load: &VectorTile,
     #[comptime] axes: MatrixAxes,
     i: usize,
 ) -> TileMatrix {
     let rank = comptime!(space.rank());
+    // Rounded up like the buffer's own load count, so a checked read covers a partial last load.
+    let counts = comptime!(load.counts(space));
+    comptime!(assert!(
+        counts[..axes.row_split]
+            .iter()
+            .zip(0..axes.row_split)
+            .all(|(&count, p)| count == space.extent_at(p)),
+        "batch_matrix: a load of {:?} spans a batch axis of {space:?}, which a matrix pins",
+        load.extents()
+    ));
     let rows = comptime!(
-        (axes.row_split..axes.col_split)
-            .map(|p| space.extent_at(p))
-            .product::<usize>()
-    );
-    // Rounded up like the buffer's own line count, so a checked read covers a partial last line.
-    let cols = comptime!(
-        line_extents(space, vector_size, axes.col_split, rank)
+        counts[axes.row_split..axes.col_split]
             .iter()
             .product::<usize>()
     );
+    let cols = comptime!(counts[axes.col_split..rank].iter().product::<usize>());
     let extents = leading_extents(bound, comptime!(space), gathered, comptime!(axes.row_split));
 
     TileMatrix::new(
         extents.unravel(i.cast::<u32>()),
-        Coords::constant(comptime!(line_extents(
-            space,
-            vector_size,
-            axes.row_split,
-            axes.col_split
-        ))),
-        Coords::constant(comptime!(line_extents(
-            space,
-            vector_size,
-            axes.col_split,
-            rank
-        ))),
+        Coords::constant(comptime!(counts[axes.row_split..axes.col_split].to_vec())),
+        Coords::constant(comptime!(counts[axes.col_split..rank].to_vec())),
         rows,
         cols,
     )
@@ -220,15 +217,28 @@ pub(crate) fn projected_batch_matrix(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
     map: RuntimeMap,
-    #[comptime] vector_size: usize,
+    #[comptime] load: VectorTile,
     #[comptime] axes: MatrixAxes,
     i: usize,
 ) -> ProjectedMatrix {
     // A partition's windows tile, so the window still sizes every logical axis.
     let gathered = comptime!(projection.composition() == Composition::Overlapping);
     ProjectedMatrix::new(
-        batch_matrix(bound, comptime!(&space), gathered, vector_size, axes, i),
-        axis_projection(comptime!(space), comptime!(projection), map, vector_size),
+        batch_matrix(
+            bound,
+            comptime!(&space),
+            gathered,
+            comptime!(&load),
+            axes,
+            i,
+        ),
+        ProjectionInKernel::new(
+            Coords::constant(comptime!(load.counts(&space))),
+            map,
+            comptime!(space.clone()),
+            projection,
+            comptime!(load.values()),
+        ),
     )
 }
 

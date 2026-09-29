@@ -6,6 +6,7 @@ pub(crate) mod memory;
 pub(crate) mod mma;
 pub(crate) mod promoted;
 pub(crate) mod registers;
+pub(crate) mod rhs_load;
 pub(crate) mod scale;
 
 pub(crate) use cmma::rhs_layout;

@@ -523,12 +523,13 @@ impl<T: Numeric> Memory<T> {
         i: usize,
     ) -> ProjectedMatrix {
         let bound = self.extent();
+        let load = self.vector_tile(&space);
         projected_batch_matrix(
             &bound,
             space,
             comptime!(self.projection.clone()),
             self.map.clone(),
-            comptime!(self.store.vector_size),
+            load,
             axes,
             i,
         )

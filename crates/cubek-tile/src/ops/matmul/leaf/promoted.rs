@@ -25,7 +25,9 @@ impl<T: Numeric> RegisterData<T> {
              way, so it cannot contract under {semiring:?}",
             self.monoid
         ));
-        let vw = rhs.vector_size();
+        // A load stored across several columns reads as their runs along the contraction.
+        let rhs_load = rhs.rhs_load();
+        let vw = comptime!(rhs_load.run);
         let lw = lhs.vector_size();
         let fold = comptime!(self.fold);
         // A packed rhs is served at its packing factor, so this checks the block was opened by it.
@@ -72,12 +74,15 @@ impl<T: Numeric> RegisterData<T> {
             MatrixAxes::new(&rhs.place.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
         });
 
+        comptime!(rhs_load.check(&rhs.place.space, rhs_axes, fold > 1, nr));
+        let size!(RL) = comptime!(rhs_load.run * rhs_load.columns);
+
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let component_fanout = comptime!(config.component_fanout);
 
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
-        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, 0usize);
         let lhs_scales = lhs.reader(
             lhs_axes,
             0usize,
@@ -93,7 +98,7 @@ impl<T: Numeric> RegisterData<T> {
             comptime!(acc_axes),
         );
 
-        registers::contract::<T, EL, L, ER, RA>(
+        registers::contract::<T, EL, L, ER, RA, RL>(
             &lhs_mat,
             &lhs_scales,
             &rhs_mat,
@@ -101,6 +106,7 @@ impl<T: Numeric> RegisterData<T> {
             &mut self.data,
             lw,
             fold,
+            comptime!(rhs_load.columns),
             mr,
             nr,
             kc,

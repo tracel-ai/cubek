@@ -225,7 +225,10 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         let lw = lhs.vector_size();
-        let rw = rhs.vector_size();
+        // The block's lines are a run of the rhs's loads: the whole load, or one column's run of
+        // a load stored across several columns.
+        let rhs_load = rhs.rhs_load();
+        let rw = comptime!(rhs_load.run);
         let aw = self.vector_size();
         let fold = comptime!(memory::contracted_per_step(
             &lhs.place.space,

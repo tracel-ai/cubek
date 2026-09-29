@@ -28,7 +28,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     ));
 
     let lw = lhs.vector_size();
-    let rw = rhs.vector_size();
+    let rhs_load = rhs.rhs_load();
+    let rw = comptime!(rhs_load.run);
     let aw = comptime!(acc.store.vector_size);
     comptime!(assert!(
         rw == aw || contracted_per_step > 1,
@@ -51,25 +52,35 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
          gives one; the N-D nest reads them a cell at a time"
     ));
 
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs.place.space));
+    comptime!(rhs_load.check(
+        &rhs.place.space,
+        rhs_axes,
+        contracted_per_step > 1,
+        shape.nr
+    ));
+    let columns = comptime!(rhs_load.columns);
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, shape, config, semiring);
+        let size!(RL) = comptime!(rhs_load.run * columns);
+        nest::<E, EL, W, ER, W, A, RL>(acc, lhs, rhs, shape, columns, config, semiring);
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, ER, A, A, A>(acc, lhs, rhs, shape, columns, config, semiring);
     }
 }
 
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and block's, `A` the accumulator's.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
+fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Size>(
     acc: &mut Memory<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] shape: ContractShape,
+    #[comptime] columns: usize,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
@@ -90,7 +101,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
     for mat in 0..matrices {
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
-        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, mat);
         let lhs_scales = lhs.reader(
             lhs_axes,
             mat,
@@ -127,7 +138,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             );
             let rhs_extent = if comptime!(contracted_per_step > 1) {
                 (
-                    comptime!(nr as u32).runtime(),
+                    comptime!((nr / columns) as u32).runtime(),
                     comptime!((kc / contracted_per_step) as u32).runtime(),
                 )
             } else {
@@ -149,7 +160,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
         if comptime!(split_edge) {
             if in_bounds {
-                body::<E, EL, L, ER, V, A>(
+                body::<E, EL, L, ER, V, A, RL>(
                     &mut acc_view,
                     &lhs_mat,
                     &lhs_scales,
@@ -157,6 +168,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     &rhs_scales,
                     lw,
                     contracted_per_step,
+                    columns,
                     aw,
                     mr,
                     nr,
@@ -167,7 +179,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     semiring,
                 );
             } else {
-                body::<E, EL, L, ER, V, A>(
+                body::<E, EL, L, ER, V, A, RL>(
                     &mut acc_view,
                     &lhs_mat,
                     &lhs_scales,
@@ -175,6 +187,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     &rhs_scales,
                     lw,
                     contracted_per_step,
+                    columns,
                     aw,
                     mr,
                     nr,
@@ -187,7 +200,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
-            body::<E, EL, L, ER, V, A>(
+            body::<E, EL, L, ER, V, A, RL>(
                 &mut acc_view,
                 &lhs_mat,
                 &lhs_scales,
@@ -195,6 +208,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 &rhs_scales,
                 lw,
                 contracted_per_step,
+                columns,
                 aw,
                 mr,
                 nr,
@@ -211,14 +225,15 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 /// The nest body, either unrolled in registers or the checked edge fallback.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
+fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Size>(
     acc: &mut AccumulateView<'_, E, A>,
     lhs: &MatrixView<'_, Vector<EL, L>>,
     lhs_scales: &FactorReader,
-    rhs: &MatrixView<'_, Vector<ER, V>>,
+    rhs: &MatrixView<'_, Vector<ER, RL>>,
     rhs_scales: &FactorReader,
     #[comptime] lw: usize,
     #[comptime] contracted_per_step: usize,
+    #[comptime] columns: usize,
     #[comptime] aw: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
@@ -230,7 +245,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 ) {
     let mut c =
         registers::seed::<E, V, A>(acc, contracted_per_step, 1usize, aw, mr, nr, cols, unroll);
-    registers::contract::<E, EL, L, ER, V>(
+    registers::contract::<E, EL, L, ER, V, RL>(
         lhs,
         lhs_scales,
         rhs,
@@ -238,6 +253,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         &mut c,
         lw,
         contracted_per_step,
+        columns,
         mr,
         nr,
         kc,

@@ -1034,7 +1034,9 @@ impl<E: Numeric> TileExpand<E> {
     ) -> FactorReaderExpand {
         refuse_codebook(self, "a leaf's read");
         let values = self.place.space.clone();
-        let vector_size = self.clone().__expand_vector_size_method(scope);
+        // A line is the run of a load along the innermost axis; a load stored across several
+        // columns is read as their runs, each placed at its own column.
+        let vector_size = self.clone().__expand_vector_tile_method(scope).extents()[0].1;
         let factor = match &self.kind {
             TileKindExpand::Memory(memory) => memory.factor.clone(),
             _ => FactorExpand::default(),
