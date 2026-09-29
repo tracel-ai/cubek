@@ -7,6 +7,7 @@ use cubecl::{
     prelude::*,
 };
 
+use super::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
 use crate::*;
 
 // Per-role fragment register widths, bound at allocation via `scope.register_size` to match
@@ -122,15 +123,6 @@ impl<T: Numeric> MmaData<T> {
     /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile, not
     /// its store: the manual path reads through the quant-transparent matrix view, decoding here.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
-        let dequant_at = src.dequant_at();
-        let io = comptime!(self.io);
-        comptime!(assert!(
-            dequant_at == DequantAt::Load
-                || (matches!(io.lhs_load_method, LoadMethod::Manual)
-                    && matches!(io.rhs_load_method, LoadMethod::Manual)),
-            "MmaData::load_window: the ldmatrix transport copies raw units, so it cannot decode a \
-             quantized source as it reads; serve that operand by its load (DequantAt::Load)"
-        ));
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -230,12 +222,32 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] io: MmaIo,
     #[comptime] edges: (usize, usize),
 ) {
-    // Fall back to manual loading for gathered operands.
+    // `ldmatrix` reads 16-byte rows of 16-bit cells out of shared memory, for an operand: it
+    // serves a window only where every one of those holds, and the manual load serves the rest.
+    // A gathered window has no row a unit could address, a line wider than a row starts one
+    // inside it, a packed window holds its stored words, which its read decodes and `ldmatrix`
+    // would copy raw, and a global window, a 4-byte cell or the accumulator is not what the
+    // instruction reads at all.
     let gathered = src.gathered();
-    let method = comptime!(if gathered {
-        LoadMethod::Manual
-    } else {
-        io.load_method(ident)
+    let shared = src.is_shared();
+    let element = src.stage_element();
+    let holds_served_values = comptime!(element == StageElement::Served);
+    let served = src.vector_size();
+    // An element's size read at expansion, where the launch has registered it: inside
+    // `comptime!` the call would size the generic placeholder instead.
+    let elem_size = T::size().comptime();
+    let row_cells = comptime!(LDMATRIX_ROW_BYTES / elem_size);
+    let ldmatrix_serves = comptime!(
+        shared
+            && !gathered
+            && holds_served_values
+            && elem_size == 2
+            && ident != MatrixIdent::Accumulator
+            && row_cells.is_multiple_of(served)
+    );
+    let method = comptime!(match ldmatrix_serves {
+        true => io.load_method(ident),
+        false => LoadMethod::Manual,
     });
     match method {
         LoadMethod::Manual => {
@@ -243,15 +255,20 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
             load_manual::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
         }
         LoadMethod::LoadMatrix => {
-            comptime!(panic!(
-                "MmaData::load: the ldmatrix fast path is not yet wired for Memory windows; \
-                 state the register stage with MmaIo::manual()"
-            ))
+            let size!(W) = src.vector_size();
+            load_ldmatrix::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
         }
     }
 }
 
-/// Manual load: reads elements for each register from `src` using the matrix view.
+/// Manual load: each unit reads its own cells out of `src` through the matrix view, the window
+/// lying as the role's `edges` (`layout` row-major) or as their transpose (col-major, a weight
+/// stored `{n, k}`).
+///
+/// Where a unit's register vector runs along the window's lines — the instruction's
+/// [`vector_layout`](MmaDefinition::vector_layout) is the window's — the unit reads whole lines,
+/// one per `W` cells, rather than one line per cell: a load the device issues wide. Elsewhere
+/// each cell is read on its own.
 #[cube]
 fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile<T>,
@@ -263,28 +280,91 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
+    let vector_layout = def.vector_layout(ident);
     let unit_id = UNIT_POS_PLANE;
     let served = src.vector_size();
-    let width = comptime!(served as u32);
-    // Only row-major layout is currently supported for manual fragment loads.
-    comptime!(assert!(
-        matches!(layout, MatrixLayout::RowMajor),
-        "MmaData::load: a manual fragment load reads a row-major stage; \
-         {layout:?} is not wired through the matrix view"
-    ));
-
+    let width = comptime!(served);
     let (rows, cols) = comptime!(edges);
-    let view = src.fragment_matrix_packed::<W>(rows, cols);
+    let transposed = comptime!(match layout {
+        MatrixLayout::RowMajor => false,
+        MatrixLayout::ColMajor => true,
+        MatrixLayout::Undefined => {
+            panic!("MmaData::load: a manual fragment load reads a row- or col-major window")
+        }
+    });
+    // A line is addressed by its index within the window, so the window's edge along its lines
+    // must hold whole lines: a fragment narrower than a line (NVIDIA's `n = 8` beside a 16-wide
+    // line) starts inside one, and its index would round down to the line before.
+    let line_edge = comptime!(if transposed { rows } else { cols });
+    comptime!(assert!(
+        line_edge.is_multiple_of(width),
+        "MmaData::load: a {width}-wide line runs past the fragment's {line_edge}-cell edge along \
+         it, which a manual fragment load cannot read from inside the line; serve the operand at \
+         most {line_edge} wide"
+    ));
+    let view = if comptime!(transposed) {
+        src.fragment_matrix_packed::<W>(cols, rows)
+    } else {
+        src.fragment_matrix_packed::<W>(rows, cols)
+    };
+    let along_lines = comptime!(vector_layout == layout);
+    comptime!(assert!(
+        !along_lines || vector_size.is_multiple_of(width) || width.is_multiple_of(vector_size),
+        "MmaData::load: a {vector_size}-cell register vector neither holds whole {width}-wide \
+         lines nor sits inside one"
+    ));
 
     #[unroll]
     for i in 0..num_vectors {
         let mut vector = Vector::empty();
-        #[unroll]
-        for e in 0..vector_size {
-            let elem_idx = i * vector_size + e;
-            let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
-            let line = view.read((row, col / width));
-            vector.insert(e, line.extract_dynamic((col % width).cast::<usize>()));
+        if comptime!(along_lines) {
+            // The vector's cells are consecutive along the window's line axis, from its first.
+            let (row, col) = def.position_of_nth(unit_id, comptime!(i * vector_size) as u32, ident);
+            let (line_row, cell) = if comptime!(transposed) {
+                (col, row)
+            } else {
+                (row, col)
+            };
+            if comptime!(width >= vector_size) {
+                // One line holds the whole vector: a register vector of a matrix instruction
+                // starts at a multiple of its own size along the axis it runs down (the unit's
+                // share of a row or column is whole vectors), and `width` is a multiple of
+                // `vector_size`, so `start + vector_size` never passes `width`.
+                let line = view.read((line_row, cell / comptime!(width as u32)));
+                let start = cell % comptime!(width as u32);
+                #[unroll]
+                for e in 0..vector_size {
+                    vector.insert(e, line.extract_dynamic((start + e as u32).cast::<usize>()));
+                }
+            } else {
+                #[unroll]
+                for l in 0..comptime!(vector_size / width) {
+                    let line = view.read((
+                        line_row,
+                        cell / comptime!(width as u32) + comptime!(l as u32),
+                    ));
+                    #[unroll]
+                    for e in 0..width {
+                        vector.insert(comptime!(l * width + e), line.extract(e));
+                    }
+                }
+            }
+        } else {
+            #[unroll]
+            for e in 0..vector_size {
+                let elem_idx = i * vector_size + e;
+                let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
+                let (line_row, cell) = if comptime!(transposed) {
+                    (col, row)
+                } else {
+                    (row, col)
+                };
+                let line = view.read((line_row, cell / comptime!(width as u32)));
+                vector.insert(
+                    e,
+                    line.extract_dynamic((cell % comptime!(width as u32)).cast::<usize>()),
+                );
+            }
         }
         fragment[i] = vector;
     }

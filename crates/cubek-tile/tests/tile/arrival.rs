@@ -9,7 +9,7 @@
 //! An `Arrival` that counted the grid instead of the group would leave one row unwritten.
 
 use cubecl::prelude::*;
-use cubek_tile::*;
+use cubek_tile::ops::reduce::Arrival;
 
 /// Cubes per row, units per cube, and the rows that run side by side.
 const CUBES: u32 = 16;

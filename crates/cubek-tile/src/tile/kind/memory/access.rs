@@ -60,9 +60,6 @@ impl<T: Numeric> Tile<T> {
 
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem_mut("view_mut");
-        if comptime!(g.store.quant.is_some()) {
-            panic!("Tile::view_mut: writing a quantized tile requires requantization")
-        }
         g.window_view_mut::<W>(comptime!(Guard::Checked))
     }
 }
@@ -107,21 +104,13 @@ impl<T: Numeric> Memory<T> {
         }
     }
 
-    /// How far this store's stored form travels ([`DequantAt`]). A plain store answers
-    /// [`DequantAt::Load`], served and stored being the same element; a [`packed`](Packing::Packed)
-    /// store with no scheme answers [`DequantAt::Read`], since a stage copies its words verbatim.
-    // The `let`-then-return is load-bearing, see [`quant_pack`](Memory::quant_pack).
-    #[allow(clippy::let_and_return)]
-    pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
-        let dequant_at = #[comptime]
-        match &self.store.quant {
-            ComptimeOption::Some(info) => comptime!(info.dequant_at),
-            ComptimeOption::None => comptime!(match self.store.packing {
-                Packing::Plain => DequantAt::Load,
-                _ => DequantAt::Read,
-            }),
-        };
-        dequant_at
+    /// What a stage of this store holds ([`StageElement`]): the values it serves where it stores
+    /// them as they are, its words where it packs them, which a stage copies verbatim.
+    pub(crate) fn stage_element(&self) -> comptime_type!(StageElement) {
+        comptime!(match self.store.packing {
+            Packing::Plain => StageElement::Served,
+            Packing::Packed { .. } => StageElement::Stored,
+        })
     }
 
     /// How this store's values sit in memory, as stated at construction.
@@ -130,14 +119,13 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// This buffer's byte length, widened by the physical width: the transaction count a TMA fill
-    /// into it lands. A packed or quantized buffer widens by the *storage* element and physical
+    /// into it lands. A packed buffer widens by the *storage* element and physical
     /// width instead, same line count.
     pub(crate) fn size_bytes(&self) -> u32 {
         let lines = self.store.buffer().len() as u32;
         let wp = comptime!(self.store.packing.physical(self.store.vector_size) as u32);
         match comptime!(self.store.packing) {
             Packing::Plain => lines * T::size().comptime() as u32 * wp,
-            Packing::Native => lines * i8::size().comptime() as u32 * wp,
             Packing::Packed { field: _ } => lines * u32::size().comptime() as u32 * wp,
         }
     }
@@ -201,7 +189,7 @@ impl<T: Numeric> Memory<T> {
     /// The backing as a [`View`] addressed by `layout`: the read path, and the only one a
     /// [`ReadCall`](Backing::ReadCall) serves; the mirror of [`write_view`](Memory::write_view).
     ///
-    /// The slice-shaped half (dense runs, quantized re-typing, tma maps) is deliberately left out:
+    /// The slice-shaped half (dense runs, storage re-typing, tma maps) is deliberately left out:
     /// none is a view over `Coords1d`, so each keeps saying so through [`Store::buffer`].
     fn read_view<W: Size>(&self, layout: BufferLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.store.backing {
@@ -283,6 +271,10 @@ impl<T: Numeric> Memory<T> {
             "Memory: a window inside one storage tile reads unmasked; a storage-tiled tensor is \
              padded to whole storage tiles"
         ));
+        comptime!(self.layout.rows.assert_in_order(
+            "Memory::contiguous_layout",
+            "a window inside one storage tile is addressed as one run"
+        ));
         let positional = comptime!(self.layout.projection.clone());
         let rank = comptime!(positional.coordinate_rank());
         let mut strides = Coords::<u32>::new();
@@ -296,18 +288,19 @@ impl<T: Numeric> Memory<T> {
             physical_shape: self.window.extent.clone(),
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
+            rows: RowArrangement::InOrder,
         }
     }
 
-    /// [`lines`](Memory::lines) with the buffer re-typed to the quantized storage
-    /// element `I` it truly holds (see [`QuantInfo`]).
+    /// [`lines`](Memory::lines) with the buffer re-typed to the storage element `I` it truly
+    /// holds: `u32` words for a packed store.
     pub(crate) fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
         let storage = unsafe { self.store.buffer().downcast_unchecked::<I>() };
         storage.as_vectorized().with_vector_size::<W>()
     }
 
-    /// The mutable twin of [`lines_storage`](Memory::lines_storage): where a quant stage's
-    /// [`fill_straight`](Memory::fill_straight) writes the packed storage words. `I == T` on a
+    /// The mutable twin of [`lines_storage`](Memory::lines_storage): where a packed stage's
+    /// [`fill_straight`](Memory::fill_straight) writes its words. `I == T` on a
     /// plain copy, a same-type reinterpret.
     pub(crate) fn lines_storage_mut<I: Numeric, W: Size>(&mut self) -> &mut [Vector<I, W>] {
         let storage = unsafe { self.store.buffer_mut().downcast_mut_unchecked::<I>() };
@@ -316,7 +309,7 @@ impl<T: Numeric> Memory<T> {
 
     /// The window as one dense run of lines: index `i` addresses line `origin + i`, one add and no
     /// layout walk. Legal only on a physically contiguous, row-major window (untiled, unmasked,
-    /// unquantized); the comptime-checkable parts assert, contiguity is the caller's guarantee.
+    /// unpacked); the comptime-checkable parts assert, contiguity is the caller's guarantee.
     pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.assert_dense();
         let all = self.lines::<W>();
@@ -399,12 +392,18 @@ impl<T: Numeric> Memory<T> {
                  layout, or stage it"
             ),
         }
-        // A raw window serves the buffer at the element it was erased to, so a quantized store
-        // would hand its stored bytes over as served values. Every other door refuses the same way.
+        // A raw window addresses a row as a base and a stride, which a swizzled row is not.
+        comptime!(
+            self.layout
+                .rows
+                .assert_rows_are_runs("Memory::window_slice")
+        );
+        // A raw window serves the buffer at the element it was erased to, so a packed store
+        // would hand its stored words over as served values. Every other door refuses the same way.
         if comptime!(self.store.packing != Packing::Plain) {
             panic!(
                 "Memory::window_slice: a packed store has no raw element window; a fragment \
-                 load reads it through Tile::matrix_transparent"
+                 load reads it through Tile::matrix_packed"
             )
         }
         self.window_start.cast::<usize>()
@@ -446,7 +445,7 @@ impl<T: Numeric> Memory<T> {
         if comptime!(self.store.packing != Packing::Plain) {
             panic!(
                 "Tile::matrix: a packed tile only serves values its read unpacks \
-                 (Tile::matrix_transparent)"
+                 (Tile::matrix_packed)"
             )
         }
         Masked::new(
@@ -496,92 +495,20 @@ impl<T: Numeric> Memory<T> {
         )
     }
 
-    /// Quantization-transparent [`flat`](Memory::flat): a plain store is read as it stands, a
-    /// quantized one re-types to the storage element `I` and pairs it with the scales over the same
-    /// window, dequantizing each read into `T`. `#[comptime]`, so the plain path pays nothing.
-    pub(crate) fn flat_transparent<I: Numeric, WP: Size, W: Size>(
-        &self,
-    ) -> FlatView<'_, Vector<T, W>> {
-        #[comptime]
-        match &self.store.quant {
-            ComptimeOption::Some(info) => {
-                // The storage view groups at the *physical* width: a packed buffer holds
-                // `W / num_quants` elements per served line.
-                let values = self
-                    .window_view_storage::<I, WP>(comptime!(Guard::Checked))
-                    .view(FlatLayout::new(self.window.extent.clone()));
-                let scales = info
-                    .buffer
-                    .view(ScaleLayout::new(
-                        info.strides.clone(),
-                        info.window_start,
-                        comptime!(info.block.clone()),
-                        comptime!(self.store.vector_size),
-                        comptime!(info.extent.clone()),
-                    ))
-                    .view(FlatLayout::new(self.window.extent.clone()));
-                let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
-                FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
-            }
-            // The flat scan reads its own window whole, so it keeps the store's own mask.
-            ComptimeOption::None => self.unscaled::<WP, W, Coords1d, FlatLayout>(
-                FlatLayout::new(self.window.extent.clone()),
-                comptime!(Guard::Checked),
-            ),
-        }
+    /// [`flat`](Memory::flat) through this store's [`Packing`]: a plain store read as it stands,
+    /// a packed one unpacked at the read. `WP` is the physical line the buffer holds.
+    pub(crate) fn flat_unpacked<WP: Size, W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+        // The flat scan reads its own window whole, so it keeps the store's own mask.
+        self.unpacked::<WP, W, Coords1d, FlatLayout>(
+            FlatLayout::new(self.window.extent.clone()),
+            comptime!(Guard::Checked),
+        )
     }
 
-    /// Quantization-transparent [`masked`](Memory::masked): the windowed twin of
-    /// [`flat_transparent`](Memory::flat_transparent). A quantized store re-types to `I` and pairs
-    /// it with the scales over the same `layout`, so a leaf reads it straight from gmem.
-    pub(crate) fn transparent<
-        I: Numeric,
-        WP: Size,
-        W: Size,
-        C: Coordinates + 'static,
-        L: TileLayout<C>,
-    >(
-        &self,
-        layout: L,
-        #[comptime] guard: Guard,
-    ) -> Masked<'_, Vector<T, W>, C> {
-        #[comptime]
-        match &self.store.quant {
-            // A quantized view *is* a view: cubecl's decodes on read and answers as `Vector<T, W>`,
-            // so both arms hand back the same masked view and no caller learns the difference.
-            ComptimeOption::Some(info) => {
-                // The storage view groups at the *physical* width: a packed buffer holds
-                // `W / num_quants` elements per served line.
-                let values = self
-                    .window_view_storage::<I, WP>(guard)
-                    .view(layout.clone());
-                // The scales over this same window: `ScaleLayout` resolves a window coordinate
-                // to its block's scale, addressed by the same `layout` as the values, so both
-                // answer the same coordinate.
-                let scales = info
-                    .buffer
-                    .view(ScaleLayout::new(
-                        info.strides.clone(),
-                        info.window_start,
-                        comptime!(info.block.clone()),
-                        comptime!(self.store.vector_size),
-                        comptime!(info.extent.clone()),
-                    ))
-                    .view(layout);
-                let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
-                Masked::new(
-                    dequant.view(),
-                    comptime!(guard.checks() && self.access.overhang.masks()),
-                )
-            }
-            ComptimeOption::None => self.unscaled::<WP, W, C, L>(layout, guard),
-        }
-    }
-
-    /// The scale-free half of [`transparent`](Memory::transparent): a plain store read as it
-    /// stands, a packed one unpacked at the read ([`PackedView`]) off its field alone, needing no
-    /// scheme or grid. `WP` is the physical line the buffer holds, `W` the served one.
-    fn unscaled<WP: Size, W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
+    /// [`masked`](Memory::masked) through this store's [`Packing`]: a plain store read as it
+    /// stands, a packed one unpacked at the read ([`PackedView`]) off its field alone. `WP` is the
+    /// physical line the buffer holds, `W` the served one.
+    pub(crate) fn unpacked<WP: Size, W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
         &self,
         layout: L,
         #[comptime] guard: Guard,
@@ -589,10 +516,6 @@ impl<T: Numeric> Memory<T> {
         let packing = self.packing();
         match comptime!(packing) {
             Packing::Plain => self.masked::<W, C, L>(layout, guard),
-            Packing::Native => panic!(
-                "Memory::transparent: a native store with nothing to fold in serves its own \
-                 element; bind it as that element and let the contraction cast it"
-            ),
             Packing::Packed { field } => {
                 let words = self
                     .window_view_storage::<u32, WP>(comptime!(Guard::Checked))
@@ -606,9 +529,8 @@ impl<T: Numeric> Memory<T> {
         }
     }
 
-    /// [`transparent`](Memory::transparent) with the storage element resolved from this store's
-    /// own [`Packing`]: the one place a packing becomes a storage element, so no reader
-    /// re-derives the `i8`/`u32` choice from a bare factor.
+    /// [`unpacked`](Memory::unpacked) with the physical line resolved from this store's own
+    /// [`Packing`], so no reader re-derives it from a bare factor.
     pub(crate) fn packed<W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
         &self,
         layout: L,
@@ -622,15 +544,11 @@ impl<T: Numeric> Memory<T> {
         match comptime!(packing) {
             Packing::Plain => {
                 let size!(WP) = physical;
-                self.transparent::<T, WP, W, C, L>(layout, guard)
-            }
-            Packing::Native => {
-                let size!(WP) = physical;
-                self.transparent::<i8, WP, W, C, L>(layout, guard)
+                self.unpacked::<WP, W, C, L>(layout, guard)
             }
             Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
-                self.transparent::<u32, WP, W, C, L>(layout, guard)
+                self.unpacked::<WP, W, C, L>(layout, guard)
             }
         }
     }
@@ -820,39 +738,6 @@ impl<T: Numeric> Memory<T> {
             .window_start
             .plus(advances.sum(comptime!((0..rank).collect::<Vec<_>>())));
 
-        // Re-window the scales alongside the values.
-        let mut origin_u32 = Coords::<u32>::new();
-        #[unroll]
-        for p in 0..rank {
-            origin_u32.push(origin.at(p).cast::<u32>());
-        }
-        let quant = #[comptime]
-        match &self.store.quant {
-            ComptimeOption::Some(info) => {
-                comptime!(assert!(
-                    !self.window.signed,
-                    "Memory::at: a quantized operand cannot carry a negative window origin, its \
-                     scale grid is addressed unsigned"
-                ));
-                // A quantized operand is direct (asserted at construction), so the child window's
-                // extent per axis is this level's cut edge; an axis left whole keeps its extent.
-                ComptimeOption::new_Some(info.window(
-                    &origin_u32,
-                    rank,
-                    comptime!(self.store.vector_size),
-                    comptime!(
-                        (0..rank)
-                            .map(|p| match step.level.extent_in(&space, space.axis_at(p)) {
-                                Extent::Static(edge) => edge,
-                                Extent::Dynamic => info.extent[p],
-                            })
-                            .collect::<Vec<_>>()
-                    ),
-                ))
-            }
-            ComptimeOption::None => ComptimeOption::new_None(),
-        };
-
         self.moved_to(
             Window::new(
                 origin,
@@ -863,7 +748,6 @@ impl<T: Numeric> Memory<T> {
             ),
             start,
             map,
-            quant,
             // The window no longer covers the buffer, so the straight-through fill is off.
             comptime!(Access {
                 whole: false,
@@ -995,7 +879,6 @@ impl<T: Numeric> Memory<T> {
         window: Window,
         window_start: u32,
         map: RuntimeMap,
-        quant: ComptimeOption<QuantInfo>,
         #[comptime] access: Access,
         #[comptime] unit_share: UnitShare,
         #[comptime] split_share: SplitShare,
@@ -1006,7 +889,6 @@ impl<T: Numeric> Memory<T> {
             store: Store::<T> {
                 backing: self.store.backing.clone(),
                 vector_size: comptime!(self.store.vector_size),
-                quant,
                 packing: comptime!(self.store.packing),
             },
             layout: self.layout.clone(),
@@ -1022,6 +904,7 @@ impl<T: Numeric> Memory<T> {
             split_share,
             init_from: comptime!(self.init_from),
             factor,
+            codebook: self.codebook.clone(),
         }
     }
 
@@ -1080,7 +963,6 @@ impl<T: Numeric> Memory<T> {
             ),
             start,
             self.map.clone(),
-            self.store.quant.clone(),
             // A placed window no longer covers the buffer, so the straight-through fill is off,
             // and `until` is a runtime bound the launch could not have stated: reads past it are
             // an overhang this tile did not have before, so it masks from here down.

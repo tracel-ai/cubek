@@ -16,6 +16,7 @@ use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 /// The weight's output dimension: rows of the lhs.

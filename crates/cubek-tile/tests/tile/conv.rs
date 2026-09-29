@@ -15,8 +15,16 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
+use cubek_tile::kind::Guard;
+use cubek_tile::layout::Divisor;
+use cubek_tile::layout::Offset;
+use cubek_tile::layout::PhysicalAxisMap;
+use cubek_tile::layout::Scale;
+use cubek_tile::ops::matmul::LoadMethod;
+use cubek_tile::ops::matmul::MmaIo;
+use cubek_tile::space::Coords;
 use cubek_tile::*;
-use cubek_tile::{Boundary, BoundaryPolicy};
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 // Output positions, output channels, window taps, input channels. `OW`/`RW` are the second
 // spatial pair the 2-D case adds.
@@ -2303,7 +2311,7 @@ fn fragment_matrix_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let size!(W) = input.vector_size();
-    let view = input.fragment_matrix::<E, W, W>(rows, cols);
+    let view = input.fragment_matrix::<W, W>(rows, cols);
 
     #[unroll]
     for r in 0..rows {
@@ -2931,7 +2939,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
-    let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
+    let _view = stage.nd::<Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 
 #[test]

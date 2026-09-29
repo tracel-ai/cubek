@@ -5,6 +5,7 @@
 
 mod access;
 mod base;
+mod codebook;
 mod factor;
 mod global;
 mod stage;
@@ -13,6 +14,7 @@ mod view;
 mod window;
 
 pub use base::*;
+pub(crate) use codebook::*;
 pub(crate) use factor::*;
 pub use global::*;
 pub(crate) use stage::*;

@@ -10,7 +10,7 @@ use cubecl::std::tensor::{
 
 use crate::*;
 
-/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor owns the
+/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] (the descriptor owns the
 /// box, the [`TmaDynLayout`] the coordinate rules) with its comptime [`TileSpec`]; [`TileArg`]'s
 /// twin. Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]
@@ -102,7 +102,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
 /// A load's box origin is tile-aligned (the storage tile is the stage, which the routine
 /// enforces), so the inner pair is always `0`.
 #[derive(CubeType, CubeLaunch, Clone)]
-pub struct TmaStoredLayout {
+pub(crate) struct TmaStoredLayout {
     /// Logical `(rows, cols)` of the operand.
     dims: (u32, u32),
     /// The storage tile `(rows, cols)`, which is the descriptor's box.

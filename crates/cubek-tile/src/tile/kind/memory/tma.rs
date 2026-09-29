@@ -56,6 +56,12 @@ impl<T: Numeric> TmaData<T> {
     /// The caller elects, because the same unit must declare the transaction count: the bytes are
     /// that unit's alone, and a second issuer would over-count and corrupt the stage.
     pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {
+        // The bulk copy lands its box row after row, in order and unpadded; the tensor map's own
+        // swizzle modes are a different permutation from a swizzled stage's.
+        comptime!(dst.layout.rows.assert_in_order(
+            "TmaData::stage_into",
+            "a TMA box lands its rows dense and in order"
+        ));
         self.view.tensor_map_load(
             barrier,
             dst.store.buffer_mut().downcast_mut(),

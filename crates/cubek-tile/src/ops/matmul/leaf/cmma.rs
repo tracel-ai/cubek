@@ -9,7 +9,6 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
-    std::tensor::layout::CoordsDyn,
 };
 
 use crate::ops::matmul::leaf::Side;
@@ -318,44 +317,6 @@ fn dense_strides(space: &Space) -> Vec<usize> {
         strides[p] = below;
     }
     strides
-}
-
-/// The scalar coordinate of the `line`-th line of a window whose innermost axis counts in
-/// `vw`-wide lines: one entry per axis, the line's first value.
-#[cube]
-fn coords_of_line(
-    line: u32,
-    #[comptime] line_extents: Vec<usize>,
-    #[comptime] vw: usize,
-) -> Coords<u32> {
-    let n = comptime!(line_extents.len());
-    let digits = Coords::constant(line_extents).unravel(line);
-    let mut coords = Coords::<u32>::new();
-    #[unroll]
-    for p in 0..n {
-        if comptime!(p == n - 1) {
-            coords.push(digits.at(p).times(comptime!(vw as u32)));
-        } else {
-            coords.push(digits.at(p));
-        }
-    }
-    coords
-}
-
-/// `coords` as an N-D view addresses them: the innermost a line index.
-#[cube]
-fn as_dyn(coords: &Coords<u32>, #[comptime] vw: usize) -> CoordsDyn {
-    let n = coords.len();
-    let mut at = CoordsDyn::new();
-    #[unroll]
-    for p in 0..n {
-        if comptime!(p == n - 1) {
-            at.push(coords.at(p).divided_by(comptime!(vw as u32)));
-        } else {
-            at.push(coords.at(p));
-        }
-    }
-    at
 }
 
 /// Where `coords` lands in a dense copy: the scalar offset under `strides`.

@@ -15,6 +15,8 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
+use cubek_tile::kind::PlanePartition;
+use cubek_tile::stage::RowChunks;
 use cubek_tile::*;
 
 const M: Axis = Axis(0);
@@ -217,6 +219,7 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
             &b_cube,
             comptime!(StageStorage::Tiled {
                 block: vec![(M, 16), (N, 16), (K, 16)],
+                chunks: RowChunks::InOrder,
             }),
             1usize,
         );

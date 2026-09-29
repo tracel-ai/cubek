@@ -1,15 +1,15 @@
-//! CPU GEMM on *tiled* (packed) storage vs the plain row-major baseline.
+//! CPU GEMM on *tiled* storage vs the plain row-major baseline.
 //!
 //! The generic `gemm` bench only ever feeds plain row/col-major buffers, so the tiled path
 //! (`levels > 0`) is unmeasured. This category drives `cpu_gemm::launch_ref` directly with tiled
 //! operands. Every strategy fixes the register-fit leaf and plane grid and varies only the storage
-//! packing, so `strided_pN` vs `tiled_pN` isolates the storage layout.
+//! storage, so `strided_pN` vs `tiled_pN` isolates the storage layout.
 //!
 //! Finding: with tiled reads vectorized (`Launcher::vector_size` accepts tiled operands whose
 //! leaf tile is `N`-contiguous)
 //! the tiled path is ~10× faster than when it was scalar, but still ~1.5× *slower* than strided and
 //! **insensitive to block size** (a 16²→256² sweep was flat): it is addressing-bound on the
-//! `TiledViewLayout` coord math, never reaching the memory wall. Storage packing buys no locality
+//! `TiledViewLayout` coord math, never reaching the memory wall. Storage tiling buys no locality
 //! here; cache locality is a compute-tiling (schedule) matter, not a storage-reblocking one. Kept as
 //! the evidence for that + a regression guard on the vectorized tiled path.
 
@@ -31,16 +31,16 @@ use crate::{
 };
 
 /// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` instruction (no
-/// spill), so the only variable across a `strided_pN`/`tiled_pN` pair is the storage packing.
+/// spill), so the only variable across a `strided_pN`/`tiled_pN` pair is the storage layout.
 const LEAF: InstructionShape = InstructionShape { m: 2, n: 32, k: 64 };
 
-/// Storage-tile edge for the packed variants: square `64 × 64` blocks (16 KiB in f32, L1-resident)
+/// Storage-tile edge for the tiled variants: square `64 × 64` blocks (16 KiB in f32, L1-resident)
 /// that divide every benchmarked shape. A sweep of 16²→256² was flat, so one representative edge is
 /// enough (see the module doc).
 const EDGE: usize = 64;
 
 /// The binding saying for itself that both its matrix dims are stored `levels + 1` fragments deep.
-fn packed(mut binding: TensorBinding, levels: usize) -> TensorBinding {
+fn tiled(mut binding: TensorBinding, levels: usize) -> TensorBinding {
     binding.tiling =
         Tiling::new(&[levels + 1; 2]).expect("two matrix dims, at most four fragments");
     binding
@@ -48,19 +48,19 @@ fn packed(mut binding: TensorBinding, levels: usize) -> TensorBinding {
 
 /// How an operand's matrix axes are physically stored.
 #[derive(Clone, Copy)]
-enum Packing {
+enum Storage {
     /// Plain row-major (`levels = 0`): the vectorized reference path.
     RowMajor,
-    /// One level of square `edge × edge` storage tiles (`levels = 1`): the packed path under test.
+    /// One level of square `edge × edge` storage tiles (`levels = 1`): the tiled path under test.
     Tiled { edge: usize },
 }
 
-impl Packing {
+impl Storage {
     /// Storage-tiling depth: `0` strided, `1` for a single level of tiles.
     fn levels(self) -> usize {
         match self {
-            Packing::RowMajor => 0,
-            Packing::Tiled { .. } => 1,
+            Storage::RowMajor => 0,
+            Storage::Tiled { .. } => 1,
         }
     }
 
@@ -69,8 +69,8 @@ impl Packing {
     /// builder reads it back as `levels = 1`.
     fn physical_dims(self, batch: usize, rows: usize, cols: usize) -> Vec<usize> {
         match self {
-            Packing::RowMajor => vec![batch, rows, cols],
-            Packing::Tiled { edge } => vec![batch, rows / edge, cols / edge, edge, edge],
+            Storage::RowMajor => vec![batch, rows, cols],
+            Storage::Tiled { edge } => vec![batch, rows / edge, cols / edge, edge, edge],
         }
     }
 }
@@ -85,15 +85,15 @@ pub struct TiledProblem {
 
 #[derive(Clone, Copy)]
 pub struct TiledStrategy {
-    packing: Packing,
+    storage: Storage,
     planes: PlaneGrid,
 }
 
-/// A fresh uniform-random operand of the given physical `packing`; a contiguous buffer whose
+/// A fresh uniform-random operand of the given physical `storage`; a contiguous buffer whose
 /// row-major strides already realize the layout (tiled dims are just higher rank).
 fn make(
     client: &Client,
-    packing: Packing,
+    storage: Storage,
     batch: usize,
     rows: usize,
     cols: usize,
@@ -102,7 +102,7 @@ fn make(
 ) -> TensorHandle {
     TestInput::builder(
         client.clone(),
-        Shape::from(packing.physical_dims(batch, rows, cols)),
+        Shape::from(storage.physical_dims(batch, rows, cols)),
     )
     .dtype(dtype)
     .uniform(seed, 0.0, 1.0)
@@ -123,27 +123,27 @@ impl Benchmark for TiledBench {
 
     fn prepare(&self) -> Self::Input {
         let TiledProblem { b, m, n, k } = self.problem;
-        let packing = self.strategy.packing;
-        let lhs = make(&self.client, packing, b, m, k, self.dtypes.lhs_global, 0);
-        let rhs = make(&self.client, packing, b, k, n, self.dtypes.rhs_global, 1);
+        let storage = self.strategy.storage;
+        let lhs = make(&self.client, storage, b, m, k, self.dtypes.lhs_global, 0);
+        let rhs = make(&self.client, storage, b, k, n, self.dtypes.rhs_global, 1);
         (lhs, rhs)
     }
 
     fn execute(&self, (lhs, rhs): Self::Input) -> Result<Self::Output, String> {
         let TiledProblem { b, m, n, k: _ } = self.problem;
-        let packing = self.strategy.packing;
-        let levels = packing.levels();
+        let storage = self.strategy.storage;
+        let levels = storage.levels();
         let out = TensorHandle::empty(
             &self.client,
-            packing.physical_dims(b, m, n),
+            storage.physical_dims(b, m, n),
             self.dtypes.acc_global,
         );
 
         launch_ref(
             &self.client,
-            InputBinding::Normal(packed(lhs.binding(), levels), self.dtypes.lhs_global),
-            InputBinding::Normal(packed(rhs.binding(), levels), self.dtypes.rhs_global),
-            packed(out.binding(), levels),
+            InputBinding::Normal(tiled(lhs.binding(), levels), self.dtypes.lhs_global),
+            InputBinding::Normal(tiled(rhs.binding(), levels), self.dtypes.rhs_global),
+            tiled(out.binding(), levels),
             &BlueprintStrategy::Forced(CpuGemmBlueprint {
                 instruction: LEAF,
                 planes: self.strategy.planes,
@@ -159,15 +159,15 @@ impl Benchmark for TiledBench {
     }
 
     fn name(&self) -> String {
-        let packing = match self.strategy.packing {
-            Packing::RowMajor => "strided".to_string(),
-            Packing::Tiled { edge } => format!("tiled{edge}"),
+        let storage = match self.strategy.storage {
+            Storage::RowMajor => "strided".to_string(),
+            Storage::Tiled { edge } => format!("tiled{edge}"),
         };
         let planes = self.strategy.planes;
         format!(
             "{}-cpu-gemm-tiled-{}-p{}x{}",
             self.client.name(),
-            packing,
+            storage,
             planes.m,
             planes.n,
         )
@@ -210,7 +210,7 @@ pub fn bench(
     Ok(RunSamples::new(durations))
 }
 
-/// Square-ish shapes whose dims all divide `EDGE`, so both packings run maskless. `1536³` carries a
+/// Square-ish shapes whose dims all divide `EDGE`, so both layouts run maskless. `1536³` carries a
 /// factor of 3 so its plane grid can split evenly across a 12-core machine.
 const SHAPES: &[(&str, &str, usize, usize, usize, usize)] = &[
     ("rect_1x512", "512³", 1, 512, 512, 512),
@@ -233,8 +233,8 @@ pub fn problems() -> Vec<CatalogEntry<TiledProblem>> {
         .collect()
 }
 
-/// For each thread count: the strided (vectorized row-major) baseline and the packed variant at the
-/// same leaf/planes, so `strided_pN` vs `tiled_pN` isolates the storage packing.
+/// For each thread count: the strided (vectorized row-major) baseline and the tiled variant at the
+/// same leaf/planes, so `strided_pN` vs `tiled_pN` isolates the storage layout.
 pub fn strategies() -> Vec<CatalogEntry<TiledStrategy>> {
     let mut out = Vec::new();
     for &(tag, planes) in PLANE_GRIDS {
@@ -242,7 +242,7 @@ pub fn strategies() -> Vec<CatalogEntry<TiledStrategy>> {
             format!("strided_{tag}"),
             format!("Strided (row-major, {tag})"),
             TiledStrategy {
-                packing: Packing::RowMajor,
+                storage: Storage::RowMajor,
                 planes,
             },
         ));
@@ -250,7 +250,7 @@ pub fn strategies() -> Vec<CatalogEntry<TiledStrategy>> {
             format!("tiled_{tag}"),
             format!("Tiled ({EDGE}² blocks, {tag})"),
             TiledStrategy {
-                packing: Packing::Tiled { edge: EDGE },
+                storage: Storage::Tiled { edge: EDGE },
                 planes,
             },
         ));

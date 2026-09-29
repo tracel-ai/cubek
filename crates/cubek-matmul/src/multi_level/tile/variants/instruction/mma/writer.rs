@@ -68,7 +68,7 @@ fn store_manual_transposed<
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
-    let lane_id = UNIT_POS_PLANE;
+    let unit_id = UNIT_POS_PLANE;
 
     let stride = tile.unvectorized_stride();
     let mut tile = tile.with_vector_size::<Const<1>>();
@@ -83,7 +83,7 @@ fn store_manual_transposed<
         #[unroll]
         for n in 0..vector_size {
             let elem_idx = i * vector_size + n;
-            let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
+            let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
             let offset = row * stride_row + col * stride_col;
             let offset = tile.stage_offset(offset);
 
@@ -110,7 +110,7 @@ fn store_manual_plain<
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
-    let lane_id = UNIT_POS_PLANE;
+    let unit_id = UNIT_POS_PLANE;
     let stride = tile.unvectorized_stride();
     // Supported on all targets that support manual MMA
     let mut tile = tile.with_vector_size::<N>();
@@ -124,7 +124,7 @@ fn store_manual_plain<
     for i in 0..num_vectors {
         let value = fragment[i];
         let elem_idx = i * vector_size;
-        let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
+        let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
         let offset = row * stride_row + col * stride_col;
         let offset = tile.stage_offset(offset / vector_size as u32);
 
@@ -197,13 +197,13 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let elem_size = E::size().comptime();
     let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size) as u32;
-    // Height is always 8, and lanes are divided into blocks of 8.
+    // Height is always 8, and units are divided into blocks of 8.
     let height = 8;
 
     //  Indices are wrapped for < 4 registers.
-    let lane = UNIT_POS_PLANE;
-    let sub_lane = lane % height;
-    let nth_matrix = lane / height % num_regs as u32;
+    let unit = UNIT_POS_PLANE;
+    let sub_unit = unit % height;
+    let nth_matrix = unit / height % num_regs as u32;
 
     let tiles_row = m / height;
 
@@ -211,7 +211,7 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let row_offs = (nth_matrix % tiles_row) * 8;
     let col_offs = (nth_matrix / tiles_row) * width;
 
-    let (row, col) = (row_offs + sub_lane, col_offs);
+    let (row, col) = (row_offs + sub_unit, col_offs);
 
     let start = row * stride_row + col * stride_col;
     start / stage_vector_size as u32

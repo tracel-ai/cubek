@@ -113,8 +113,10 @@ pub fn tma_operand(
 ///
 /// # Panics
 ///
-/// A binding whose innermost two dims are not `tile`, which is what packing produced and what
-/// the routine's own storage-tile check enforces.
+/// A binding whose innermost two dims are not `tile`, or whose tile is not stored a row at a
+/// time: the descriptor takes the innermost dim to step by one and each row to follow the last,
+/// so any other tile would load in silence as the wrong values. The routine's own checks refuse
+/// both first.
 pub fn tma_operand_tiled(
     binding: TensorBinding,
     tile: (usize, usize),
@@ -126,6 +128,14 @@ pub fn tma_operand_tiled(
     assert_eq!(
         stored, tile,
         "tma_operand_tiled: the binding is stored in {stored:?} tiles, not the {tile:?} asked for"
+    );
+    let inner = (binding.strides[rank - 2], binding.strides[rank - 1]);
+    assert_eq!(
+        inner,
+        (tile.1, 1),
+        "tma_operand_tiled: a box is one contiguous run only for a tile stored a row at a time, \
+         which steps ({}, 1); this one steps {inner:?}",
+        tile.1
     );
     // One box per storage tile: unit on every outer dim, the whole tile on the inner pair.
     let mut dims = vec![1usize; rank];
@@ -172,8 +182,8 @@ mod tests {
 
     use super::*;
 
-    /// A weight packed to a 32x64 stage: `[256, 512]` stored as `[8, 8, 32, 64]`.
-    fn packed() -> TensorBinding {
+    /// A weight tiled to a 32x64 stage: `[256, 512]` stored as `[8, 8, 32, 64]`.
+    fn tiled() -> TensorBinding {
         let client = cubecl::test_device().client();
         let shape = shape![8, 8, 32, 64];
         let strides = strides![64 * 32 * 8, 64 * 32, 64, 1];
@@ -188,7 +198,7 @@ mod tests {
     #[test]
     fn a_stored_descriptor_keeps_the_rank_and_boxes_one_storage_tile() {
         let arg = tma_operand_tiled(
-            packed(),
+            tiled(),
             (32, 64),
             f32::elem_type_native(),
             TensorMapSwizzle::None,
@@ -211,7 +221,7 @@ mod tests {
     #[should_panic(expected = "stored in (32, 64) tiles, not the (64, 64) asked for")]
     fn a_stored_descriptor_refuses_a_tile_the_buffer_does_not_hold() {
         tma_operand_tiled(
-            packed(),
+            tiled(),
             (64, 64),
             f32::elem_type_native(),
             TensorMapSwizzle::None,

@@ -7,10 +7,10 @@ use core::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::zspace::Tiling;
 
-use super::analysis::{Boundaries, Labels, Refusal, StorageLevel};
+use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, Packing, Projection, QuantTileArgLaunch,
-    Quantization, Storage, StorageTiling, TileArgLaunch, TileSpec,
+    Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
+    StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -49,7 +49,6 @@ struct ArgData<'a> {
     width: usize,
     boundary: BoundaryPolicy,
     packing: Packing,
-    quant: Option<Quantization>,
     /// Whether the labelled dims bind in the order they step rather than the order the binding
     /// names them ([`in_stride_order`](Arg::in_stride_order)).
     in_stride_order: bool,
@@ -85,7 +84,6 @@ impl<'a> Arg<'a, Unlabelled> {
                 width: 1,
                 boundary: BoundaryPolicy::Derived,
                 packing: Packing::Plain,
-                quant: None,
                 in_stride_order: false,
             },
             _state: PhantomData,
@@ -102,11 +100,11 @@ impl<'a> Arg<'a, Unlabelled> {
     /// An explicit affine [`Projection`] for a gathered operand (a convolution's input, a
     /// resample's source), from logical axes to buffer dims. Refuses a storage-tiled binding.
     ///
-    /// Checking follows [`may_underflow`](Projection::may_underflow); a window off the buffer's
+    /// Checking follows `may_underflow`; a window off the buffer's
     /// *tail* is not detected, so a gather that overruns (a rational mapping's last window always
     /// does) must state [`BoundaryPolicy::Every`].
     ///
-    /// An axis sharing a physical dim has no extent here, so a [`Dynamic`](crate::Extent) one needs
+    /// An axis sharing a physical dim has no extent here, so a `Dynamic` one needs
     /// another operand to witness it; dynamic scales, divisors and offsets declare a launch bound.
     pub fn gathered(mut self, projection: Projection) -> Arg<'a, Labelled> {
         self.data.projection = Some(projection);
@@ -162,14 +160,6 @@ impl<'a> Arg<'a, Labelled> {
         self.data.packing = Packing::Packed {
             field: field.into(),
         };
-        self
-    }
-
-    /// The operand is quantized: its binding holds the scheme's storage element (declared in
-    /// values), and `quant` says how reads dequantize. [`build`](Self::build)'s product carries
-    /// it and launches as a [`QuantTileArg`](crate::QuantTileArg).
-    pub fn quantized(mut self, quant: Quantization) -> Self {
-        self.data.quant = Some(quant);
         self
     }
 
@@ -230,10 +220,20 @@ impl<'a> Arg<'a, Labelled> {
         projection.validate(width);
         // The width against the *settled* geometry, the one the kernel re-expresses in lines.
         // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
-        // destination the negotiation never saw) is gated here: `stride / width` truncates silently.
-        geometry
-            .serves_lines(width)
-            .map_err(|why| Refusal::WidthNotServed { width, why })?;
+        // destination the negotiation never saw) is gated here: `stride / width` truncates
+        // silently.
+        let settled = tiling
+            .as_ref()
+            .map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
+        let geometry = geometry.with_tiling(settled);
+        // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
+        let labels = projection.dense_labels();
+        let served = match labels.last() {
+            Some(&axis) => geometry.serves(&[(axis, width)], &labels),
+            None if width == 1 => Ok(()),
+            None => Err(LineMisfit::NoDims),
+        };
+        served.map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();
         let boundaries = Boundaries::new(
             data.boundary,
@@ -250,9 +250,6 @@ impl<'a> Arg<'a, Labelled> {
             packing: data.packing,
             storage,
         };
-        if let Some(quant) = &data.quant {
-            quant.check(&spec, launch.space(), width)?;
-        }
         let tensor = data
             .binding
             .map(|binding| settled_tensor(binding, &geometry, tiling.as_ref(), stored));
@@ -260,7 +257,6 @@ impl<'a> Arg<'a, Labelled> {
             tensor,
             vector_size: width,
             spec,
-            quant: data.quant,
         };
         Ok((bound, geometry))
     }
@@ -282,9 +278,12 @@ fn stride_ordered(
     }
 }
 
-/// The operand's storage tiling, read off its binding, and the level whose tile it is: a storage
-/// tile is the tile of one of the kernel's levels, or the operand is refused. A gathered operand
-/// (`labelled == false`) states its own mapping and reads no tiling.
+/// The operand's storage tiling, read off its binding, and what its storage tiles are to the
+/// kernel's levels: the coarsest tile its [storage partitioning](StoragePartitioning) can address
+/// a window inside with one stride per axis, where a level cuts to exactly that tile, makes the
+/// windows below that level [`Contiguous`](Storage::Contiguous); every other window is walked
+/// through the layout. Matched on the labelled axes alone: a batch dim is one physical dim. A
+/// gathered operand (`labelled == false`) states its own mapping and reads no tiling.
 fn storage_of(
     geometry: &Geometry,
     axes: &[Axis],
@@ -296,14 +295,26 @@ fn storage_of(
         return Ok((None, Storage::Strided));
     }
     let tiling = StorageTiling::stored(stored, axes.len(), geometry.rank());
-    let level = StorageLevel::new(
-        geometry,
-        axes,
-        &tiling,
-        launch.space(),
-        launch.partitioning().levels(),
-    );
-    Ok((Some(tiling), level.storage()))
+    let labels = tiling.order(axes);
+    let tiles = StoragePartitioning::new(geometry, &labels)
+        .map(|storage| storage.contiguous_tiles(&geometry.extents(&labels)))
+        .unwrap_or_default();
+    let (space, levels) = (launch.space(), launch.partitioning().levels());
+    let cuts_to = |level: usize, tile: &[(Axis, usize)]| {
+        let leaf = space.leaf(&levels[..=level]);
+        axes.iter().all(|&axis| {
+            let stored = tile
+                .iter()
+                .find(|&&(a, _)| a == axis)
+                .map_or(1, |&(_, e)| e);
+            leaf.extent(axis) == stored
+        })
+    };
+    let level = tiles
+        .iter()
+        .rev()
+        .find_map(|tile| (0..levels.len()).find(|&level| cuts_to(level, tile)));
+    Ok((Some(tiling), Storage::Tiled(level)))
 }
 
 /// The binding as the arg ships it: the settled geometry, whose derivation may have dropped
@@ -317,27 +328,17 @@ fn settled_tensor(
 ) -> TensorArg {
     binding.shape = geometry.shape().into();
     binding.strides = geometry.strides().into();
-    binding.tiling = match tiling {
-        Some(tiling) => {
-            let batch_dims = geometry.rank() - tiling.physical_rank();
-            let mut fragments = vec![1; batch_dims];
-            fragments.extend((0..tiling.rank()).map(|axis| tiling.fragments(axis)));
-            Tiling::new(&fragments)
-                .expect("the binding's own tiling fit, and this drops dims from it")
-        }
-        None => stored,
-    };
+    binding.tiling = tiling.map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
     binding.into_tensor_arg()
 }
 
 /// A bound operand: its tensor argument (absent for an operand built over geometry alone), its
-/// comptime [`TileSpec`], the served width, and its quantization when it has one.
+/// comptime [`TileSpec`], and the served width.
 pub struct Bound {
     tensor: Option<TensorArg>,
     /// Served width (values per line); a packed binding is narrower by the packing factor.
     pub vector_size: usize,
     pub spec: TileSpec,
-    pub quant: Option<Quantization>,
 }
 
 impl Bound {
@@ -346,22 +347,6 @@ impl Bound {
         let Bound { spec, .. } = &self;
         let spec = spec.clone();
         TileArgLaunch::new(self.tensor(), spec)
-    }
-
-    /// The operand as the kernel's [`QuantTileArg`](crate::QuantTileArg) launch argument: values,
-    /// scales, spec and scheme as one thing. Read [`bound_width`](Self::bound_width) first.
-    ///
-    /// # Panics
-    ///
-    /// When the operand was not [`quantized`](Arg::quantized).
-    pub fn quant_arg<E: Numeric, V: Size>(self) -> QuantTileArgLaunch<'static, E, V> {
-        let quant = self
-            .quant
-            .expect("Bound::quant_arg: this operand was not quantized");
-        quant.arg(
-            self.tensor.expect("a quantized operand is always bound"),
-            self.spec,
-        )
     }
 
     /// The tensor argument itself, for a launch that binds it under another argument type.
@@ -374,16 +359,13 @@ impl Bound {
     /// [`vector_size`](Self::vector_size) is what the operand *serves*, held by a packed store in
     /// fewer words. The two agree without packing.
     pub fn bound_width(&self) -> usize {
-        match &self.quant {
-            Some(quant) => self.vector_size / quant.num_quants(),
-            None => self.spec.packing.physical(self.vector_size),
-        }
+        self.spec.packing.physical(self.vector_size)
     }
 }
 
-/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind: the
-/// comptime [`TileSpec`], the served width, and the geometry a bound `TensorArg` would ship,
-/// broadcast dims dropped; [`GlobalOperand::sink`](crate::GlobalOperand::sink) addresses through it.
+/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind: the comptime
+/// [`TileSpec`], the served width, and the geometry a bound `TensorArg` would ship, broadcast dims
+/// dropped; [`GlobalOperand::sink`](crate::GlobalOperand::sink) addresses through it.
 pub struct Unbound {
     pub spec: TileSpec,
     /// Served width (values per line).

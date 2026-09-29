@@ -11,6 +11,7 @@
 use super::{Form, implied};
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 /// Which sequence.

@@ -2,7 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, Grid, Launcher, Space};
+use cubek_tile::{Axis, Geometry, Launcher, Space, launch::Grid};
 
 use crate::{
     definition::{
@@ -11,7 +11,7 @@ use crate::{
     },
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
-    tiled::{K, M, N, batch_axis, logical_dims, validate_stored_tile},
+    tiled::{K, M, MatrixBinding, N, batch_axis},
 };
 
 /// A strided matmul operand must be contiguous along one of its two innermost dims. Under storage
@@ -79,8 +79,8 @@ pub fn launch_ref(
     // Logical dims folded from each operand's physical shape (it may be a higher-rank tiled
     // buffer): `k` on lhs's trailing axis, `n` on rhs's, leading dims each operand's own (possibly
     // broadcast) batch shape.
-    let (lhs_batches, m, k) = logical_dims(lhs.data());
-    let (rhs_batches, _, n) = logical_dims(rhs.data());
+    let (lhs_batches, m, k) = MatrixBinding::new(lhs.data(), "lhs").dims();
+    let (rhs_batches, _, n) = MatrixBinding::new(rhs.data(), "rhs").dims();
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "CpuGemm: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -138,8 +138,8 @@ pub fn launch_ref(
     // A storage-tiled operand's tile must be the tile of one of this routine's levels, said here
     // on the host rather than by the launch on a worker thread.
     let partitioning = blueprint.partitioning(&space, &batch_axes);
-    validate_stored_tile(lhs.data(), "lhs", &space, partitioning.levels(), (M, K))?;
-    validate_stored_tile(rhs.data(), "rhs", &space, partitioning.levels(), (K, N))?;
+    MatrixBinding::new(lhs.data(), "lhs").cut_by(&space, partitioning.levels(), (M, K))?;
+    MatrixBinding::new(rhs.data(), "rhs").cut_by(&space, partitioning.levels(), (K, N))?;
     let plane_size = client.properties().hardware.plane_size_max;
     let launch = {
         let partitioning = blueprint.partitioning(&space, &batch_axes);

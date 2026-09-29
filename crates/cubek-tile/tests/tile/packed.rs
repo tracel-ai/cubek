@@ -19,6 +19,9 @@ use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use crate::tile::uncut;
+use cubek_tile::Instruction;
+use cubek_tile::kind::Field;
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 use half::f16;
 
@@ -414,10 +417,12 @@ fn packed_cmma_rhs<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     // Both factors land: a fragment loads a window as it lies, and a gmem layout is unchecked.
-    let x = x.tile(comptime!(space.clone())).with_landing();
+    let x = x
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_landing()
+        .landed_for(Instruction::Cmma)
         .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(&x, Monoid::Sum);
@@ -1534,8 +1539,8 @@ fn several_lines_may_share_one_scale() {
 }
 
 /// **The native store needs no engine feature.** `i8` weights, their scales beside them, one
-/// contraction: the tile serves the element its binding names and the block casts it, so
-/// `Packing::Native` never has to be *stated* for a store that carries no scales in its element.
+/// contraction: the tile serves the element its binding names and the block casts it, so an
+/// `i8` store needs no packing stated.
 #[test]
 fn an_i8_operand_contracts_against_its_scales() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
@@ -2710,6 +2715,243 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
             let have = got.get_f32(&[m, n]);
             assert!(
                 (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// `output = unpack(input) ⊗ scales`: the decode a kernel states by copying its scaled values.
+#[cube(launch)]
+fn packed_scaled_copy<O: Numeric, V: Size>(
+    input: &TileArg<'_, u32, Const<1>>,
+    scales: &TileArg<'_, f32, Const<1>>,
+    output: &TileArg<'_, O, V>,
+    space: Partitioning,
+    #[define(O)] _dtype: ElemType,
+) {
+    let input = input.tile_as::<O>(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
+    output.copy_from(&input.mul(&scales));
+}
+
+/// Eight-bit fields and one scale per block of sixteen, decoded by the copy that states them: the
+/// words unpack and every value takes its block's scale.
+#[test]
+fn a_copy_of_scaled_packed_fields_decodes_them() {
+    let (field, rows, block, blocks) = (QuantValue::Q8S, 8, 16, 2);
+    let cols = block * blocks;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    let span = 1i32 << bits;
+    let values: Vec<i32> = (0..rows * cols)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = values
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+    let input = TensorHandle::new_contiguous(
+        vec![rows, cols],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let scales: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 4.0).collect();
+    let (scales_t, _) = TestInput::builder(client.clone(), shape![rows, blocks])
+        .dtype(f32::elem_type_native())
+        .custom(scales.clone())
+        .generate_with_f32_host_data();
+
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Space::new(&[(M, rows), (KB, blocks), (KI, block)]);
+    let projection = Projection::new(
+        &[M, KB, KI],
+        &[
+            PhysicalAxisMap::of(M),
+            PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+        ],
+    );
+    packed_scaled_copy::launch(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        factor,
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            TileSpec::new(projection.clone()).packed(field),
+        ),
+        TileArgLaunch::new(
+            scales_t.binding().into_tensor_arg(),
+            TileSpec::new(projection.scales_per(KB)),
+        ),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::new(projection),
+        ),
+        uncut(&client, &space, &space).partitioning_arg(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want = values[m * cols + n] as f32 * scales[m * blocks + n / block];
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-6,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// The table a looked-up operand indexes: its one axis, the positions.
+const TBL: Axis = Axis(6);
+
+/// `output = table[input] ⊗ scales`: the codebook decode, stated at the copy.
+#[cube(launch)]
+fn looked_up_copy<O: Numeric, V: Size>(
+    input: &TileArg<'_, u32, Const<1>>,
+    table: &TileArg<'_, f32, Const<1>>,
+    scales: &TileArg<'_, f32, Const<1>>,
+    output: &TileArg<'_, O, V>,
+    space: Partitioning,
+    #[define(O)] _dtype: ElemType,
+) {
+    let input = input.tile_as::<O>(comptime!(space.clone()));
+    let table = table.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
+    output.copy_from(&input.lookup(&table).mul(&scales));
+}
+
+/// Eight-bit indices into a table of 256 entries, scaled per block of sixteen: each field names
+/// its entry, raw and unsigned (an index past 127 must not read as negative), and the entry takes
+/// its block's scale.
+#[test]
+fn a_copy_of_looked_up_fields_decodes_them() {
+    check_looked_up_copy(8, 4);
+}
+
+/// Four- and two-bit indices copied into lines narrower than their word, the read a vec4 device
+/// gives a low-bit cache: each word's fields unpack a destination line at a time.
+#[test]
+fn a_copy_of_looked_up_fields_narrower_than_a_word_decodes_them() {
+    check_looked_up_copy(4, 4);
+    check_looked_up_copy(2, 4);
+}
+
+/// `table[index] ⊗ scale` for `bits`-wide indices, copied into lines `width` wide.
+fn check_looked_up_copy(bits: usize, width: usize) {
+    let (rows, block, blocks) = (8, 16, 2);
+    let cols = block * blocks;
+    let factor = 32 / bits;
+    let entries = 1usize << bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if width > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {width}-wide line"
+        )))
+        .enforce();
+        return;
+    }
+
+    let indices: Vec<u32> = (0..rows * cols)
+        .map(|i| ((i * 37 + 3) % entries) as u32)
+        .collect();
+    let words: Vec<u32> = indices
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | (v << (j * bits)))
+        })
+        .collect();
+    let input = TensorHandle::new_contiguous(
+        vec![rows, cols],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let table: Vec<f32> = (0..entries).map(|i| (i as f32 - 127.5) / 3.0).collect();
+    let (table_t, _) = TestInput::builder(client.clone(), shape![entries])
+        .dtype(f32::elem_type_native())
+        .custom(table.clone())
+        .generate_with_f32_host_data();
+    let scales: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 4.0).collect();
+    let (scales_t, _) = TestInput::builder(client.clone(), shape![rows, blocks])
+        .dtype(f32::elem_type_native())
+        .custom(scales.clone())
+        .generate_with_f32_host_data();
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Space::new(&[(M, rows), (KB, blocks), (KI, block), (TBL, entries)]);
+    let projection = Projection::new(
+        &[M, KB, KI],
+        &[
+            PhysicalAxisMap::of(M),
+            PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+        ],
+    );
+    looked_up_copy::launch(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        width,
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            TileSpec::new(projection.clone()).packed(Field::Index { bits }),
+        ),
+        TileArgLaunch::new(
+            table_t.binding().into_tensor_arg(),
+            TileSpec::direct(&[TBL]),
+        ),
+        TileArgLaunch::new(
+            scales_t.binding().into_tensor_arg(),
+            TileSpec::new(projection.scales_per(KB)),
+        ),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::new(projection),
+        ),
+        uncut(&client, &space, &space).partitioning_arg(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want = table[indices[m * cols + n] as usize] * scales[m * blocks + n / block];
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-6,
                 "at ({m}, {n}): got {have}, want {want}"
             );
         }

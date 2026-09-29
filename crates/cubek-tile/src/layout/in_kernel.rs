@@ -18,7 +18,7 @@ use crate::*;
 /// physical step under the one necessary divide.
 ///
 /// Constant offsets belong to the [`Window`](crate::Window) and are omitted here, all but the
-/// phase a division starts the floor at, which the [`RuntimeMap`](crate::RuntimeMap) carries.
+/// phase a division starts the floor at, which the `RuntimeMap` carries.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct ProjectionInKernel {
@@ -121,9 +121,10 @@ fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
 
 #[cube]
 impl ProjectionInKernel {
-    /// The source coordinate of `pos` with every axis in `moving` held at zero: the part of the
-    /// map a walk over those axes leaves alone, which [`advance`](Self::advance) puts back. This
-    /// gives a gather one floor per accumulator cell rather than per tap on its rational axes.
+    /// The source coordinate of `pos` with every axis in `moving` held at zero: the part of the map
+    /// a walk over those axes leaves alone, which [`advance`](ProjectionInKernel::advance) puts
+    /// back. This gives a gather one floor per accumulator cell rather than per tap on its rational
+    /// axes.
     pub fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
         let mut out = CoordsDyn::new();
 
@@ -205,8 +206,9 @@ impl ProjectionInKernel {
     }
 
     /// `anchor` moved to where `pos` places the `moving` axes, which must be the ones it was
-    /// [anchored](Self::anchor) against. Every one enters linearly, so the move is an exact add:
-    /// the term's own coefficient outside a division, the divisor's static step under one.
+    /// [anchored](ProjectionInKernel::anchor) against. Every one enters linearly, so the move is an
+    /// exact add: the term's own coefficient outside a division, the divisor's static step under
+    /// one.
     pub fn advance(
         &self,
         anchor: &CoordsDyn,

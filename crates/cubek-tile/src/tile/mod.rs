@@ -1,17 +1,14 @@
-//! One operand's data in the kernel: the [`Tile`] itself ([`base`]), the kinds it dispatches on
-//! ([`kind`]), how packed values decode ([`packing`]), the accumulators ([`accumulator`]), and
-//! the scale paths on their way out ([`deprecated`]).
+//! One operand's data in the kernel: the [`Tile`] itself (`base`), the kinds it dispatches on
+//! (`kind`), how packed values decode (`packing`), and the accumulators (`accumulator`).
 
 mod accumulator;
 mod base;
-mod deprecated;
-mod kind;
+pub(crate) mod kind;
 mod packing;
 mod placement;
 
 pub use accumulator::*;
 pub use base::*;
-pub use deprecated::*;
 pub use kind::*;
 pub use packing::*;
 pub use placement::*;

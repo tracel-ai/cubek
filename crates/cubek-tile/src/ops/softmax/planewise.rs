@@ -20,7 +20,7 @@ use crate::*;
 #[cube]
 impl<EA: Float> Tile<EA> {
     /// [`scale_and_mask`](Tile::scale_and_mask) at plane ownership.
-    pub fn scale_and_mask_planar(
+    pub(crate) fn scale_and_mask_planar(
         &mut self,
         scale: EA,
         probe: &MaskProbe,
@@ -61,7 +61,7 @@ impl<EA: Float> Tile<EA> {
     /// [`row_max`](Tile::row_max) at plane ownership: a unit's partial over its own lines, then
     /// one plane reduction per row. Seeding with `base` on every unit is free: a max is
     /// idempotent, so the seed survives the fold whichever unit carried it.
-    pub fn row_max_planar(
+    pub(crate) fn row_max_planar(
         &self,
         acc: &mut Array<EA>,
         base: &Array<EA>,
@@ -92,14 +92,15 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = comptime!(UnitShare::of_units(units, units)).fold::<EA>(partial, Monoid::Max);
+            acc[ri] =
+                comptime!(UnitShare::of_units(units, units)).reduce::<EA>(partial, Monoid::Max);
         }
     }
 
     /// [`exp_diff`](Tile::exp_diff) at plane ownership. `rowwise` is
     /// plane-uniform coming out of [`row_max_planar`](Tile::row_max_planar),
     /// so every unit exponentiates against the same row max.
-    pub fn exp_diff_planar(
+    pub(crate) fn exp_diff_planar(
         &mut self,
         rowwise: &Array<EA>,
         #[comptime] rpp: usize,
@@ -139,7 +140,7 @@ impl<EA: Float> Tile<EA> {
     /// [`row_sum`](Tile::row_sum) at plane ownership. Unlike the max there is
     /// no seed: a sum's identity is zero and every unit must contribute its
     /// own lines exactly once.
-    pub fn row_sum_planar(
+    pub(crate) fn row_sum_planar(
         &self,
         acc: &mut Array<EA>,
         #[comptime] rpp: usize,
@@ -169,7 +170,8 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = comptime!(UnitShare::of_units(units, units)).fold::<EA>(partial, Monoid::Sum);
+            acc[ri] =
+                comptime!(UnitShare::of_units(units, units)).reduce::<EA>(partial, Monoid::Sum);
         }
     }
 

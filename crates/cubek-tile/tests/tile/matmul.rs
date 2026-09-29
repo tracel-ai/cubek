@@ -5,18 +5,22 @@
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout},
-    features::TypeUsage,
     ir::ElemType,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::shape,
 };
-use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx, skip_unless_plane_holds,
 };
 
+use cubek_tile::kind::CmmaData;
+use cubek_tile::kind::PlanePartition;
+use cubek_tile::launch::Grid;
+use cubek_tile::ops::matmul::MmaIo;
+use cubek_tile::space::CubeOrder;
+use cubek_tile::stage::RowChunks;
 use cubek_tile::*;
 
 use half::f16;
@@ -66,17 +70,6 @@ fn require_mma_8x8x8_f32(client: &Client) -> bool {
     supported
 }
 
-fn require_native_i8(client: &Client) -> bool {
-    let supported = i8::supported_uses(client).contains(TypeUsage::Conversion);
-    if !supported {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no native i8".to_string(),
-        ))
-        .enforce();
-    }
-    supported
-}
-
 // Matmul's axes: the labels this client gives the engine's opaque `Axis`. `B`
 // is the leading batch axis; `M`/`N`/`K` are the matrix axes.
 const M: Axis = Axis(0);
@@ -95,14 +88,6 @@ const K2: Axis = Axis(6);
 /// The software instruction most tests contract through: a 16-cell budget, no edge split, no
 /// unit fan-out.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
-
-/// Where an operand is read from in the kernels that offer both: staged in shared memory, or
-/// where it lies in global memory.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Serve {
-    Staged,
-    Direct,
-}
 
 /// The kernel-side level of one cube naming nothing: the whole space is its box.
 fn one_cube() -> Level {
@@ -286,7 +271,7 @@ fn contract_staged<E: Numeric>(
 
 /// Which of the ring's schedules a staged test kernel drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Schedule {
+pub(super) enum Schedule {
     /// [`pipelined`]: the next region's slot filled ahead of the contraction.
     AheadInSlots,
     /// [`pipelined_through_registers`]: the next region read into registers across the
@@ -761,51 +746,6 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     }
 }
 
-/// [`cmma_matmul_k_walk`] with a quantized lhs: each region's stage decodes it (or keeps it stored
-/// for the fragment load to decode) exactly as the operand states.
-#[cube(launch)]
-fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
-    a: &QuantTileArg<'_, I, V>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] depth: usize,
-    #[define(I)] _idtype: ElemType,
-    #[define(E)] _edtype: ElemType,
-) {
-    let a = a.tile::<E>(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
-    acc.zero();
-    let walk = space.over(&level);
-    let mut stages = Stages::smem(
-        &walk,
-        &a,
-        &b,
-        comptime!(StageStorage::Tiled {
-            block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
-                std::slice::from_ref(&level).to_vec()
-            )
-            .leaf()
-            .extents()
-        }),
-        depth,
-    );
-    stages.pipelined(walk, |slot, region| {
-        let mut acc_r = acc.at(region);
-        slot.consume(|a_s, b_s| {
-            acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
-        });
-    });
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
-}
-
 /// [`cmma_matmul_k_walk`] through the manual-mma instruction, whose fragment transports are
 /// `io`'s.
 #[cube(launch)]
@@ -819,38 +759,6 @@ fn mma_matmul_k_walk<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
-    acc.zero();
-    let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-    stages.pipelined(walk, |slot, region| {
-        let mut acc_r = acc.at(region);
-        slot.consume(|a_s, b_s| {
-            acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
-        });
-    });
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
-}
-
-/// [`mma_matmul_k_walk`] with a quantized lhs kept in its stored form by the stage, the manual
-/// fragment load decoding each element as it reads.
-#[cube(launch)]
-fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
-    a: &QuantTileArg<'_, I, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] io: MmaIo,
-    #[define(I)] _idtype: ElemType,
-    #[define(E)] _edtype: ElemType,
-) {
-    let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
@@ -899,7 +807,8 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
                 vec![outer.clone(), inner.clone()]
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -951,7 +860,8 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
                 vec![stage.clone(), plane.clone(), fragment.clone()]
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -1018,7 +928,8 @@ fn cmma_matmul_five_levels<E: Numeric>(
                 ]
             )
             .leaf()
-            .extents()
+            .extents(),
+            chunks: RowChunks::InOrder,
         }),
         depth,
     );
@@ -1061,144 +972,6 @@ fn cmma_matmul_five_levels<E: Numeric>(
 }
 
 // ---- quantized operands through the register leaf --------------------------------
-
-/// `c = a · b` with a quantized lhs staged in shared memory per region: the stage holds the
-/// operand as it states (packed words decoded at the read, or decoded by the fill), and the
-/// software instruction runs under `config` out of it.
-#[cube(launch)]
-fn matmul_quant_lhs_smem_ring<I: Numeric, E: Numeric>(
-    a: &QuantTileArg<'_, I, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] config: RegisterBlock,
-    #[define(I)] _a_dtype: ElemType,
-    #[define(E)] _e_dtype: ElemType,
-) {
-    let a = a.tile::<E>(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-    c.zero();
-    let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-    stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
-        slot.consume(|a_s, b_s| {
-            c_r.mma_with(a_s, b_s, config, Semiring::SUM_PROD);
-        });
-    });
-}
-
-/// [`matmul_quant_lhs_smem_ring`] serving the quantized lhs straight from global memory, decoded
-/// per read.
-#[cube(launch)]
-fn matmul_quant_lhs_in_place<I: Numeric, E: Numeric, BV: Size>(
-    a: &QuantTileArg<'_, I, Const<1>>,
-    b: &TileArg<'_, E, BV>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] config: RegisterBlock,
-    #[define(I)] _a_dtype: ElemType,
-    #[define(E)] _e_dtype: ElemType,
-) {
-    let a = a.tile::<E>(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-    c.zero();
-    for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(&a.at(&region), &b.at(&region), config, Semiring::SUM_PROD);
-    }
-}
-
-/// [`matmul_quant_lhs_smem_ring`]'s mirror: the rhs is the quantized operand.
-#[cube(launch)]
-fn matmul_quant_rhs_smem_ring<I: Numeric, E: Numeric, V: Size>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &QuantTileArg<'_, I, Const<1>>,
-    c: &TileArg<'_, E, V>,
-    space: Partitioning,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
-    #[comptime] config: RegisterBlock,
-    #[define(I)] _b_dtype: ElemType,
-    #[define(E)] _e_dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile::<E>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    for outer in space.over(&outer) {
-        let a = a.at(&outer);
-        let b = b.at(&outer);
-        let mut c = c.at(&outer);
-        c.zero();
-        let walk = outer.over(&inner);
-        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-        stages.pipelined(walk, |slot, region| {
-            let mut c_r = c.at(region);
-            slot.consume(|a_s, b_s| {
-                c_r.mma_with(a_s, b_s, config, Semiring::SUM_PROD);
-            });
-        });
-    }
-}
-
-/// [`matmul_quant_lhs_in_place`]'s mirror: the quantized rhs served straight from global memory.
-#[cube(launch)]
-fn matmul_quant_rhs_in_place<I: Numeric, E: Numeric, V: Size>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &QuantTileArg<'_, I, Const<1>>,
-    c: &TileArg<'_, E, V>,
-    space: Partitioning,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
-    #[comptime] config: RegisterBlock,
-    #[define(I)] _b_dtype: ElemType,
-    #[define(E)] _e_dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile::<E>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    for outer in space.over(&outer) {
-        let mut c = c.at(&outer);
-        c.zero();
-        for region in outer.over(&inner) {
-            let mut c_r = c.at(&region);
-            c_r.mma_with(&a.at(&region), &b.at(&region), config, Semiring::SUM_PROD);
-        }
-    }
-}
-
-/// [`promoted_matmul_in_place`] with a quantized lhs: a packed lhs contracting into a register
-/// block, decoded per read.
-#[cube(launch)]
-fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
-    a: &QuantTileArg<'_, I, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] config: RegisterBlock,
-    #[define(I)] _a_dtype: ElemType,
-    #[define(E)] _e_dtype: ElemType,
-    #[define(EA)] _acc_dtype: ElemType,
-) {
-    let a = a.tile::<E>(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, config, Monoid::Sum);
-    acc.zero();
-    for region in space.over(&level) {
-        let mut acc_r = acc.at(&region);
-        acc_r.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
-    }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
-}
 
 // ---- cmma fragment transit, by hand -------------------------------------------------
 
@@ -1348,69 +1121,6 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
     acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
 
     let mut c_smem = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
-    c_smem.copy_from(&acc);
-    sync_cube();
-    c.copy_from(&c_smem);
-}
-
-/// Quantized `A`: gmem `I` (i8) dequantized into smem by the plain `copy_from`, which recovers
-/// the storage element from the scheme on its own; `B`/`C` plain `E`. The cmma path then runs
-/// entirely in `E`. Mirrors [`cmma_matmul`] otherwise.
-#[cube(launch)]
-fn cmma_matmul_quant<I: Numeric, E: Numeric>(
-    a: &QuantTileArg<'_, I, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(I)] _idtype: ElemType,
-    #[define(E)] _edtype: ElemType,
-) {
-    let a = a.tile::<E>(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-
-    let mut a_smem = Tile::shared(comptime!(a.place.space.clone()), StageStorage::Strided);
-    a_smem.copy_from(&a);
-
-    let mut b_smem = Tile::shared(comptime!(b.place.space.clone()), StageStorage::Strided);
-    b_smem.copy_from(&b);
-
-    let mut c_smem = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
-    c_smem.copy_from(&c);
-    sync_cube();
-
-    let mut a_frag = CmmaData::<E>::fragment(
-        MatrixIdent::A,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(a.place.space.clone()),
-    );
-    a_frag.copy_from(&a_smem);
-
-    let mut b_frag = CmmaData::<E>::fragment(
-        MatrixIdent::B,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(b.place.space.clone()),
-    );
-    b_frag.copy_from(&b_smem);
-
-    let mut acc = CmmaData::<E>::fragment(
-        MatrixIdent::Accumulator,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(c.place.space.clone()),
-    );
-    acc.copy_from(&c_smem);
-
-    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
-
     c_smem.copy_from(&acc);
     sync_cube();
     c.copy_from(&c_smem);
@@ -1700,7 +1410,8 @@ fn check_matmul_scheduled(
 /// on a few units of one plane, and on a cube of 70 units over stages of 256 elements, whose lines
 /// they do not divide: every unit fills its share and the last one contracts, so a missing or
 /// misplaced barrier lets it read what units of other planes have not written, or overwrite what
-/// it has not read.
+/// it has not read. A case whose cube the device cannot hold is not run: a CPU runtime's cube
+/// holds as many units as the host has cores, and a small CI runner has four.
 #[test]
 fn a_register_staged_ring_matches_a_slot_ahead_ring() {
     // A leaf `edge` wide on every axis, walked along `K`.
@@ -1712,12 +1423,20 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
     // (units, width, problem edge, leaf edge, the `K`s).
     let cases = [
         (1u32, 1, 8, 4, [16, 4]),
-        (6, 1, 8, 4, [16, 4]),
+        (3, 1, 8, 4, [16, 4]),
         (1, 4, 8, 4, [16, 4]),
         (70, 1, 32, 16, [64, 16]),
         (70, 4, 32, 16, [64, 16]),
     ];
+    let max_units = cubecl::test_device()
+        .client()
+        .properties()
+        .hardware
+        .max_units_per_cube;
     for (units, width, edge, leaf, ks) in cases {
+        if units > max_units {
+            continue;
+        }
         for k in ks {
             for depth in [1, 2] {
                 for schedule in [Schedule::AheadInSlots, Schedule::ThroughRegisters] {
@@ -2514,6 +2233,7 @@ impl StageLayout {
         match self {
             StageLayout::Tiled => StageStorage::Tiled {
                 block: launcher.partitioning().leaf().extents(),
+                chunks: RowChunks::InOrder,
             },
             StageLayout::Strided => StageStorage::Strided,
         }
@@ -3624,99 +3344,6 @@ fn register_matmul_folded_step_two_contracted_axes() {
         .enforce()
 }
 
-/// A folded step whose lhs is packed `q8s` (4 values per word): the pack factor narrows the
-/// *physical* line to one `u32` while the served line stays `pack` wide, so the same walk, gate
-/// and fold run with a decode added on the read.
-#[test]
-fn register_matmul_folded_step_quant_q8() {
-    let client = cubecl::test_device().client();
-    run_folded_step_quant(client, QuantValue::Q8S, (4, 4, 8), 4);
-}
-
-/// The `q4s` twin: eight values per word, the brief's headline packing. Needs a device whose
-/// vectors reach the factor, so it skips on WGSL-bound targets.
-#[test]
-fn register_matmul_folded_step_quant_q4() {
-    let client = cubecl::test_device().client();
-    run_folded_step_quant(client, QuantValue::Q4S, (4, 4, 16), 4);
-}
-
-/// The quantized folded step: the weight lined along `K` in packed `u32` words, the activation
-/// lined along `K` in plain lines, and the decode sitting between the read and the `fma`. Checks
-/// `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[j,p]`.
-fn run_folded_step_quant(
-    client: Client,
-    value: QuantValue,
-    (m, n, k): (usize, usize, usize),
-    bm: usize,
-) {
-    let scheme = QuantScheme::default()
-        .per_block([bm as u8, k as u8], ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(0))
-        .with_value(value);
-    let pack = scheme.num_quants();
-
-    let max_width = client.properties().hardware.max_vector_size;
-    if pack > max_width {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
-        )))
-        .enforce();
-        return;
-    }
-
-    let launcher = lined_lhs_space(m, n, k);
-    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
-        .untiled()
-        .packed(&scheme, DequantAt::Read)
-        .arange();
-    let b = TileInput::builder(&client, launcher.space().subspace(&[N, K]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
-        .untiled()
-        .uniform(4242, 10., 100.);
-
-    matmul_quant_lhs_in_place::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        pack,
-        QuantTileArgLaunch::new(
-            a.tile.tensor_arg(1),
-            a.scales_binding().into_tensor_arg(),
-            None.into(),
-            None.into(),
-            TileSpec::direct(&[M, K]),
-            scheme,
-            DequantAt::Read,
-        ),
-        b.arg(),
-        c.arg(),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        RegisterBlock::new(64),
-        u32::elem_type_native(),
-        f32::elem_type_native(),
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k)
-                .map(|p| (a.q[i * k + p] as f32) * a.scale_values[i / bm] * ((j * k + p) as f32))
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
 // ---- the sub-plane fold: UnitShare::Group --------------------------------------
 
 /// The nest a rows-in-flight gemv cuts: the plane splits into aligned groups of `group_units`,
@@ -3894,94 +3521,6 @@ fn register_matmul_promoted_folded_step_unit_group_fold() {
         .enforce()
 }
 
-/// A packed lhs contracts into a register block to the product its scales and values describe.
-///
-/// The decode belongs to the read, not to the leaf: `Tile::matrix_packed` dequantizes per read
-/// for whichever leaf asks, so a promoted accumulator serves a quantized operand with nothing of
-/// its own. The reference is built on the host from the values and scales, so it shares no decode.
-#[test]
-fn register_matmul_promoted_accumulator_quant() {
-    let client = cubecl::test_device().client();
-    let (m, n, k, edge, bm) = (4usize, 4usize, 8usize, 4usize, 4usize);
-    let scheme = QuantScheme::default()
-        .per_block([bm as u8, k as u8], ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(0))
-        .with_value(QuantValue::Q8S);
-    let pack = scheme.num_quants();
-
-    let max_width = client.properties().hardware.max_vector_size;
-    if pack > max_width {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max_width}, below the packing factor ({pack})"
-        )))
-        .enforce();
-        return;
-    }
-
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-
-    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
-        .untiled()
-        .packed(&scheme, DequantAt::Read)
-        .arange();
-    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
-        .untiled()
-        .arange();
-    // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
-    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
-        .untiled()
-        .uniform(4242, 10., 100.);
-
-    promoted_matmul_quant_lhs_in_place::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        QuantTileArgLaunch::new(
-            a.tile.tensor_arg(1),
-            a.scales_binding().into_tensor_arg(),
-            None.into(),
-            None.into(),
-            TileSpec::direct(&[M, K]),
-            scheme,
-            DequantAt::Read,
-        ),
-        b.arg(),
-        c.arg(),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        RegisterBlock::new(64),
-        u32::elem_type_native(),
-        f32::elem_type_native(),
-        f32::elem_type_native(),
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    // Row-major arange rhs: b(p, j) = p·n + j.
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k)
-                .map(|p| (a.q[i * k + p] as f32) * a.scale_values[i / bm] * ((p * n + j) as f32))
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
 // ---- cmma fragment transit (tensor-core) -------------------------------------
 
 /// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no arithmetic,
@@ -4095,116 +3634,6 @@ fn cmma_matmul_transposed_rhs_8x8x8() {
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
         .enforce()
-}
-
-/// Quantized `A` (i8, `scheme`) through the hand-written cmma matmul: `A` dequantizes into smem,
-/// then the tensor-core matmul runs in f32. `C[i, j] = Σ_p a[i, p]·scale(i, p)·(p·8 + j)`, the
-/// scale block `scales` describes.
-fn check_cmma_matmul_quant_8x8x8(
-    scheme: QuantScheme,
-    scales_shape: (usize, usize),
-    scale_vals: Vec<f32>,
-    scale_of: impl Fn(usize, usize) -> usize,
-) {
-    let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) || !require_native_i8(&client) {
-        return;
-    }
-
-    let a_dtype = ElemType::from_quant_value(scheme.value);
-    let (lo, hi) = scheme.value.range();
-    let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
-        .dtype(a_dtype)
-        .uniform(0x1, lo, hi)
-        .generate_with_f32_host_data();
-    let scales = TestInput::builder(client.clone(), shape![scales_shape.0, scales_shape.1])
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
-
-    // B: f32 row-major arange (b[p, j] = p·8 + j); C: zeros.
-    let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
-        .untiled()
-        .zeros();
-
-    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    cmma_matmul_quant::launch(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_3d(32, 1, 1),
-        QuantTileArgLaunch::new(
-            a_input.binding().into_tensor_arg(),
-            scales.binding().into_tensor_arg(),
-            None.into(),
-            None.into(),
-            TileSpec::direct(&[M, K]),
-            scheme,
-            DequantAt::Load,
-        ),
-        b.arg(),
-        c.arg(),
-        uncut(&client, &space, &space).partitioning_arg(),
-        a_dtype,
-        f32::elem_type_native(),
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let expected: Vec<f32> = (0..8 * 8)
-        .map(|idx| {
-            let (i, j) = (idx / 8, idx % 8);
-            (0..8)
-                .map(|p| {
-                    (a_host.get_f32(&[i, p]) * scale_vals[scale_of(i, p)]) * ((p * 8 + j) as f32)
-                })
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![8, 8])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
-/// Per-tensor-quantized `A` (i8) through the cmma matmul. Needs both cmma and native i8.
-#[test]
-fn cmma_matmul_quant_per_tensor_8x8x8() {
-    let scheme = QuantScheme::default()
-        .per_tensor(ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    check_cmma_matmul_quant_8x8x8(scheme, (1, 1), vec![0.05], |_, _| 0);
-}
-
-/// Block-quantized `A` (block along `M`): one flat `8×8` smem fill spans both scale blocks, the
-/// per-line lookup picking each line's scale: `A`'s space needs no block sub-level. The cmma
-/// fragment then reads the whole `8×8` smem. Validates block windowing into the matmul stage.
-#[test]
-fn cmma_matmul_quant_block_m_8x8x8() {
-    let bm = 4usize; // 2 blocks along M, each 4×8; one scale each
-    let scheme = QuantScheme::default()
-        .per_block([bm as u8, 8], ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    let scale_vals: Vec<f32> = (0..8 / bm).map(|k| 0.05 * (k + 1) as f32).collect();
-    check_cmma_matmul_quant_8x8x8(scheme, (8 / bm, 1), scale_vals, move |i, _| i / bm);
-}
-
-/// Block-quantized `A` along `K` (the contraction axis): the scale changes partway through each
-/// dot product, and the per-line lookup picks the right one mid-row. The case that matters for
-/// quantized-weight matmul.
-#[test]
-fn cmma_matmul_quant_block_k_8x8x8() {
-    let bk = 4usize; // 2 blocks along K, each 8×4; the scale changes at p = 4
-    let scheme = QuantScheme::default()
-        .per_block([8, bk as u8], ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    let scale_vals: Vec<f32> = (0..8 / bk).map(|k| 0.05 * (k + 1) as f32).collect();
-    check_cmma_matmul_quant_8x8x8(scheme, (1, 8 / bk), scale_vals, move |_, p| p / bk);
 }
 
 // ---- the cmma K walk ----------------------------------------------------------------
@@ -4640,244 +4069,6 @@ fn cmma_matmul_staged_n_walk_partition() {
 
 // ---- the quantized cmma K walk ----------------------------------------------------
 
-/// Per-tensor-quantized `A` (i8) through the K walk, staged: `K = 16` runs in two
-/// `8`-deep K regions, and each region's smem fill dequantizes `A` on its own. The
-/// self-describing fill in action. Tensor-core only.
-#[test]
-fn cmma_matmul_quant_k_walk() {
-    check_cmma_matmul_quant_k_walk(16, 1);
-}
-
-/// The same self-describing quant K walk driven double-buffered: both slots' fills dequantize.
-#[test]
-fn cmma_matmul_quant_double_buffered_k_walk() {
-    check_cmma_matmul_quant_k_walk(32, 2);
-}
-
-fn check_cmma_matmul_quant_k_walk(k: usize, depth: usize) {
-    let scheme = QuantScheme::default()
-        .per_tensor(ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    check_cmma_matmul_quant_walk(k, depth, 1, scheme, (1, 1), vec![0.05], |_, _| 0);
-}
-
-/// Block-M-quantized `A` through the K walk: one K stage stages the whole `M = 8`, which spans
-/// two `bm = 4` scale blocks, so a single cooperative fill dequantizes across two scales: the
-/// per-line scale lookup, not the one-scale-per-window assumption. Tensor-core only.
-#[test]
-fn cmma_matmul_quant_block_m_k_walk() {
-    let (m, k, bm) = (8usize, 16usize, 4usize); // 2 M-blocks
-    let scheme = QuantScheme::default()
-        .per_block([bm as u8, k as u8], ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
-    check_cmma_matmul_quant_walk(k, 1, 1, scheme, (m / bm, 1), scale_vals, move |i, _| i / bm);
-}
-
-/// Block-K-quantized `A` through the K walk (the quantized-weight case): the scale changes
-/// partway through each `8`-deep K stage (`bk = 4`), and it changes again between stages, so
-/// the per-line scale lookup must fold in the stage's `window_start`. Tensor-core only.
-#[test]
-fn cmma_matmul_quant_block_k_k_walk() {
-    let (m, k, bk) = (8usize, 16usize, 4usize); // 4 K-blocks, 2 per stage
-    let scheme = QuantScheme::default()
-        .per_block([m as u8, bk as u8], ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
-    check_cmma_matmul_quant_walk(k, 1, 1, scheme, (1, k / bk), scale_vals, move |_, p| p / bk);
-}
-
-/// Block-K-quantized `A` served in 2-wide lines: the blocks sit on the vectorized inner axis, so
-/// a line's coordinate counts lines while its scale block is cut in elements, the widening
-/// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a scale changes mid-fill. Tensor-core.
-#[test]
-fn cmma_matmul_quant_block_k_k_walk_vectorized() {
-    let (m, k, bk) = (8usize, 16usize, 4usize);
-    let scheme = QuantScheme::default()
-        .per_block([m as u8, bk as u8], ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
-    check_cmma_matmul_quant_walk(k, 1, 2, scheme, (1, k / bk), scale_vals, move |_, p| p / bk);
-}
-
-/// Drive [`cmma_matmul_k_walk_quant`] over `8 × 8 × k` in `8`-deep stages and check
-/// `C[i, j] = Σ_p (a[i, p] · scale(i, p)) · (p·n + j)`.
-fn check_cmma_matmul_quant_walk(
-    k: usize,
-    depth: usize,
-    v: usize,
-    scheme: QuantScheme,
-    scales_shape: (usize, usize),
-    scale_vals: Vec<f32>,
-    scale_of: impl Fn(usize, usize) -> usize,
-) {
-    let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) || !require_native_i8(&client) {
-        return;
-    }
-
-    let (m, n, edge) = (8usize, 8usize, 8usize);
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-
-    let a_dtype = ElemType::from_quant_value(scheme.value);
-    let (lo, hi) = scheme.value.range();
-    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
-        .dtype(a_dtype)
-        .uniform(0x1, lo, hi)
-        .generate_with_f32_host_data();
-    let scales = TestInput::builder(client.clone(), shape![scales_shape.0, scales_shape.1])
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
-
-    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
-        .untiled()
-        .zeros();
-
-    cmma_matmul_k_walk_quant::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        v,
-        QuantTileArgLaunch::new(
-            a_input.binding().into_tensor_arg(),
-            scales.binding().into_tensor_arg(),
-            None.into(),
-            None.into(),
-            TileSpec::direct(&[M, K]),
-            scheme,
-            DequantAt::Load,
-        ),
-        b.arg(),
-        c.arg(),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        depth,
-        a_dtype,
-        f32::elem_type_native(),
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k)
-                .map(|p| {
-                    (a_host.get_f32(&[i, p]) * scale_vals[scale_of(i, p)]) * ((p * n + j) as f32)
-                })
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
-/// The manual-mma leaf decoding at the *read*: `DequantAt::Read` keeps `A`'s stage in its stored
-/// `i8`, and the fragment load decodes each element through the quant-transparent matrix view,
-/// which the cmma twin cannot (its load takes a raw window). Same numbers, a quarter the stage.
-#[test]
-fn mma_matmul_quant_until_read() {
-    let client = cubecl::test_device().client();
-    // The shape, not just the feature; see `require_mma_8x8x8_f32`. The `f32` triple, not the
-    // stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is the *walk*, walked 8 deep, and `A`
-    // decodes at the read, so the leaf uses the same f32 `8x8x8` the plain manual-mma test runs.
-    if !require_mma_8x8x8_f32(&client) || !require_native_i8(&client) {
-        return;
-    }
-
-    let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-
-    let scale = 0.05f32;
-    let scheme = QuantScheme::default()
-        .per_tensor(ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-
-    let a_dtype = ElemType::from_quant_value(scheme.value);
-    let (lo, hi) = scheme.value.range();
-    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
-        .dtype(a_dtype)
-        .uniform(0x1, lo, hi)
-        .generate_with_f32_host_data();
-    let scales = TestInput::builder(client.clone(), shape![1, 1])
-        .custom(vec![scale])
-        .generate_without_host_data();
-
-    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
-        .untiled()
-        .zeros();
-
-    mma_matmul_k_walk_quant::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        QuantTileArgLaunch::new(
-            a_input.binding().into_tensor_arg(),
-            scales.binding().into_tensor_arg(),
-            None.into(),
-            None.into(),
-            TileSpec::direct(&[M, K]),
-            scheme,
-            DequantAt::Read,
-        ),
-        b.arg(),
-        c.arg(),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        MmaIo::manual(),
-        a_dtype,
-        f32::elem_type_native(),
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k)
-                .map(|p| (a_host.get_f32(&[i, p]) * scale) * ((p * n + j) as f32))
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
 // ---- Quantized A through the register (plain-ALU) leaf --------------------------------
 //
 // Every other quant matmul above runs on tensor cores and skips where cmma is absent, which is
@@ -4887,596 +4078,8 @@ fn mma_matmul_quant_until_read() {
 // dequantizes each read out of smem: no f32 inflation of the stage, no promotion, no cmma, no
 // i8 needed for the packed cases (the binding is a `u32`).
 
-/// Native i8 `A`, one scale per `bm`-row block, through the register leaf.
-#[test]
-fn register_matmul_quant_native_block_m() {
-    run_register_matmul_quant_native(Serve::Staged);
-}
-
-/// Native i8 `A` served DIRECTLY through the register leaf (Keystone K): nothing is staged, so
-/// the leaf reads i8 straight from gmem and scales per read. The native + lhs-arm twin of the
-/// packed-rhs [`register_matmul_quant_rhs_direct_serve_gemv`]; the pair covers the quant dispatch.
-#[test]
-fn register_matmul_quant_native_direct_serve() {
-    run_register_matmul_quant_native(Serve::Direct);
-}
-
-fn run_register_matmul_quant_native(serve: Serve) {
-    let client = cubecl::test_device().client();
-    if !require_native_i8(&client) {
-        return;
-    }
-
-    let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
-    let scheme = QuantScheme::default()
-        .per_block([bm as u8, k as u8], ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-
-    let a_dtype = ElemType::from_quant_value(scheme.value);
-    let (lo, hi) = scheme.value.range();
-    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
-        .dtype(a_dtype)
-        .uniform(0x1, lo, hi)
-        .generate_with_f32_host_data();
-    let q: Vec<f32> = (0..m * k)
-        .map(|idx| a_host.get_f32(&[idx / k, idx % k]))
-        .collect();
-
-    let scale_vals: Vec<f32> = (0..m / bm).map(|g| 0.05 * (g + 1) as f32).collect();
-    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
-
-    run_register_matmul_quant(
-        client,
-        (m, n, k),
-        Levels::leaf(&[(M, 4), (N, 4), (K, 4)]).walk_every(&[M, N, K]),
-        serve,
-        a_input.binding().into_tensor_arg(),
-        a_dtype,
-        scheme,
-        scales.binding().into_tensor_arg(),
-        scale_vals,
-        bm,
-        q,
-    );
-}
-
-/// Packed-u32 Q8S `A` (4 values per word along `K`), served in whole-word lines.
-#[test]
-fn register_matmul_quant_packed_q8() {
-    let client = cubecl::test_device().client();
-    run_register_matmul_quant_packed(client, (8, 8, 8), 4, QuantValue::Q8S, 4);
-}
-
-/// Packed-u32 Q4S `A` (8 values per word): the widest served line, so it needs a device
-/// whose vectors reach the packing factor (cpu/cuda; WGSL-bound targets cap at 4).
-#[test]
-fn register_matmul_quant_packed_q4() {
-    let client = cubecl::test_device().client();
-    run_register_matmul_quant_packed(client, (8, 8, 16), 8, QuantValue::Q4S, 4);
-}
-
-/// Build a packed `A` spanning the scheme's signed range and run the register matmul.
-fn run_register_matmul_quant_packed(
-    client: Client,
-    (m, n, k): (usize, usize, usize),
-    tk: usize,
-    value: QuantValue,
-    bm: usize,
-) {
-    let scheme = QuantScheme::default()
-        .per_block([bm as u8, k as u8], ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(0))
-        .with_value(value);
-    let pack = scheme.num_quants();
-
-    let max_width = client.properties().hardware.max_vector_size;
-    if pack > max_width {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
-        )))
-        .enforce();
-        return;
-    }
-
-    let a = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
-        .untiled()
-        .packed(&scheme, DequantAt::Read)
-        .arange();
-
-    let a_dtype = u32::elem_type_native();
-    let q: Vec<f32> = a.q.iter().map(|&v| v as f32).collect();
-    run_register_matmul_quant(
-        client,
-        (m, n, k),
-        Levels::leaf(&[(M, 4), (N, 4), (K, tk)]).walk_every(&[M, N, K]),
-        Serve::Staged,
-        a.tile.tensor_arg(1),
-        a_dtype,
-        scheme,
-        a.scales_binding().into_tensor_arg(),
-        a.scale_values.clone(),
-        bm,
-        q,
-    );
-}
-
-/// Drive the quantized-lhs register kernels and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[p,j]`.
-/// [`Serve::Staged`] stages `A`'s storage into smem and dequantizes per read out of it,
-/// [`Serve::Direct`] serves it from gmem; either way through `matrix_transparent`, no f32 stage.
-#[allow(clippy::too_many_arguments)]
-fn run_register_matmul_quant(
-    client: Client,
-    (m, n, k): (usize, usize, usize),
-    plan: Levels,
-    serve: Serve,
-    a_arg: TensorArg,
-    a_dtype: ElemType,
-    scheme: QuantScheme,
-    scales_arg: TensorArg,
-    scale_vals: Vec<f32>,
-    bm: usize,
-    q: Vec<f32>,
-) {
-    let launcher = implied(
-        &client,
-        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), plan.build()),
-        Form::Static,
-    );
-
-    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
-        .untiled()
-        .zeros();
-    let e_dtype = f32::elem_type_native();
-    // Built in each arm: a launch argument is typed by the kernel that takes it.
-    match serve {
-        Serve::Staged => matmul_quant_lhs_smem_ring::launch(
-            &client,
-            CubeCount::new_single(),
-            CubeDim::new_single(),
-            QuantTileArgLaunch::new(
-                a_arg,
-                scales_arg,
-                None.into(),
-                None.into(),
-                TileSpec::direct(&[M, K]),
-                scheme,
-                DequantAt::Load,
-            ),
-            b.arg(),
-            c.arg(),
-            launcher.partitioning_arg(),
-            launcher.partitioning().level(0),
-            REGISTER_BLOCK,
-            a_dtype,
-            e_dtype,
-        ),
-        Serve::Direct => matmul_quant_lhs_in_place::launch(
-            &client,
-            CubeCount::new_single(),
-            CubeDim::new_single(),
-            1,
-            QuantTileArgLaunch::new(
-                a_arg,
-                scales_arg,
-                None.into(),
-                None.into(),
-                TileSpec::direct(&[M, K]),
-                scheme,
-                DequantAt::Load,
-            ),
-            b.arg(),
-            c.arg(),
-            launcher.partitioning_arg(),
-            launcher.partitioning().level(0),
-            REGISTER_BLOCK,
-            a_dtype,
-            e_dtype,
-        ),
-    }
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k)
-                .map(|p| q[i * k + p] * scale_vals[i / bm] * ((p * n + j) as f32))
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
 // ---- Quantized B (RHS) through the register leaf ---------------------------------------
 //
 // The gemv production shape: the *weight* is the streamed RHS at `(K, N) = (d_in, d_out)`, packed
 // along `d_out` (the innermost axis) with one scale per `(k, N-group)` block (`[1, bn]`); A stays
 // float. The RHS's served width drives the accumulator's line width, so `C` launches at that width.
-
-/// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]`: the exact scheme
-/// family `metabolic`'s gemv ships (`q8s`, packed-u32, block scales along `d_out`).
-#[test]
-fn register_matmul_quant_rhs_packed_q8() {
-    let client = cubecl::test_device().client();
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, 8), (N, 8), (K, 8)]),
-            Levels::leaf(&[(M, 4), (N, 4), (K, 4)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-    run_register_matmul_quant_rhs(
-        client,
-        launcher.clone(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Read,
-        Serve::Staged,
-        None,
-    );
-}
-
-/// The `q4s` twin (8 values per word): needs 8-wide bindings, so cpu/cuda only.
-#[test]
-fn register_matmul_quant_rhs_packed_q4() {
-    let client = cubecl::test_device().client();
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, 8), (N, 16), (K, 8)]),
-            Levels::leaf(&[(M, 4), (N, 8), (K, 4)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-    run_register_matmul_quant_rhs(
-        client,
-        launcher.clone(),
-        QuantValue::Q4S,
-        8,
-        DequantAt::Read,
-        Serve::Staged,
-        None,
-    );
-}
-
-/// The decode shape itself: a single activation row (`m = 1`) against the packed weight,
-/// what every projection degenerates to during token-by-token generation.
-#[test]
-fn register_matmul_quant_rhs_gemv_row() {
-    let client = cubecl::test_device().client();
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, 1), (N, 8), (K, 8)]),
-            Levels::leaf(&[(M, 1), (N, 4), (K, 4)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-    run_register_matmul_quant_rhs(
-        client,
-        launcher.clone(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Read,
-        Serve::Staged,
-        None,
-    );
-}
-
-/// The decode shape spread across the device: `N` across cubes on `X`, the geometry a gemv
-/// selector emits (`M = 1` leaves nothing else to spread).
-#[test]
-fn register_matmul_quant_rhs_gemv_row_multi_cube() {
-    let client = cubecl::test_device().client();
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, 1), (N, 16), (K, 8)]),
-            Levels::leaf(&[(M, 1), (N, 4), (K, 4)])
-                .walk_every(&[M, K])
-                .cubes(&[N])
-                .build(),
-        ),
-        Form::Static,
-    );
-    run_register_matmul_quant_rhs(
-        client,
-        launcher.clone(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Read,
-        Serve::Staged,
-        None,
-    );
-}
-
-/// Direct-serve the quantized RHS weight (Keystone K): nothing is staged, so the register leaf
-/// reads the packed weight straight from gmem and dequantizes *per read* through
-/// [`matrix_transparent`]: the sync-free `m = 1` decode path.
-///
-/// The `_rhs_*` tests above are all staged: they stage the weight's *packed words* into smem
-/// (plus its scales) and dequantize per read out of smem. Same answer; direct avoids even the
-/// smem round-trip.
-#[test]
-fn register_matmul_quant_rhs_direct_serve_gemv() {
-    let client = cubecl::test_device().client();
-    let launch = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, 1), (N, 8), (K, 8)]),
-            Levels::leaf(&[(M, 1), (N, 4), (K, 4)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            launch.space().clone(),
-            launch.partitioning().levels().to_vec(),
-        ),
-        Form::Dynamic,
-    );
-    run_register_matmul_quant_rhs(
-        client,
-        launcher.clone(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Read,
-        Serve::Direct,
-        None,
-    );
-}
-
-/// The Goal path: a staged packed weight whose smem stage holds the *packed u32 words*, not a
-/// dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with `[1, bn]` scales distinct
-/// along K refills both per region; the leaf decodes each smem read via [`matrix_transparent`].
-///
-/// This is the batched weight-streaming case the change targets: the contrast to the f32-inflated
-/// stage the cmma leaf still uses, and to the sync-free direct serve above.
-#[test]
-fn register_matmul_quant_rhs_staged_packed_smem() {
-    let client = cubecl::test_device().client();
-    run_register_matmul_quant_rhs(
-        client,
-        four_region_k_walk(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Read,
-        Serve::Staged,
-        None,
-    );
-}
-
-/// The same staged packed weight, decoded by the load instead of the read (`DequantAt::Load`): the
-/// stage holds served values, so it costs the served-to-stored ratio in shared memory and decodes
-/// once per element rather than per read: the fork a register leaf may take and a cmma leaf must.
-#[test]
-fn register_matmul_quant_rhs_staged_dequantized_smem() {
-    let client = cubecl::test_device().client();
-    run_register_matmul_quant_rhs(
-        client,
-        four_region_k_walk(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Load,
-        Serve::Staged,
-        None,
-    );
-}
-
-/// Two-level through the staged `DequantAt::Read` path: the stage keeps the packed weight, and
-/// `stage_scales` writes `global * local` into the smem scale grid, so reads see one-level
-/// scales. The expectation carries the global scale, so a missed or doubled fold fails by it.
-#[test]
-fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
-    let client = cubecl::test_device().client();
-    run_register_matmul_quant_rhs(
-        client,
-        four_region_k_walk(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Read,
-        Serve::Staged,
-        Some(0.5),
-    );
-}
-
-/// Two-level through the staged `DequantAt::Load` path: the fill dequantizes into the stage, so
-/// the global scale folds in the gmem read itself and the stage carries plain served values.
-#[test]
-fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
-    let client = cubecl::test_device().client();
-    run_register_matmul_quant_rhs(
-        client,
-        four_region_k_walk(),
-        QuantValue::Q8S,
-        4,
-        DequantAt::Load,
-        Serve::Staged,
-        Some(0.5),
-    );
-}
-
-/// `4 × 8 × 16` walked in `4×4×4` tiles: four K regions per output tile.
-fn four_region_k_walk() -> Launcher {
-    implied(
-        &cubecl::test_device().client(),
-        Partitioning::new(
-            Space::new(&[(M, 4), (N, 8), (K, 16)]),
-            Levels::leaf(&[(M, 4), (N, 4), (K, 4)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    )
-}
-
-/// Drive the quantized-rhs register kernels and check
-/// `C[i,j] = Σ_p A[i,p] · q_b[p,j] · scale[p, j/bn]`.
-#[allow(clippy::too_many_arguments)]
-fn run_register_matmul_quant_rhs(
-    client: Client,
-    launch: Launcher,
-    value: QuantValue,
-    bn: usize,
-    dequant_at: DequantAt,
-    serve: Serve,
-    global: Option<f32>,
-) {
-    // The data is minted against the one-level scheme either way: a two-level tensor holds the
-    // same value and block-scale bytes, plus the global scale in its own binding.
-    let mint_scheme = QuantScheme::default()
-        .per_block([1, bn as u8], ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(0))
-        .with_value(value);
-    let scheme = match global {
-        Some(_) => mint_scheme.per_tensor(ScaleDtype::F32),
-        None => mint_scheme,
-    };
-    let pack = scheme.num_quants();
-
-    let max_width = client.properties().hardware.max_vector_size;
-    if pack > max_width {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
-        )))
-        .enforce();
-        return;
-    }
-
-    let (m, n, k) = (
-        launch.space().extent(M),
-        launch.space().extent(N),
-        launch.space().extent(K),
-    );
-    let a = TileInput::builder(&client, launch.space().subspace(&[M, K]))
-        .untiled()
-        .arange();
-    // The weight and its per-(k, N-group) scales, minted together.
-    let b = TileInput::builder(&client, launch.space().subspace(&[K, N]))
-        .untiled()
-        .packed(&mint_scheme, dequant_at)
-        .arange();
-    let global_scale = global.map(|g| {
-        TestInput::builder(client.clone(), shape![1])
-            .custom(vec![g])
-            .generate_without_host_data()
-    });
-    let c = TileInput::builder(&client, launch.space().subspace(&[M, N]))
-        .untiled()
-        .zeros();
-    let b_dtype = u32::elem_type_native();
-    let e_dtype = f32::elem_type_native();
-
-    // Routine-like: the launcher derives geometry and argument wiring from the nest; the
-    // quantized RHS goes through the source builder, which binds it at the storage width.
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            launch.space().clone(),
-            launch.partitioning().levels().to_vec(),
-        ),
-        Form::Dynamic,
-    );
-    let a_op = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
-    let b_op = launcher
-        .arg(b.tile.handle().binding())
-        .axes(&[K, N])
-        .vectorize(pack)
-        .quantized(Quantization::new(
-            b.scales_binding(),
-            global_scale.map(|g| g.binding()),
-            scheme,
-            dequant_at,
-        ))
-        .build();
-    // The register instruction lines the accumulator at the RHS's served width.
-    let c_op = launcher
-        .arg(c.handle().binding())
-        .axes(&[M, N])
-        .vectorize(pack)
-        .build();
-    // One level cuts `N` across cubes where the test says so; the walk is always stated.
-    let (outer, inner) = match launch.partitioning().levels().len() {
-        1 => (one_cube(), launch.partitioning().level(0)),
-        _ => (
-            launch.partitioning().level(0),
-            launch.partitioning().level(1),
-        ),
-    };
-    match serve {
-        Serve::Staged => matmul_quant_rhs_smem_ring::launch(
-            &client,
-            launcher.cube_count(),
-            launcher.cube_dim(),
-            c_op.vector_size,
-            a_op.arg(),
-            b_op.quant_arg(),
-            c_op.arg(),
-            launcher.partitioning_arg(),
-            outer.clone(),
-            inner.clone(),
-            REGISTER_BLOCK,
-            b_dtype,
-            e_dtype,
-        ),
-        Serve::Direct => matmul_quant_rhs_in_place::launch(
-            &client,
-            launcher.cube_count(),
-            launcher.cube_dim(),
-            c_op.vector_size,
-            a_op.arg(),
-            b_op.quant_arg(),
-            c_op.arg(),
-            launcher.partitioning_arg(),
-            outer.clone(),
-            inner.clone(),
-            REGISTER_BLOCK,
-            b_dtype,
-            e_dtype,
-        ),
-    }
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    // A is arange over (m, k): a[i, p] = i·k + p.
-    let sn = n / bn;
-    let g = global.unwrap_or(1.0);
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k)
-                .map(|p| {
-                    ((i * k + p) as f32)
-                        * (b.q[p * n + j] as f32)
-                        * b.scale_values[p * sn + j / bn]
-                        * g
-                })
-                .sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}

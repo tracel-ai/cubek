@@ -17,9 +17,10 @@ use cubecl::std::tensor::layout::Coords2d;
 /// rows and columns in the last level cache: nothing while a band fits, everything once none does.
 ///
 /// **Any width serves any grid.** Where it does not divide the cube count of the axis it strips,
-/// the last strip is only as wide as the boxes left ([`swizzle_ragged`]), so a width can stay what
-/// a plan asked for rather than one fitted to each grid's count: the order is part of what a kernel
-/// compiles, and a width that moved with the grid would compile a kernel per grid.
+/// the last strip is only as wide as the boxes left (`swizzle_ragged`), so a
+/// width can stay what a plan asked for rather than one fitted to each grid's count: the order is
+/// part of what a kernel compiles, and a width that moved with the grid would compile a kernel per
+/// grid.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum CubeOrder {
     /// The box at `(x, y)` goes to the cube at `(x, y)`.
@@ -72,14 +73,15 @@ pub(crate) fn cube_positions(
     }
 }
 
-/// [`swizzle`] over strips cut from an axis of `strip_axis` elements that `step_length` need not
-/// divide: every strip is `step_length` wide but the last, which holds what is left of the axis
-/// and snakes the same way. Where `step_length` divides the axis this is [`swizzle`].
+/// [`swizzle`](fn@swizzle) over strips cut from an axis of `strip_axis` elements that `step_length`
+/// need not divide: every strip is `step_length` wide but the last, which holds what is left of the
+/// axis and snakes the same way. Where `step_length` divides the axis this is
+/// [`swizzle`](fn@swizzle).
 ///
 /// `index` lies in the grid, below `num_steps * strip_axis`; past it the position lands off the
 /// grid, without a division by zero or an overflow.
 #[cube]
-pub fn swizzle_ragged(
+pub(crate) fn swizzle_ragged(
     index: usize,
     num_steps: usize,
     #[comptime] step_length: u32,

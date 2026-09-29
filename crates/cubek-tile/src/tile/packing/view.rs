@@ -27,9 +27,10 @@ use cubecl::{
 /// Unpack one line of stored words into the `NF` values it holds: `NQ` words, each carrying
 /// `NF / NQ` consecutive fields from its low bits.
 ///
-/// Four shapes, because a field decodes four ways. A `Q*` field is a sign-extended integer of
-/// `width` bits (`Q4S` is `[-8, 7]`). An `e2m1` field is read by reinterpreting the byte two share;
-/// an 8-bit float code by its format's decoder; a whole float by reinterpreting its own slot.
+/// Five shapes, because a field decodes five ways. A `Q*` field is a sign-extended integer of
+/// `width` bits (`Q4S` is `[-8, 7]`); an index field its raw bits. An `e2m1` field is read by
+/// reinterpreting the byte two share; an 8-bit float code by its format's decoder; a whole float
+/// by reinterpreting its own slot.
 #[cube]
 pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
@@ -37,6 +38,7 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
 ) -> Vector<F, NF> {
     match comptime!(field.decode()) {
         FieldDecode::SignExtended => unpack_int_line::<F, NQ, NF>(words, field),
+        FieldDecode::Unsigned => unpack_index_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
         FieldDecode::Bits(kind) => unpack_float_line::<F, NQ, NF>(words, kind),
@@ -80,6 +82,34 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
             // xor/sub on every unit, two uniform vector ops instead of a compare/select chain.
             let value = (raw ^ sign) as i32 - sign as i32;
             out.insert(base + j, F::cast_from(value));
+        }
+    }
+    out
+}
+
+/// The index fields, their raw bits as they lie.
+#[cube]
+fn unpack_index_line<F: Numeric, NQ: Size, NF: Size>(
+    words: Vector<u32, NQ>,
+    #[comptime] field: Field,
+) -> Vector<F, NF> {
+    let bits = comptime!(field.size_bits());
+    let nq = NQ::value();
+    let nf = NF::value();
+    let factor = comptime!(fields_per_word(nq, nf, bits));
+    let mask = comptime!(((1u64 << bits) - 1) as u32);
+
+    let mut out = Vector::<F, NF>::empty();
+    #[unroll]
+    for w in 0..words.vector_size() {
+        let word = words.extract(w);
+        let base = w * factor;
+        #[unroll]
+        for j in 0..factor {
+            out.insert(
+                base + j,
+                F::cast_from((word >> comptime!((j * bits) as u32)) & mask),
+            );
         }
     }
     out

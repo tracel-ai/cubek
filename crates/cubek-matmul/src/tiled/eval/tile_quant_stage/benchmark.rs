@@ -8,49 +8,57 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
+use cubek_tile::launch::Grid;
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
 use super::problem::TileQuantStageProblem;
 
 use super::strategy::StageDepth;
 
-/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
+/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
 /// fan-out, so the numbers measure the staging, not the instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 
 const M: Axis = Axis(0);
-const N: Axis = Axis(1);
 const K: Axis = Axis(2);
+/// `N` as the scale blocks make it: which block, and where inside it.
+const NB: Axis = Axis(3);
+const NI: Axis = Axis(4);
 
-/// `C = A · dequant(B)`, `B` the packed weight staged in its stored form: both inputs stage
-/// into shared memory per cube region, the plane's lanes read windows of the stage.
+/// `C = A · (B ⊗ S)`, `B` the packed weight staged in its stored form: both inputs stage into
+/// shared memory per cube region, and the plane's units read windows of the stage, each scaled
+/// where it is read (`b_s.at(&unit).mul(..)`), which is the decode this bench measures.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
+fn staged_matmul_quant_rhs<E: Numeric, VA: Size, VB: Size, VC: Size>(
     a: &TileArg<'_, E, VA>,
-    b: &QuantTileArg<'_, I, VB>,
+    b: &TileArg<'_, u32, VB>,
+    scales: &TileArg<'_, f32, Const<1>>,
     c: &TileArg<'_, E, VC>,
     space: Partitioning,
-    #[define(I)] _b_dtype: ElemType,
     #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
-    let b = b.tile::<E>(comptime!(space.clone()));
+    let b = b.tile_as::<E>(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let a = a.at(&cube);
         let b = b.at(&cube);
+        let scales = scales.at(&cube);
         let c = c.at(&cube);
         let steps = cube.walk();
         let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize);
         stages.pipelined(steps, |slot, step| {
             let c_step = c.at(step);
+            let scales_step = scales.at(step);
             slot.consume(|a_s, b_s| {
-                for lane in step {
-                    let mut c_lane = c_step.at(&lane);
-                    c_lane.mma_with(
-                        &a_s.at(&lane),
-                        &b_s.at(&lane),
+                for unit in step {
+                    let mut c_unit = c_step.at(&unit);
+                    c_unit.mma_with(
+                        &a_s.at(&unit),
+                        &b_s.at(&unit).mul(&scales_step.at(&unit)),
                         REGISTER_BLOCK,
                         Semiring::SUM_PROD,
                     );
@@ -125,25 +133,44 @@ struct TileQuantStageBench {
 }
 
 impl TileQuantStageBench {
-    /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's lanes,
+    /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's units,
     /// one served line each, so the leaf is `mr = m`, `nr = 1`: unrolled while `m <= 64` (the
     /// `mr·nr` cliff), keeping the unroll state constant as depth varies. The kernel stages both
     /// inputs at L0 and reads windows of the stage at L1, which is the staging this bench
     /// measures. The output stages nothing.
+    ///
+    /// `N` is split into its scale blocks (`NB` of `bn` columns, `NI` inside one), so a block's
+    /// scale is looked up at the value's own coordinate.
     fn extents(&self) -> Vec<(Axis, usize)> {
-        vec![(M, self.m), (N, self.n), (K, self.k)]
+        let bn = self.bn();
+        vec![(M, self.m), (NB, self.n / bn), (NI, bn), (K, self.k)]
     }
 
-    /// Three levels: a strip of `tn` columns per cube, `K` in `tk` steps, then `un` columns per
-    /// lane.
+    /// Three levels: a strip of `plane_size · un` columns per cube, `K` in `tk` steps, then `un`
+    /// columns per unit, the units running across a block's columns first, then across blocks.
     fn levels(&self) -> Vec<Level> {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
-        let un = self.pack;
-        Levels::leaf(&[(N, un), (K, self.tk)])
-            .units(&[(N, plane_size)])
+        let (un, bn) = (self.pack, self.bn());
+        Levels::leaf(&[(NI, un), (NB, 1), (K, self.tk)])
+            .units(&[(NI, bn / un), (NB, plane_size * un / bn)])
             .walk_every(&[K])
-            .cubes(&[N])
+            .cubes(&[NB])
             .build()
+    }
+
+    /// The scale block along `N`, which the scheme states.
+    fn bn(&self) -> usize {
+        // The block is `1 × bn`; the scheme keeps its trailing dims, the `N` one last.
+        let block = self
+            .scheme
+            .block_size()
+            .expect("the bench's scheme is block-scaled");
+        block[block.len() - 1] as usize
+    }
+
+    /// `N`'s one physical dim, in blocks and inside one.
+    fn n_dim(&self) -> PhysicalAxisMap {
+        PhysicalAxisMap::disjoint(&[(NB, self.bn()), (NI, 1)])
     }
 
     fn space(&self) -> Space {
@@ -157,13 +184,15 @@ impl Benchmark for TileQuantStageBench {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let space = self.space();
+        // The buffers are the plain matrices; only the kernel's view splits `N`.
+        const N: Axis = Axis(1);
+        let space = Space::new(&[(M, self.m), (N, self.n), (K, self.k)]);
         let a = TileInput::builder(&self.client, space.subspace(&[M, K]))
             .untiled()
             .arange();
         let b = TileInput::builder(&self.client, space.subspace(&[K, N]))
             .untiled()
-            .packed(&self.scheme, DequantAt::Read)
+            .packed(&self.scheme)
             .arange();
         let c = TileInput::builder(&self.client, space.subspace(&[M, N]))
             .untiled()
@@ -179,36 +208,24 @@ impl Benchmark for TileQuantStageBench {
             Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
         };
         let a = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
-        let b = launcher
-            .arg(b.tile.handle().binding())
-            .axes(&[K, N])
-            .vectorize(self.pack)
-            .quantized(Quantization::new(
-                b.scales_binding(),
-                None,
-                self.scheme,
-                DequantAt::Read,
-            ))
-            .build();
+        let b_projection = Projection::new(&[K, NB, NI], &[PhysicalAxisMap::of(K), self.n_dim()]);
         // The register instruction lines the accumulator at the RHS's served width.
-        let c = launcher
-            .arg(c.handle().binding())
-            .axes(&[M, N])
-            .vectorize(self.pack)
-            .build();
-        let vb = b.bound_width();
+        let c_spec = TileSpec::new(Projection::new(
+            &[M, NB, NI],
+            &[PhysicalAxisMap::of(M), self.n_dim()],
+        ));
         staged_matmul_quant_rhs::launch(
             &self.client,
             launcher.cube_count(),
             launcher.cube_dim(),
             a.vector_size,
-            vb,
-            c.vector_size,
+            1,
+            self.pack,
             a.arg(),
-            b.quant_arg(),
-            c.arg(),
+            b.values_arg(TileSpec::new(b_projection.clone())),
+            b.scales_arg(TileSpec::new(b_projection.scales_per(NB))),
+            TileArgLaunch::new(c.tensor_arg(self.pack), c_spec),
             launcher.partitioning_arg(),
-            u32::elem_type_native(),
             f32::elem_type_native(),
         );
         Ok(())

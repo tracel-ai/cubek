@@ -1,21 +1,13 @@
 //! Unit tests for [`Launcher`]: geometry read off the concrete space, kernel space dynamic.
 
 use super::{Form, implied};
-use cubecl::{
-    prelude::*,
-    quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
-    zspace::Tiling,
-};
-use cubek_tile::BoundaryPolicy;
-use cubek_tile::Quantization;
+use cubecl::{prelude::*, zspace::Tiling};
+use cubek_tile::launch::BoundaryPolicy;
 use cubek_tile::{
-    Axis, Boundary, DequantAt, Divisor, Geometry, Level, Offset, Partitioning, PhysicalAxisMap,
-    Projection, Scale, Space, Storage, StorageTiling, TileSpec,
+    Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
+    kind::{Boundary, Storage},
+    layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageTiling},
 };
-
-/// The plane width these tests reason on. Stated, not read off a device: nothing here
-/// launches, and a launch's geometry is the same arithmetic whatever plane runs it.
-const PLANE: u32 = 32;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -34,8 +26,9 @@ fn launcher_geometry_matches_concrete_space() {
         CubeCount::Static(x, y, z) => assert_eq!((x, y, z), (4, 2, 1)),
         _ => panic!("launcher geometry should be static"),
     }
-    // Planes: within a 16×32 cube tile, 2×4 leaves of 8×8.
-    assert_eq!(launch.cube_dim(), CubeDim::new_2d(PLANE, 8));
+    // Planes: within a 16×32 cube tile, 2×1 leaves of 8×32, each as wide as the device's plane.
+    let plane = client.properties().hardware.plane_size_max;
+    assert_eq!(launch.cube_dim(), CubeDim::new_2d(plane, 2));
 }
 
 #[test]
@@ -118,13 +111,14 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
 }
 
 /// A cpu_gemm-shaped scheme: two batch axes riding one-per-cube on Z, 16×32 cube tiles on
-/// X/Y, 8×8 plane leaves with `leaf_k = 4`.
+/// X/Y, 8×32 plane leaves with `leaf_k = 4`. Two planes a cube, so the cube fits a device
+/// whose cube holds as few units as a small CPU runner's cores.
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> (Space, Vec<Level>) {
     (
         Space::new(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)]),
-        cubek_tile::Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
+        cubek_tile::Levels::leaf(&[(M, 8), (N, 32), (K, 4)])
             .walk_every(&[K])
-            .planes(&[(M, 2), (N, 4)])
+            .planes(&[(M, 2)])
             .cubes(&[M, N])
             .batches(&[B0, B1])
             .build(),
@@ -796,7 +790,7 @@ fn arg_gathered_cancelling_divisor_stages() {
 #[test]
 fn vector_size_picks_widest_qualifying_line() {
     let client = cubecl::test_device().client();
-    // Everything divides: N's leaf edge is 8, both inner extents are 64.
+    // Everything divides: N's leaf edge is 32, both inner extents are 64.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
@@ -807,14 +801,14 @@ fn vector_size_picks_widest_qualifying_line() {
     let out = Geometry::from(&binding(&client, &[64, 64]));
 
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], size_of::<f32>());
-    // The gate passed, so the pick is the hardware's widest line fitting the leaf edge (8).
+    // The gate passed, so the pick is the hardware's widest line fitting the leaf edge (32).
     let expected = client
         .io_optimized_vector_sizes(size_of::<f32>())
-        .filter(|&v| 8 % v == 0)
+        .filter(|&v| 32 % v == 0)
         .max()
         .unwrap_or(1);
     assert_eq!(v, expected);
-    assert_eq!(8 % v, 0);
+    assert_eq!(32 % v, 0);
     assert_eq!(64 % v, 0);
 }
 
@@ -981,77 +975,4 @@ fn arg_more_batch_dims_than_axes_panics() {
         .axes(&[M, K])
         .batches(&[B1])
         .build();
-}
-
-// ---- StridedTileSource::quantized ------------------------------------------
-
-/// Attach `scheme` to an `M×K` operand served in `v`-wide lines. Every rule below is also an
-/// in-kernel assumption, so the launch is the one place a violation can still be seen: an
-/// in-kernel assert fires on a device thread, which surfaces as zeroed output.
-fn quantize(v: usize, scheme: QuantScheme) {
-    let client = cubecl::test_device().client();
-    let launch = {
-        let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        implied(&client, Partitioning::new(space, levels), Form::Dynamic)
-    };
-    let _ = launch
-        .arg(binding(&client, &[64, 16]))
-        .axes(&[M, K])
-        .vectorize(v)
-        .boundary(BoundaryPolicy::Unchecked)
-        .quantized(Quantization::new(
-            binding(&client, &[1, 8]),
-            None,
-            scheme,
-            DequantAt::Read,
-        ))
-        .build();
-}
-
-fn quant_scheme() -> QuantScheme {
-    QuantScheme::default()
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-}
-
-/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine, but a line is one
-/// read, and a 4-wide line spans two of them.
-#[test]
-#[should_panic(expected = "straddles two scales")]
-fn quantized_line_straddling_two_blocks_panics() {
-    quantize(4, quant_scheme().per_block([64, 2], ScaleDtype::F32));
-}
-
-/// Scales ride an `f32` buffer read straight through, so a narrower param would reinterpret its
-/// bytes rather than convert them.
-#[test]
-#[should_panic(expected = "scales are read as f32")]
-fn quantized_non_f32_param_panics() {
-    quantize(1, quant_scheme().per_tensor(ScaleDtype::F16));
-}
-
-/// A packed store's values are laid down along the innermost axis, so that is the only axis it may
-/// pack on: the view unpacks a line's components into consecutive served values.
-#[test]
-#[should_panic(expected = "must pack along the innermost axis")]
-fn quantized_packed_store_outer_axis_panics() {
-    quantize(
-        1,
-        quant_scheme()
-            .per_tensor(ScaleDtype::F32)
-            .with_store(QuantStore::PackedU32(2)),
-    );
-}
-
-/// A served line must cover whole `u32`s: `Q8S` packs 4 values each, so a 1-wide line would ask
-/// for a quarter of one.
-#[test]
-#[should_panic(expected = "packing factor")]
-fn quantized_packed_store_narrow_line_panics() {
-    quantize(
-        1,
-        quant_scheme()
-            .per_tensor(ScaleDtype::F32)
-            .with_store(QuantStore::PackedU32(0)),
-    );
 }

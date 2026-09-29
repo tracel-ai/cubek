@@ -141,7 +141,7 @@ pub(crate) fn select_argmin<E: Numeric, N: Size>(
 /// coordinates.
 ///
 /// Every test is an ordered comparison, since WGSL does not promise how a NaN
-/// compares with itself. Merging accumulators or folding lanes cannot use this:
+/// compares with itself. Merging accumulators or reducing components cannot use this:
 /// there the candidate's coordinate can be the lower one.
 #[cube]
 pub(crate) fn advance_argmax<E: Numeric, N: Size>(
@@ -259,12 +259,12 @@ fn replace_plane_extreme_with_nan<E: Numeric, N: Size>(
     item: Vector<E, N>,
 ) -> Vector<E, N> {
     let is_nan = numeric_is_nan(item);
-    let no_lane = Vector::new(u32::MAX);
-    let nan_lane = plane_min(select_many(is_nan, Vector::new(UNIT_POS_X), no_lane));
-    let has_nan = nan_lane.not_equal(&no_lane);
-    let nan_lane = select_many(has_nan, nan_lane, Vector::new(0u32));
+    let no_unit = Vector::new(u32::MAX);
+    let nan_unit = plane_min(select_many(is_nan, Vector::new(UNIT_POS_X), no_unit));
+    let has_nan = nan_unit.not_equal(&no_unit);
+    let nan_unit = select_many(has_nan, nan_unit, Vector::new(0u32));
     // Preserve an input NaN for each vector component; synthesizing one is not portable on WGPU.
-    let nan_item = shuffle_vector(item, nan_lane);
+    let nan_item = shuffle_vector(item, nan_unit);
 
     select_many(has_nan, nan_item, ordered_extreme)
 }
@@ -281,11 +281,11 @@ fn replace_plane_arg_extreme_with_nan<E: Numeric, N: Size>(
     let nan_coordinate = plane_min(select_many(is_nan, coordinate, no_coordinate));
     let has_nan = nan_coordinate.not_equal(&no_coordinate);
     let is_first_nan = is_nan.vec_and(coordinate.equal(&nan_coordinate));
-    let no_lane = Vector::new(u32::MAX);
-    let nan_lane = plane_min(select_many(is_first_nan, Vector::new(UNIT_POS_X), no_lane));
-    let nan_lane = select_many(has_nan, nan_lane, Vector::new(0u32));
-    // Different vector components can choose different source lanes.
-    let nan_item = shuffle_vector(item, nan_lane);
+    let no_unit = Vector::new(u32::MAX);
+    let nan_unit = plane_min(select_many(is_first_nan, Vector::new(UNIT_POS_X), no_unit));
+    let nan_unit = select_many(has_nan, nan_unit, Vector::new(0u32));
+    // Different vector components can choose different source units.
+    let nan_item = shuffle_vector(item, nan_unit);
 
     (
         select_many(has_nan, nan_item, ordered_extreme),
@@ -296,12 +296,12 @@ fn replace_plane_arg_extreme_with_nan<E: Numeric, N: Size>(
 #[cube]
 fn shuffle_vector<E: Numeric, N: Size>(
     item: Vector<E, N>,
-    source_lanes: Vector<u32, N>,
+    source_units: Vector<u32, N>,
 ) -> Vector<E, N> {
     let mut shuffled = Vector::empty();
     #[unroll]
     for k in 0..N::value() {
-        shuffled.insert(k, plane_shuffle(item.extract(k), source_lanes.extract(k)));
+        shuffled.insert(k, plane_shuffle(item.extract(k), source_units.extract(k)));
     }
     shuffled
 }

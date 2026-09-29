@@ -123,7 +123,6 @@ impl<T: Numeric> Lines<T> {
                      one; bind the operand packed, or serve it as `f32`"
                 ),
             },
-            Packing::Native => panic!("Lines: a native store has no words to hold"),
         });
         let per_word = comptime!(field.per_word());
         comptime!(assert!(
@@ -242,7 +241,6 @@ impl<T: Numeric> Lines<T> {
                         }
                         bits
                     }
-                    Packing::Native => panic!("Lines::load: a native store has no words"),
                 };
                 #[unroll]
                 for j in 0..per_read {

@@ -247,7 +247,7 @@ fn depthwise_5x5_dilated() {
     .check_every_tiling();
 }
 
-/// A channel count that is not a multiple of the lane count, so the last cube's channel tile is
+/// A channel count that is not a multiple of the unit count, so the last cube's channel tile is
 /// short and the walk has to stop where the tensor does.
 #[test]
 fn depthwise_channels_not_a_whole_number_of_cubes() {

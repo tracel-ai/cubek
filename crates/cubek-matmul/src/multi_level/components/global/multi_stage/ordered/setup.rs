@@ -150,7 +150,7 @@ where
         // degrade on. The kernel re-checks them at comptime, but an error
         // raised there only surfaces as an asynchronous compile failure at the
         // next flush (e.g. ordered loading on a plane-64 device whose stage
-        // leaves fewer vectors per plane than lanes), which no caller can
+        // leaves fewer vectors per plane than units), which no caller can
         // recover from.
         LL::validate_with_config(device_props, &lhs_reader_config)?;
         RL::validate_with_config(device_props, &rhs_reader_config)?;

@@ -11,7 +11,7 @@ use crate::{Extent, Space};
 /// block is an `M x KI` matrix and `(B, M, K)` a batch of `M x K` ones, both rank 3. A grouping
 /// that is not a face of the tile's box is refused here rather than read out of bounds.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct MatrixAxes {
+pub(crate) struct MatrixAxes {
     /// Where the row group starts; everything before it is batch.
     pub row_split: usize,
     /// Where the column group starts.
@@ -35,7 +35,8 @@ impl MatrixAxes {
     ///
     /// An axis of extent one folds away, so a split contraction's block digit or a column tile's
     /// index does not stand between a fragment and its rows. What a fragment, a partition and a
-    /// trailing region read through, none of which knows a shape to [`find`](Self::find) one from.
+    /// trailing region read through, none of which knows a shape to [`find`](MatrixAxes::new) one
+    /// from.
     pub fn edges(space: &Space) -> Self {
         let rank = space.rank();
         let col_split = rank - 1;
@@ -154,7 +155,7 @@ impl MatrixAxes {
 
 /// Why a space has no `rows x cols` reading: no grouping of its axes multiplies out to it.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct NoMatrix {
+pub(crate) struct NoMatrix {
     pub rows: usize,
     pub cols: usize,
     pub extents: Vec<usize>,

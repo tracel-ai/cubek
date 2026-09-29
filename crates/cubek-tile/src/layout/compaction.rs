@@ -82,7 +82,7 @@ impl Compaction {
                 // need not divide, and its value is unobservable, so it is pinned, not truncated.
                 //
                 // A Dynamic one passes untouched: `step` is 1 wherever one moves, and pinning a
-                // non-moving one would drop its slot from the coefficient carrier, which the stage
+                // non-moving one would drop its slot from the coefficient array, which the stage
                 // inherits verbatim ([`Memory::fill_from`](crate::Memory)) so must index alike.
                 let scaled: Vec<(Axis, Scale)> = terms
                     .iter()
@@ -126,7 +126,7 @@ impl Compaction {
     }
 
     /// The step per physical axis: what a stage coordinate is multiplied by to land on the source
-    /// coordinate it was filled from. All `1` exactly when [`is_dense`](Compaction::is_dense).
+    /// coordinate it was filled from. All `1` exactly when `is_dense`.
     pub fn steps(&self) -> &[usize] {
         &self.steps
     }
@@ -374,10 +374,10 @@ mod tests {
     }
 
     /// A non-moving term is pinned to `1` only when it is static: pinning a `Dynamic` one would
-    /// drop its slot from the coefficient carrier, which the stage inherits from its source
+    /// drop its slot from the coefficient array, which the stage inherits from its source
     /// position for position and so must index identically.
     #[test]
-    fn a_non_moving_dynamic_coefficient_keeps_its_carrier_slot() {
+    fn a_non_moving_dynamic_coefficient_keeps_its_array_slot() {
         let p = Projection::new(
             &[OH, RH, CI],
             &[

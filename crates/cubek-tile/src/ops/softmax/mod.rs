@@ -7,7 +7,7 @@
 //! by the returned correction). No self-lowering: a standalone softmax verb's schedules land later.
 //!
 //! Nothing but the step. The row plumbing a caller wraps it in is
-//! [`rows`](super::rows) and the split ending is attention's; either one
+//! `rows` and the split ending is attention's; either one
 //! landing here is the module drifting back into a dumping ground.
 
 mod leaf;

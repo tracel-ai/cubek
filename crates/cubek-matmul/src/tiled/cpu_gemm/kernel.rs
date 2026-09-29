@@ -9,7 +9,7 @@ use cubek_tile::{
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
 
 /// The register block the software instruction runs under on a CPU backend: a wide scalar
-/// register budget to unroll against and the dual-path edge specialization, with no lanes to
+/// register budget to unroll against and the dual-path edge specialization, with no units to
 /// fan out over. Stated here because the kernel is what runs it.
 pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 

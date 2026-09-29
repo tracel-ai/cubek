@@ -14,24 +14,20 @@ impl<T: LaunchArg + CubeType<ExpandType: Clone> + Clone + Send + Sync> RuntimeCo
 /// classifies as [`MatrixBatchLayout::HighlyPermuted`] and can't be consumed
 /// directly; materialize such an operand into a contiguous tensor. A broadcast
 /// *batch* dim is only `MildlyPermuted` and stays untouched (handled natively).
+///
+/// A storage-tiled operand is passed as it is: its strides order its tiles, not a matrix's rows
+/// and columns, so this classification does not read them, and a routine that reads storage
+/// tiles checks the layout it was handed itself.
 #[allow(clippy::result_large_err)]
 pub(crate) fn into_contiguous_if_highly_permuted(
     client: &Client,
     binding: InputBinding,
 ) -> Result<InputBinding, MatmulSetupError> {
+    if binding.data().tiling.is_tiled() {
+        return Ok(binding);
+    }
     match matrix_batch_layout(&binding.data().strides, binding.scheme()) {
-        MatrixBatchLayout::HighlyPermuted => {
-            // A contiguous copy is a plain row-major buffer, so it would drop the storage tiles
-            // the binding states rather than carry them: the caller packs a plain tensor.
-            if binding.data().tiling.is_tiled() {
-                return Err(MatmulSetupError::InvalidConfig(Box::new(
-                    "a storage-tiled operand arrived highly permuted; making it contiguous would \
-                     drop its storage tiles, so unpack it, or pack a row-major tensor"
-                        .to_string(),
-                )));
-            }
-            Ok(binding.into_contiguous(client)?)
-        }
+        MatrixBatchLayout::HighlyPermuted => Ok(binding.into_contiguous(client)?),
         _ => Ok(binding),
     }
 }

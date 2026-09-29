@@ -22,8 +22,8 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
-    TileSpec as CubekTileSpec,
+    Axis, Projection, Space, TileArgLaunch, TileSpec as CubekTileSpec, kind::Field,
+    layout::StorageTiling,
 };
 
 use crate::{TestInput, TestInputBuilder};
@@ -230,7 +230,14 @@ impl TileInputBuilder {
     /// [`arange`](QuantizedTileInputBuilder::arange)), which also mints the scales: a
     /// quantized tensor is one thing (data + scales + scheme). Untiled only: packed storage
     /// has no physically tiled layout.
-    pub fn packed(self, scheme: &QuantScheme, dequant_at: DequantAt) -> QuantizedTileInputBuilder {
+    ///
+    /// The kernel meets the three as operands of their own ([`values_arg`], [`scales_arg`],
+    /// [`table_arg`]) and states the decode where it happens: `w.lookup(&table).mul(&scales)`.
+    ///
+    /// [`values_arg`]: QuantizedTileInput::values_arg
+    /// [`scales_arg`]: QuantizedTileInput::scales_arg
+    /// [`table_arg`]: QuantizedTileInput::table_arg
+    pub fn packed(self, scheme: &QuantScheme) -> QuantizedTileInputBuilder {
         let levels = self
             .levels
             .expect("TileInput: set .untiled() before .packed");
@@ -242,7 +249,6 @@ impl TileInputBuilder {
             client: self.client,
             space: self.space,
             scheme: *scheme,
-            dequant_at,
         }
     }
 
@@ -309,7 +315,6 @@ impl TileInputBuilder {
 /// finalizer fills it and mints the values tile and its scales together: a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
-    dequant_at: DequantAt,
     client: Client,
     space: Space,
     scheme: QuantScheme,
@@ -366,7 +371,6 @@ impl QuantizedTileInputBuilder {
             },
             scales,
             scheme: self.scheme,
-            dequant_at: self.dequant_at,
             table: None,
             q,
             scale_values,
@@ -424,7 +428,6 @@ impl QuantizedTileInputBuilder {
             },
             scales,
             scheme: self.scheme,
-            dequant_at: self.dequant_at,
             table: Some(table_handle),
             q,
             scale_values,
@@ -451,8 +454,6 @@ fn integer_valued(value: QuantValue) -> bool {
 /// scheme), so the [`quantized builder`](QuantizedTileInputBuilder) mints the pair together,
 /// plus the exact numbers behind both for host references.
 pub struct QuantizedTileInput {
-    /// How far this operand's quantized form travels, stated when it was declared quantized.
-    pub dequant_at: DequantAt,
     pub tile: TileInput,
     scales: TensorHandle,
     scheme: QuantScheme,
@@ -473,20 +474,42 @@ impl QuantizedTileInput {
         self.scales.clone().binding()
     }
 
-    /// The quantized tile as one launch argument: values, scales, spec, scheme, and how far the
-    /// quantized form travels.
-    pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V> {
-        QuantTileArgLaunch::new(
-            self.tile.tensor_arg(1),
-            self.scales_binding().into_tensor_arg(),
-            None.into(),
-            self.table
-                .as_ref()
-                .map(|t| t.clone().binding().into_tensor_arg().into_buffer_arg())
-                .into(),
-            self.tile.spec(),
-            self.scheme,
-            self.dequant_at,
+    /// The field each stored value occupies: the scheme's value, or under a lookup scheme an
+    /// index as wide, which names a table entry rather than a number.
+    pub fn field(&self) -> Field {
+        match self.scheme.mode {
+            cubecl::quant::scheme::QuantMode::Lookup => Field::Index {
+                bits: self.scheme.size_bits_value(),
+            },
+            _ => Field::Quant(self.scheme.value),
+        }
+    }
+
+    /// The packed values as an operand: `u32` words of [`field`](Self::field)s, addressed as
+    /// `spec` says (declared in values). What they decode to is the kernel's statement.
+    pub fn values_arg<V: Size>(&self, spec: CubekTileSpec) -> TileArgLaunch<'static, u32, V> {
+        TileArgLaunch::new(self.tile.tensor_arg(1), spec.packed(self.field()))
+    }
+
+    /// The innermost level's scales as an operand, addressed as `spec` says: one per block of
+    /// the scheme's grid, row-major.
+    pub fn scales_arg<V: Size>(&self, spec: CubekTileSpec) -> TileArgLaunch<'static, f32, V> {
+        TileArgLaunch::new(self.scales_binding().into_tensor_arg(), spec)
+    }
+
+    /// A lookup scheme's table as an operand over its one axis, the positions.
+    ///
+    /// # Panics
+    ///
+    /// Unless the scheme is a lookup one.
+    pub fn table_arg<V: Size>(&self, axis: Axis) -> TileArgLaunch<'static, f32, V> {
+        let table = self
+            .table
+            .as_ref()
+            .expect("QuantizedTileInput::table_arg: this scheme indexes no table");
+        TileArgLaunch::new(
+            table.clone().binding().into_tensor_arg(),
+            CubekTileSpec::direct(&[axis]),
         )
     }
 }

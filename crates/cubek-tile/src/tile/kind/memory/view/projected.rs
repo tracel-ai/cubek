@@ -1,13 +1,13 @@
-//! The gathered read view over a [`Tile`](crate::Tile). [`ProjectionInKernel`] is the [`Layout`] that
-//! turns the tile's *logical* coordinate (one per axis of its [`Space`](crate::Space)) into the
-//! *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
+//! The gathered read view over a [`Tile`](crate::Tile). [`ProjectionInKernel`] is the [`Layout`]
+//! that turns the tile's *logical* coordinate (one per axis of its [`Space`](crate::Space)) into
+//! the *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
 //!
 //! Under the direct mapping the two coincide and this layout is never built; the matmul leaves read
 //! through [`TileMatrix`](super::TileMatrix). Under a gathering mapping they differ in rank: a 2-D
 //! convolution input has five logical axes over three physical, a step and a tap sharing one.
 //!
-//! [`CompactionStep`] is the other half, one level down: physical to physical, undoing the lattice a
-//! [`Compaction`] quotients a gathered window by, so a fill of the compacted stage lands on the
+//! [`CompactionStep`] is the other half, one level down: physical to physical, undoing the lattice
+//! a [`Compaction`] quotients a gathered window by, so a fill of the compacted stage lands on the
 //! source cells the stage keeps.
 
 use cubecl::{
@@ -42,8 +42,8 @@ pub(crate) trait TileLayout<C: Coordinates>:
 impl<C: Coordinates, L> TileLayout<C> for L where L: LogicalLayout + Layout<Coordinates = C> {}
 
 /// Any [`LogicalLayout`] with an operand's [`Projection`] applied under it: the inner layout
-/// resolves a reader's coordinate to the tile's *logical* one, then [`ProjectionInKernel`] folds that
-/// onto the window's *physical* one. Under the direct mapping the fold is the identity.
+/// resolves a reader's coordinate to the tile's *logical* one, then [`ProjectionInKernel`] folds
+/// that onto the window's *physical* one. Under the direct mapping the fold is the identity.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct Projected<L: LogicalLayout> {
@@ -127,15 +127,15 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`nd_packed`](Tile::nd_packed) at a stated storage element `I` and physical line `WP`.
-    pub fn nd<I: Numeric, WP: Size, W: Size>(
+    /// `nd_packed` at a stated physical line `WP`.
+    pub fn nd<WP: Size, W: Size>(
         &self,
         #[comptime] guard: Guard,
     ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
         match &self.kind {
             TileKind::Memory(g) => {
                 let layout = g.axis_projection(comptime!(self.place.space.clone()));
-                g.transparent::<I, WP, W, CoordsDyn, ProjectionInKernel>(layout, guard)
+                g.unpacked::<WP, W, CoordsDyn, ProjectionInKernel>(layout, guard)
             }
             TileKind::Procedural(data) => {
                 procedural_nd::<T, W>(data, comptime!(self.place.space.clone()), guard)
@@ -291,4 +291,42 @@ pub(crate) fn line_extents(
             }
         })
         .collect()
+}
+
+/// The scalar coordinate of the `line`-th line of a window whose innermost axis counts in
+/// `vw`-wide lines: one entry per axis, the line's first value.
+#[cube]
+pub(crate) fn coords_of_line(
+    line: u32,
+    #[comptime] line_extents: Vec<usize>,
+    #[comptime] vw: usize,
+) -> Coords<u32> {
+    let n = comptime!(line_extents.len());
+    let digits = Coords::constant(line_extents).unravel(line);
+    let mut coords = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            coords.push(digits.at(p).times(comptime!(vw as u32)));
+        } else {
+            coords.push(digits.at(p));
+        }
+    }
+    coords
+}
+
+/// `coords` as an N-D view addresses them: the innermost a line index.
+#[cube]
+pub(crate) fn as_dyn(coords: &Coords<u32>, #[comptime] vw: usize) -> CoordsDyn {
+    let n = coords.len();
+    let mut at = CoordsDyn::new();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            at.push(coords.at(p).divided_by(comptime!(vw as u32)));
+        } else {
+            at.push(coords.at(p));
+        }
+    }
+    at
 }

@@ -48,7 +48,7 @@ impl Projection {
     }
 
     /// The same operand in *coordinate* space: an axis's storage fragments merged back into the one
-    /// coordinate they are digits of, one entry per coordinate [`BufferLayout`](crate::BufferLayout)
+    /// coordinate they are digits of, one entry per coordinate `BufferLayout`
     /// consumes; the other half of [`positional`](Projection::positional). Untiled: its own map.
     pub fn untiled(&self) -> Projection {
         let carried = self.carried_groups();
@@ -68,7 +68,7 @@ impl Projection {
 
     /// The same buffer addressed by physical position, not this operand's axes: each physical axis
     /// relabeled with its synthetic [`Axis`] at coefficient `1`. Tiling survives, a gather does not
-    /// (resolved a layer up); the map [`BufferLayout`](crate::BufferLayout) splits coordinates through.
+    /// (resolved a layer up); the map `BufferLayout` splits coordinates through.
     pub fn positional(&self) -> Projection {
         let carried = self.carried_groups();
         let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
@@ -269,6 +269,23 @@ impl Projection {
                 .all(|(map, &axis)| map.is_identity(axis))
     }
 
+    /// The logical axis each trailing physical axis carries, up to the innermost one that carries
+    /// none: the labels a [`Layout`](crate::Layout) reads the buffer's dense part under, right-
+    /// aligned to its dims.
+    pub(crate) fn dense_labels(&self) -> Vec<Axis> {
+        let mut labels: Vec<Axis> = self
+            .physical
+            .iter()
+            .rev()
+            .map_while(|map| match map.addressed() {
+                Addressed::By(axis) => Some(axis),
+                Addressed::Broadcast => None,
+            })
+            .collect();
+        labels.reverse();
+        labels
+    }
+
     pub fn physical_rank(&self) -> usize {
         self.physical.len()
     }
@@ -349,7 +366,7 @@ impl Projection {
     /// where every physical axis is partitioned by the axes addressing it, so a position
     /// determines a cell and no two share one; [`Overlapping`] where any axis may not.
     ///
-    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one, one
+    /// The question every dense path asks. `is_direct` is the narrower one, one
     /// axis per physical axis in order, and a [`Disjoint`] projection of higher logical rank
     /// answers the same for the same reason: nothing aliases, every window is a box.
     ///
@@ -511,12 +528,12 @@ impl Projection {
 }
 
 // Where the runtime coefficients sit once they are packed for launch. A projection's `Dynamic`
-// scales, offsets and divisors travel to the kernel in two flat carriers, one unsigned
+// scales, offsets and divisors travel to the kernel in two flat arrays, one unsigned
 // (coefficients and divisors) and one signed (offsets), in the projection's own order: physical
-// axis major, terms within an axis, each axis's divisor last. The launch fills the carriers by
+// axis major, terms within an axis, each axis's divisor last. The launch fills the arrays by
 // walking the maps in order, and the kernel indexes them with the same functions below.
 impl Projection {
-    /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
+    /// Where physical axis `pa`'s term `t` sits in the runtime coefficient array, or `None` when
     /// it is [`Static`](Scale::Static): physical axis major, term order within, each axis's
     /// [`Dynamic`](Divisor::Dynamic) divisor last: a caller fills it by walking the maps in order.
     pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
@@ -530,8 +547,8 @@ impl Projection {
         Some(self.coefficient_base(pa) + within)
     }
 
-    /// Where physical axis `pa`'s divisor sits in the runtime coefficient carrier, or `None` when
-    /// it is [`Static`](Divisor::Static). Divisors share the carrier with coefficients: both are
+    /// Where physical axis `pa`'s divisor sits in the runtime coefficient array, or `None` when
+    /// it is [`Static`](Divisor::Static). Divisors share the array with coefficients: both are
     /// unsigned values of the same combination, and an axis's divisor follows its own terms.
     pub fn dynamic_divisor_index(&self, pa: usize) -> Option<usize> {
         if !self.physical_axis(pa).divisor().is_dynamic() {
@@ -540,8 +557,8 @@ impl Projection {
         Some(self.coefficient_base(pa) + self.physical_axis(pa).dynamic_scale_count())
     }
 
-    /// Where physical axis `pa`'s entries start in the runtime coefficient carrier; at the physical
-    /// rank, the carrier's whole length.
+    /// Where physical axis `pa`'s entries start in the runtime coefficient array; at the physical
+    /// rank, the array's whole length.
     fn coefficient_base(&self, pa: usize) -> usize {
         (0..pa)
             .map(|i| self.physical_axis(i))
@@ -549,14 +566,14 @@ impl Projection {
             .sum()
     }
 
-    /// The length of the runtime coefficient carrier: every [`Dynamic`](Scale::Dynamic) coefficient
+    /// The length of the runtime coefficient array: every [`Dynamic`](Scale::Dynamic) coefficient
     /// and every [`Dynamic`](Divisor::Dynamic) divisor.
     pub(crate) fn dynamic_coefficient_count(&self) -> usize {
         self.coefficient_base(self.physical_rank())
     }
 
-    /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
-    /// [`Static`](Offset::Static). Offsets ride their own signed carrier, so this order is
+    /// Where physical axis `pa`'s offset sits in the runtime offset array, or `None` when it is
+    /// [`Static`](Offset::Static). Offsets ride their own signed array, so this order is
     /// independent of [`dynamic_scale_index`](Self::dynamic_scale_index)'s.
     pub(crate) fn dynamic_offset_index(&self, pa: usize) -> Option<usize> {
         if !self.physical_axis(pa).offset().is_dynamic() {
@@ -570,7 +587,7 @@ impl Projection {
         )
     }
 
-    /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
+    /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset array.
     pub(crate) fn dynamic_offset_count(&self) -> usize {
         self.axis_maps().filter(|m| m.offset().is_dynamic()).count()
     }
@@ -810,8 +827,9 @@ mod tests {
     }
 
     /// A spec built from a realized tiled layout is honest about its buffer: its physical rank *is*
-    /// the rank a memory tile reads shape and strides over, its positional relabeling the layout's own
-    /// synthetic map; the declared twin (`TileSpec::new` plus tiled `Storage`) describes the same.
+    /// the rank a memory tile reads shape and strides over, its positional relabeling the layout's
+    /// own synthetic map; the declared twin (`TileSpec::new` plus tiled `Storage`) describes the
+    /// same.
     #[test]
     fn a_tiled_spec_matches_its_buffer() {
         use crate::TileSpec;
@@ -954,7 +972,7 @@ mod tests {
         assert!(dynamic_offset.may_underflow());
     }
 
-    /// Each carrier's order: physical axis major, term order within, `Static` skipped. Offsets are
+    /// Each array's order: physical axis major, term order within, `Static` skipped. Offsets are
     /// indexed apart from coefficients, so one does not shift the other.
     #[test]
     fn dynamic_terms_index_in_projection_order() {

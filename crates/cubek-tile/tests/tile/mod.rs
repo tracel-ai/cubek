@@ -7,7 +7,9 @@ mod conv;
 mod decode_gemv;
 mod depthwise;
 mod dequant;
+mod destination;
 mod distributed;
+mod dynamic_contraction;
 mod erased;
 mod imperative;
 mod launcher;
@@ -22,6 +24,7 @@ mod recursive;
 mod reduce;
 mod references;
 mod routed;
+mod row_chunks;
 mod scaled;
 mod separable;
 mod smem_accumulation;
@@ -31,7 +34,7 @@ mod split_k;
 mod stream;
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Grid, Launcher, Partitioning, Space};
+use cubek_tile::{Axis, Launcher, Partitioning, Space, launch::Grid};
 
 /// Which extents a test's kernel reads at runtime: the test's statement of what a family decides
 /// once by building its partitioning over `Space::with_dynamic`.

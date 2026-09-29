@@ -19,6 +19,13 @@ use cubecl::{
     zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput};
+use cubek_tile::kind::GlobalOperand;
+use cubek_tile::kind::Write;
+use cubek_tile::layout::RuntimeGeometry;
+use cubek_tile::procedural::Procedural;
+use cubek_tile::procedural::Recipe;
+use cubek_tile::procedural::RecipeCoords;
+use cubek_tile::procedural::RecipeExpand;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);

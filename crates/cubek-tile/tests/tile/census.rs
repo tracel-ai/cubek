@@ -13,16 +13,40 @@ use std::path::{Path, PathBuf};
 /// Counts what the crate compiles: a file no `mod` declares is not part of the surface, and one
 /// left behind by a merge was inflating this by 33 until it was deleted. Phase 10 sets the
 /// target the facade lands on.
-const PUB_ITEMS: usize = 761;
+///
+/// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
+/// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
+/// memory counts it. The attention walk moving to its client and the resampling filters to
+/// cubek-interpolate took it down to 746. The facade split the root into modules (a few more
+/// `pub mod` and root re-exports) and made crate-private what nothing outside named, and the
+/// questions a selector asks (`Prefetch`, `Delivery::moves`) replaced the limits it re-derived
+/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724. `softmax`
+/// became the one public row op (its unit and plane arms crate-private) and the stencil builder
+/// test-only: 717. `Input` and `Output`, one launch argument each way, replaced the delivery
+/// families (`DeliveryFamily`, `DeliveryLaunch`, `Cooperative`, `Tma`, `Accumulated`): five
+/// concepts to two, but their `tile` and host builders count as lines, four more: 721.
+/// `StoragePartitioning` raised it by fifteen: the type and what it answers (`new`, `tiles`,
+/// `order`, `holds`, `physical`), the `StorageLevels` it is stated with (`new`, `tile`, `grid`),
+/// the misfits a statement and a tile are refused with, `Geometry::serves` and the re-export of
+/// its folder, since a caller writing a storage-tiled buffer states how it is laid down and every
+/// reader asks whether it holds the tile the reader needs: 736. `Destination`, the seam a caller's
+/// own output plugs into (a fused epilogue's sink, which no enum here can name), raised it by
+/// four: the trait, its host half `DestinationLaunch`, `Buffered` (the one implementation, serving
+/// `Output`), and the module's re-export. One seam for outputs only, not the families back: 740.
+/// `Tile::lookup`, the explicit codebook a copy decodes (with its expansion), raised it by two,
+/// ahead of the implicit quantization path it retires, which then went (`DequantAt`,
+/// `Quantization`, `QuantTileArg`, `Packing::Native`, the storage-element parameter of `nd` and
+/// `fragment_matrix`): 725.
+const PUB_ITEMS: usize = 725;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 36;
+const LONG_FNS: usize = 31;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
-const LONG_FILES: usize = 11;
+const LONG_FILES: usize = 10;
 /// `#[allow(clippy::too_many_arguments)]` sites. The 27th came in with upstream's
-/// shared-memory accumulator.
-const TOO_MANY_ARGUMENTS: usize = 27;
+/// shared-memory accumulator; the implicit quantization path took one with it: 26.
+const TOO_MANY_ARGUMENTS: usize = 26;
 
 /// Words the redesign retires, each checked as a whole identifier. A phase that deletes a concept
 /// moves its word here, and the count must be zero from then on.
@@ -37,12 +61,25 @@ const RETIRED: &[&str] = &[
     "unravel_const",
     "concat3",
     "within_2d",
-    "AxisDistribution",
-    "Distributed",
-    "DistributedToUnits",
-    "distribution",
-    "distributes",
-    "distributed",
+    // A level distributes its tiles over a compute scope ("distribution over deal"), and a
+    // plane is made of units, not lanes.
+    "Deal",
+    "Dealt",
+    "deal",
+    "dealt",
+    "deals",
+    "lane",
+    "lanes",
+    "Takers",
+    // A unit share reduces its partials; a stage's rows are arranged, not placed.
+    "fold_of",
+    "fold_mask",
+    "RowPlacement",
+    // Nothing decodes behind a read: a kernel states its decode (`Tile::mul`, `Tile::lookup`).
+    "DequantAt",
+    "QuantTileArg",
+    "QuantInfo",
+    "quant_arg",
 ];
 
 #[test]
