@@ -50,12 +50,11 @@ impl<T: Numeric> Tile<T> {
         let dst = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let mem = src.mem("Tile::copy_from");
+        let (load, lands) = (src.vector_tile(), self.vector_tile());
         let mut out = self.nd_mut::<VW>();
-        let lines = comptime!(line_extents(&space, sw, 0, rank));
-        let count = comptime!(lines.iter().product::<usize>() as u32);
-        for line in range_stepped(UNIT_POS, count, CUBE_DIM) {
-            let start = coords_of_line(line, comptime!(lines.clone()), sw);
-            let held = stored.read(as_dyn(&start, sw));
+        for line in range_stepped(UNIT_POS, load.count(&space), CUBE_DIM) {
+            let start = load.start(line, &space);
+            let held = stored.read(load.index(&start, &space));
             // The destination lines this source line holds, each at its first value; and where
             // it lands, the same place without the source's one-wide axes.
             #[unroll]
@@ -75,7 +74,7 @@ impl<T: Numeric> Tile<T> {
                 let values = values_at::<T, I, WP, VW>(held, offset, packing);
                 let scale = mem.factor.at_coords(&at, comptime!(space.clone()));
                 let decoded = mem.codebook.entries(values) * Vector::<T, VW>::cast_from(scale);
-                out.write(as_dyn(&to, vw), decoded);
+                out.write(lands.index(&to, &dst), decoded);
             }
         }
     }

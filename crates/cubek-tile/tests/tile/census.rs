@@ -45,7 +45,11 @@ use std::path::{Path, PathBuf};
 /// words is 16 values along `K` by 2 columns), raised it by six: the type, `new`, `extents`,
 /// `values`, `along_one_axis` for the readers that place a load along one axis, and its module's
 /// re-export: 725.
-const PUB_ITEMS: usize = 725;
+/// A kernel reading an operand in those loads raised it by eight: `Tile::vector_tile`, the tile's
+/// own load; `VectorTile::run`, a plain buffer's; and `count`, `start` and `index`, which replace
+/// the line helpers that assumed a load runs along the innermost axis, each with the `__expand`
+/// twin a compile-time value needs to be called from a kernel: 733.
+const PUB_ITEMS: usize = 733;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 31;

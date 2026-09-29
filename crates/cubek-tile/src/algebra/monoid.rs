@@ -141,7 +141,7 @@ macro_rules! comptime_only {
 
         impl ExpandTypeClone for $ty {
             fn clone_unchecked(&self) -> Self {
-                *self
+                Clone::clone(self)
             }
         }
 

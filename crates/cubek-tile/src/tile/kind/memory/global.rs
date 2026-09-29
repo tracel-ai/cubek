@@ -212,7 +212,8 @@ impl<T: Numeric> GlobalOperand<T> {
 impl<T: Numeric> Memory<T> {
     /// The memory tile a launched operand becomes: the top window boxed over the operand's
     /// physical axes, in global memory.
-    #[allow(clippy::too_many_arguments)]
+    // The unrolled loop over the buffer's dims indexes a compile-time list by the dim.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
         let backing = operand.backing;
         let geometry = operand.geometry;
@@ -260,24 +261,25 @@ impl<T: Numeric> Memory<T> {
         // Off the projection rather than the space: a gathered operand's buffer has fewer
         // physical axes than its logical space has axes, and a storage-tiled one has more.
         let rank = comptime!(projection.physical_rank());
-        let last = comptime!(rank - 1);
-        let w = comptime!(vector_size as u32);
+        // The buffer read in loads: each dim's extent over what one load covers of it, every
+        // stride counted in loads. A plain buffer's innermost dim counts lines one line apart and
+        // the coarser strides divide by the width; a stored tile a load takes whole is one.
+        let load = comptime!(
+            VectorTile::new(
+                &spec.stored_tiles,
+                space.axis_at(space.rank() - 1),
+                vector_size
+            )
+            .unwrap_or_else(|why| panic!("GlobalOperand: {vector_size} values a load: {why}"))
+        );
+        let parts = comptime!(load.parts(&spec.stored_tiles, &projection.dense_labels(), rank));
         let mut physical_shape = Coords::<u32>::new();
         let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
-            let extent = geometry.shape.at(i);
-            let stride = geometry.strides.at(i);
-            if comptime!(i == last) {
-                // Innermost (contiguous, scalar stride 1): count lines; consecutive lines
-                // are one line apart.
-                physical_shape.push(extent / w);
-                physical_strides.push(stride);
-            } else {
-                // Coarser axes re-express their scalar strides in lines.
-                physical_shape.push(extent);
-                physical_strides.push(stride / w);
-            }
+            let part = comptime!(parts[i] as u32);
+            physical_shape.push(geometry.shape.at(i) / part);
+            physical_strides.push(geometry.strides.at(i) * part / comptime!(vector_size as u32));
         }
         // `BufferLayout`'s own physical-position map: the operand's projection relabeled by
         // position, since the layout is handed coordinates a gather has already resolved. Storage
@@ -294,7 +296,7 @@ impl<T: Numeric> Memory<T> {
             &bound,
             &offsets,
             coefficients,
-            vector_size,
+            comptime!(load.clone()),
             comptime!(coords.clone()),
         );
         Memory::<T> {
@@ -303,6 +305,7 @@ impl<T: Numeric> Memory<T> {
                 backing,
                 vector_size: comptime!(vector_size),
                 packing: comptime!(packing),
+                stored_tiles: comptime!(spec.stored_tiles.clone()),
             },
             layout: BufferLayout {
                 physical_shape,
@@ -379,14 +382,13 @@ fn top_window(
     bound: &Coords<u32>,
     offsets: &Coords<i32>,
     coefficients: Coords<u32>,
-    #[comptime] vector_size: usize,
+    #[comptime] load: VectorTile,
     #[comptime] projection: Projection,
 ) -> (Coords<i32>, Coords<u32>, RuntimeMap) {
     let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
     let mut residues = Coords::<u32>::new();
     let rank = comptime!(projection.physical_rank());
-    let last = comptime!(rank - 1);
 
     #[unroll]
     for pa in 0..rank {
@@ -394,12 +396,11 @@ fn top_window(
             origin.push(0);
             residues.push(0u32);
             let axis = comptime!(space.axis_at(pa));
-            // The innermost (vectorized) axis is a line count, `/ vector_size`. A `Dynamic` axis
-            // reads its size from `bound`, already lined from the physical shape.
+            // Counted in loads, each axis over what one load covers of it (the innermost alone, for
+            // a plain buffer). A `Dynamic` axis reads its size from `bound`, already counted in
+            // loads from the physical shape.
             match comptime!(space.extent_raw(axis)) {
-                Extent::Static(e) => {
-                    (comptime!(if pa == last { e / vector_size } else { e }) as u32).runtime()
-                }
+                Extent::Static(e) => (comptime!(e / load.extent_along(axis)) as u32).runtime(),
                 Extent::Dynamic => bound.at(pa),
             }
         } else {

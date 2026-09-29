@@ -121,15 +121,40 @@ impl<T: Numeric> Tile<T> {
     /// Physical vectorization of the backing store: the `Vector<T, vector_size>` line
     /// width the leaf reconstructs. A launched memory tile carries its operand's vector
     /// size; a cmma fragment and a tma source are scalar (`1`).
+    ///
+    /// A reader asking this places a load along the innermost axis, so a memory whose loads span
+    /// several axes ([`vector_tile`](Self::vector_tile)) is refused here, by name: a reader that
+    /// places a tile asks for the tile instead.
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.kind {
-            TileKind::Memory(d) => d.store.vector_size,
+            TileKind::Memory(d) => {
+                let load = d.vector_tile(&comptime!(self.place.space.clone()));
+                comptime!(load.along_one_axis("a reader asking Tile::vector_size").1)
+            }
             TileKind::Lines(c) => c.line(),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 comptime!(1usize)
+            }
+        }
+    }
+
+    /// What one vector load of this tile covers, from how its buffer is stored and its
+    /// [`vector_size`](Self::vector_size): a run along the innermost axis for a plain buffer, the
+    /// stored tiles that hold that many values for one stored in tiles ([`VectorTile::new`]).
+    pub fn vector_tile(&self) -> comptime_type!(VectorTile) {
+        let space = comptime!(self.place.space.clone());
+        match &self.kind {
+            TileKind::Memory(d) => d.vector_tile(&space),
+            TileKind::Lines(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                let width = self.vector_size();
+                comptime!(VectorTile::run(space.axis_at(space.rank() - 1), width))
             }
         }
     }

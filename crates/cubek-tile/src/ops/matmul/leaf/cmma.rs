@@ -195,7 +195,6 @@ impl<E: Numeric> Tile<E> {
              shared memory; open the operand with `with_landing()`"
         ));
         let space = comptime!(self.place.space.clone());
-        let rank = comptime!(space.rank());
         let units = self.units();
         let planes = comptime!(plane_windows(&space, &self.place.levels));
         let (stage, mut window) = Memory::<E>::landing(comptime!(space.clone()), units, planes);
@@ -212,10 +211,9 @@ impl<E: Numeric> Tile<E> {
             comptime!(out.clone()),
             acc_axes,
         );
-        // The window's lines, the innermost axis counted in lines; and where each one lands,
-        // dense over the window's axes in scalars.
-        let line_extents = comptime!(line_extents(&space, vw, 0, rank));
-        let lines = comptime!(line_extents.iter().product::<usize>() as u32);
+        // The window's loads, and where each one lands, dense over the window's axes in scalars.
+        let load = self.vector_tile();
+        let lines = load.count(&space);
         let strides = comptime!(dense_strides(&space));
         let by_shuffle = scales.by_shuffle();
         if comptime!(by_shuffle) {
@@ -227,8 +225,9 @@ impl<E: Numeric> Tile<E> {
             for turn in 0..turns {
                 let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
                 let line = min(mine, lines - 1);
-                let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
-                let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
+                let coords = load.start(line, &space);
+                let landed =
+                    scales.apply_at::<E, VW>(view.read(load.index(&coords, &space)), &coords);
                 if mine < lines {
                     let base = offset_of(&coords, comptime!(strides.clone()));
                     #[unroll]
@@ -239,8 +238,9 @@ impl<E: Numeric> Tile<E> {
             }
         } else {
             for line in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
-                let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
-                let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
+                let coords = load.start(line, &space);
+                let landed =
+                    scales.apply_at::<E, VW>(view.read(load.index(&coords, &space)), &coords);
                 let base = offset_of(&coords, comptime!(strides.clone()));
                 #[unroll]
                 for j in 0..vw {

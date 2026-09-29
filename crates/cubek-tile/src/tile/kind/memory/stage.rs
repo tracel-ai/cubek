@@ -233,11 +233,7 @@ impl<T: Numeric> Memory<T> {
         Tile::<T> {
             kind: TileKind::new_Memory(Memory::<T> {
                 address: comptime!(AddressSpace::Shared),
-                store: Store::<T> {
-                    backing,
-                    vector_size,
-                    packing: comptime!(packing),
-                },
+                store: Store::<T>::untiled(backing, vector_size, packing),
                 layout: BufferLayout {
                     physical_shape,
                     physical_strides,
