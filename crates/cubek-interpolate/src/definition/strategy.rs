@@ -250,41 +250,15 @@ fn floor_power_of_two(extent: usize) -> usize {
 mod tests {
     use super::*;
     use crate::definition::{InterpolateMode, InterpolateOptions, NearestMode};
-    use cubecl::ir::VectorSize;
+    use cubek_test_utils::hardware::{AVX2, GPU};
 
-    /// A GPU with 32-unit planes, 1024 units per cube and 64 streaming multiprocessors.
-    fn gpu() -> HardwareProperties {
-        HardwareProperties {
-            load_width: 128,
-            vector_register_count: None,
-            plane_size_min: 32,
-            plane_size_max: 32,
-            max_bindings: 32,
-            max_shared_memory_size: 48 * 1024,
-            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
-            max_units_per_cube: 1024,
-            max_cube_dim: (1024, 1024, 64),
-            num_streaming_multiprocessors: Some(64),
-            num_cpu_cores: None,
-            num_tensor_cores: Some(4),
-            min_tensor_cores_dim: Some(16),
-            max_vector_size: VectorSize::MAX,
-            cube_mma_reserved_shared_memory: 0,
-            last_level_cache_size: None,
-        }
-    }
-
-    /// A CPU: one unit per plane, one unit per core, no shared memory to stage into.
+    /// `AVX2` with `cores` worker threads, each unit of a cube one thread.
     fn cpu(cores: u32) -> HardwareProperties {
         HardwareProperties {
-            plane_size_min: 1,
-            plane_size_max: 1,
             max_units_per_cube: cores,
-            num_streaming_multiprocessors: None,
+            max_cube_dim: (cores, cores, cores),
             num_cpu_cores: Some(cores),
-            num_tensor_cores: None,
-            min_tensor_cores_dim: None,
-            ..gpu()
+            ..AVX2
         }
     }
 
@@ -313,7 +287,7 @@ mod tests {
     /// point twice.
     #[test]
     fn the_two_intents_resolve_to_different_blueprints() {
-        let hardware = gpu();
+        let hardware = GPU;
         let problem = upsample();
 
         assert_ne!(
@@ -326,7 +300,7 @@ mod tests {
     /// always-launchable one has to stay clear of it.
     #[test]
     fn only_the_latency_intent_stages_the_input() {
-        let hardware = gpu();
+        let hardware = GPU;
         let problem = upsample();
 
         assert_eq!(
@@ -350,7 +324,7 @@ mod tests {
 
         assert_eq!(
             InterpolateStrategy::MinimizeLatency
-                .blueprint(&gpu(), &problem)
+                .blueprint(&GPU, &problem)
                 .input_residence,
             InputStage::InPlace
         );
@@ -392,7 +366,7 @@ mod tests {
     fn a_gpu_unit_takes_one_column() {
         assert_eq!(
             InterpolateStrategy::MaximizeThroughput
-                .blueprint(&gpu(), &upsample())
+                .blueprint(&GPU, &upsample())
                 .cols_per_unit,
             1
         );
@@ -402,7 +376,7 @@ mod tests {
     /// ratio. A downsample draws each output row from rows no other output row wants.
     #[test]
     fn the_row_run_follows_the_resampling_ratio() {
-        let hardware = gpu();
+        let hardware = GPU;
         let rows = |problem| {
             InterpolateStrategy::MinimizeLatency
                 .blueprint(&hardware, &problem)
@@ -418,7 +392,7 @@ mod tests {
     /// that swallows the grid leaves the device with nothing to schedule.
     #[test]
     fn a_cube_never_outruns_the_output_it_covers() {
-        let hardware = gpu();
+        let hardware = GPU;
 
         for problem in [
             problem(InterpolateMode::Nearest(NearestMode::Floor), 1, 4, 8),
@@ -447,7 +421,7 @@ mod tests {
     fn a_narrow_device_bounds_the_plane_count() {
         let hardware = HardwareProperties {
             max_units_per_cube: 128,
-            ..gpu()
+            ..GPU
         };
 
         let blueprint = InterpolateStrategy::MaximizeThroughput.blueprint(&hardware, &upsample());
@@ -459,7 +433,7 @@ mod tests {
     /// inferred strategy could fail a build that states nothing.
     #[test]
     fn every_inferred_blueprint_is_valid() {
-        for hardware in [gpu(), cpu(1), cpu(12)] {
+        for hardware in [GPU, cpu(1), cpu(12)] {
             for problem in [
                 problem(InterpolateMode::Nearest(NearestMode::Exact), 1, 1, 1),
                 problem(InterpolateMode::Bilinear, 1, 4, 8),
