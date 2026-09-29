@@ -23,6 +23,13 @@ impl<T: Numeric> Tile<T> {
     /// wide (a batch or head the cube already fixed); every other axis is the destination's, in
     /// its order and at its extent.
     pub(crate) fn copy_scaled_from(&mut self, src: &Tile<T>) {
+        let delivery = src.delivery();
+        comptime!(assert!(
+            !delivery.is_async(),
+            "Tile::copy_from: a decoding copy decodes each line in the unit that loads it, and \
+             this source is delivered {delivery:?}, which lands its bytes as they lie; deliver it \
+             SyncPerUnit, or stage it as it lies and decode out of the stage"
+        ));
         let space = comptime!(src.place.space.clone());
         comptime!(kept_axes(&space, &self.place.space));
         comptime!(assert!(

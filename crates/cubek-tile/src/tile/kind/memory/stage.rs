@@ -262,6 +262,7 @@ impl<T: Numeric> Memory<T> {
                     units,
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
+                    // Read as a source, a stage is copied out by the units that read it.
                     delivery: Delivery::SyncPerUnit,
                 }),
                 unit_share: comptime!(UnitShare::Repeated),

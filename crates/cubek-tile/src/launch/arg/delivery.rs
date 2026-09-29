@@ -85,9 +85,9 @@ impl Delivery {
         }
     }
 
-    /// The synchronization required to materialize this source in a staging slot. A bulk copy
-    /// completes only on an mbarrier counting its bytes. A per-unit async copy could also wait on
-    /// its units' own copy groups; the slot tracks it on the same mbarrier for now.
+    /// The synchronization required to materialize this source in a staging slot: an mbarrier for
+    /// every async delivery, counting a bulk copy's bytes or each unit's committed `cp.async`
+    /// copies.
     pub(crate) fn rendezvous(&self) -> Rendezvous {
         if self.is_async() {
             Rendezvous::Barrier

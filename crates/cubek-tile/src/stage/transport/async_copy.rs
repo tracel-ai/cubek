@@ -1,12 +1,13 @@
-//! The asynchronous line copy under a straight or packed fill ([`Delivery::AsyncPerUnit`]): each unit hands
-//! its lines to the copy engine rather than loading and storing them, so they land in the stage
-//! without passing through its registers, after the fill has returned.
+//! The asynchronous fill under a straight or packed transport ([`Delivery::AsyncPerUnit`]): each
+//! unit hands its lines to the copy engine (`cp.async`) rather than loading and storing them, so
+//! they land in the stage without passing through its registers, after the fill has returned.
 //!
 //! A unit takes as many lines as under the straight fill, but walks them in the source's order
-//! rather than the stage's: the copy bypasses L1, so the neighbouring lanes of a warp must read
-//! neighbouring source bytes for the requests to coalesce into whole sectors. Walking a blocked
-//! stage in its own order hands a warp two lines of each of sixteen rows, and every sector is
-//! fetched from L2 more than once. Nothing here waits: the slot's barrier is handed the copies and flips once they land
+//! rather than the stage's. The copy bypasses L1, so neighbouring lanes must read neighbouring
+//! source bytes: walking a stage blocked into instruction tiles in its own order hands a warp a
+//! sliver of each of many rows, and reads more from DRAM than the stage holds.
+//!
+//! Nothing here waits: the slot's barrier is handed the copies and flips once they land
 //! ([`Slot::release_write`](crate::Slot)), or a blocking copy waits on one of its own
 //! ([`Memory::load_from`]).
 
@@ -21,60 +22,74 @@ use crate::*;
 /// The widths of one copy the engine takes, in bytes: `cp.async` moves 4, 8 or 16.
 const COPY_BYTES: [usize; 3] = [4, 8, 16];
 
-/// Copy the `i`-th line of the stage, counted in the source's order ([`source_order`]),
-/// asynchronously: the source line at those coordinates, whole, or zeros where the source masks it
-/// off. It has not landed when this returns.
+/// [`fill_lines`](super::cooperative::fill_lines) with every line handed to the copy engine: the
+/// same lines per unit on the same schedule, numbered in the source's order ([`BufferLayout::row_major_coords`]).
+///
+/// A schedule of its own rather than an arm of `fill_lines`: the copy reads and writes lines of
+/// one width, which `fill_lines`, generic over a source served narrower, cannot hand it.
 #[cube]
-pub(crate) fn copy_line_async<I2: Numeric, WP2: Size, SW: Size>(
-    d: &mut [Vector<I2, WP2>],
-    s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
+pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
+    d: &mut [Vector<I2, W>],
+    s: &Masked<'_, Vector<I2, W>, CoordsDyn>,
     layout: &BufferLayout,
-    i: usize,
+    total: usize,
+    #[comptime] total_c: Option<u64>,
+    #[comptime] units: usize,
+    #[comptime] straight: bool,
 ) {
-    let width = WP2::value();
-    // Outside `comptime!`: in there, `size` is the host's `size_of` of the generic, not the
-    // element's.
+    // Both read outside `comptime!`: in there, `size` is the host's `size_of` of the generic and
+    // `value` is not expanded at all.
+    let width = W::value();
     let elem_size = I2::size().comptime();
     let bytes = comptime!(width * elem_size);
     comptime!(assert!(
         COPY_BYTES.contains(&bytes),
-        "copy_line_async: the copy engine moves 4, 8 or 16 bytes at once, and this stage's lines are \
-         {bytes}: serve the operand in lines one copy moves"
+        "fill_lines_async: the copy engine moves 4, 8 or 16 bytes at once, and this stage's lines \
+         are {bytes}: serve the operand in lines one copy moves"
     ));
-    let coords = source_order(layout, i);
+    if comptime!(straight) {
+        let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
+        #[unroll]
+        for t in 0..tasks {
+            let i = UNIT_POS as usize + comptime!(t * units);
+            if comptime!((t + 1) * units > total_c.unwrap() as usize) {
+                if i < total {
+                    copy_line_async::<I2, W>(d, s, layout, i);
+                }
+            } else {
+                copy_line_async::<I2, W>(d, s, layout, i);
+            }
+        }
+    } else {
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            copy_line_async::<I2, W>(d, s, layout, i);
+            i += workers;
+        }
+    }
+}
+
+/// Copy the `i`-th line of the stage, counted in the source's order, asynchronously: the source
+/// line at those coordinates, whole, or zeros where the source masks it off. It has not landed
+/// when this returns.
+#[cube]
+fn copy_line_async<I2: Numeric, W: Size>(
+    d: &mut [Vector<I2, W>],
+    s: &Masked<'_, Vector<I2, W>, CoordsDyn>,
+    layout: &BufferLayout,
+    i: usize,
+) {
+    let coords = layout.row_major_coords(i);
     let offset = layout.to_source_pos(coords.clone());
     let run = s.item_run(coords);
+    let width = W::value();
     let dst = &mut d[offset..offset + 1];
-    // One type on both sides: the transport already refused a stage served at another width.
-    let dst = dst.downcast_mut::<Vector<I2, SW>>();
     if comptime!(s.check) {
         copy_async_checked(run, dst, comptime!(width as u32));
     } else {
         copy_async(run, dst, comptime!(width as u32));
     }
-}
-
-/// The logical coordinates of the `i`-th line of `layout`'s buffer in row-major order over its
-/// logical extents, innermost axis fastest: the order the source lies in, whatever blocking or
-/// swizzle places the lines in the stage.
-#[cube]
-fn source_order(layout: &BufferLayout, i: usize) -> CoordsDyn {
-    let rank = comptime!(layout.projection.logical_rank());
-    let extent = logical_extent(comptime!(layout.projection.clone()), &layout.physical_shape);
-    let x = i.cast::<u32>();
-    let mut coords = CoordsDyn::new();
-    #[unroll]
-    for p in 0..rank {
-        let inner = comptime!((p + 1..rank).collect::<Vec<_>>());
-        let quot = x.divided_by(extent.product(inner));
-        let digit = if comptime!(p == 0) {
-            quot
-        } else {
-            quot.remainder(extent.at(p))
-        };
-        coords.push(digit);
-    }
-    coords
 }
 
 #[cube]
