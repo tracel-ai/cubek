@@ -281,7 +281,7 @@ impl<T: Numeric> Memory<T> {
                     Overhang::Fits
                 },
                 write,
-                units: spec.units,
+                fill: FillUnits::cube(spec.units),
                 storage: spec.storage,
             }),
             unit_share: comptime!(UnitShare::Repeated),

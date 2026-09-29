@@ -1,6 +1,7 @@
 //! Reading, writing and windowing a [`Memory`]: cooperative fills, the views a leaf reads and
 //! writes through, and [`at`](Memory::at).
-//! Cooperative fills assume every unit of the cube runs them.
+//! Cooperative fills assume every unit their destination names ([`FillUnits`]) runs them: the
+//! cube's, or, for a stage one plane owns, that plane's.
 
 use cubecl::{
     prelude::*,
@@ -670,7 +671,7 @@ impl<T: Numeric> Memory<T> {
                 whole: false,
                 overhang: self.access.overhang,
                 write: self.access.write,
-                units: self.access.units,
+                fill: self.access.fill,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
             comptime!(UnitShare::new(&step.level, &space).under(self.unit_share)),
@@ -847,7 +848,7 @@ impl<T: Numeric> Memory<T> {
                 whole: false,
                 overhang: Overhang::Masked,
                 write: self.access.write,
-                units: self.access.units,
+                fill: self.access.fill,
                 storage: self.access.storage,
             }),
             comptime!(self.unit_share),

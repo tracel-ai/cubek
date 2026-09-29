@@ -42,8 +42,11 @@ impl<T: Numeric> Tile<T> {
         let along = comptime!(dst.axis_at(dst.rank() - 1));
         let varies = mem.factor.varies_along(comptime!(along));
         comptime!(check_decoding_copy(&space, &dst, &load, vw, varies));
+        let fill = self.fill_units();
         let mut out = self.nd_mut::<VW>();
-        for line in range_stepped(UNIT_POS, load.count(&space), CUBE_DIM) {
+        let first = fill_worker(fill) as u32;
+        let stride = fill_workers(fill) as u32;
+        for line in range_stepped(first, load.count(&space), stride) {
             let start = load.start(line, &space);
             let held = stored.read(load.index(&start, &space));
             // The destination lines this load holds, `offset` their place in it, and where they land.

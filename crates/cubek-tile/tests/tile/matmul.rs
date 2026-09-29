@@ -2712,6 +2712,90 @@ fn register_matmul_promoted_cube_plane() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
+/// Each plane stages its own rows of `a` and walks `K` alone: planes on different rows fill
+/// different stages, so a stage the cube shared, or a fill spread over every unit of the cube,
+/// would hand one plane the other's rows.
+#[test]
+fn a_plane_stages_its_own_walk() {
+    let client = cubecl::test_device().client();
+    let (m, n, k) = (8usize, 4usize, 32usize);
+    let (leaf_m, leaf_n, leaf_k) = (4usize, 4usize, 4usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)])
+                .walk_every(&[K])
+                .planes(&[(M, m / leaf_m)])
+                .cubes(&[M, N])
+                .build(),
+        ),
+        Form::Static,
+    );
+    let dtype = f32::elem_type_native();
+    for depth in [1, 2] {
+        let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
+            .untiled()
+            .arange();
+        let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
+            .untiled()
+            .arange();
+        let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
+            .untiled()
+            .uniform(4242, 10., 100.);
+        plane_staged_matmul::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            launcher.partitioning_arg(),
+            depth,
+            dtype,
+        );
+        assert_matmul_arange(&client, c.handle(), m, n, k);
+    }
+}
+
+/// A register block opened per plane and contracted along the plane's own `K` walk, both
+/// operands staged by the plane alone: the walk sits under the plane level, so the stages are the
+/// plane's own copy, filled by its units and met on `sync_plane`, and no other plane waits on them.
+#[cube(launch)]
+fn plane_staged_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] depth: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        for plane in cube {
+            let c_p = c.at(&plane);
+            let a_p = a.at(&plane);
+            let b_p = b.at(&plane);
+            let mut acc = c_p.block_accumulator::<E, E, E>(&a_p, &b_p, REGISTER_BLOCK, Monoid::Sum);
+            acc.zero();
+            let walk = plane.walk();
+            let mut stages = Stages::smem(&walk, &a_p, &b_p, StageStorage::Strided, depth);
+            stages.pipelined(walk, |slot, step| {
+                let mut acc_s = acc.at(step);
+                slot.consume(|a_s, b_s| {
+                    acc_s.mma(a_s, b_s, Semiring::SUM_PROD);
+                });
+            });
+            for r0 in c_p.walk().unrolled() {
+                let mut c_p_w = c_p.at(&r0);
+                c_p_w.copy_cast_from(&acc.at(&r0));
+            }
+        }
+    }
+}
+
 /// One body, whatever a plane contracts through: the instruction is an argument, and both
 /// [`Tile::accumulator`] and [`PlanePartition::operand`] take it.
 ///

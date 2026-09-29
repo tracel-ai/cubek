@@ -33,12 +33,13 @@ impl<T: CubeType> Slot<T> {
         comptime!(self.refills.contains(&Refill::Once))
     }
 
-    /// Producer acquire: wait until the slot is free.
+    /// Producer acquire: wait until the slot is free; a `Plane` slot waits on `sync_plane`.
     #[allow(dead_code)] // Reached through its expand, from `Slot::fill` / `Slot::consume`.
     pub(crate) fn acquire_write(&self) {
         match &self.pipeline {
             Meeting::Barrier { empty, writes, .. } => empty.wait_parity(*writes ^ 1),
             Meeting::Cube => sync_cube(),
+            Meeting::Plane => sync_plane(),
         }
     }
 
@@ -58,7 +59,7 @@ impl<T: CubeType> Slot<T> {
                 }
                 *writes ^= 1;
             }
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
@@ -67,7 +68,7 @@ impl<T: CubeType> Slot<T> {
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {
             Meeting::Barrier { full, reads, .. } => full.wait_parity(*reads),
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
@@ -79,7 +80,7 @@ impl<T: CubeType> Slot<T> {
                 empty.arrive();
                 *reads ^= 1;
             }
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
@@ -88,6 +89,7 @@ impl<T: CubeType> Slot<T> {
     pub fn publish(&self) {
         match &self.pipeline {
             Meeting::Cube => sync_cube(),
+            Meeting::Plane => sync_plane(),
             Meeting::Barrier { .. } => {}
         }
     }

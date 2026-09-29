@@ -23,12 +23,14 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
         #[comptime] depth: usize,
     ) -> Stages<P> {
         let operands = sources.operands();
-        let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level));
+        let owner = walk.stage_owner();
+        let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level, owner));
         let spec = comptime!(StageSpec {
             level: walk.level.clone(),
             depth: walk.depth(),
             storage,
             width,
+            owner: plan.owner(),
         });
 
         // Later slots share buffers the first slot owns, so it is built first.
