@@ -202,7 +202,9 @@ impl FragmentDrain {
     pub(crate) const fn of(access: &Access) -> Self {
         match (access.write, access.overhang) {
             (Write::Replace, Overhang::Never | Overhang::Fits) => FragmentDrain::Intrinsic,
-            (Write::Replace, Overhang::Masked) | (Write::Accumulate, _) => FragmentDrain::Bounce,
+            (Write::Replace, Overhang::Masked) | (Write::Accumulate | Write::Fold, _) => {
+                FragmentDrain::Bounce
+            }
         }
     }
 }

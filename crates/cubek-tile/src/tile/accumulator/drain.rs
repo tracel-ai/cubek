@@ -27,10 +27,10 @@ pub(crate) enum CellRead {
 
 impl CellRead {
     /// Derived from `init_from` and the unit share. A folding destination is never read here:
-    /// its atomic store is the fold.
+    /// its store, atomic or taken in turns, is the fold.
     const fn of(unit_share: UnitShare, init_from: InitFrom, write: Write) -> Self {
         match write {
-            Write::Accumulate => CellRead::Never,
+            Write::Accumulate | Write::Fold => CellRead::Never,
             Write::Replace => match init_from {
                 InitFrom::Identity => CellRead::Never,
                 InitFrom::Cell => match unit_share {
@@ -95,7 +95,7 @@ impl Drain {
             (UnitShare::Plane, _) => Drain::PlaneFold,
             (UnitShare::Group { unit_bits }, _) => Drain::GroupFold { unit_bits },
             // Repeated units hold the same cells: a store may land many times, a fold only once.
-            (UnitShare::Repeated, Write::Accumulate) => Drain::UnitZero,
+            (UnitShare::Repeated, Write::Accumulate | Write::Fold) => Drain::UnitZero,
             (UnitShare::Repeated, Write::Replace) | (UnitShare::Whole, _) => Drain::EachUnit,
         }
     }

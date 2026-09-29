@@ -43,7 +43,8 @@ impl Destination for Buffered {
     }
 }
 
-/// [`Write::Replace`] binds an [`Output::Tensor`], [`Write::Accumulate`] an [`Output::Atomic`].
+/// [`Write::Replace`] binds an [`Output::Tensor`], [`Write::Accumulate`] an [`Output::Atomic`],
+/// [`Write::Fold`] an [`Output::Folded`].
 impl DestinationLaunch for Buffered {
     type Operand = (Bound, Write);
 
@@ -51,6 +52,7 @@ impl DestinationLaunch for Buffered {
         match write {
             Write::Replace => bound.output(),
             Write::Accumulate => bound.atomic(),
+            Write::Fold => bound.folded(),
         }
     }
 }

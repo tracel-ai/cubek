@@ -237,20 +237,28 @@ pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
     }
 }
 
-/// What a write to a store does to the cell it lands on; stated by the binding operand.
+/// What a write to a store does to the cell it lands on; stated by the binding operand. `Replace`
+/// is the writer's own cell, `Accumulate` adds atomically so cubes need not know of each other,
+/// `Fold` adds with a plain read and write in the turns the kernel gives the writers.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Write {
     /// Replaces the cell.
     Replace,
     /// Adds into the cell, atomically.
     Accumulate,
+    /// Adds into the cell by reading it and writing the sum back, a line at a time. One writer at
+    /// a time: the kernel serializes the instances sharing a cell (a turnstile across the cubes
+    /// of a split contraction), and two writing at once lose one's partial.
+    Fold,
 }
 
 impl Write {
     /// Refuse an accumulation `split` leaves in pieces unless this write adds them.
     pub(crate) fn admits(self, split: SplitShare, site: &str) {
         match (split, self) {
-            (SplitShare::Whole, _) | (SplitShare::Partial, Write::Accumulate) => {}
+            (SplitShare::Whole, _)
+            | (SplitShare::Partial, Write::Accumulate)
+            | (SplitShare::Partial, Write::Fold) => {}
             (SplitShare::Partial, Write::Replace) => panic!(
                 "{site}: this accumulator's cells are split across planes or cubes and its \
                  destination replaces rather than accumulates, so every partial but one would be \

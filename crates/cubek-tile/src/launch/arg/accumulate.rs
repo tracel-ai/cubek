@@ -76,9 +76,10 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E
         <N as Size>::__expand_value(scope)
     }
 
-    /// In lines of `N`, as the trait counts them, off a buffer whose own elements are scalar.
+    /// In lines of `N`, as the trait counts them, off a buffer whose own elements are scalar: the
+    /// buffer's, not the tensor's, since a pitched buffer holds cells past its shape's product.
     fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
-        let scalars = self.values.__expand_len_method(scope);
+        let scalars = self.values.__expand_buffer_len_method(scope);
         let width = N::value().__expand_runtime_method(scope);
         scalars.__expand_div_method(scope, width)
     }

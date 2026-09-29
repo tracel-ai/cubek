@@ -35,4 +35,30 @@ impl<T: Numeric> Memory<T> {
             i += stride;
         }
     }
+
+    /// A copy of `src` into this window with a cast, `S` down (or up) to `T`, one line for one
+    /// line: what a sum held in a wider buffer becomes when it lands in its output. The two are
+    /// the same box, plain, and served at one width; the same cyclic scan as
+    /// [`fill_scanned`](Memory::fill_scanned), each unit casting the lines it moves.
+    pub(crate) fn fill_cast_from<S: Numeric>(&mut self, src: &Memory<S>) {
+        comptime!(assert!(
+            src.store.packing == Packing::Plain
+                && self.store.packing == Packing::Plain
+                && src.store.vector_size == self.store.vector_size
+                && src.projection.is_direct()
+                && self.projection.is_direct(),
+            "Memory::fill_cast_from: a cast copy moves plain lines between two boxes served at \
+             one width"
+        ));
+        let size!(W) = comptime!(self.store.vector_size);
+        let s = src.flat_unpacked::<W, W>();
+        let mut d = self.flat_mut::<W>();
+        let total = d.shape();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            d.write(i, Vector::<T, W>::cast_from(s.read(i)));
+            i += workers;
+        }
+    }
 }
