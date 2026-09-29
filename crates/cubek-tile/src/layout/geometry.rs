@@ -42,8 +42,39 @@ impl Geometry {
     }
 
     /// Which dims are pieces of one logical dim: untiled unless the binding said otherwise.
-    pub(crate) fn tiling(&self) -> Tiling {
+    pub fn tiling(&self) -> Tiling {
         self.tiling
+    }
+
+    /// Its trailing dims, coarsest first, each named by the axis it is a piece of: `axes` name the
+    /// trailing logical dims in the tensor's order, each once per piece its tiling stores it as, in
+    /// [`StoragePartitioning::labels`]' order. The dims ahead of them are batch dims, one each.
+    ///
+    /// # Panics
+    ///
+    /// When the tiling does not fit the rank, when the buffer stands for fewer logical dims than
+    /// `axes` name, or when it tiles a batch dim, which is stored one dim.
+    pub fn labels(&self, axes: &[Axis]) -> Vec<Axis> {
+        if !self.tiling.is_tiled() {
+            return axes.to_vec();
+        }
+        let logical_rank = self
+            .tiling
+            .logical_rank(self.rank())
+            .unwrap_or_else(|e| panic!("Geometry::labels: {e:?}"));
+        assert!(
+            logical_rank >= axes.len(),
+            "Geometry::labels: the buffer stands for {logical_rank} dims but {} axes name them",
+            axes.len()
+        );
+        let fragments = self.tiling.fragments(logical_rank);
+        let (batches, block) = fragments.split_at(logical_rank - axes.len());
+        assert!(
+            batches.iter().all(|&n| n == 1),
+            "Geometry::labels: batch dims are stored one dim each, so {batches:?} pieces over \
+             them cannot be named"
+        );
+        StoragePartitioning::level_major(axes, block)
     }
 
     /// The extents, coarsest first.
@@ -327,10 +358,8 @@ mod tests {
         let storage = StorageLevels::new(&[(N, 4)])
             .tile(&[(N, 8), (K, 32)])
             .grid(&[N, K]);
-        let (geometry, tiling) = storage.physical(&[(K, 64), (N, 64)]).unwrap();
-        let fragments: Vec<usize> = (0..tiling.rank()).map(|i| tiling.fragments(i)).collect();
-        let geometry = geometry.with_tiling(Tiling::new(&fragments).unwrap());
-        let labels = tiling.order(&[K, N]);
+        let geometry = storage.physical(&[(K, 64), (N, 64)]).unwrap();
+        let labels = geometry.labels(&[K, N]);
         assert_eq!(geometry.serves(&[(N, 4)], &labels), Ok(()));
         assert_eq!(geometry.serves(&[(N, 32), (K, 32)], &labels), Ok(()));
         assert!(geometry.serves(&[(N, 2)], &labels).is_err());

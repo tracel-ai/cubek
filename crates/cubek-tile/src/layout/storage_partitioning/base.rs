@@ -20,7 +20,9 @@
 
 use core::fmt::{self, Display, Formatter};
 
-use crate::{Axis, Geometry, StorageTiling};
+use cubecl::zspace::{MetadataError, Tiling};
+
+use crate::{Axis, Geometry};
 
 /// How a tensor's values are laid down in memory: its stated tiles, finest first, then the order
 /// the rest of each axis follows.
@@ -43,8 +45,11 @@ pub struct StoragePartitioning {
 impl StoragePartitioning {
     /// The statement a bound buffer was written from, read off its dims by stride: every piece of
     /// a storage-tiled axis but its coarsest was stated, and the coarsest, like every untiled dim,
-    /// is the rest of its axis. `labels` name the trailing dims, right-aligned to the geometry;
-    /// a dim they leave out, a broadcast one and one of extent one say nothing of the order.
+    /// is the rest of its axis. `labels` name the trailing dims, right-aligned to the geometry
+    /// ([`Geometry::labels`]); a dim they leave out, a broadcast one and the rest of an axis of
+    /// extent one say nothing of the order. A stated piece of one is kept, since it is a dim of
+    /// the buffer: its stride says nothing, so it reads back as the finest of the pieces sharing
+    /// it, where [`physical`](Self::physical) writes it.
     ///
     /// `None` where the buffer's order is no partitioning: a stated piece coarser than the rest of
     /// an axis.
@@ -58,27 +63,33 @@ impl StoragePartitioning {
             true => tiling.logical_rank(rank).unwrap_or(rank),
             false => rank,
         };
-        let mut dims: Vec<(usize, usize)> = geometry
+        let mut dims: Vec<(usize, usize, usize)> = geometry
             .dims()
             .enumerate()
-            .filter(|&(dim, (extent, stride))| dim >= unlabelled && extent > 1 && stride > 0)
-            .map(|(dim, (_, stride))| (dim, stride))
+            .filter(|&(dim, (extent, stride))| {
+                let piece_of_one = extent == 1 && dim >= first_stated;
+                dim >= unlabelled && (piece_of_one || extent > 1 && stride > 0)
+            })
+            .map(|(dim, (extent, stride))| (dim, extent, stride))
             .collect();
-        dims.sort_by_key(|&(dim, stride)| (stride, core::cmp::Reverse(dim)));
+        dims.sort_by_key(|&(dim, extent, stride)| (stride, extent > 1, core::cmp::Reverse(dim)));
         let (stated, rest): (Vec<_>, Vec<_>) =
-            dims.iter().partition(|&&(dim, _)| dim >= first_stated);
-        let finest_rest = rest.first().map_or(usize::MAX, |&(_, stride)| stride);
-        if stated.iter().any(|&(_, stride)| stride > finest_rest) {
+            dims.iter().partition(|&&(dim, _, _)| dim >= first_stated);
+        let finest_rest = rest.first().map_or(usize::MAX, |&(_, _, stride)| stride);
+        if stated
+            .iter()
+            .any(|&(_, extent, stride)| extent > 1 && stride > finest_rest)
+        {
             return None;
         }
         Some(Self {
             tiles: stated
                 .iter()
-                .map(|&(dim, _)| (labels[dim - unlabelled], geometry.shape()[dim]))
+                .map(|&(dim, extent, _)| (labels[dim - unlabelled], extent))
                 .collect(),
             order: rest
                 .iter()
-                .map(|&(dim, _)| labels[dim - unlabelled])
+                .map(|&(dim, _, _)| labels[dim - unlabelled])
                 .collect(),
         })
     }
@@ -91,6 +102,36 @@ impl StoragePartitioning {
     /// The order the rest of each axis follows, finest first.
     pub fn order(&self) -> &[Axis] {
         &self.order
+    }
+
+    /// The buffer's dims, coarsest first, each named by the axis it is a piece of, `axes` in the
+    /// tensor's own order: what [`Projection::tiled`](crate::Projection::tiled) maps.
+    pub fn labels(&self, axes: &[Axis]) -> Vec<Axis> {
+        StoragePartitioning::level_major(axes, &self.fragments(axes))
+    }
+
+    /// The dims of a buffer storing `axes` (in the tensor's own order) as `fragments` pieces each,
+    /// named by their axis, in the order cubecl's [`Tiling`] lists them: every axis's coarsest
+    /// piece in the tensor's order, then every axis still split further gives its next, down to
+    /// the finest. `[k, n]` stored `[k/32, n/32, 32, 32]` is `[K, N, K, N]`. The one place the order
+    /// is written.
+    pub(crate) fn level_major(axes: &[Axis], fragments: &[usize]) -> Vec<Axis> {
+        assert_eq!(
+            axes.len(),
+            fragments.len(),
+            "StoragePartitioning::level_major: {} axes but {} piece counts",
+            axes.len(),
+            fragments.len()
+        );
+        let depth = fragments.iter().copied().max().unwrap_or(0);
+        (0..depth)
+            .flat_map(|level| {
+                axes.iter()
+                    .zip(fragments)
+                    .filter(move |&(_, &pieces)| level < pieces)
+                    .map(|(&axis, _)| axis)
+            })
+            .collect()
     }
 
     /// Whether `tile`, finest first, is held by this partitioning over a tensor of `extents`:
@@ -170,17 +211,14 @@ impl StoragePartitioning {
     }
 
     /// The buffer this partitioning stores a tensor of `extents` in, the axes in its logical order:
-    /// its physical dims as cubecl's storage tiling lists them (level-major, coarsest first), each
-    /// `(extent, stride)`, and the piece count per axis that [`StorageTiling`] reads back.
+    /// its physical dims in [`labels`](Self::labels)' order, each `(extent, stride)`, and the
+    /// [`Tiling`] its metadata records.
     ///
     /// # Errors
     ///
-    /// An axis the tiles do not close in whole tiles, or an order that does not name each of the
-    /// tensor's axes once.
-    pub fn physical(
-        &self,
-        extents: &[(Axis, usize)],
-    ) -> Result<(Geometry, StorageTiling), StorageMisfit> {
+    /// An axis the tiles do not close in whole tiles, an order that does not name each of the
+    /// tensor's axes once, or more pieces than a [`Tiling`] records.
+    pub fn physical(&self, extents: &[(Axis, usize)]) -> Result<Geometry, StorageMisfit> {
         let axes: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
         let named = |axis: &Axis| self.order.iter().filter(|&a| a == axis).count() == 1;
         if self.order.len() != axes.len() || !axes.iter().all(named) {
@@ -195,11 +233,7 @@ impl StoragePartitioning {
             }
             _ => unreachable!("only the rest of an axis is computed against its extent"),
         })?;
-        let fragments: Vec<usize> = axes
-            .iter()
-            .map(|&axis| pieces.iter().filter(|p| p.axis == axis).count())
-            .collect();
-        let tiling = StorageTiling::per_axis(&fragments);
+        let tiling = Tiling::new(&self.fragments(&axes)).map_err(StorageMisfit::Unrecordable)?;
         // Each piece's stride is the product of the counts finer than it.
         let strides: Vec<usize> = pieces
             .iter()
@@ -209,26 +243,30 @@ impl StoragePartitioning {
                 Some(stride)
             })
             .collect();
-        // An axis's pieces coarsest first, so fragment `level` of `axis` is its `level`th from
-        // the top, the order the tiling's level-major emission counts them in.
-        let per_axis: Vec<Vec<usize>> = axes
+        // Each dim takes its axis's next piece from the top: `labels` names an axis's pieces
+        // coarsest first, and `pieces` lists them finest first.
+        let mut taken = vec![false; pieces.len()];
+        let dims: Vec<(usize, usize)> = self
+            .labels(&axes)
             .iter()
             .map(|&axis| {
-                (0..pieces.len())
+                let p = (0..pieces.len())
                     .rev()
-                    .filter(|&p| pieces[p].axis == axis)
-                    .collect()
+                    .find(|&p| !taken[p] && pieces[p].axis == axis)
+                    .expect("an axis has as many pieces as it has dims");
+                taken[p] = true;
+                (pieces[p].count, strides[p])
             })
             .collect();
-        let mut dims = Vec::with_capacity(pieces.len());
-        for level in 0..tiling.max_fragments() {
-            for of_axis in &per_axis {
-                if let Some(&p) = of_axis.get(level) {
-                    dims.push((pieces[p].count, strides[p]));
-                }
-            }
-        }
-        Ok((Geometry::new(&dims), tiling))
+        Ok(Geometry::new(&dims).with_tiling(tiling))
+    }
+
+    /// How many buffer dims each of `axes` is stored as: one per stated tile along it, and one for
+    /// the rest of it.
+    fn fragments(&self, axes: &[Axis]) -> Vec<usize> {
+        axes.iter()
+            .map(|&axis| 1 + self.tiles.iter().filter(|&&(a, _)| a == axis).count())
+            .collect()
     }
 
     /// Every piece over a tensor of `extents`, finest first: the stated tiles, then the rest of
@@ -289,15 +327,11 @@ impl StorageLevels {
     }
 
     /// The partitioning, the rest of each axis following `order`, finest first: `[K, N]` puts the
-    /// next tile along `K` right after this one. A tile's piece of one holds nothing and is
-    /// dropped.
+    /// next tile along `K` right after this one. A tile's piece of one is kept: it is a dim of the
+    /// buffer, as stated.
     pub fn grid(self, order: &[Axis]) -> StoragePartitioning {
         StoragePartitioning {
-            tiles: self
-                .tiles
-                .into_iter()
-                .filter(|&(_, count)| count > 1)
-                .collect(),
+            tiles: self.tiles,
             order: order.to_vec(),
         }
     }
@@ -363,6 +397,8 @@ pub enum StorageMisfit {
     },
     /// The order does not name each of the tensor's axes once.
     Order { order: Vec<Axis>, axes: Vec<Axis> },
+    /// More pieces than the buffer's metadata records ([`Tiling`]).
+    Unrecordable(MetadataError),
 }
 
 impl Display for StorageMisfit {
@@ -377,6 +413,9 @@ impl Display for StorageMisfit {
                 "the tiles follow {order:?}, but the tensor's axes are {axes:?}: the order names \
                  each once"
             ),
+            Self::Unrecordable(why) => {
+                write!(f, "the buffer's metadata cannot record its pieces: {why:?}")
+            }
         }
     }
 }

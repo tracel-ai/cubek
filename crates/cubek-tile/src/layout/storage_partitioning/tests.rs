@@ -9,8 +9,9 @@ const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
 /// A buffer reads back as the statement it was written from, whatever order its tiling lists
-/// its pieces in: row-major tiles, tiles down `K`, and two nested levels whose pieces the tiling
-/// lists coarsest first rather than in memory order.
+/// its pieces in: row-major tiles, tiles down `K`, two nested levels whose pieces the tiling
+/// lists coarsest first rather than in memory order, and a stated piece of one, whose stride
+/// says nothing.
 #[test]
 fn a_written_buffer_reads_back_as_its_statement() {
     let statements = [
@@ -19,11 +20,13 @@ fn a_written_buffer_reads_back_as_its_statement() {
         StorageLevels::new(&[(N, 4), (N, 8)])
             .tile(&[(K, 2), (K, 16)])
             .grid(&[K, N]),
+        StorageLevels::new(&[(N, 4)])
+            .tile(&[(N, 1), (K, 2)])
+            .grid(&[N, K]),
     ];
     for storage in statements {
-        let (geometry, tiling) = storage.physical(&[(K, 64), (N, 64)]).unwrap();
-        let geometry = geometry.with_tiling(tiled(&tiling));
-        let read = StoragePartitioning::new(&geometry, &tiling.order(&[K, N])).unwrap();
+        let geometry = storage.physical(&[(K, 64), (N, 64)]).unwrap();
+        let read = StoragePartitioning::new(&geometry, &geometry.labels(&[K, N])).unwrap();
         assert_eq!(read, storage);
     }
 }
@@ -112,11 +115,12 @@ fn a_word_and_a_two_dimensional_read_are_whole_tiles() {
 #[test]
 fn a_k_first_grid_moves_the_strides_not_the_dims() {
     let storage = StorageLevels::new(&[(N, 16), (K, 32)]).grid(&[K, N]);
-    let (geometry, _) = storage.physical(&[(K, 128), (N, 64)]).unwrap();
+    let geometry = storage.physical(&[(K, 128), (N, 64)]).unwrap();
     // [k/32, n/16, 32, 16]: a tile is 512 values, the next along K 512 on, along N 4 tiles on.
     assert_eq!(
         geometry,
         Geometry::new(&[(4, 512), (4, 2048), (32, 16), (16, 1)])
+            .with_tiling(cubecl::zspace::Tiling::new(&[2, 2]).unwrap())
     );
 }
 
@@ -140,16 +144,37 @@ fn a_statement_that_does_not_fit_the_tensor_is_refused_when_written() {
     ));
 }
 
-/// A tile's piece of one holds nothing: a read as wide as a tile's row leaves nothing for the
-/// next piece along that axis, and the statement reads as the one without it.
+/// A tile's piece of one is kept as stated: it is a dim of the buffer, so its statement names one
+/// dim more than the one without it, while a reader, which a piece of one never splits, is held
+/// the same by both.
 #[test]
-fn a_piece_of_one_is_no_piece() {
-    assert_eq!(
-        StorageLevels::new(&[(N, 4)])
-            .tile(&[(N, 1), (K, 2)])
-            .grid(&[N, K]),
-        StorageLevels::new(&[(N, 4), (K, 2)]).grid(&[N, K])
-    );
+fn a_piece_of_one_is_a_dim_kept_as_stated() {
+    let with_one = StorageLevels::new(&[(N, 4)])
+        .tile(&[(N, 1), (K, 2)])
+        .grid(&[N, K]);
+    let without = StorageLevels::new(&[(N, 4), (K, 2)]).grid(&[N, K]);
+    assert_ne!(with_one, without);
+    assert_eq!(with_one.labels(&[K, N]), vec![K, N, K, N, N]);
+    assert_eq!(without.labels(&[K, N]), vec![K, N, K, N]);
+    let (read, extents) = ([(N, 4), (K, 2)], [(K, 8), (N, 8)]);
+    assert_eq!(with_one.holds(&read, &extents), Ok(()));
+    assert_eq!(without.holds(&read, &extents), Ok(()));
+}
+
+/// The level-major order cubecl's tiling lists dims in: every axis's coarsest piece in the
+/// tensor's order, then the next of every axis still split, so an untiled axis drops out after
+/// the first level and a deeper axis appears alone at the finest.
+#[test]
+fn labels_name_the_dims_level_major_coarsest_first() {
+    let untiled = StorageLevels::new(&[]).grid(&[N, K]);
+    assert_eq!(untiled.labels(&[K, N]), vec![K, N]);
+    let one_level = StorageLevels::new(&[(N, 32), (K, 32)]).grid(&[N, K]);
+    assert_eq!(one_level.labels(&[K, N]), vec![K, N, K, N]);
+    let deeper_n = StorageLevels::new(&[(N, 4), (N, 8), (K, 32)]).grid(&[N, K]);
+    assert_eq!(deeper_n.labels(&[K, N]), vec![K, N, K, N, N]);
+    // A batch axis ahead of the tiled block is its own single dim.
+    let batched = StorageLevels::new(&[(N, 32), (K, 32)]).grid(&[N, K, M]);
+    assert_eq!(batched.labels(&[M, K, N]), vec![M, K, N, K, N]);
 }
 
 /// A window is one run with one stride per axis inside every tile whose axes each sit in one
@@ -182,10 +207,4 @@ fn a_window_is_one_run_inside_the_tiles_whose_axes_do_not_interleave() {
         interleaved.contiguous_tiles(&[(K, 64), (N, 64)]),
         vec![vec![(N, 16)], vec![(N, 16), (K, 2)]]
     );
-}
-
-/// The tiling a buffer's metadata carries for a [`StorageTiling`] over its axes.
-fn tiled(tiling: &StorageTiling) -> cubecl::zspace::Tiling {
-    let fragments: Vec<usize> = (0..tiling.rank()).map(|i| tiling.fragments(i)).collect();
-    cubecl::zspace::Tiling::new(&fragments).unwrap()
 }

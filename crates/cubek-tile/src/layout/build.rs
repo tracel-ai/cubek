@@ -325,8 +325,7 @@ mod tests {
             .build();
 
         assert_eq!(p.logical_axes(), &[B, M, K, C]);
-        assert_eq!(p.tiling().fragments(1), 2);
-        assert_eq!(p.tiling().fragments(3), 1);
+        assert_eq!(p.tiling().fragments(4).as_slice(), &[1, 2, 2, 1]);
     }
 
     #[test]

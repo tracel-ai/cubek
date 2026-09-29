@@ -6,7 +6,7 @@ use cubek_tile::launch::BoundaryPolicy;
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
     kind::{Boundary, Storage},
-    layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageTiling},
+    layout::{Divisor, Offset, PhysicalAxisMap, Scale},
 };
 
 const M: Axis = Axis(0);
@@ -210,7 +210,7 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
 
     assert_eq!(
         off_the_tensor.spec.projection,
-        Projection::tiled(&[M, K], StorageTiling::uniform(2, 1))
+        Projection::tiled(&[M, K], &[M, K, M, K])
     );
 }
 

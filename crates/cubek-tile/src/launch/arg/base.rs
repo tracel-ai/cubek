@@ -5,12 +5,11 @@
 use core::marker::PhantomData;
 
 use cubecl::prelude::*;
-use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
     Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
-    StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
+    StoragePartitioning, TileArgLaunch, TileSpec,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -204,13 +203,12 @@ impl<'a> Arg<'a, Labelled> {
         let stated = data.projection.is_some() || stored.is_tiled();
         let (geometry, axes) =
             stride_ordered(data.geometry, data.axes, data.in_stride_order, stated)?;
-        let (tiling, storage) =
-            storage_of(&geometry, &axes, data.projection.is_none(), stored, launch)?;
+        let storage = storage_of(&geometry, &axes, data.projection.is_none(), launch);
         let labels = match data.projection {
             Some(projection) => {
                 Labels::stated(&geometry, launch, projection, &axes, data.batches, stored)?
             }
-            None => Labels::new(&geometry, &axes, data.batches, tiling.clone())?,
+            None => Labels::new(&geometry, &axes, data.batches)?,
         };
         let Labels {
             geometry,
@@ -222,10 +220,6 @@ impl<'a> Arg<'a, Labelled> {
         // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
         // destination the negotiation never saw) is gated here: `stride / width` truncates
         // silently.
-        let settled = tiling
-            .as_ref()
-            .map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
-        let geometry = geometry.with_tiling(settled);
         // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
         let labels = projection.dense_labels();
         let served = match labels.last() {
@@ -252,7 +246,7 @@ impl<'a> Arg<'a, Labelled> {
         };
         let tensor = data
             .binding
-            .map(|binding| settled_tensor(binding, &geometry, tiling.as_ref(), stored));
+            .map(|binding| settled_tensor(binding, &geometry));
         let bound = Bound {
             tensor,
             vector_size: width,
@@ -278,24 +272,16 @@ fn stride_ordered(
     }
 }
 
-/// The operand's storage tiling, read off its binding, and what its storage tiles are to the
-/// kernel's levels: the coarsest tile its [storage partitioning](StoragePartitioning) can address
+/// What the operand's storage tiles, read off its binding, are to the kernel's levels: the coarsest tile its [storage partitioning](StoragePartitioning) can address
 /// a window inside with one stride per axis, where a level cuts to exactly that tile, makes the
 /// windows below that level [`Contiguous`](Storage::Contiguous); every other window is walked
 /// through the layout. Matched on the labelled axes alone: a batch dim is one physical dim. A
 /// gathered operand (`labelled == false`) states its own mapping and reads no tiling.
-fn storage_of(
-    geometry: &Geometry,
-    axes: &[Axis],
-    labelled: bool,
-    stored: Tiling,
-    launch: &Launcher,
-) -> Result<(Option<StorageTiling>, Storage), Refusal> {
-    if !(labelled && stored.is_tiled()) {
-        return Ok((None, Storage::Strided));
+fn storage_of(geometry: &Geometry, axes: &[Axis], labelled: bool, launch: &Launcher) -> Storage {
+    if !(labelled && geometry.tiling().is_tiled()) {
+        return Storage::Strided;
     }
-    let tiling = StorageTiling::stored(stored, axes.len(), geometry.rank());
-    let labels = tiling.order(axes);
+    let labels = geometry.labels(axes);
     let tiles = StoragePartitioning::new(geometry, &labels)
         .map(|storage| storage.contiguous_tiles(&geometry.extents(&labels)))
         .unwrap_or_default();
@@ -314,21 +300,15 @@ fn storage_of(
         .iter()
         .rev()
         .find_map(|tile| (0..levels.len()).find(|&level| cuts_to(level, tile)));
-    Ok((Some(tiling), Storage::Tiled(level)))
+    Storage::Tiled(level)
 }
 
 /// The binding as the arg ships it: the settled geometry, whose derivation may have dropped
-/// broadcast batch dims, and its tiling restated over those dims. A `Tiling` counts fragments off
-/// the leading dims, so one counted off a dropped dim claims a layout the arg lacks.
-fn settled_tensor(
-    mut binding: TensorBinding,
-    geometry: &Geometry,
-    tiling: Option<&StorageTiling>,
-    stored: Tiling,
-) -> TensorArg {
+/// broadcast batch dims, with the tiling restated over those dims.
+fn settled_tensor(mut binding: TensorBinding, geometry: &Geometry) -> TensorArg {
     binding.shape = geometry.shape().into();
     binding.strides = geometry.strides().into();
-    binding.tiling = tiling.map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
+    binding.tiling = geometry.tiling();
     binding.into_tensor_arg()
 }
 

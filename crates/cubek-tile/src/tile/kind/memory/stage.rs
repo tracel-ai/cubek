@@ -429,7 +429,7 @@ impl StageForm {
         StageForm {
             extents,
             rows,
-            positional: Projection::of_tiling(StorageTiling::uniform(space.rank(), nesting.len())),
+            positional: StageForm::positional(space.rank(), nesting.len() + 1),
             // A dense stage is a copy of the tile itself, so it addresses its own buffer directly
             // whatever the operand it stages was gathered through.
             projection: Projection::direct_over(space),
@@ -457,7 +457,7 @@ impl StageForm {
         let extents = compaction.line_extents(vector_size);
         StageForm {
             rows: RowArrangement::InOrder,
-            positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
+            positional: StageForm::positional(extents.len(), 1),
             projection: compaction.projection().clone(),
             steps: compaction.steps().iter().copied().collect(),
             extents,
@@ -496,6 +496,15 @@ impl StageForm {
     /// A dense stage's physical line extents: `[extents…]` flat, or `[grid…, …, block…]`, one grid
     /// per level of `nesting`. A level contributes how many of the next block down it holds; the
     /// innermost contributes its own extents.
+    /// The buffer addressed by position ([`Projection::positional`]): `rank` coordinates, each the
+    /// synthetic `Axis(p)`, every one split into `pieces` dims, one per level, since a stage stores
+    /// every axis at every level of its nesting.
+    fn positional(rank: usize, pieces: usize) -> Projection {
+        let axes: Vec<Axis> = (0..rank).map(|p| Axis(p as u8)).collect();
+        let labels = StoragePartitioning::level_major(&axes, &vec![pieces; rank]);
+        Projection::tiled(&axes, &labels)
+    }
+
     fn dense_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<usize> {
         let rank = space.rank();
         let mut extents = Vec::new();

@@ -7,10 +7,7 @@ use core::fmt::{self, Display, Formatter};
 use cubecl::zspace::{SmallVec, Tiling};
 
 use super::BoundaryPolicy;
-use crate::{
-    Axis, Boundary, Geometry, Launcher, LineMisfit, PhysicalAxisMap, Projection, Space,
-    StorageTiling,
-};
+use crate::{Axis, Boundary, Geometry, Launcher, LineMisfit, PhysicalAxisMap, Projection, Space};
 
 /// Why an operand cannot be bound as described.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -29,8 +26,6 @@ pub enum Refusal {
     GatherRankMismatch { mapped: usize, rank: usize },
     /// The mapping spans an axis the launched space does not have.
     GatherOfAnUnknownAxis(Axis),
-    /// The tiling describes `tiled` axes but `labelled` were stated.
-    TilingRankMismatch { tiled: usize, labelled: usize },
     /// The operand's rank is smaller than its labelled block of dims.
     RankBelowLabels { rank: usize, block: usize },
     /// More leading dims than batch axes to label them.
@@ -78,10 +73,6 @@ impl Display for Refusal {
                 f,
                 "Arg::gathered: the mapping spans {axis:?}, which the launched space does not have"
             ),
-            Refusal::TilingRankMismatch { tiled, labelled } => write!(
-                f,
-                "Arg: the tiling describes {tiled} axes but {labelled} were labelled"
-            ),
             Refusal::RankBelowLabels { rank, block } => write!(
                 f,
                 "Arg: operand rank {rank} is smaller than its labelled block of {block} dims"
@@ -122,8 +113,12 @@ impl std::error::Error for Refusal {}
 
 /// The labelled reading of a buffer: its dims named by the operand's axes (leading dims by the
 /// batch axes, right-aligned, size-1 broadcast dims dropped; trailing dims by the labelled axes in
-/// the storage tiling's level-major order), as a [`Projection`] and the settled geometry.
+/// the storage tiling's level-major order, [`Geometry::labels`]), as a [`Projection`] and the
+/// settled geometry.
 pub(crate) struct Labels {
+    /// The buffer less its dropped dims, its tiling restated over the dims it keeps: a tiling
+    /// counts pieces from the leading dim, so one counted off a dropped dim claims a layout the
+    /// buffer lacks.
     pub(crate) geometry: Geometry,
     pub(crate) projection: Projection,
     /// Every logical axis the buffer carries, before broadcast dims dropped: what the bounds-check
@@ -136,17 +131,9 @@ impl Labels {
         geometry: &Geometry,
         axes: &[Axis],
         batches: &[Axis],
-        tiling: Option<StorageTiling>,
     ) -> Result<Self, Refusal> {
         let rank = geometry.rank();
-        let tiling = tiling.unwrap_or_else(|| StorageTiling::uniform(axes.len(), 0));
-        if tiling.rank() != axes.len() {
-            return Err(Refusal::TilingRankMismatch {
-                tiled: tiling.rank(),
-                labelled: axes.len(),
-            });
-        }
-        let block = tiling.order(axes);
+        let block = geometry.labels(axes);
         if rank < block.len() {
             return Err(Refusal::RankBelowLabels {
                 rank,
@@ -180,8 +167,19 @@ impl Labels {
             }
             dims.push((extent, stride));
         }
+        // The batch dims kept, one piece each, then each labelled axis's pieces.
+        let pieces = axes
+            .iter()
+            .map(|&axis| block.iter().filter(|&&a| a == axis).count());
+        let fragments: Vec<usize> = core::iter::repeat_n(1, dims.len() - block.len())
+            .chain(pieces)
+            .collect();
+        let tiling = match geometry.tiling().is_tiled() {
+            true => Tiling::new(&fragments).expect("the binding's own tiling, less plain dims"),
+            false => Tiling::UNTILED,
+        };
         Ok(Labels {
-            geometry: Geometry::new(&dims),
+            geometry: Geometry::new(&dims).with_tiling(tiling),
             projection: Projection::new(&logical, &maps),
             addressed,
         })

@@ -37,7 +37,11 @@ use std::path::{Path, PathBuf};
 /// ahead of the implicit quantization path it retires, which then went (`DequantAt`,
 /// `Quantization`, `QuantTileArg`, `Packing::Native`, the storage-element parameter of `nd` and
 /// `fragment_matrix`): 725.
-const PUB_ITEMS: usize = 725;
+/// `StorageTiling` went into `StoragePartitioning`: the per-axis piece counts it described are
+/// cubecl's `Tiling`, and the order it named a buffer's dims in is `StoragePartitioning::labels`
+/// and `Geometry::labels` (with `Geometry::tiling` public to read the counts back). Its type,
+/// constructors, questions and re-export went: 719.
+const PUB_ITEMS: usize = 719;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 31;

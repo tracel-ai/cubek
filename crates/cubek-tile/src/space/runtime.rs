@@ -32,7 +32,7 @@ impl Witness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PhysicalAxisMap, Projection, StorageTiling};
+    use crate::{PhysicalAxisMap, Projection};
 
     const A: Axis = Axis(0);
     const B: Axis = Axis(1);
@@ -50,7 +50,7 @@ mod tests {
         assert_eq!(Witness::new(&gathered, A), None);
         assert_eq!(Witness::new(&gathered, B), None);
 
-        let tiled = Projection::tiled(&[A, B], StorageTiling::per_axis(&[1, 2]));
+        let tiled = Projection::tiled(&[A, B], &[A, B, B]);
         assert_eq!(Witness::new(&tiled, A).map(|w| w.dim()), Some(0));
         assert_eq!(Witness::new(&tiled, B), None);
     }

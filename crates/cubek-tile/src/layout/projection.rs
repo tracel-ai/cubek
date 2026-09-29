@@ -2,11 +2,10 @@
 //! module doc derives, assembled from one [`PhysicalAxisMap`] per physical axis.
 
 use crate::Addressed;
-use cubecl::zspace::SmallVec;
+use cubecl::zspace::{SmallVec, Tiling};
 
 use crate::{
     Axis, Composition, DimsBuilder, Divisor, Geometry, Offset, PhysicalAxisMap, Scale, Space,
-    StorageTiling,
 };
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
@@ -35,15 +34,13 @@ impl Projection {
         Projection::direct(&space.axes().collect::<Vec<_>>())
     }
 
-    /// [`direct`](Projection::direct) with the axes storage-tiled per `tiling`: each axis labels as
-    /// many physical axes as it has fragments, in [`StorageTiling`]'s level-major order, with no
-    /// extent baked in. All ones is [`direct`](Projection::direct) itself.
-    pub fn tiled(axes: &[Axis], tiling: StorageTiling) -> Self {
-        let physical: Vec<PhysicalAxisMap> = tiling
-            .order(axes)
-            .into_iter()
-            .map(PhysicalAxisMap::of)
-            .collect();
+    /// [`direct`](Projection::direct) with the axes storage-tiled: `labels` name each buffer dim by
+    /// the axis it is a piece of, as a [`StoragePartitioning`](crate::StoragePartitioning) or a
+    /// bound buffer's [`Geometry`] lists them, with no extent baked in. `labels == axes` is
+    /// [`direct`](Projection::direct) itself.
+    pub fn tiled(axes: &[Axis], labels: &[Axis]) -> Self {
+        let physical: Vec<PhysicalAxisMap> =
+            labels.iter().copied().map(PhysicalAxisMap::of).collect();
         Projection::new(axes, &physical)
     }
 
@@ -122,37 +119,34 @@ impl Projection {
         carried
     }
 
-    /// [`BufferLayout`](crate::BufferLayout)'s own physical-position map: coordinate `p`
-    /// (`0..tiling.rank()`) labeled by the synthetic axis `Axis(p)`, split per `tiling`. The layout
-    /// addresses by position, past any gather resolved a layer up, so it needs no real axis labels.
-    pub(crate) fn of_tiling(tiling: StorageTiling) -> Projection {
-        let axes: Vec<Axis> = (0..tiling.rank()).map(|p| Axis(p as u8)).collect();
-        Projection::tiled(&axes, tiling)
-    }
-
-    /// How many fragments each logical axis is split across, counted off the physical map; a
-    /// gathered one reports one per axis. Counts only, not an order: [`tiled`](Projection::tiled)
-    /// rebuilds this projection only where its fragments run level-major.
-    pub fn tiling(&self) -> StorageTiling {
-        StorageTiling::per_axis(
-            &self
-                .axes
-                .iter()
-                .map(|&axis| match self.addresses(axis) {
-                    // A broadcast axis is spread over no physical axis, which is not a tiling of
-                    // it: one fragment, the same answer an untiled axis gives.
-                    false => 1,
-                    true => self.carriers(axis).len(),
-                })
-                .collect::<Vec<_>>(),
-        )
+    /// How many fragments each logical axis is split across, counted off the physical map, as a
+    /// buffer's metadata records it; a gathered one reports one per axis. Counts only, not an
+    /// order: [`tiled`](Projection::tiled) rebuilds this projection only where its fragments run
+    /// level-major.
+    ///
+    /// # Panics
+    ///
+    /// When an axis is split into more fragments than a [`Tiling`] records.
+    pub fn tiling(&self) -> Tiling {
+        let fragments: Vec<usize> = self.axes.iter().map(|&axis| self.fragments(axis)).collect();
+        Tiling::new(&fragments)
+            .unwrap_or_else(|e| panic!("Projection::tiling: {fragments:?} fragments: {e:?}"))
     }
 
     /// Whether some axis is storage-tiled: split across several physical fragments, so a
     /// coordinate along it decomposes into one digit per fragment. Not a rank comparison, which a
     /// gather also fails (its logical rank exceeds its physical one without any axis being split).
     pub(crate) fn is_tiled(&self) -> bool {
-        self.tiling().is_tiled()
+        self.axes.iter().any(|&axis| self.fragments(axis) > 1)
+    }
+
+    /// How many physical axes `axis` is split across. A broadcast axis is spread over none, which
+    /// is not a tiling of it: one fragment, the same answer an untiled axis gives.
+    fn fragments(&self, axis: Axis) -> usize {
+        match self.addresses(axis) {
+            false => 1,
+            true => self.carriers(axis).len(),
+        }
     }
 
     /// Where `axis`'s digit at physical axis `pa` sits in the buffer's mixed radix: the positions
@@ -804,7 +798,7 @@ mod tests {
     /// A plain projection is never constrained: storage tiling is exactly what it is for.
     #[test]
     fn tiled_is_not_a_gather() {
-        let p = Projection::tiled(&[A, B], StorageTiling::uniform(2, 1));
+        let p = Projection::tiled(&[A, B], &[A, B, A, B]);
         assert!(!p.is_direct());
         assert!(p.is_tiled());
         assert!(p.is_invertible());
@@ -841,16 +835,17 @@ mod tests {
         ));
 
         assert_eq!(spec.projection.physical_rank(), 5);
+        let [p0, p1, p2] = [Axis(0), Axis(1), Axis(2)];
         assert_eq!(
             spec.projection.positional(),
-            Projection::of_tiling(StorageTiling::suffix(3, 1, 1))
+            Projection::tiled(&[p0, p1, p2], &[p0, p1, p2, p1, p2])
         );
         assert_eq!(
-            Projection::tiled(&[BATCH, A, B], StorageTiling::suffix(3, 1, 1)),
+            Projection::tiled(&[BATCH, A, B], &[BATCH, A, B, A, B]),
             spec.projection
         );
         // The tiling is readable straight back off the realized buffer's map.
-        assert_eq!(spec.projection.tiling(), StorageTiling::suffix(3, 1, 1));
+        assert_eq!(spec.projection.tiling(), Tiling::new(&[1, 2, 2]).unwrap());
     }
 
     /// An untiled operand is its own positional map, up to the relabeling.
@@ -873,10 +868,7 @@ mod tests {
                 PhysicalAxisMap::of(B),
             ],
         );
-        assert_eq!(
-            p.positional(),
-            Projection::of_tiling(StorageTiling::uniform(2, 0))
-        );
+        assert_eq!(p.positional(), Projection::direct(&[Axis(0), Axis(1)]));
     }
 
     /// Axes tiled to different depths, which no start/depth pair can describe: `A` is split three
@@ -884,7 +876,7 @@ mod tests {
     /// exactly the finer ones of its own axis.
     #[test]
     fn a_ragged_tiling_orders_level_major() {
-        let p = Projection::tiled(&[A, B], StorageTiling::per_axis(&[3, 2]));
+        let p = Projection::tiled(&[A, B], &[A, B, A, B, A]);
         assert_eq!(p.physical_rank(), 5);
         // `[A0, B0, A1, B1, A2]`.
         assert_eq!(p.carriers(A).as_slice(), &[0, 2, 4]);
@@ -897,21 +889,18 @@ mod tests {
         p.validate(4);
     }
 
-    /// `tiling` inverts `tiled` for every projection storage tiling can build, so the two are one
-    /// description read in either direction.
+    /// `tiling` reads back the piece counts of the dims `tiled` was given, level-major as a
+    /// [`StoragePartitioning`](crate::StoragePartitioning) names them, so the metadata a projection
+    /// implies is the metadata the buffer was written with.
     #[test]
-    fn tiling_round_trips_through_tiled() {
-        for tiling in [
-            StorageTiling::uniform(2, 0),
-            StorageTiling::uniform(3, 2),
-            StorageTiling::suffix(3, 1, 1),
-            StorageTiling::per_axis(&[3, 1, 2]),
-        ] {
-            let axes: Vec<Axis> = (0..tiling.rank()).map(|p| Axis(p as u8)).collect();
-            let p = Projection::tiled(&axes, tiling.clone());
-            assert_eq!(p.tiling(), tiling);
-            assert_eq!(p.physical_rank(), tiling.physical_rank());
-            assert_eq!(p.is_tiled(), tiling.is_tiled());
+    fn tiling_reads_back_the_counts_tiled_was_built_from() {
+        for fragments in [[1, 1, 1], [3, 3, 3], [1, 2, 2], [3, 1, 2]] {
+            let axes: Vec<Axis> = (0..3).map(|p| Axis(p as u8)).collect();
+            let labels = crate::StoragePartitioning::level_major(&axes, &fragments);
+            let p = Projection::tiled(&axes, &labels);
+            assert_eq!(p.tiling(), Tiling::new(&fragments).unwrap());
+            assert_eq!(p.physical_rank(), fragments.iter().sum::<usize>());
+            assert_eq!(p.is_tiled(), fragments.iter().any(|&n| n > 1));
         }
     }
 
