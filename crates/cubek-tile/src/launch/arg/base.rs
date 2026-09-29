@@ -9,7 +9,7 @@ use cubecl::prelude::*;
 use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
     Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
-    StoragePartitioning, TileArgLaunch, TileSpec,
+    StoragePartitioning, TileArgLaunch, TileSpec, VectorTile,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -203,7 +203,8 @@ impl<'a> Arg<'a, Labelled> {
         let stated = data.projection.is_some() || stored.is_tiled();
         let (geometry, axes) =
             stride_ordered(data.geometry, data.axes, data.in_stride_order, stated)?;
-        let storage = storage_of(&geometry, &axes, data.projection.is_none(), launch);
+        let (storage, stored_tiles) =
+            storage_of(&geometry, &axes, data.projection.is_none(), launch);
         let labels = match data.projection {
             Some(projection) => {
                 Labels::stated(&geometry, launch, projection, &axes, data.batches, stored)?
@@ -223,7 +224,9 @@ impl<'a> Arg<'a, Labelled> {
         // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
         let labels = projection.dense_labels();
         let served = match labels.last() {
-            Some(&axis) => geometry.serves(&[(axis, width)], &labels),
+            Some(&axis) => VectorTile::new(&stored_tiles, axis, width)
+                .map_err(LineMisfit::Tile)
+                .and_then(|tile| geometry.serves(tile.extents(), &labels)),
             None if width == 1 => Ok(()),
             None => Err(LineMisfit::NoDims),
         };
@@ -243,6 +246,7 @@ impl<'a> Arg<'a, Labelled> {
             units: launch.cube_dim().num_elems() as usize,
             packing: data.packing,
             storage,
+            stored_tiles,
         };
         let tensor = data
             .binding
@@ -272,17 +276,28 @@ fn stride_ordered(
     }
 }
 
-/// What the operand's storage tiles, read off its binding, are to the kernel's levels: the coarsest tile its [storage partitioning](StoragePartitioning) can address
-/// a window inside with one stride per axis, where a level cuts to exactly that tile, makes the
-/// windows below that level [`Contiguous`](Storage::Contiguous); every other window is walked
-/// through the layout. Matched on the labelled axes alone: a batch dim is one physical dim. A
-/// gathered operand (`labelled == false`) states its own mapping and reads no tiling.
-fn storage_of(geometry: &Geometry, axes: &[Axis], labelled: bool, launch: &Launcher) -> Storage {
+/// The operand's storage tiles, read off its binding: what they are to the kernel's levels, and
+/// the tiles themselves as its [storage partitioning](StoragePartitioning) states them, finest
+/// first ([`TileSpec::stored_tiles`]). The coarsest tile the partitioning can address a window
+/// inside with one stride per axis, where a level cuts to exactly that tile, makes the windows
+/// below that level [`Contiguous`](Storage::Contiguous); every other window is walked through the
+/// layout. Matched on the labelled axes alone: a batch dim is one physical dim. A gathered operand
+/// (`labelled == false`) states its own mapping and reads no tiling.
+fn storage_of(
+    geometry: &Geometry,
+    axes: &[Axis],
+    labelled: bool,
+    launch: &Launcher,
+) -> (Storage, Vec<(Axis, usize)>) {
     if !(labelled && geometry.tiling().is_tiled()) {
-        return Storage::Strided;
+        return (Storage::Strided, Vec::new());
     }
     let labels = geometry.labels(axes);
-    let tiles = StoragePartitioning::new(geometry, &labels)
+    let partitioning = StoragePartitioning::new(geometry, &labels);
+    let stored_tiles = partitioning
+        .as_ref()
+        .map_or_else(Vec::new, |storage| storage.tiles().to_vec());
+    let tiles = partitioning
         .map(|storage| storage.contiguous_tiles(&geometry.extents(&labels)))
         .unwrap_or_default();
     let (space, levels) = (launch.space(), launch.partitioning().levels());
@@ -300,7 +315,7 @@ fn storage_of(geometry: &Geometry, axes: &[Axis], labelled: bool, launch: &Launc
         .iter()
         .rev()
         .find_map(|tile| (0..levels.len()).find(|&level| cuts_to(level, tile)));
-    Storage::Tiled(level)
+    (Storage::Tiled(level), stored_tiles)
 }
 
 /// The binding as the arg ships it: the settled geometry, whose derivation may have dropped

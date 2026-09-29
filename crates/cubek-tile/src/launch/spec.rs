@@ -29,6 +29,10 @@ pub struct TileSpec {
     /// What this operand's storage tiles are to the windows it is read through;
     /// [`Strided`](Storage::Strided) for every untiled operand.
     pub storage: Storage,
+    /// How the buffer is stored: its stated storage tiles, finest first, as its
+    /// [`StoragePartitioning`](crate::StoragePartitioning) reads back. Empty for a plain buffer.
+    /// What a load of it covers is the kernel's to pick ([`VectorTile::new`](crate::VectorTile::new)).
+    pub stored_tiles: Vec<(Axis, usize)>,
 }
 
 impl TileSpec {
@@ -42,6 +46,7 @@ impl TileSpec {
             units: 0,
             packing: Packing::Plain,
             storage: Storage::Strided,
+            stored_tiles: Vec::new(),
         }
     }
 

@@ -41,7 +41,11 @@ use std::path::{Path, PathBuf};
 /// cubecl's `Tiling`, and the order it named a buffer's dims in is `StoragePartitioning::labels`
 /// and `Geometry::labels` (with `Geometry::tiling` public to read the counts back). Its type,
 /// constructors, questions and re-export went: 719.
-const PUB_ITEMS: usize = 719;
+/// `VectorTile`, the tile one vector load covers once a load may span axes (an NVFP4 load of four
+/// words is 16 values along `K` by 2 columns), raised it by six: the type, `new`, `extents`,
+/// `values`, `along_one_axis` for the readers that place a load along one axis, and its module's
+/// re-export: 725.
+const PUB_ITEMS: usize = 725;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 31;
