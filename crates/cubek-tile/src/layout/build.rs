@@ -131,7 +131,7 @@ impl StencilDim {
 #[cfg(test)]
 impl From<StencilDim> for PhysicalAxisMap {
     fn from(window: StencilDim) -> Self {
-        let map = PhysicalAxisMap::affine_with_offset(&window.coefficients, -(window.pad as isize));
+        let map = PhysicalAxisMap::affine(&window.coefficients).shifted(-(window.pad as isize));
         debug_assert!(
             window.coefficients.len() == 1 || map.composition() == Composition::Overlapping,
             "a window over several axes takes the overlapping reading"

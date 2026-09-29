@@ -6,6 +6,6 @@ pub(crate) mod matrix;
 pub(crate) mod projected;
 
 pub(crate) use flat::*;
-pub use masked::*;
+pub(crate) use masked::*;
 pub(crate) use matrix::*;
 pub(crate) use projected::*;

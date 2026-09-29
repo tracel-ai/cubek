@@ -5,5 +5,5 @@ pub(crate) mod base;
 pub(crate) mod drain;
 pub(crate) mod smem_accumulation;
 
-pub use base::*;
+pub(crate) use base::*;
 pub(crate) use drain::*;

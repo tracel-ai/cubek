@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 /// Public items declared anywhere in `src/`: types, traits, functions, constants, modules,
 /// re-exports. `pub(crate)` and `pub(super)` are not public, and a file no `mod` declares is not
 /// counted.
-const PUB_ITEMS: usize = 661;
+const PUB_ITEMS: usize = 579;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 28;
+const LONG_FNS: usize = 29;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
 const LONG_FILES: usize = 8;

@@ -34,7 +34,7 @@ pub(crate) struct ContractShape {
 
 impl ContractShape {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         lhs: &Space,
         rhs: &Space,
         space: Space,
@@ -135,12 +135,12 @@ impl ContractShape {
     }
 
     /// How many batch matrices a nest walks.
-    pub fn matrices(&self) -> usize {
+    pub(crate) fn matrices(&self) -> usize {
         self.batch_extents().iter().product()
     }
 
     /// The block's size in scalars, as [`RegisterBlock::budget`] counts it.
-    pub fn scalars(&self) -> usize {
+    pub(crate) fn scalars(&self) -> usize {
         self.mr * self.nr * self.contracted_per_step * self.aw * self.spread
     }
 

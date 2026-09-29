@@ -1,4 +1,3 @@
-#![warn(unreachable_pub)]
 //! The axis-agnostic tile DSL engine: a [`Space`] cut into [`Level`]s forms a [`Partitioning`],
 //! whose loops hand out [`Region`]s; the [`Launcher`] reads the grid off the same levels.
 
@@ -12,8 +11,10 @@ pub(crate) mod tile;
 
 /// What a [`Tile`] can be in the kernel.
 pub mod kind {
+    pub use crate::tile::accumulator::smem_accumulation::SmemAccumulation;
     pub use crate::tile::kind::memory::base::{Boundary, Storage, Write};
     pub use crate::tile::kind::memory::global::GlobalOperand;
+    pub use crate::tile::kind::memory::view::masked::{Masked, MaskedMut};
     pub use crate::tile::kind::plane::base::PlanePartition;
     pub use crate::tile::packing::base::Field;
 }
@@ -35,7 +36,7 @@ pub mod procedural {
 #[allow(unused_imports)]
 pub(crate) use {algebra::*, launch::*, layout::*, ops::*, space::*, stage::*, tile::*};
 
-pub use algebra::monoid::Monoid;
+pub use algebra::monoid::{Carrier, Monoid};
 pub use algebra::semiring::Semiring;
 pub use launch::arg::tensor::{TileArg, TileArgLaunch};
 pub use launch::base::Launcher;

@@ -373,8 +373,8 @@ impl<T: Float> ProceduralExpand<T> {
 mod tests {
     use cubecl::ir::{ExpandValue, Scope};
 
-    use crate::*;
     use crate::tile::kind::procedural::constant::{Constant, ConstantExpand};
+    use crate::*;
 
     fn test_scope() -> Scope {
         Scope::root(cubecl::ir::settings::KernelSettings::new(

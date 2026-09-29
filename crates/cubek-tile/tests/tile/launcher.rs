@@ -541,7 +541,7 @@ fn window(stride: usize, dilation: usize, offset: impl Into<Offset>) -> Projecti
     Projection::new(
         &[M, K, N],
         &[
-            PhysicalAxisMap::affine_with_offset(&[(M, stride), (K, dilation)], offset),
+            PhysicalAxisMap::affine(&[(M, stride), (K, dilation)]).shifted(offset),
             PhysicalAxisMap::of(N),
         ],
     )
@@ -845,7 +845,17 @@ fn arg_gathered_cancelling_divisor_stages() {
             PhysicalAxisMap::of(N),
         ],
     );
-    assert!(!projection.is_rational());
+    // Every coefficient divides by 4, so the division reduces away.
+    assert_eq!(
+        projection,
+        Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 2), (K, 1)]),
+                PhysicalAxisMap::of(N)
+            ],
+        )
+    );
     let _ = staged
         .arg(binding(&client, &[512, 64]))
         .gathered(projection)

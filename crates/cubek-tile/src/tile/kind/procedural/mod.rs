@@ -11,7 +11,7 @@ pub(crate) mod product;
 pub(crate) mod separable;
 pub(crate) mod sum;
 
-pub use base::*;
+pub(crate) use base::*;
 pub(crate) use erased::*;
-pub use kind::*;
-pub use normalization::*;
+pub(crate) use kind::*;
+pub(crate) use normalization::*;

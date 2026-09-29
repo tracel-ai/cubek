@@ -67,7 +67,7 @@ impl Scratch {
     }
 
     /// The slot tile `i` of a grid of `tiles` spills into.
-    pub fn slot_of(self, i: usize, tiles: usize) -> usize {
+    pub(crate) fn slot_of(self, i: usize, tiles: usize) -> usize {
         match self {
             Scratch::WholeGrid => i,
             Scratch::None | Scratch::OneTile => {

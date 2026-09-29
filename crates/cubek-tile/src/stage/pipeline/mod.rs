@@ -6,7 +6,6 @@ pub(crate) mod payload;
 pub(crate) mod plan;
 pub(crate) mod slot;
 
-pub use base::*;
-pub use payload::pair::OperandPair;
+pub(crate) use base::*;
 pub(crate) use plan::*;
-pub use slot::*;
+pub(crate) use slot::*;

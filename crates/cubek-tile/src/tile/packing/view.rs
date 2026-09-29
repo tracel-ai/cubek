@@ -250,7 +250,7 @@ pub(crate) struct PackedView<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates 
 
 #[cube]
 impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a, NQ, F, NF, C> {
-    pub fn new(words: View<'a, Vector<u32, NQ>, C>, #[comptime] field: Field) -> Self {
+    pub(crate) fn new(words: View<'a, Vector<u32, NQ>, C>, #[comptime] field: Field) -> Self {
         PackedView::<'a, NQ, F, NF, C> {
             words,
             field,
@@ -261,11 +261,11 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a
 
 impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a, NQ, F, NF, C> {
     /// This view as a plain [`View`] of served values.
-    pub fn view(self) -> View<'a, Vector<F, NF>, C> {
+    pub(crate) fn view(self) -> View<'a, Vector<F, NF>, C> {
         unexpanded!()
     }
 
-    pub fn __expand_view(
+    pub(crate) fn __expand_view(
         scope: &Scope,
         this: PackedViewExpand<'a, NQ, F, NF, C>,
     ) -> ViewExpand<'a, Vector<F, NF>, C> {
@@ -284,7 +284,7 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
         unpack_line::expand::<F, NQ, NF>(scope, words, self.field)
     }
 
-    pub fn __expand_view_method(self, scope: &Scope) -> ViewExpand<'a, Vector<F, NF>, C> {
+    pub(crate) fn __expand_view_method(self, scope: &Scope) -> ViewExpand<'a, Vector<F, NF>, C> {
         ViewExpand::new(scope, self)
     }
 }

@@ -9,4 +9,3 @@ pub(crate) use constant::{
     IntegerExpand, IntegerSeq, IntegerSeqExpand, constant, fold_add, fold_mul,
 };
 pub(crate) use monoid::comptime_only;
-pub(crate) use monoid::Carrier;

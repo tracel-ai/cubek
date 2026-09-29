@@ -8,7 +8,7 @@ use crate::*;
 pub const LOGIT_MASKED: f32 = -6e4;
 
 /// Below this an `l` row sum is numerically zero (fully-masked row).
-pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
+pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 
 /// `1/l`, exactly zero when `l` is numerically zero.
 #[cube]
@@ -121,7 +121,7 @@ impl<E: Float> RowState<E> {
     }
 
     /// The row of the tile this worker's `ri`-th owned row is.
-    pub fn owned_row(&self, ri: usize) -> usize {
+    pub(crate) fn owned_row(&self, ri: usize) -> usize {
         match comptime!(self.share) {
             RowShare::Unit { rows } => self.team.index * rows + ri,
             RowShare::Plane { rows: _, units: _ } => ri,

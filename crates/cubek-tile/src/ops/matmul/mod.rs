@@ -8,5 +8,6 @@ pub(crate) mod leaf;
 
 pub(crate) use leaf::*;
 
+pub use config::StoreMethod;
 pub use config::{LoadMethod, MmaIo};
 pub use leaf::scale::Side;

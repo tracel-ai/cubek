@@ -163,14 +163,10 @@ impl Depthwise {
             &[B, OH, OW, C, RH, RW],
             &[
                 PhysicalAxisMap::of(B),
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OH, self.sh), (RH, self.dh)],
-                    -(self.ph as isize),
-                ),
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OW, self.sw), (RW, self.dw)],
-                    -(self.pw as isize),
-                ),
+                PhysicalAxisMap::affine(&[(OH, self.sh), (RH, self.dh)])
+                    .shifted(-(self.ph as isize)),
+                PhysicalAxisMap::affine(&[(OW, self.sw), (RW, self.dw)])
+                    .shifted(-(self.pw as isize)),
                 PhysicalAxisMap::of(C),
             ],
         ))

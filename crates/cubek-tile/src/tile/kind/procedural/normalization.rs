@@ -13,7 +13,7 @@ pub(crate) struct Normalization {
 }
 
 impl Normalization {
-    pub fn new(taps: TapSupport, guard: DivGuard, over: Space) -> Self {
+    pub(crate) fn new(taps: TapSupport, guard: DivGuard, over: Space) -> Self {
         Normalization { taps, guard, over }
     }
 }

@@ -13,3 +13,5 @@ pub(crate) use transport::*;
 
 pub use base::{RowChunks, UnitRead};
 pub use pipeline::base::{Prefetch, Role};
+pub use pipeline::payload::pair::OperandPair;
+pub use pipeline::slot::Slot;

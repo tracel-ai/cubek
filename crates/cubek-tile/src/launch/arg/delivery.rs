@@ -56,7 +56,7 @@ impl Delivery {
     }
 
     /// Whether the fill returns before its bytes land.
-    pub fn is_async(&self) -> bool {
+    pub(crate) fn is_async(&self) -> bool {
         match self {
             Delivery::SyncPerUnit | Delivery::Procedural => false,
             Delivery::AsyncPerUnit | Delivery::AsyncBulk | Delivery::Tma => true,

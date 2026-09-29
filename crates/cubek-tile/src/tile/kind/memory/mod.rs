@@ -10,11 +10,11 @@ pub(crate) mod tma;
 pub(crate) mod view;
 pub(crate) mod window;
 
-pub use base::*;
+pub(crate) use base::*;
 pub(crate) use codebook::*;
 pub(crate) use factor::*;
-pub use global::*;
+pub(crate) use global::*;
 pub(crate) use stage::*;
 pub(crate) use tma::*;
-pub use view::*;
+pub(crate) use view::*;
 pub(crate) use window::*;

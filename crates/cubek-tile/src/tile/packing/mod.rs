@@ -3,5 +3,5 @@
 pub(crate) mod base;
 pub(crate) mod view;
 
-pub use base::*;
+pub(crate) use base::*;
 pub(crate) use view::*;

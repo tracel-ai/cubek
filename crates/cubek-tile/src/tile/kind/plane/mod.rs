@@ -8,8 +8,8 @@ pub(crate) mod load_matrix;
 pub(crate) mod mma;
 pub(crate) mod registers;
 
-pub use base::*;
+pub(crate) use base::*;
 pub(crate) use cmma::*;
 pub(crate) use lines::*;
-pub use mma::*;
+pub(crate) use mma::*;
 pub(crate) use registers::*;

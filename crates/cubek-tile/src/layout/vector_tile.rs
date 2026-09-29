@@ -102,7 +102,7 @@ impl VectorTile {
     /// # Panics
     ///
     /// When the load spans several axes, naming `reader`.
-    pub fn along_one_axis(&self, reader: &str) -> (Axis, usize) {
+    pub(crate) fn along_one_axis(&self, reader: &str) -> (Axis, usize) {
         match self.extents.as_slice() {
             &[one] => one,
             extents => panic!(

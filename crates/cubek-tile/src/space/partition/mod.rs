@@ -7,9 +7,8 @@ pub(crate) mod level;
 pub(crate) mod levels;
 pub(crate) mod table;
 
-pub use base::*;
-pub use cube_order::*;
+pub(crate) use base::*;
+pub(crate) use cube_order::*;
 pub(crate) use cube_order::{in_plane_axes, swizzled_positions};
 pub(crate) use level::GridCount;
-pub use level::*;
-pub use table::*;
+pub(crate) use level::*;

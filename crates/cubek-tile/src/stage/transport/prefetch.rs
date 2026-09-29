@@ -21,7 +21,7 @@ pub(crate) struct UnitLines {
 
 impl UnitLines {
     /// The lines of a stage of `lines` spread over `units`; panics if `units` is zero.
-    pub fn new(lines: usize, units: usize) -> Self {
+    pub(crate) fn new(lines: usize, units: usize) -> Self {
         UnitLines::of(lines, FillUnits::cube(units))
     }
 
@@ -42,7 +42,7 @@ impl UnitLines {
     }
 
     /// Scalars one unit holds in registers when each line is `width` wide.
-    pub fn scalars(self, width: usize) -> usize {
+    pub(crate) fn scalars(self, width: usize) -> usize {
         self.tasks() * width
     }
 

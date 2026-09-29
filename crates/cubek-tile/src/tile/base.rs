@@ -114,7 +114,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Physical vector width of the backing store; `1` for a fragment or tma source. Refuses a
-    /// memory whose loads span several axes: its reader asks [`vector_tile`](Tile::vector_tile).
+    /// memory whose loads span several axes: its reader asks for the vector tile instead.
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.kind {
             TileKind::Memory(d) => {
@@ -133,7 +133,7 @@ impl<T: Numeric> Tile<T> {
 
     /// What one vector load of this tile covers: a run along the innermost axis, or the stored
     /// tiles that hold [`vector_size`](Tile::vector_size) values ([`VectorTile::new`]).
-    pub fn vector_tile(&self) -> comptime_type!(VectorTile) {
+    pub(crate) fn vector_tile(&self) -> comptime_type!(VectorTile) {
         let space = comptime!(self.place.space.clone());
         match &self.kind {
             TileKind::Memory(d) => d.vector_tile(&space),
