@@ -179,8 +179,8 @@ impl<T: Numeric> PlaneTile<T> {
     }
 
     /// Fill this fragment from a memory `src`. Takes the whole tile, not its store: the manual-mma
-    /// transport reads element by element through the quant-transparent matrix view, so it needs
-    /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
+    /// transport reads element by element through the packed matrix view, so it needs the space
+    /// that view is shaped by. A cmma load takes the raw window and cannot unpack.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         match self {
             PlaneTile::Cmma(d) => match &src.kind {

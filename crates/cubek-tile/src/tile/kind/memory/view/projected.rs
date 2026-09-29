@@ -21,8 +21,8 @@ use cubecl::{
 use crate::*;
 
 /// The layouts a windowed tile re-views through: any [`Layout`] from a coordinate `C` onto the
-/// window's `CoordsDyn`, cloneable in both worlds so a transparent read addresses the values and
-/// the scales through the same one. A blanket impl, bundling bounds rather than naming a concept.
+/// window's `CoordsDyn`, cloneable in both worlds so a read addresses the values and the scales
+/// through the same one. A blanket impl, bundling bounds rather than naming a concept.
 pub(crate) trait LogicalLayout:
     Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>
 {

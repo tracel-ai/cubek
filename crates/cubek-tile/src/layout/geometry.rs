@@ -215,8 +215,9 @@ impl From<&TensorBinding> for Geometry {
 /// two in step, counting the innermost extent in lines and dividing every coarser stride by the
 /// served width, so [`push`](Self::push) takes a dim's extent and stride together.
 ///
-/// A bound operand reads its geometry off the tensor ([`of_tensor`](Self::of_tensor)); one with
-/// no address states it, which is what [`GlobalOperand::sink`](crate::GlobalOperand::sink) and [`GlobalOperand::source`](crate::GlobalOperand::source) take.
+/// A bound operand reads its geometry off the tensor ([`of_tensor`](Self::of_tensor)); one with no
+/// address states it, which is what [`GlobalOperand::sink`](crate::GlobalOperand::sink) and
+/// [`GlobalOperand::source`](crate::GlobalOperand::source) take.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RuntimeGeometry {

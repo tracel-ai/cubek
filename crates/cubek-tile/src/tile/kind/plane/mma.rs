@@ -120,7 +120,7 @@ impl<T: Numeric> MmaData<T> {
 
     /// Fill this fragment from `src`'s window (row-major stage), by the role's transport
     /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile, not
-    /// its store: the manual path reads through the quant-transparent matrix view, decoding here.
+    /// its store: the manual path reads through the packed matrix view, unpacking here.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         let element = src.stage_element();
         let io = comptime!(self.io);

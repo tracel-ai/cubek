@@ -52,9 +52,9 @@ impl<T: Numeric> Memory<T> {
         let extent = comptime!(fill_extent(&space, sw, w, check));
         let src_rank = comptime!(src.projection.physical_rank());
         let padding = comptime!((sw != w).then(|| {
-            // `source_component` swaps the innermost entry of a destination coordinate to address the
-            // source, which only lands on a source cell when the two boxes have the same rank. A
-            // storage-tiled stage splits each axis into a grid and a block digit and does not.
+            // `source_component` swaps the innermost entry of a destination coordinate to address
+            // the source, which only lands on a source cell when the two boxes have the same rank.
+            // A storage-tiled stage splits each axis into a grid and a block digit and does not.
             assert!(
                 src_rank == plen,
                 "Memory::fill_straight: a padded stage is a rank-{plen} box filled from a \

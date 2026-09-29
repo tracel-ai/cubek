@@ -1,10 +1,6 @@
-//! A factor these values carry: another tile, read at their own coordinates, multiplying them
-//! where they are read.
-//!
-//! A quantized tensor is values *and* scales, and a binding names one thing, so the scales arrive
-//! as an operand of their own. [`Tile::mul`](crate::Tile::mul) hands them to the values, and from
-//! there they ride along: windowed by the same `at`, read at the same coordinates, and multiplied
-//! in at the one place that can do it without materializing a dequantized tile, the read.
+//! A factor these values carry ([`Tile::mul`](crate::Tile::mul)): another tile, windowed by the
+//! same `at` and read at the same coordinates, multiplied in where a kernel copies or contracts
+//! the values.
 //!
 //! **The scales' element is the scales' business.** A `Memory<T>` carries a factor whatever the
 //! scales are served as: the erasure happens while the kernel is expanded, so nothing downstream

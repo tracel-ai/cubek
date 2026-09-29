@@ -1,5 +1,4 @@
-//! The softmax leaf, composed from the row ops at the legacy `softmax_at`
-//! granularity.
+//! The softmax leaf, composed from the row ops.
 //!
 //! Row ownership is the state's statement ([`RowShare`]) and this leaf's only branch: a worker
 //! owns a contiguous slice of the score tile's rows and keeps their running state in registers.

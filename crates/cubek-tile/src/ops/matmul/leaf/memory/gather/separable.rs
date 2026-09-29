@@ -22,8 +22,9 @@ use super::coords::{cell_position, offset_last};
 /// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so one cell apart.
 ///
 /// Taps move only contracted axes. With every factor free of the column axis, a run shares one
-/// anchor ([`ProjectionInKernel::anchor`]) per row; otherwise each `(i, n)` cell anchors once and steps
-/// via [`ProjectionInKernel::advance`]. Reads and mask tests use the stepped physical coordinates.
+/// anchor ([`ProjectionInKernel::anchor`]) per row; otherwise each `(i, n)` cell anchors once and
+/// steps via [`ProjectionInKernel::advance`]. Reads and mask tests use the stepped physical
+/// coordinates.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     acc: &mut Memory<E>,

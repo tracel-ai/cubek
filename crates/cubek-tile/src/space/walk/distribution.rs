@@ -1,7 +1,7 @@
-//! How one axis of a walk's space is distributed at its level ([`AxisDistribution`]), settled on the host so
-//! the walk asks each distribution for its share and its position instead of asking the level six
-//! questions per axis, and where an instance finds its own position ([`ComputeScope::position`],
-//! [`CubeAxis::position`]).
+//! How one axis of a walk's space is distributed at its level ([`AxisDistribution`]), settled on
+//! the host so the walk asks each distribution for its share and its position instead of asking the
+//! level six questions per axis, and where an instance finds its own position
+//! ([`ComputeScope::position`], [`CubeAxis::position`]).
 
 use cubecl::prelude::*;
 
@@ -19,8 +19,8 @@ pub(crate) enum AxisDistribution {
     Distributed(Distribution),
 }
 
-/// How an axis's grid is distributed over a level's scope: one tile an instance, or `across` of them in
-/// runs.
+/// How an axis's grid is distributed over a level's scope: one tile an instance, or `across` of
+/// them in runs.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Distribution {
     /// The scope whose instances take the tiles.
@@ -88,9 +88,9 @@ impl AxisDistribution {
         })
     }
 
-    /// Whether every worker's run along an axis distributed across workers is the full one: the grid
-    /// divides the worker count, provable only of a static extent. Any other count distributes one tile
-    /// a worker, which every grid divides.
+    /// Whether every worker's run along an axis distributed across workers is the full one: the
+    /// grid divides the worker count, provable only of a static extent. Any other count distributes
+    /// one tile a worker, which every grid divides.
     fn divides(level: &Level, space: &Space, axis: Axis) -> bool {
         match level.cut(axis).count {
             Count::AllAcross(workers) => match space.extent_raw(axis) {
@@ -134,10 +134,10 @@ impl AxisDistribution {
 
 #[cube]
 impl AxisDistribution {
-    /// The tiles the instance at `pos` of `instances` takes of a `grid` distributed in runs of `run`:
-    /// the whole run where the host proved the grid `divides`, else the run cut where the grid
-    /// ends (contiguous) or the turns left to it (interleaved). Saturating: an instance past the
-    /// grid takes nothing.
+    /// The tiles the instance at `pos` of `instances` takes of a `grid` distributed in runs of
+    /// `run`: the whole run where the host proved the grid `divides`, else the run cut where the
+    /// grid ends (contiguous) or the turns left to it (interleaved). Saturating: an instance past
+    /// the grid takes nothing.
     pub(crate) fn tiles(
         grid: usize,
         pos: usize,
@@ -163,8 +163,8 @@ impl AxisDistribution {
         }
     }
 
-    /// The raw hardware position of the instances this distribution hands tiles to, before it is folded
-    /// through the axis's shared-dimension stride.
+    /// The raw hardware position of the instances this distribution hands tiles to, before it is
+    /// folded through the axis's shared-dimension stride.
     pub(crate) fn hardware(
         #[comptime] compute_scope: ComputeScope,
         #[comptime] dim: Option<CubeAxis>,
@@ -180,8 +180,8 @@ impl AxisDistribution {
 
 #[cube]
 impl ComputeScope {
-    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of the
-    /// plane. A cube's is per grid dimension (`CubeAxis::position`).
+    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of
+    /// the plane. A cube's is per grid dimension (`CubeAxis::position`).
     ///
     /// `cube_dim = new_2d(plane_size, num_planes)`: `Y` is the plane index, `X` the plane-relative
     /// unit. Units agree on `UNIT_POS_Y`, so they cooperate. The plane-relative unit, not the flat

@@ -7,12 +7,8 @@ use cubecl::quant::scheme::ScaleDtype;
 
 /// How an operand's values sit in memory.
 ///
-/// A leaf asks `Tile::packing` and reads through the matching view;
-/// nothing outside the view constructors turns a factor back into a storage element.
-///
-/// Self-describing: a packed operand names the field its values occupy, so the read unpacks from
-/// this alone. That lets packing be *stated* on an operand
-/// ([`TileSpec::packed`](crate::TileSpec::packed)) with no scales beside it.
+/// Stated on an operand ([`TileSpec::packed`](crate::TileSpec::packed)); a packed one names the
+/// field its values occupy, so the read unpacks from this alone.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Packing {
     /// Served as stored: the storage element is the served element, the physical line the served
@@ -28,9 +24,8 @@ pub enum Packing {
 
 /// The slot one packed value occupies.
 ///
-/// A quantized value's field, an 8-bit float code stored as a byte, or a whole float. Every
-/// stored width is one of these, so one binding serves them all: a `ue8m0` scale sits four to a
-/// word, an `f16` one two, an `f32` one alone, and the read is the same read.
+/// A `ue8m0` scale sits four to a word, an `f16` one two, an `f32` one alone: one binding serves
+/// every stored width, and the read is the same read.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Field {
     Quant(QuantValue),

@@ -982,8 +982,8 @@ fn eight_bit_fields_contract_against_their_scales() {
 }
 
 /// **The folded walk takes its scales several at a time.** A packed line folds a whole word per
-/// step, so nothing walks the contraction one value at a time, which used to force the scales to
-/// be read singly. Here they are read two to a line, each field covering a block the walk picks.
+/// step, so nothing walks the contraction one value at a time. Here the scales are read two to a
+/// line, each field covering a block the walk picks.
 #[test]
 fn a_folded_walk_takes_its_scales_several_at_a_time() {
     let (field, rows, cols, block, blocks) = (QuantValue::Q4S, 4, 4, 8, 4);

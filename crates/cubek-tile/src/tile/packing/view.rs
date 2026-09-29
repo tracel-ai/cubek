@@ -1,8 +1,5 @@
-//! The scale-free unpacking read: a stored `u32`'s fields served as values.
-//!
-//! A packed operand is values and nothing else, so unpacking is the whole read, not dequantization
-//! missing a scale. [`Packing::Packed`](crate::Packing::Packed) names the field and this view
-//! unpacks it; a scale is folded in where the values are read ([`Tile::mul`](crate::Tile::mul)).
+//! The unpacking read: a stored `u32`'s fields served as values, decoded by the field
+//! [`Packing::Packed`](crate::Packing::Packed) names.
 //!
 //! A line is whole words: every field of every word it reads is served, and a scales operand is
 //! no exception — the walk that reads a word of scales owns the tiles of every field in it.
@@ -157,9 +154,8 @@ fn unpack_index_line<F: Numeric, NQ: Size, NF: Size>(
 /// The pair is the unit rather than the value: two `e2m1` codes share a byte, which is
 /// [`QuantValue::native_packing`], read here as the loop's step.
 ///
-/// Decoded in software, as `cubek-quant`'s field read and cubecl's own quantized view both are:
-/// the `e2m1x2` cast lowers on CUDA alone and dies in codegen everywhere else, on a worker thread,
-/// which surfaces as a zeroed output rather than as an error.
+/// Decoded in software: the `e2m1x2` cast lowers on CUDA alone and dies in codegen everywhere else,
+/// on a worker thread, which surfaces as a zeroed output rather than as an error.
 #[cube]
 fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Vector<F, NF> {
     let pair = comptime!(QuantValue::E2M1.native_packing());
@@ -274,10 +270,6 @@ fn unpack_float_line<F: Numeric, NQ: Size, NF: Size>(
 
 /// A [`View`] over stored words that serves the values they hold: reads `Vector<u32, NQ>` lines
 /// and answers `Vector<F, NF>` ones, `NF = NQ * factor`.
-///
-/// The unscaled twin of cubecl's `QuantizedView`, and the reason it is a separate type rather than
-/// that one with a scale of `1`: a view that takes a scale takes a scheme, a scale binding and a
-/// block grid with it, and a packed operand has none of those to give.
 #[expect(dead_code, reason = "read through the expand impls below")]
 #[derive(CubeType, Clone)]
 pub(crate) struct PackedView<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> {

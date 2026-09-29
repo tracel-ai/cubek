@@ -6,8 +6,8 @@ use crate::{Level, Space};
 /// A tile's place in its nest: the box it covers (`space`), how many levels down the partitioning
 /// it sits (`depth`, what `at` skips of a region's path, so a region names the same box from the
 /// root tile and from any window of it), and every level of the partitioning it is walked with
-/// (`levels`; the one at its depth is what `for plane in tile` distributes). Empty levels for a tile no
-/// partitioning states.
+/// (`levels`; the one at its depth is what `for plane in tile` distributes). Empty levels for a
+/// tile no partitioning states.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Placement {
     pub space: Space,

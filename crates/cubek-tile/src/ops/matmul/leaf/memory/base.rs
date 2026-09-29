@@ -9,8 +9,8 @@ use super::gather;
 use super::shape::ContractShape;
 use crate::*;
 
-/// Run the register instruction over each batch matrix, reading operands through the
-/// quant-transparent [`matrix_packed`](Tile::matrix_packed). Each factor resolves its own
+/// Run the register instruction over each batch matrix, reading operands through
+/// [`matrix_packed`](Tile::matrix_packed). Each factor resolves its own
 /// [`Packing`], so neither side constrains the other's, and each carries its own scales.
 ///
 /// The 2-D nest reads each operand as a batch matrix, which fits only when one axis is

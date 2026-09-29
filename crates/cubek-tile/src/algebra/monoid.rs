@@ -2,8 +2,8 @@
 
 use cubecl::prelude::*;
 
-/// What a monoid asks of the values it combines: ordering and arithmetic. Every bound here is
-/// one the four operations need, and the set stays well below `Numeric`, which `Vector` does not have.
+/// What a monoid asks of the values it combines: ordering and arithmetic. Every bound here is one
+/// the four operations need, and the set stays well below `Numeric`, which `Vector` does not have.
 pub trait Carrier:
     CubePartialOrd
     + CubeAdd

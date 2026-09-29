@@ -12,8 +12,8 @@ use crate::{Axis, Coords, Integer, IntegerExpand, IntegerSeq, IntegerSeqExpand, 
 /// [rational](Divisor) mapping.
 ///
 /// They travel together because they are read together, per physical axis, in one expression:
-/// [`ProjectionInKernel`](crate::ProjectionInKernel) resolves a tap through the coefficients and off the
-/// phase at once, and a descent ([`Memory::at`](crate::Memory)) advances both.
+/// [`ProjectionInKernel`](crate::ProjectionInKernel) resolves a tap through the coefficients and
+/// off the phase at once, and a descent ([`Memory::at`](crate::Memory)) advances both.
 ///
 /// No coefficients and an all-zero phase is the whole of it for a fully-`Static` integer mapping,
 /// which is every operand but a runtime-strided or fractionally scaled gather; [`Integer`] passes

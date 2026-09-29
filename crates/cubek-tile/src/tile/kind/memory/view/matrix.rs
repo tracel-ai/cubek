@@ -305,8 +305,9 @@ impl<T: Numeric> Tile<T> {
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
-    /// `fragment_matrix_packed` at a stated physical line `WP`: several logical axes may flatten into one edge, so a contraction
-    /// over taps *and* channels still has a `k` edge, read straight out of a compacted stage.
+    /// `fragment_matrix_packed` at a stated physical line `WP`: several logical axes may flatten
+    /// into one edge, so a contraction over taps *and* channels still has a `k` edge, read straight
+    /// out of a compacted stage.
     pub fn fragment_matrix<WP: Size, W: Size>(
         &self,
         #[comptime] rows: usize,

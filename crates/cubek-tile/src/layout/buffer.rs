@@ -11,8 +11,9 @@ use crate::*;
 /// [`projection`](Projection) spreads over the physical axes, then dots the physical strides. The
 /// arithmetic folds, so a static store dots by constants and an untiled projection is a plain dot.
 ///
-/// `Coordinates` are already physical (a gather is resolved a layer up, by [`ProjectionInKernel`]), so
-/// `projection` is [`Projection::of_tiling`]'s synthetic per-position map, not the operand's own.
+/// `Coordinates` are already physical (a gather is resolved a layer up, by [`ProjectionInKernel`]),
+/// so `projection` is [`Projection::of_tiling`]'s synthetic per-position map, not the operand's
+/// own.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct BufferLayout {

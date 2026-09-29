@@ -1,6 +1,6 @@
-//! The [`Meeting`]: the fill-vs-read rendezvous for one staging slot, and the [`Rendezvous`] strategy
-//! deduced from the operands' delivery. [`Barrier`](Rendezvous::Barrier) mirrors cubek-matmul's
-//! `specialized/matmul.rs`; [`Cube`](Rendezvous::Cube) is the degenerate case.
+//! The [`Meeting`]: the fill-vs-read rendezvous for one staging slot, and the [`Rendezvous`]
+//! strategy deduced from the operands' delivery. [`Barrier`](Rendezvous::Barrier) mirrors
+//! cubek-matmul's `specialized/matmul.rs`; [`Cube`](Rendezvous::Cube) is the degenerate case.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;

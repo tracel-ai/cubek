@@ -1,8 +1,8 @@
 //! The promoted accumulator form of the contraction nest: `acc += lhs · rhs` where the `mr × nr`
 //! block *is* the accumulator.
 //!
-//! The peer of [`memory`](super::memory), and the reason [`block`](super::super::registers) takes the
-//! block as a parameter: the memory form round-trips its partials through the sink's element on
+//! The peer of [`memory`](super::memory), and the reason [`block`](super::super::registers) takes
+//! the block as a parameter: the memory form round-trips its partials through the sink's element on
 //! every visit, this one keeps them in `T` across the walk and only meets memory on drain.
 //!
 //! Sibling of the two hardware leaves in `instruction/mma`, reached from the same dispatch.

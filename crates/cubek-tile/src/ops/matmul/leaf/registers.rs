@@ -16,7 +16,8 @@ use crate::*;
 ///
 /// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line along the
 /// contracted axis and the block's units are one cell's partials, folded by [`commit`]. At one, the
-/// rhs lines along the accumulator and the lhs is read unit by unit (comptime under `component_fanout`).
+/// rhs lines along the accumulator and the lhs is read unit by unit (comptime under
+/// `component_fanout`).
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(

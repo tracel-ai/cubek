@@ -108,7 +108,8 @@ impl Scratch {
     ///
     /// **Forced for a destination that folds**: the intrinsic's store overwrites, so the cells must
     /// become addressable before they can be added. A replacing destination may want it too, since
-    /// a bounced drain writes lines the units distribute between them; which is faster is a measurement.
+    /// a bounced drain writes lines the units distribute between them; which is faster is a
+    /// measurement.
     pub fn bounces(self) -> bool {
         !matches!(self, Scratch::None)
     }
@@ -123,8 +124,9 @@ impl Scratch {
     }
 }
 
-/// The planes `levels` distribute `space` across: the product, over every level distributed on the cube's
-/// planes, of the instances its plane-distributed axes take. One where no level rides the planes.
+/// The planes `levels` distribute `space` across: the product, over every level distributed on the
+/// cube's planes, of the instances its plane-distributed axes take. One where no level rides the
+/// planes.
 ///
 /// Each level's count is read against the space its parents hand it, so a count that is
 /// only known at runtime is refused here rather than read as one.
@@ -471,8 +473,8 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
 ///
 /// **The levels the grid was read off are the levels the drain walks** ([`GridShape::new`]), which
 /// is what makes the leaf one tile: a level that cuts the grid hands out one region per tile, a
-/// level that distributes hands out this instance's own window, and a level the destination does not
-/// span hands out one region and narrows nothing. A contraction the accumulator outlives is of
+/// level that distributes hands out this instance's own window, and a level the destination does
+/// not span hands out one region and narrows nothing. A contraction the accumulator outlives is of
 /// that last kind, so it is walked once here however many steps it takes.
 #[cube]
 fn drain_below<Acc: Numeric, Out: Numeric>(

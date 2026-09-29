@@ -20,14 +20,16 @@ use crate::*;
 #[derive(CubeType, CubeTypeMut, IntoRuntime)]
 #[cube(runtime_variants)]
 pub enum Role {
-    /// Fills the slots, and takes no tile of any level ([`Levels::filled_by`](crate::Levels::filled_by)).
+    /// Fills the slots, and takes no tile of any level
+    /// ([`Levels::filled_by`](crate::Levels::filled_by)).
     Fill,
     /// Reads the slots and computes out of them, and fills none.
     Compute,
 }
 
-/// The `depth` slots of one buffered walk, and the operands they are filled from: the same
-/// payload shape at this level, so [`pipelined`](Stages::pipelined) can fill a slot for a region on its own.
+/// The `depth` slots of one buffered walk, and the operands they are filled from: the same payload
+/// shape at this level, so [`pipelined`](Stages::pipelined) can fill a slot for a region on its
+/// own.
 #[derive(CubeType)]
 pub struct Stages<T: CubeType> {
     pub(crate) slots: Sequence<Slot<T>>,
@@ -37,7 +39,8 @@ pub struct Stages<T: CubeType> {
     #[allow(dead_code)]
     #[cube(comptime)]
     pub(crate) depth: usize,
-    /// Planes of the cube that fill these slots and do nothing else ([`Levels::filled_by`](crate::Levels::filled_by)).
+    /// Planes of the cube that fill these slots and do nothing else
+    /// ([`Levels::filled_by`](crate::Levels::filled_by)).
     #[cube(comptime)]
     pub(crate) fillers: usize,
 }
@@ -64,9 +67,10 @@ impl<T: CubeType> Stages<T> {
         }
     }
 
-    /// What this plane does with the stages' slots. The planes a walk sets aside to fill sit at
-    /// the end of the cube ([`Levels::filled_by`](crate::Levels::filled_by)), so a unit fills exactly when it stands at or
-    /// past the ones that compute, and every plane below is the one it would have been.
+    /// What this plane does with the stages' slots. The planes a walk sets aside to fill sit at the
+    /// end of the cube ([`Levels::filled_by`](crate::Levels::filled_by)), so a unit fills exactly
+    /// when it stands at or past the ones that compute, and every plane below is the one it would
+    /// have been.
     ///
     /// Where the walk set none aside, every plane computes and fills its own slots, which is the
     /// schedule [`pipelined`](Stages::pipelined) writes.
@@ -207,8 +211,8 @@ impl Prefetch {
     }
 
     /// Whether a register prefetch holding `scalars` a unit, summed over both operands
-    /// ([`scalars`](Prefetch::scalars)), is one [`prefetched`](Stages::prefetched) runs; past it the
-    /// schedule is refused at expansion.
+    /// ([`scalars`](Prefetch::scalars)), is one [`prefetched`](Stages::prefetched) runs; past it
+    /// the schedule is refused at expansion.
     pub fn fits(scalars: usize) -> bool {
         scalars <= MOST_FETCHED_SCALARS
     }

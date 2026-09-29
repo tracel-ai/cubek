@@ -811,8 +811,7 @@ mod tests {
         p.validate(4);
     }
 
-    /// A gather has fewer physical axes than logical ones without any axis being split, so the
-    /// rank comparison it used to be tested by does not answer this.
+    /// A gather has fewer physical axes than logical ones without any axis being split.
     #[test]
     fn a_gather_is_not_tiled() {
         let p = Projection::new(
@@ -1244,8 +1243,7 @@ mod geometry_tests {
         Geometry::new(dims)
     }
 
-    /// A `[k, n]` view over an `[n, k]` buffer: `k` strides by one, `n` by the row. The whole
-    /// of what a `Col` variant used to say, read off the strides instead.
+    /// A `[k, n]` view over an `[n, k]` buffer: `k` strides by one, `n` by the row.
     #[test]
     fn a_col_weight_is_k_contiguous() {
         let p = Projection::direct(&[K, N]);

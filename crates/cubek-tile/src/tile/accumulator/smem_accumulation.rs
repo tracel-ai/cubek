@@ -96,8 +96,8 @@ impl<T: Numeric> Tile<T> {
 
 /// The erased tensors over a shared buffer of atomics: one adds into it, one loads out of it.
 ///
-/// Constructors here rather than in cubecl for the reason [`AccumulateArg`](crate::AccumulateArg)'s is: what a
-/// write *means* is this crate's statement.
+/// Constructors here rather than in cubecl for the reason [`AccumulateArg`](crate::AccumulateArg)'s
+/// is: what a write *means* is this crate's statement.
 pub(crate) trait SmemAccumulateSink<E: Numeric> {
     /// The sink that adds into `values`, one scalar per line.
     fn of_smem_accumulate(_values: &Shared<[Atomic<E>]>) -> ErasedTensor<E, WriteOnly> {

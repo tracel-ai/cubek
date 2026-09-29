@@ -1,8 +1,5 @@
-//! The decoding copy: a source carrying a table ([`Tile::lookup`]) or scales ([`Tile::mul`])
-//! copied into a destination that holds plain values.
-//!
-//! This is where a kernel decodes on purpose: `stage.copy_from(&w.lookup(&t).mul(&scales))` states
-//! the decode at the copy, and nothing decodes behind a read the kernel did not write.
+//! The decoding copy, `dst.copy_from(&w.lookup(&t).mul(&scales))`: the one place a kernel decodes
+//! ([`Tile::lookup`], [`Tile::mul`]).
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
@@ -10,9 +7,8 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales: each destination line
-    /// takes its values out of the source line holding them, replaces each by its table entry,
-    /// multiplies them by the scale at its first value, and lands.
+    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales. Each destination line
+    /// is read out of the source line holding it and scaled at its first value.
     ///
     /// **The two span one box.** The source may carry axes the destination does not, each one
     /// wide (a batch or head the cube already fixed).

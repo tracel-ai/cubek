@@ -119,9 +119,10 @@ impl From<Axis> for PhysicalAxisMap {
 /// One dim cut into blocks by several axes, stated in **extents**, coarsest first:
 /// `split(&[(KB, blocks), (KI, block)])` is `kb·block + ki`.
 ///
-/// The coefficients are derived, each axis stepping by the product of the extents finer than it,
-/// so the caller states sizes it knows and never a stride-within-a-dim, and no two positions can
-/// share a cell: [`Composition::Disjoint`](crate::layout::Composition::Disjoint) by construction, keeping every window dense.
+/// The coefficients are derived, each axis stepping by the product of the extents finer than it, so
+/// the caller states sizes it knows and never a stride-within-a-dim, and no two positions can share
+/// a cell: [`Composition::Disjoint`](crate::layout::Composition::Disjoint) by construction, keeping
+/// every window dense.
 ///
 /// # Panics
 ///

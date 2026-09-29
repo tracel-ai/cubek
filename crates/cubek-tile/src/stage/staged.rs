@@ -57,7 +57,8 @@ impl<T: Numeric> Memory<T> {
     ///
     /// The stage takes the element the operand needs staged: the one it *serves* when the fill
     /// decodes it (a plain operand, or a scaled or looked-up one: [`Tile::copy_from`]), else the
-    /// one it is *stored* in ([`smem_stored`](Memory::smem_stored)). The operand carries which, so no caller asks.
+    /// one it is *stored* in ([`smem_stored`](Memory::smem_stored)). The operand carries which, so
+    /// no caller asks.
     pub(crate) fn stage(
         operand: &Tile<T>,
         #[comptime] level: Level,

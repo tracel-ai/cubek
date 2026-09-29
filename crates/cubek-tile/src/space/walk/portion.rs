@@ -1,5 +1,6 @@
-//! This instance's share of a level distributed as one flat index ([`Level::sharing`](crate::Level)):
-//! the regions it touches and, for the first and last, how much of their walk below is its own.
+//! This instance's share of a level distributed as one flat index
+//! ([`Level::sharing`](crate::Level)): the regions it touches and, for the first and last, how much
+//! of their walk below is its own.
 
 use cubecl::prelude::*;
 
@@ -46,9 +47,9 @@ impl Portion {
 
 #[cube]
 impl Walk {
-    /// This instance's portion of the index this level distributes as one, counted in steps of `below`,
-    /// the level each region is walked with. Two divisions rather than a length each: the portions
-    /// abut, cover the work once, and differ in length by at most one.
+    /// This instance's portion of the index this level distributes as one, counted in steps of
+    /// `below`, the level each region is walked with. Two divisions rather than a length each: the
+    /// portions abut, cover the work once, and differ in length by at most one.
     pub fn portion(self, #[comptime] below: Level) -> Portion {
         let instances = comptime!(
             self.level

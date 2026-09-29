@@ -11,8 +11,7 @@ use crate::*;
 /// of accumulators lives in registers (load once, `kc / contracted_per_step` steps, store once).
 ///
 /// Each factor arrives as its values and the levels of scales that multiply them, innermost
-/// first. A factor carrying none reads as its values alone, so this is the one nest whatever is
-/// quantized: scales are looked up at each line's coordinates and the block contracts the same.
+/// first, looked up at each line's coordinates; a factor carrying none reads as its values alone.
 ///
 /// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` (or
 /// `(col, k)` at a folded step) address the operands. [`memory`](super::memory) routes anything

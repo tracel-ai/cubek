@@ -150,8 +150,8 @@ fn a_unit_level_that_cuts_nothing_hands_every_unit_the_plane() {
     serving_geometry(false, false);
 }
 
-/// `promoted`: where the accumulator lives. `units_cut`: whether the unit level distributes rows and
-/// words to the units, or names no axis and hands every unit the plane's box.
+/// `promoted`: where the accumulator lives. `units_cut`: whether the unit level distributes rows
+/// and words to the units, or names no axis and hands every unit the plane's box.
 fn serving_geometry(promoted: bool, units_cut: bool) {
     let field = QuantValue::Q8S;
     let bits = field.size_bits();

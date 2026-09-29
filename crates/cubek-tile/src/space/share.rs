@@ -2,8 +2,8 @@
 //!
 //! Two questions, at two scopes. A plane's units share registers and combine there, so a reducing
 //! drain asks what each unit holds of a cell ([`UnitShare`]), and reduces the partials with
-//! [`UnitShare::reduce`]. Planes and cubes share none; the one question is whether an instance holds
-//! a whole cell ([`SplitShare`]).
+//! [`UnitShare::reduce`]. Planes and cubes share none; the one question is whether an instance
+//! holds a whole cell ([`SplitShare`]).
 //!
 //! Both are read off a [`Level`] against the space an operand spans, level by level on the way
 //! down a partitioning ([`under`](UnitShare::under)), since the level that spreads an axis is only
@@ -13,9 +13,10 @@ use cubecl::prelude::*;
 
 use crate::{Axis, Carrier, ComputeScope, Count, Coverage, Level, Monoid, Space};
 
-/// What the plane's units each hold of a tile's cells, once a units level is distributed out. An axis
-/// the tile does not span is *reduced* (units cover disjoint slices, each holds a partial); one it
-/// does span is *carried* (each unit gets a different cell). The case says how a partial drains.
+/// What the plane's units each hold of a tile's cells, once a units level is distributed out. An
+/// axis the tile does not span is *reduced* (units cover disjoint slices, each holds a partial);
+/// one it does span is *carried* (each unit gets a different cell). The case says how a partial
+/// drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum UnitShare {
     /// Nothing rides the units, so every unit repeats the same work over the same whole cells: a
@@ -81,8 +82,8 @@ impl UnitShare {
         }
     }
 
-    /// This share under `parent`'s: the reductions compose, since each level takes its own bits of the
-    /// unit index, and units that once carried cells of their own keep doing so.
+    /// This share under `parent`'s: the reductions compose, since each level takes its own bits of
+    /// the unit index, and units that once carried cells of their own keep doing so.
     /// [`Plane`](Self::Plane) spans every unit, so nothing reduces under it.
     pub fn under(self, parent: UnitShare) -> UnitShare {
         match (parent, self) {
@@ -102,9 +103,9 @@ impl UnitShare {
         matches!(self, UnitShare::Plane | UnitShare::Group { .. })
     }
 
-    /// The units over which `axis` of a units level is distributed, as a share: the whole plane where
-    /// they are all of it, a group otherwise. What a row-owning verb asks of the units level it
-    /// runs under.
+    /// The units over which `axis` of a units level is distributed, as a share: the whole plane
+    /// where they are all of it, a group otherwise. What a row-owning verb asks of the units level
+    /// it runs under.
     pub fn of_units(plane_units: usize, plane: usize) -> UnitShare {
         match plane_units {
             1 => UnitShare::Repeated,
@@ -192,8 +193,9 @@ pub enum SplitShare {
 
 impl SplitShare {
     /// What one instance of an operand spanning `spanned` holds of its cells after `level` is
-    /// distributed out over `space`: [`Partial`](SplitShare::Partial) where a plane or cube axis the
-    /// operand does not span is distributed across several instances, so each contracts a slice.
+    /// distributed out over `space`: [`Partial`](SplitShare::Partial) where a plane or cube axis
+    /// the operand does not span is distributed across several instances, so each contracts a
+    /// slice.
     ///
     /// Asked with the level's whole space, not the operand's projection: a projection has dropped
     /// the contracted axis and so cannot tell a split from a cut whose edge is the whole axis.
@@ -204,9 +206,9 @@ impl SplitShare {
             Coverage::Distribute(ComputeScope::Plane)
             | Coverage::Distribute(ComputeScope::Cube) => {}
         }
-        // A grid shared as one index is not distributed by axis: a share of it covers part of a cell
-        // whenever the index runs over an axis the operand does not span, and which part is not
-        // something the per-axis cuts record.
+        // A grid shared as one index is not distributed by axis: a share of it covers part of a
+        // cell whenever the index runs over an axis the operand does not span, and which part is
+        // not something the per-axis cuts record.
         if level.shared_by().is_some() {
             let unspanned = level.axes().iter().any(|axis| !spanned.contains(*axis));
             return match unspanned {
@@ -302,9 +304,10 @@ mod tests {
         assert_eq!(SplitShare::new(&level, &space, &space), SplitShare::Whole);
     }
 
-    /// A cube cut whose edge is the whole axis distributes out one tile, so it is not a split at all.
-    /// The level's whole space is asked because a mapping parameterised by its split count writes
-    /// the same cut at `splits` one, and refusing it refuses the control it is compared against.
+    /// A cube cut whose edge is the whole axis distributes out one tile, so it is not a split at
+    /// all. The level's whole space is asked because a mapping parameterised by its split count
+    /// writes the same cut at `splits` one, and refusing it refuses the control it is compared
+    /// against.
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
@@ -327,8 +330,9 @@ mod tests {
         );
     }
 
-    /// A units level over the contraction alone reduces every unit's bit: the plane shares the cell.
-    /// One over an axis the operand spans carries; a units level naming both is a group per cell.
+    /// A units level over the contraction alone reduces every unit's bit: the plane shares the
+    /// cell. One over an axis the operand spans carries; a units level naming both is a group per
+    /// cell.
     #[test]
     fn a_units_level_reduces_what_the_operand_does_not_span() {
         let space = Space::new(&[(M, 4), (N, 8), (K, 32)]);

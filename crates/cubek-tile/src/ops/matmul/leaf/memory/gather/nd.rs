@@ -41,8 +41,9 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let rhs_provable = rhs.guard_provable();
     let provable = comptime!(lhs_provable && rhs_provable);
     // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
-    // extent, one past the far corner [`box_in_bounds`] proves. [`registers::seed`]/[`registers::commit`]
-    // mask those spare units; an unguarded operand read has nothing, so keep the leaf checked.
+    // extent, one past the far corner [`box_in_bounds`] proves.
+    // [`registers::seed`]/[`registers::commit`] mask those spare units; an unguarded operand read
+    // has nothing, so keep the leaf checked.
     let spread_overhang = comptime!(registers::spread_guard(
         problem.block.spread,
         problem.block.cols
@@ -299,8 +300,8 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 }
 
 /// One gathered rank-1 update. `unit` names the component to take when the caller walks `K` as
-/// (line, component), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
-/// the component from `reduce_coords` on the fastest contracted axis instead.
+/// (line, component), so shader backends see a fixed `extract`; `None` is the flat walk, which
+/// resolves the component from `reduce_coords` on the fastest contracted axis instead.
 ///
 /// The operands' roles say which reads hoist out of the cell loop: each read is taken at the
 /// coarsest cell the operand is invariant over, so the plain outer product still reads one lhs

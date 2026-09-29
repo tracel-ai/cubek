@@ -103,8 +103,8 @@ impl Walk {
         }
 
         // Per-axis instance counts, `1` where the axis is walked: the grid itself where every
-        // worker takes one tile, the stated count where the grid is distributed across workers in runs.
-        // Folded, so a constant grid's decode below folds too (`/1`, `%1` vanish; `%` gets a
+        // worker takes one tile, the stated count where the grid is distributed across workers in
+        // runs. Folded, so a constant grid's decode below folds too (`/1`, `%1` vanish; `%` gets a
         // constant divisor).
         let mut instances = Coords::<usize>::new();
         #[unroll]
@@ -163,8 +163,8 @@ impl Walk {
                             .divided_by(inner_weight)
                             .remainder(instances.at(p)),
                     };
-                    // One tile a worker, or this worker's run of a grid distributed across them, cut
-                    // short where the grid does not divide.
+                    // One tile a worker, or this worker's run of a grid distributed across them,
+                    // cut short where the grid does not divide.
                     let run = match comptime!(across) {
                         Some(workers) => grid
                             .at(p)
@@ -416,9 +416,10 @@ impl Walk {
     /// This walk over the `steps` regions starting at flat step `base`, rather than all of its
     /// own from zero.
     ///
-    /// How a level distributes its grid out as contiguous runs, not a rectangular block per axis: every
-    /// axis stays `Sequential`, so the flat index carries every coordinate and an instance's share
-    /// is a range of it. `base` and `steps` are runtime, so launch-sized runs walk the same loop.
+    /// How a level distributes its grid out as contiguous runs, not a rectangular block per axis:
+    /// every axis stays `Sequential`, so the flat index carries every coordinate and an instance's
+    /// share is a range of it. `base` and `steps` are runtime, so launch-sized runs walk the same
+    /// loop.
     ///
     /// The caller owns the range: `base + steps` past this walk's own [`total`](Walk::total)
     /// reads coordinates that are not in the grid, and nothing here can check it.
