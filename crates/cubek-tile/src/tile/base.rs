@@ -93,7 +93,7 @@ impl<T: Numeric> Tile<T> {
     /// The launch's cube size this operand was bound with, `0` when unknown.
     pub(crate) fn units(&self) -> comptime_type!(usize) {
         match &self.kind {
-            TileKind::Memory(d) => comptime!(d.access.units),
+            TileKind::Memory(d) => comptime!(d.access.fill.count),
             TileKind::TmaGmem(t) => comptime!(t.units),
             TileKind::Procedural(_)
             | TileKind::Lines(_)
@@ -101,6 +101,19 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlanePartition(_) => {
                 comptime!(0)
             }
+        }
+    }
+
+    /// The units that share a cooperative fill of this tile ([`FillUnits`]): one plane's for a
+    /// stage that plane owns, the cube's for everything else.
+    pub(crate) fn fill_units(&self) -> comptime_type!(FillUnits) {
+        match &self.kind {
+            TileKind::Memory(d) => comptime!(d.access.fill),
+            TileKind::TmaGmem(t) => comptime!(FillUnits::cube(t.units)),
+            TileKind::Procedural(_)
+            | TileKind::Lines(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_) => comptime!(FillUnits::cube(0)),
         }
     }
 
@@ -587,7 +600,13 @@ impl<T: Numeric> Tile<T> {
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile<T> {
-        Memory::<T>::stage(self, level, storage, comptime!(None))
+        Memory::<T>::stage(
+            self,
+            level,
+            storage,
+            comptime!(None),
+            comptime!(StageOwner::Cube),
+        )
     }
 
     /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.

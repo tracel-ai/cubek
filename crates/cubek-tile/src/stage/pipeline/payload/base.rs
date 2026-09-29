@@ -13,13 +13,14 @@ pub(crate) struct StageOperand {
     pub(crate) space: Space,
 }
 
-/// What shapes a slot's buffers: level, depth, storage and optional line width.
+/// What shapes a slot's buffers: level, depth, storage, optional line width, and who holds them.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct StageSpec {
     pub(crate) level: Level,
     pub(crate) depth: usize,
     pub(crate) storage: StageStorage,
     pub(crate) width: Option<usize>,
+    pub(crate) owner: StageOwner,
 }
 
 /// One operand or two, staged and filled as one.
@@ -56,6 +57,7 @@ pub(crate) fn stage_one<T: Numeric>(operand: &Tile<T>, #[comptime] spec: StageSp
         comptime!(spec.level),
         comptime!(spec.storage),
         comptime!(spec.width),
+        comptime!(spec.owner),
     );
     Tile::new(stage.kind, comptime!(stage.place.at_depth(spec.depth)))
 }

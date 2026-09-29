@@ -179,10 +179,59 @@ pub(crate) struct Access {
     pub overhang: Overhang,
     /// What a write here does to the cell it lands on.
     pub write: Write,
-    /// The launch's cube size, `0` when unknown.
-    pub units: usize,
+    /// The units that share a cooperative fill of this window.
+    pub fill: FillUnits,
     /// What the storage tiles are to this window.
     pub storage: Storage,
+}
+
+/// The units that share a cooperative fill of a window: every unit of the cube, or the units of
+/// one plane, for a stage that plane owns and fills alone ([`Stages::smem`](crate::Stages::smem)).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FillUnits {
+    /// Whose units they are: the cube's, or one plane's.
+    pub scope: ComputeScope,
+    /// How many there are, `0` when unknown: a stage filled from this tile emits its fill
+    /// straight-line when it knows. The launch's cube size, or one plane's width.
+    pub count: usize,
+}
+
+impl FillUnits {
+    /// Every unit of the cube, `count` of them (`0` when unknown).
+    pub(crate) fn cube(count: usize) -> Self {
+        FillUnits {
+            scope: ComputeScope::Cube,
+            count,
+        }
+    }
+}
+
+/// This unit's position among the units `fill` names, which a cooperative fill takes its lines
+/// at: its position in the cube, or in its plane.
+///
+/// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
+/// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
+#[cube]
+pub(crate) fn fill_worker(#[comptime] fill: FillUnits) -> usize {
+    match comptime!(fill.scope) {
+        ComputeScope::Cube => UNIT_POS as usize,
+        ComputeScope::Plane => UNIT_POS_X as usize,
+        ComputeScope::Unit => comptime!(panic!(
+            "fill_worker: a cooperative fill is shared by a cube or a plane, never one unit"
+        )),
+    }
+}
+
+/// How many units `fill` names at runtime: the cube's, or one plane's ([`fill_worker`]).
+#[cube]
+pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
+    match comptime!(fill.scope) {
+        ComputeScope::Cube => CUBE_DIM as usize,
+        ComputeScope::Plane => CUBE_DIM_X as usize,
+        ComputeScope::Unit => comptime!(panic!(
+            "fill_workers: a cooperative fill is shared by a cube or a plane, never one unit"
+        )),
+    }
 }
 
 /// What a write to a store does to the cell it lands on; stated by the binding operand.

@@ -18,19 +18,21 @@ impl<T: Numeric> Memory<T> {
         }
     }
 
-    /// Cooperative cyclic flat scan across the cube; a packed source unpacks.
+    /// Cooperative cyclic flat scan across the units that share this fill ([`FillUnits`]); a
+    /// packed source unpacks.
     pub(crate) fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
+        let fill = comptime!(self.access.fill);
         let s = src.flat_unpacked::<WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
-        // One line per unit, striding by the cube: the distribution must stay disjoint, or a
-        // `Write::Accumulate` destination folds a value more than once.
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
+        // One line per unit, striding by the units that fill: the distribution must stay
+        // disjoint, or a `Write::Accumulate` destination folds a value more than once.
+        let stride = fill_workers(fill);
+        let mut i = fill_worker(fill);
         while i < total {
             // `src` zeroes reads past its bound; the staged buffer writes the full padded cell.
             d.write(i, s.read(i));
-            i += workers;
+            i += stride;
         }
     }
 }

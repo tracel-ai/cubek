@@ -1,5 +1,6 @@
 //! Choosing the transport that moves one memory tile's cells into another's, and the copy.
-//! Cooperative fills assume every unit of the cube runs them.
+//! Cooperative fills assume every unit their destination names ([`FillUnits`]) runs them: the
+//! cube's, or the plane's that owns the stage.
 
 use cubecl::prelude::*;
 
@@ -78,7 +79,8 @@ impl TransportKind {
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// Cooperative cyclic copy of `src` into `self`, whole lines at `self`'s width.
-    /// The caller must `sync_cube` between this fill and its readers.
+    /// The caller must `sync_cube`, or `sync_plane` for a stage a plane owns, between this fill
+    /// and its readers.
     pub(crate) fn fill_from(&mut self, src: &Memory<T>, #[comptime] space: Space) {
         let size!(W) = comptime!(self.store.vector_size);
         // A gathered stage records where it read from: nothing in the staged window says which
@@ -161,7 +163,7 @@ mod tests {
             whole: true,
             overhang: Overhang::Never,
             write: Write::Replace,
-            units: 64,
+            fill: FillUnits::cube(64),
             storage: Storage::Contiguous,
         }
     }
