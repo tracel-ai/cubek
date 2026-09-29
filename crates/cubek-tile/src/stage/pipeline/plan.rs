@@ -41,11 +41,12 @@ pub(crate) struct StagePlan {
     sync: Rendezvous,
     collective_full: bool,
     fillers: usize,
+    owner: StageOwner,
 }
 
 impl StagePlan {
-    /// Read the operands a walk of `level` over `op_space` stages, or refuse a walk whose fill
-    /// cannot reach every cell it must.
+    /// Read the operands a walk of `level` over `op_space` stages for `owner`, or refuse a walk
+    /// whose fill cannot reach every cell it must.
     ///
     /// # Panics
     ///
@@ -53,10 +54,15 @@ impl StagePlan {
     /// cooperative fill distributes its elements out over every unit position of the cube, so planes
     /// that are not there leave their share of the stage unwritten, and quietly — the slot
     /// publishes on schedule and the wrong bytes are read.
-    pub(crate) fn new(operands: &[StageOperand], op_space: &Space, level: &Level) -> StagePlan {
+    pub(crate) fn new(
+        operands: &[StageOperand],
+        op_space: &Space,
+        level: &Level,
+        owner: StageOwner,
+    ) -> StagePlan {
         let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
         let fillers = level.fillers();
-        let sync = Rendezvous::for_deliveries(&deliveries, fillers);
+        let sync = Rendezvous::for_deliveries(&deliveries, fillers, owner);
         let collective_full = Rendezvous::collective_full(&deliveries);
         assert!(
             fillers == 0 || !collective_full,
@@ -81,6 +87,7 @@ impl StagePlan {
             sync,
             collective_full,
             fillers,
+            owner,
         }
     }
 
@@ -107,6 +114,11 @@ impl StagePlan {
     /// Planes of the cube that fill this walk's stages and take no tile ([`Level::filled_by`]).
     pub(crate) fn fillers(&self) -> usize {
         self.fillers
+    }
+
+    /// Who this walk's stages belong to: the cube, or each plane a copy of its own.
+    pub(crate) fn owner(&self) -> StageOwner {
+        self.owner
     }
 }
 
@@ -151,6 +163,7 @@ mod tests {
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
         for slot in 0..2 {
             assert_eq!(plan.refills(slot)[0], Refill::EveryRegion);
@@ -166,6 +179,7 @@ mod tests {
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
         assert_eq!(plan.refills(0)[0], Refill::Once);
         assert_eq!(plan.refills(1)[0], Refill::Shared);
@@ -184,6 +198,7 @@ mod tests {
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
         assert_eq!(plan.fillers(), 2);
     }
@@ -202,6 +217,7 @@ mod tests {
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
     }
 
@@ -214,6 +230,7 @@ mod tests {
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
         assert_eq!(plan.refills(0)[0], Refill::EveryRegion);
     }

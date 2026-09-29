@@ -16,7 +16,10 @@
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Axis, Coords, Integer, IntegerExpand, Level, Region, RegionExpand, Space};
+use crate::{
+    Axis, ComputeScope, Coords, Integer, IntegerExpand, Level, Region, RegionExpand, Space,
+    StageOwner,
+};
 
 use super::distribution::{AxisDistribution, Distribution};
 use crate::space::partition::{GridCount, in_plane_axes, swizzled_positions};
@@ -270,6 +273,19 @@ impl Walk {
             unroll: comptime!(self.unroll),
             order: comptime!(self.order),
         }
+    }
+
+    /// Who the stages a kernel fills along this walk belong to ([`StageOwner`]): each plane,
+    /// where the walk sits under a level that hands every plane a region of its own or hands
+    /// planes its own regions itself; the cube otherwise.
+    pub(crate) fn stage_owner(&self) -> comptime_type!(StageOwner) {
+        comptime!(StageOwner::new(
+            self.parent
+                .path
+                .scope()
+                .min(self.level.coverage().scope().unwrap_or(ComputeScope::Cube)),
+            self.parent.path.planes_per_cube(),
+        ))
     }
 
     /// Returns the regions count

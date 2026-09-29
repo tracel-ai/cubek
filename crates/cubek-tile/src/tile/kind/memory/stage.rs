@@ -9,6 +9,54 @@ use crate::*;
 /// The byte alignment a TMA-filled stage's shared buffer must have.
 pub(crate) const TMA_STAGE_ALIGNMENT: usize = 128;
 
+/// Who a shared-memory stage belongs to: the whole cube, or each of its planes. It decides how
+/// many copies of the stage one cube holds, and which units fill each.
+///
+/// Read off the levels a walk sits under ([`Stages::smem`]), never stated: a walk below a level
+/// that hands each plane a region of its own is that plane's, and so are the stages it fills.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum StageOwner {
+    /// One stage for the cube, filled by every unit of it.
+    Cube,
+    /// One stage for each of the cube's `planes` planes, laid side by side in one allocation,
+    /// each filled by its own plane's units and read by nobody else.
+    Plane { planes: usize },
+}
+
+impl StageOwner {
+    /// The owner of a stage run by `scope` in a cube of `planes` planes.
+    ///
+    /// # Panics
+    ///
+    /// A unit's scope: a stage is filled cooperatively, and one unit has nobody to fill it with.
+    pub(crate) fn new(scope: ComputeScope, planes: usize) -> Self {
+        match scope {
+            ComputeScope::Cube => StageOwner::Cube,
+            ComputeScope::Plane => StageOwner::Plane { planes },
+            ComputeScope::Unit => panic!(
+                "StageOwner: this walk hands each unit a region of its own, and a stage is \
+                 filled cooperatively: stage it from the plane or the cube above the units"
+            ),
+        }
+    }
+
+    /// The units that fill one copy of the stage, where the cube holds `cube_units` (`0` when
+    /// unknown): all of them, or one plane's share. A share that is not a whole count is
+    /// unknown, which a fill walks rolled.
+    pub(crate) fn fill(self, cube_units: usize) -> FillUnits {
+        match self {
+            StageOwner::Cube => FillUnits::cube(cube_units),
+            StageOwner::Plane { planes } => FillUnits {
+                scope: ComputeScope::Plane,
+                count: match cube_units.is_multiple_of(planes) {
+                    true => cube_units / planes,
+                    false => 0,
+                },
+            },
+        }
+    }
+}
+
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// Allocate a shared-memory tile over `space`, at physical `vector_size` (allocated natively
@@ -40,6 +88,26 @@ impl<T: Numeric> Memory<T> {
         #[comptime] units: usize,
         #[comptime] alignment: usize,
     ) -> Tile<T> {
+        Memory::smem_owned(
+            space,
+            vector_size,
+            storage,
+            units,
+            alignment,
+            comptime!(StageOwner::Cube),
+        )
+    }
+
+    /// [`smem_aligned`](Memory::smem_aligned) for the stage `owner` holds: the cube's one, or the
+    /// calling plane's own copy. `units` is the launch's cube size, `0` when unknown.
+    pub(crate) fn smem_owned(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
+        #[comptime] alignment: usize,
+        #[comptime] owner: StageOwner,
+    ) -> Tile<T> {
         let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let elem_bytes = T::size().comptime();
         let form = comptime!(StageForm::dense(
@@ -57,6 +125,7 @@ impl<T: Numeric> Memory<T> {
             map,
             ComptimeOption::new_None(),
             alignment,
+            owner,
         )
     }
 
@@ -109,11 +178,17 @@ impl<T: Numeric> Memory<T> {
             stage_map,
             ComptimeOption::new_Some(source),
             comptime!(0usize),
+            comptime!(StageOwner::Cube),
         )
     }
 
     /// The body every plain smem constructor shares, taking the buffer's [`StageForm`] directly.
     /// `alignment` is the shared buffer's minimum byte alignment (`0` = the element's own).
+    ///
+    /// A stage each plane owns is one allocation of a copy per plane, the calling plane's copy
+    /// windowed out of it by its position on the launch's `y`, which is where a plane level
+    /// places its planes ([`Partitioning::cube_dim`]). Each copy starts on the alignment the
+    /// whole buffer has, so a plane's rows line up as the cube's would.
     #[allow(clippy::too_many_arguments)]
     fn smem_with_form(
         #[comptime] space: Space,
@@ -123,17 +198,36 @@ impl<T: Numeric> Memory<T> {
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
         #[comptime] alignment: usize,
+        #[comptime] owner: StageOwner,
     ) -> Tile<T> {
         let size!(W) = vector_size;
-        let smem = if comptime!(alignment > 0) {
-            Shared::<[Vector<T, W>]>::new_aligned_slice(comptime!(form.cells()), alignment)
-        } else {
-            Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()))
+        let cells = comptime!(form.cells());
+        let smem = match comptime!(owner) {
+            StageOwner::Cube => {
+                if comptime!(alignment > 0) {
+                    Shared::<[Vector<T, W>]>::new_aligned_slice(cells, alignment)
+                } else {
+                    Shared::<[Vector<T, W>]>::new_slice(cells)
+                }
+            }
+            StageOwner::Plane { planes } => {
+                let line_bytes = comptime!(vector_size * T::size().comptime());
+                let copy = comptime!(aligned_cells(cells, line_bytes, alignment));
+                let start = UNIT_POS_Y as usize * copy;
+                let end = start + cells;
+                if comptime!(alignment > 0) {
+                    Shared::<[Vector<T, W>]>::new_aligned_slice(comptime!(copy * planes), alignment)
+                        .map(|all| &all[start..end])
+                } else {
+                    Shared::<[Vector<T, W>]>::new_slice(comptime!(copy * planes))
+                        .map(|all| &all[start..end])
+                }
+            }
         };
         Memory::smem_over(
             space,
             vector_size,
-            units,
+            comptime!(owner.fill(units)),
             &smem,
             comptime!(Packing::Plain),
             form,
@@ -165,7 +259,7 @@ impl<T: Numeric> Memory<T> {
         Memory::smem_over(
             space,
             vector_size,
-            units,
+            comptime!(FillUnits::cube(units)),
             &smem,
             comptime!(packing),
             form,
@@ -178,12 +272,12 @@ impl<T: Numeric> Memory<T> {
     /// caller's) and the buffer's [`StageForm`]: scalar-erases the slice to the served `T` (views
     /// recover it via [`lines_storage`](Memory::lines_storage)) and windows the whole buffer.
     ///
-    /// `units` is the launch's cube size, `0` when unknown ([`Access::units`](super::Access)).
+    /// `fill` is who fills it ([`FillUnits`]).
     #[allow(clippy::too_many_arguments)]
     fn smem_over<S: CubePrimitive>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
-        #[comptime] units: usize,
+        #[comptime] fill: FillUnits,
         smem: &Shared<[S]>,
         #[comptime] packing: Packing,
         #[comptime] form: StageForm,
@@ -200,7 +294,7 @@ impl<T: Numeric> Memory<T> {
         Memory::smem_backed(
             space,
             vector_size,
-            units,
+            fill,
             backing,
             packing,
             form,
@@ -217,7 +311,7 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn smem_backed(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
-        #[comptime] units: usize,
+        #[comptime] fill: FillUnits,
         backing: Backing<T>,
         #[comptime] packing: Packing,
         #[comptime] form: StageForm,
@@ -259,7 +353,7 @@ impl<T: Numeric> Memory<T> {
                     whole: true,
                     overhang: Overhang::Never,
                     write,
-                    units,
+                    fill,
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
                 }),
@@ -303,7 +397,7 @@ impl<T: Numeric> Memory<T> {
         let tile = Memory::smem_over(
             space,
             1usize,
-            units,
+            comptime!(FillUnits::cube(units)),
             &window,
             comptime!(Packing::Plain),
             form,
@@ -603,6 +697,16 @@ impl StageStorage {
     }
 }
 
+/// Lines one plane's copy of a stage of `cells` lines, each `line_bytes` long, spans in a buffer
+/// of one copy per plane: rounded up so the next copy starts on `alignment` bytes (`0` = the
+/// element's own, which every line already keeps).
+fn aligned_cells(cells: usize, line_bytes: usize, alignment: usize) -> usize {
+    match alignment > line_bytes && alignment.is_multiple_of(line_bytes) {
+        true => cells.next_multiple_of(alignment / line_bytes),
+        false => cells,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,5 +897,28 @@ mod tests {
         assert!(tiled.nesting(&space)[0] == space.leaf(&levels));
         assert!(StageStorage::Strided.nesting(&space).is_empty());
         assert!(tiled.nesting(&space.leaf(&levels)).is_empty());
+    }
+
+    /// A plane fills its own copy with its share of the cube's units, and a share that is not a
+    /// whole count is read as unknown rather than rounded.
+    #[test]
+    fn a_plane_fills_with_its_share_of_the_units() {
+        let plane = StageOwner::Plane { planes: 4 };
+        assert_eq!(plane.fill(128).count, 32);
+        assert_eq!(plane.fill(0).count, 0);
+        assert_eq!(plane.fill(130).count, 0);
+        assert_eq!(plane.fill(128).scope, ComputeScope::Plane);
+        assert_eq!(StageOwner::Cube.fill(128), FillUnits::cube(128));
+    }
+
+    /// Every plane's copy starts on the buffer's alignment: a copy of lines shorter than it is
+    /// rounded up to whole alignments, and a line already as long keeps its count.
+    #[test]
+    fn every_planes_copy_starts_aligned() {
+        assert_eq!(aligned_cells(5, 4, 16), 8);
+        assert_eq!(aligned_cells(8, 4, 16), 8);
+        assert_eq!(aligned_cells(5, 16, 16), 5);
+        assert_eq!(aligned_cells(5, 32, 16), 5);
+        assert_eq!(aligned_cells(5, 4, 0), 5);
     }
 }

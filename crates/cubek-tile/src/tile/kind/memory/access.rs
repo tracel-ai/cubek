@@ -1,12 +1,14 @@
 //! Touching a [`Memory`]: filling one from another (the cooperative copy), the views a leaf
 //! reads and writes it through, and [`at`](Memory::at), which windows it down to a region.
 //!
-//! Every cooperative fill here distributes its elements out over `CUBE_DIM` workers indexed by
-//! `UNIT_POS`, assuming every unit of the cube runs it. A walk that sets planes aside to fill its
-//! stages ([`Level::filled_by`](crate::Level::filled_by)) breaks that: a wrong answer, not a hang.
+//! Every cooperative fill here distributes its elements out over the units its destination names
+//! ([`FillUnits`]): the cube's, `CUBE_DIM` of them indexed by `UNIT_POS`, or,
+//! for a stage one plane owns, that plane's, `CUBE_DIM_X` indexed by `UNIT_POS_X`. Either way
+//! every one of those units runs it. A walk that sets planes aside to fill its stages
+//! ([`Level::filled_by`](crate::Level::filled_by)) breaks that: a wrong answer, not a hang.
 //!
 //! Such a walk is refused where the two meet, and only a bulk copy may be filled by planes of
-//! their own. Closing the gap is a worker offset and count on these loops, taken from the pipeline.
+//! their own. Closing the gap is one more set of workers, the filling planes, read the same way.
 
 use cubecl::{
     prelude::*,
@@ -753,7 +755,7 @@ impl<T: Numeric> Memory<T> {
                 whole: false,
                 overhang: self.access.overhang,
                 write: self.access.write,
-                units: self.access.units,
+                fill: self.access.fill,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
             comptime!(UnitShare::new(&step.level, &space).under(self.unit_share)),
@@ -970,7 +972,7 @@ impl<T: Numeric> Memory<T> {
                 whole: false,
                 overhang: Overhang::Masked,
                 write: self.access.write,
-                units: self.access.units,
+                fill: self.access.fill,
                 storage: self.access.storage,
             }),
             comptime!(self.unit_share),

@@ -41,7 +41,10 @@ use std::path::{Path, PathBuf};
 /// cubecl's `Tiling`, and the order it named a buffer's dims in is `StoragePartitioning::labels`
 /// and `Geometry::labels` (with `Geometry::tiling` public to read the counts back). Its type,
 /// constructors, questions and re-export went: 719.
-const PUB_ITEMS: usize = 719;
+/// `FillUnits`, the units that share a cooperative fill (the cube's, or one plane's for a stage that
+/// plane owns), raised it by one: it is the type of a public field of `Access`, where it replaced
+/// the bare unit count that could not say whose units it counted: 720.
+const PUB_ITEMS: usize = 720;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 31;

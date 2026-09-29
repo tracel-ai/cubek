@@ -68,7 +68,7 @@ impl<T: Numeric> Tile<T> {
         let sink = Memory::<A>::smem_backed(
             comptime!(space.clone()),
             1usize,
-            units,
+            comptime!(FillUnits::cube(units)),
             Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_accumulate(&values)),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
@@ -79,7 +79,7 @@ impl<T: Numeric> Tile<T> {
         let source = Memory::<T>::smem_backed(
             space,
             1usize,
-            units,
+            comptime!(FillUnits::cube(units)),
             Backing::<T>::new_ReadCall(ErasedTensor::<T, ReadOnly>::of_smem_load::<A>(&values)),
             comptime!(Packing::Plain),
             comptime!(form.clone()),

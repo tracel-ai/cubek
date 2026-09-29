@@ -40,8 +40,8 @@ impl<T: CubeType> Slot<T> {
         comptime!(self.refills.contains(&Refill::Once))
     }
 
-    /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`
-    /// slot rendezvouses on `sync_cube`; a lone-unit one does nothing.
+    /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `Cube` slot
+    /// rendezvouses on `sync_cube`, a `Plane` one on `sync_plane`.
     ///
     /// The first wait is on the parity `writes` was not born at, which a fresh mbarrier already
     /// carries, so it passes straight through.
@@ -50,6 +50,7 @@ impl<T: CubeType> Slot<T> {
         match &self.pipeline {
             Meeting::Barrier { empty, writes, .. } => empty.wait_parity(*writes ^ 1),
             Meeting::Cube => sync_cube(),
+            Meeting::Plane => sync_plane(),
         }
     }
 
@@ -71,7 +72,7 @@ impl<T: CubeType> Slot<T> {
                 }
                 *writes ^= 1;
             }
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
@@ -81,7 +82,7 @@ impl<T: CubeType> Slot<T> {
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {
             Meeting::Barrier { full, reads, .. } => full.wait_parity(*reads),
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
@@ -94,16 +95,17 @@ impl<T: CubeType> Slot<T> {
                 empty.arrive();
                 *reads ^= 1;
             }
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
     /// Publish this slot's last fill when no successor fill's rendezvous will (the walk's final
-    /// regions). Only a collective `Cube` slot needs it; callers invoke this immediately before
+    /// regions). Only a `Cube` or a `Plane` slot needs it; callers invoke this immediately before
     /// [`consume`](Slot::consume).
     pub fn publish(&self) {
         match &self.pipeline {
             Meeting::Cube => sync_cube(),
+            Meeting::Plane => sync_plane(),
             Meeting::Barrier { .. } => {}
         }
     }

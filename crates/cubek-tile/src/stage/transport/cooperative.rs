@@ -66,13 +66,14 @@ impl<T: Numeric> Memory<T> {
                 rank: src_rank,
             }
         }));
-        // A comptime worker count emits the tasks straight-line: a rolled loop's runtime `CUBE_DIM`
-        // stride blocks unrolling, and on Metal's in-order pipe each store then stalls the next
+        // A comptime worker count emits the tasks straight-line: a rolled loop's runtime stride
+        // (`CUBE_DIM`, or a plane's `CUBE_DIM_X`) blocks unrolling, and on Metal's in-order pipe each store then stalls the next
         // read. Only a spilling last task needs a guard; unknown or tiny cubes stay rolled.
         //
         // `constant()` bridges the folded total back to host data; a whole smem stage's shape is
         // static, so it always folds.
-        let units = comptime!(self.access.units);
+        let fill = comptime!(self.access.fill);
+        let units = comptime!(fill.count);
         let total_c = total.constant();
         // The other half of the fill's contract: the mappings agree ([`stage_compaction`]), and so
         // do the sizes. A gathered destination is always an smem stage, so its line count folds and
@@ -102,7 +103,7 @@ impl<T: Numeric> Memory<T> {
                     check,
                 )
             };
-            fill_lines::<I2, WP2, WP2>(d, &s, &layout, total, total_c, units, straight, padding);
+            fill_lines::<I2, WP2, WP2>(d, &s, &layout, total, total_c, fill, straight, padding);
         } else {
             let s = if comptime!(steps.is_empty()) {
                 Masked::new(
@@ -120,7 +121,7 @@ impl<T: Numeric> Memory<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, &layout, total, total_c, units, straight, padding,
+                d, &s, &layout, total, total_c, fill, straight, padding,
             );
         }
     }
@@ -156,10 +157,12 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
     }
 }
 
-/// Schedule cooperative cyclic writing of destination stage lines across cube units.
+/// Schedule cooperative cyclic writing of destination stage lines across the units `fill` names:
+/// the cube's, or the plane's that owns the stage.
 ///
 /// Dispatches line reads via [`read_stage_line`], taking an unrolled loop when the task count
-/// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
+/// is small and static (`straight == true`) or a dynamic loop strided by the workers' count
+/// otherwise.
 #[cube]
 pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
@@ -167,15 +170,16 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     layout: &BufferLayout,
     total: usize,
     #[comptime] total_c: Option<u64>,
-    #[comptime] units: usize,
+    #[comptime] fill: FillUnits,
     #[comptime] straight: bool,
     #[comptime] padding: Option<Padding>,
 ) {
     if comptime!(straight) {
+        let units = comptime!(fill.count);
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
         #[unroll]
         for t in 0..tasks {
-            let i = UNIT_POS as usize + comptime!(t * units);
+            let i = fill_worker(fill) + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
                     d[layout.line_offset(i)] = read_stage_line::<I2, WP2, SW>(
@@ -190,12 +194,12 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             }
         }
     } else {
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
+        let stride = fill_workers(fill);
+        let mut i = fill_worker(fill);
         while i < total {
             d[layout.line_offset(i)] =
                 read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding));
-            i += workers;
+            i += stride;
         }
     }
 }

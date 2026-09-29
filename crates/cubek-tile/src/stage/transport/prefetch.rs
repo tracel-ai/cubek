@@ -21,15 +21,16 @@ use crate::*;
 /// rules out what cannot pay.
 pub(crate) const MOST_FETCHED_SCALARS: usize = 128;
 
-/// The lines of one stage a single unit moves, when the cube's units take them between them.
+/// The lines of one stage a single unit moves, when the units that fill it take them between them:
+/// the cube's, or the plane's that owns the stage.
 ///
 /// **Unit `u` takes lines `u`, `u + units`, …**, so every unit takes the same count and only the
 /// last of them can run past the stage. Holding the two numbers together is what lets the fetch
 /// and the store agree on which line a task is without either re-deriving it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UnitLines {
-    /// The units the lines are spread over, which must be the launch's `CUBE_DIM`.
-    units: usize,
+    /// The units the lines are spread over: the launch's `CUBE_DIM`, or one plane's width.
+    fill: FillUnits,
     /// The stage's whole line count.
     lines: usize,
 }
@@ -42,18 +43,23 @@ impl UnitLines {
     /// Units that were never stated: a stage fetched into registers spreads its lines over the
     /// launch's units, which an operand's spec has to carry.
     pub fn new(lines: usize, units: usize) -> Self {
+        UnitLines::of(lines, FillUnits::cube(units))
+    }
+
+    /// [`new`](Self::new) for the units `fill` names.
+    pub(crate) fn of(lines: usize, fill: FillUnits) -> Self {
         assert!(
-            units > 0,
+            fill.count > 0,
             "UnitLines: a stage fetched into registers spreads its lines over the launch's \
              units, which this operand's spec does not state: bind it through `Launcher::arg`, \
              or set its `units`"
         );
-        UnitLines { units, lines }
+        UnitLines { fill, lines }
     }
 
     /// How many lines one unit moves: the tasks a fetch and a store each run.
     pub(crate) fn tasks(self) -> usize {
-        self.lines.div_ceil(self.units)
+        self.lines.div_ceil(self.fill.count)
     }
 
     /// Scalars one unit holds in registers when each line is `width` wide: what a routine asks
@@ -66,7 +72,7 @@ impl UnitLines {
     /// and only where the units do not divide the lines; elsewhere the guard is a constant the
     /// expansion folds away.
     fn guarded(self, t: usize) -> bool {
-        (t + 1) * self.units > self.lines
+        (t + 1) * self.fill.count > self.lines
     }
 }
 
@@ -80,10 +86,10 @@ impl<T: Numeric> Memory<T> {
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn unit_lines(&self) -> comptime_type!(UnitLines) {
         let folded = self.stage_lines().constant();
-        let units = comptime!(self.access.units);
-        comptime!(UnitLines::new(
+        let fill = comptime!(self.access.fill);
+        comptime!(UnitLines::of(
             folded.expect("Memory: a stage fetched into registers has a static shape") as usize,
-            units,
+            fill,
         ))
     }
 
@@ -185,7 +191,7 @@ impl<T: Numeric> Memory<T> {
 /// The line task `t` of this unit moves.
 #[cube]
 fn task_line(#[comptime] t: usize, #[comptime] lines: UnitLines) -> usize {
-    UNIT_POS as usize + comptime!(t * lines.units)
+    fill_worker(comptime!(lines.fill)) + comptime!(t * lines.fill.count)
 }
 
 /// Whether line `i` is one of the stage's `total`. Guarded only where task `t` can run past it

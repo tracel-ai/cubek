@@ -15,14 +15,15 @@ pub(crate) struct StageOperand {
 }
 
 /// What a slot's buffers are shaped by: the level one region of the walk sits at, the depth the
-/// stage is placed at, how it lays its cells out, and the line it is served in where the caller
-/// states one rather than taking the operand's.
+/// stage is placed at, how it lays its cells out, the line it is served in where the caller
+/// states one rather than taking the operand's, and who holds it.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct StageSpec {
     pub(crate) level: Level,
     pub(crate) depth: usize,
     pub(crate) storage: StageStorage,
     pub(crate) width: Option<usize>,
+    pub(crate) owner: StageOwner,
 }
 
 /// One operand or two, staged and filled as one.
@@ -70,6 +71,7 @@ pub(crate) fn stage_one<T: Numeric>(operand: &Tile<T>, #[comptime] spec: StageSp
         comptime!(spec.level),
         comptime!(spec.storage),
         comptime!(spec.width),
+        comptime!(spec.owner),
     );
     Tile::new(stage.kind, comptime!(stage.place.at_depth(spec.depth)))
 }

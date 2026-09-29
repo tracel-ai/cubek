@@ -262,7 +262,7 @@ mod fragment_drain_tests {
             whole: false,
             overhang,
             write,
-            units: 0,
+            fill: FillUnits::cube(0),
             storage: Storage::Strided,
         }
     }

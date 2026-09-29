@@ -14,20 +14,48 @@ pub enum Rendezvous {
     /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
     /// in `write` and covers both this slot's fill→read and the sibling's read→refill.
     Cube,
+    /// [`Cube`](Rendezvous::Cube) for a stage one plane owns: its own units fill it and read it,
+    /// so one `sync_plane` per phase meets them all and no other plane waits.
+    ///
+    /// Every plane of the cube still has to reach the same count of them: a backend with no
+    /// plane-wide barrier (WGSL) lowers `sync_plane` to the workgroup's, which every unit of the
+    /// cube must meet.
+    Plane,
     /// Hardware async bulk copy (TMA): `full`/`empty` mbarrier pair with a `phase` parity, producer
     /// and consumer decoupled so the copy overlaps compute.
     Barrier,
 }
 
 impl Rendezvous {
-    /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill.
-    /// `Barrier` dominates `Cube` because TMA transaction completion must be in the slot's
-    /// publication, while `Cube` rendezvouses on `sync_cube`, where the two roles never meet.
-    pub(crate) fn for_deliveries(deliveries: &[Delivery], fillers: usize) -> Rendezvous {
+    /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill,
+    /// for stages `owner` holds. `Barrier` dominates `Cube` because TMA transaction completion
+    /// must be in the slot's publication, while `Cube` rendezvouses on `sync_cube`, where the two
+    /// roles never meet. A plane's own stages meet on `sync_plane`.
+    ///
+    /// # Panics
+    ///
+    /// A plane's own stages filled by a bulk copy, or by planes set aside to fill: both meet on
+    /// barriers the whole cube arms, which a plane walking its own stages never shares.
+    pub(crate) fn for_deliveries(
+        deliveries: &[Delivery],
+        fillers: usize,
+        owner: StageOwner,
+    ) -> Rendezvous {
         assert!(
             !deliveries.is_empty(),
             "Slot: a slot must have at least one delivery"
         );
+        if let StageOwner::Plane { .. } = owner {
+            assert!(
+                fillers == 0
+                    && deliveries
+                        .iter()
+                        .all(|delivery| delivery.rendezvous() == Rendezvous::Cube),
+                "Slot: a stage one plane owns is filled by that plane's units alone, so neither a \
+                 bulk copy nor planes set aside to fill can deliver it"
+            );
+            return Rendezvous::Plane;
+        }
         let floor = if fillers > 0 {
             Rendezvous::Barrier
         } else {
@@ -37,6 +65,9 @@ impl Rendezvous {
             match (sync, delivery.rendezvous()) {
                 (Rendezvous::Barrier, _) | (_, Rendezvous::Barrier) => Rendezvous::Barrier,
                 (Rendezvous::Cube, Rendezvous::Cube) => Rendezvous::Cube,
+                (Rendezvous::Plane, _) | (_, Rendezvous::Plane) => {
+                    unreachable!("a delivery asks for the cube or a barrier, never a plane")
+                }
             }
         })
     }
@@ -59,6 +90,9 @@ pub enum Meeting {
     /// The variant (not a flag) carries the choice, so the dispatch is comptime and the
     /// rendezvous emits a bare barrier, never a branch-wrapped one.
     Cube,
+    /// [`Cube`](Meeting::Cube) for a stage one plane owns, rendezvoused on `sync_plane`
+    /// ([`Rendezvous::Plane`]).
+    Plane,
     /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair, one parity each,
     /// so the fill overlaps compute. TMA motivates it, but the barrier itself is
     /// delivery-agnostic; see [`Meeting::fill`].
@@ -103,6 +137,7 @@ impl Meeting {
     ) -> Meeting {
         match sync {
             Rendezvous::Cube => Meeting::new_Cube(),
+            Rendezvous::Plane => Meeting::new_Plane(),
             Rendezvous::Barrier => {
                 let full =
                     Barrier::shared(Meeting::producers(collective_full, fillers), UNIT_POS == 0);
@@ -156,7 +191,8 @@ impl Meeting {
     }
 
     /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
-    /// stages under `full`, a `Cube` slot is a blocking [`copy_from`](Tile::copy_from);
+    /// stages under `full`, a `Cube` or a `Plane` slot is a blocking [`copy_from`](Tile::copy_from),
+    /// spread over the units `dst` names ([`Access::workers`](crate::Access));
     /// in-place operands allocate no destination and never reach it, reading the source instead.
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind: the fill needs the logical space both
@@ -193,7 +229,7 @@ impl Meeting {
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
             },
-            Meeting::Cube => dst.copy_from(src),
+            Meeting::Cube | Meeting::Plane => dst.copy_from(src),
         }
     }
 }
@@ -205,7 +241,11 @@ mod tests {
     #[test]
     fn procedural_and_strided_share_a_cube_pipeline() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Copy], 0),
+            Rendezvous::for_deliveries(
+                &[Delivery::Procedural, Delivery::Copy],
+                0,
+                StageOwner::Cube
+            ),
             Rendezvous::Cube
         );
     }
@@ -213,7 +253,7 @@ mod tests {
     #[test]
     fn procedural_and_tma_share_a_barrier_pipeline() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0),
+            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0, StageOwner::Cube),
             Rendezvous::Barrier
         );
         assert!(Rendezvous::collective_full(&[
@@ -232,8 +272,33 @@ mod tests {
     #[test]
     fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::Copy], 1),
+            Rendezvous::for_deliveries(&[Delivery::Copy], 1, StageOwner::Cube),
             Rendezvous::Barrier
         );
+    }
+
+    /// A plane's own stages meet on its own barrier, whatever copy fills them.
+    #[test]
+    fn a_planes_own_stage_rendezvouses_on_the_plane() {
+        let owner = StageOwner::Plane { planes: 4 };
+        assert_eq!(
+            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Copy], 0, owner),
+            Rendezvous::Plane
+        );
+    }
+
+    /// A bulk copy's barrier is armed by the whole cube, which a plane walking its own stages
+    /// never meets.
+    #[test]
+    #[should_panic(expected = "filled by that plane's units alone")]
+    fn a_planes_own_stage_takes_no_bulk_copy() {
+        Rendezvous::for_deliveries(&[Delivery::Tma], 0, StageOwner::Plane { planes: 4 });
+    }
+
+    /// Planes set aside to fill are planes the owning plane's units are not.
+    #[test]
+    #[should_panic(expected = "filled by that plane's units alone")]
+    fn a_planes_own_stage_takes_no_filling_planes() {
+        Rendezvous::for_deliveries(&[Delivery::Copy], 1, StageOwner::Plane { planes: 4 });
     }
 }

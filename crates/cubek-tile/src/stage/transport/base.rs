@@ -1,10 +1,11 @@
 //! Which transport moves one memory tile's cells into another's, and the copy that runs it.
 //!
-//! Every cooperative fill under this module distributes its lines out over `CUBE_DIM` workers indexed
-//! by `UNIT_POS`, assuming every unit of the cube runs it. A walk that sets planes aside to fill
-//! its stages ([`Levels::filled_by`](crate::Levels::filled_by)) breaks that: a wrong answer, not a
-//! hang. Such a walk is refused where the two meet, and only a bulk copy may be filled by planes
-//! of their own.
+//! Every cooperative fill under this module distributes its lines out over the units its
+//! destination names ([`FillUnits`]): the cube's, or the plane's that owns
+//! the stage, every one of them running it. A walk that sets planes aside to fill its stages
+//! ([`Levels::filled_by`](crate::Levels::filled_by)) breaks that: a wrong answer, not a hang. Such
+//! a walk is refused where the two meet, and only a bulk copy may be filled by planes of their
+//! own.
 
 use cubecl::prelude::*;
 
@@ -99,8 +100,9 @@ impl TransportKind {
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole
-    /// `Vector<T, W>` lines at `self`'s width, unit `u` moving lines `u`, `u + CUBE_DIM`, ….
-    /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
+    /// `Vector<T, W>` lines at `self`'s width, unit `u` of the units that share the fill moving
+    /// lines `u`, `u + count`, …. The caller owns the rendezvous: a `sync_cube`, or a plane's
+    /// `sync_plane` for a stage it owns, must separate this fill from its readers.
     ///
     /// `space` is the logical space both sides carry. A gathered `src` stages the compacted
     /// *window* rather than its logical tile, so the fill stays a box copy and the gather stays at
@@ -195,7 +197,7 @@ mod tests {
             whole: true,
             overhang: Overhang::Never,
             write: Write::Replace,
-            units: 64,
+            fill: FillUnits::cube(64),
             storage: Storage::Contiguous,
         }
     }

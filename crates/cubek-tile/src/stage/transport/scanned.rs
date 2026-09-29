@@ -26,22 +26,24 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The cooperative flat scan behind [`fill_from`](Memory::fill_from)'s general path: cyclic
-    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …, read through
+    /// across the units that share this fill ([`FillUnits`]), each writing
+    /// lines `u`, `u + count`, …, read through
     /// [`flat_unpacked`](Memory::flat_unpacked), so a packed source unpacks.
     pub(crate) fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
+        let fill = comptime!(self.access.fill);
         let s = src.flat_unpacked::<WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
         // One line per unit, striding by the cube: **the distribution is disjoint**, which a folding
         // destination rests on. A repeated distribution would be invisible under `Write::Replace`
         // and land once per repeat under `Write::Accumulate`; any future distribution owes the same.
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
+        let stride = fill_workers(fill);
+        let mut i = fill_worker(fill);
         while i < total {
             // `src` zeroes reads past its logical bound (the partial-tile overhang); the
             // staged buffer is unchecked, so the full padded cell is still written.
             d.write(i, s.read(i));
-            i += workers;
+            i += stride;
         }
     }
 }

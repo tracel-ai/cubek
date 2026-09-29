@@ -2,7 +2,7 @@
 //! the box the innermost one handed out, one [`Step`] per level. A tile windows itself to a region
 //! with `at`, applying the steps below its own depth, so the root tile and any window read alike.
 
-use super::{Level, Partitioning, Space};
+use super::{ComputeScope, Level, Partitioning, Space};
 use crate::{Axis, Coords, Integer, IntegerExpand, MatrixAxes, Walk};
 use cubecl::{prelude::*, unexpanded};
 
@@ -65,6 +65,23 @@ impl Path {
             levels.len()
         );
         levels[depth].clone()
+    }
+
+    /// Who runs the box this path names: the narrowest scope any level from the root down to it
+    /// hands its tiles to — a unit, a plane, or, where every level is walked or distributed over
+    /// cubes, the cube.
+    pub(crate) fn scope(&self) -> ComputeScope {
+        self.root.levels()[..self.base]
+            .iter()
+            .chain(&self.levels)
+            .filter_map(|level| level.coverage().scope())
+            .min()
+            .unwrap_or(ComputeScope::Cube)
+    }
+
+    /// The planes one cube of the root's partitioning holds ([`Partitioning::planes_per_cube`]).
+    pub(crate) fn planes_per_cube(&self) -> usize {
+        self.root.planes_per_cube() as usize
     }
 
     /// This path one level further down.

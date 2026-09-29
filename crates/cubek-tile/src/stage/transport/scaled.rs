@@ -50,10 +50,13 @@ impl<T: Numeric> Tile<T> {
         let dst = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let mem = src.mem("Tile::copy_from");
+        let fill = self.fill_units();
         let mut out = self.nd_mut::<VW>();
         let lines = comptime!(line_extents(&space, sw, 0, rank));
         let count = comptime!(lines.iter().product::<usize>() as u32);
-        for line in range_stepped(UNIT_POS, count, CUBE_DIM) {
+        let first = fill_worker(fill) as u32;
+        let stride = fill_workers(fill) as u32;
+        for line in range_stepped(first, count, stride) {
             let start = coords_of_line(line, comptime!(lines.clone()), sw);
             let held = stored.read(as_dyn(&start, sw));
             // The destination lines this source line holds, each at its first value; and where
