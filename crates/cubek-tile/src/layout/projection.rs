@@ -54,7 +54,7 @@ impl Projection {
     }
 
     /// The same buffer addressed by physical position: physical axis `p` relabeled `Axis(p)`.
-    pub fn positional(&self) -> Projection {
+    pub(crate) fn positional(&self) -> Projection {
         let carried = self.carried_groups();
         let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
         let physical: Vec<PhysicalAxisMap> = self
@@ -139,7 +139,7 @@ impl Projection {
     }
 
     /// Whether this operand addresses `axis`; a spanned but unaddressed axis is a broadcast.
-    pub fn addresses(&self, axis: Axis) -> bool {
+    pub(crate) fn addresses(&self, axis: Axis) -> bool {
         self.physical.iter().any(|m| m.addresses(axis))
     }
 
@@ -280,12 +280,12 @@ impl Projection {
     }
 
     /// Physical axis `pa`'s divisor, [`Static(1)`](Divisor::Static) for integer mappings.
-    pub fn divisor(&self, pa: usize) -> Divisor {
+    pub(crate) fn divisor(&self, pa: usize) -> Divisor {
         self.physical[pa].divisor()
     }
 
     /// Whether any physical axis is [rational](PhysicalAxisMap::is_rational).
-    pub fn is_rational(&self) -> bool {
+    pub(crate) fn is_rational(&self) -> bool {
         self.physical.iter().any(|m| m.is_rational())
     }
 
@@ -310,7 +310,7 @@ impl Projection {
     }
 
     /// `Disjoint` if every physical axis is partitioned by its axes, else `Overlapping`.
-    pub fn composition(&self) -> Composition {
+    pub(crate) fn composition(&self) -> Composition {
         match self
             .physical
             .iter()
@@ -322,7 +322,7 @@ impl Projection {
     }
 
     /// Panics if a disjoint axis's coefficients are not the products of its finer extents.
-    pub fn validate_composition(&self, extent_of: impl Fn(Axis) -> usize) {
+    pub(crate) fn validate_composition(&self, extent_of: impl Fn(Axis) -> usize) {
         for (pa, map) in self.physical.iter().enumerate() {
             let radices = map.claimed_radices();
             if radices.is_empty() {
@@ -441,7 +441,7 @@ impl Projection {
 // major, term order within, each axis's divisor last.
 impl Projection {
     /// Term `t` of physical axis `pa` in the runtime coefficient array, `None` if static.
-    pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
+    pub(crate) fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
         if !self.physical_axis(pa).terms()[t].scale.is_dynamic() {
             return None;
         }
@@ -453,7 +453,7 @@ impl Projection {
     }
 
     /// Physical axis `pa`'s divisor in the runtime coefficient array, `None` if static.
-    pub fn dynamic_divisor_index(&self, pa: usize) -> Option<usize> {
+    pub(crate) fn dynamic_divisor_index(&self, pa: usize) -> Option<usize> {
         if !self.physical_axis(pa).divisor().is_dynamic() {
             return None;
         }
@@ -785,7 +785,7 @@ mod tests {
         let with_offset = Projection::new(
             &[A, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 1)], -1),
+                PhysicalAxisMap::affine(&[(A, 1)]).shifted(-1),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -799,7 +799,7 @@ mod tests {
         let padded = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], -1),
+                PhysicalAxisMap::affine(&[(A, 2), (R, 1)]).shifted(-1),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -808,7 +808,7 @@ mod tests {
         let shifted = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], 1),
+                PhysicalAxisMap::affine(&[(A, 2), (R, 1)]).shifted(1),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -818,7 +818,7 @@ mod tests {
         let dynamic_offset = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], Offset::Dynamic),
+                PhysicalAxisMap::affine(&[(A, 2), (R, 1)]).shifted(Offset::Dynamic),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -860,10 +860,8 @@ mod tests {
         let with_dynamic_offset = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::scaled_with_offset(
-                    &[(A, Scale::Dynamic { max: 2 }), (R, Scale::Static(1))],
-                    Offset::Dynamic,
-                ),
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic { max: 2 }), (R, Scale::Static(1))])
+                    .shifted(Offset::Dynamic),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -877,11 +875,8 @@ mod tests {
         let two_offsets = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], Offset::Dynamic),
-                PhysicalAxisMap::scaled_with_offset(
-                    &[(B, Scale::Dynamic { max: 2 })],
-                    Offset::Dynamic,
-                ),
+                PhysicalAxisMap::affine(&[(A, 2), (R, 1)]).shifted(Offset::Dynamic),
+                PhysicalAxisMap::scaled(&[(B, Scale::Dynamic { max: 2 })]).shifted(Offset::Dynamic),
             ],
         );
         assert_eq!(two_offsets.dynamic_offset_index(0), Some(0));
@@ -907,7 +902,9 @@ mod tests {
         let p = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(133),
+                PhysicalAxisMap::affine(&[(A, 100), (R, 133)])
+                    .shifted(-50)
+                    .over(133),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -922,7 +919,9 @@ mod tests {
         let p = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(133),
+                PhysicalAxisMap::affine(&[(A, 100), (R, 133)])
+                    .shifted(-50)
+                    .over(133),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -938,7 +937,8 @@ mod tests {
             Projection::new(
                 &[A, R, B],
                 &[
-                    PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50)
+                    PhysicalAxisMap::affine(&[(A, 100), (R, 133)])
+                        .shifted(-50)
                         .over(Divisor::Dynamic { min }),
                     PhysicalAxisMap::of(B),
                 ],
@@ -953,7 +953,9 @@ mod tests {
             Projection::new(
                 &[A, R, B],
                 &[
-                    PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(d),
+                    PhysicalAxisMap::affine(&[(A, 100), (R, 133)])
+                        .shifted(-50)
+                        .over(d),
                     PhysicalAxisMap::of(B),
                 ],
             )
@@ -1126,7 +1128,7 @@ mod geometry_tests {
     fn a_window_is_exempt_from_the_aliasing_check() {
         let p = Projection::dims()
             .dim(B)
-            .dim(crate::stencil(&[(M, 2), (K, 1)]).pad(1))
+            .dim(crate::layout::build::stencil(&[(M, 2), (K, 1)]).pad(1))
             .dim(C)
             .build();
         let g = geometry(&[(8, 64 * 32), (64, 32), (32, 1)]);

@@ -11,7 +11,7 @@ use crate::*;
 /// A TMA tensor-map source: the launch-built view, the current box origin and the logical bound.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct TmaData<T: Numeric> {
+pub(crate) struct TmaData<T: Numeric> {
     view: ViewMut<'static, T, CoordsDyn>,
     pos: CoordsDyn,
     pub(crate) bound: CoordsDyn,

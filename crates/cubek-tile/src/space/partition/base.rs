@@ -161,7 +161,7 @@ impl Partitioning {
     }
 
     /// Every axis some tile reaches past the end of, whose accesses are masked.
-    pub fn overhanging(&self) -> Vec<Axis> {
+    pub(crate) fn overhanging(&self) -> Vec<Axis> {
         self.space
             .axes()
             .filter(|&axis| self.overhangs(axis))

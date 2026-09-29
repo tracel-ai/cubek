@@ -9,9 +9,13 @@ use cubecl::{
 use crate::*;
 
 /// One plane-level tile, by encoding ([`Instruction`]).
+#[expect(
+    dead_code,
+    reason = "built through the expand type's generated constructors"
+)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum PlaneTile<T: Numeric> {
+pub(crate) enum PlaneTile<T: Numeric> {
     Cmma(CmmaData<T>),
     Mma(MmaData<T>),
     /// The software leaf's accumulator: a register block, not a hardware fragment.
@@ -536,7 +540,7 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding.
-    pub fn mma_fragments<Acc: Numeric>(
+    pub(crate) fn mma_fragments<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
         #[comptime] io: MmaIo,

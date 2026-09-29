@@ -2265,7 +2265,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let b_plane = b_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
-            let out = comptime!(c_plane.place.space.clone());
+            let out = comptime!(c_plane.space());
             let mut lines = scale_plane.stage(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),

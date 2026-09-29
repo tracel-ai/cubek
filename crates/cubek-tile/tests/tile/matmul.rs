@@ -3,19 +3,12 @@
 //! drive.
 #![allow(non_snake_case)]
 
-use cubecl::{
-    cmma::{MatrixIdent, MatrixLayout},
-    ir::ElemType,
-    prelude::*,
-    std::tensor::TensorHandle,
-    zspace::shape,
-};
+use cubecl::{ir::ElemType, prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx, skip_unless_plane_holds,
 };
 
-use cubek_tile::kind::CmmaData;
 use cubek_tile::kind::PlanePartition;
 use cubek_tile::launch::Grid;
 use cubek_tile::ops::matmul::MmaIo;
@@ -803,7 +796,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
+                Space::merge(&[&a.space(), &b.space()]),
                 vec![outer.clone(), inner.clone()]
             )
             .leaf()
@@ -856,7 +849,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
+                Space::merge(&[&a.space(), &b.space()]),
                 vec![stage.clone(), plane.clone(), fragment.clone()]
             )
             .leaf()
@@ -918,7 +911,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
+                Space::merge(&[&a.space(), &b.space()]),
                 vec![
                     stage.clone(),
                     plane.clone(),
@@ -972,159 +965,6 @@ fn cmma_matmul_five_levels<E: Numeric>(
 }
 
 // ---- quantized operands through the register leaf --------------------------------
-
-// ---- cmma fragment transit, by hand -------------------------------------------------
-
-/// gmem → smem → cmma accumulator → smem → gmem: pure transit, no arithmetic.
-#[cube(launch)]
-fn cmma_roundtrip<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = input.tile(comptime!(space.clone()));
-
-    let mut a_smem = Tile::shared(comptime!(space.space().clone()), StageStorage::Strided);
-    a_smem.copy_from(&a);
-    sync_cube();
-
-    let mut frag = CmmaData::<E>::fragment(
-        MatrixIdent::Accumulator,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(space.space().clone()),
-    );
-    frag.copy_from(&a_smem);
-
-    let mut c_smem = Tile::shared(comptime!(space.space().clone()), StageStorage::Strided);
-    c_smem.copy_from(&frag);
-    sync_cube();
-
-    let mut c = output.tile(comptime!(space.clone()));
-    c.copy_from(&c_smem);
-}
-
-/// gmem A,B → smem → cmma A/B fragments; accumulator init from (zeroed) `c`, then
-/// `cmma::execute` (`acc = A·B`), stored back through smem to gmem.
-#[cube(launch)]
-fn cmma_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-
-    let mut a_smem_tile = Tile::shared(comptime!(a.place.space.clone()), StageStorage::Strided);
-    a_smem_tile.copy_from(&a);
-
-    let mut b_smem_tile = Tile::shared(comptime!(b.place.space.clone()), StageStorage::Strided);
-    b_smem_tile.copy_from(&b);
-
-    let mut c_smem_tile = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
-    c_smem_tile.copy_from(&c);
-    sync_cube();
-
-    let mut a_frag = CmmaData::<E>::fragment(
-        MatrixIdent::A,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(a.place.space.clone()),
-    );
-    a_frag.copy_from(&a_smem_tile);
-
-    let mut b_frag = CmmaData::<E>::fragment(
-        MatrixIdent::B,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(b.place.space.clone()),
-    );
-    b_frag.copy_from(&b_smem_tile);
-
-    let mut acc = CmmaData::<E>::fragment(
-        MatrixIdent::Accumulator,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(c.place.space.clone()),
-    );
-    acc.copy_from(&c_smem_tile);
-
-    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
-
-    c_smem_tile.copy_from(&acc);
-    sync_cube();
-    c.copy_from(&c_smem_tile);
-}
-
-/// [`cmma_matmul`] with the rhs stored `{N, K}` and read through a col-major fragment.
-#[cube(launch)]
-fn cmma_matmul_transposed_rhs<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-
-    let mut a_smem = Tile::shared(comptime!(a.place.space.clone()), StageStorage::Strided);
-    a_smem.copy_from(&a);
-
-    let mut b_smem = Tile::shared(comptime!(b.place.space.clone()), StageStorage::Strided);
-    b_smem.copy_from(&b);
-    sync_cube();
-
-    let mut a_frag = CmmaData::<E>::fragment(
-        MatrixIdent::A,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(a.place.space.clone()),
-    );
-    a_frag.copy_from(&a_smem);
-
-    let mut b_frag = CmmaData::<E>::fragment(
-        MatrixIdent::B,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::ColMajor,
-        comptime!(b.place.space.clone()),
-    );
-    b_frag.copy_from(&b_smem);
-
-    let mut acc = CmmaData::<E>::fragment(
-        MatrixIdent::Accumulator,
-        8usize,
-        8usize,
-        8usize,
-        MatrixLayout::RowMajor,
-        comptime!(c.place.space.clone()),
-    );
-    acc.zero();
-
-    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
-
-    let mut c_smem = Tile::shared(comptime!(c.place.space.clone()), StageStorage::Strided);
-    c_smem.copy_from(&acc);
-    sync_cube();
-    c.copy_from(&c_smem);
-}
 
 // ---- one level, both operands staged ---------------------------------------------
 
@@ -2872,6 +2712,90 @@ fn register_matmul_promoted_cube_plane() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
+/// Each plane stages its own rows of `a` and walks `K` alone: planes on different rows fill
+/// different stages, so a stage the cube shared, or a fill spread over every unit of the cube,
+/// would hand one plane the other's rows.
+#[test]
+fn a_plane_stages_its_own_walk() {
+    let client = cubecl::test_device().client();
+    let (m, n, k) = (8usize, 4usize, 32usize);
+    let (leaf_m, leaf_n, leaf_k) = (4usize, 4usize, 4usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)])
+                .walk_every(&[K])
+                .planes(&[(M, m / leaf_m)])
+                .cubes(&[M, N])
+                .build(),
+        ),
+        Form::Static,
+    );
+    let dtype = f32::elem_type_native();
+    for depth in [1, 2] {
+        let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
+            .untiled()
+            .arange();
+        let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
+            .untiled()
+            .arange();
+        let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
+            .untiled()
+            .uniform(4242, 10., 100.);
+        plane_staged_matmul::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            launcher.partitioning_arg(),
+            depth,
+            dtype,
+        );
+        assert_matmul_arange(&client, c.handle(), m, n, k);
+    }
+}
+
+/// A register block opened per plane and contracted along the plane's own `K` walk, both
+/// operands staged by the plane alone: the walk sits under the plane level, so the stages are the
+/// plane's own copy, filled by its units and met on `sync_plane`, and no other plane waits on them.
+#[cube(launch)]
+fn plane_staged_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] depth: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        for plane in cube {
+            let c_p = c.at(&plane);
+            let a_p = a.at(&plane);
+            let b_p = b.at(&plane);
+            let mut acc = c_p.block_accumulator::<E, E, E>(&a_p, &b_p, REGISTER_BLOCK, Monoid::Sum);
+            acc.zero();
+            let walk = plane.walk();
+            let mut stages = Stages::smem(&walk, &a_p, &b_p, StageStorage::Strided, depth);
+            stages.pipelined(walk, |slot, step| {
+                let mut acc_s = acc.at(step);
+                slot.consume(|a_s, b_s| {
+                    acc_s.mma(a_s, b_s, Semiring::SUM_PROD);
+                });
+            });
+            for r0 in c_p.walk().unrolled() {
+                let mut c_p_w = c_p.at(&r0);
+                c_p_w.copy_cast_from(&acc.at(&r0));
+            }
+        }
+    }
+}
+
 /// One body, whatever a plane contracts through: the instruction is an argument, and both
 /// [`Tile::accumulator`] and [`PlanePartition::operand`] take it.
 ///
@@ -3515,121 +3439,6 @@ fn register_matmul_promoted_folded_step_unit_group_fold() {
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let (_, expected) = TestInput::builder(client, shape![m, n])
         .custom(folded_matmul_reference(m, n, k))
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
-// ---- cmma fragment transit (tensor-core) -------------------------------------
-
-/// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no arithmetic,
-/// gmem → smem → cmma (load) → smem → gmem, to check that the `TileKind::Cmma` transit
-/// (`cmma::load_with_layout` / `cmma::store`) preserves data. Tensor-core only: `cargo test-metal`.
-#[test]
-fn cmma_fragment_roundtrip() {
-    let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) {
-        return;
-    }
-
-    let dtype = f32::elem_type_native();
-    let space = Space::new(&[(M, 8), (N, 8)]);
-
-    let input = TileInput::builder(&client, space.clone())
-        .untiled()
-        .arange();
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
-
-    cmma_roundtrip::launch(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_3d(32, 1, 1),
-        input.arg(),
-        output.arg(),
-        uncut(&client, &space, &space).partitioning_arg(),
-        dtype,
-    );
-
-    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
-    let want = HostData::from_tensor_handle(&client, input.handle(), HostDataType::F32);
-    assert_equals_approx(&got, &want, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
-/// A real 8×8×8 matmul through tensor cores: `C = A · B`, contracted by `cmma::execute`
-/// on the cmma final space. Validates the fragment load → `execute` → store path against
-/// the register reference. Tensor-core only: run with `cargo test-metal`.
-#[test]
-fn cmma_matmul_8x8x8() {
-    let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) {
-        return;
-    }
-
-    let dtype = f32::elem_type_native();
-    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a = TileInput::builder(&client, space.subspace(&[M, K]))
-        .untiled()
-        .arange();
-    let b = TileInput::builder(&client, space.subspace(&[K, N]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, space.subspace(&[M, N]))
-        .untiled()
-        .zeros();
-
-    cmma_matmul::launch(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_3d(32, 1, 1),
-        a.arg(),
-        b.arg(),
-        c.arg(),
-        uncut(&client, &space, &space).partitioning_arg(),
-        dtype,
-    );
-    assert_matmul_arange(&client, c.handle(), 8, 8, 8);
-}
-
-/// `C = A · Bᵀ` where `B` is stored `{N, K}` row-major: the rhs fragment states
-/// [`ColMajor`](MatrixLayout::ColMajor) and reads the same buffer at the same row stride, the
-/// score matmul of attention (`Q · Kᵀ`, `K` stored `{S, D}`) in miniature. Tensor-core only.
-#[test]
-fn cmma_matmul_transposed_rhs_8x8x8() {
-    let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) {
-        return;
-    }
-
-    let dtype = f32::elem_type_native();
-    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a = TileInput::builder(&client, space.subspace(&[M, K]))
-        .untiled()
-        .arange();
-    // `{N, K}`: the rhs transposed, so `b[j, p] = j·8 + p`.
-    let b = TileInput::builder(&client, space.subspace(&[N, K]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, space.subspace(&[M, N]))
-        .untiled()
-        .zeros();
-
-    cmma_matmul_transposed_rhs::launch(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_3d(32, 1, 1),
-        a.arg(),
-        b.arg(),
-        c.arg(),
-        uncut(&client, &space, &space).partitioning_arg(),
-        dtype,
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let (_, expected) = TestInput::builder(client, shape![8, 8])
-        .custom(folded_matmul_reference(8, 8, 8))
         .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()

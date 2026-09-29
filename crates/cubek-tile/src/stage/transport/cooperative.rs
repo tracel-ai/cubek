@@ -2,6 +2,7 @@
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
+use super::async_copy::fill_lines_async;
 use super::padded::{read_stage_line, widened_shape};
 use crate::*;
 
@@ -53,9 +54,10 @@ impl<T: Numeric> Memory<T> {
                 rank: src_rank,
             }
         }));
-        // A comptime worker count unrolls the tasks: a runtime `CUBE_DIM` stride stalls each store
-        // on Metal's in-order pipe. Unknown or tiny cubes stay rolled.
-        let units = comptime!(self.access.units);
+        // A comptime worker count unrolls the tasks: a runtime stride (`CUBE_DIM`, or a plane's
+        // `CUBE_DIM_X`) stalls each store on Metal's in-order pipe. Unknown or tiny cubes stay rolled.
+        let fill = comptime!(self.access.fill);
+        let units = comptime!(fill.count);
         let total_c = total.constant();
         // A gathered destination's line count must equal the compacted window's.
         let cells = comptime!(compaction.as_ref().map(|c| c.cells(w)));
@@ -83,7 +85,13 @@ impl<T: Numeric> Memory<T> {
                     check,
                 )
             };
-            fill_lines::<I2, WP2, WP2>(d, &s, &layout, total, total_c, units, straight, padding);
+            // Only an equal-width fill moves each line whole, which is what the copy engine does
+            // ([`TransportKind::new`] refuses it any other).
+            if comptime!(src.access.delivery == Delivery::AsyncPerUnit) {
+                fill_lines_async::<I2, WP2>(d, &s, &layout, total, total_c, fill, straight);
+            } else {
+                fill_lines::<I2, WP2, WP2>(d, &s, &layout, total, total_c, fill, straight, padding);
+            }
         } else {
             let s = if comptime!(steps.is_empty()) {
                 Masked::new(
@@ -101,7 +109,7 @@ impl<T: Numeric> Memory<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, &layout, total, total_c, units, straight, padding,
+                d, &s, &layout, total, total_c, fill, straight, padding,
             );
         }
     }
@@ -131,7 +139,7 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
     }
 }
 
-/// Cooperatively write destination stage lines cyclically across cube units.
+/// Cooperatively write destination stage lines cyclically across the units `fill` names.
 #[cube]
 pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
@@ -139,15 +147,16 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     layout: &BufferLayout,
     total: usize,
     #[comptime] total_c: Option<u64>,
-    #[comptime] units: usize,
+    #[comptime] fill: FillUnits,
     #[comptime] straight: bool,
     #[comptime] padding: Option<Padding>,
 ) {
     if comptime!(straight) {
+        let units = comptime!(fill.count);
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
         #[unroll]
         for t in 0..tasks {
-            let i = UNIT_POS as usize + comptime!(t * units);
+            let i = fill_worker(fill) + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
                     d[layout.line_offset(i)] = read_stage_line::<I2, WP2, SW>(
@@ -162,12 +171,12 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             }
         }
     } else {
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
+        let stride = fill_workers(fill);
+        let mut i = fill_worker(fill);
         while i < total {
             d[layout.line_offset(i)] =
                 read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding));
-            i += workers;
+            i += stride;
         }
     }
 }

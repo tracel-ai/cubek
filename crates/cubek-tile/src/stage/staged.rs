@@ -16,7 +16,7 @@ pub(crate) enum StageElement {
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// Cooperatively materialize a procedural source into this plain, direct scalar tile.
-    /// Every unit in the cube must own this window.
+    /// Every unit that shares its fill ([`FillUnits`]) must own this window.
     pub(crate) fn fill_procedural(&mut self, src: &Procedural<T>, #[comptime] space: Space) {
         comptime!(assert!(
             self.store.packing == Packing::Plain
@@ -26,10 +26,11 @@ impl<T: Numeric> Memory<T> {
         ));
         // Runtime window, so a Dynamic extent witnessed by another operand still works.
         let shape = self.window.extent.clone();
+        let fill = comptime!(self.access.fill);
         let mut dst = self.flat_mut::<Const<1>>();
         let total = dst.shape();
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
+        let stride = fill_workers(fill);
+        let mut i = fill_worker(fill);
         while i < total {
             let pos = shape.unravel(i.cast::<u32>());
             // TODO: masked cells use Procedural's zero fallback, not the reduction's identity.
@@ -37,33 +38,38 @@ impl<T: Numeric> Memory<T> {
                 i,
                 Vector::cast_from(src.read_masked(&pos, comptime!(space.clone()))),
             );
-            i += workers;
+            i += stride;
         }
     }
 
     /// Allocate a tile staging one `divide()` sub-tile of `operand`, laid out as `storage` and
-    /// served `width` wide where stated.
+    /// served `width` wide where stated, for `owner`: the cube, or each plane a copy of its own,
+    /// which only a plain stage of served values is.
     pub(crate) fn stage(
         operand: &Tile<T>,
         #[comptime] level: Level,
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
+        #[comptime] owner: StageOwner,
     ) -> Tile<T> {
         match comptime!(storage.clone()) {
             // The plane holds the units at the depth of one region of `level`.
-            StageStorage::Lines { read } => Tile::<T> {
-                kind: TileKind::new_Lines(Lines::<T>::new(
-                    operand,
-                    comptime!(level.clone()),
-                    comptime!(read),
-                )),
-                place: comptime!(Placement::new(
-                    level.child(&operand.place.space),
-                    operand.place.depth + 1,
-                    operand.place.levels.clone()
-                )),
-            },
-            _ => Memory::<T>::stage_memory(operand, level, storage, width),
+            StageStorage::Lines { read } => {
+                comptime!(refuse_for_a_plane(owner, "held in the plane's units"));
+                Tile::<T> {
+                    kind: TileKind::new_Lines(Lines::<T>::new(
+                        operand,
+                        comptime!(level.clone()),
+                        comptime!(read),
+                    )),
+                    place: comptime!(Placement::new(
+                        level.child(&operand.place.space),
+                        operand.place.depth + 1,
+                        operand.place.levels.clone()
+                    )),
+                }
+            }
+            _ => Memory::<T>::stage_memory(operand, level, storage, width, owner),
         }
     }
 
@@ -73,6 +79,7 @@ impl<T: Numeric> Memory<T> {
         #[comptime] level: Level,
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
+        #[comptime] owner: StageOwner,
     ) -> Tile<T> {
         // Scaled or looked-up sources are decoded by the fill, so the stage holds served values.
         let decodes = operand.scaled();
@@ -112,8 +119,9 @@ impl<T: Numeric> Memory<T> {
                 });
                 // A decoded stage is dense over the values' axes whatever the source's map.
                 if comptime!(projection.is_direct() || decodes) {
-                    Memory::smem_aligned(space, vector_size, storage, units, alignment)
+                    Memory::smem_owned(space, vector_size, storage, units, alignment, owner)
                 } else {
+                    comptime!(refuse_for_a_plane(owner, "gathered"));
                     Memory::smem_gathered(
                         space,
                         vector_size,
@@ -126,7 +134,10 @@ impl<T: Numeric> Memory<T> {
                     )
                 }
             }
-            StageElement::Stored => Memory::smem_stored(operand, level, storage),
+            StageElement::Stored => {
+                comptime!(refuse_for_a_plane(owner, "kept in its stored form"));
+                Memory::smem_stored(operand, level, storage)
+            }
         }
     }
 
@@ -155,4 +166,15 @@ impl<T: Numeric> Memory<T> {
             }
         }
     }
+}
+
+/// Refuse a plane its own copy of a stage `form` describes: only a plain shared-memory stage of
+/// served values is laid out one copy per plane.
+fn refuse_for_a_plane(owner: StageOwner, form: &str) {
+    assert!(
+        owner == StageOwner::Cube,
+        "Memory::stage: this walk hands each plane a stage of its own, which is laid out only for \
+         a plain shared-memory stage of served values, and this one is {form}; stage the operand \
+         plain, or walk it from the cube"
+    );
 }

@@ -17,7 +17,7 @@ define_size!(pub NA);
 /// `Clone` duplicates the handle, not the registers.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct MmaData<T: Numeric> {
+pub(crate) struct MmaData<T: Numeric> {
     pub(crate) fragment: MmaFragment<T>,
     #[cube(comptime)]
     pub m: usize,
@@ -32,9 +32,13 @@ pub struct MmaData<T: Numeric> {
 }
 
 /// One role's register array, each role at its own width (`NL`/`NR`/`NA`).
+#[expect(
+    dead_code,
+    reason = "built through the expand type's generated constructors"
+)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum MmaFragment<T: Numeric> {
+pub(crate) enum MmaFragment<T: Numeric> {
     Lhs(Array<Vector<T, NL>>),
     Rhs(Array<Vector<T, NR>>),
     Acc(Array<Vector<T, NA>>),

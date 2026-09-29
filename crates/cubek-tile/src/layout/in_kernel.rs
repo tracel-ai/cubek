@@ -28,7 +28,7 @@ pub(crate) struct ProjectionInKernel {
 
 #[cube]
 impl ProjectionInKernel {
-    pub fn new(
+    pub(crate) fn new(
         shape: Coords<u32>,
         map: RuntimeMap,
         #[comptime] space: Space,
@@ -106,7 +106,7 @@ fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
 #[cube]
 impl ProjectionInKernel {
     /// The source coordinate of `pos` with every axis in `moving` held at zero.
-    pub fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
+    pub(crate) fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
         let mut out = CoordsDyn::new();
 
         #[unroll]
@@ -183,7 +183,7 @@ impl ProjectionInKernel {
     }
 
     /// `anchor` moved to where `pos` places the `moving` axes it was anchored against.
-    pub fn advance(
+    pub(crate) fn advance(
         &self,
         anchor: &CoordsDyn,
         pos: CoordsDyn,
@@ -264,7 +264,7 @@ pub(crate) struct CompactionStep {
 
 #[cube]
 impl CompactionStep {
-    pub fn new(shape: Coords<u32>, #[comptime] steps: Vec<usize>) -> Self {
+    pub(crate) fn new(shape: Coords<u32>, #[comptime] steps: Vec<usize>) -> Self {
         let rank = shape.len();
         comptime!(assert!(
             rank == steps.len(),

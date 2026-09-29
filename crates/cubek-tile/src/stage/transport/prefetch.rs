@@ -13,37 +13,42 @@ pub(crate) const MOST_FETCHED_SCALARS: usize = 128;
 /// The lines of one stage a single unit moves: unit `u` takes lines `u`, `u + units`, ….
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UnitLines {
-    /// The units the lines are spread over; must be the launch's `CUBE_DIM`.
-    units: usize,
+    /// The units the lines are spread over: the launch's `CUBE_DIM`, or one plane's width.
+    fill: FillUnits,
     /// The stage's line count.
     lines: usize,
 }
 
 impl UnitLines {
     /// The lines of a stage of `lines` spread over `units`; panics if `units` is zero.
-    pub fn new(lines: usize, units: usize) -> Self {
+    pub(crate) fn new(lines: usize, units: usize) -> Self {
+        UnitLines::of(lines, FillUnits::cube(units))
+    }
+
+    /// [`new`](Self::new) for the units `fill` names.
+    pub(crate) fn of(lines: usize, fill: FillUnits) -> Self {
         assert!(
-            units > 0,
+            fill.count > 0,
             "UnitLines: a stage fetched into registers spreads its lines over the launch's \
              units, which this operand's spec does not state: bind it through `Launcher::arg`, \
              or set its `units`"
         );
-        UnitLines { units, lines }
+        UnitLines { fill, lines }
     }
 
     /// Lines one unit moves.
     pub(crate) fn tasks(self) -> usize {
-        self.lines.div_ceil(self.units)
+        self.lines.div_ceil(self.fill.count)
     }
 
     /// Scalars one unit holds in registers when each line is `width` wide.
-    pub fn scalars(self, width: usize) -> usize {
+    pub(crate) fn scalars(self, width: usize) -> usize {
         self.tasks() * width
     }
 
     /// Whether task `t` can run past the stage.
     fn guarded(self, t: usize) -> bool {
-        (t + 1) * self.units > self.lines
+        (t + 1) * self.fill.count > self.lines
     }
 }
 
@@ -53,10 +58,10 @@ impl<T: Numeric> Memory<T> {
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn unit_lines(&self) -> comptime_type!(UnitLines) {
         let folded = self.stage_lines().constant();
-        let units = comptime!(self.access.units);
-        comptime!(UnitLines::new(
+        let fill = comptime!(self.access.fill);
+        comptime!(UnitLines::of(
             folded.expect("Memory: a stage fetched into registers has a static shape") as usize,
-            units,
+            fill,
         ))
     }
 
@@ -148,7 +153,7 @@ impl<T: Numeric> Memory<T> {
 /// The line task `t` of this unit moves.
 #[cube]
 fn task_line(#[comptime] t: usize, #[comptime] lines: UnitLines) -> usize {
-    UNIT_POS as usize + comptime!(t * lines.units)
+    fill_worker(comptime!(lines.fill)) + comptime!(t * lines.fill.count)
 }
 
 /// Whether line `i` is inside the stage; a constant where task `t` cannot run past it.

@@ -31,7 +31,7 @@ pub(crate) type ProjectedMatrix = Projected<TileMatrix>;
 
 #[cube]
 impl TileMatrix {
-    pub fn new(
+    pub(crate) fn new(
         batches: Coords<u32>,
         row_extents: Coords<u32>,
         col_extents: Coords<u32>,
@@ -250,11 +250,6 @@ pub(crate) fn projected_whole_matrix(
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The `i`-th batch matrix over the trailing two axes in `Vector<T, W>` lines, unpacked.
-    pub fn matrix<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
-        self.matrix_packed::<W>(comptime!(MatrixAxes::trailing(&self.place.space)), i)
-    }
-
     /// The `i`-th batch matrix over `axes`, unpacked if packed.
     pub(crate) fn matrix_packed<W: Size>(
         &self,
@@ -275,16 +270,5 @@ impl<T: Numeric> Tile<T> {
         let g = self.mem("fragment_matrix");
         let layout = g.whole_matrix(comptime!(self.place.space.clone()), rows, cols);
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
-    }
-
-    /// `fragment_matrix_packed` at a stated physical line `WP`.
-    pub fn fragment_matrix<WP: Size, W: Size>(
-        &self,
-        #[comptime] rows: usize,
-        #[comptime] cols: usize,
-    ) -> MatrixView<'_, Vector<T, W>> {
-        let g = self.mem("fragment_matrix");
-        let layout = g.whole_matrix(comptime!(self.place.space.clone()), rows, cols);
-        g.unpacked::<WP, W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 }

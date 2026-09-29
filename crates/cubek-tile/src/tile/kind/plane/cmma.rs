@@ -11,7 +11,7 @@ use crate::*;
 /// `Clone` duplicates the handle, not the fragment.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct CmmaData<T: Numeric> {
+pub(crate) struct CmmaData<T: Numeric> {
     pub matrix: Matrix<T>,
     #[cube(comptime)]
     pub ident: MatrixIdent,
@@ -66,24 +66,6 @@ impl<T: Numeric> CmmaData<T> {
     pub(crate) fn load_scratch(&mut self, scratch: &Shared<[T]>) {
         let n = comptime!(self.shape.1 as u32);
         cmma::load_with_layout(&mut self.matrix, scratch, n, MatrixLayout::RowMajor)
-    }
-
-    /// An uninitialized fragment as a `Cmma` tile cut by no level.
-    /// `m`/`n`/`k` are the whole MMA tile, whatever the role.
-    pub fn fragment(
-        #[comptime] ident: MatrixIdent,
-        #[comptime] m: usize,
-        #[comptime] n: usize,
-        #[comptime] k: usize,
-        #[comptime] layout: MatrixLayout,
-        #[comptime] space: Space,
-    ) -> Tile<T> {
-        Tile::<T> {
-            kind: TileKind::new_PlaneTile(PlaneTile::new_Cmma(CmmaData::<T>::alloc(
-                ident, m, n, k, layout,
-            ))),
-            place: comptime!(Placement::new(space, 0usize, Vec::new())),
-        }
     }
 
     /// Zero the fragment.
@@ -234,8 +216,9 @@ mod fragment_drain_tests {
             whole: false,
             overhang,
             write,
-            units: 0,
+            fill: FillUnits::cube(0),
             storage: Storage::Strided,
+            delivery: Delivery::SyncPerUnit,
         }
     }
 

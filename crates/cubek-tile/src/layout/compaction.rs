@@ -241,7 +241,7 @@ mod tests {
         let p = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(OH, 2), (RH, 1)], -2),
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)]).shifted(-2),
                 PhysicalAxisMap::of(CI),
             ],
         );
@@ -257,7 +257,7 @@ mod tests {
         let p = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(OH, 2), (RH, 1)], Offset::Dynamic),
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)]).shifted(Offset::Dynamic),
                 PhysicalAxisMap::of(CI),
             ],
         );
@@ -384,11 +384,9 @@ mod tests {
         let p_dynamic_offset = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::scaled_with_offset(
-                    &[(OH, Scale::Static(16)), (RH, Scale::Static(8))],
-                    Offset::Dynamic,
-                )
-                .over(4),
+                PhysicalAxisMap::scaled(&[(OH, Scale::Static(16)), (RH, Scale::Static(8))])
+                    .shifted(Offset::Dynamic)
+                    .over(4),
                 PhysicalAxisMap::of(CI),
             ],
         );

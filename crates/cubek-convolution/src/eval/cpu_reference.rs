@@ -113,6 +113,17 @@ impl ConvSpec {
         let k_w = self.kernel_size[1];
         (self.in_w + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1
     }
+
+    /// Evaluates this convolution on the host, plus `bias`; the weight's input channels set the groups.
+    pub fn cpu_reference(
+        &self,
+        input: &HostData,
+        weight: &HostData,
+        bias: Option<&HostData>,
+    ) -> HostData {
+        let progress = None;
+        ConvGeometry::from(self).cpu_reference(input, weight, bias, progress)
+    }
 }
 
 struct SeededInputs {
@@ -255,76 +266,122 @@ pub fn conv_cpu_reference(
     problem: &ConvolutionProblem,
     progress: Option<&Progress>,
 ) -> HostData {
-    let n = problem.batches;
-    let h = problem.in_shape[0];
-    let w = problem.in_shape[1];
-    let c = problem.channels;
+    let bias = None;
+    ConvGeometry::from(problem).cpu_reference(lhs, rhs, bias, progress)
+}
 
-    let out_h = problem.out_shape[0];
-    let out_w = problem.out_shape[1];
-    let out_channels = problem.n;
+/// The spatial geometry of a 2D convolution, all but the input size, which the input carries.
+struct ConvGeometry {
+    out: [usize; 2],
+    kernel: [usize; 2],
+    stride: [usize; 2],
+    /// At the start of each spatial dimension: a problem may pad the end differently, which `out`
+    /// already reflects.
+    padding: [i32; 2],
+    dilation: [usize; 2],
+}
 
-    let kh = problem.kernel_size[0] as usize;
-    let kw = problem.kernel_size[1] as usize;
+impl ConvGeometry {
+    /// NHWC `input` by OHWI `weight`, grouped when the weight holds fewer input channels.
+    fn cpu_reference(
+        &self,
+        input: &HostData,
+        weight: &HostData,
+        bias: Option<&HostData>,
+        progress: Option<&Progress>,
+    ) -> HostData {
+        let [n, h, w, c] = [0, 1, 2, 3].map(|axis| input.shape[axis]);
+        let (out_channels, c_in_group) = (weight.shape[0], weight.shape[3]);
+        let c_out_group = out_channels / (c / c_in_group);
+        let Self {
+            out: [out_h, out_w],
+            kernel: [kh, kw],
+            stride,
+            padding,
+            dilation,
+        } = *self;
 
-    let padding = &problem.padding;
-    let stride = &problem.stride;
-    let dilation = &problem.dilation;
+        if let Some(p) = progress {
+            p.set_total((n * out_h * out_w * out_channels) as u64);
+        }
 
-    if let Some(p) = progress {
-        p.set_total((n * out_h * out_w * out_channels) as u64);
-    }
+        let mut out = vec![0.0_f32; n * out_h * out_w * out_channels];
 
-    let mut out = vec![0.0_f32; n * out_h * out_w * out_channels];
+        for nth_batch in 0..n {
+            for out_y in 0..out_h {
+                for out_x in 0..out_w {
+                    for out_c in 0..out_channels {
+                        let group_start = out_c / c_out_group * c_in_group;
+                        let mut acc = bias.map_or(0.0, |bias| bias.get_f32(&[out_c]));
+                        for in_c in 0..c_in_group {
+                            for ky in 0..kh {
+                                for kx in 0..kw {
+                                    let in_y = out_y as i32 * stride[0] as i32
+                                        + ky as i32 * dilation[0] as i32
+                                        - padding[0];
+                                    let in_x = out_x as i32 * stride[1] as i32
+                                        + kx as i32 * dilation[1] as i32
+                                        - padding[1];
 
-    for nth_batch in 0..n {
-        for out_y in 0..out_h {
-            for out_x in 0..out_w {
-                for out_c in 0..out_channels {
-                    let mut acc = 0.0_f32;
-                    for in_c in 0..c {
-                        for ky in 0..kh {
-                            for kx in 0..kw {
-                                let in_y = out_y as i32 * stride[0] as i32
-                                    + ky as i32 * dilation[0] as i32
-                                    - padding[0];
-                                let in_x = out_x as i32 * stride[1] as i32
-                                    + kx as i32 * dilation[1] as i32
-                                    - padding[1];
+                                    if in_y >= 0 && in_y < h as i32 && in_x >= 0 && in_x < w as i32
+                                    {
+                                        let value = input.get_f32(&[
+                                            nth_batch,
+                                            in_y as usize,
+                                            in_x as usize,
+                                            group_start + in_c,
+                                        ]);
+                                        let weight = weight.get_f32(&[out_c, ky, kx, in_c]);
 
-                                if in_y >= 0 && in_y < h as i32 && in_x >= 0 && in_x < w as i32 {
-                                    let value = lhs.get_f32(&[
-                                        nth_batch,
-                                        in_y as usize,
-                                        in_x as usize,
-                                        in_c,
-                                    ]);
-                                    let weight = rhs.get_f32(&[out_c, ky, kx, in_c]);
-
-                                    acc += value * weight;
+                                        acc += value * weight;
+                                    }
                                 }
                             }
                         }
-                    }
-                    let out_linear = nth_batch * out_h * out_w * out_channels
-                        + out_y * out_w * out_channels
-                        + out_x * out_channels
-                        + out_c;
-                    out[out_linear] = acc;
-                    if let Some(p) = progress {
-                        p.bump();
+                        let out_linear = nth_batch * out_h * out_w * out_channels
+                            + out_y * out_w * out_channels
+                            + out_x * out_channels
+                            + out_c;
+                        out[out_linear] = acc;
+                        if let Some(p) = progress {
+                            p.bump();
+                        }
                     }
                 }
             }
         }
+
+        let out_shape: Shape = shape![n, out_h, out_w, out_channels];
+        let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
+
+        HostData {
+            data: HostDataVec::F32(out),
+            shape: out_shape,
+            strides,
+        }
     }
+}
 
-    let out_shape: Shape = shape![n, out_h, out_w, out_channels];
-    let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
+impl From<&ConvolutionProblem> for ConvGeometry {
+    fn from(problem: &ConvolutionProblem) -> Self {
+        Self {
+            out: [problem.out_shape[0], problem.out_shape[1]],
+            kernel: [0, 1].map(|axis| problem.kernel_size[axis] as usize),
+            stride: [0, 1].map(|axis| problem.stride[axis] as usize),
+            padding: [problem.padding[0], problem.padding[1]],
+            dilation: [0, 1].map(|axis| problem.dilation[axis] as usize),
+        }
+    }
+}
 
-    HostData {
-        data: HostDataVec::F32(out),
-        shape: out_shape,
-        strides,
+impl From<&ConvSpec> for ConvGeometry {
+    fn from(spec: &ConvSpec) -> Self {
+        Self {
+            out: [spec.out_h(), spec.out_w()],
+            kernel: spec.kernel_size,
+            stride: spec.args.stride,
+            padding: spec.args.padding.map(|padding| padding as i32),
+            dilation: spec.args.dilation,
+        }
     }
 }

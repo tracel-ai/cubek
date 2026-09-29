@@ -177,7 +177,7 @@ impl ComputeScope {
 #[cube]
 impl CubeAxis {
     /// This cube's position on grid dimension `dim`.
-    pub fn position(#[comptime] dim: CubeAxis) -> usize {
+    pub(crate) fn position(#[comptime] dim: CubeAxis) -> usize {
         let cube_pos = match comptime!(dim) {
             CubeAxis::X => CUBE_POS_X,
             CubeAxis::Y => CUBE_POS_Y,

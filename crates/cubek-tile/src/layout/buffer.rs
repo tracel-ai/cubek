@@ -93,6 +93,27 @@ impl BufferLayout {
         }
     }
 
+    /// The logical coordinate of line `i` counted row-major over the logical extents: the
+    /// source's order, whatever blocking or swizzle places the line here.
+    pub(crate) fn row_major_coords(&self, i: usize) -> CoordsDyn {
+        let rank = comptime!(self.projection.logical_rank());
+        let extent = logical_extent(comptime!(self.projection.clone()), &self.physical_shape);
+        let x = i.cast::<u32>();
+        let mut coords = CoordsDyn::new();
+        #[unroll]
+        for p in 0..rank {
+            let inner = comptime!((p + 1..rank).collect::<Vec<_>>());
+            let quot = x.divided_by(extent.product(inner));
+            let digit = if comptime!(p == 0) {
+                quot
+            } else {
+                quot.remainder(extent.at(p))
+            };
+            coords.push(digit);
+        }
+        coords
+    }
+
     /// The digits line `i` sits at, one per physical axis, row-major over its extents.
     fn line_digits(&self, i: usize) -> Coords<u32> {
         let x = i.cast::<u32>();

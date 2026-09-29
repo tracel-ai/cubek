@@ -1,6 +1,7 @@
 use cubecl::{
     calculate_cube_count_elemwise,
     client::Client,
+    ir::{FloatKind, VectorRegisters},
     num_traits::Zero,
     prelude::*,
     std::tensor::layout::linear::{LinearViewMut, linear_view},
@@ -52,6 +53,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     shape_out_c: FastDivmod<u32>,
     #[comptime] has_padding: bool,
     #[comptime] accumulate_components: bool,
+    #[comptime] channel_block: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -105,18 +107,65 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
         stride_oc,
     };
 
-    kernel_loop(
-        input,
-        weight,
-        &mut sum,
-        in_offs,
-        true,
-        weight_offs,
-        &loop_params,
-        0usize,
-        has_padding,
-        accumulate_components,
-    );
+    let vector_size_in = input.vector_size();
+
+    if accumulate_components {
+        comptime!(assert!(
+            vector_size_out.is_multiple_of(channel_block),
+            "a block of {channel_block} channels does not divide the output vector of {vector_size_out}"
+        ));
+
+        #[unroll]
+        for bi in 0..comptime![vector_size_out / channel_block] {
+            let base_v = bi * channel_block;
+            let mut partials = Array::<Vector<E, NIn>>::new(channel_block);
+
+            kernel_loop(
+                input,
+                weight,
+                &mut sum,
+                &mut partials,
+                in_offs,
+                true,
+                weight_offs,
+                &loop_params,
+                0usize,
+                has_padding,
+                accumulate_components,
+                base_v,
+            );
+
+            #[unroll]
+            for j in 0..channel_block {
+                let mut channel = sum.extract(base_v + j);
+
+                #[unroll]
+                for i in 0..vector_size_in {
+                    channel += partials[j].extract(i);
+                }
+
+                sum.insert(base_v + j, channel);
+            }
+        }
+    } else {
+        // Unread: `accumulate_per_step` sums into `sum`, and the loop still takes an accumulator.
+        let mut partials = Array::<Vector<E, NIn>>::new(1usize);
+
+        kernel_loop(
+            input,
+            weight,
+            &mut sum,
+            &mut partials,
+            in_offs,
+            true,
+            weight_offs,
+            &loop_params,
+            0usize,
+            has_padding,
+            accumulate_components,
+            0usize,
+        );
+    }
 
     output.write(ABSOLUTE_POS, sum);
 }
@@ -139,6 +188,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
     sum: &mut Vector<E, NOut>,
+    partials: &mut Array<Vector<E, NIn>>,
     in_offs: usize,
     in_bounds: bool,
     weight_offs: usize,
@@ -146,6 +196,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
     #[comptime] kernel_dim: usize,
     #[comptime] has_padding: bool,
     #[comptime] accumulate_components: bool,
+    #[comptime] base_v: usize,
 ) {
     if comptime![kernel_dim < params.kernel_shape.len()] {
         let out_idx = *params.out_pos.index(kernel_dim);
@@ -168,6 +219,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
                 input,
                 weight,
                 sum,
+                partials,
                 in_offs,
                 in_bounds,
                 weight_offs,
@@ -175,6 +227,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
                 comptime![kernel_dim + 1],
                 has_padding,
                 accumulate_components,
+                base_v,
             );
         }
     } else {
@@ -182,12 +235,14 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
             input,
             weight,
             sum,
+            partials,
             in_offs,
             in_bounds,
             weight_offs,
             params.in_c_per_group,
             params.stride_oc,
             accumulate_components,
+            base_v,
         );
     }
 }
@@ -197,23 +252,26 @@ fn kernel_loop_inner<E: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
     sum: &mut Vector<E, NOut>,
+    partials: &mut Array<Vector<E, NIn>>,
     in_offs: usize,
     in_bounds: bool,
     weight_offs: usize,
     in_c_per_group: u32,
     stride_oc: usize,
     #[comptime] accumulate_components: bool,
+    #[comptime] base_v: usize,
 ) {
     if in_bounds {
         if accumulate_components {
             accumulate_in_components(
                 input,
                 weight,
-                sum,
+                partials,
                 in_offs,
                 weight_offs,
                 in_c_per_group,
                 stride_oc,
+                base_v,
             );
         } else {
             accumulate_per_step(
@@ -229,39 +287,31 @@ fn kernel_loop_inner<E: Numeric, NIn: Size, NOut: Size>(
     }
 }
 
-/// One input read per output channel buys a channel loop with no dependency chain.
+/// One input read serves a whole block of output channels, and the block's accumulator outlives
+/// the kernel window, so a channel step costs one input load per block and never a fold.
 #[cube]
-fn accumulate_in_components<E: Numeric, NIn: Size, NOut: Size>(
+fn accumulate_in_components<E: Numeric, NIn: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
-    sum: &mut Vector<E, NOut>,
+    partials: &mut Array<Vector<E, NIn>>,
     in_offs: usize,
     weight_offs: usize,
     in_c_per_group: u32,
     stride_oc: usize,
+    #[comptime] base_v: usize,
 ) {
     let vector_size_in = input.vector_size();
-    let vector_size_out = sum.vector_size();
+    let block = partials.len();
 
-    #[unroll]
-    for v in 0..vector_size_out {
-        let mut partials = Vector::<E, NIn>::zero();
-        let weight_offs = weight_offs + v * stride_oc;
-
-        for in_c in range_stepped(0, in_c_per_group, vector_size_in as u32) {
-            let val = input[(in_offs + in_c as usize) / vector_size_in];
-
-            partials += val * weight[(weight_offs + in_c as usize) / vector_size_in];
-        }
-
-        let mut channel = sum.extract(v);
+    for in_c in range_stepped(0, in_c_per_group, vector_size_in as u32) {
+        let val = input[(in_offs + in_c as usize) / vector_size_in];
 
         #[unroll]
-        for i in 0..vector_size_in {
-            channel += partials.extract(i);
-        }
+        for j in 0..block {
+            let weight_offs = weight_offs + (base_v + j) * stride_oc + in_c as usize;
 
-        sum.insert(v, channel);
+            partials[j] += val * weight[weight_offs / vector_size_in];
+        }
     }
 }
 
@@ -351,11 +401,14 @@ pub fn launch_direct<const N: usize>(
     );
 
     // Only a single-unit plane pays the dependency chain in full; a wide plane hides it and is
-    // left with the extra input read per output channel. One component is exactly as serial as `sum`,
-    // and a channel loop of one step has nothing to amortize the fold over.
-    let accumulate_components = client.properties().hardware.plane_size_max == 1
-        && vector_size_in > 1
-        && weight.shape[dim_c] > vector_size_in as usize;
+    // left with the extra input read per output channel. One component is exactly as serial as `sum`.
+    let accumulate_components =
+        client.properties().hardware.plane_size_max == 1 && vector_size_in > 1;
+    let channel_block =
+        VectorRegisters::new(&client.properties().hardware, register_elem_size(dtype))
+            .map_or(1, |registers| {
+                channel_block(registers, vector_size_in, vector_size_out)
+            });
 
     let shape_out = out.shape[1..dim_c].iter().map(|s| *s as u32).collect();
     let shape_out_c = out_channels as u32;
@@ -396,11 +449,33 @@ pub fn launch_direct<const N: usize>(
             shape_out_c,
             check_spatial_bounds,
             accumulate_components,
+            channel_block,
             dtype,
         )
     };
 
     Ok(())
+}
+
+/// How many output channels share one input read. A power of two, so it divides the output vector.
+fn channel_block(
+    registers: VectorRegisters,
+    vector_size_in: usize,
+    vector_size_out: usize,
+) -> usize {
+    // An accumulator that spills turns every add into a load and a store.
+    let operands = registers.count() / 2;
+    let block = registers.vectors_fitting(vector_size_in, operands).max(1);
+
+    (1 << block.ilog2()).min(vector_size_out)
+}
+
+/// Half floats are sized as f32 on every host: the device does not state whether it promotes them.
+fn register_elem_size(dtype: ElemType) -> usize {
+    match dtype {
+        ElemType::Float(FloatKind::F16 | FloatKind::BF16) => size_of::<f32>(),
+        dtype => dtype.size(),
+    }
 }
 
 fn should_check_spatial_bounds<const N: usize>(
@@ -417,4 +492,83 @@ fn should_check_spatial_bounds<const N: usize>(
             - begin;
         first < 0 || last >= in_shape[dim] as i64
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use cubecl::ir::HardwareProperties;
+
+    use super::*;
+
+    fn registers(load_width: u32, count: u32, elem_size: usize) -> VectorRegisters {
+        let hardware = HardwareProperties {
+            load_width,
+            vector_register_count: Some(count),
+            plane_size_min: 1,
+            plane_size_max: 1,
+            max_bindings: u32::MAX,
+            max_shared_memory_size: 48 * 1024,
+            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
+            max_units_per_cube: 16,
+            max_cube_dim: (16, 16, 16),
+            num_streaming_multiprocessors: None,
+            num_cpu_cores: Some(16),
+            last_level_cache_size: None,
+            num_tensor_cores: None,
+            min_tensor_cores_dim: None,
+            max_vector_size: usize::MAX,
+            cube_mma_reserved_shared_memory: 0,
+        };
+        VectorRegisters::new(&hardware, elem_size).unwrap()
+    }
+
+    fn avx2(elem_size: usize) -> VectorRegisters {
+        registers(256, 16, elem_size)
+    }
+
+    fn avx512(elem_size: usize) -> VectorRegisters {
+        registers(512, 32, elem_size)
+    }
+
+    fn neon(elem_size: usize) -> VectorRegisters {
+        registers(128, 32, elem_size)
+    }
+
+    #[test]
+    fn a_two_register_accumulator_halves_the_block() {
+        assert_eq!(channel_block(avx2(4), 16, 16), 4);
+    }
+
+    #[test]
+    fn a_four_register_accumulator_quarters_the_block() {
+        assert_eq!(channel_block(neon(4), 16, 16), 4);
+    }
+
+    #[test]
+    fn a_register_wide_accumulator_spends_one() {
+        assert_eq!(channel_block(avx2(4), 8, 16), 8);
+        assert_eq!(channel_block(avx512(4), 16, 16), 16);
+    }
+
+    #[test]
+    fn a_narrow_accumulator_still_spends_a_whole_register() {
+        assert_eq!(channel_block(avx2(4), 2, 16), 8);
+    }
+
+    #[test]
+    fn a_half_float_accumulator_spends_f32_registers() {
+        let f16 = register_elem_size(ElemType::Float(FloatKind::F16));
+        assert_eq!(channel_block(avx2(f16), 32, 32), 2);
+        assert_eq!(channel_block(neon(f16), 32, 32), 2);
+    }
+
+    #[test]
+    fn the_block_never_outgrows_the_output_vector() {
+        assert_eq!(channel_block(avx2(4), 8, 2), 2);
+    }
+
+    #[test]
+    fn an_accumulator_wider_than_the_budget_still_gets_a_block_of_one() {
+        assert_eq!(channel_block(avx2(8), 64, 16), 1);
+    }
 }

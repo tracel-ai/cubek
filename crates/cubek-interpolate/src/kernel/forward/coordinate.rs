@@ -39,7 +39,9 @@ impl Rational {
         };
         let offset = self.offset - (radius * self.divisor) as isize;
 
-        PhysicalAxisMap::affine_with_offset(terms, offset).over(self.divisor)
+        PhysicalAxisMap::affine(terms)
+            .shifted(offset)
+            .over(self.divisor)
     }
 }
 

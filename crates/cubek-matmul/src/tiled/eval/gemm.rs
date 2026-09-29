@@ -62,6 +62,11 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             Tiled::Cmma(BlueprintStrategy::default()).into(),
         ),
         CatalogEntry::new(
+            "cmma_async",
+            "Cmma (tile-DSL, cp.async)",
+            Tiled::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::async_copy())).into(),
+        ),
+        CatalogEntry::new(
             "cmma_tma",
             "Cmma (tile-DSL, TMA)",
             Tiled::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())).into(),

@@ -1,6 +1,7 @@
 //! Reading, writing and windowing a [`Memory`]: cooperative fills, the views a leaf reads and
 //! writes through, and [`at`](Memory::at).
-//! Cooperative fills assume every unit of the cube runs them.
+//! Cooperative fills assume every unit their destination names ([`FillUnits`]) runs them: the
+//! cube's, or, for a stage one plane owns, that plane's.
 
 use cubecl::{
     prelude::*,
@@ -550,13 +551,16 @@ impl<T: Numeric> Memory<T> {
         )
     }
 
-    /// The operand's [`Projection`] applied to this window's logical box: the N-D read surface.
+    /// The operand's [`Projection`] applied to this window's logical box: the N-D read surface,
+    /// each axis counted in this memory's loads ([`vector_tile`](Memory::vector_tile)).
     pub(crate) fn axis_projection(&self, #[comptime] space: Space) -> ProjectionInKernel {
-        axis_projection(
-            space,
-            comptime!(self.projection.clone()),
+        let load = self.vector_tile(&space);
+        ProjectionInKernel::new(
+            Coords::constant(comptime!(load.counts(&space))),
             self.map.clone(),
-            comptime!(self.store.vector_size),
+            comptime!(space.clone()),
+            comptime!(self.projection.clone()),
+            comptime!(load.values()),
         )
     }
 
@@ -667,8 +671,9 @@ impl<T: Numeric> Memory<T> {
                 whole: false,
                 overhang: self.access.overhang,
                 write: self.access.write,
-                units: self.access.units,
+                fill: self.access.fill,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
+                delivery: self.access.delivery,
             }),
             comptime!(UnitShare::new(&step.level, &space).under(self.unit_share)),
             // Per level: the level's space still has the axis the projection dropped.
@@ -687,8 +692,7 @@ impl<T: Numeric> Memory<T> {
         let mut extent = Coords::<u32>::new();
         let mut advances = Coords::<u32>::new();
         let rank = comptime!(self.projection.physical_rank());
-        let last = comptime!(rank - 1);
-        let w = comptime!(self.store.vector_size);
+        let load = self.vector_tile(&space);
 
         #[unroll]
         for p in 0..rank {
@@ -702,20 +706,12 @@ impl<T: Numeric> Memory<T> {
                 extent.push(self.window.extent.at(p));
                 advances.push(0u32);
             } else {
-                let edge = comptime!(if p == last {
-                    let e = step.level.extent_in(&space, axis).get();
-                    assert!(
-                        e.is_multiple_of(w)
-                            || matches!(space.extent_raw(axis), Extent::Static(x) if x == e),
-                        "Memory::at: the innermost edge {e} is neither a whole number of \
-                         {w}-wide lines nor the axis's whole extent ({:?}), so a step would \
-                         start mid-line",
-                        space.extent_raw(axis)
-                    );
-                    e.div_ceil(w)
-                } else {
-                    step.level.extent_in(&space, axis).get()
-                });
+                // The edge counts loads: along an axis a load spans, over its extent there.
+                let edge = comptime!(load.loads_in(
+                    axis,
+                    step.level.extent_in(&space, axis).get(),
+                    space.extent_raw(axis)
+                ));
                 let index = step.coord(axis);
 
                 origin.push(
@@ -781,6 +777,7 @@ impl<T: Numeric> Memory<T> {
                 backing: self.store.backing.clone(),
                 vector_size: comptime!(self.store.vector_size),
                 packing: comptime!(self.store.packing),
+                stored_tiles: comptime!(self.store.stored_tiles.clone()),
             },
             layout: self.layout.clone(),
             window,
@@ -852,8 +849,9 @@ impl<T: Numeric> Memory<T> {
                 whole: false,
                 overhang: Overhang::Masked,
                 write: self.access.write,
-                units: self.access.units,
+                fill: self.access.fill,
                 storage: self.access.storage,
+                delivery: self.access.delivery,
             }),
             comptime!(self.unit_share),
             comptime!(self.split_share),

@@ -10,7 +10,7 @@ use crate::*;
 /// A lifetime-erased buffer, its fixed `layout`, and the window this tile looks at.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Memory<T: Numeric> {
+pub(crate) struct Memory<T: Numeric> {
     /// Which memory the bytes sit in.
     #[cube(comptime)]
     pub(crate) address: AddressSpace,
@@ -86,10 +86,47 @@ pub(crate) struct Store<T: Numeric> {
     /// How the buffer's values sit in it, from [`TileSpec::packed`].
     #[cube(comptime)]
     pub(crate) packing: Packing,
+    /// How the buffer is stored: its stated storage tiles, finest first
+    /// ([`TileSpec::stored_tiles`]); empty for a plain buffer and every stage. What one load of it
+    /// covers follows from these and the width ([`Tile::vector_tile`]).
+    #[cube(comptime)]
+    pub(crate) stored_tiles: Vec<(Axis, usize)>,
+}
+
+#[cube]
+impl<T: Numeric> Memory<T> {
+    /// What one vector load of this memory covers over a window spanning `space`: the stored
+    /// tiles that hold [`vector_size`](Store::vector_size) values, a run along the innermost axis
+    /// where none are stated ([`VectorTile::new`]).
+    pub(crate) fn vector_tile(&self, #[comptime] space: &Space) -> comptime_type!(VectorTile) {
+        let width = comptime!(self.store.vector_size);
+        comptime!(
+            VectorTile::new(
+                &self.store.stored_tiles,
+                space.axis_at(space.rank() - 1),
+                width
+            )
+            .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"))
+        )
+    }
 }
 
 #[cube]
 impl<T: Numeric> Store<T> {
+    /// A store whose buffer is laid down in rows, stored in no tiles: every stage.
+    pub(crate) fn untiled(
+        backing: Backing<T>,
+        #[comptime] vector_size: usize,
+        #[comptime] packing: Packing,
+    ) -> Store<T> {
+        Store::<T> {
+            backing,
+            vector_size,
+            packing,
+            stored_tiles: comptime!(Vec::new()),
+        }
+    }
+
     /// The bytes, for a destination that has an address.
     // `Box<[T]>` is cubecl's owned-slice handle, not a Rust box; `&[T]` is a different kernel type.
     #[allow(clippy::borrowed_box)]
@@ -142,10 +179,62 @@ pub(crate) struct Access {
     pub overhang: Overhang,
     /// What a write here does to the cell it lands on.
     pub write: Write,
-    /// The launch's cube size, `0` when unknown.
-    pub units: usize,
+    /// The units that share a cooperative fill of this window.
+    pub fill: FillUnits,
     /// What the storage tiles are to this window.
     pub storage: Storage,
+    /// Who moves this tile's lines into a stage filled from it. Stated by the operand's spec and
+    /// carried down its windows; a stage copied onward is copied by its units.
+    pub delivery: Delivery,
+}
+
+/// The units that share a cooperative fill of a window: every unit of the cube, or the units of
+/// one plane, for a stage that plane owns and fills alone ([`Stages::smem`](crate::Stages::smem)).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FillUnits {
+    /// Whose units they are: the cube's, or one plane's.
+    pub scope: ComputeScope,
+    /// How many there are, `0` when unknown: a stage filled from this tile emits its fill
+    /// straight-line when it knows. The launch's cube size, or one plane's width.
+    pub count: usize,
+}
+
+impl FillUnits {
+    /// Every unit of the cube, `count` of them (`0` when unknown).
+    pub(crate) fn cube(count: usize) -> Self {
+        FillUnits {
+            scope: ComputeScope::Cube,
+            count,
+        }
+    }
+}
+
+/// This unit's position among the units `fill` names, which a cooperative fill takes its lines
+/// at: its position in the cube, or in its plane.
+///
+/// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
+/// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
+#[cube]
+pub(crate) fn fill_worker(#[comptime] fill: FillUnits) -> usize {
+    match comptime!(fill.scope) {
+        ComputeScope::Cube => UNIT_POS as usize,
+        ComputeScope::Plane => UNIT_POS_X as usize,
+        ComputeScope::Unit => comptime!(panic!(
+            "fill_worker: a cooperative fill is shared by a cube or a plane, never one unit"
+        )),
+    }
+}
+
+/// How many units `fill` names at runtime: the cube's, or one plane's ([`fill_worker`]).
+#[cube]
+pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
+    match comptime!(fill.scope) {
+        ComputeScope::Cube => CUBE_DIM as usize,
+        ComputeScope::Plane => CUBE_DIM_X as usize,
+        ComputeScope::Unit => comptime!(panic!(
+            "fill_workers: a cooperative fill is shared by a cube or a plane, never one unit"
+        )),
+    }
 }
 
 /// What a write to a store does to the cell it lands on; stated by the binding operand.
@@ -199,14 +288,14 @@ pub enum Boundary {
 
 impl Overhang {
     /// The flag a [`Masked`] is built with.
-    pub fn masks(&self) -> bool {
+    pub(crate) fn masks(&self) -> bool {
         matches!(self, Overhang::Masked)
     }
 }
 
 /// Whether a read still proves its own bounds, stated by the reader.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Guard {
+pub(crate) enum Guard {
     /// Mask the overhang and apply the window's [`Boundary`] on every access.
     Checked,
     /// The reader proved its whole box is in bounds; reading past it is out of bounds, not masked.
@@ -215,7 +304,7 @@ pub enum Guard {
 
 impl Guard {
     /// Whether this guard still costs a test per access.
-    pub fn checks(self) -> bool {
+    pub(crate) fn checks(self) -> bool {
         matches!(self, Guard::Checked)
     }
 }

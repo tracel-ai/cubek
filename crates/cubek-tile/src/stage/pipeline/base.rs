@@ -90,17 +90,6 @@ impl<T: CubeType> Stages<T> {
     {
         unexpanded!()
     }
-
-    /// [`pipelined`](Stages::pipelined) with a caller-supplied `fill`.
-    ///
-    /// Panics if the stages hold a fixed operand.
-    pub fn pipelined_with<Fill, F>(&mut self, _walk: Walk, _fill: Fill, _compute: F)
-    where
-        Fill: FnMut(&mut Slot<T>, &Region),
-        F: FnMut(&mut Slot<T>, &Region),
-    {
-        unexpanded!()
-    }
 }
 
 impl<T: CubeType> StagesExpand<T>
@@ -116,34 +105,6 @@ where
             walk,
             self,
             |scope, stages, slot, region| stages.fill_streamed(scope, slot, region),
-            compute,
-        )
-    }
-
-    pub fn __expand_pipelined_with_method<Fill, F>(
-        &mut self,
-        scope: &Scope,
-        walk: WalkExpand,
-        mut fill: Fill,
-        compute: F,
-    ) where
-        Fill: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
-        F: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
-    {
-        assert!(
-            !self.has_fixed(scope),
-            "Stages::pipelined_with: these stages hold an operand the walk leaves fixed, which \
-             the schedule fills once from their own sources -- the one thing a caller's fill \
-             cannot be handed. Stream every operand, or use `pipelined`."
-        );
-        schedule::run(
-            scope,
-            walk,
-            self,
-            move |scope, stages, slot, region| {
-                let slot = stages.__expand_slot_mut_method(scope, slot);
-                fill(scope, slot, region)
-            },
             compute,
         )
     }

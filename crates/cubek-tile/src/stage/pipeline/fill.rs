@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 use super::payload::base::{Payload, PayloadExpand, StageSpec};
-use super::payload::pair::{OperandPair, OperandPairExpand};
+use super::payload::pair::OperandPair;
 use super::plan::StagePlan;
 use crate::*;
 
@@ -23,12 +23,14 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
         #[comptime] depth: usize,
     ) -> Stages<P> {
         let operands = sources.operands();
-        let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level));
+        let owner = walk.stage_owner();
+        let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level, owner));
         let spec = comptime!(StageSpec {
             level: walk.level.clone(),
             depth: walk.depth(),
             storage,
             width,
+            owner: plan.owner(),
         });
 
         // Later slots share buffers the first slot owns, so it is built first.
@@ -54,6 +56,8 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
                 Meeting::new(
                     comptime!(plan.sync()),
                     comptime!(plan.collective_full()),
+                    comptime!(plan.commits()),
+                    comptime!(plan.fences()),
                     comptime!(plan.fillers()),
                 ),
                 comptime!(plan.refills(slot)),
@@ -230,7 +234,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
         let lhs = self.sources.lhs.delivery();
         let rhs = self.sources.rhs.delivery();
         comptime!(assert!(
-            self.fillers == 0 && lhs == Delivery::Copy && rhs == Delivery::Copy,
+            self.fillers == 0 && lhs == Delivery::SyncPerUnit && rhs == Delivery::SyncPerUnit,
             "Stages: a register-staged schedule fills its slots with every unit's own copy of \
              memory; these stages are filled by {} plane(s) of their own, or their sources are \
              delivered {lhs:?} and {rhs:?}",
@@ -245,23 +249,9 @@ impl<Lhs: Numeric, Rhs: Numeric> Slot<OperandPair<Lhs, Rhs>> {
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
-
-    /// Wait for the slot to be free, run `fill` over its buffers and [`Meeting`], then publish.
-    pub fn fill(&mut self, _fill: impl FnOnce(&mut OperandPair<Lhs, Rhs>, &Meeting)) {
-        unexpanded!()
-    }
 }
 
 impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<OperandPair<Lhs, Rhs>> {
-    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
-    where
-        F: FnOnce(&Scope, &mut OperandPairExpand<Lhs, Rhs>, &MeetingExpand),
-    {
-        self.__expand_acquire_write_method(scope);
-        fill(scope, &mut self.data, &self.pipeline);
-        self.__expand_release_write_method(scope);
-    }
-
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
@@ -277,23 +267,9 @@ impl<T: Numeric> Slot<Tile<T>> {
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<T>)) {
         unexpanded!()
     }
-
-    /// [`fill`](Slot::fill) for the sole operand.
-    pub fn fill(&mut self, _fill: impl FnOnce(&mut Tile<T>, &Meeting)) {
-        unexpanded!()
-    }
 }
 
 impl<T: Numeric> SlotExpand<Tile<T>> {
-    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
-    where
-        F: FnOnce(&Scope, &mut TileExpand<T>, &MeetingExpand),
-    {
-        self.__expand_acquire_write_method(scope);
-        fill(scope, &mut self.data, &self.pipeline);
-        self.__expand_release_write_method(scope);
-    }
-
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
         F: FnOnce(&Scope, &TileExpand<T>),

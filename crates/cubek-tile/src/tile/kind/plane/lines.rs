@@ -21,7 +21,7 @@ fn register_line_words(#[comptime] words: usize) {
 /// The lines a plane holds in its units, and where inside them a window sits.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Lines<T: Numeric> {
+pub(crate) struct Lines<T: Numeric> {
     /// This unit's line, as words (unit `t` holds line `t`); filled under [`UnitRead::Shuffle`].
     line: Array<Vector<u32, LW>>,
     /// Every line, in this plane's shared-memory window; only under [`UnitRead::PlaneShared`].

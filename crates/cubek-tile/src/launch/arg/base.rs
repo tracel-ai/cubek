@@ -6,8 +6,8 @@ use cubecl::prelude::*;
 
 use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
-    StoragePartitioning, TileArgLaunch, TileSpec,
+    Axis, Boundary, Delivery, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
+    StoragePartitioning, TileArgLaunch, TileSpec, VectorTile,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -40,6 +40,8 @@ struct ArgData<'a> {
     width: usize,
     boundary: BoundaryPolicy,
     packing: Packing,
+    /// Who moves the operand into a stage ([`delivery`](Arg::delivery)).
+    delivery: Delivery,
     /// Whether the labelled dims bind in stride order ([`in_stride_order`](Arg::in_stride_order)).
     in_stride_order: bool,
 }
@@ -72,6 +74,7 @@ impl<'a> Arg<'a, Unlabelled> {
                 width: 1,
                 boundary: BoundaryPolicy::Derived,
                 packing: Packing::Plain,
+                delivery: Delivery::SyncPerUnit,
                 in_stride_order: false,
             },
             _state: PhantomData,
@@ -132,6 +135,13 @@ impl<'a> Arg<'a, Labelled> {
         self
     }
 
+    /// Who moves this operand into a stage ([`SyncPerUnit`](Delivery::SyncPerUnit) unless
+    /// stated); the kernel is the same either way.
+    pub fn delivery(mut self, delivery: Delivery) -> Self {
+        self.data.delivery = delivery;
+        self
+    }
+
     /// The operand, bound; panics with the [`Refusal`] if it cannot be.
     pub fn build(self) -> Bound {
         let (bound, _) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
@@ -157,7 +167,8 @@ impl<'a> Arg<'a, Labelled> {
         let stated = data.projection.is_some() || stored.is_tiled();
         let (geometry, axes) =
             stride_ordered(data.geometry, data.axes, data.in_stride_order, stated)?;
-        let storage = storage_of(&geometry, &axes, data.projection.is_none(), launch);
+        let (storage, stored_tiles) =
+            storage_of(&geometry, &axes, data.projection.is_none(), launch);
         let labels = match data.projection {
             Some(projection) => {
                 Labels::stated(&geometry, launch, projection, &axes, data.batches, stored)?
@@ -174,7 +185,9 @@ impl<'a> Arg<'a, Labelled> {
         // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
         let labels = projection.dense_labels();
         let served = match labels.last() {
-            Some(&axis) => geometry.serves(&[(axis, width)], &labels),
+            Some(&axis) => VectorTile::new(&stored_tiles, axis, width)
+                .map_err(LineMisfit::Tile)
+                .and_then(|tile| geometry.serves(tile.extents(), &labels)),
             None if width == 1 => Ok(()),
             None => Err(LineMisfit::NoDims),
         };
@@ -194,7 +207,10 @@ impl<'a> Arg<'a, Labelled> {
             units: launch.cube_dim().num_elems() as usize,
             packing: data.packing,
             storage,
-        };
+            stored_tiles,
+            delivery: Delivery::SyncPerUnit,
+        }
+        .delivery(data.delivery);
         let tensor = data
             .binding
             .map(|binding| settled_tensor(binding, &geometry));
@@ -222,31 +238,46 @@ fn stride_ordered(
 }
 
 /// The coarsest level whose windows the operand's storage tiles address with one stride per axis
-/// ([`Contiguous`](Storage::Contiguous)); every other window is walked through the layout.
-fn storage_of(geometry: &Geometry, axes: &[Axis], labelled: bool, launch: &Launcher) -> Storage {
+/// ([`Contiguous`](Storage::Contiguous)), every other window walked through the layout; and the
+/// stored tiles themselves, finest first ([`TileSpec::stored_tiles`]).
+fn storage_of(
+    geometry: &Geometry,
+    axes: &[Axis],
+    labelled: bool,
+    launch: &Launcher,
+) -> (Storage, Vec<(Axis, usize)>) {
     if !(labelled && geometry.tiling().is_tiled()) {
-        return Storage::Strided;
+        return (Storage::Strided, Vec::new());
     }
     let labels = geometry.labels(axes);
-    let tiles = StoragePartitioning::new(geometry, &labels)
+    let partitioning = StoragePartitioning::new(geometry, &labels);
+    let stored_tiles = partitioning
+        .as_ref()
+        .map_or_else(Vec::new, |storage| storage.tiles().to_vec());
+    let tiles = partitioning
         .map(|storage| storage.contiguous_tiles(&geometry.extents(&labels)))
         .unwrap_or_default();
     let (space, levels) = (launch.space(), launch.partitioning().levels());
+    let kernel = launch.partitioning().space();
     let cuts_to = |level: usize, tile: &[(Axis, usize)]| {
         let leaf = space.leaf(&levels[..=level]);
-        axes.iter().all(|&axis| {
-            let stored = tile
-                .iter()
-                .find(|&&(a, _)| a == axis)
-                .map_or(1, |&(_, e)| e);
-            leaf.extent(axis) == stored
-        })
+        // A tile the kernel hands down dynamic is no window a storage tile can be, whatever
+        // this launch's extent makes it.
+        let fixed = kernel.leaf(&levels[..=level]);
+        axes.iter().all(|&axis| !fixed.is_dynamic(axis))
+            && axes.iter().all(|&axis| {
+                let stored = tile
+                    .iter()
+                    .find(|&&(a, _)| a == axis)
+                    .map_or(1, |&(_, e)| e);
+                leaf.extent(axis) == stored
+            })
     };
     let level = tiles
         .iter()
         .rev()
         .find_map(|tile| (0..levels.len()).find(|&level| cuts_to(level, tile)));
-    Storage::Tiled(level)
+    (Storage::Tiled(level), stored_tiles)
 }
 
 /// The binding as the arg ships it, its tiling restated over the settled geometry's dims.
