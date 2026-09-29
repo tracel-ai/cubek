@@ -1,11 +1,5 @@
-//! The promoted accumulator form of the contraction nest: `acc += lhs · rhs` where the `mr × nr`
-//! block *is* the accumulator.
-//!
-//! The peer of [`memory`](super::memory), and the reason [`block`](super::super::registers) takes
-//! the block as a parameter: the memory form round-trips its partials through the sink's element on
-//! every visit, this one keeps them in `T` across the walk and only meets memory on drain.
-//!
-//! Sibling of the two hardware leaves in `instruction/mma`, reached from the same dispatch.
+//! The promoted accumulator form of the register nest: the `mr × nr` block is the accumulator,
+//! kept in `T` across calls and drained once.
 
 use cubecl::prelude::*;
 
@@ -15,20 +9,8 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> RegisterData<T> {
-    /// `self += lhs · rhs` over the block, one rank-1 update per scalar `K` step, each factor
-    /// times whatever scales it carries.
-    ///
-    /// The memory-backed instruction's contraction minus the round trip: there the block is seeded
-    /// from the sink and committed back per visit, losing precision to the sink's element. This one
-    /// *is* the accumulator, so partials stay in `T` until [`store_cast_window`] drains them.
-    ///
-    /// A **packed factor is served here too**: the decode is [`Tile::matrix_packed`]'s, per read
-    /// for whichever leaf asks. The rhs may be packed as well; the width assert below governs it,
-    /// as a packed `vector_size` is the *served* width, and the block was opened at the rhs's.
-    ///
-    /// An rhs lined along the contraction is the folded step ([`fold`](Self::fold)): a step
-    /// consumes a whole line of each operand and the block's units are one cell's partials, which
-    /// [`store_cast_window`](Self::store_cast_window) collapses. The block must be opened that way.
+    /// `self += lhs · rhs` over the block, one rank-1 update per `K` step, with scales folded in.
+    /// The block must be opened against the rhs it contracts (width and fold).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
@@ -46,17 +28,13 @@ impl<T: Numeric> RegisterData<T> {
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
         let fold = comptime!(self.fold);
-        // Either factor may be packed: the decode is the read's, and this is the only width
-        // either one owes. A packed rhs is served at its packing factor, so it is this assert,
-        // not a packing test, that asks the block to have been opened by the same rhs.
+        // A packed rhs is served at its packing factor, so this checks the block was opened by it.
         comptime!(assert!(
             vw == self.vector_size,
             "RegisterData::mma: the block's lines are {} wide but the rhs serves {vw}; a packed \
              rhs serves its packing factor, so open the block against the rhs it contracts",
             self.vector_size
         ));
-        // A contracted axis is one both operands span. The rhs lining along one is the folded
-        // step, and the block's lines mean one thing for the whole walk.
         let lined_along_k = comptime!(
             lhs.place
                 .space
@@ -79,19 +57,15 @@ impl<T: Numeric> RegisterData<T> {
         ));
         let size!(L) = lw;
 
-        // Every contracted axis multiplied out: a partitioned contraction carries more than one.
         let operands = comptime!(Space::merge(&[&lhs.place.space, &rhs.place.space]));
         let kc = comptime!(operands.contracted_extent(&out));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
-        // The accumulator's column edge, which is the rhs's too: read off the operands rather
-        // than off the last axis, so a split column group stays one edge.
+        // Read the column edge off the operands so a split column group stays one edge.
         let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs.place.space));
         let cols = comptime!(acc_axes.cols(&out));
         let lhs_axes =
             comptime!(MatrixAxes::new(&lhs.place.space, mr, kc).unwrap_or_else(|e| panic!("{e}")));
-        // Lined along the contraction the rhs reads as `(col, k)`, along the accumulator
-        // `(k, col)`.
         let rhs_axes = comptime!(if fold > 1 {
             MatrixAxes::new(&rhs.place.space, cols, kc).unwrap_or_else(|e| panic!("{e}"))
         } else {
@@ -102,9 +76,6 @@ impl<T: Numeric> RegisterData<T> {
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let component_fanout = comptime!(config.component_fanout);
 
-        // Each factor as the block reads it: its values' matrix, and its scales looked up at
-        // every line's own coordinates. The rhs and the block share the width `RA` (asserted
-        // above, `vw == self.vector_size`).
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
         let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
         let lhs_scales = lhs.reader(

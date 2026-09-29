@@ -1,5 +1,4 @@
-//! The decoding copy, `dst.copy_from(&w.lookup(&t).mul(&scales))`: the one place a kernel decodes
-//! ([`Tile::lookup`], [`Tile::mul`]).
+//! The decoding copy through a table or scales ([`Tile::lookup`], [`Tile::mul`]).
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
@@ -7,11 +6,8 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales. Each destination line
-    /// is read out of the source line holding it and scaled at its first value.
-    ///
-    /// **The two span one box.** The source may carry axes the destination does not, each one
-    /// wide (a batch or head the cube already fixed).
+    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales.
+    /// The source may carry extra axes only if each is one wide.
     pub(crate) fn copy_scaled_from(&mut self, src: &Tile<T>) {
         let (sw, vw) = (src.vector_size(), self.vector_size());
         comptime!(check_decoding_copy(
@@ -52,8 +48,7 @@ impl<T: Numeric> Tile<T> {
         for line in range_stepped(UNIT_POS, count, CUBE_DIM) {
             let start = coords_of_line(line, comptime!(lines.clone()), sw);
             let held = stored.read(as_dyn(&start, sw));
-            // The destination lines this source line holds, each at its first value; and where
-            // it lands, the same place without the source's one-wide axes.
+            // The destination lines this source line holds, and where they land.
             #[unroll]
             for c in 0..comptime!(sw / vw) {
                 let offset = comptime!(c * vw);

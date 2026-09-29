@@ -1,22 +1,11 @@
-//! The plane-resident accumulator an output opens ([`Accumulate`]): a grid of plane tiles
-//! mirroring the output's own grid under the levels below it, contracted into, and drained back
-//! one tile per cell.
-//!
-//! ```ignore
-//! let mut acc = c.accumulator::<EA, EL, ER>(&a, &b, instruction, Monoid::Sum);
-//! acc.zero();
-//! for step in plane.walk() { /* acc.at(&cell).mma(..) */ }
-//! acc.drained_into(&c);
-//! ```
+//! The plane-resident accumulator an output opens ([`Accumulate`]).
 
 use cubecl::prelude::*;
 
 use crate::ops::matmul::leaf::memory;
 use crate::*;
 
-/// The shape a plane-resident accumulator is opened at: the `tiles` one plane holds, each `m × n`
-/// and contracting `k` a step. Read off the accumulator's placement (the walked levels below it
-/// cut its grid) and the lhs it is contracted with (which sizes `k`).
+/// The shape a plane-resident accumulator is opened at: `tiles` per plane, each `m × n`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct GridShape {
     pub(crate) tiles: (usize, usize),
@@ -26,16 +15,14 @@ pub(crate) struct GridShape {
 }
 
 impl GridShape {
-    /// The grid an accumulator at `place` contracting `lhs` holds: the walked levels below its
-    /// depth cut its tiles, the leaf they reach is one tile, and `lhs`'s leaf contracts `k`.
+    /// The grid an accumulator at `place` contracting `lhs` holds.
     pub(crate) fn new(place: &Placement, lhs: &Space) -> Self {
         let levels = place.below();
         let tiles = partition_shape(&place.space, levels);
         let leaf = place.space.leaf(levels);
         let lhs_leaf = lhs.leaf(levels);
         let axes = MatrixAxes::accumulator(&leaf, &lhs_leaf);
-        // The edges the accumulator's own axes give, not its last two: a split column group is
-        // one edge, and sizing the block off the innermost axis alone would cut it in half.
+        // Use the accumulator's own edges: a split column group is one edge.
         GridShape {
             tiles,
             m: axes.rows(&leaf),
@@ -45,33 +32,20 @@ impl GridShape {
     }
 }
 
-/// How much of a plane's accumulator its scratch holds at once.
-///
-/// A fragment's cells sit across the plane's units in a layout only the hardware knows, so
-/// anything that must touch them one at a time spills the tile to shared memory first. How much is
-/// resident is a trade and not a fact: barriers against bytes.
-///
-/// **There is no size between the two.** A middle size would hand each tile a slot chosen by its
-/// drain, whose walk order and the grid's index order nothing makes agree. At these two sizes a
-/// tile's slot is a fact about the tile: its own index, or the one slot there is.
-///
-/// Serialized because a caller's setting rides a persisted autotune key, so the value a winner was
-/// measured at has to come back; the on-disk spellings are the ones it was measured under.
+/// How much of a plane's accumulator its scratch holds at once. Serialized names are persisted in
+/// autotune keys and must not change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Scratch {
-    /// No window. A fragment stores straight to memory through its own intrinsic, which is the
-    /// cheapest drain there is and the only one that cannot add: a folding destination refuses.
+    /// No window: fragments store through their intrinsic, which cannot add.
     None,
-    /// One tile. A fragment bounces through shared memory, one at a time, three cube-wide
-    /// barriers each. The smallest window that lets a drain touch a fragment's cells.
+    /// One tile, bounced through shared memory with three cube-wide barriers each.
     OneTile,
-    /// The plane's whole grid. Two barriers for the whole drain, at as many times the footprint
-    /// as the grid has tiles.
+    /// The plane's whole grid, two barriers for the whole drain.
     #[serde(rename = "WholePartition")]
     WholeGrid,
 }
 
-/// `none`, `one_tile`, `whole_partition`: what a persisted setting is read by.
+/// The persisted setting's spelling.
 impl core::fmt::Display for Scratch {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -92,8 +66,7 @@ impl Scratch {
         }
     }
 
-    /// The slot tile `i` of a grid of `tiles` spills into: its own where every tile has one, the
-    /// only slot otherwise.
+    /// The slot tile `i` of a grid of `tiles` spills into.
     pub fn slot_of(self, i: usize, tiles: usize) -> usize {
         match self {
             Scratch::WholeGrid => i,
@@ -104,18 +77,12 @@ impl Scratch {
         }
     }
 
-    /// Whether a fragment goes through shared memory on its way out at all.
-    ///
-    /// **Forced for a destination that folds**: the intrinsic's store overwrites, so the cells must
-    /// become addressable before they can be added. A replacing destination may want it too, since
-    /// a bounced drain writes lines the units distribute between them; which is faster is a
-    /// measurement.
+    /// Whether a fragment goes through shared memory on its way out; forced when folding.
     pub fn bounces(self) -> bool {
         !matches!(self, Scratch::None)
     }
 
-    /// This setting raised to what `folds` demands: a folding destination cannot be drained
-    /// without a window, so [`None`](Self::None) is not a value it admits.
+    /// This setting raised to what `folds` demands.
     pub fn at_least_bouncing(self, folds: bool) -> Scratch {
         match (folds, self) {
             (true, Scratch::None) => Scratch::OneTile,
@@ -124,12 +91,7 @@ impl Scratch {
     }
 }
 
-/// The planes `levels` distribute `space` across: the product, over every level distributed on the
-/// cube's planes, of the instances its plane-distributed axes take. One where no level rides the
-/// planes.
-///
-/// Each level's count is read against the space its parents hand it, so a count that is
-/// only known at runtime is refused here rather than read as one.
+/// The planes `levels` distribute `space` across; panics on a runtime-only count.
 pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     let mut handed = space.clone();
     let mut planes = 1;
@@ -151,18 +113,10 @@ pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     planes
 }
 
-/// What an output does with the sum contracted into it: open a plane-resident accumulator over
-/// its own grid, give it the scratch a bouncing drain needs, and take the sum back.
-///
-/// Implemented once for [`Tile`]: the accumulator's shape is the tile's placement (the walked
-/// levels below it cut its grid) and the operands' widths; nothing is restated.
+/// What an output does with the sum contracted into it: open, scratch and drain an accumulator.
 #[cube]
 pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
     /// What one plane sums into, in the form `instruction` names.
-    ///
-    /// **The one opener a kernel whose instruction is data wants.** A derivation electing a form
-    /// from what the device offers hands it here; the kernel never matches on it. The register
-    /// block reads both operands to line its cells; the fragment forms read the lhs alone, for `k`.
     fn accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -171,18 +125,14 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// The plane-resident accumulator this output contracts in through the tensor-core
-    /// instruction: an uninitialized grid of cmma fragments mirroring this tile's grid, drained
-    /// after the walk one fragment per cell ([`drained_into`](Self::drained_into)). `lhs` sizes
-    /// `k`.
+    /// A cmma-fragment accumulator mirroring this tile's grid; `lhs` sizes `k`.
     fn cmma_accumulator<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// [`cmma_accumulator`](Self::cmma_accumulator) through the manual-mma instruction, whose
-    /// fragment transports are `io`'s.
+    /// [`cmma_accumulator`](Self::cmma_accumulator) through the manual-mma instruction.
     fn mma_accumulator<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -190,12 +140,8 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// [`cmma_accumulator`](Self::cmma_accumulator) through the software instruction: a register
-    /// block per tile of the grid, run under `config`.
-    ///
-    /// The block's lines are the rhs's, so it reads both operands where the hardware forms read
-    /// the lhs alone. An rhs lined along the accumulator gives lines of neighbouring cells; one
-    /// lined along `k` gives each cell a line of partials folded on drain, and the tile is scalar.
+    /// [`cmma_accumulator`](Self::cmma_accumulator) through the software instruction, run under
+    /// `config`.
     fn block_accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -204,8 +150,7 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// [`block_accumulator`](Self::block_accumulator) for a reduction, whose one operand is
-    /// `input`: the block's lines are this tile's, there being no rhs to line them by.
+    /// [`block_accumulator`](Self::block_accumulator) for a reduction over `input`.
     fn block_reducer<EA: Numeric, In: Numeric>(
         &self,
         input: &Tile<In>,
@@ -213,22 +158,11 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// This plane-resident accumulator opened with a scratch: a window of shared memory per plane
-    /// of the cube that a fragment bounces through where its cells must be touched one at a time.
-    /// Stated where the accumulator opens: the scratch is its residence. How many planes share
-    /// the cube is read off the partitioning; the plane's width is the launch's.
+    /// This accumulator opened with a per-plane shared-memory scratch for bouncing drains.
     fn with_scratch(self, #[comptime] scratch: Scratch) -> Self;
 
-    /// Drain this plane-resident accumulator into `dest`, cast to `dest`'s element, one tile per
-    /// cell of its grid.
-    ///
-    /// **`self` and `dest` are indexed by the same region**, so a caller that narrows one narrows
-    /// the other to the same window. An accumulator opened wider than the destination handed over
-    /// resolves each region somewhere else and drains the wrong cells.
-    ///
-    /// **The scratch's size decides the barrier count** ([`Scratch`]). With one tile resident each
-    /// tile drains on its own, three cube-wide barriers apiece. With the whole grid resident no
-    /// two tiles share a slot: every spill, one barrier, every add, two in all.
+    /// Drain this accumulator into `dest`, cast to its element. `self` and `dest` must be
+    /// indexed by the same region.
     fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>);
 }
 
@@ -301,8 +235,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
             rw,
             aw
         ));
-        // A memory leaf spreads a line wider than its scalar sink across cells; a block that
-        // outlives the leaf has no such step, so its lines and the sink's agree or fold.
+        // A block outliving the leaf cannot spread lines, so its lines and the sink's agree or fold.
         comptime!(assert!(
             fold > 1 || rw == aw,
             "Tile::block_accumulator: the block's lines are the rhs's ({rw} wide) and drain into \
@@ -343,16 +276,11 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                 let cells = comptime!(m * n);
                 let tiles = comptime!(p.m_tiles * p.n_tiles);
                 let slots = comptime!(scratch.slots(tiles));
-                // One window per plane of the cube, this plane's found by the hardware's own
-                // plane index; the cube's whole claim sits behind it. Not the level's position:
-                // the launch decides the cube's shape, and a team wider than a plane puts two
-                // planes on one of its rows.
+                // Indexed by hardware plane position, not level position: the launch decides the cube's shape.
                 let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
                 let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
                 let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
-                // **Every fragment carries its own slot.** One taken off the grid by `at` then
-                // bounces on its own, and, where the whole grid is resident, no two fragments
-                // share a slot, so nothing depends on the order a drain walks them in.
+                // Each fragment carries its own slot, so drain order doesn't matter.
                 let mut frags = Sequence::<PlaneTile<Acc>>::new();
                 #[unroll]
                 for i in 0..tiles {
@@ -387,8 +315,6 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
 
     fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>) {
         match &self.kind {
-            // A grid below the open: the descent walks the levels it was cut by, narrowing both
-            // sides, and lands one tile against one window.
             TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held)) {
                 DrainPlan::Straight => drain_below::<Acc, Out>(
                     self,
@@ -397,7 +323,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                     0usize,
                     comptime!(DrainPass::Copy),
                 ),
-                // One slot between the tiles, so each one's spill and add pair off at its leaf.
+                // One slot shared: each spill and add pair off at its leaf.
                 DrainPlan::BounceEach => drain_below::<Acc, Out>(
                     self,
                     dest,
@@ -405,8 +331,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                     0usize,
                     comptime!(DrainPass::Bounce),
                 ),
-                // Every tile has its own slot, so every spill happens before any add: the
-                // descent runs twice and the barriers are the whole drain's.
+                // Own slots: every spill precedes any add, so the descent runs twice.
                 DrainPlan::BounceTogether => {
                     sync_cube();
                     drain_below::<Acc, Out>(
@@ -427,9 +352,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                     sync_cube();
                 }
             },
-            // No grid: the accumulator is one tile and the drain is one store. The register
-            // leaves are this shape, since their block is the plane's whole box rather than a
-            // grid of it.
+            // No grid: the accumulator is one tile and the drain is one store.
             TileKind::PlaneTile(_) => {
                 drain_leaf::<Acc, Out>(self, dest, comptime!(DrainPass::Copy))
             }
@@ -443,9 +366,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
     }
 }
 
-/// The plane-resident grid an accumulator contracts in, in `form`, uninitialized and shaped to
-/// meet `lhs` at the instruction. `vector_size` is its lines' width and `fold` what a line holds
-/// ([`RegisterData::fold`]); only the software form reads them.
+/// The plane-resident grid an accumulator contracts in, in `form`, uninitialized.
 #[cube]
 fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
     out: &Tile<Acc>,
@@ -468,14 +389,7 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
     )
 }
 
-/// [`Accumulate::drained_into`]'s descent: `levels[i..]` walked in the destination's own axes,
-/// narrowing both sides one level at a time, `pass` applied to every leaf of it.
-///
-/// **The levels the grid was read off are the levels the drain walks** ([`GridShape::new`]), which
-/// is what makes the leaf one tile: a level that cuts the grid hands out one region per tile, a
-/// level that distributes hands out this instance's own window, and a level the destination does
-/// not span hands out one region and narrows nothing. A contraction the accumulator outlives is of
-/// that last kind, so it is walked once here however many steps it takes.
+/// [`Accumulate::drained_into`]'s descent over `levels[i..]`, applying `pass` at every leaf.
 #[cube]
 fn drain_below<Acc: Numeric, Out: Numeric>(
     acc: &Tile<Acc>,
@@ -488,8 +402,7 @@ fn drain_below<Acc: Numeric, Out: Numeric>(
         drain_leaf::<Acc, Out>(acc, dest, pass);
     } else {
         let level = comptime!(levels[i].clone());
-        // A walked level's regions select fragments, so its coordinates must fold to constants;
-        // a distributed one selects nothing and is one region whatever its count.
+        // A walked level's coordinates must fold to constants: its regions select fragments.
         if comptime!(level.coverage() == Coverage::Walk) {
             for region in dest.over(&level).unrolled() {
                 drain_below::<Acc, Out>(
@@ -514,7 +427,7 @@ fn drain_below<Acc: Numeric, Out: Numeric>(
     }
 }
 
-/// One tile of a drain, against the one window it lands in: what every leaf of the descent runs.
+/// One tile of a drain against the one window it lands in.
 #[cube]
 fn drain_leaf<Acc: Numeric, Out: Numeric>(
     acc: &Tile<Acc>,

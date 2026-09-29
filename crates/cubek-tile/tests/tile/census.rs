@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 const PUB_ITEMS: usize = 725;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 31;
+const LONG_FNS: usize = 28;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
-const LONG_FILES: usize = 10;
+const LONG_FILES: usize = 8;
 /// `#[allow(clippy::too_many_arguments)]` sites.
 const TOO_MANY_ARGUMENTS: usize = 26;
 

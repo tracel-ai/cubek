@@ -1,7 +1,5 @@
-//! Where an operand's axes live: [`Projection`] maps logical axes onto buffer dims, extent-free;
-//! [`Geometry`] is the buffer's extents and strides, [`StoragePartitioning`] where its values sit
-//! relative to one another, as counts; the in-kernel halves evaluate both. A stage's block rows are
-//! placed across the banks by `RowArrangement` and `ChunkSwizzle`.
+//! Where an operand's axes live: [`Projection`] maps logical axes onto buffer dims,
+//! [`Geometry`] holds extents and strides, [`StoragePartitioning`] how values are tiled.
 
 mod buffer;
 mod build;

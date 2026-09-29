@@ -1,5 +1,4 @@
-//! How a [`StoragePartitioning`](super::StoragePartitioning) is stated, written, read back, and
-//! asked whether it holds a tile.
+//! Tests for [`StoragePartitioning`](super::StoragePartitioning).
 
 use super::base::*;
 use crate::*;
@@ -8,9 +7,7 @@ const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
-/// A buffer reads back as the statement it was written from, whatever order its tiling lists
-/// its pieces in: row-major tiles, tiles down `K`, and two nested levels whose pieces the tiling
-/// lists coarsest first rather than in memory order.
+/// A buffer reads back as the statement it was written from, whatever its tiling's order.
 #[test]
 fn a_written_buffer_reads_back_as_its_statement() {
     let statements = [
@@ -28,8 +25,7 @@ fn a_written_buffer_reads_back_as_its_statement() {
     }
 }
 
-/// An untiled buffer states no tiles: its order is its dims by stride, the contiguous one first,
-/// and a broadcast dim or one of extent one says nothing of it.
+/// An untiled buffer states no tiles: its order is its dims by stride.
 #[test]
 fn an_untiled_buffer_is_its_order_alone() {
     let rows = Geometry::new(&[(64, 4096), (4096, 1)]);
@@ -46,8 +42,6 @@ fn an_untiled_buffer_is_its_order_alone() {
     assert_eq!(read.order(), &[N]);
 }
 
-/// A tile stored for a four-wide read holds both the read and the whole tile a stage copies:
-/// the read is its finest piece, and the pieces of the tile fuse back into it a row at a time.
 #[test]
 fn a_stored_read_and_its_whole_tile_are_both_held() {
     let with_read = StorageLevels::new(&[(N, 4)])
@@ -58,8 +52,6 @@ fn a_stored_read_and_its_whole_tile_are_both_held() {
     assert_eq!(with_read.holds(&[(N, 32), (K, 32)], &extents), Ok(()));
 }
 
-/// A stated tile is taken whole or not at all: a narrower read would split it, and a tile stored
-/// a column at a time holds no tile read a row at a time. Each refusal says where.
 #[test]
 fn a_stated_tile_is_never_split() {
     let extents = [(K, 64), (N, 64)];
@@ -82,8 +74,6 @@ fn a_stated_tile_is_never_split() {
     );
 }
 
-/// The rest of an axis is a count the tensor's size decided, so a read may cut its own tile out
-/// of it: the one division, which has to come out whole.
 #[test]
 fn a_read_cuts_itself_out_of_the_rest_of_an_axis() {
     let rows = StorageLevels::new(&[]).grid(&[N, K]);
@@ -92,9 +82,7 @@ fn a_read_cuts_itself_out_of_the_rest_of_an_axis() {
     assert!(rows.holds(&[(N, 3)], &extents).is_err());
 }
 
-/// NVFP4 values stored for a word of eight along `K` and a four-word read of two words along `K`
-/// by two columns: the word and the two-dimensional read are whole stated tiles, and a read
-/// that would run along `K` past its two words is refused.
+/// NVFP4: a word of eight along `K` and a two-by-two-word read are whole stated tiles.
 #[test]
 fn a_word_and_a_two_dimensional_read_are_whole_tiles() {
     let values = StorageLevels::new(&[(K, 8)])
@@ -107,8 +95,6 @@ fn a_word_and_a_two_dimensional_read_are_whole_tiles() {
     assert!(values.holds(&[(K, 32)], &extents).is_err());
 }
 
-/// A grid ordered `K` first puts the next tile along `K` right after this one: the buffer keeps
-/// the dims cubecl lists and only the strides move.
 #[test]
 fn a_k_first_grid_moves_the_strides_not_the_dims() {
     let storage = StorageLevels::new(&[(N, 16), (K, 32)]).grid(&[K, N]);
@@ -120,8 +106,6 @@ fn a_k_first_grid_moves_the_strides_not_the_dims() {
     );
 }
 
-/// Writing is where a statement meets the tensor's extents, and the one place it can fail to
-/// fit: tiles that do not close an axis, or an order that does not name each axis once.
 #[test]
 fn a_statement_that_does_not_fit_the_tensor_is_refused_when_written() {
     let eight_rows = StorageLevels::new(&[(K, 8)]).grid(&[K, N]);
@@ -140,8 +124,6 @@ fn a_statement_that_does_not_fit_the_tensor_is_refused_when_written() {
     ));
 }
 
-/// A tile's piece of one holds nothing: a read as wide as a tile's row leaves nothing for the
-/// next piece along that axis, and the statement reads as the one without it.
 #[test]
 fn a_piece_of_one_is_no_piece() {
     assert_eq!(
@@ -152,9 +134,6 @@ fn a_piece_of_one_is_no_piece() {
     );
 }
 
-/// A window is one run with one stride per axis inside every tile whose axes each sit in one
-/// piece of memory: a stored read fuses into the tile it starts, a grid ordered down `K` runs the
-/// tile down `K` with it, and pieces that interleave the axes stop the run where an axis returns.
 #[test]
 fn a_window_is_one_run_inside_the_tiles_whose_axes_do_not_interleave() {
     let with_read = StorageLevels::new(&[(N, 4)])

@@ -1,20 +1,11 @@
-//! How many physical fragments each of an operand's logical axes is split across: the whole
-//! description of storage tiling, and the order it lays a buffer's physical axes out in.
+//! How many physical fragments each of an operand's logical axes is split across.
 
 use cubecl::zspace::{SmallVec, Tiling};
 
 use crate::{Axis, Space};
 
-/// How many physical fragments each logical axis is split across, in the operand's own axis order.
-/// One fragment is an untiled axis; `n` make a coordinate along it an `n`-digit mixed radix number
-/// (`Projection::digit`); the radices are read off `physical_shape`.
-///
-/// The physical order this induces is level-major, coarsest first: every axis contributes its
-/// level-0 fragment, then every axis still deep enough its level-1 fragment, down to the tile
-/// fragments. Untiled leading axes over a uniformly tiled block give `[pre…, grid…, tile…]`.
-///
-/// Per-axis counts rather than a start/depth pair, so a buffer whose axes are tiled to different
-/// depths needs no new shape of description.
+/// How many physical fragments each logical axis is split across, in the operand's axis order.
+/// The physical order is level-major, coarsest first.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct StorageTiling {
     fragments: SmallVec<[usize; Space::MAX_RANK]>,
@@ -26,8 +17,7 @@ impl StorageTiling {
         StorageTiling::per_axis(&vec![levels + 1; rank])
     }
 
-    /// Axes from `start_axis` on split `levels + 1` ways, the ones before it untiled: a buffer
-    /// carrying batch (or otherwise passthrough) axes ahead of its tiled block.
+    /// Axes from `start_axis` on split `levels + 1` ways, the ones before it untiled.
     pub fn suffix(rank: usize, start_axis: usize, levels: usize) -> Self {
         assert!(
             start_axis <= rank,
@@ -41,13 +31,7 @@ impl StorageTiling {
     }
 
     /// The tiling a tensor's metadata states, over the `subspace_len` inner axes of a buffer of
-    /// `physical_rank` dims: where a stored [`Tiling`] becomes a [`StorageTiling`]. Metadata covers
-    /// every dim; this the subspace only: [`Arg::axes`](crate::Arg::axes) handles batch dims.
-    ///
-    /// # Panics
-    ///
-    /// When the tiling does not fit the rank, when the buffer holds fewer logical dims than the
-    /// subspace names, or when it tiles a batch dim, which the block order cannot express.
+    /// `physical_rank` dims. Panics if it does not fit or tiles a batch dim.
     pub fn stored(tiling: Tiling, subspace_len: usize, physical_rank: usize) -> Self {
         let logical_rank = tiling
             .logical_rank(physical_rank)
@@ -87,15 +71,12 @@ impl StorageTiling {
         self.fragments[i]
     }
 
-    /// The deepest axis's fragment count, which is how many levels the physical order runs over.
-    /// A *count*, not a depth: an untiled axis carries one fragment, so this is the `levels + 1`
-    /// the rest of the crate spells out, never `levels` itself.
+    /// The deepest axis's fragment count: how many levels the physical order runs over.
     pub(crate) fn max_fragments(&self) -> usize {
         self.fragments.iter().copied().max().unwrap_or(0)
     }
 
-    /// This tiling as a buffer of `rank` dims records it: the dims ahead of its own axes stored
-    /// plain, one piece each.
+    /// This tiling over a buffer of `rank` dims, the extra leading dims untiled.
     pub(crate) fn over_rank(&self, rank: usize) -> Tiling {
         let mut fragments = vec![1; rank - self.physical_rank()];
         fragments.extend(self.fragments.iter().copied());
@@ -112,11 +93,7 @@ impl StorageTiling {
         self.fragments.iter().any(|&n| n > 1)
     }
 
-    /// The physical axis labels this tiling induces over `axes`, in buffer order: the level-major
-    /// emission itself, one entry per physical axis, a tiled axis appearing once per fragment.
-    ///
-    /// The one place the order is defined: [`Projection::tiled`](crate::Projection::tiled) and
-    /// the labelling of a binding's dims shares it.
+    /// The physical axis labels this tiling induces over `axes`, in level-major buffer order.
     pub fn order(&self, axes: &[Axis]) -> Vec<Axis> {
         assert_eq!(
             self.rank(),
@@ -144,8 +121,6 @@ mod tests {
     const B: Axis = Axis(1);
     const R: Axis = Axis(2);
 
-    /// The uniform and suffix tilings are the two the engine builds today; both are special cases
-    /// of the per-axis counts.
     #[test]
     fn shorthands_agree_with_explicit_counts() {
         assert_eq!(
@@ -167,9 +142,6 @@ mod tests {
         );
     }
 
-    /// The level-major emission: every axis contributes its coarsest fragment, then every axis
-    /// still deep enough contributes the next, so an untiled axis drops out after level 0 and a
-    /// deeper axis appears alone at the finest level.
     #[test]
     fn order_emits_level_major_coarsest_first() {
         assert_eq!(StorageTiling::uniform(2, 0).order(&[A, B]), vec![A, B]);

@@ -2,17 +2,14 @@ use cubecl::prelude::*;
 
 use super::{Reads, Recipe, RecipeCoords, RecipeExpand};
 
-/// Pointwise sum of two recipes: `(A + B)(coords) = A(coords) + B(coords)`. Composing
-/// [`AffineCoordinate`](super::AffineCoordinate) terms through it is how a recipe reads more than
-/// one axis, `c0 + c1 * coord[a1] + c2 * coord[a2]` being a sum of two affine terms.
+/// Pointwise sum of two recipes: `(A + B)(coords) = A(coords) + B(coords)`.
 #[derive(CubeType, Clone)]
 pub struct Sum<A: CubeType, B: CubeType> {
     pub lhs: A,
     pub rhs: B,
 }
 
-/// Construct a [`Sum`]. `#[cube]` cannot parse a two-parameter generic in a struct literal, which
-/// this sidesteps; only the literal is affected, the type still spells out in a turbofish.
+/// Construct a [`Sum`].
 #[cube]
 pub fn sum_of<A: CubeType, B: CubeType>(lhs: A, rhs: B) -> Sum<A, B> {
     Sum::<A, B> { lhs, rhs }

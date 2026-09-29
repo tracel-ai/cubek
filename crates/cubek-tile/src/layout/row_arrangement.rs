@@ -1,34 +1,24 @@
-//! Where a stage keeps each line of a block row ([`RowArrangement`]): the form [`RowChunks`]
-//! resolves to once the stage knows its extents and its line.
+//! Where a stage keeps each line of a block row ([`RowArrangement`]).
 
 use crate::*;
 
-/// Bytes one physical line of a buffer holds: what a stage's block rows are placed by, which is
-/// not its vector size once a packed line stores several values a word.
+/// Bytes one physical line of a buffer holds.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct LineBytes(pub(crate) usize);
 
-/// Where a stage keeps each line of its innermost block's rows: what a [`RowChunks`] request
-/// resolves to for a stage's physical extents and line size, and what every read and fill of the
-/// stage addresses through.
+/// Where a stage keeps each line of its innermost block's rows, resolved from [`RowChunks`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum RowArrangement {
-    /// Each row one run, the next right after it: line `i` of the stage sits at offset `i`. Every
-    /// buffer that is not a stage asking otherwise, and a stage whose rows are one chunk each,
-    /// which already start on distinct banks.
+    /// Each row one run, the next right after it: line `i` sits at offset `i`.
     InOrder,
     /// In order, each row's chunks permuted ([`ChunkSwizzle`]).
     Swizzled(ChunkSwizzle),
-    /// Each row followed by `lines` lines nothing reads: one chunk
-    /// ([`RowChunks::CHUNK_BYTES`]), or one line where a line is wider, so a row starts that much
-    /// further round the banks than the row before it. Only the stage's strides and its size
-    /// change: a reader that addresses rows by a stride reads it as it reads one in order.
+    /// Each row followed by `lines` unread lines, so each row starts further round the banks.
     Padded { lines: usize },
 }
 
 impl RowArrangement {
-    /// Where the rows of a stage whose physical line extents are `extents` (the last two its
-    /// innermost block's rows and a row's lines), each line `line` long, are kept under `chunks`.
+    /// Resolves `chunks` for a stage whose last two line extents are block rows and row lines.
     pub(crate) fn new(chunks: RowChunks, extents: &[usize], line: LineBytes) -> Self {
         let row_bytes = extents.last().copied().unwrap_or(0) * line.0;
         let one_chunk = row_bytes <= RowChunks::CHUNK_BYTES.max(line.0);
@@ -44,8 +34,7 @@ impl RowArrangement {
         }
     }
 
-    /// Whether a row is followed by padding, so line `i` of the stage no longer sits at offset
-    /// `i` and a fill writes it at its pitched offset ([`BufferLayout::line_offset`]).
+    /// Whether a row is followed by padding, so line `i` is not at offset `i`.
     pub(crate) fn is_pitched(&self) -> bool {
         match self {
             Self::InOrder | Self::Swizzled(_) => false,
@@ -53,8 +42,7 @@ impl RowArrangement {
         }
     }
 
-    /// Whether a row is one run whose next row sits a stride further on: what a reader that
-    /// addresses rows by a pointer and a stride (`cmma`, a raw window) needs.
+    /// Whether each row is one run a stride after the previous one.
     pub(crate) fn rows_are_runs(&self) -> bool {
         match self {
             Self::InOrder | Self::Padded { .. } => true,
@@ -62,12 +50,7 @@ impl RowArrangement {
         }
     }
 
-    /// Refuses a stage whose rows are not in order to `reader`, which takes the stage as one dense
-    /// run of rows (a TMA box, a window addressed as one run); `why` says what it needs.
-    ///
-    /// # Panics
-    ///
-    /// Where the rows are swizzled or padded.
+    /// Panics unless the rows are in order; `reader` and `why` go in the message.
     pub(crate) fn assert_in_order(&self, reader: &str, why: &str) {
         assert!(
             *self == Self::InOrder,
@@ -75,12 +58,7 @@ impl RowArrangement {
         );
     }
 
-    /// Refuses a stage whose rows are not runs a stride apart to `reader`, which addresses rows
-    /// by a pointer and a stride (`cmma`, a raw window).
-    ///
-    /// # Panics
-    ///
-    /// Where the rows are swizzled.
+    /// Panics if the rows are swizzled; `reader` goes in the message.
     pub(crate) fn assert_rows_are_runs(&self, reader: &str) {
         assert!(
             self.rows_are_runs(),
@@ -98,8 +76,7 @@ impl RowArrangement {
         }
     }
 
-    /// The swizzle that moves the digits of physical axis `axis`, where one does: a swizzled
-    /// stage's line axis.
+    /// The swizzle moving physical axis `axis`'s digits, if any.
     pub(crate) fn swizzle_along(&self, axis: usize) -> Option<ChunkSwizzle> {
         match self {
             Self::Swizzled(swizzle) if swizzle.line_axis() == axis => Some(*swizzle),
@@ -120,7 +97,6 @@ mod tests {
         RowArrangement::new(RowChunks::Padded, &[16, 4], LineBytes(16))
     }
 
-    /// A TMA box and a window read as one run take rows in order only.
     #[test]
     #[should_panic(expected = "stage it RowChunks::InOrder")]
     fn a_dense_reader_refuses_a_swizzled_stage() {
@@ -134,8 +110,6 @@ mod tests {
         padded().assert_in_order("reader", "why");
     }
 
-    /// A fragment API reading rows off a pointer and a stride takes a padded row, never a
-    /// swizzled one.
     #[test]
     #[should_panic(expected = "a swizzled stage keeps a row's chunks out of order")]
     fn a_fragment_api_refuses_a_swizzled_stage() {
@@ -144,9 +118,6 @@ mod tests {
         swizzled().assert_rows_are_runs("cmma");
     }
 
-    /// Rows of four 16-byte lines: kept in order, swizzled, or padded by one line; a row of one
-    /// line is kept in order whatever was asked, a narrow line pads by a whole chunk of them, and
-    /// a line wider than a chunk pads by one line.
     #[test]
     fn a_request_resolves_against_the_rows_it_lays_down() {
         let extents = [2, 16, 4];

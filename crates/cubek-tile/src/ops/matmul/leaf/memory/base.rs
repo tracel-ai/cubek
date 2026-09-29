@@ -1,5 +1,4 @@
-//! The contraction nest's entry point: settle how many contracted values a step consumes, then
-//! route to the 2-D or the N-D nest.
+//! The contraction nest's entry point: routes to the 2-D or the N-D nest.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -9,16 +8,7 @@ use super::gather;
 use super::shape::ContractShape;
 use crate::*;
 
-/// Run the register instruction over each batch matrix, reading operands through
-/// [`matrix_packed`](Tile::matrix_packed). Each factor resolves its own
-/// [`Packing`], so neither side constrains the other's, and each carries its own scales.
-///
-/// The 2-D nest reads each operand as a batch matrix, which fits only when one axis is
-/// contracted *and* a logical coordinate is a physical one; otherwise the N-D nest, so a
-/// single-axis stencil is a gather as much as a two-axis reduce is.
-///
-/// A scaled factor takes the 2-D nest alone: the N-D nest reads through compacted gather
-/// windows, where a step has no single scalar `k` to address a scale with.
+/// Run the register instruction over each batch matrix. A scaled factor requires the 2-D nest.
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory<E>,
@@ -47,9 +37,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         rw,
         aw
     ));
-    // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
-    // several contracted axes still form one `k` edge when the operand carries them as one run,
-    // which is what a partitioned axis is.
+    // Several contracted axes still form one `k` edge when an operand carries them as one run.
     let shape = comptime!(ContractShape::new(
         &lhs.place.space,
         &rhs.place.space,
@@ -86,16 +74,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
 }
 
 /// How many contracted values one step consumes, reconciled across both operands and the
-/// accumulator: one where the rhs lines along the accumulator, its whole line where it lines
-/// along the contraction, so a block's lines are then partials of one cell.
-///
-/// Asked per operand ([`Space::contracted_per_step`]) because the answer differs: an lhs lined
-/// along the contracted axis folds, an rhs lined along the accumulator's innermost axis holds
-/// cells that must stay apart.
-///
-/// Both must serve the same count, and the block's units mean one axis, so a folded step needs a
-/// scalar-contracted_per_step accumulator. Settled once per block, whether the memory leaf's or
-/// opened ahead of the walk ([`Tile::block_accumulator`]).
+/// accumulator.
 pub(crate) fn contracted_per_step(
     lhs: &Space,
     rhs: &Space,
@@ -158,23 +137,21 @@ mod tests {
         (pick(lhs), pick(rhs), pick(&[M, N]))
     }
 
-    /// An rhs lined along the accumulator holds cells that must stay apart, whatever the lhs's
-    /// line width.
+    /// An rhs lined along the accumulator serves one value a step.
     #[test]
     fn an_rhs_lined_along_the_accumulator_serves_one_value_a_step() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
         assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 2, 2), 1);
     }
 
-    /// Both operands lined along the contracted axis: the units are partials of one cell.
+    /// Both operands lined along the contracted axis serve a line.
     #[test]
     fn both_operands_lined_along_the_contracted_axis_serve_a_line() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
         assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
     }
 
-    /// A dynamic contracted extent is a launch's, which serves the operands in whole lines of it,
-    /// so the fold holds without a size to divide.
+    /// A dynamic contracted axis serves a line.
     #[test]
     fn a_dynamic_contracted_axis_serves_a_line() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
@@ -182,7 +159,7 @@ mod tests {
         assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
     }
 
-    /// A width the contracted extent does not divide would leave a masked tail.
+    /// A width that does not divide the contracted extent is refused.
     #[test]
     #[should_panic(expected = "served in whole lines")]
     fn a_width_that_misdivides_the_contracted_axis_is_refused() {
@@ -190,7 +167,7 @@ mod tests {
         contracted_per_step(&lhs, &rhs, &acc, 3, 3, 1);
     }
 
-    /// A lined rhs has nothing to fold against when the lhs serves one value a step.
+    /// A folded step needs both operands lined.
     #[test]
     #[should_panic(expected = "line the lhs along")]
     fn a_folded_step_needs_both_operands_lined() {
@@ -198,7 +175,7 @@ mod tests {
         contracted_per_step(&lhs, &rhs, &acc, 1, 4, 1);
     }
 
-    /// The block's units mean one axis, and a lined accumulator has already claimed them.
+    /// A folded step needs a scalar accumulator.
     #[test]
     #[should_panic(expected = "cannot also be served")]
     fn a_folded_step_needs_a_scalar_accumulator() {
@@ -206,7 +183,7 @@ mod tests {
         contracted_per_step(&lhs, &rhs, &acc, 4, 4, 2);
     }
 
-    /// The rhs and the accumulator share their line, so they share its width.
+    /// The rhs shares the accumulator's width.
     #[test]
     #[should_panic(expected = "served at one width")]
     fn an_rhs_lined_along_the_accumulator_shares_its_width() {
@@ -215,20 +192,10 @@ mod tests {
     }
 }
 
-/// The coordinate `operand` is read at, one entry per axis of its own space: an axis present in
-/// `acc` takes its coordinate from `acc_coords`, a contracted one from `reduce_coords`. An axis in
-/// neither is a routed one, which [`Space::contracted`] leaves out, so its one value sits at zero.
-///
-/// `acc_coords` is indexed by `acc.position(axis)`: one entry per axis of the accumulator's
-/// *space*, in that order, not per edge of the matrix a caller reads it as. A caller holding a
-/// `(row, col)` cell owes the unravel over each edge's axes before it gets here.
-///
-/// `width` is the operand's line width; only its innermost axis is addressed in lines, so it alone
-/// divides by it.
-///
-/// `scale_acc_branch` says whether that division also applies when the fastest axis falls in the
-/// acc branch: raw element `acc_coords` (reduce's cell) need it; a coordinate already a line index
-/// (mma's `col`, the gather leaf's `nr`-loop step) must pass `false` or is divided twice.
+/// The coordinate `operand` is read at, one entry per axis of its space: from `acc_coords`
+/// (indexed by `acc.position(axis)`), from `reduce_coords`, or zero for a routed axis.
+/// The innermost axis is divided by `width`; pass `scale_acc_branch = false` when an acc
+/// coordinate is already a line index.
 #[cube]
 pub(crate) fn resolve_nd_coords(
     #[comptime] operand: Space,

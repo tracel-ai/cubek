@@ -1,31 +1,12 @@
 //! Writing a [`Projection`] one buffer dim at a time.
 //!
-//! [`Projection::new`] takes two parallel lists, logical axes and one map per physical dim, that
-//! say nothing of how they relate. This states the same value as **one line per buffer dim, in
-//! buffer order, each saying what that dim's index is computed from**; the axis list falls out.
-//!
 //! ```text
 //! Projection::dims()
 //!     .dim(B)                                        // dim 0 = b
 //!     .dim(stencil(&[(OH, stride), (RH, dilation)]).pad(pad)) // dim 1 = oh*stride+rh*dilation-pad
-//!     .dim(stencil(&[(OW, stride), (RW, dilation)]).pad(pad))   // dim 2
-//!     .dim(C)                                        // dim 3 = c
+//!     .dim(C)                                        // dim 2 = c
 //!     .build()
 //! ```
-//!
-//! Three kinds of dim, and the argument says which:
-//!
-//! * an [`Axis`] — the dim *is* that coordinate;
-//!
-//! * [`split`] — several axes cut one dim into blocks, `kb·block + ki`, and cannot land on the
-//!   same cell. Stated in **extents**, coarsest first, so no coefficient is computed by hand;
-//!
-//! * [`stencil`] — several axes slide over one dim, `oh·stride + rh·dilation`, and may land on
-//!   the same cell. Stated in coefficients, because a stride and a dilation *are* the
-//!   coefficients, with [`pad`](StencilDim::pad) for the constant term.
-//!
-//! A storage-tiled axis is the plain axis repeated, coarsest fragment first; the radix each
-//! fragment steps by is read off the buffer at use time, not stated here.
 
 use cubecl::zspace::SmallVec;
 
@@ -33,8 +14,7 @@ use cubecl::zspace::SmallVec;
 use crate::Composition;
 use crate::{Axis, PhysicalAxisMap, Projection, Space};
 
-/// A [`Projection`] under construction: the dims stated so far, and any axis the operand is
-/// defined over but addresses with no dim.
+/// A [`Projection`] under construction.
 #[derive(Clone, Debug)]
 pub struct DimsBuilder {
     physical: SmallVec<[PhysicalAxisMap; Space::MAX_RANK]>,
@@ -42,7 +22,7 @@ pub struct DimsBuilder {
 }
 
 impl DimsBuilder {
-    /// No dim stated yet: what [`Projection::dims`] starts from.
+    /// No dim stated yet.
     pub(crate) fn new() -> Self {
         DimsBuilder {
             physical: SmallVec::new(),
@@ -56,24 +36,14 @@ impl DimsBuilder {
         self
     }
 
-    /// An axis this operand is defined over and constant along — addressed by no dim. One scale
-    /// covering a block of the contraction is this, and so is a grouped-query cache, which spans
-    /// the query group without distinguishing its members.
+    /// An axis this operand is defined over but addressed by no dim.
     pub fn spanning(mut self, axis: Axis) -> Self {
         self.spanning.push(axis);
         self
     }
 
-    /// The projection, with its logical axes derived from the dims.
-    ///
-    /// [`Projection::validate`]'s order: the innermost dim's axes come **last**, since that dim is
-    /// addressed in vector lines along the operand's last axis. Others follow first mention, a
-    /// [`spanning`](Self::spanning) axis after the addressed ones but before the innermost dim's.
-    ///
-    /// # Panics
-    ///
-    /// On no dims at all, or on an axis that is both [`spanning`](Self::spanning) and addressed
-    /// by a dim — the two are contradictory claims about the same coordinate.
+    /// The projection, its logical axes derived from the dims, the innermost dim's last.
+    /// Panics on no dims, or on an axis both [`spanning`](Self::spanning) and addressed.
     pub fn build(self) -> Projection {
         assert!(
             !self.physical.is_empty(),
@@ -99,9 +69,7 @@ impl DimsBuilder {
             );
             mention(axis, &mut axes);
         }
-        // Last, so the line runs along it. A term already mentioned by an outer dim is a
-        // storage-tiled axis whose finest fragment this is; it keeps its earlier position, and
-        // `validate` accepts that because such a projection is invertible.
+        // Last, so the line runs along it; a storage-tiled axis keeps its earlier position.
         for term in innermost.terms() {
             mention(term.axis, &mut axes);
         }
@@ -116,17 +84,8 @@ impl From<Axis> for PhysicalAxisMap {
     }
 }
 
-/// One dim cut into blocks by several axes, stated in **extents**, coarsest first:
-/// `split(&[(KB, blocks), (KI, block)])` is `kb·block + ki`.
-///
-/// The coefficients are derived, each axis stepping by the product of the extents finer than it, so
-/// the caller states sizes it knows and never a stride-within-a-dim, and no two positions can share
-/// a cell: [`Composition::Disjoint`](crate::layout::Composition::Disjoint) by construction, keeping
-/// every window dense.
-///
-/// # Panics
-///
-/// On no terms, or on an extent of zero.
+/// One dim cut into blocks, stated in extents, coarsest first:
+/// `split(&[(KB, blocks), (KI, block)])` is `kb·block + ki`. Panics on no terms or extent 0.
 pub fn split(extents: &[(Axis, usize)]) -> PhysicalAxisMap {
     assert!(
         !extents.is_empty(),
@@ -143,15 +102,7 @@ pub fn split(extents: &[(Axis, usize)]) -> PhysicalAxisMap {
     PhysicalAxisMap::disjoint(&terms)
 }
 
-/// One dim several axes slide over, stated in **coefficients**:
-/// `stencil(&[(OH, stride), (RH, dilation)])` is `oh·stride + rh·dilation`, and
-/// [`.pad(p)`](StencilDim::pad) subtracts the padding.
-///
-/// Consecutive windows may overlap — that is what a receptive field is — so this is
-/// [`Composition::Overlapping`], and the aliasing checks leave it alone.
-///
-/// Test-only: no launch states a stencil yet; the projection's overlapping reading is checked
-/// through it.
+/// One dim several axes slide over, in coefficients: `oh·stride + rh·dilation`.
 #[cfg(test)]
 pub(crate) fn stencil(coefficients: &[(Axis, usize)]) -> StencilDim {
     StencilDim {
@@ -160,8 +111,7 @@ pub(crate) fn stencil(coefficients: &[(Axis, usize)]) -> StencilDim {
     }
 }
 
-/// A [`stencil`] before its padding is stated. Converts into the dim's map directly, at zero
-/// padding, or after [`pad`](Self::pad).
+/// A [`stencil`] before its padding is stated.
 #[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct StencilDim {
@@ -171,8 +121,7 @@ pub(crate) struct StencilDim {
 
 #[cfg(test)]
 impl StencilDim {
-    /// How many cells before the buffer's first this window's origin sits: the padding, which
-    /// a boundary guard reads as zero.
+    /// How many cells before the buffer's first the window's origin sits.
     pub(crate) fn pad(mut self, pad: usize) -> Self {
         self.pad = pad;
         self
@@ -210,8 +159,7 @@ mod tests {
     const C: Axis = Axis(11);
     const M: Axis = Axis(12);
 
-    /// One dim's index for a coordinate: `Σ axis·coefficient + offset` — the projection,
-    /// evaluated, so each case below checks arithmetic rather than describing it.
+    /// One dim's index for a coordinate: `Σ axis·coefficient + offset`.
     fn index(p: &Projection, dim: usize, coordinate: &[(Axis, usize)]) -> isize {
         let sum: usize = coordinate
             .iter()
@@ -230,8 +178,7 @@ mod tests {
         assert_eq!(p, Projection::direct(&[K, N]));
     }
 
-    /// `kb·32 + ki`, stated as extents: 4 blocks of 32. The coefficients are derived, and
-    /// `k = 100` lands at block 3, position 4.
+    /// `kb·32 + ki` as 4 blocks of 32: `k = 100` lands at block 3, position 4.
     #[test]
     fn split_derives_the_coefficients_from_extents() {
         let p = Projection::dims()
@@ -243,12 +190,9 @@ mod tests {
         assert_eq!(p.scale(1, KI), 1);
         assert_eq!(index(&p, 1, &[(KB, 3), (KI, 4)]), 100);
         assert_eq!(p.composition(), Composition::Disjoint);
-        // The innermost dim's axes are last, its finest term last of all.
         assert_eq!(p.logical_axes(), &[N, KB, KI]);
     }
 
-    /// A three-way split multiplies through: `(a, b, c)` over extents `(2, 3, 5)` steps by
-    /// `15, 5, 1`.
     #[test]
     fn split_composes_more_than_two_axes() {
         let p = Projection::dims()
@@ -260,8 +204,7 @@ mod tests {
         assert_eq!(index(&p, 0, &[(B, 1), (H, 2), (D, 4)]), 29);
     }
 
-    /// Split-merge partials, group-major: `g·splits + t`, so a group member's slices are
-    /// adjacent. The other choice is a one-line change and a different kernel.
+    /// Split-merge partials, group-major: `g·splits + t`.
     #[test]
     fn a_partition_in_the_middle_keeps_the_innermost_last() {
         let (group, splits) = (4, 8);
@@ -293,8 +236,7 @@ mod tests {
         assert_eq!(p.logical_axes(), &[B, OH, RH, C]);
     }
 
-    /// A grouped-query cache: `g` is in the coordinate and in no dim, and it must not take the
-    /// line position — the innermost dim's axis stays last.
+    /// A grouped-query cache: `g` is addressed by no dim and stays before the innermost axis.
     #[test]
     fn a_spanning_axis_sits_before_the_innermost() {
         let p = Projection::dims()
@@ -307,13 +249,9 @@ mod tests {
 
         assert!(!p.addresses(G));
         assert_eq!(p.logical_axes(), &[B, H, T, G, D]);
-        // The rule `validate` enforces, checked here so a builder cannot produce a projection
-        // the bind refuses.
         p.validate(4);
     }
 
-    /// Storage tiling is the plain axis repeated, coarsest fragment first. The logical list
-    /// keeps each axis once, at its first mention.
     #[test]
     fn a_repeated_axis_is_storage_tiled() {
         let p = Projection::dims()

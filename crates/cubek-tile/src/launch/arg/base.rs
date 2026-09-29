@@ -1,6 +1,4 @@
-//! The [`Arg`] builder: the one place a launched tensor becomes an operand. Every client binds
-//! its operands through it, so the layout, broadcast and bounds-check derivation lives here and
-//! nowhere else.
+//! The [`Arg`] builder, which turns a launched tensor into an operand.
 
 use core::marker::PhantomData;
 
@@ -15,48 +13,39 @@ use crate::{
 
 /// Typestate marker: the operand's axes are not yet stated.
 pub struct Unlabelled;
-/// Typestate marker: the operand's axes are stated, by label or by a gathering projection.
+/// Typestate marker: the operand's axes are stated.
 pub struct Labelled;
 
 /// Whether an operand's reads are bounds-checked, and how.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BoundaryPolicy {
-    /// Checked with [`Boundary::Zero`] on the axes that can leave the buffer: the ones the
-    /// partitioning overhangs, or every axis of a mapping that may underflow.
+    /// Checked with [`Boundary::Zero`] on the axes that can leave the buffer.
     #[default]
     Derived,
-    /// Unchecked on every axis: the launch proves every read in bounds.
+    /// Unchecked; the caller guarantees every read is in bounds.
     Unchecked,
     /// Checked with this boundary on every axis that is not provably in bounds.
     Every(Boundary),
 }
 
-/// What the builder accumulates; the typestate lives in the wrapper, not here.
+/// What the builder accumulates.
 struct ArgData<'a> {
     launch: &'a Launcher,
-    /// The tensor this operand is served from, when there is one. `None` for a destination with
-    /// no address: a fused store writes through a call, so the launch has nothing to bind and only
-    /// the comptime half is derived ([`build_spec`](Arg::build_spec)).
+    /// The tensor this operand is served from; `None` for a destination with no address.
     binding: Option<TensorBinding>,
-    /// The operand's physical extents and strides: the source of truth for the whole derivation.
-    /// A bound operand copies them off its binding, an unbound one states them.
     geometry: Geometry,
     axes: &'a [Axis],
     batches: &'a [Axis],
-    /// The operand's own affine mapping, when it states one ([`gathered`](Arg::gathered)); `None`
-    /// derives it from the labelled dims.
+    /// The operand's own affine mapping; `None` derives it from the labelled dims.
     projection: Option<Projection>,
     width: usize,
     boundary: BoundaryPolicy,
     packing: Packing,
-    /// Whether the labelled dims bind in the order they step rather than the order the binding
-    /// names them ([`in_stride_order`](Arg::in_stride_order)).
+    /// Whether the labelled dims bind in stride order ([`in_stride_order`](Arg::in_stride_order)).
     in_stride_order: bool,
 }
 
-/// One operand of a launch, being described: which axes its buffer spans, how wide it is served,
-/// how its edges are checked. Built from [`Launcher::arg`] or [`Launcher::unbound`]; `S` says
-/// whether the axes are stated yet, which is what makes [`build`](Self::build) exist.
+/// One operand of a launch, being described; `S` says whether its axes are stated yet.
 pub struct Arg<'a, S> {
     data: ArgData<'a>,
     _state: PhantomData<S>,
@@ -90,22 +79,14 @@ impl<'a> Arg<'a, Unlabelled> {
         }
     }
 
-    /// The axes the operand's trailing buffer dims carry, `[row, col]` for a matmul operand; the
-    /// leading dims are its [`batches`](Arg::batches). Exclusive with [`gathered`](Self::gathered).
+    /// The axes the operand's trailing buffer dims carry.
     pub fn axes(mut self, axes: &'a [Axis]) -> Arg<'a, Labelled> {
         self.data.axes = axes;
         self.labelled()
     }
 
-    /// An explicit affine [`Projection`] for a gathered operand (a convolution's input, a
-    /// resample's source), from logical axes to buffer dims. Refuses a storage-tiled binding.
-    ///
-    /// Checking follows `may_underflow`; a window off the buffer's
-    /// *tail* is not detected, so a gather that overruns (a rational mapping's last window always
-    /// does) must state [`BoundaryPolicy::Every`].
-    ///
-    /// An axis sharing a physical dim has no extent here, so a `Dynamic` one needs
-    /// another operand to witness it; dynamic scales, divisors and offsets declare a launch bound.
+    /// An explicit affine [`Projection`] for a gathered operand. Overruns past the buffer's tail
+    /// are not detected; a gather that overruns must state [`BoundaryPolicy::Every`].
     pub fn gathered(mut self, projection: Projection) -> Arg<'a, Labelled> {
         self.data.projection = Some(projection);
         self.labelled()
@@ -120,42 +101,31 @@ impl<'a> Arg<'a, Unlabelled> {
 }
 
 impl<'a> Arg<'a, Labelled> {
-    /// The outer (batch) axes in the output's order, right-aligned to this operand's leading
-    /// dims (numpy broadcast): pass the full list, extra leading axes are the ones this operand
-    /// omits, and a size-1 dim drops out. Default none (unbatched).
+    /// The batch axes in the output's order, right-aligned to the leading dims (numpy broadcast).
     pub fn batches(mut self, axes: &'a [Axis]) -> Self {
         self.data.batches = axes;
         self
     }
 
-    /// Bind the labelled dims in the order they step, coarsest first: a transposed view binds as
-    /// the buffer it is (same bytes, no copy), so its unit-strided dim is innermost, serving lines.
-    /// Labels follow dims: `axes(&[K, N])` over `[n, k]` viewed `[k, n]` binds `[N, K]`.
-    ///
-    /// Batch dims stay where they are: a broadcast one strides by zero, and where it sorts says
-    /// nothing about which way the operand's own dims run.
+    /// Bind the labelled dims in the order they step, coarsest first; batch dims stay put.
     pub fn in_stride_order(mut self) -> Self {
         self.data.in_stride_order = true;
         self
     }
 
-    /// Serve the innermost axis in `width`-wide lines (default `1`, scalar). Only valid when that
-    /// axis is contiguous. The kernel's element type carries the width (`Vector<E, V>`).
+    /// Serve the innermost axis in `width`-wide lines; that axis must be contiguous.
     pub fn vectorize(mut self, width: usize) -> Self {
         self.data.width = width;
         self
     }
 
-    /// How this operand's edges are checked. Whatever the policy, the check lands only on the axes
-    /// that can leave the buffer, which is what keeps a vectorized innermost axis unmasked.
+    /// How this operand's edges are checked.
     pub fn boundary(mut self, policy: BoundaryPolicy) -> Self {
         self.data.boundary = policy;
         self
     }
 
-    /// This operand's values are fields of a stored word, `field` wide each. A fact of the values
-    /// alone: the binding's shape and strides count *values*, and this says how many share a word.
-    /// Scales are a second tensor and a second operand; nothing here decodes behind a read.
+    /// This operand's values are `field`-wide fields of a stored word.
     pub fn packed(mut self, field: impl Into<Field>) -> Self {
         self.data.packing = Packing::Packed {
             field: field.into(),
@@ -163,24 +133,13 @@ impl<'a> Arg<'a, Labelled> {
         self
     }
 
-    /// The operand, bound: its tensor argument, its comptime [`TileSpec`] and the served width.
-    ///
-    /// # Panics
-    ///
-    /// With the [`Refusal`] that names what this operand cannot be: a storage tile no level cuts
-    /// to, a width its buffer does not serve, a vector line that is not provably in bounds.
+    /// The operand, bound; panics with the [`Refusal`] if it cannot be.
     pub fn build(self) -> Bound {
         let (bound, _) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
         bound
     }
 
-    /// The untensored half: everything [`build`](Self::build) would derive but the tensor argument
-    /// itself, for a destination with no address (a fused store writes through a call), with the
-    /// geometry the derivation settled on.
-    ///
-    /// # Panics
-    ///
-    /// As [`build`](Self::build).
+    /// [`build`](Self::build) without the tensor argument, for an operand with no address.
     pub fn build_spec(self) -> Unbound {
         let (bound, geometry) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
         Unbound {
@@ -190,16 +149,11 @@ impl<'a> Arg<'a, Labelled> {
         }
     }
 
-    /// The derivation both builds share: settle the operand's [`Projection`] (the labelled dims,
-    /// or the gathered mapping as given), which level its storage tile is the tile of, where the
-    /// bounds-check lands, and whether the buffer serves the width; then mint the [`TileSpec`].
+    /// The derivation both builds share.
     fn realize(self) -> Result<(Bound, Geometry), Refusal> {
         let data = self.data;
         let launch = data.launch;
         let width = data.width;
-        // How the bound tensor says it is stored: the tiling is a fact of the tensor, read off its
-        // binding rather than stated at the launch. An unbound operand (a fused store) has none to
-        // ask; a gathered operand states its mapping and refuses a tiled binding.
         let stored = data.binding.as_ref().map(|b| b.tiling).unwrap_or_default();
         let stated = data.projection.is_some() || stored.is_tiled();
         let (geometry, axes) =
@@ -218,15 +172,11 @@ impl<'a> Arg<'a, Labelled> {
             addressed,
         } = labels;
         projection.validate(width);
-        // The width against the *settled* geometry, the one the kernel re-expresses in lines.
-        // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
-        // destination the negotiation never saw) is gated here: `stride / width` truncates
-        // silently.
+        // A stated width is checked here: `stride / width` would truncate silently.
         let settled = tiling
             .as_ref()
             .map_or(stored, |tiling| tiling.over_rank(geometry.rank()));
         let geometry = geometry.with_tiling(settled);
-        // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
         let labels = projection.dense_labels();
         let served = match labels.last() {
             Some(&axis) => geometry.serves(&[(axis, width)], &labels),
@@ -262,9 +212,7 @@ impl<'a> Arg<'a, Labelled> {
     }
 }
 
-/// The labelled dims in the order the buffer steps them where the caller asked for it, settled
-/// before the tiling and the labelling read them, so both see one order. A stated layout (a
-/// gathered mapping, a storage-tiled binding) already says how it steps and is refused.
+/// The labelled dims in stride order where asked; refused for a stated layout.
 fn stride_ordered(
     geometry: Geometry,
     axes: &[Axis],
@@ -278,12 +226,7 @@ fn stride_ordered(
     }
 }
 
-/// The operand's storage tiling, read off its binding, and what its storage tiles are to the
-/// kernel's levels: the coarsest tile its [storage partitioning](StoragePartitioning) can address
-/// a window inside with one stride per axis, where a level cuts to exactly that tile, makes the
-/// windows below that level [`Contiguous`](Storage::Contiguous); every other window is walked
-/// through the layout. Matched on the labelled axes alone: a batch dim is one physical dim. A
-/// gathered operand (`labelled == false`) states its own mapping and reads no tiling.
+/// The operand's storage tiling and the coarsest level whose tile is one of its storage tiles.
 fn storage_of(
     geometry: &Geometry,
     axes: &[Axis],
@@ -317,9 +260,7 @@ fn storage_of(
     Ok((Some(tiling), Storage::Tiled(level)))
 }
 
-/// The binding as the arg ships it: the settled geometry, whose derivation may have dropped
-/// broadcast batch dims, and its tiling restated over those dims. A `Tiling` counts fragments off
-/// the leading dims, so one counted off a dropped dim claims a layout the arg lacks.
+/// The binding as the arg ships it, its tiling restated over the settled geometry's dims.
 fn settled_tensor(
     mut binding: TensorBinding,
     geometry: &Geometry,
@@ -332,8 +273,7 @@ fn settled_tensor(
     binding.into_tensor_arg()
 }
 
-/// A bound operand: its tensor argument (absent for an operand built over geometry alone), its
-/// comptime [`TileSpec`], and the served width.
+/// A bound operand: its tensor argument, comptime [`TileSpec`] and served width.
 pub struct Bound {
     tensor: Option<TensorArg>,
     /// Served width (values per line); a packed binding is narrower by the packing factor.
@@ -349,23 +289,19 @@ impl Bound {
         TileArgLaunch::new(self.tensor(), spec)
     }
 
-    /// The tensor argument itself, for a launch that binds it under another argument type.
+    /// The tensor argument itself; panics for an operand built over geometry alone.
     pub fn tensor(self) -> TensorArg {
         self.tensor
             .expect("Bound: this operand was built over geometry alone and has no tensor to bind")
     }
 
-    /// The width the binding is typed at: the launch value for the kernel's `Size` generic, while
-    /// [`vector_size`](Self::vector_size) is what the operand *serves*, held by a packed store in
-    /// fewer words. The two agree without packing.
+    /// The width the binding is typed at, narrower than `vector_size` when packed.
     pub fn bound_width(&self) -> usize {
         self.spec.packing.physical(self.vector_size)
     }
 }
 
-/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind: the comptime
-/// [`TileSpec`], the served width, and the geometry a bound `TensorArg` would ship, broadcast dims
-/// dropped; [`GlobalOperand::sink`](crate::GlobalOperand::sink) addresses through it.
+/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind.
 pub struct Unbound {
     pub spec: TileSpec,
     /// Served width (values per line).

@@ -1,6 +1,4 @@
-//! The slots a walk fills ahead of the region that reads them: what a slot holds ([`payload`]),
-//! when each of its operands is filled ([`plan`]), the slot itself ([`slot`]), the one
-//! constructor and fill over them ([`fill`]), and the schedule that drives them ([`base`]).
+//! The slots a walk fills ahead of the region that reads them, and the schedule driving them.
 
 mod base;
 mod fill;

@@ -1,18 +1,12 @@
-//! Host-side load/store method selection for the manual-mma form ([`MmaIo`]) and the
-//! execution configuration of the software instruction ([`RegisterBlock`]).
-//!
-//! Which fragment transport each role uses is a `(device, storage-type)` decision that queries
-//! [`DeviceProperties`], so it is built host-side and carried into the kernel as a comptime
-//! value on the [`Instruction`](crate::Instruction), exactly as the contraction depth `k` is.
+//! Host-side configuration: manual-mma load/store selection ([`MmaIo`]) and the software
+//! instruction's execution config ([`RegisterBlock`]).
 
 use cubecl::{
     cmma::MatrixIdent,
     ir::{DeviceProperties, ElemType},
 };
 
-/// Hardware-capability-driven choice of load/store methods for a manual-mma tile, fixed once per
-/// `(device, operand storage types)` and carried by the manual-mma form
-/// because the fragment readers/writers branch on it.
+/// Device-driven choice of load/store methods for a manual-mma tile.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIo {
     pub lhs_load_method: LoadMethod,
@@ -34,8 +28,7 @@ pub enum StoreMethod {
 }
 
 impl MmaIo {
-    /// Select each role's transport from the device's `ldmatrix`/`stmatrix` support over that
-    /// operand's storage element. A packed storage type never uses the intrinsic paths.
+    /// Select each role's transport from the device's `ldmatrix`/`stmatrix` support.
     pub fn new(
         device_props: &DeviceProperties,
         lhs_stage: ElemType,
@@ -50,8 +43,7 @@ impl MmaIo {
         }
     }
 
-    /// A config forcing the manual path for every role: the universal fallback for a backend that
-    /// exposes the manual mma but no `ldmatrix`/`stmatrix`, or when the props are not on hand.
+    /// A config forcing the manual path for every role.
     pub fn manual() -> Self {
         Self {
             lhs_load_method: LoadMethod::Manual,
@@ -90,27 +82,19 @@ fn store_method(device_props: &DeviceProperties, dtype: ElemType) -> StoreMethod
     }
 }
 
-/// Execution and unrolling configuration for the software instruction. Every
-/// field is stated by the caller: nothing here reads the device, so the same config compiles the
-/// same kernel everywhere.
+/// Execution and unrolling configuration for the software instruction.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct RegisterBlock {
-    /// Scalar register budget for the accumulator block. The leaf inlines `mr × nr` vector
-    /// cells only while they fit in it; wider lines therefore buy fewer cells, not more
-    /// registers. Blocks over budget stay rolled, to avoid spilling.
+    /// Scalar register budget for the accumulator block; blocks over budget stay rolled.
     pub budget: usize,
-    /// Whether to generate a dual-path specialization for masked/edge tiles (fast in-bounds path
-    /// plus checked fallback).
+    /// Whether to generate a fast in-bounds path plus checked fallback for edge tiles.
     pub split_edge: bool,
-    /// Whether to walk K as (line, component) with fixed comptime extracts, rather than as a flat
-    /// scalar walk.
+    /// Whether to walk K as (line, component) rather than as a flat scalar walk.
     pub component_fanout: bool,
 }
 
 impl RegisterBlock {
-    /// A budget with neither specialization turned on. Both are named at the call site by the
-    /// method that turns them on, so a reader never has to open this file to learn what a bare
-    /// `true` in a constructor meant.
+    /// A budget with neither specialization turned on.
     pub const fn new(budget: usize) -> Self {
         Self {
             budget,
@@ -119,8 +103,7 @@ impl RegisterBlock {
         }
     }
 
-    /// Generate the dual-path specialization for masked edge tiles: a fast path that proves its
-    /// reads in bounds once, plus the checked fallback for the instances that straddle an edge.
+    /// Generate the fast in-bounds path plus checked fallback for edge tiles.
     pub const fn split_edge(self) -> Self {
         Self {
             split_edge: true,
@@ -128,7 +111,7 @@ impl RegisterBlock {
         }
     }
 
-    /// Walk `K` as (line, component) with fixed comptime extracts, rather than as a flat scalar walk.
+    /// Walk `K` as (line, component) rather than as a flat scalar walk.
     pub const fn component_fanout(self) -> Self {
         Self {
             component_fanout: true,

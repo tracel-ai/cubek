@@ -1,9 +1,5 @@
 //! The register nest behind [`Tile::reduce_axis`](crate::Tile::reduce_axis): fold an input's
 //! contracted axes into one accumulator cell at a time, under a [`Monoid`].
-//!
-//! The contraction nest's sibling ([`contract`](super::contract)): same seed, walk `kc`, commit
-//! shape over an [`AccumulateView`], with one operand and an elementwise fold instead of a rank-1
-//! outer product. Dispatch by accumulator storage stays with the verb, in `ops/reduce/lower.rs`.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -18,8 +14,7 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
 ) {
-    // The block was built to fold one way and is drained that way; folding it another here would
-    // combine the units under an operator the partials were never built for.
+    // Drain the block the way it was built to fold; the partials fit no other operator.
     comptime!(assert!(
         acc.monoid == monoid,
         "reduce: this accumulator folds under {:?} (stated at `Tile::accumulate`) but is being \
@@ -139,12 +134,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
     }
 }
 
-/// The per-element inner reduction shared by both accumulator backings: fold `in_view` across the
-/// contracted axes into `seed`, for the single accumulator cell at `acc_coords`.
-///
-/// A step consumes [`Space::contracted_per_step`] values: past one the input's line runs along
-/// the fastest contracted axis, so the whole line folds into this one cell ([`element_lines`])
-/// instead of one scalar at a time ([`element_scalars`]).
+/// Fold `in_view` across the contracted axes into `seed` for the cell at `acc_coords`.
 #[cube]
 fn element<Acc: Numeric, In: Numeric, V: Size>(
     in_view: &Masked<'_, Vector<In, V>, CoordsDyn>,
@@ -182,9 +172,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
     }
 }
 
-/// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step
-/// lands on a line start and one read serves `contracted_per_step` folds. The units accumulate in
-/// parallel and collapse through [`Monoid::reduce`] once, after the walk.
+/// [`element`]'s line path: one read serves `contracted_per_step` folds.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
@@ -212,7 +200,6 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
             true,
         );
 
-        // Same masking as the scalar path, a whole line at a time.
         let in_vec = match comptime!(monoid) {
             Monoid::Sum => in_view.read(in_coords),
             Monoid::Prod | Monoid::Max | Monoid::Min => {
@@ -261,8 +248,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
             true,
         );
 
-        // Memory reads already return Sum's zero identity out of bounds; procedural reads are
-        // always valid. The others need the identity read in explicitly.
+        // Memory reads return Sum's identity out of bounds; other monoids need it read in.
         let in_vec = match comptime!(monoid) {
             Monoid::Sum => in_view.read(in_coords),
             Monoid::Prod | Monoid::Max | Monoid::Min => {
@@ -295,9 +281,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
     curr_val
 }
 
-/// Comptime bookkeeping shared by both accumulator backings: which axes of `in_space` are
-/// contracted against `acc_space`, their extents, the total contracted size (`kc`), and the
-/// accumulator's own extents/total cell count.
+/// Comptime bookkeeping: the axes of `in_space` contracted against `acc_space`, and extents.
 #[derive(Clone)]
 struct ReduceLayout {
     reduce_axes: Vec<Axis>,
@@ -329,8 +313,7 @@ impl ReduceLayout {
     }
 }
 
-/// The component within the vectorized line for the input's fastest (innermost) axis, whether it is
-/// contracted (in `reduce_axes`) or surviving (in `acc_space`).
+/// The line component for the input's innermost axis, contracted or surviving.
 #[cube]
 fn resolve_reduce_component(
     #[comptime] in_space: Space,

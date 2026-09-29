@@ -1,5 +1,4 @@
-//! The straight-line transport: the destination filled in its own physical order, whole lines,
-//! decoding the source once per line, the cube's units taking the lines cyclically between them.
+//! The straight transport: the destination filled in its own physical order, whole lines.
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
@@ -8,21 +7,14 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Memory<T> {
-    /// The straight-line half of [`fill_from`](Memory::fill_from): the destination filled in its
-    /// own physical order, whole `Vector<I2, WP2>` lines, decoding the source once per line. `I2` /
-    /// `WP2`: the *storage* element and width, `T` for a plain copy, `u32`/`i8` for a quant stage.
-    ///
-    /// Both sides are physical boxes of the same rank here, so the fill copies and never gathers;
-    /// a gathered pair differs only by the compaction's step. The [`Window`] sits below either way,
-    /// so a cell past the source's bound masks to zero once, at fill, not at every read.
+    /// Straight half of [`fill_from`](Memory::fill_from); `I2`/`WP2` are the storage element and
+    /// width.
     pub(crate) fn fill_straight<I2: Numeric, WP2: Size>(
         &mut self,
         src: &Memory<T>,
         #[comptime] space: Space,
     ) {
-        // A gathered stage owns mutable map registers alongside its bytes. Store the source
-        // window's coefficients and phase into those registers so bytes and interpretation are
-        // one slot value. Direct stages carry no runtime map state.
+        // A gathered stage carries the source window's map in its own registers.
         if comptime!(self.projection.is_rational() || self.projection.has_dynamic_scales()) {
             self.map.store_from(&src.map);
         }
@@ -35,8 +27,7 @@ impl<T: Numeric> Memory<T> {
             w,
             &space
         ));
-        // Empty exactly when the window has no holes to skip, so the fill reads the source box
-        // straight through and this layer is never built.
+        // Empty when the window has no holes to skip.
         let steps = comptime!(match &compaction {
             Some(c) if !c.is_dense() => c.steps().to_vec(),
             _ => Vec::new(),
@@ -47,14 +38,10 @@ impl<T: Numeric> Memory<T> {
             .product(comptime!((0..plen).collect::<Vec<_>>()))
             .cast::<usize>();
         let layout = self.layout.clone();
-        // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
-        // the same agreement between the two boxes.
         let extent = comptime!(fill_extent(&space, sw, w, check));
         let src_rank = comptime!(src.projection.physical_rank());
         let padding = comptime!((sw != w).then(|| {
-            // `source_component` swaps the innermost entry of a destination coordinate to address
-            // the source, which only lands on a source cell when the two boxes have the same rank.
-            // A storage-tiled stage splits each axis into a grid and a block digit and does not.
+            // `source_component` only addresses the source when both boxes share a rank.
             assert!(
                 src_rank == plen,
                 "Memory::fill_straight: a padded stage is a rank-{plen} box filled from a \
@@ -66,17 +53,11 @@ impl<T: Numeric> Memory<T> {
                 rank: src_rank,
             }
         }));
-        // A comptime worker count emits the tasks straight-line: a rolled loop's runtime `CUBE_DIM`
-        // stride blocks unrolling, and on Metal's in-order pipe each store then stalls the next
-        // read. Only a spilling last task needs a guard; unknown or tiny cubes stay rolled.
-        //
-        // `constant()` bridges the folded total back to host data; a whole smem stage's shape is
-        // static, so it always folds.
+        // A comptime worker count unrolls the tasks: a runtime `CUBE_DIM` stride stalls each store
+        // on Metal's in-order pipe. Unknown or tiny cubes stay rolled.
         let units = comptime!(self.access.units);
         let total_c = total.constant();
-        // The other half of the fill's contract: the mappings agree ([`stage_compaction`]), and so
-        // do the sizes. A gathered destination is always an smem stage, so its line count folds and
-        // has to be exactly the compacted window's.
+        // A gathered destination's line count must equal the compacted window's.
         let cells = comptime!(compaction.as_ref().map(|c| c.cells(w)));
         comptime!(assert!(
             match cells {
@@ -126,14 +107,8 @@ impl<T: Numeric> Memory<T> {
     }
 }
 
-/// The innermost extent of `space` in cells, with the two widths a fill pairs checked against it.
-///
-/// The fill reads whole `sw`-wide source lines, so the innermost extent has to be a whole number
-/// of them; only the *destination* may hold a partial `w`-wide line (a padded stage, spare units
-/// zero). Else the stage rounds its line count up ([`storage_extents`]) where the source truncates.
-///
-/// `None` for a `Dynamic` extent: nothing can be said at comptime, so a padded stage over one
-/// leans on `check` to zero its spare units instead.
+/// The innermost extent of `space` in cells, checked against both widths; `None` when `Dynamic`.
+/// The extent must be a whole number of `sw`-wide source lines.
 pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Option<usize> {
     match space.extent_raw(space.axis_at(space.rank() - 1)) {
         Extent::Static(e) => {
@@ -156,10 +131,7 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
     }
 }
 
-/// Schedule cooperative cyclic writing of destination stage lines across cube units.
-///
-/// Dispatches line reads via [`read_stage_line`], taking an unrolled loop when the task count
-/// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
+/// Cooperatively write destination stage lines cyclically across cube units.
 #[cube]
 pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],

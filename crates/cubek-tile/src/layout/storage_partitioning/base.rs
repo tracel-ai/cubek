@@ -1,29 +1,10 @@
-//! [`StoragePartitioning`]: how a tensor's values are laid down in memory.
-//!
-//! Memory is one line of values, and a tensor is folded onto it the way a kernel's space is cut
-//! for its workers: into nested tiles, leaf up, each holding `count` of the one below along its
-//! axis, the outermost of every axis holding whatever the extent leaves. A partitioning's digits
-//! say who takes a tile; these say where it sits.
-//!
-//! It holds only what was stated: the tiles, and the order the rest of each axis follows. The
-//! extents are the tensor's, and every question that needs them takes them, so one statement
-//! describes a tensor of any size ([`StorageLevels`]), and a bound buffer reads back as the
-//! statement it was written from ([`StoragePartitioning::new`]).
-//!
-//! A reader asks whether a tile it needs is [held](StoragePartitioning::holds): made of whole
-//! stated tiles, in order, cutting only the rest of an axis. A packed word, a vector read and a
-//! stage are all asked the same way. Where a tile sits in memory, dense or padded, is the
-//! [`Geometry`]'s to answer ([`Geometry::serves`]).
-//!
-//! The order of a level's tiles is an order of axes: the strides a buffer carries state no other.
-//! A swizzled or space-filling order is not expressible.
+//! [`StoragePartitioning`]: how a tensor's values are laid down in memory, as nested tiles.
 
 use core::fmt::{self, Display, Formatter};
 
 use crate::{Axis, Geometry, StorageTiling};
 
-/// How a tensor's values are laid down in memory: its stated tiles, finest first, then the order
-/// the rest of each axis follows.
+/// How a tensor's values are laid down: stated tiles, finest first, then the rest's order.
 ///
 /// ```ignore
 /// // 32 x 32 tiles of a [k, n] weight, stored for a four-wide read, the tiles along N
@@ -35,25 +16,18 @@ use crate::{Axis, Geometry, StorageTiling};
 pub struct StoragePartitioning {
     /// Stated tiles, finest first: each `(axis, count)` holds `count` of the piece below it.
     tiles: Vec<(Axis, usize)>,
-    /// The rest of each axis, finest first: which way the next outermost tile goes. Its counts
-    /// are what the tensor's extents leave.
+    /// The rest of each axis, finest first; its counts are what the extents leave.
     order: Vec<Axis>,
 }
 
 impl StoragePartitioning {
-    /// The statement a bound buffer was written from, read off its dims by stride: every piece of
-    /// a storage-tiled axis but its coarsest was stated, and the coarsest, like every untiled dim,
-    /// is the rest of its axis. `labels` name the trailing dims, right-aligned to the geometry;
-    /// a dim they leave out, a broadcast one and one of extent one say nothing of the order.
-    ///
-    /// `None` where the buffer's order is no partitioning: a stated piece coarser than the rest of
-    /// an axis.
+    /// The statement a bound buffer was written from, read off its dims by stride; `labels` name
+    /// the trailing dims. `None` where the buffer's order is no partitioning.
     pub fn new(geometry: &Geometry, labels: &[Axis]) -> Option<Self> {
         let rank = geometry.rank();
         let unlabelled = rank.saturating_sub(labels.len());
         let tiling = geometry.tiling();
-        // A tiling lists every logical dim's coarsest piece first, so the dims past the logical
-        // rank were stated.
+        // Dims past the logical rank are stated pieces.
         let first_stated = match tiling.is_tiled() {
             true => tiling.logical_rank(rank).unwrap_or(rank),
             false => rank,
@@ -93,15 +67,8 @@ impl StoragePartitioning {
         &self.order
     }
 
-    /// Whether `tile`, finest first, is held by this partitioning over a tensor of `extents`:
-    /// each of its pieces is this partitioning's next pieces along the same axis, their counts
-    /// multiplying to exactly its count. A stated tile is taken whole or not at all; the rest of an
-    /// axis may have the wanted count cut out of it, the one division, which has to come out whole.
-    ///
-    /// # Errors
-    ///
-    /// Where the walk first breaks: another axis inside a wanted piece, a stated tile it would
-    /// split, the rest of an axis it does not divide, or nothing left to take.
+    /// Whether `tile`, finest first, is held by this partitioning over a tensor of `extents`.
+    /// Stated tiles are taken whole; the rest of an axis may be divided.
     pub fn holds(
         &self,
         tile: &[(Axis, usize)],
@@ -124,8 +91,6 @@ impl StoragePartitioning {
                         found: piece.axis,
                     });
                 }
-                // What the wanted piece still lacks: a whole number, since `run` only ever grows
-                // by counts that divide it.
                 let missing = count / run;
                 if missing.is_multiple_of(piece.count) {
                     run *= piece.count;
@@ -146,10 +111,7 @@ impl StoragePartitioning {
         Ok(())
     }
 
-    /// The tiles, finest first, a window can be addressed inside with one stride per axis: every
-    /// run of pieces over a tensor of `extents` from the finest up, stated or the rest of an axis,
-    /// in which each axis's pieces sit next to one another, so a coordinate along it is one
-    /// offset times one stride. Each tile is its extent per axis it spans.
+    /// The tiles, finest first, a window can be addressed inside with one stride per axis.
     pub(crate) fn contiguous_tiles(&self, extents: &[(Axis, usize)]) -> Vec<Vec<(Axis, usize)>> {
         let Ok(pieces) = self.pieces(extents) else {
             return Vec::new();
@@ -169,14 +131,7 @@ impl StoragePartitioning {
         tiles
     }
 
-    /// The buffer this partitioning stores a tensor of `extents` in, the axes in its logical order:
-    /// its physical dims as cubecl's storage tiling lists them (level-major, coarsest first), each
-    /// `(extent, stride)`, and the piece count per axis that [`StorageTiling`] reads back.
-    ///
-    /// # Errors
-    ///
-    /// An axis the tiles do not close in whole tiles, or an order that does not name each of the
-    /// tensor's axes once.
+    /// The buffer storing a tensor of `extents`: level-major `(extent, stride)` dims and tiling.
     pub fn physical(
         &self,
         extents: &[(Axis, usize)],
@@ -200,7 +155,6 @@ impl StoragePartitioning {
             .map(|&axis| pieces.iter().filter(|p| p.axis == axis).count())
             .collect();
         let tiling = StorageTiling::per_axis(&fragments);
-        // Each piece's stride is the product of the counts finer than it.
         let strides: Vec<usize> = pieces
             .iter()
             .scan(1, |run, piece| {
@@ -209,8 +163,7 @@ impl StoragePartitioning {
                 Some(stride)
             })
             .collect();
-        // An axis's pieces coarsest first, so fragment `level` of `axis` is its `level`th from
-        // the top, the order the tiling's level-major emission counts them in.
+        // Each axis's pieces coarsest first, matching the tiling's level-major order.
         let per_axis: Vec<Vec<usize>> = axes
             .iter()
             .map(|&axis| {
@@ -231,8 +184,7 @@ impl StoragePartitioning {
         Ok((Geometry::new(&dims), tiling))
     }
 
-    /// Every piece over a tensor of `extents`, finest first: the stated tiles, then the rest of
-    /// each axis in order, its count what the extent leaves.
+    /// Every piece over a tensor of `extents`, finest first: stated tiles, then each rest.
     fn pieces(&self, extents: &[(Axis, usize)]) -> Result<Vec<Piece>, TileMisfit> {
         let mut pieces: Vec<Piece> = self
             .tiles
@@ -267,8 +219,7 @@ impl StoragePartitioning {
     }
 }
 
-/// A [`StoragePartitioning`] being stated leaf-up: its tiles, finest first, each holding `count`
-/// of the one below, until [`grid`](Self::grid) says the order the rest of each axis follows.
+/// A [`StoragePartitioning`] being stated leaf-up, until [`grid`](Self::grid).
 #[derive(Clone, Debug)]
 pub struct StorageLevels {
     tiles: Vec<(Axis, usize)>,
@@ -288,9 +239,7 @@ impl StorageLevels {
         self
     }
 
-    /// The partitioning, the rest of each axis following `order`, finest first: `[K, N]` puts the
-    /// next tile along `K` right after this one. A tile's piece of one holds nothing and is
-    /// dropped.
+    /// The partitioning, the rest of each axis following `order`, finest first.
     pub fn grid(self, order: &[Axis]) -> StoragePartitioning {
         StoragePartitioning {
             tiles: self
@@ -308,8 +257,7 @@ impl StorageLevels {
 pub enum TileMisfit {
     /// A piece of another axis sits inside a wanted piece: the wanted tile is not one run.
     Interleaved { wanted: Axis, found: Axis },
-    /// A piece reaches past the wanted count: a stated tile no reader may split, or the rest of an
-    /// axis the wanted count does not divide.
+    /// A piece reaches past the wanted count.
     Overshoots {
         axis: Axis,
         wanted: usize,
@@ -386,7 +334,6 @@ impl Display for StorageMisfit {
 struct Piece {
     axis: Axis,
     count: usize,
-    /// Whether the count was stated, so a reader takes the piece whole; `false` for the rest of an
-    /// axis, which a reader may cut its own tile out of.
+    /// Whether the count was stated, so a reader must take the piece whole.
     stated: bool,
 }

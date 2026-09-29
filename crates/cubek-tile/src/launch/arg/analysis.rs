@@ -1,6 +1,4 @@
-//! What the [`Arg`](super::Arg) builder decides about an operand, one named step each, and the
-//! one [`Refusal`] any of them can answer with. Every step is a value a test can build without a
-//! client.
+//! The [`Arg`](super::Arg) builder's derivation steps and the [`Refusal`] they can return.
 
 use core::fmt::{self, Display, Formatter};
 
@@ -15,15 +13,11 @@ use crate::{
 /// Why an operand cannot be bound as described.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Refusal {
-    /// [`in_stride_order`](super::Arg::in_stride_order) on a gathered mapping or a storage-tiled
-    /// binding: the order a buffer steps is read off strides, which a mapping states for itself
-    /// and a tiled binding stores in tiles.
+    /// [`in_stride_order`](super::Arg::in_stride_order) on a gathered or storage-tiled operand.
     StrideOrderOfAStatedLayout,
-    /// A gathered mapping addresses the buffer's own dims, so a storage-tiled binding has no
-    /// reading under it.
+    /// A gathered mapping over a storage-tiled binding.
     GatherOfATiledBinding(Tiling),
-    /// [`gathered`](super::Arg::gathered) states the mapping outright, so `axes` and `batches`
-    /// have nothing left to describe.
+    /// [`gathered`](super::Arg::gathered) combined with `axes` or `batches`.
     GatherWithLabels,
     /// The mapping addresses `mapped` dims but the operand has `rank`.
     GatherRankMismatch { mapped: usize, rank: usize },
@@ -39,12 +33,9 @@ pub enum Refusal {
     NoCoordinate,
     /// The buffer cannot be served `width` wide.
     WidthNotServed { width: usize, why: LineMisfit },
-    /// The innermost axis is served in vector lines but is not provably in bounds (it overhangs
-    /// its tiling, or its map is affine and reaches past any extent stated here); serve it scalar,
-    /// or state [`BoundaryPolicy::Unchecked`] if the launch proves its lines are in bounds.
+    /// The innermost axis is served in vector lines but is not provably in bounds.
     UncheckableVectorEdge,
-    /// A TMA box edge past what the descriptor encodes: the stage's `edge` along `axis`, where a
-    /// box holds at most `most` ([`Delivery::moves`](super::Delivery::moves)).
+    /// A TMA box edge past the descriptor's per-axis limit `most`.
     BoxPastDescriptor {
         axis: Axis,
         edge: usize,
@@ -120,14 +111,11 @@ fn box_past(f: &mut Formatter<'_>, axis: Axis, edge: usize, most: usize) -> fmt:
 
 impl std::error::Error for Refusal {}
 
-/// The labelled reading of a buffer: its dims named by the operand's axes (leading dims by the
-/// batch axes, right-aligned, size-1 broadcast dims dropped; trailing dims by the labelled axes in
-/// the storage tiling's level-major order), as a [`Projection`] and the settled geometry.
+/// The labelled reading of a buffer, as a [`Projection`] and the settled geometry.
 pub(crate) struct Labels {
     pub(crate) geometry: Geometry,
     pub(crate) projection: Projection,
-    /// Every logical axis the buffer carries, before broadcast dims dropped: what the bounds-check
-    /// is derived over.
+    /// Every logical axis the buffer carries, before broadcast dims dropped.
     pub(crate) addressed: Vec<Axis>,
 }
 
@@ -170,7 +158,7 @@ impl Labels {
         let mut logical: Vec<Axis> = Vec::new();
         let mut dims = Vec::new();
         for (&axis, (extent, stride)) in addressed.iter().zip(geometry.dims()) {
-            // A labelled axis never drops out, however small, since the tile is shaped over it.
+            // A labelled axis never drops out: the tile is shaped over it.
             if batches.contains(&axis) && extent == 1 && !axes.contains(&axis) {
                 continue;
             }
@@ -187,9 +175,7 @@ impl Labels {
         })
     }
 
-    /// A stated gathered mapping, checked against the binding and the launch: it refuses a
-    /// storage-tiled binding, nothing else labels it, it addresses every dim, and it spans only
-    /// axes the kernel's space has. The geometry is kept as it stands.
+    /// A stated gathered mapping, checked against the binding and the launch.
     pub(crate) fn stated(
         geometry: &Geometry,
         launch: &Launcher,
@@ -249,17 +235,14 @@ impl Boundaries {
     }
 }
 
-/// Where the bounds-check lands: on the coordinate axes that can leave the buffer, and only those.
-/// A settled axis would pay for a mask that can never fire, and a settled *innermost* axis must be
-/// left alone outright, since a window clamps in lines and would alias the edge line.
+/// Where the bounds-check lands: on the coordinate axes that can leave the buffer, only those.
 pub(crate) struct Boundaries {
     /// One mode per coordinate axis; empty when nothing is checked.
     pub(crate) modes: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
 }
 
 impl Boundaries {
-    /// `concrete` is the launch's real-extent space and `overhangs` the axes its tiles reach
-    /// past; an operand built over geometry alone is judged by the same launch.
+    /// `concrete` is the launch's real-extent space and `overhangs` the axes its tiles reach past.
     pub(crate) fn new(
         policy: BoundaryPolicy,
         projection: &Projection,
@@ -275,22 +258,12 @@ impl Boundaries {
             return Err(Refusal::NoCoordinate);
         }
 
-        // Whether coordinate axis `pa` is inside the buffer by construction. Only an identity map
-        // can be: it reaches exactly as far as its own coordinate, so it stays inside whenever its
-        // tiling divides, and its zero offset keeps it clear of the underflow half above.
-        //
-        // A non-identity map (a negative or `Dynamic` offset, an affine reach past any stated
-        // extent) is the caller's to size the buffer for, the trust the derivation runs on; no
-        // proof here can retire its policy. An axis the concrete space does not describe is
-        // unproven, not proven.
+        // Whether coordinate axis `pa` is in bounds by construction; only an identity map can be.
         let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
             Some(axis) => concrete.contains(axis) && !overhangs.contains(&axis),
             None => false,
         };
 
-        // A vector line only needs a scalar fallback when its own innermost axis is unsettled.
-        // Other coordinate axes may still be masked or clamped independently (NHWC interpolation
-        // clamps H/W while serving a contiguous C line).
         if boundary.is_some() && width > 1 && !settled(coord_rank - 1) {
             return Err(Refusal::UncheckableVectorEdge);
         }
@@ -298,7 +271,7 @@ impl Boundaries {
         let modes: SmallVec<[Option<Boundary>; Space::MAX_RANK]> = (0..coord_rank)
             .map(|pa| boundary.filter(|_| !settled(pa)))
             .collect();
-        // An all-`None` list collapses to the empty one, so "nothing is checked" has one form.
+        // "Nothing is checked" has one form: the empty list.
         Ok(match modes.iter().any(Option::is_some) {
             true => Boundaries { modes },
             false => Boundaries {

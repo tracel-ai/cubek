@@ -1,7 +1,4 @@
-//! Integer arithmetic on kernel values that keeps a constant constant. An expand element knows
-//! whether it is a constant (`Variable::Constant`), but the stock operators always emit an
-//! instruction, degrading a computed constant to runtime. Here two constants compute at expand
-//! time and identities pass through, so an index built from stated extents stays comptime.
+//! Integer arithmetic on kernel values that folds constants at expand time.
 
 use cubecl::ir::{
     ConstantValue, ExpandValue, Scope,
@@ -41,13 +38,11 @@ pub trait Integer: Sized {
     fn max_with(self, _rhs: Self) -> Self {
         unexpanded!()
     }
-    /// The value re-typed to `To`, a constant staying constant (the stock `as` emits a
-    /// cast instruction, which erases constness).
+    /// The value re-typed to `To`, a constant staying constant.
     fn cast<To: Int>(self) -> To {
         unexpanded!()
     }
-    /// The comptime constant this value holds, if any: the bridge from a folded value
-    /// back to host data (fragment selection needs host indices).
+    /// The comptime constant this value holds, if any.
     fn constant(self) -> Option<u64> {
         unexpanded!()
     }
@@ -57,9 +52,7 @@ impl Integer for u32 {}
 impl Integer for usize {}
 impl Integer for i32 {}
 
-/// Constant-keeping sums over the elements at comptime `picks`: a sequence accumulates by
-/// chaining fresh values, where a `let mut` accumulator would land in a mutable slot and erase
-/// constness.
+/// Constant-keeping sums over the elements at comptime `picks`.
 pub(crate) trait IntegerSeq<C: Int>: Sized {
     /// Sum of the picked elements (empty picks fold to `0`).
     fn sum(&self, _picks: Vec<usize>) -> C {
@@ -78,7 +71,6 @@ pub(crate) fn constant<C: Int>(e: &NativeExpand<C>) -> Option<u64> {
     }
 }
 
-/// A constant expand element of `e`'s type holding `v`.
 fn constant_like<C: Int>(scope: &Scope, v: u64, e: &NativeExpand<C>) -> NativeExpand<C> {
     let ty = match e.expand {
         ExpandValue::Value(val) => {
@@ -130,7 +122,7 @@ fn fold_div<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
     match (constant(&lhs), constant(&rhs)) {
         (Some(a), Some(b)) if b != 0 => constant_like(scope, a / b, &lhs),
         (None, Some(1)) => lhs,
-        // 0 / x is 0 for any in-range divisor (a divisor here is an extent, never 0).
+        // A divisor here is an extent, never 0.
         (Some(0), None) => constant_like(scope, 0, &lhs),
         _ => DivExpand::__expand_div_method(lhs, scope, rhs),
     }

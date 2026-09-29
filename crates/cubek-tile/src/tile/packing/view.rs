@@ -1,8 +1,4 @@
-//! The unpacking read: a stored `u32`'s fields served as values, decoded by the field
-//! [`Packing::Packed`](crate::Packing::Packed) names.
-//!
-//! A line is whole words: every field of every word it reads is served, and a scales operand is
-//! no exception — the walk that reads a word of scales owns the tiles of every field in it.
+//! The unpacking read: a stored `u32`'s fields served as values.
 
 use std::marker::PhantomData;
 
@@ -21,13 +17,7 @@ use cubecl::{
     std::tensor::{View, ViewExpand, ViewOperations, ViewOperationsExpand, layout::Coordinates},
 };
 
-/// Unpack one line of stored words into the `NF` values it holds: `NQ` words, each carrying
-/// `NF / NQ` consecutive fields from its low bits.
-///
-/// Five shapes, because a field decodes five ways. A `Q*` field is a sign-extended integer of
-/// `width` bits (`Q4S` is `[-8, 7]`); an index field its raw bits. An `e2m1` field is read by
-/// reinterpreting the byte two share; an 8-bit float code by its format's decoder; a whole float
-/// by reinterpreting its own slot.
+/// Unpack one line of `NQ` stored words into its `NF` values, fields from each word's low bits.
 #[cube]
 pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
@@ -42,9 +32,7 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     }
 }
 
-/// The `NF` values starting at `offset` of one stored line, read as `packing` lays them: a slice
-/// of a plain line, or the fields a packed one holds there. `NF` may be narrower than a word: a
-/// device whose vectors cannot hold a word's fields still reads them, a line at a time.
+/// The `NF` values starting at `offset` of one stored line, read as `packing` lays them.
 #[cube]
 pub(crate) fn values_at<F: Numeric, I: Numeric, WP: Size, NF: Size>(
     line: Vector<I, WP>,
@@ -63,8 +51,6 @@ pub(crate) fn values_at<F: Numeric, I: Numeric, WP: Size, NF: Size>(
         }
         Packing::Packed { field } => {
             let (bits, per_word) = comptime!((field.size_bits(), field.per_word()));
-            // The words the values lie in: several where they span more than one, else the one
-            // they share, shifted down to them.
             let nq = comptime!((nf / per_word).max(1));
             let size!(NQ) = nq;
             let (first, shift) =
@@ -101,7 +87,6 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
     let nf = NF::value();
     let factor = comptime!(fields_per_word(nq, nf, bits));
     let mask = comptime!(((1u64 << bits) - 1) as u32);
-    // The sign bit, doubling as the bias of the branchless extension below.
     let sign = comptime!(1u32 << (bits - 1));
 
     let mut out = Vector::<F, NF>::empty();
@@ -112,8 +97,7 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
         #[unroll]
         for j in 0..factor {
             let raw = (word >> comptime!((j * bits) as u32)) & mask;
-            // Branchless sign extension: `(raw ^ s) - s` with `s = 2^(bits-1)` runs the identical
-            // xor/sub on every unit, two uniform vector ops instead of a compare/select chain.
+            // Branchless sign extension: `(raw ^ s) - s` with `s = 2^(bits-1)`.
             let value = (raw ^ sign) as i32 - sign as i32;
             out.insert(base + j, F::cast_from(value));
         }
@@ -149,20 +133,13 @@ fn unpack_index_line<F: Numeric, NQ: Size, NF: Size>(
     out
 }
 
-/// The `e2m1` fields, decoded a pair at a time.
-///
-/// The pair is the unit rather than the value: two `e2m1` codes share a byte, which is
-/// [`QuantValue::native_packing`], read here as the loop's step.
-///
-/// Decoded in software: the `e2m1x2` cast lowers on CUDA alone and dies in codegen everywhere else,
-/// on a worker thread, which surfaces as a zeroed output rather than as an error.
+/// The `e2m1` fields, decoded a byte pair at a time in software (the `e2m1x2` cast is CUDA-only).
 #[cube]
 fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Vector<F, NF> {
     let pair = comptime!(QuantValue::E2M1.native_packing());
     let nq = NQ::value();
     let nf = NF::value();
     let fields = comptime!(fields_per_word(nq, nf, QuantValue::E2M1.size_bits()));
-    // A sub-word read of one code still decodes its pair and keeps the first.
     let bytes = comptime!(fields.div_ceil(pair));
 
     let mut out = Vector::<F, NF>::empty();
@@ -211,18 +188,13 @@ fn unpack_byte_line<F: Numeric, NQ: Size, NF: Size>(
     out
 }
 
-/// One `f16` bit pattern, decoded to `f32` in integer arithmetic. Bits above the low half are
-/// ignored.
-///
-/// Written out rather than reinterpreted through a 16-bit scalar, which not every target admits:
-/// cubecl's own minifloat decoders are the same shape for the same reason.
+/// One `f16` bit pattern decoded to `f32` in integer arithmetic; high bits are ignored.
 #[cube]
 fn f16_bits_to_f32(bits: u32) -> f32 {
     let sign = (bits & 0x8000u32) << 16u32;
     let exponent = (bits >> 10u32) & 0x1fu32;
     let mantissa = bits & 0x3ffu32;
-    // `f16` biases its exponent by 15 and `f32` by 127, and the mantissa moves up to `f32`'s 23
-    // bits. A zero exponent is a subnormal, counted in steps of 2^-24.
+    // Rebias the exponent 15 -> 127 and widen the mantissa; a zero exponent is subnormal.
     let normal = sign | ((exponent + 112u32) << 23u32) | (mantissa << 13u32);
     let subnormal = sign | u32::reinterpret(f32::cast_from(mantissa) * 5.9604645e-8f32);
     let finite = select(exponent == 0u32, subnormal, normal);
@@ -234,9 +206,7 @@ fn f16_bits_to_f32(bits: u32) -> f32 {
     f32::reinterpret(select(exponent == 31u32, special, finite))
 }
 
-/// The whole floats, each read out of the slot it occupies: one `f32` a word, two `f16` or
-/// `bf16`. A scale stored at its own precision is read here, which is what lets one word-typed
-/// binding serve every scale a scheme can carry.
+/// The whole floats, each read out of its own slot.
 #[cube]
 fn unpack_float_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
@@ -255,8 +225,7 @@ fn unpack_float_line<F: Numeric, NQ: Size, NF: Size>(
         #[unroll]
         for j in 0..fields {
             let slot = word >> comptime!((j * bits) as u32);
-            // `bf16` is an `f32` truncated to its top half, so putting it back is the whole
-            // decode. Every kind but these three was refused by `float_field_bits`.
+            // `bf16` is a truncated `f32`, so shifting it back is the decode.
             let value = match comptime!(kind) {
                 FloatKind::F32 => F::cast_from(f32::reinterpret(slot)),
                 FloatKind::F16 => F::cast_from(f16_bits_to_f32(slot)),
@@ -268,8 +237,7 @@ fn unpack_float_line<F: Numeric, NQ: Size, NF: Size>(
     out
 }
 
-/// A [`View`] over stored words that serves the values they hold: reads `Vector<u32, NQ>` lines
-/// and answers `Vector<F, NF>` ones, `NF = NQ * factor`.
+/// A [`View`] over stored words serving `Vector<F, NF>` lines, `NF = NQ * factor`.
 #[expect(dead_code, reason = "read through the expand impls below")]
 #[derive(CubeType, Clone)]
 pub(crate) struct PackedView<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> {
@@ -292,7 +260,7 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a
 }
 
 impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a, NQ, F, NF, C> {
-    /// This view as a plain [`View`] of served values, which is what every reader takes.
+    /// This view as a plain [`View`] of served values.
     pub fn view(self) -> View<'a, Vector<F, NF>, C> {
         unexpanded!()
     }

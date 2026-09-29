@@ -5,24 +5,11 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-// The block's line width, a scope-registered size rather than a generic, as `MmaData` carries
-// `NA`/`NL`/`NR`: `alloc` binds it with `register_size`, every op reads `Vector<T, RA>`, and it
-// never reaches `PlaneTile` / `TileKind` / `Tile`.
-//
-// Allocate at the vector element: a scalar `Array::<T>` re-viewed as lines has nothing behind the
-// reinterpret, and the CPU backend refuses a vectorized operand built that way.
+// The block's line width, bound by `alloc` via `register_size`. Allocated at the vector
+// element: the CPU backend refuses a scalar array re-viewed as lines.
 define_size!(pub(crate) RA);
 
-/// An `mr × nr` block of `RA`-wide accumulators living in registers, the software instruction's
-/// encoding of a [`PlaneTile`].
-///
-/// The block exists so the software leaf can accumulate the way the hardware ones do: created by
-/// [`block_accumulator`](Tile::block_accumulator) and passed in, it outlives a leaf call and meets
-/// memory only on drain, so a deep contraction into `f16` never round-trips partials through it.
-///
-/// Its lines are the rhs's. Lined along the accumulator, a line is `RA` neighbouring cells; lined
-/// along the contraction (a weight stored along `K`), it is `RA` partials of *one* cell
-/// (`fold`), collapsed on drain so that sum, too, stays in `T` across the walk.
+/// An `mr × nr` block of `RA`-wide register accumulators, the software [`PlaneTile`].
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RegisterData<T: Numeric> {
@@ -31,29 +18,22 @@ pub struct RegisterData<T: Numeric> {
     /// Physical line width, the numeric twin of `RA`; comptime, for the line arithmetic.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    /// Contracted values a line holds of one cell: `1` where its units are neighbouring cells,
-    /// the line width where they are that cell's partials. What [`vector_size`](Self::vector_size)
-    /// means, not how wide it is.
+    /// Partials a line holds of one cell: `1` for neighbouring cells, else the line width.
     #[cube(comptime)]
     pub(crate) fold: usize,
     /// Rows in the block.
     #[cube(comptime)]
     pub(crate) mr: usize,
-    /// Lines per row: the `n` extent divided by [`vector_size`](Self::vector_size), or `n` itself
-    /// where every cell has a line of its own partials.
+    /// Lines per row: `n / vector_size`, or `n` when folded.
     #[cube(comptime)]
     pub(crate) nr: usize,
-    /// The sink's matrix, the one this block was sized against. Carried rather than re-derived:
-    /// a block that drains through a different grouping than it was allocated for writes its
-    /// lines at coordinates the sink reads as something else.
+    /// The sink's matrix this block was sized against.
     #[cube(comptime)]
     pub(crate) axes: MatrixAxes,
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
     pub(crate) config: RegisterBlock,
-    /// How this block's partials merge: the `⊕` it accumulates under, [`Sum`](Monoid::Sum) for a
-    /// matmul. Stated where the block is built ([`Tile::block_accumulator`]), since comptime state
-    /// cannot be set afterwards; read on drain with [`units`](Self::units), which says they exist.
+    /// The `⊕` this block's partials merge under ([`Sum`](Monoid::Sum) for a matmul).
     #[cube(comptime)]
     pub(crate) monoid: Monoid,
 }
@@ -68,9 +48,8 @@ fn register_block_size(#[comptime] vector_size: usize) {
 
 #[cube]
 impl<T: Numeric> RegisterData<T> {
-    /// An uninitialized `m × n` block at `vector_size`, its lines `fold` partials of one cell or,
-    /// at a `fold` of one, `vector_size` neighbouring cells, in which case `n` must divide into
-    /// whole lines: the leaf reads and writes nothing narrower.
+    /// An uninitialized `m × n` block of `vector_size`-wide lines, each `fold` partials of a cell.
+    /// Unfolded, `n` must be a whole number of lines.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn alloc(
         #[comptime] m: usize,
@@ -117,18 +96,7 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
-    /// Add `src`'s block into this one, casting each line up to `T`.
-    ///
-    /// The promotion a narrow leaf drains through. A block accumulating in the operands' own
-    /// element reaches a device's packed instruction (`hfma2` on `f16`, twice the arithmetic of
-    /// `f32`), but `f16` counts integers exactly to 2048, so a long reduction in it stalls.
-    ///
-    /// Draining the narrow block into a wide one **inside** the walk keeps both: the packed
-    /// instruction on the leaf's own steps and the wide sum across them, with the error bounded by
-    /// the leaf's depth rather than by the whole contraction.
-    ///
-    /// Both blocks are the same `mr × nr` grid at the same fold, since the narrow one is opened
-    /// against the same sink; the add is line-wise and needs no view of either.
+    /// Add `src`'s block (same grid and fold) into this one, casting each line up to `T`.
     pub(crate) fn add_cast_from<S: Numeric>(&mut self, src: &RegisterData<S>) {
         comptime!(assert!(
             self.mr == src.mr && self.nr == src.nr && self.fold == src.fold,
@@ -149,9 +117,7 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
-    /// Multiply every partial this block holds by `factor`: one multiply per slot, which is what
-    /// a scale covering the whole block costs when it is applied to the sum rather than to each
-    /// term of it.
+    /// Multiply every partial this block holds by `factor`.
     pub(crate) fn scale(&mut self, factor: T) {
         let count = comptime!(self.mr * self.nr);
         let line = Vector::<T, RA>::cast_from(factor);
@@ -165,22 +131,7 @@ impl<T: Numeric> RegisterData<T> {
 
 #[cube]
 impl<T: Numeric> RegisterData<T> {
-    /// Write the block into `mem`'s window, casting down to its element: the same manual,
-    /// row-major store the mma fragment does, over lines instead of unit positions.
-    ///
-    /// Under a folded [`UnitShare`] each unit holds only part of every cell, so fold first, then
-    /// let one unit write, as [`AccumulateView::commit`] does; skipping it is every unit writing
-    /// its fraction over the last. The share is `mem`'s (descended every level), not the block's.
-    ///
-    /// A write that folds ([`Write::Accumulate`]) rather than replaces adds one more election:
-    /// units that repeat each other's work would each add the same contribution.
-    ///
-    /// The write goes through the sink's masked matrix view, as [`AccumulateView::commit`] does: a
-    /// block is sized to the leaf, so it may overhang the real extent, and the lines past the edge
-    /// belong to the next row. The mask is a comptime flag, so a block that fits stores straight.
-    ///
-    /// A line of one cell's partials ([`fold`](Self::fold)) is collapsed after the units are
-    /// combined and lands in a scalar cell; a line of neighbouring cells lands as it is.
+    /// Write the block into `mem`'s window, casting down to its element.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
         mem: &mut Memory<Out>,
@@ -194,19 +145,15 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
-    /// [`store_cast_window`](Self::store_cast_window) into a sink addressed in `A`-wide cells:
-    /// the block's own width, or scalar where a line folds into one cell.
+    /// [`store_cast_window`](Self::store_cast_window) into a sink of `A`-wide cells.
     fn drain<Out: Numeric, A: Size>(&self, mem: &mut Memory<Out>, #[comptime] space: Space) {
         let mem_write = comptime!(mem.access.write);
         let unit_share = comptime!(mem.unit_share);
         let fold = comptime!(self.fold);
         let monoid = comptime!(self.monoid);
-        // Bounded by the window extent.
         let mut sink = mem.matrix_mut::<A>(0usize, comptime!(self.axes), space);
 
-        // Split comptime rather than branching per line: a value-producing `match` plus a unit
-        // guard emits a binding the CPU backend cannot resolve ("Value should have been declared
-        // before"), and a `Whole` share (every CPU, whose planes are one unit) needs neither.
+        // Split at comptime: a per-line `match` plus a unit guard breaks the CPU backend.
         match comptime!(Drain::of(unit_share, mem_write)) {
             Drain::EachUnit =>
             {
@@ -269,8 +216,7 @@ impl<T: Numeric> RegisterData<T> {
     }
 }
 
-/// What a drained line lands as: the line itself, cast, where its units are neighbouring cells;
-/// their fold under `monoid`, cast, where they are `fold` partials of one cell.
+/// A drained line cast to `Out`, first folded under `monoid` when it holds partials.
 #[cube]
 fn cell<T: Numeric, Out: Numeric, A: Size>(
     line: Vector<T, RA>,

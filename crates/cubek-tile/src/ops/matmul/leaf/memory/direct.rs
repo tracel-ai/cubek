@@ -7,15 +7,8 @@ use super::super::scale::Side;
 use super::shape::ContractShape;
 use crate::*;
 
-/// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
-/// of accumulators lives in registers (load once, `kc / contracted_per_step` steps, store once).
-///
-/// Each factor arrives as its values and the levels of scales that multiply them, innermost
-/// first, looked up at each line's coordinates; a factor carrying none reads as its values alone.
-///
-/// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` (or
-/// `(col, k)` at a folded step) address the operands. [`memory`](super::memory) routes anything
-/// else to the N-D nest, so the conditions below are re-asserted rather than re-decided.
+/// The 2-D contraction nest: over each batch matrix, the `mr × nr` accumulator block lives in
+/// registers.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
@@ -58,8 +51,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
          gives one; the N-D nest reads them a cell at a time"
     ));
 
-    // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a
-    // folded step, `aw`-wide neighbouring cells otherwise.
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
@@ -71,8 +62,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
-/// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
-/// accumulator's.
+/// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and block's, `A` the accumulator's.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
@@ -95,14 +85,12 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let lhs_axes = comptime!(shape.lhs_axes(&lhs.place.space));
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.place.space));
 
-    // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
     let component_fanout = comptime!(config.component_fanout);
 
     for mat in 0..matrices {
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
         let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
-        // Each factor's scales, looked up at its lines' own coordinates.
         let lhs_scales = lhs.reader(
             lhs_axes,
             mat,
@@ -117,7 +105,6 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             comptime!(shape.space.clone()),
             comptime!(shape.acc_axes),
         );
-        // The contraction's own algebra: its products accumulate under the semiring's add.
         let mut acc_view = acc.matrix_accumulate::<A>(
             mat,
             comptime!(shape.acc_axes),
@@ -125,9 +112,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             comptime!(semiring.add()),
         );
 
-        // A checked edge normally rolls every local array access. When enabled, split the leaf in
-        // two comptime-specialized bodies: interior instances prove their blocks in bounds once and
-        // keep `c` and `b` in registers; only the edge instance pays masking and runtime indexing.
+        // Split into an in-bounds body kept in registers and a checked edge body.
         let lhs_check = comptime!(lhs_mat.check);
         let rhs_check = comptime!(rhs_mat.check);
         let acc_check = acc_view.check();
@@ -223,8 +208,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     }
 }
 
-/// The complete nest body, specialized at trace time for either register-resident local arrays
-/// (`unroll = true`) or the checked edge fallback (`unroll = false`).
+/// The nest body, either unrolled in registers or the checked edge fallback.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(

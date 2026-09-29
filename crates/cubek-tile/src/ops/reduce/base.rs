@@ -1,6 +1,4 @@
-//! `c.reduce_axis(input, monoid)` and its accumulating twin at a final tile: the register nest
-//! ([`leaf`](super::leaf)). The levels above
-//! are the kernel's own walk.
+//! `c.reduce_axis(input, monoid)` and its accumulating twin at a final tile.
 
 use cubecl::prelude::*;
 
@@ -9,17 +7,13 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = fold(input)`: reduce `input` into `self` across the contracted axes, at a final
-    /// tile. `self` is a result, so nothing it held before takes part: it starts from the
-    /// monoid's identity ([`init_identity`](Tile::init_identity)).
+    /// `c = fold(input)`: reduce `input` into `self` across the contracted axes.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
         self.init_identity(monoid);
         self.reduce_axis_accumulate(input, monoid);
     }
 
-    /// `c = fold(c, input)`: [`reduce_axis`](Tile::reduce_axis) with the accumulate
-    /// [`mma`](Tile::mma) carries over [`mm`](Tile::mm), folding each contracted cell into what
-    /// `self` holds; unseeded ([`init_identity`](Tile::init_identity)) it folds against garbage.
+    /// `c = fold(c, input)`: fold `input` into what `self` holds, which must be seeded.
     pub fn reduce_axis_accumulate<In: Numeric>(
         &mut self,
         input: &Tile<In>,
