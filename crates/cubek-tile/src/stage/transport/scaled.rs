@@ -6,16 +6,12 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales.
+    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales, read in the source's
+    /// own loads ([`vector_tile`](Tile::vector_tile)), a run or a rectangle of its stored tiles.
     /// The source may carry extra axes only if each is one wide.
     pub(crate) fn copy_scaled_from(&mut self, src: &Tile<T>) {
-        let (sw, vw) = (src.vector_size(), self.vector_size());
-        comptime!(check_decoding_copy(
-            &src.place.space,
-            &self.place.space,
-            sw,
-            vw
-        ));
+        let load = src.vector_tile();
+        let sw = comptime!(load.values());
         let packing = src.packing();
         match comptime!(packing) {
             Packing::Plain => {
@@ -29,29 +25,31 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The copy, over `stored`: the source's lines as its buffer holds them.
+    /// The copy, over `stored`: the source's loads as its buffer holds them.
     fn copy_decoded<I: Numeric, WP: Size>(
         &mut self,
         src: &Tile<T>,
         stored: Masked<'_, Vector<I, WP>, CoordsDyn>,
     ) {
-        let (sw, vw) = (src.vector_size(), self.vector_size());
+        let (load, lands) = (src.vector_tile(), self.vector_tile());
+        let (sw, vw) = comptime!((load.values(), lands.values()));
         let size!(VW) = vw;
         let packing = src.packing();
         let space = comptime!(src.place.space.clone());
         let dst = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let mem = src.mem("Tile::copy_from");
+        let along = comptime!(dst.axis_at(dst.rank() - 1));
+        let varies = mem.factor.varies_along(comptime!(along));
+        comptime!(check_decoding_copy(&space, &dst, &load, vw, varies));
         let fill = self.fill_units();
         let mut out = self.nd_mut::<VW>();
-        let lines = comptime!(line_extents(&space, sw, 0, rank));
-        let count = comptime!(lines.iter().product::<usize>() as u32);
         let first = fill_worker(fill) as u32;
         let stride = fill_workers(fill) as u32;
-        for line in range_stepped(first, count, stride) {
-            let start = coords_of_line(line, comptime!(lines.clone()), sw);
-            let held = stored.read(as_dyn(&start, sw));
-            // The destination lines this source line holds, and where they land.
+        for line in range_stepped(first, load.count(&space), stride) {
+            let start = load.start(line, &space);
+            let held = stored.read(load.index(&start, &space));
+            // The destination lines this load holds, `offset` their place in it, and where they land.
             #[unroll]
             for c in 0..comptime!(sw / vw) {
                 let offset = comptime!(c * vw);
@@ -59,7 +57,7 @@ impl<T: Numeric> Tile<T> {
                 let mut to = Coords::<u32>::new();
                 #[unroll]
                 for p in 0..rank {
-                    let inner = comptime!((if p == rank - 1 { offset } else { 0 }) as u32);
+                    let inner = comptime!(load.offset_along(offset, space.axis_at(p)) as u32);
                     let coord = start.at(p) + inner;
                     at.push(coord);
                     if comptime!(dst.contains(space.axis_at(p))) {
@@ -69,14 +67,15 @@ impl<T: Numeric> Tile<T> {
                 let values = values_at::<T, I, WP, VW>(held, offset, packing);
                 let scale = mem.factor.at_coords(&at, comptime!(space.clone()));
                 let decoded = mem.codebook.entries(values) * Vector::<T, VW>::cast_from(scale);
-                out.write(as_dyn(&to, vw), decoded);
+                out.write(lands.index(&to, &dst), decoded);
             }
         }
     }
 }
 
-/// What a decoding copy from `src` (served `sw` wide) into `dst` (served `vw` wide) rests on.
-fn check_decoding_copy(src: &Space, dst: &Space, sw: usize, vw: usize) {
+/// What a decoding copy from `src`, read in `load`s, into `dst` (written `vw` wide) rests on.
+/// `varies` is whether the scales vary along the destination's innermost axis.
+fn check_decoding_copy(src: &Space, dst: &Space, load: &VectorTile, vw: usize, varies: bool) {
     assert!(
         src.axes().all(|axis| !src.is_dynamic(axis)),
         "Tile::copy_from: a decoding copy reads its window through the values' own axes, which \
@@ -88,9 +87,24 @@ fn check_decoding_copy(src: &Space, dst: &Space, sw: usize, vw: usize) {
         "Tile::copy_from: a decoding copy writes the box it reads, and {src:?} does not narrow to \
          {dst:?} by dropping one-wide axes"
     );
+    // A destination line is `vw` consecutive values along its innermost axis, so it sits inside
+    // one load only where that is the load's finest axis and its extent there holds whole lines.
+    let along = dst.axis_at(dst.rank() - 1);
+    let &(finest, run) = load
+        .extents()
+        .first()
+        .expect("a load holds at least one value");
     assert!(
-        sw.is_multiple_of(vw),
-        "Tile::copy_from: a decoding copy reads each destination line out of one source line, and \
-         a {vw}-wide line does not sit inside {sw}-wide ones"
+        vw == 1 || (finest == along && run.is_multiple_of(vw)),
+        "Tile::copy_from: a decoding copy reads each destination line out of one load, and a \
+         {vw}-wide line along {along:?} does not sit inside a load of {:?}",
+        load.extents()
+    );
+    // One scale a destination line, at its first value.
+    assert!(
+        vw == 1 || !varies,
+        "Tile::copy_from: a destination line runs {vw} values along {along:?}, which the scales \
+         vary along, so one line lies under several scales; write the destination one value a \
+         line, or omit {along:?} from the scales"
     );
 }

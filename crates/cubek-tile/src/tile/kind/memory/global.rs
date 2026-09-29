@@ -177,7 +177,8 @@ impl<T: Numeric> GlobalOperand<T> {
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// The memory tile a launched operand becomes, its top window boxed over the physical axes.
-    #[allow(clippy::too_many_arguments)]
+    // The unrolled loop over the buffer's dims indexes a compile-time list by the dim.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
         let backing = operand.backing;
         let geometry = operand.geometry;
@@ -215,21 +216,25 @@ impl<T: Numeric> Memory<T> {
         comptime!(check_operand(&space, &spec, vector_size));
         // Gathered buffers have fewer physical axes than logical; storage-tiled ones have more.
         let rank = comptime!(projection.physical_rank());
-        let last = comptime!(rank - 1);
-        let w = comptime!(vector_size as u32);
+        // The buffer read in loads: each dim's extent over what one load covers of it, every
+        // stride counted in loads. A plain buffer's innermost dim counts lines one line apart and
+        // the coarser strides divide by the width; a stored tile a load takes whole is one.
+        let load = comptime!(
+            VectorTile::new(
+                &spec.stored_tiles,
+                space.axis_at(space.rank() - 1),
+                vector_size
+            )
+            .unwrap_or_else(|why| panic!("GlobalOperand: {vector_size} values a load: {why}"))
+        );
+        let parts = comptime!(load.parts(&spec.stored_tiles, &projection.dense_labels(), rank));
         let mut physical_shape = Coords::<u32>::new();
         let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
-            let extent = geometry.shape.at(i);
-            let stride = geometry.strides.at(i);
-            if comptime!(i == last) {
-                physical_shape.push(extent / w);
-                physical_strides.push(stride);
-            } else {
-                physical_shape.push(extent);
-                physical_strides.push(stride / w);
-            }
+            let part = comptime!(parts[i] as u32);
+            physical_shape.push(geometry.shape.at(i) / part);
+            physical_strides.push(geometry.strides.at(i) * part / comptime!(vector_size as u32));
         }
         let gmem_projection = comptime!(projection.positional());
         // Folded from the physical shape, so tiled (padded) operands get the logical extent.
@@ -239,7 +244,7 @@ impl<T: Numeric> Memory<T> {
             &bound,
             &offsets,
             coefficients,
-            vector_size,
+            comptime!(load.clone()),
             comptime!(coords.clone()),
         );
         Memory::<T> {
@@ -248,6 +253,7 @@ impl<T: Numeric> Memory<T> {
                 backing,
                 vector_size: comptime!(vector_size),
                 packing: comptime!(packing),
+                stored_tiles: comptime!(spec.stored_tiles.clone()),
             },
             layout: BufferLayout {
                 physical_shape,
@@ -313,14 +319,13 @@ fn top_window(
     bound: &Coords<u32>,
     offsets: &Coords<i32>,
     coefficients: Coords<u32>,
-    #[comptime] vector_size: usize,
+    #[comptime] load: VectorTile,
     #[comptime] projection: Projection,
 ) -> (Coords<i32>, Coords<u32>, RuntimeMap) {
     let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
     let mut residues = Coords::<u32>::new();
     let rank = comptime!(projection.physical_rank());
-    let last = comptime!(rank - 1);
 
     #[unroll]
     for pa in 0..rank {
@@ -329,9 +334,7 @@ fn top_window(
             residues.push(0u32);
             let axis = comptime!(space.axis_at(pa));
             match comptime!(space.extent_raw(axis)) {
-                Extent::Static(e) => {
-                    (comptime!(if pa == last { e / vector_size } else { e }) as u32).runtime()
-                }
+                Extent::Static(e) => (comptime!(e / load.extent_along(axis)) as u32).runtime(),
                 Extent::Dynamic => bound.at(pa),
             }
         } else {

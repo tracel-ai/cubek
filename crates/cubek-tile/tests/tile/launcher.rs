@@ -6,7 +6,7 @@ use cubek_tile::launch::BoundaryPolicy;
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
     kind::{Boundary, Storage},
-    layout::{Divisor, Offset, PhysicalAxisMap, Scale},
+    layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageLevels, VectorTile},
 };
 
 const M: Axis = Axis(0);
@@ -241,6 +241,64 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
 
     let plain = launch.arg(binding(&client, &[64, 8])).axes(&[M, K]).build();
     assert_eq!(plain.spec.storage, Storage::Strided);
+}
+
+/// A `[m, k]` buffer of 64 by 64 stored in NVFP4-shaped tiles: a word of 8 along `K`, then 2
+/// words along `K` by 2 rows, then 4 of those along `K` by 4 rows, the tiles down `K`.
+fn nvfp4_shaped(client: &Client) -> TensorBinding {
+    let geometry = StorageLevels::new(&[(K, 8)])
+        .tile(&[(K, 2), (M, 2)])
+        .tile(&[(K, 4), (M, 4)])
+        .grid(&[K, M])
+        .physical(&[(M, 64), (K, 64)])
+        .unwrap();
+    let mut tiled = binding(client, geometry.shape());
+    tiled.strides = geometry.strides().into();
+    tiled.tiling = geometry.tiling();
+    tiled
+}
+
+/// A buffer stored in tiles says so in its spec, and a load of 32 values binds as the 16 by 2
+/// rectangle those tiles make: how the buffer is stored is the operand's to state, what a load
+/// covers the kernel's to pick out of it.
+#[test]
+fn arg_binds_a_load_across_the_tiles_a_buffer_stores() {
+    let client = cubecl::test_device().client();
+    let launch = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 64);
+        implied(&client, Partitioning::new(space, levels), Form::Dynamic)
+    };
+    let arg = launch
+        .arg(nvfp4_shaped(&client))
+        .axes(&[M, K])
+        .vectorize(32)
+        .build();
+    assert_eq!(
+        arg.spec.stored_tiles,
+        vec![(K, 8), (K, 2), (M, 2), (K, 4), (M, 4)]
+    );
+    assert_eq!(
+        VectorTile::new(&arg.spec.stored_tiles, K, 32)
+            .unwrap()
+            .extents(),
+        &[(K, 16), (M, 2)]
+    );
+}
+
+/// A load that would cut a stored tile does not bind: four values are half a word.
+#[test]
+#[should_panic(expected = "cannot be served 4 wide")]
+fn arg_refuses_a_load_that_cuts_a_stored_tile() {
+    let client = cubecl::test_device().client();
+    let launch = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 64);
+        implied(&client, Partitioning::new(space, levels), Form::Dynamic)
+    };
+    launch
+        .arg(nvfp4_shaped(&client))
+        .axes(&[M, K])
+        .vectorize(4)
+        .build();
 }
 
 /// A tensor whose block is no level's tile is still an operand: (16, 4) is the cube's M with the

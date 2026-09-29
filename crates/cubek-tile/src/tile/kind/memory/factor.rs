@@ -75,6 +75,11 @@ impl Factor {
         unexpanded!()
     }
 
+    /// Whether the innermost level's scales vary along `axis`, so a run along it spans scales.
+    pub(crate) fn varies_along(&self, _axis: Axis) -> bool {
+        unexpanded!()
+    }
+
     /// The scale covering the value at `coords`: the product of every level.
     pub(crate) fn at_coords(&self, _coords: &Coords<u32>, _values: Space) -> f32 {
         unexpanded!()
@@ -248,6 +253,13 @@ impl FactorReader {
         } else {
             value
         }
+    }
+}
+
+impl FactorExpand {
+    pub(crate) fn __expand_varies_along_method(&self, _scope: &Scope, axis: Axis) -> bool {
+        self.inner()
+            .is_some_and(|level| level.projection.addresses(axis))
     }
 }
 
