@@ -8,8 +8,7 @@ use crate::*;
 use super::base::{GatherProblem, LhsRole};
 use crate::ops::matmul::leaf::memory::resolve_nd_coords;
 
-/// One operand read at the accumulator cell `(row, col)` of the batch matrix `batch` names.
-/// `width` is the operand's own line width, since only its innermost axis is addressed in lines.
+/// One operand read at accumulator cell `(row, col)` of batch matrix `batch`.
 #[cube]
 pub(super) fn cell_read<T: Numeric, W: Size>(
     view: &Masked<'_, Vector<T, W>, CoordsDyn>,
@@ -76,17 +75,8 @@ pub(super) fn offset_last(coords: &CoordsDyn, #[comptime] rank: usize, delta: u3
     out
 }
 
-/// Assembles the accumulator cell coordinate [`resolve_nd_coords`] reads on its acc branch: one
-/// entry per axis of the accumulator's space, in the space's own order, because that is what
-/// `acc.position(axis)` indexes it by.
-///
-/// `batch`'s axes come already resolved; `row` unravels over the row group and `col` over the
-/// column group, whose innermost entry counts the cells one block column holds rather than
-/// scalars ([`ContractShape::cell_width`]). One axis per group gives `[batch…, row, col]`.
-///
-/// A column group spans several axes when `MatrixAxes::accumulator`, which stops it at the first
-/// axis the lhs spans, finds none: a depthwise convolution's `[batch, out_h, out_w, channel]`
-/// against a filter over channel and taps leaves them all in the column group.
+/// The accumulator cell coordinate [`resolve_nd_coords`] reads, one entry per axis of the
+/// accumulator's space in its own order.
 #[cube]
 fn acc_cell_coords(
     batch: &Coords<u32>,
@@ -115,12 +105,7 @@ fn acc_cell_coords(
     out
 }
 
-/// What the separable schedule assumes on top of [`assert_operand_shapes`], where it steps one
-/// resolved coordinate along the accumulator's columns by hand instead of resolving each cell.
-///
-/// [`Projection::validate`] already states this for an operand lined `contracted_per_step` wide,
-/// but skips it at width `1`, where a scalar operand may gather on its innermost axis. The step
-/// below needs it at every width, so it is asked here. Host-side, so a violation is comptime.
+/// Assert the extra operand shapes the separable schedule assumes; fails at comptime.
 pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_col: bool) {
     let col = acc.axis_at(acc.rank() - 1);
     assert!(
@@ -136,9 +121,7 @@ pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_c
     );
 }
 
-/// What [`resolve_nd_coords`] and the unit fold assume about how the operands are lined up: one
-/// axis per operand is the vectorized one, addressed in lines; if it is not the axis the operand
-/// really lines along, reads are silently off by the width. Host-side, so it fails at comptime.
+/// Assert each operand's vectorized axis is the one it lines along; fails at comptime.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn assert_operand_shapes(
     lhs: &Space,
@@ -153,9 +136,7 @@ pub(super) fn assert_operand_shapes(
         !reduce.is_empty(),
         "contract gather: the operands contract no axis against the accumulator"
     );
-    // `Space::contracted` merges lhs-first, so an axis only the rhs spans lands past every lhs
-    // one and would take the `fastest` slot below. That reads as the lhs being lined wrong, which
-    // it is not, so the real constraint is named here instead.
+    // An rhs-only contracted axis would take the `fastest` slot; name that constraint instead.
     for &axis in reduce {
         assert!(
             lhs.contains(axis),
@@ -164,31 +145,25 @@ pub(super) fn assert_operand_shapes(
         );
     }
     let fastest = reduce[reduce.len() - 1];
-    // A col-lined lhs is the exception: it lines along the accumulator's innermost axis, so the
-    // fastest contracted axis is walked in elements like every other contracted one.
+    // A col-lined lhs lines along the accumulator, so every contracted axis is walked in elements.
     assert!(
         lhs_role == LhsRole::LinedAlongColumn || lhs.axis_at(lhs.rank() - 1) == fastest,
         "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
     );
-    // A vectorized rhs lines along the accumulator's innermost axis (its units are cells) or the
-    // fastest contracted one (its units are partials of one cell); a scalar one is addressed in
-    // elements and need not span either, so a weight shared by every column can omit that axis.
+    // A scalar rhs need not span either axis, so a weight shared by every column can omit it.
     let rhs_lined = rhs.axis_at(rhs.rank() - 1);
     assert!(
         rhs_vec_len == 1 || rhs_lined == acc.axis_at(acc.rank() - 1) || rhs_lined == fastest,
         "contract gather: a vectorized rhs must line along the accumulator's innermost axis or \
          the fastest contracted axis {fastest:?}"
     );
-    // A [`LhsRole::PerCell`] lhs is read once per cell, and a cell is `rhs_vec_len` columns wide,
-    // so one read covers them only when it lines along the column axis. Lined along a contracted
-    // axis instead, the broadcast would silently serve the first column's value to every unit.
+    // A per-cell lhs read covers `rhs_vec_len` columns only when lined along the column axis.
     assert!(
         lhs_role != LhsRole::PerCell || rhs_vec_len == 1,
         "contract gather: an lhs spanning the accumulator's innermost axis needs a value per \
          column, so that axis must be the one it lines along (the accumulator is {rhs_vec_len} \
          wide, the lhs lines {lhs_vec_len})"
     );
-    // The col-lined line *is* the cell, so the two are the same width by construction.
     assert!(
         lhs_role != LhsRole::LinedAlongColumn || lhs_vec_len == rhs_vec_len,
         "contract gather: a col-lined lhs is read as the cell itself, so its line width \

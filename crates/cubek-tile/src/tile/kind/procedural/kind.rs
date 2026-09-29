@@ -17,21 +17,15 @@ use super::{ErasedRecipe, FactorReads, RecipeCoords, Separable, SeparableCall};
 #[expand(derive(Clone))]
 pub struct Procedural<T: Numeric> {
     origin: Coords<u32>,
-    /// The source's static logical extent. Dynamic axes hold `u32::MAX`, deliberately leaving
-    /// them unmasked; unlike `space`, this stays in the parent's coordinate system as
-    /// [`Tile::at`](crate::Tile::at) descends into nominally sized trailing partial tiles.
+    /// The source's static extent in the parent's coordinates; dynamic axes hold `u32::MAX`.
     bound: Coords<u32>,
-    /// Whether any level can select a partial tile. It stays with the source while its `space`
-    /// descends, because the leaf space alone no longer records an ancestor's overhang.
+    /// Whether any level can select a partial tile.
     #[cube(comptime)]
     pub(crate) bounds_check: bool,
-    /// The statically overhanging axes. Keeping this comptime avoids emitting a per-tap bound
-    /// comparison when only an unrelated axis has a trailing partial tile.
+    /// The statically overhanging axes.
     #[cube(comptime)]
     bounded_axes: Vec<Axis>,
-    /// Requested factor normalization and the space whose complete factor runs it describes. Only
-    /// a separable contraction consumes it, since only that leaf knows each factor's tap run; the
-    /// original space lets it reject an ancestor split that would normalize each chunk on its own.
+    /// Requested factor normalization, consumed by a separable contraction.
     #[cube(comptime)]
     pub(crate) normalization: Option<Normalization>,
     recipe: ErasedRecipe<T>,
@@ -58,8 +52,6 @@ impl<T: Numeric> Procedural<T> {
             });
             bound.push(extent);
         }
-        // Nothing has cut this tile yet: an axis overhangs once a level's edge fails to divide
-        // it, which `at` records on the way down.
         let bounded_axes = comptime!(Vec::new());
         Procedural::<T> {
             origin,
@@ -86,8 +78,6 @@ impl<T: Numeric> Procedural<T> {
                 None => origin.push(self.origin.at(p)),
             }
         }
-        // An axis this level cuts unevenly leaves a partial tile below; from here down every
-        // read along it is checked.
         let bounded_axes = comptime!({
             let mut axes = self.bounded_axes.clone();
             for axis in space.axes() {
@@ -145,9 +135,7 @@ impl<T: Numeric> Procedural<T> {
         self.recipe.factor(&absolute, factor)
     }
 
-    /// Whether `pos` remains inside the original procedural box on one logical axis. Factor-local
-    /// normalization asks only about the axis its tap moves, so another factor's placeholder
-    /// coordinate cannot mask this one.
+    /// Whether `pos` remains inside the original procedural box along `axis`.
     pub(crate) fn axis_in_bounds(&self, pos: &CoordsDyn, #[comptime] axis: Axis) -> bool {
         if comptime!(self.bounded_axes.contains(&axis) && self.space.contains(axis)) {
             let p = comptime!(self.space.position(axis));
@@ -157,8 +145,7 @@ impl<T: Numeric> Procedural<T> {
         }
     }
 
-    /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe
-    /// has no source-local runtime extent for them.
+    /// Evaluate with the static partial-tile mask; dynamic axes are unmasked.
     pub(crate) fn read_masked(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
         if comptime!(self.bounds_check) && !self.is_in_bounds(pos) {
             T::from_int(0)
@@ -306,8 +293,7 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn> for Proc
 
 #[cube]
 impl<T: Numeric> Procedural<T> {
-    /// This source as a tile, placed alone: a recipe is evaluated where it is read, so no level
-    /// above it cuts it until a walk states one.
+    /// This source as a tile, placed alone.
     pub fn tile(self) -> Tile<T> {
         let space = comptime!(self.space.clone());
         Tile::new(
@@ -318,11 +304,7 @@ impl<T: Numeric> Procedural<T> {
 }
 
 impl<T: Numeric> Procedural<T> {
-    /// A memory-free source over `space`, evaluated from `recipe` at the logical coordinates it
-    /// is read at. The concrete recipe is erased while the kernel expands and nowhere else.
-    ///
-    /// Dynamic extents are supplied by another operand when an operation is walked; a procedural
-    /// source never witnesses them.
+    /// A memory-free source over `space`, evaluated from `recipe` where it is read.
     pub fn new<R: Recipe<T> + 'static>(_space: Space, _recipe: R) -> Self {
         unexpanded!()
     }
@@ -339,8 +321,7 @@ impl<T: Numeric> Procedural<T> {
         )
     }
 
-    /// [`new`](Self::new) keeping the recipe's factorization: a consumer sees one factor per
-    /// contracted axis instead of one opaque field, and evaluates each factor once per tap run.
+    /// [`new`](Self::new) keeping the recipe's factorization, one factor per contracted axis.
     pub fn separable<R: Separable<T> + 'static>(_space: Space, _recipe: R) -> Self
     where
         R::ExpandType: FactorReads,
@@ -356,8 +337,6 @@ impl<T: Numeric> Procedural<T> {
     where
         R::ExpandType: SeparableCall<T>,
     {
-        // A separable source is evaluated where it is read: staging a recipe into shared memory
-        // would drop its factorization and its normalization without diagnostic.
         Self::__expand_erased(
             scope,
             space,
@@ -367,12 +346,8 @@ impl<T: Numeric> Procedural<T> {
 }
 
 impl<T: Float> Procedural<T> {
-    /// Normalize this source's factor runs where the gather contraction evaluates them: each
-    /// factor's taps are summed and divided out there, since only that leaf knows a tap run.
-    ///
-    /// Refused for a recipe that states no factorization: a post-pass over the values would hide
-    /// a second walk. Summing only the taps in bounds ([`TapSupport::InBounds`]) also needs the
-    /// operand read at its source window, so staging it in shared memory is refused at launch.
+    /// Normalize each factor's taps where the gather contraction evaluates them.
+    /// The recipe must state a factorization.
     pub fn normalized(self, _taps: TapSupport, _guard: DivGuard) -> Self {
         unexpanded!()
     }

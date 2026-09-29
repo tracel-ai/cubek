@@ -1,8 +1,4 @@
-//! The decoding copy: a source carrying a table ([`Tile::lookup`]) or scales ([`Tile::mul`])
-//! copied into a destination that holds plain values.
-//!
-//! This is where a kernel decodes on purpose: `stage.copy_from(&w.lookup(&t).mul(&scales))` states
-//! the decode at the copy, and nothing decodes behind a read the kernel did not write.
+//! The decoding copy through a table or scales ([`Tile::lookup`], [`Tile::mul`]).
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
@@ -10,16 +6,9 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales: each source load is
-    /// unpacked, and every destination line it holds replaces its values by their table entries,
-    /// multiplies them by the scale at its first value, and lands.
-    ///
-    /// A load is the source's [`vector_tile`](Tile::vector_tile): a run along the innermost axis,
-    /// or a rectangle of the tiles its buffer is stored in (an NVFP4 load of 16 values along `K`
-    /// by 2 columns), whose values land a destination line at a time, each where it belongs.
-    ///
-    /// **The two span one box.** The source may carry axes the destination does not, each one
-    /// wide (a batch or head the cube already fixed).
+    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales, read in the source's
+    /// own loads ([`vector_tile`](Tile::vector_tile)), a run or a rectangle of its stored tiles.
+    /// The source may carry extra axes only if each is one wide.
     pub(crate) fn copy_scaled_from(&mut self, src: &Tile<T>) {
         let load = src.vector_tile();
         let sw = comptime!(load.values());
@@ -57,9 +46,7 @@ impl<T: Numeric> Tile<T> {
         for line in range_stepped(UNIT_POS, load.count(&space), CUBE_DIM) {
             let start = load.start(line, &space);
             let held = stored.read(load.index(&start, &space));
-            // The destination lines this load holds, each at its first value, `offset` its
-            // position in the load; and where it lands, the same place without the source's
-            // one-wide axes.
+            // The destination lines this load holds, `offset` their place in it, and where they land.
             #[unroll]
             for c in 0..comptime!(sw / vw) {
                 let offset = comptime!(c * vw);

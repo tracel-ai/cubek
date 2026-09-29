@@ -1,9 +1,5 @@
-//! A table these values index: stored fields that are positions rather than numbers
-//! ([`Tile::lookup`](crate::Tile::lookup)), read back as `table[index]` where the kernel copies
-//! them, and nowhere else.
-//!
-//! Like a [`Factor`], it rides the values it was attached to, and the table's element is the
-//! table's business: it is erased while the kernel is expanded and read back as `f32`.
+//! A table the stored values index ([`Tile::lookup`](crate::Tile::lookup)), read back as
+//! `table[index]` widened to `f32`.
 
 use std::sync::Arc;
 
@@ -54,8 +50,7 @@ pub(crate) struct CodebookExpand {
 }
 
 impl Codebook {
-    /// No table: what every operand carries until [`Tile::lookup`](crate::Tile::lookup) says
-    /// otherwise.
+    /// No table: what every operand carries until [`Tile::lookup`](crate::Tile::lookup).
     pub(crate) fn none() -> Codebook {
         unexpanded!()
     }
@@ -65,8 +60,7 @@ impl Codebook {
         unexpanded!()
     }
 
-    /// Every value of `indices` replaced by the entry it names; values that index no table are
-    /// returned as they are.
+    /// Every value of `indices` replaced by its entry; unchanged when there is no table.
     pub(crate) fn entries<T: Numeric, V: Size>(&self, _indices: Vector<T, V>) -> Vector<T, V> {
         unexpanded!()
     }

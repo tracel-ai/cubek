@@ -3,9 +3,7 @@ use cubecl::{
     std::tensor::{View, ViewMut, layout::Coordinates},
 };
 
-/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some layout plus
-/// its own comptime `check` flag, so the leaf zeroes reads / skips writes past the
-/// partial-tile overhang; `false` is the unchecked fast path.
+/// A [`View`] plus a comptime `check` flag: reads past the overhang zero, writes skip.
 #[derive(CubeType)]
 pub struct Masked<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: View<'a, T, C>,
@@ -23,15 +21,12 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
         if comptime!(self.check) {
             self.view.read_checked(pos)
         } else {
-            // `check == false` means the launch proved this access in-bounds; dropping
-            // the inner view's redundant index clamp speeds up the hot leaf loop.
+            // `check == false`: the launch proved this access in-bounds.
             self.view.read_unchecked(pos)
         }
     }
 
-    /// Whether `pos` lands on the operand's real data (`true` unconditionally when `check` is
-    /// `false`: the launch already proved every access in-bounds). A fold whose identity is not
-    /// zero (`Max`, `Min`) cannot use [`read`](Masked::read)'s zeroed default and selects its own.
+    /// Whether `pos` lands on real data; always `true` when `check` is `false`.
     pub fn is_in_bounds(&self, pos: C) -> bool {
         if comptime!(self.check) {
             self.view.is_in_bounds(pos)
@@ -40,8 +35,7 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
         }
     }
 
-    /// Whether the non-empty box starting at `pos` with `extent` is wholly in bounds.
-    /// A layout's bounds are axis-aligned, so checking the box's far corner is sufficient.
+    /// Whether the non-empty box at `pos` with `extent` is wholly in bounds.
     pub(crate) fn block_in_bounds(&self, pos: C, extent: C) -> bool {
         if comptime!(self.check) {
             let one = C::from_int(pos.clone(), 1i64);
@@ -59,14 +53,8 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
 
 #[cube]
 impl<'a, T: CubePrimitive, C: Coordinates + 'static> Masked<'a, T, C> {
-    /// The buffer from where the stage arranges `pos`, spanning `size`: what an instruction that takes
-    /// an address rather than a value (`ldmatrix`) reads, with the stage's arrangement — padded or
-    /// swizzled — applied to `pos` as a read applies it. The lines must lie together in the
-    /// buffer, which an arrangement keeps within one chunk.
-    ///
-    /// # Panics
-    ///
-    /// Where the view masks: an address reads past the overhang a masked read would zero.
+    /// The buffer the stage's arrangement places at `pos`, spanning `size`: the address `ldmatrix`
+    /// reads. Panics where the view masks.
     pub(crate) fn line_slice(&self, pos: C, size: C) -> &[T] {
         comptime!(assert!(
             !self.check,
@@ -80,8 +68,7 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'static> Masked<'a, T, C> {
     }
 }
 
-/// The mutable twin of [`Masked`]. Its `write` skips the overhang under `check`, matching
-/// the masked reads.
+/// The mutable twin of [`Masked`].
 #[derive(CubeType)]
 pub struct MaskedMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: ViewMut<'a, T, C>,

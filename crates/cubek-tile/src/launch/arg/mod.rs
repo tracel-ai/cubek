@@ -1,6 +1,4 @@
-//! The kernel argument that carries one operand, host and device side: what is bound
-//! ([`Input`], [`Output`]), the arguments they carry, one file each, and the [`Destination`] seam
-//! a caller's own output plugs into.
+//! The kernel arguments that carry operands, host and device side.
 
 mod accumulate;
 mod analysis;

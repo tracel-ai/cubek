@@ -1,39 +1,24 @@
-//! The runtime side of a [`Projection`]: [`RuntimeMap`], the values a mapping only knows in the
-//! kernel, and the folds that drive a buffer's shape and strides against the digits an operand's
-//! coordinates decompose into. Free `#[cube]` functions, as `Projection` is never a [`CubeType`].
+//! The runtime side of a [`Projection`]: [`RuntimeMap`] and the `#[cube]` digit folds.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::{Axis, Coords, Integer, IntegerExpand, IntegerSeq, IntegerSeqExpand, Projection};
 
-/// What a [`Projection`] cannot state at comptime: the values its [`Dynamic`](crate::Scale)
-/// coefficients and divisors carry, and the phase its window origin sits at under a
-/// [rational](Divisor) mapping.
-///
-/// They travel together because they are read together, per physical axis, in one expression:
-/// [`ProjectionInKernel`](crate::ProjectionInKernel) resolves a tap through the coefficients and off the
-/// phase at once, and a descent ([`Memory::at`](crate::Memory)) advances both.
-///
-/// No coefficients and an all-zero phase is the whole of it for a fully-`Static` integer mapping,
-/// which is every operand but a runtime-strided or fractionally scaled gather; [`Integer`] passes
-/// that through, so carrying it costs nothing where it says nothing.
+/// The runtime half of a [`Projection`]: its dynamic coefficients and divisors, and the
+/// window origin's phase under each divisor.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct RuntimeMap {
-    /// One per [`Scale::Dynamic`](crate::Scale) coefficient ([`Projection::dynamic_scale_index`]
-    /// order) and one per [`Divisor::Dynamic`] axis ([`Projection::dynamic_divisor_index`] order),
-    /// interleaved physical axis major (divisor last); unlike [`Store`](crate::Store)'s scales.
+pub(crate) struct RuntimeMap {
+    /// Dynamic coefficients and divisors, physical axis major, each axis's divisor last.
     pub(crate) coefficients: Coords<u32>,
-    /// The window origin's phase within its divisor, one per physical axis, in `0..divisor`.
-    /// Constant `0` for every integer mapping, where the origin absorbs the offset whole.
+    /// The window origin's phase within its divisor per physical axis, `0` when integer.
     pub(crate) residues: Coords<u32>,
 }
 
 #[cube]
 impl RuntimeMap {
-    /// The runtime map an integer mapping carries: nothing to carry, and no phase on any of
-    /// `physical_rank` axes.
+    /// The runtime map of an integer mapping: no coefficients, zero phases.
     pub(crate) fn integral(#[comptime] physical_rank: usize) -> RuntimeMap {
         RuntimeMap {
             coefficients: Coords::<u32>::new(),
@@ -41,9 +26,7 @@ impl RuntimeMap {
         }
     }
 
-    /// Materialize this map in mutable, per-slot kernel registers. A normal clone preserves the
-    /// source expressions; a staged slot instead needs values that survive independently while a
-    /// sibling slot is refilled for another region.
+    /// This map copied into mutable registers that survive a sibling slot's refill.
     pub(crate) fn stored(&self) -> RuntimeMap {
         RuntimeMap {
             coefficients: self.coefficients.stored(),
@@ -58,9 +41,7 @@ impl RuntimeMap {
     }
 }
 
-/// The logical extent per axis, folded from `projection`'s physical shape: a single-carrier axis
-/// passes its physical extent through, a storage-tiled one multiplies its fragments' extents back
-/// together, or `physical_shape` itself when untiled. Free since `Projection` is no [`CubeType`].
+/// The logical extent per axis, folded from `projection`'s physical shape.
 #[cube]
 pub(crate) fn logical_extent(
     #[comptime] projection: Projection,
@@ -75,12 +56,7 @@ pub(crate) fn logical_extent(
     bound
 }
 
-/// The line offset one `edge`-sized tile step along `axis` moves under `projection`: `axis`'s
-/// digits taken of `edge` itself rather than of a coordinate, dotted with `strides`. Radices come
-/// from `physical_shape`: a static store folds to a constant, a runtime-shaped one stays exact.
-///
-/// Exact because one edge-step's offset is linear in the tile index: every edge divides its
-/// enclosing block, so decomposing the step size like a coordinate reconstructs the same advance.
+/// The line offset one `edge`-sized tile step along `axis` moves under `projection`.
 #[cube]
 pub(crate) fn step_offset(
     #[comptime] projection: Projection,
@@ -113,12 +89,8 @@ pub(crate) fn step_offset(
     parts.sum(picks)
 }
 
-/// The inverse of `BufferLayout`'s `to_source_pos`: the logical coordinate under `projection` that
-/// produced physical digits `digits` (one per physical axis, already decoded off the flat index).
-/// Requires [`Projection::is_invertible`]: a gathered (affine, scale != 1) one never reaches this.
-///
-/// A [`BufferLayout`](crate::BufferLayout) only carries its buffer's own positional map: a gathered
-/// operand is resolved a layer above it or staged through its own compacted [`Projection`].
+/// The logical coordinate producing physical `digits` under `projection`, inverting
+/// `BufferLayout`'s `to_source_pos`. Requires [`Projection::is_invertible`].
 #[cube]
 pub(crate) fn fold_physical(
     #[comptime] projection: Projection,
@@ -167,9 +139,7 @@ mod tests {
 
     const A: Axis = Axis(0);
 
-    /// Folding `Σ digit * (extents it stripped)` back reconstructs the coordinate the digits were
-    /// decomposed from, which is what `fold_physical` does to `to_source_pos`. Both are `#[cube]`,
-    /// so the round trip is checked here on the digit positions they are built from.
+    /// Folding the digits back reconstructs the coordinate they were decomposed from.
     #[test]
     fn fold_physical_digits_invert_to_source_pos_digits() {
         let shape = [3usize, 8];

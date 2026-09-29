@@ -1,16 +1,4 @@
-//! The destination a contraction cut across a cube's planes drains into: a shared-memory buffer
-//! whose writes add into the cell atomically, and a tile that reads the sum back.
-//!
-//! [`AccumulateArg`](crate::AccumulateArg) is the same destination one scope up, in global memory.
-//!
-//! What the caller owns is the order. The buffer is zeroed and the cube synchronized before
-//! [`smem_accumulation`](Tile::smem_accumulation) returns, so the first add lands on the identity.
-//! Reading the source before every plane has drained and the cube has synchronized again reads a
-//! partial sum, and nothing here can tell.
-//!
-//! A call site's buffer is the same memory every time it runs, so an accumulator opened in a loop
-//! reuses the last one's cells. The cube synchronizes before zeroing too, so a unit still reading
-//! the previous sum finishes before the next one clears it.
+//! A shared-memory destination planes add into atomically, and a tile that reads the sum back.
 
 use core::marker::PhantomData;
 
@@ -24,26 +12,19 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// A cube's shared-memory accumulator over one box: where the planes add their partials, summed
-/// in `A`, and where the sum is read back in the box's own element `T`.
+/// A cube's shared-memory accumulator over one box, summing in `A`, read back as `T`.
 #[derive(CubeType)]
 pub struct SmemAccumulation<A: Numeric, T: Numeric> {
-    /// Writes add into the cell atomically: what each plane's partial drains into.
+    /// Writes add into the cell atomically.
     pub sink: Tile<A>,
-    /// Reads the sum back, cast to `T`: valid once every plane has drained and the cube has
-    /// synchronized.
+    /// Reads the sum back as `T`; valid only once every plane has drained and the cube has synced.
     pub source: Tile<T>,
 }
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A shared-memory accumulator over this tile's box, summing in `A`, zeroed, with the cube
+    /// A zeroed shared-memory accumulator over this tile's box, summing in `A`, with the cube
     /// synchronized on both sides of the zeroing.
-    ///
-    /// Sized to this tile's own space, so a cube opens one over its box of the output and each of
-    /// its planes drains into `sink.at(&plane)`; the source reads the sum as this tile's element,
-    /// so it copies into the box as it stands. Scalar, because an atomic is: whatever width the
-    /// planes compute in, a line is added one element at a time.
     pub fn smem_accumulation<A: Numeric>(&self) -> SmemAccumulation<A, T> {
         let space = comptime!(self.place.space.clone());
         let elem_bytes = A::size().comptime();
@@ -94,10 +75,7 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-/// The erased tensors over a shared buffer of atomics: one adds into it, one loads out of it.
-///
-/// Constructors here rather than in cubecl for the reason [`AccumulateArg`](crate::AccumulateArg)'s is: what a
-/// write *means* is this crate's statement.
+/// The erased tensors over a shared buffer of atomics.
 pub(crate) trait SmemAccumulateSink<E: Numeric> {
     /// The sink that adds into `values`, one scalar per line.
     fn of_smem_accumulate(_values: &Shared<[Atomic<E>]>) -> ErasedTensor<E, WriteOnly> {
@@ -164,8 +142,7 @@ impl<E: Numeric> ErasedTensorOperationsExpand<E> for SmemAccumulate<E> {
 
 impl<E: Numeric> WritesLines<E> for SmemAccumulate<E> {}
 
-/// A backing that loads out of a shared buffer of `Atomic<A>`, casting to `T`. Reads and never
-/// writes.
+/// A backing that loads out of a shared buffer of `Atomic<A>`, casting to `T`.
 struct SmemLoad<A: Numeric, T: Numeric> {
     values: <Shared<[Atomic<A>]> as CubeType>::ExpandType,
     _t: PhantomData<T>,

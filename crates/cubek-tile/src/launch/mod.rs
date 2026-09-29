@@ -1,5 +1,4 @@
-//! Binding tensors to a kernel and launching it: the [`Launcher`], the operand builder and the
-//! arguments a `#[cube(launch)]` signature names.
+//! Binding tensors to a kernel and launching it.
 
 mod arg;
 mod base;

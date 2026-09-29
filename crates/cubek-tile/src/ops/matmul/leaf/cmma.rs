@@ -1,10 +1,5 @@
-//! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`. The accumulator is always a
-//! resident fragment; operands are fragments or staged smem windows (row-major by construction)
-//! loaded into transient `A`/`B` here. A gmem window's layout is unchecked, so it is staged first.
-//!
-//! The rhs window is `{k, n}` as stored, or `{n, k}` when its trailing axis is the one
-//! contracted: that window is read as a col-major `B`, so `a · bᵀ` needs no transposed
-//! copy ([`rhs_layout`]).
+//! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`, with non-fragment operands
+//! loaded into transient `A`/`B` fragments.
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -16,11 +11,7 @@ use crate::*;
 
 #[cube]
 impl<A: Numeric> CmmaData<A> {
-    /// Tensor-core contraction `self += lhs · rhs`, each factor times whatever scales it carries.
-    ///
-    /// Operands already resident as fragments execute as they are; every other operand is read
-    /// into a transient `A`/`B` fragment first. A fragment load reads memory as it lies, so a
-    /// factor carrying scales is folded into its plane's landing and the load reads that.
+    /// Tensor-core contraction `self += lhs · rhs`, each factor times its scales.
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -75,9 +66,7 @@ impl<A: Numeric> CmmaData<A> {
     }
 }
 
-/// How a rhs window is read: col-major when its trailing axis is `contracted`, the matrix
-/// then being the window's transpose; row-major otherwise. The rule
-/// [`PlanePartition::store`](crate::PlanePartition::store) loads a `B` fragment by.
+/// How a rhs window is read: col-major when its trailing axis is `contracted`, else row-major.
 pub(crate) fn rhs_layout(rhs: &Space, contracted: Axis) -> MatrixLayout {
     match rhs.axis_at(rhs.rank() - 1) == contracted {
         true => MatrixLayout::ColMajor,
@@ -85,32 +74,23 @@ pub(crate) fn rhs_layout(rhs: &Space, contracted: Axis) -> MatrixLayout {
     }
 }
 
-/// How one factor of a tensor-core contraction is read into its fragment: the fragment's own
-/// edges, the matrix this factor's window is, and what the scales it carries are checked
-/// against.
-///
-/// Read off the two operand spaces and the accumulator's, once per factor, so neither can
-/// disagree with the other about the contraction they share. `side` is stated by the caller —
-/// it is the factor it is calling on — and nothing here infers it.
+/// How one factor of a tensor-core contraction is read into its fragment.
 #[derive(Clone)]
 pub(crate) struct FragmentRead {
-    /// The fragment's edges, the same for both factors.
+    /// The fragment's edges.
     pub m: usize,
     pub n: usize,
     pub k: usize,
-    /// The layout the rhs window reads at: col-major where the contraction is its trailing
-    /// axis and the fragment reads its window as the transpose; the lhs is always row-major.
+    /// The rhs window's layout; the lhs is always row-major.
     pub layout: MatrixLayout,
-    /// What the scales riding this factor are checked against: the side they were stated on,
-    /// and the accumulator.
+    /// What this factor's scales are checked against.
     pub side: Side,
     pub out: Space,
 }
 
 impl FragmentRead {
     pub(crate) fn new(side: Side, lhs: &Space, rhs: &Space, out: &Space) -> Self {
-        // The fragment's edges off the accumulator's axes and the contracted extent, as the plain
-        // leaf reads them: a split contraction is one `k` edge, whatever its digits.
+        // A split contraction is one `k` edge.
         let acc_axes = MatrixAxes::accumulator(out, lhs);
         let m = acc_axes.rows(out);
         let n = acc_axes.cols(out);
@@ -130,14 +110,7 @@ impl FragmentRead {
 
 #[cube]
 impl<E: Numeric> Tile<E> {
-    /// This factor read into `frag`.
-    ///
-    /// A fragment loads a window as it lies, so the window's layout must be one the instruction
-    /// can be told: a shared one is, a global one is not. The landing ([`landed`](Tile::landed))
-    /// answers that: the factor's values, dense in plane-owned shared memory, loaded from there.
-    ///
-    /// A factor carrying scales has no other route, since its values exist only once scaled; one
-    /// carrying none lands when it has a landing and is read as it lies when already shared.
+    /// This factor read into `frag`; a scaled or landed factor goes through its landing.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
         let scaled = self.scaled();
         let landed = self.has_landing();
@@ -150,15 +123,11 @@ impl<E: Numeric> Tile<E> {
         } else {
             match &self.kind {
                 TileKind::Memory(m) => {
-                    // A fragment loads a window as it lies, which only a shared stage
-                    // guarantees: a gmem layout is unchecked.
                     comptime!(assert!(
                         m.address == AddressSpace::Shared,
                         "mma: a fragment loads a window as it lies and a gmem layout is \
                          unchecked; open the operand with `with_landing()`, or stage it"
                     ));
-                    // A packed stage holds words, and a fragment loads a window as it lies: it
-                    // lands first, or it is not read at all.
                     comptime!(assert!(
                         packing == Packing::Plain,
                         "mma: a packed stage reaches a fragment through a landing; open the \
@@ -177,16 +146,8 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
-    /// This factor in its plane's landing: a shared-memory stage, dense over the window's own
-    /// axes, holding `values ⊗ scales`, that fragments load from as from any shared stage. Sized
-    /// to this window: a kernel landing a step whole lands it once for its partition's fragments.
-    ///
-    /// Each unit reads lines through the values' packed view, multiplies each by the scale at
-    /// the line's coordinates where the factor carries one, and writes it there; the plane then
-    /// syncs past the writes. A scale-free factor walks the same way: the landing is a residence.
-    ///
-    /// `side` and `out` are what the scales' statement is checked against: the accumulator's
-    /// space, and which factor of it this is.
+    /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
+    /// that fragments load from.
     pub fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
         let lands = self.has_landing();
         comptime!(assert!(
@@ -211,15 +172,13 @@ impl<E: Numeric> Tile<E> {
             comptime!(out.clone()),
             acc_axes,
         );
-        // The window's loads, and where each one lands, dense over the window's axes in scalars.
         let load = self.vector_tile();
         let lines = load.count(&space);
         let strides = comptime!(dense_strides(&space));
         let by_shuffle = scales.by_shuffle();
         if comptime!(by_shuffle) {
-            // A scale held in the plane's units is fetched by shuffle, which the whole plane must
-            // join: every unit takes every turn, and a unit past the lines reads the last one
-            // again and writes nothing.
+            // The whole plane must join every shuffle; units past the lines reread the last one and
+            // write nothing.
             #[allow(clippy::manual_div_ceil)]
             let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
             for turn in 0..turns {
@@ -255,9 +214,7 @@ impl<E: Numeric> Tile<E> {
 
 #[cube]
 impl<E: Numeric> Tile<E> {
-    /// This landing loaded into `frag` as it lies: dense over the window's axes, so a row of
-    /// the fragment's matrix is as long as the columns' axes multiply to — the trailing run of
-    /// axes on the innermost one's side of the contraction against `out`.
+    /// This landing loaded into `frag`, dense over the window's axes.
     pub(crate) fn load_into(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
         let cols = comptime!(landed_cols(&self.place.space, &out) as u32);
         match &self.kind {
@@ -277,9 +234,8 @@ impl<E: Numeric> Tile<E> {
     }
 }
 
-/// The columns of a landed window's matrix: the product of its trailing axes on the innermost
-/// axis's side of the contraction — contracted with it, or the accumulator's with it — which is
-/// where a row-major copy of the window turns to its next row.
+/// The column count of a landed window's matrix: the trailing axes on the innermost axis's side
+/// of the contraction.
 fn landed_cols(window: &Space, out: &Space) -> usize {
     let rank = window.rank();
     let innermost = out.contains(window.axis_at(rank - 1));
@@ -290,9 +246,7 @@ fn landed_cols(window: &Space, out: &Space) -> usize {
         .product()
 }
 
-/// The accumulator's matrix as [`MatrixAxes::accumulator`] reads it off the lhs, read off one
-/// factor alone: the column group is the innermost run of `out`'s axes the lhs does not span,
-/// which is the run the rhs does.
+/// The accumulator's [`MatrixAxes`] read off one factor alone.
 fn accumulator_axes(side: Side, out: &Space, own: &Space) -> MatrixAxes {
     let mut col_split = out.rank() - 1;
     let in_columns = |axis: Axis| match side {
@@ -308,7 +262,7 @@ fn accumulator_axes(side: Side, out: &Space, own: &Space) -> MatrixAxes {
     }
 }
 
-/// Row-major scalar strides over `space`: where a coordinate lands in a dense copy of it.
+/// Row-major scalar strides over a dense copy of `space`.
 fn dense_strides(space: &Space) -> Vec<usize> {
     let rank = space.rank();
     let mut strides = vec![1; rank];
@@ -319,7 +273,7 @@ fn dense_strides(space: &Space) -> Vec<usize> {
     strides
 }
 
-/// Where `coords` lands in a dense copy: the scalar offset under `strides`.
+/// The scalar offset of `coords` under `strides`.
 #[cube]
 #[allow(clippy::needless_range_loop)]
 fn offset_of(coords: &Coords<u32>, #[comptime] strides: Vec<usize>) -> usize {

@@ -9,21 +9,8 @@ use crate::*;
 use super::base::{FactorReuse, GatherProblem};
 use super::coords::{cell_position, offset_last};
 
-/// Cache each factor's 1-D tap walk at its maximal reuse level before consuming the Cartesian
-/// product: once per block, row, column or cell. Recipe coordinate dependencies decide where a
-/// factor varies; masked normalization adds accumulator axes that move its checked physical bound.
-///
-/// Whether any factor varies over the innermost accumulator axis decides the nesting. Where none
-/// does, a tap's factor product is invariant along the output line: taps outside lines, the rhs
-/// position resolved once per tap. Otherwise lines outside taps, row/column caches still reused.
-///
-/// Both nestings fold the map by hand ([`Tile::nd_split`]) rather than per read. A run's lines are
-/// adjacent on the operand's innermost axis, the accumulator's column axis at coefficient `1`
-/// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so one cell apart.
-///
-/// Taps move only contracted axes. With every factor free of the column axis, a run shares one
-/// anchor ([`ProjectionInKernel::anchor`]) per row; otherwise each `(i, n)` cell anchors once and steps
-/// via [`ProjectionInKernel::advance`]. Reads and mask tests use the stepped physical coordinates.
+/// Contract a separable procedural rhs, caching each factor's 1-D tap walk at its maximal reuse
+/// level (block, row, column or cell).
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     acc: &mut Memory<E>,
@@ -62,16 +49,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     for mat in 0..matrices {
         let batch = Coords::constant(comptime!(batch_extents.clone())).unravel(mat.cast::<u32>());
 
-        // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
             comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),
             comptime!(semiring.add()),
         );
-        // A comptime `p` folds the tap coordinates, operand coordinate resolution and weight
-        // indices, letting the walk stay in registers and vectorize. It costs `kc` bodies per cell,
-        // so taps unroll on their own budget: the whole nest only if each cell's scalars fit too.
+        // Taps unroll on their own budget: each unrolled tap costs a body per cell.
         let acc_check = acc.check();
         let unroll =
             comptime!(problem.block.scalars() * kc <= config.budget && !rhs_check && !acc_check);
@@ -246,9 +230,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                     }
                 }
             } else {
-                // The taps are the only coordinates moving under this row, so the map's rational
-                // axes carry the same numerator at all `kc` of them: their floor is taken once
-                // here and each tap steps the result.
+                // Only the taps move under this row, so the map's floors are taken once here.
                 #[unroll(unroll_taps)]
                 for p in 0..kc {
                     let reduce_coords =

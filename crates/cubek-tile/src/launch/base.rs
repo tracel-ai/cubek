@@ -1,6 +1,4 @@
-//! One kernel launch: the [`Launcher`] binds a partitioning, the grid and the tiles its operands
-//! are cut to to a client, keeping the concrete (real-extent) space beside the kernel-form one:
-//! geometry and divisibility read off real extents, and nothing consumes it early.
+//! One kernel launch: the [`Launcher`].
 
 use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
@@ -9,8 +7,7 @@ use crate::{
     Arg, Axis, Geometry, Partitioning, PartitioningLaunch, Space, SpaceLaunch, Unlabelled,
 };
 
-/// How many cubes of how many units the launch runs: stated by a blueprint, or read off the
-/// partitioning's levels (a test, a benchmark mapping, a kernel with no blueprint).
+/// How many cubes of how many units the launch runs: stated, or read off the levels.
 #[derive(Clone, Debug)]
 pub enum Grid {
     Stated {
@@ -20,13 +17,7 @@ pub enum Grid {
     FromLevels,
 }
 
-/// One launch: a partitioning (its space in kernel form, the extents a family frees stated
-/// `Dynamic`), the concrete space with this call's real extents, and the grid, bound to a client.
-/// Geometry and divisibility read off the concrete space, tile arguments off the kernel-form one.
-///
-/// A storage-tiled operand's storage tile must be the tile of one of the partitioning's levels
-/// ([`Storage`](crate::Storage)); the launch is where the buffer's real extents and the levels are
-/// both in hand.
+/// One launch: a kernel-form partitioning, the concrete space with real extents, and the grid.
 #[derive(Clone)]
 pub struct Launcher {
     client: Client,
@@ -37,9 +28,7 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    /// `partitioning` over `concrete`'s real extents, on `grid`. Refuses a cube the device cannot
-    /// hold, a filler role on a device with no barrier, and a units level that is neither one unit
-    /// nor the plane when the grid is read off the levels.
+    /// `partitioning` over `concrete`'s real extents, on `grid`; panics if the device can't run it.
     pub fn new(client: &Client, partitioning: Partitioning, concrete: &Space, grid: Grid) -> Self {
         let (cube_count, cube_dim) = match grid {
             Grid::Stated {
@@ -54,7 +43,7 @@ impl Launcher {
                     "Launcher: a grid read off the levels needs a units level of one unit or the \
                      whole plane ({plane_size}), got {plane_units}"
                 );
-                // Counted over the real extents: the kernel-form space may state none.
+                // The kernel-form space may state no extents.
                 let over_concrete =
                     Partitioning::new(concrete.clone(), partitioning.levels().to_vec());
                 (
@@ -70,9 +59,7 @@ impl Launcher {
             cube_dim.num_elems()
         );
         let fillers = partitioning.fillers();
-        // The two roles meet on a barrier and nowhere else, so a device with no barrier type would
-        // run two loops with no rendezvous. Refused on the host, not where the slot is allocated: a
-        // refusal at expansion fires on a worker thread, unseen, and the launch returns zeros.
+        // Checked on the host: a panic at expansion is unseen and the launch returns zeros.
         assert!(
             fillers == 0
                 || client
@@ -115,14 +102,12 @@ impl Launcher {
         &self.partitioning
     }
 
-    /// The kernel's partitioning argument: the kernel-form space, its dynamic extents sized by this
-    /// launch, under the levels the launch states. What `for cube in partitioning` iterates.
+    /// The kernel's partitioning argument, dynamic extents sized by this launch.
     pub fn partitioning_arg(&self) -> PartitioningLaunch {
         PartitioningLaunch::new(self.space_arg(), self.partitioning.levels().to_vec())
     }
 
-    /// The kernel-form space as a kernel argument: its shape, plus each dynamic axis's size read
-    /// off the concrete space (positional over every axis, empty when the space is static).
+    /// The kernel-form space as a kernel argument.
     fn space_arg(&self) -> SpaceLaunch {
         let kernel = self.partitioning.space();
         let mut sizes = SequenceArg::new();
@@ -134,8 +119,7 @@ impl Launcher {
         SpaceLaunch::new(kernel.shape().clone(), sizes)
     }
 
-    /// The partitioning's levels over the concrete space: what overhang, leaf edges and the grid
-    /// are read off, since the kernel-form space may state no extent to read them from.
+    /// The partitioning's levels over the concrete space.
     fn over_concrete(&self) -> Partitioning {
         Partitioning::new(self.concrete.clone(), self.partitioning.levels().to_vec())
     }
@@ -156,34 +140,25 @@ impl Launcher {
             .unwrap_or_else(|| self.concrete.extent(axis))
     }
 
-    /// Bind `binding` as an operand of this launch: the builder that derives its layout, width and
-    /// bounds-check against the kernel's partitioning.
+    /// Bind `binding` as an operand of this launch.
     pub fn arg(&self, binding: TensorBinding) -> Arg<'_, Unlabelled> {
         Arg::bound(self, binding)
     }
 
-    /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor: a fused store's
-    /// destination ([`GlobalOperand::sink`](crate::GlobalOperand::sink)) or a fused read's producer
-    /// ([`GlobalOperand::source`](crate::GlobalOperand::source)). `geometry` is what it *would* have had.
-    /// End it with [`build_spec`](Arg::build_spec), which hands back the settled geometry too.
+    /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor; end it with
+    /// [`build_spec`](Arg::build_spec).
     pub fn unbound(&self, geometry: &Geometry) -> Arg<'_, Unlabelled> {
         Arg::unbound(self, geometry)
     }
 
-    /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for
-    /// all, since a kernel reading one operand's lines writes the other's. Takes a [`Geometry`]
-    /// rather than a binding, so an operand with no tensor constrains the width like any other.
-    ///
-    /// `1` unless each `(geometry, axes)` is unchecked and innermost-contiguous and `v` divides
-    /// each inner extent, every coarser stride and the axis's leaf tile edge.
+    /// The widest line every operand can be served in along `axis`, which must label each
+    /// operand's innermost dim.
     pub fn vector_size(
         &self,
         axis: Axis,
         operands: &[(&Geometry, &[Axis])],
         type_size: usize,
     ) -> usize {
-        // The width gates below test the physical innermost dim, so `axis` must be the label
-        // of every operand's innermost buffer dim (`axes` labels repeat level-major).
         for (_, axes) in operands {
             assert_eq!(
                 axes.last(),
@@ -191,9 +166,7 @@ impl Launcher {
                 "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
-        // The one gate that is about the tiles rather than the geometry: a masked access reports
-        // its length in lines and would wrongly clip, so an overhanging operand is served scalar
-        // whatever its extents and strides would allow. `Geometry::serves` below answers the rest.
+        // A masked access counts in lines and would clip wrongly, so overhangs serve scalar.
         let overhangs = self.overhangs();
         let masked = operands
             .iter()
@@ -206,10 +179,9 @@ impl Launcher {
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
                 leaf.is_multiple_of(v)
-                    // The same cut a stated width is refused on: the innermost extent counts in
-                    // lines and every coarser stride re-expresses as `stride / v`, which
-                    // truncates when `v` does not divide it.
-                    && operands.iter().all(|(g, axes)| g.serves(&[(axis, v)], axes).is_ok())
+                    && operands
+                        .iter()
+                        .all(|(g, axes)| g.serves(&[(axis, v)], axes).is_ok())
             })
             .max()
             .unwrap_or(1)

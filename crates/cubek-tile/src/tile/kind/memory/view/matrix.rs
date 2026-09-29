@@ -1,6 +1,4 @@
-//! The 2-D matrix views over a [`Tile`]. [`TileMatrix`] is a [`Layout`] re-viewing the tile's N-D
-//! [`Space`] as a [`Coords2d`] `(row, col)` matrix: a pinned batch prefix, then a row group and a
-//! column group of as many axes as each edge needs. [`Tile::matrix`] wraps it as a [`MatrixView`].
+//! The 2-D matrix views over a [`Tile`]: [`TileMatrix`] and its masked [`MatrixView`].
 
 use cubecl::{
     prelude::*,
@@ -9,18 +7,13 @@ use cubecl::{
 
 use crate::*;
 
-/// A masked 2-D ([`TileMatrix`]) view: one matrix of a [`Tile`].
+/// A masked 2-D view: one matrix of a [`Tile`].
 pub(crate) type MatrixView<'a, T> = Masked<'a, T, Coords2d>;
 /// The mutable twin of [`MatrixView`].
 pub(crate) type MatrixViewMut<'a, T> = MaskedMut<'a, T, Coords2d>;
 
-/// A [`Layout`] presenting a tile's logical box as one `(row, col)` matrix over three axes of
-/// axes, in the space's own order: a *batch* prefix already pinned to one matrix, then the axes
-/// `row` unravels over, then the axes `col` unravels over (the innermost a line count).
-///
-/// One type because there is one concept. A plain batched matmul exposes exactly two axes, so the
-/// unravels are the identity. A convolution contracts over taps *and* channels, so its `k` group
-/// holds several; a [partitioned](Composition::Disjoint) `(M, KB, KI)` reads as `M·KB` by `KI`.
+/// A [`Layout`] presenting a tile's logical box as one `(row, col)` matrix: a pinned batch
+/// prefix, then the axes `row` unravels over, then those `col` unravels over (in lines).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct TileMatrix {
@@ -33,8 +26,7 @@ pub(crate) struct TileMatrix {
     tile_shape: Coords2d,
 }
 
-/// A [`TileMatrix`] over the operand's mapping: what every 2-D reader of a tile sees, from the
-/// matmul leaves to an mma fragment's stage.
+/// A [`TileMatrix`] over the operand's mapping.
 pub(crate) type ProjectedMatrix = Projected<TileMatrix>;
 
 #[cube]
@@ -85,10 +77,6 @@ impl Layout for TileMatrix {
 }
 
 /// The leading (batch) extents a matrix index unravels over, in the space's axis order.
-///
-/// A direct operand reads them off the window, the only place a [`Dynamic`](crate::Extent::Dynamic)
-/// top-level axis carries a size. A gathered one reads them off the space: its window is boxed in
-/// *physical* axes, fewer than the logical ones and combinations of them, so none sizes a logical.
 #[cube]
 fn leading_extents(
     bound: &Coords<u32>,
@@ -110,9 +98,7 @@ fn leading_extents(
     out
 }
 
-/// The `i`-th matrix of a tile whose window is `bound`, read over the axes [`MatrixAxes`] names:
-/// the batch prefix pinned to `i` unraveled over its extents, the other two edges exposed as
-/// `row` and `col`. The column edge is a line count, so the innermost extent divides by the width.
+/// The `i`-th matrix of a tile whose window is `bound`, over the axes [`MatrixAxes`] names.
 #[cube]
 pub(crate) fn batch_matrix(
     bound: &Coords<u32>,
@@ -128,9 +114,7 @@ pub(crate) fn batch_matrix(
             .map(|p| space.extent_at(p))
             .product::<usize>()
     );
-    // Rounded up like the buffer's own line count (`storage_extents`): a padded stage's innermost
-    // extent need not fill whole lines, and a checked read's box must include the partial last one
-    // it really holds. `cols` is a shape here, never a stride, so this only widens the bound.
+    // Rounded up like the buffer's own line count, so a checked read covers a partial last line.
     let cols = comptime!(
         line_extents(space, vector_size, axes.col_split, rank)
             .iter()
@@ -157,9 +141,7 @@ pub(crate) fn batch_matrix(
     )
 }
 
-/// The logical coordinate of the value line at `(row, col)` of the `i`-th batch matrix a tile
-/// reads as: one entry per axis of the tile's space, in scalars, the line's first value. What a
-/// scale covering that line is looked up at ([`FactorReader`](crate::FactorReader)).
+/// The logical coordinate, in scalars, of the first value of line `(row, col)` of matrix `i`.
 #[cube]
 pub(crate) fn matrix_coords(
     row: u32,
@@ -191,8 +173,7 @@ pub(crate) fn matrix_coords(
     for p in 0..rows.len() {
         coords.push(rows.at(p));
     }
-    // The column edge counts in lines, so its innermost digit is a line index; the value's own
-    // coordinate is that many lines in.
+    // The innermost column digit is a line index.
     let cols = Coords::constant(comptime!(line_extents(
         space,
         vector_size,
@@ -212,9 +193,7 @@ pub(crate) fn matrix_coords(
     coords
 }
 
-/// The tile's whole logical box as one `rows x cols` matrix, its axes grouped by
-/// [`MatrixAxes::whole`]. `cols` is scalar, as a fragment states it; the view serves lines, so
-/// the column edge and the innermost extent both divide by the width.
+/// The tile's whole logical box as one `rows x cols` matrix; `cols` is in scalars.
 #[cube]
 pub(crate) fn whole_matrix(
     #[comptime] space: &Space,
@@ -234,8 +213,7 @@ pub(crate) fn whole_matrix(
     )
 }
 
-/// [`batch_matrix`] over the operand's mapping: the `i`-th batch matrix as every 2-D reader of a
-/// tile sees it.
+/// [`batch_matrix`] over the operand's mapping.
 #[cube]
 pub(crate) fn projected_batch_matrix(
     bound: &Coords<u32>,
@@ -246,7 +224,7 @@ pub(crate) fn projected_batch_matrix(
     #[comptime] axes: MatrixAxes,
     i: usize,
 ) -> ProjectedMatrix {
-    // A partition is not a gather: its windows tile, so the window still sizes every logical axis.
+    // A partition's windows tile, so the window still sizes every logical axis.
     let gathered = comptime!(projection.composition() == Composition::Overlapping);
     ProjectedMatrix::new(
         batch_matrix(bound, comptime!(&space), gathered, vector_size, axes, i),
@@ -254,8 +232,7 @@ pub(crate) fn projected_batch_matrix(
     )
 }
 
-/// [`whole_matrix`] over the operand's mapping: the whole logical box as the `rows x cols`
-/// matrix an mma fragment reads.
+/// [`whole_matrix`] over the operand's mapping.
 #[cube]
 pub(crate) fn projected_whole_matrix(
     #[comptime] space: Space,
@@ -273,14 +250,12 @@ pub(crate) fn projected_whole_matrix(
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The `i`-th batch matrix over the trailing two axes, in `Vector<T, W>` lines (`W` =
-    /// [`vector_size`](Tile::vector_size)), read through whatever [`Packing`] this tile carries.
+    /// The `i`-th batch matrix over the trailing two axes in `Vector<T, W>` lines, unpacked.
     pub fn matrix<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
         self.matrix_packed::<W>(comptime!(MatrixAxes::trailing(&self.place.space)), i)
     }
 
-    /// The `i`-th batch matrix over the axes `axes` names, read through whatever [`Packing`]
-    /// this tile carries: a plain tile as it stands, a packed one unpacked at the read.
+    /// The `i`-th batch matrix over `axes`, unpacked if packed.
     pub(crate) fn matrix_packed<W: Size>(
         &self,
         #[comptime] axes: MatrixAxes,
@@ -291,10 +266,7 @@ impl<T: Numeric> Tile<T> {
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
-    /// The fragment's grouped matrix, read through whatever [`Packing`] this tile carries. The
-    /// manual-mma twin of [`matrix_packed`](Tile::matrix_packed).
-    ///
-    /// `cols` is scalar, as an mma definition states it; the view serves lines.
+    /// The fragment's grouped matrix, unpacked if packed; `cols` is in scalars.
     pub(crate) fn fragment_matrix_packed<W: Size>(
         &self,
         #[comptime] rows: usize,
@@ -305,8 +277,7 @@ impl<T: Numeric> Tile<T> {
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
-    /// `fragment_matrix_packed` at a stated physical line `WP`: several logical axes may flatten into one edge, so a contraction
-    /// over taps *and* channels still has a `k` edge, read straight out of a compacted stage.
+    /// `fragment_matrix_packed` at a stated physical line `WP`.
     pub fn fragment_matrix<WP: Size, W: Size>(
         &self,
         #[comptime] rows: usize,

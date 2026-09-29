@@ -5,39 +5,29 @@ use cubecl::{
 
 use crate::*;
 
-/// What an accumulation starts from: the statement a verb makes about the cells it is about to
-/// write ([`Tile::mm`] and [`Tile::reduce_axis`] say [`Identity`](InitFrom::Identity), the
-/// accumulating verbs say [`Cell`](InitFrom::Cell)).
+/// What an accumulation starts from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum InitFrom {
-    /// Fold onto the cell: it holds a value that counts, whether a partial the walk above left
-    /// there or an accumulator the caller seeded.
+    /// Fold onto the cell's existing value.
     Cell,
-    /// Start from the monoid's identity: nothing before this accumulation counts, so the cell is
-    /// never read and the result is written outright.
+    /// Start from the monoid's identity; the cell is never read.
     Identity,
 }
 
-/// Where the cell's own value enters the result. Exactly one site reads it, or neither does, and
-/// both sites read this rather than deciding for themselves.
+/// Where the cell's own value enters the result: at most one site reads it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum CellRead {
     /// This unit owns the cell whole, so the block starts from it.
     AtSeed,
-    /// The plane's units each hold a partial, so no unit may start from the cell: the one unit
-    /// elected to write folds it in once instead.
+    /// The units each hold a partial, so the elected writer folds the cell in once.
     AtCommit,
     /// Nothing the cell holds counts.
     Never,
 }
 
 impl CellRead {
-    /// Derived, never stated: whether the cell counts at all is the accumulation's statement, and
-    /// which site reads it is what the plane's units hold of it.
-    ///
-    /// A destination that folds is never read here, whatever the accumulation says: the store's
-    /// atomic read-modify-write *is* the fold, so reading the cell back would duplicate the commit
-    /// and race every other instance writing it. That is what lets a split contract in place.
+    /// Derived from `init_from` and the unit share. A folding destination is never read here:
+    /// its atomic store is the fold.
     const fn of(unit_share: UnitShare, init_from: InitFrom, write: Write) -> Self {
         match write {
             Write::Accumulate => CellRead::Never,
@@ -52,16 +42,14 @@ impl CellRead {
     }
 }
 
-/// How a plane-resident accumulator's tiles reach memory: stored straight through the intrinsic,
-/// or bounced through the scratch, together where every tile has a slot of its own and one at a
-/// time where they share one. Read off the [`Scratch`] the accumulator was opened with.
+/// How a plane-resident accumulator's tiles reach memory, per its [`Scratch`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum DrainPlan {
     /// No scratch: each tile stores through its own intrinsic.
     Straight,
-    /// Every tile has its own slot, so every spill happens before any add: two barriers in all.
+    /// Own slot per tile: all spills, then all adds, two barriers in all.
     BounceTogether,
-    /// One slot between the tiles, so each spills and adds inside the loop: three barriers each.
+    /// One shared slot: spill and add per tile, three barriers each.
     BounceEach,
 }
 
@@ -75,37 +63,29 @@ impl DrainPlan {
     }
 }
 
-/// What a drain does to one tile of the accumulator at the leaf of its descent: the two halves of
-/// a bounce run as passes of their own where every tile has a slot, so the barriers between them
-/// are the whole drain's rather than each tile's.
+/// What a drain does to one tile at the leaf of its descent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum DrainPass {
     /// Store through the tile's own intrinsic.
     Copy,
     /// Spill, add, and the three barriers around them.
     Bounce,
-    /// Spill alone: the first pass of a drain whose tiles each have a slot.
+    /// Spill alone: the first pass.
     Spill,
-    /// Add alone: its second pass.
+    /// Add alone: the second pass.
     Add,
 }
 
-/// Which of the plane's units carry a drain's writes, and what they do to their values first.
-///
-/// Derived from the three facts that decide it and matched on once, so a write reads as four
-/// cases rather than as a unit guard nested in a share. Shared by the two sites that carry an
-/// accumulation into memory: this view's commit, and a register block's drain.
+/// Which of the plane's units carry a drain's writes, and what they combine first.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Drain {
-    /// Each unit holds whole cells of its own and writes them as they are.
+    /// Each unit holds whole cells of its own and writes them.
     EachUnit,
-    /// Every unit holds the same whole cells, and the write folds, so one unit writes.
+    /// Every unit holds the same whole cells and the write folds, so one unit writes.
     UnitZero,
-    /// The plane's units each hold a partial of one cell: combine across the plane, unit zero
-    /// writes.
+    /// Units each hold a partial of one cell: combine across the plane, unit zero writes.
     PlaneFold,
-    /// Groups of units each hold a partial of one cell: combine within the group, its first
-    /// unit writes.
+    /// Groups each hold a partial of one cell: combine within the group, its first unit writes.
     GroupFold { unit_bits: usize },
 }
 
@@ -114,9 +94,7 @@ impl Drain {
         match (units, write) {
             (UnitShare::Plane, _) => Drain::PlaneFold,
             (UnitShare::Group { unit_bits }, _) => Drain::GroupFold { unit_bits },
-            // Nothing is folded across the units, so nothing has to be combined. Whether they may
-            // all write is what a fold turns on: repeated units hold the same cells, so a store
-            // lands the same value however many make it, but a fold lands it once per unit.
+            // Repeated units hold the same cells: a store may land many times, a fold only once.
             (UnitShare::Repeated, Write::Accumulate) => Drain::UnitZero,
             (UnitShare::Repeated, Write::Replace) | (UnitShare::Whole, _) => Drain::EachUnit,
         }
@@ -124,12 +102,7 @@ impl Drain {
 }
 
 /// The view a register block accumulates through: [`seed`](AccumulateView::seed) it, contract into
-/// it, [`commit`](AccumulateView::commit) it back. It owns the [`UnitShare`], so cells the plane's
-/// units hold partials of combine on commit and the contraction never asks.
-///
-/// It owns the [`Monoid`] and the [`CellRead`] for the same reason. Both are one fact about the
-/// accumulation, not a fact about each cell, so they are settled where the view is built and read
-/// from there by every seed and commit the leaf runs.
+/// it, [`commit`](AccumulateView::commit) it back.
 #[derive(CubeType)]
 pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
     values: MaskedMut<'a, Vector<E, V>, C>,
@@ -163,21 +136,18 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 
-    /// The underlying overhang-mask flag, so a leaf makes the same unroll decision it makes on a
-    /// plain [`MatrixView`].
+    /// The underlying overhang-mask flag.
     pub fn check(&self) -> comptime_type!(bool) {
         comptime!(self.values.check)
     }
 
-    /// How these cells are shared across the plane's units. A leaf that commits *conditionally*
-    /// has to ask: past `Whole`, [`commit`](Self::commit) folds across the plane, and a plane op
-    /// under divergent control flow is undefined.
+    /// How these cells are shared across the plane's units. Past `Whole`,
+    /// [`commit`](Self::commit) is a plane op and must not run under divergent control flow.
     pub(crate) fn unit_share(&self) -> comptime_type!(UnitShare) {
         comptime!(self.units)
     }
 
-    /// The monoid these cells fold under, stated where the view was built. A register block asks
-    /// so its own seed and commit start from and collapse under the same fold this does.
+    /// The monoid these cells fold under.
     pub fn monoid(&self) -> comptime_type!(Monoid) {
         comptime!(self.monoid)
     }
@@ -187,8 +157,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         self.values.block_in_bounds(pos, extent)
     }
 
-    /// A block's starting value: the cell where this is the site that reads it, the monoid's
-    /// identity everywhere else.
+    /// A block's starting value: the cell where this site reads it, else the monoid's identity.
     pub fn seed(&self, pos: C) -> Vector<E, V> {
         match comptime!(self.cell_read) {
             CellRead::AtSeed => self.values.read(pos),
@@ -198,9 +167,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 
-    /// Fold a finished block back. The fold reduces each `V`-wide cell element-wise and leaves
-    /// every unit holding the total, so one writes: the plane's first unit where the whole plane
-    /// shares one cell, each group's first unit where the plane carries a cell per group.
+    /// Fold a finished block back across the plane; one unit writes the total.
     pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
         match comptime!(self.drain) {
             Drain::PlaneFold => {
@@ -212,15 +179,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 let unit_in_group = UNIT_POS_X & comptime!(unit_bits as u32);
                 self.commit_shared(pos, combined, unit_in_group == 0);
             }
-            // Nothing to combine, but a fold from units that repeat each other's work would land
-            // once per unit, so one of them makes it.
+            // A fold from repeating units would land once per unit, so one makes it.
             Drain::UnitZero => self.commit_shared(pos, value, UNIT_POS_X == 0),
             Drain::EachUnit => self.values.write(pos, value),
         }
     }
 
-    /// Commit a cell the plane's units share, under the one unit elected to write it. Where this
-    /// is the site that reads the cell, that unit folds it in, which no unit's seed could do.
+    /// Commit a shared cell under the one unit elected to write it.
     fn commit_shared(&mut self, pos: C, combined: Vector<E, V>, leader: bool) {
         if leader {
             match comptime!(self.cell_read) {

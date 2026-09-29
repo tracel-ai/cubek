@@ -1,5 +1,4 @@
-//! The TMA delivery's argument: a tensor map with its comptime [`TileSpec`], and the in-kernel
-//! layouts that align its coordinates with the descriptor.
+//! The TMA delivery's argument and its in-kernel layouts.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
@@ -10,9 +9,7 @@ use cubecl::std::tensor::{
 
 use crate::*;
 
-/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] (the descriptor owns the
-/// box, the [`TmaDynLayout`] the coordinate rules) with its comptime [`TileSpec`]; [`TileArg`]'s
-/// twin. Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
+/// The TMA [`Delivery`]'s argument: a tensor-map [`ViewMut`] with its comptime [`TileSpec`].
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaTileArg<E: Numeric> {
     pub view: ViewMut<'static, E, CoordsDyn>,
@@ -22,8 +19,7 @@ pub struct TmaTileArg<E: Numeric> {
 
 #[cube]
 impl<E: Numeric> TmaTileArg<E> {
-    /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
-    /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
+    /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over `space`.
     pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
         let own = comptime!(space.space().subspace(self.spec.axes()));
         let data = TmaData::from_tensor_map(
@@ -38,9 +34,8 @@ impl<E: Numeric> TmaTileArg<E> {
     }
 }
 
-/// The box a TMA descriptor moves and the runtime extents it moves within: the operand's logical
-/// `(rows, cols)`, its batch when it has one, and whether the descriptor is column-major (TMA
-/// discards the last stride, so a col-major descriptor is transposed and the layout swaps back).
+/// The box a TMA descriptor moves: logical `(rows, cols)`, optional batch, and whether the
+/// descriptor is transposed (column-major).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TmaBox {
     pub rows: u32,
@@ -57,9 +52,7 @@ pub struct TmaOperand {
 }
 
 impl<E: Numeric> TmaTileArgLaunch<E> {
-    /// A TMA tensor map as a tile argument over `axes`: two for a matrix, three with the batch
-    /// leading, which `shape.batch` then states. Width and storage don't apply to a tensor map,
-    /// so the spec is built.
+    /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set.
     pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
         let batched = match (axes.len(), shape.batch) {
             (2, None) => false,
@@ -75,9 +68,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         Self::new(view, TileSpec::direct(axes))
     }
 
-    /// Load a storage-tiled operand's tensor-map over `axes`; `dims` is its logical `(rows, cols)`.
-    /// The descriptor is the stored `[.., R/tr, C/tc, tr, tc]` and its box one storage tile, so
-    /// unlike [`tensor_map`](Self::tensor_map) it keeps the stored rank and splits the coordinate.
+    /// A storage-tiled operand's tensor map over two `axes`; `dims` is its logical `(rows, cols)`.
     pub fn tensor_map_stored(
         tensor_map: TensorMapArg<Tiled>,
         axes: &[Axis],
@@ -95,17 +86,12 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
     }
 }
 
-/// In-kernel tensor-map layout for a storage-tiled operand: splits the logical `(row, col)` into
-/// the descriptor's `(row / tr, col / tc, row % tr, col % tc)`, as [`Storage::Tiled`] does on the
-/// cooperative path. `shape()` stays logical, so a tile's `bound` aligns with its space.
-///
-/// A load's box origin is tile-aligned (the storage tile is the stage, which the routine
-/// enforces), so the inner pair is always `0`.
+/// In-kernel tensor-map layout splitting a logical `(row, col)` into storage-tile coordinates.
 #[derive(CubeType, CubeLaunch, Clone)]
 pub(crate) struct TmaStoredLayout {
     /// Logical `(rows, cols)` of the operand.
     dims: (u32, u32),
-    /// The storage tile `(rows, cols)`, which is the descriptor's box.
+    /// The storage tile `(rows, cols)`, the descriptor's box.
     tile: (u32, u32),
 }
 
@@ -119,7 +105,7 @@ impl Layout for TmaStoredLayout {
         let mut src = CoordsDyn::new();
         src.push(pos[0] / tile_rows);
         src.push(pos[1] / tile_cols);
-        // A box origin is tile-aligned, so the offset inside the tile is structurally zero.
+        // A box origin is tile-aligned, so the in-tile offset is zero.
         src.push(0u32);
         src.push(0u32);
         src
@@ -143,11 +129,10 @@ impl Layout for TmaStoredLayout {
     }
 }
 
-/// In-kernel tensor-map layout: aligns the operand's logical [`CoordsDyn`] to the descriptor's 3-D
-/// `(batch, row, col)`: a rank-2 operand gets batch `0`, a unit batch broadcasts, a `transposed`
-/// descriptor's inner pair swaps back. `shape()` stays logical, so a tile's `bound` fits its space.
+/// In-kernel tensor-map layout aligning logical [`CoordsDyn`] to the descriptor's
+/// `(batch, row, col)`.
 #[derive(CubeType, CubeLaunch, Clone)]
-pub struct TmaDynLayout {
+pub(crate) struct TmaDynLayout {
     /// Logical `(batch, rows, cols)` of the operand.
     dims: (u32, u32, u32),
     #[cube(comptime)]
