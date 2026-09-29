@@ -122,7 +122,7 @@ impl ConvSpec {
         bias: Option<&HostData>,
     ) -> HostData {
         let progress = None;
-        Window::from(self).cpu_reference(input, weight, bias, progress)
+        ConvGeometry::from(self).cpu_reference(input, weight, bias, progress)
     }
 }
 
@@ -267,12 +267,13 @@ pub fn conv_cpu_reference(
     progress: Option<&Progress>,
 ) -> HostData {
     let bias = None;
-    Window::from(problem).cpu_reference(lhs, rhs, bias, progress)
+    ConvGeometry::from(problem).cpu_reference(lhs, rhs, bias, progress)
 }
 
-/// Where each output reads the input from.
-struct Window {
+/// The spatial geometry of a 2D convolution, all but the input size, which the input carries.
+struct ConvGeometry {
     out: [usize; 2],
+    kernel: [usize; 2],
     stride: [usize; 2],
     /// At the start of each spatial dimension: a problem may pad the end differently, which `out`
     /// already reflects.
@@ -280,7 +281,7 @@ struct Window {
     dilation: [usize; 2],
 }
 
-impl Window {
+impl ConvGeometry {
     /// NHWC `input` by OHWI `weight`, grouped when the weight holds fewer input channels.
     fn cpu_reference(
         &self,
@@ -290,14 +291,14 @@ impl Window {
         progress: Option<&Progress>,
     ) -> HostData {
         let [n, h, w, c] = [0, 1, 2, 3].map(|axis| input.shape[axis]);
-        let [out_channels, kh, kw, c_in_group] = [0, 1, 2, 3].map(|axis| weight.shape[axis]);
+        let (out_channels, c_in_group) = (weight.shape[0], weight.shape[3]);
         let c_out_group = out_channels / (c / c_in_group);
-        let [out_h, out_w] = self.out;
         let Self {
+            out: [out_h, out_w],
+            kernel: [kh, kw],
             stride,
             padding,
             dilation,
-            ..
         } = *self;
 
         if let Some(p) = progress {
@@ -361,10 +362,11 @@ impl Window {
     }
 }
 
-impl From<&ConvolutionProblem> for Window {
+impl From<&ConvolutionProblem> for ConvGeometry {
     fn from(problem: &ConvolutionProblem) -> Self {
         Self {
             out: [problem.out_shape[0], problem.out_shape[1]],
+            kernel: [0, 1].map(|axis| problem.kernel_size[axis] as usize),
             stride: [0, 1].map(|axis| problem.stride[axis] as usize),
             padding: [problem.padding[0], problem.padding[1]],
             dilation: [0, 1].map(|axis| problem.dilation[axis] as usize),
@@ -372,10 +374,11 @@ impl From<&ConvolutionProblem> for Window {
     }
 }
 
-impl From<&ConvSpec> for Window {
+impl From<&ConvSpec> for ConvGeometry {
     fn from(spec: &ConvSpec) -> Self {
         Self {
             out: [spec.out_h(), spec.out_w()],
+            kernel: spec.kernel_size,
             stride: spec.args.stride,
             padding: spec.args.padding.map(|padding| padding as i32),
             dilation: spec.args.dilation,
