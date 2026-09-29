@@ -17,7 +17,7 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
 
-use crate::{Field, FieldDecode};
+use crate::{Field, FieldDecode, Packing};
 use cubecl::unexpanded;
 use cubecl::{
     prelude::*,
@@ -42,6 +42,43 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
         FieldDecode::Bits(kind) => unpack_float_line::<F, NQ, NF>(words, kind),
+    }
+}
+
+/// The `NF` values starting at `offset` of one stored line, read as `packing` lays them: a slice
+/// of a plain line, or the fields a packed one holds there. `NF` may be narrower than a word: a
+/// device whose vectors cannot hold a word's fields still reads them, a line at a time.
+#[cube]
+pub(crate) fn values_at<F: Numeric, I: Numeric, WP: Size, NF: Size>(
+    line: Vector<I, WP>,
+    #[comptime] offset: usize,
+    #[comptime] packing: Packing,
+) -> Vector<F, NF> {
+    let nf = NF::value();
+    match comptime!(packing) {
+        Packing::Plain => {
+            let mut out = Vector::<F, NF>::empty();
+            #[unroll]
+            for j in 0..nf {
+                out.insert(j, F::cast_from(line.extract(offset + j)));
+            }
+            out
+        }
+        Packing::Packed { field } => {
+            let (bits, per_word) = comptime!((field.size_bits(), field.per_word()));
+            // The words the values lie in: several where they span more than one, else the one
+            // they share, shifted down to them.
+            let nq = comptime!((nf / per_word).max(1));
+            let size!(NQ) = nq;
+            let (first, shift) =
+                comptime!((offset / per_word, ((offset % per_word) * bits) as u32));
+            let mut words = Vector::<u32, NQ>::empty();
+            #[unroll]
+            for w in 0..nq {
+                words.insert(w, u32::cast_from(line.extract(first + w)) >> shift);
+            }
+            unpack_line::<F, NQ, NF>(words, field)
+        }
     }
 }
 

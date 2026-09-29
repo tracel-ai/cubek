@@ -1104,11 +1104,6 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
-    /// Whether these values index a table ([`lookup`](Tile::lookup)).
-    pub(crate) fn looked_up(&self) -> comptime_type!(bool) {
-        unexpanded!()
-    }
-
     /// Refuses values carrying scales, for a leaf that has nowhere to apply them.
     pub(crate) fn refuse_factor(&self, _site: &str) {
         unexpanded!()
@@ -1208,13 +1203,6 @@ impl<E: Numeric> TileExpand<E> {
     pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
         match &self.kind {
             TileKindExpand::Memory(memory) => memory.factor.scaled() || memory.codebook.present(),
-            _ => false,
-        }
-    }
-
-    pub(crate) fn __expand_looked_up_method(&self, _scope: &Scope) -> bool {
-        match &self.kind {
-            TileKindExpand::Memory(memory) => memory.codebook.present(),
             _ => false,
         }
     }
