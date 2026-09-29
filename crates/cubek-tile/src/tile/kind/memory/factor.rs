@@ -96,6 +96,12 @@ impl Factor {
         unexpanded!()
     }
 
+    /// Whether the innermost level's scales vary along `axis`: a run of values along it lies
+    /// under several scales, so a reader applying one scale a run refuses it.
+    pub(crate) fn varies_along(&self, _axis: Axis) -> bool {
+        unexpanded!()
+    }
+
     /// The scale covering the value at `coords` of a tile spanning `values`: the product of every
     /// level this factor holds, each looked up at its own granularity.
     pub(crate) fn at_coords(&self, _coords: &Coords<u32>, _values: Space) -> f32 {
@@ -278,6 +284,13 @@ impl FactorReader {
         } else {
             value
         }
+    }
+}
+
+impl FactorExpand {
+    pub(crate) fn __expand_varies_along_method(&self, _scope: &Scope, axis: Axis) -> bool {
+        self.inner()
+            .is_some_and(|level| level.projection.addresses(axis))
     }
 }
 

@@ -34,7 +34,8 @@ impl VectorTile {
     ///
     /// # Errors
     ///
-    /// A load that would cut a stored tile, or one wider than every stored tile together.
+    /// A load that would cut a stored tile, one wider than every stored tile together, or one
+    /// whose axis comes back after another, which is no longer one extent per axis.
     pub fn new(
         stored: &[(Axis, usize)],
         innermost: Axis,
@@ -57,8 +58,16 @@ impl VectorTile {
                 });
             }
             held *= count;
-            match extents.last_mut() {
-                Some((last, extent)) if *last == axis => *extent *= count,
+            match extents.last().copied() {
+                Some((last, extent)) if last == axis => {
+                    *extents.last_mut().expect("just read") = (axis, extent * count);
+                }
+                Some((last, _)) if extents.iter().any(|&(a, _)| a == axis) => {
+                    return Err(TileMisfit::Interleaved {
+                        wanted: axis,
+                        found: last,
+                    });
+                }
                 _ => extents.push((axis, count)),
             }
         }
@@ -109,6 +118,20 @@ impl VectorTile {
             .iter()
             .find(|&&(a, _)| a == axis)
             .map_or(1, |&(_, extent)| extent)
+    }
+
+    /// How far along `axis` the value at `position` of one load sits from the load's first: the
+    /// position read as a number whose digits are the load's extents, finest first. `20` of a
+    /// 16 by 2 load along `K` then `N` is 4 along `K` and 1 along `N`.
+    pub(crate) fn offset_along(&self, position: usize, axis: Axis) -> usize {
+        let mut rest = position;
+        for &(a, extent) in &self.extents {
+            if a == axis {
+                return rest % extent;
+            }
+            rest /= extent;
+        }
+        0
     }
 
     /// How many loads an edge of `edge` values along `axis` holds, rounded up: an edge cuts whole
@@ -324,6 +347,30 @@ mod tests {
         );
         assert!(VectorTile::new(&stored, N, 24).is_err());
         assert!(VectorTile::new(&stored, N, 32).is_err());
+    }
+
+    /// A load is one extent per axis: stored tiles that go along `K`, then `N`, then `K` again
+    /// make no load that spans all three, since its values along `K` would not be one run.
+    #[test]
+    fn a_load_that_returns_to_an_axis_is_refused() {
+        assert_eq!(
+            VectorTile::new(&[(K, 8), (N, 2), (K, 2)], N, 32),
+            Err(TileMisfit::Interleaved {
+                wanted: K,
+                found: N
+            })
+        );
+    }
+
+    /// A value's place in a load reads off its position, the load's extents the digits, finest
+    /// first: the 21st value of a 16 by 2 load is the second column's fifth, a run's is itself.
+    #[test]
+    fn a_position_in_a_load_is_an_offset_along_each_axis() {
+        let load = VectorTile::new(&[(K, 8), (K, 2), (N, 2)], N, 32).unwrap();
+        assert_eq!(load.offset_along(20, K), 4);
+        assert_eq!(load.offset_along(20, N), 1);
+        assert_eq!(VectorTile::run(N, 4).offset_along(3, N), 3);
+        assert_eq!(VectorTile::run(N, 4).offset_along(3, K), 0);
     }
 
     /// A stated tile of one is a dim of the buffer, not a piece of a load.
