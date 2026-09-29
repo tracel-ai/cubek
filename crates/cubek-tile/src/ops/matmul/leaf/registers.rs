@@ -323,7 +323,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     let unit_share = acc.unit_share();
     let monoid = acc.monoid();
     comptime!(assert!(
-        !guard || !unit_share.folds(),
+        !guard || !unit_share.reduces(),
         "block::commit: a spread block skips the units overhanging the sink, and a unit-split \
          accumulator ({unit_share:?}) folds across the plane on the way out, which that skip \
          would put under divergent control flow"

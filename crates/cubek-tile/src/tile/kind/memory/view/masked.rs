@@ -31,7 +31,7 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
 
     /// Whether `pos` lands on the operand's real data (`true` unconditionally when `check` is
     /// `false`: the launch already proved every access in-bounds). A fold whose identity is not
-    /// zero (`Max`, `Min`) cannot use [`read`](Self::read)'s zeroed default and selects its own.
+    /// zero (`Max`, `Min`) cannot use [`read`](Masked::read)'s zeroed default and selects its own.
     pub fn is_in_bounds(&self, pos: C) -> bool {
         if comptime!(self.check) {
             self.view.is_in_bounds(pos)
@@ -59,10 +59,10 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
 
 #[cube]
 impl<'a, T: CubePrimitive, C: Coordinates + 'static> Masked<'a, T, C> {
-    /// The buffer from where `pos` is placed on, spanning `size`: what an instruction that takes
-    /// an address rather than a value (`ldmatrix`) reads, with the stage's placement — padded or
+    /// The buffer from where the stage arranges `pos`, spanning `size`: what an instruction that takes
+    /// an address rather than a value (`ldmatrix`) reads, with the stage's arrangement — padded or
     /// swizzled — applied to `pos` as a read applies it. The lines must lie together in the
-    /// buffer, which a placement keeps within one chunk.
+    /// buffer, which an arrangement keeps within one chunk.
     ///
     /// # Panics
     ///

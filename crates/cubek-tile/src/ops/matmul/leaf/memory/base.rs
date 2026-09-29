@@ -120,8 +120,8 @@ pub(crate) fn contracted_per_step(
     assert!(
         contracted_per_step > 1,
         "contract: the rhs lines along the contracted axis {k:?}, which is served in whole lines; \
-         its width {rw} must exceed 1 and divide the axis's extent {}",
-        rhs.extent(k)
+         its width {rw} must exceed 1 and divide the axis's extent {:?}",
+        rhs.extent_raw(k)
     );
     assert_eq!(
         lhs.contracted_per_step(&contracted, lw),
@@ -170,6 +170,15 @@ mod tests {
     #[test]
     fn both_operands_lined_along_the_contracted_axis_serve_a_line() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
+        assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
+    }
+
+    /// A dynamic contracted extent is a launch's, which serves the operands in whole lines of it,
+    /// so the fold holds without a size to divide.
+    #[test]
+    fn a_dynamic_contracted_axis_serves_a_line() {
+        let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
+        let (lhs, rhs) = (lhs.with_dynamic(&[K]), rhs.with_dynamic(&[K]));
         assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
     }
 

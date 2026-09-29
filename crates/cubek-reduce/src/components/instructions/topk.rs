@@ -49,7 +49,7 @@ impl ReduceWithIndicesFamily for TopK {
 /// Ties break towards the lower coordinate, matching the CPU reference. A
 /// coordinate-less candidate emits no index arithmetic at all.
 ///
-/// A candidate that reaches no lane's last kept slot changes nothing and skips
+/// A candidate that reaches no component's last kept slot changes nothing and skips
 /// the `k`-slot walk — over a long row, almost every candidate.
 #[cube]
 pub(crate) fn topk_insert<N: Numeric, S: Size>(

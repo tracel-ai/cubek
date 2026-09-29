@@ -14,6 +14,8 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+/// One over the sum and its tap: the read is memory bound, and wider vectors measured slower.
+const LIVE_VECTORS: usize = 3;
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool3d_direct<EI: Float, EA: Float, N: Size>(
     input: &Tensor<Vector<EI, N>>,
@@ -66,13 +68,17 @@ pub(crate) fn adaptive_avg_pool3d_launch(
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);
     let input_vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
     let output_vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        client
+            .properties()
+            .vector_sizes_in_registers(acc_dtype.size(), LIVE_VECTORS),
         &output.shape,
         &output.strides,
         output.shape.len() - 1,

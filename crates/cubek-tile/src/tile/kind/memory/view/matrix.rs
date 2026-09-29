@@ -282,7 +282,7 @@ impl<T: Numeric> Tile<T> {
     /// The `i`-th batch matrix over the axes `axes` names, read through whatever [`Packing`]
     /// this tile carries: a plain tile as it stands, a packed one unpacked at the read, a
     /// quantized one dequantized per its scheme, with no dequantize-into-`f32` fill.
-    pub fn matrix_packed<W: Size>(
+    pub(crate) fn matrix_packed<W: Size>(
         &self,
         #[comptime] axes: MatrixAxes,
         i: usize,
@@ -306,7 +306,7 @@ impl<T: Numeric> Tile<T> {
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
-    /// [`fragment_matrix_packed`](Tile::fragment_matrix_packed) at a stated storage element `I`
+    /// `fragment_matrix_packed` at a stated storage element `I`
     /// and physical line `WP`: several logical axes may flatten into one edge, so a contraction
     /// over taps *and* channels still has a `k` edge, read straight out of a compacted stage.
     pub fn fragment_matrix<I: Numeric, WP: Size, W: Size>(

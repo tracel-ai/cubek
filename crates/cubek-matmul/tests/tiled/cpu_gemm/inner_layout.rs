@@ -6,7 +6,7 @@
 use cubecl::prelude::{TensorArg, TensorBinding};
 use cubek_matmul::definition::MatmulSetupError;
 use cubek_std::MatrixLayout;
-use cubek_tile::StorageTiling;
+use cubek_tile::layout::StorageTiling;
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]

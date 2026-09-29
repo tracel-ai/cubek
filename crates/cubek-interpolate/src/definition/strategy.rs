@@ -14,11 +14,11 @@ pub enum InputStage {
 ///
 /// This is the resolved end of [`InterpolateStrategy`]: nothing here is inferred any further. The
 /// launch takes the geometry and the gathered input's residence exactly as stated, and only the
-/// lane split is solved, by `TileGeometry::from_blueprint`, because the space asserts an exact
+/// unit split is solved, by `TileGeometry::from_blueprint`, because the space asserts an exact
 /// plane cover.
 ///
 /// [`channel_block`](Self::channel_block) is the one choice inside that split a caller may still
-/// pin. It is the lane's channel run, so it is the accumulator's innermost extent and sets `nr`
+/// pin. It is the unit's channel run, so it is the accumulator's innermost extent and sets `nr`
 /// in the contraction: the separable schedule's cost is per tap, and `nr` multiplies it. Solving
 /// it only ever reaches the widest divisor one line holds, which leaves the other splits of a
 /// deep channel axis unreachable.
@@ -30,8 +30,8 @@ pub struct InterpolateBlueprint {
     pub input_residence: InputStage,
     pub planes_per_cube: usize,
     pub rows_per_plane: usize,
-    pub cols_per_lane: usize,
-    /// The lane's channel run, `None` to solve it with the rest of the lane split.
+    pub cols_per_unit: usize,
+    /// The unit's channel run, `None` to solve it with the rest of the unit split.
     pub channel_block: Option<usize>,
 }
 
@@ -40,18 +40,18 @@ impl InterpolateBlueprint {
         input_residence: InputStage,
         planes_per_cube: usize,
         rows_per_plane: usize,
-        cols_per_lane: usize,
+        cols_per_unit: usize,
     ) -> Self {
         Self {
             input_residence,
             planes_per_cube,
             rows_per_plane,
-            cols_per_lane,
+            cols_per_unit,
             channel_block: None,
         }
     }
 
-    /// Pin the lane's channel run rather than solving it. A final block may overhang the channel
+    /// Pin the unit's channel run rather than solving it. A final block may overhang the channel
     /// count; reads and writes in that padded tail are masked.
     pub const fn with_channel_block(self, block: usize) -> Self {
         Self {
@@ -67,8 +67,8 @@ impl InterpolateBlueprint {
         if self.rows_per_plane == 0 {
             return Err(InterpolateError::ZeroRowsPerPlane);
         }
-        if self.cols_per_lane == 0 {
-            return Err(InterpolateError::ZeroColsPerLane);
+        if self.cols_per_unit == 0 {
+            return Err(InterpolateError::ZeroColsPerUnit);
         }
         if self.channel_block == Some(0) {
             return Err(InterpolateError::ZeroChannelBlock);
@@ -82,7 +82,7 @@ impl InterpolateBlueprint {
 /// A caller states the bottleneck it believes in and the device decides the rest:
 /// [`blueprint`](Self::blueprint) reads the hardware and the problem and resolves the intent into
 /// an [`InterpolateBlueprint`]. Vectorization and coalescing are not among the choices, because
-/// they are not traded against anything: the lane split covers the channel axis before it rides
+/// they are not traded against anything: the unit split covers the channel axis before it rides
 /// the columns, and the launch takes the widest line the device serves for the tensors it was
 /// handed.
 ///
@@ -106,7 +106,7 @@ pub enum InterpolateStrategy {
     /// autotune key only buckets, so refusing would abort on a problem the tuner never measured.
     MinimizeLatency,
     /// Pin every choice, whatever the device reports. What a characterization sweep names, and
-    /// the only way to reach a channel block the lane split would not solve to.
+    /// the only way to reach a channel block the unit split would not solve to.
     ///
     /// Unlike an intent, a stated `Smem` is a demand: a device that cannot hold the window refuses
     /// the launch rather than quietly reading in place, so a sweep is never told it measured a
@@ -125,9 +125,9 @@ const WIDE_PLANES_PER_CUBE: usize = 8;
 /// on AMD. The same figure the matmul selector uses.
 const CONCURRENT_PLANES_PER_CUBE: usize = 4;
 
-/// The column run a CPU lane takes. A CPU plane is one lane wide, so this is the only column
+/// The column run a CPU unit takes. A CPU plane is one unit wide, so this is the only column
 /// parallelism there is and it is what vectorizes the inner loop.
-const CPU_COLS_PER_LANE: usize = 2;
+const CPU_COLS_PER_UNIT: usize = 2;
 
 /// Output rows one cube may hold live. Past this the register file is the limit rather than the
 /// schedule, so the selector never proposes a deeper cube.
@@ -144,7 +144,7 @@ impl InterpolateStrategy {
             return *blueprint;
         }
 
-        // A CPU plane is one lane on one core, so neither intent has a knob to turn there: the
+        // A CPU plane is one unit on one core, so neither intent has a knob to turn there: the
         // cube is the machine either way and there is nowhere to stage into. They collapse here
         // rather than at each choice below, so a sweep never measures one launch under two names.
         let is_cpu = hardware.num_cpu_cores.is_some();
@@ -158,11 +158,11 @@ impl InterpolateStrategy {
         let planes = intent.planes_per_cube(hardware, taps, budget);
         let rows = rows_per_plane(problem, taps, budget / planes);
 
-        // Lanes cover the channel axis first and ride the output columns for the rest, so a device
-        // with a real plane already spreads the columns across it and a longer run per lane would
+        // Units cover the channel axis first and ride the output columns for the rest, so a device
+        // with a real plane already spreads the columns across it and a longer run per unit would
         // only hold more output live.
         let cols = match is_cpu {
-            true => CPU_COLS_PER_LANE,
+            true => CPU_COLS_PER_UNIT,
             false => 1,
         };
 
@@ -171,7 +171,7 @@ impl InterpolateStrategy {
 
     /// The planes one cube holds, which is how many loads its scheduler keeps in flight.
     ///
-    /// A CPU unit is a core and its plane is one lane wide, so the cube is the machine: every core
+    /// A CPU unit is a core and its plane is one unit wide, so the cube is the machine: every core
     /// takes a plane. On a GPU the count follows the intent, and a problem streaming one tap per
     /// output gives the scheduler no arithmetic to hide a load behind, so it wants the widest cube
     /// whatever the intent.
@@ -186,8 +186,8 @@ impl InterpolateStrategy {
         // A cube wider than the device is refused at launch, and one wider than the rows it was
         // budgeted walks past the output it was meant to cover. Both are bounded here rather than
         // proposed and then paid for.
-        let lanes = (hardware.plane_size_max as usize).max(1);
-        let units = (hardware.max_units_per_cube as usize / lanes).max(1);
+        let plane_units = (hardware.plane_size_max as usize).max(1);
+        let units = (hardware.max_units_per_cube as usize / plane_units).max(1);
 
         floor_power_of_two(wanted.min(units).min(budget))
     }
@@ -252,10 +252,11 @@ mod tests {
     use crate::definition::{InterpolateMode, InterpolateOptions, NearestMode};
     use cubecl::ir::VectorSize;
 
-    /// A GPU with 32-lane planes, 1024 units per cube and 64 streaming multiprocessors.
+    /// A GPU with 32-unit planes, 1024 units per cube and 64 streaming multiprocessors.
     fn gpu() -> HardwareProperties {
         HardwareProperties {
             load_width: 128,
+            vector_register_count: None,
             plane_size_min: 32,
             plane_size_max: 32,
             max_bindings: 32,
@@ -273,7 +274,7 @@ mod tests {
         }
     }
 
-    /// A CPU: one lane per plane, one unit per core, no shared memory to stage into.
+    /// A CPU: one unit per plane, one unit per core, no shared memory to stage into.
     fn cpu(cores: u32) -> HardwareProperties {
         HardwareProperties {
             plane_size_min: 1,
@@ -381,18 +382,18 @@ mod tests {
             assert_eq!(blueprint.input_residence, InputStage::InPlace);
             // Twelve cores, floored to the eight a power-of-two extent reaches.
             assert_eq!(blueprint.planes_per_cube, 8);
-            // A CPU plane is one lane, so the column run is the only column parallelism.
-            assert!(blueprint.cols_per_lane > 1);
+            // A CPU plane is one unit, so the column run is the only column parallelism.
+            assert!(blueprint.cols_per_unit > 1);
         }
     }
 
-    /// Lanes already spread the columns on a device with a real plane.
+    /// Units already spread the columns on a device with a real plane.
     #[test]
-    fn a_gpu_lane_takes_one_column() {
+    fn a_gpu_unit_takes_one_column() {
         assert_eq!(
             InterpolateStrategy::MaximizeThroughput
                 .blueprint(&gpu(), &upsample())
-                .cols_per_lane,
+                .cols_per_unit,
             1
         );
     }

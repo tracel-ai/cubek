@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, DeliveryFamily, Level, Levels, Monoid, Partitioning,
-    PlanePartition, RowChunks, Semiring, Space, StageStorage, Stages, TileArg,
+    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Semiring, Space,
+    StageStorage, Stages, TileArg, kind::PlanePartition, launch::Input, stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -92,10 +92,9 @@ pub fn cmma_kernel<
     VA: Size,
     VB: Size,
     VC: Size,
-    D: DeliveryFamily,
 >(
-    a: &D::Arg<EL, VA>,
-    b: &D::Arg<ER, VB>,
+    a: &Input<'_, EL, VA>,
+    b: &Input<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
     space: Partitioning,
     #[comptime] bp: CmmaBlueprint,
@@ -115,8 +114,8 @@ pub fn cmma_kernel<
             .chain([(M, i.m), (N, i.n), (K, i.k)])
             .collect::<Vec<_>>()
     );
-    let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
-    let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
 
     for cube in space {
@@ -197,7 +196,7 @@ mod tests {
             stage_k: 32,
             buffering: 2,
             delivery: CmmaDelivery::Copy,
-            order: cubek_tile::CubeOrder::RowMajor,
+            order: cubek_tile::space::CubeOrder::RowMajor,
         }
     }
 
@@ -216,7 +215,7 @@ mod tests {
                 stage_k,
                 buffering: 2,
                 delivery: CmmaDelivery::Copy,
-                order: cubek_tile::CubeOrder::RowMajor,
+                order: cubek_tile::space::CubeOrder::RowMajor,
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);

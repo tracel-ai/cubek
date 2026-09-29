@@ -181,7 +181,7 @@ impl AxisDistribution {
 #[cube]
 impl ComputeScope {
     /// This instance's position within `compute_scope`: which plane of the cube, or which unit of the
-    /// plane. A cube's is per grid dimension ([`CubeAxis::position`]).
+    /// plane. A cube's is per grid dimension (`CubeAxis::position`).
     ///
     /// `cube_dim = new_2d(plane_size, num_planes)`: `Y` is the plane index, `X` the plane-relative
     /// unit. Units agree on `UNIT_POS_Y`, so they cooperate. The plane-relative unit, not the flat

@@ -9,7 +9,7 @@ use cubecl::{
 
 use crate::*;
 
-/// A lifetime-erased buffer, how to address it ([`layout`](BufferLayout)), and which part of it this
+/// A lifetime-erased buffer, how to address it (`layout`), and which part of it this
 /// tile is looking at ([`window`](Window)). The layout is fixed at construction, so a staged smem
 /// sub-tile keeps addressing its whole buffer after [`at`](Tile::at) windows it down.
 #[derive(CubeType, Clone)]
@@ -77,7 +77,7 @@ pub struct Memory<T: Numeric> {
 /// buffer is allocated to exactly its tile and so never overhangs, and a shared stage remembers
 /// the window it was filled from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum AddressSpace {
+pub(crate) enum AddressSpace {
     Global,
     Shared,
 }
@@ -156,6 +156,15 @@ impl<T: Numeric> Store<T> {
                  slice-shaped paths (a dense run, a re-typed quant storage, a tensor-map load) \
                  are closed to it"
             ),
+        }
+    }
+
+    /// Whether the values have an address: a buffer, rather than a call that stores or loads
+    /// them. Only an addressed store serves the slice-shaped paths ([`buffer`](Self::buffer)).
+    pub(crate) fn has_address(&self) -> comptime_type!(bool) {
+        match &self.backing {
+            Backing::Buffer(_) => comptime!(true),
+            Backing::WriteCall(_) | Backing::ReadCall(_) => comptime!(false),
         }
     }
 

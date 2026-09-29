@@ -51,7 +51,7 @@ impl PrngRuntime for Normal {
         let unit_0 = to_unit_interval_open(state.next());
         let unit_1 = to_unit_interval_open(state.next());
 
-        // A CPU has no vector `ln`, `cos`, or `sin`, only one libm call per lane.
+        // A CPU has no vector `ln`, `cos`, or `sin`, only one libm call per component.
         let (log, cosine, sine) = match comptime!(blueprint) {
             PrngBlueprint::Interleaved => {
                 let angle = Vector::new(2.0f32 * PI) * unit_1;

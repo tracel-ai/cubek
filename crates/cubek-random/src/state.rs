@@ -1,10 +1,10 @@
 use cubecl::prelude::*;
 
-/// The four generators a unit advances, one independent stream per lane.
+/// The four generators a unit advances, one independent stream per component.
 ///
-/// Three Tausworthe generators and an LCG are combined by xor: the hybrid of GPU Gems 3,
-/// chapter 37, with a combined period near 2^121. Every step is element-wise, so a
-/// wide line is genuine SIMD rather than a lane loop.
+/// Three Tausworthe generators and an LCG are combined by xor: the hybrid of GPU Gems 3, chapter
+/// 37, with a combined period near 2^121. Every step is element-wise, so a wide line is genuine
+/// SIMD rather than a component loop.
 /// <https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-37-efficient-random-number-generation-and-application>
 #[derive(CubeType)]
 pub(crate) struct PrngState<N: Size> {
@@ -25,14 +25,15 @@ pub(crate) struct Seeds {
 
 #[cube]
 impl<N: Size> PrngState<N> {
-    /// Give lane `lane` of unit `unit` the stream of the `unit * N + lane`th generator, so
-    /// a wider line splits the same sequence of streams further instead of repeating one.
+    /// Give component `component` of unit `unit` the stream of the `unit * N + component`th
+    /// generator, so a wider line splits the same sequence of streams further instead of repeating
+    /// one.
     pub fn seeded(unit: usize, seeds: Seeds) -> PrngState<N> {
         // A large prime spreads consecutive stream indices across the u32 range;
         // truncation is fine here, a repeated seed is no issue.
         #[allow(arithmetic_overflow)]
         let stream = Vector::new(1000000007u32)
-            * (Vector::new(unit as u32 * N::value() as u32) + lane_indices::<N>());
+            * (Vector::new(unit as u32 * N::value() as u32) + component_indices::<N>());
 
         PrngState::<N> {
             taus_0: stream + Vector::new(seeds.taus_0),
@@ -56,12 +57,12 @@ impl<N: Size> PrngState<N> {
 }
 
 #[cube]
-fn lane_indices<N: Size>() -> Vector<u32, N> {
+fn component_indices<N: Size>() -> Vector<u32, N> {
     let mut indices = Vector::empty();
 
     #[unroll]
-    for lane in 0..N::value() {
-        indices.insert(lane, comptime!(lane as u32));
+    for component in 0..N::value() {
+        indices.insert(component, comptime!(component as u32));
     }
 
     indices

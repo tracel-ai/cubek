@@ -28,7 +28,7 @@ pub enum DequantAt {
 
 /// Quantization a tile's store carries, so reads dequantize on their own: the scale `buffer` plus
 /// per-axis `strides`, a running `window_start` and comptime `block` sizes, which [`ScaleLayout`]
-/// turns into an address ([`Memory::at`]). Per-tensor: one scale, every stride `0`, a fixed start.
+/// turns into an address (`Memory::at`). Per-tensor: one scale, every stride `0`, a fixed start.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {

@@ -168,7 +168,7 @@ impl<X: CubePrimitive> Value<X> {
 /// `k` at all.
 pub(crate) const TOPK_UNROLL_BUDGET: usize = 1024;
 
-/// Whether any lane of `item` reaches the list slot `kth` — reaches, not only
+/// Whether any component of `item` reaches the list slot `kth` — reaches, not only
 /// beats, so a tie still goes through the insertion and its coordinate rule.
 ///
 /// The negation is load-bearing and is not `>=`: this guard only skips what
@@ -193,9 +193,9 @@ pub(crate) fn reaches<N: Numeric, S: Size>(item: Vector<N, S>, kth: Vector<N, S>
 
 /// Plane-cooperative top-k insertion; the candidate's coordinate decides which
 /// algorithm runs, since winners are identified by their coordinate when one
-/// rides along and by lane id otherwise.
+/// rides along and by unit id otherwise.
 ///
-/// A step none of whose lanes reaches the list's last kept slot changes nothing
+/// A step none of whose components reaches the list's last kept slot changes nothing
 /// and is skipped: the insertion is `k` plane reductions per step, and over a
 /// long row almost every step is such a step — on a 151936-wide row of logits
 /// the insertion was the whole cost of a top-20 (4.7 ms on GP100).
@@ -275,13 +275,13 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
     #[comptime] k: usize,
 ) {
     let mut local_best_val = item;
-    let lane_id = Vector::new(UNIT_POS_X);
+    let unit_id = Vector::new(UNIT_POS_X);
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for _i in 0..k {
         let winning_val = plane_max(local_best_val);
         let is_match = local_best_val.equal(&winning_val);
-        let winning_lane = plane_min(select_many(is_match, lane_id, Vector::new(u32::MAX)));
+        let winning_unit = plane_min(select_many(is_match, unit_id, Vector::new(u32::MAX)));
 
         let mut insert_val = winning_val;
 
@@ -294,12 +294,12 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
         }
 
         // Winner masking logic
-        let is_winner = lane_id.equal(&winning_lane);
+        let is_winner = unit_id.equal(&winning_unit);
         local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
     }
 }
 
-/// Plane-cooperative merge of per-lane top-k candidates; the accumulator's
+/// Plane-cooperative merge of per-unit top-k candidates; the accumulator's
 /// coordinates decide which algorithm runs, as in [`plane_topk_insert`].
 #[cube]
 pub fn plane_topk_merge<N: Numeric, S: Size>(
@@ -323,7 +323,7 @@ fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
     let mut final_elements = Array::new(k);
     let mut final_coords = Array::new(k);
     let mut cursor = Vector::new(0u32);
-    let lane_id = Vector::new(UNIT_POS_X);
+    let unit_id = Vector::new(UNIT_POS_X);
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
@@ -343,10 +343,10 @@ fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
         let is_cand = local_val
             .equal(&winning_val)
             .vec_and(local_coord.equal(&best_c));
-        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+        let winning_unit = plane_min(select_many(is_cand, unit_id, Vector::new(u32::MAX)));
 
         final_elements[i] = winning_val;
-        let is_winner_thread = lane_id.equal(&winning_lane);
+        let is_winner_thread = unit_id.equal(&winning_unit);
         cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
     }
 
@@ -364,7 +364,7 @@ fn plane_topk_merge_values<N: Numeric, S: Size>(
 ) {
     let mut final_elements = Array::new(k);
     let mut cursor = Vector::new(0u32);
-    let lane_id = Vector::new(UNIT_POS_X);
+    let unit_id = Vector::new(UNIT_POS_X);
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
@@ -378,10 +378,10 @@ fn plane_topk_merge_values<N: Numeric, S: Size>(
 
         let winning_val = plane_max(local_val);
         let is_cand = local_val.equal(&winning_val);
-        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+        let winning_unit = plane_min(select_many(is_cand, unit_id, Vector::new(u32::MAX)));
 
         final_elements[i] = winning_val;
-        let is_winner_thread = lane_id.equal(&winning_lane);
+        let is_winner_thread = unit_id.equal(&winning_unit);
         cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
     }
 
@@ -435,11 +435,11 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
 
 /// An instruction for a reduce algorithm that works with [`Vector`].
 ///
-/// See a provided implementation, such as [`Sum`](super::Sum) or [`Max`](super::Max) for an example how to implement
-/// this trait for a custom instruction.
+/// See a provided implementation, such as [`Sum`](super::Sum) or [`Max`](super::Max) for an example
+/// how to implement this trait for a custom instruction.
 ///
-/// A reduction works at three levels. First, it takes input data of type `In` and reduce them
-/// with their coordinate into an `AccumulatorItem`. Then, multiple `AccumulatorItem` are possibly fused
+/// A reduction works at three levels. First, it takes input data of type `In` and reduce them with
+/// their coordinate into an `AccumulatorItem`. Then, multiple `AccumulatorItem` are possibly fused
 /// together into a single accumulator that is converted to the expected output type.
 #[cube]
 pub trait ReduceInstruction<P: ReducePrecision>:
@@ -447,9 +447,9 @@ pub trait ReduceInstruction<P: ReducePrecision>:
 {
     type Config: CubeComptime + Send + Sync;
 
-    /// When multiple agents are collaborating to reduce a single slice,
-    /// we need a share accumulator to store multiple `AccumulatorItem`.
-    /// This is most likely a `Shared<[Vector<T>]>` or a struct or tuple of vectorized shared memories.
+    /// When multiple agents are collaborating to reduce a single slice, we need a share accumulator
+    /// to store multiple `AccumulatorItem`. This is most likely a `Shared<[Vector<T>]>` or a struct
+    /// or tuple of vectorized shared memories.
     type SharedAccumulator: SharedAccumulator<P, Self>;
 
     /// Requirements of the reduce.
@@ -461,12 +461,13 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     /// is guaranteed to return `accumulator` unchanged for any choice of `coordinate`.
     fn null_input(this: &Self) -> Vector<P::EI, P::SI>;
 
-    /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()` always returns
-    /// is guaranteed to return `accumulator` unchanged.
+    /// A accumulator such that `Self::fuse_accumulators(accumulator, Self::null_accumulator()`
+    /// always returns is guaranteed to return `accumulator` unchanged.
     fn null_accumulator(this: &Self) -> Accumulator<P>;
 
     /// If `ReduceStep` is `Plane`, reduce all the `item` and `coordinate` within the `accumulator`.
-    /// if `ReduceStep` is `Identity`, reduce the given `item` and `coordinate` into the accumulator.
+    /// if `ReduceStep` is `Identity`, reduce the given `item` and `coordinate` into the
+    /// accumulator.
     fn reduce(
         this: &Self,
         accumulator: &mut Accumulator<P>,

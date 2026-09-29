@@ -228,7 +228,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
 
 impl<P: ReducePrecision> ReduceWithIndices<P> for Max {}
 
-/// Collapse the vectorized accumulator lanes down to the final maximum and its
+/// Collapse the vectorized accumulator components down to the final maximum and its
 /// coordinate, for the parallel layout.
 ///
 /// Ties break towards the lower coordinate, matching the CPU reference. The

@@ -1,0 +1,269 @@
+//! Storing a matrix in storage tiles, and laying it back out.
+//!
+//! A storage-tiled tensor is stored one tile at a time, as the [`StoragePartitioning`] it was stored in
+//! states: its tiles, finest first, each made of the one below, then the grid of tiles. Its
+//! binding carries how many pieces each dim is stored in (its `tiling`, `[.., R/tr, C/tc, tr, tc]`
+//! for one level) and the order they follow one another in (its strides). A routine that reads
+//! storage tiles (cmma's stage) moves a tile as one contiguous run.
+//!
+//! Tiling is a relayout on the tile DSL: a space over the matrix with exactly one level, the
+//! outermost storage tile, one cube per tile. Whichever side is storage-tiled is read or written
+//! through its layout, however many levels lie inside that tile.
+
+use cubecl::{
+    client::Client,
+    ir::ElemType,
+    prelude::*,
+    std::tensor::{TensorHandle, layout::CoordsDyn},
+    zspace::{Shape, Strides, Tiling, metadata::Metadata},
+};
+use cubek_tile::{Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, launch::Grid};
+
+use crate::{
+    definition::MatmulSetupError,
+    tiled::{MatrixBinding, batch_axis},
+};
+
+/// A matrix's outermost storage tile, `(rows, cols)`: each dim over its grid's count, whatever
+/// finer pieces it holds.
+type StorageTile = (usize, usize);
+
+/// `dst = src` over their logical cells, one cube per region of `level`, the cube's units
+/// striding the region's lines. A side inside its storage tile is a run; the other walks its
+/// layout.
+#[cube(launch)]
+fn relayout<E: Numeric, V: Size>(
+    src: &TileArg<'_, E, V>,
+    dst: &TileArg<'_, E, V>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let src = src.tile(comptime!(space.clone()));
+    let dst = dst.tile(comptime!(space.clone()));
+    let rank = comptime!(space.space().rank());
+    let ri = comptime!(rank - 2);
+    let ci = comptime!(rank - 1);
+    for cube in space.over(&level) {
+        let s = src.at(&cube);
+        let mut d = dst.at(&cube);
+        let r = s.view::<V>();
+        let mut w = d.view_mut::<V>();
+        let shape = r.shape();
+        let rows = shape[ri];
+        let cols = shape[ci];
+        let total = rows * cols;
+        let mut i = UNIT_POS;
+        while i < total {
+            // The cube's region is one cell of every batch axis.
+            let mut pos = CoordsDyn::new();
+            #[unroll]
+            for _ in 0..ri {
+                pos.push(0u32);
+            }
+            pos.push(i / cols);
+            pos.push(i % cols);
+            w.write(pos.clone(), r.read(pos));
+            i += CUBE_DIM;
+        }
+    }
+}
+
+/// What [`tile`] is told: how the matrix is laid down in memory, stated leaf-up over axes the
+/// caller names.
+pub use cubek_tile::{
+    Axis,
+    layout::{StorageLevels, StoragePartitioning},
+};
+
+/// Store a plain matrix (leading batch dims, trailing two dims that `axes` names) as `storage`
+/// states: its tiles, finest first, and the order the rest of each axis follows, all in the
+/// caller's axes. The result's metadata states the tiling, so its binding says how it is stored
+/// and any routine folds its logical shape back; the order is in its strides.
+///
+/// ```ignore
+/// // A [k, n] weight in 16 x 32 tiles, rows of each tile first, the next tile along k.
+/// let storage = StorageLevels::new(&[(N, 32), (K, 16)]).grid(&[K, N]);
+/// let stored = tile(&client, weight.binding(), [K, N], dtype, storage)?;
+/// ```
+///
+/// # Errors
+///
+/// A source that is already storage-tiled (untile it first), a partitioning that does not close
+/// the matrix in whole tiles (a routine reading storage tiles reads whole ones, and a padded buffer
+/// would change the logical shape), or one deeper than a tiling records.
+#[allow(clippy::result_large_err)]
+pub fn tile(
+    client: &Client,
+    src: TensorBinding,
+    axes: [Axis; 2],
+    dtype: ElemType,
+    storage: StoragePartitioning,
+) -> Result<TensorHandle, MatmulSetupError> {
+    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("tile: {why}")));
+    if src.tiling.is_tiled() {
+        return Err(refused(
+            "the source is already storage-tiled; untile it first".to_string(),
+        ));
+    }
+    let (batches, rows, cols) = MatrixBinding::new(&src, "tile").dims();
+    let (matrix, tiling) = storage
+        .physical(&[(axes[0], rows), (axes[1], cols)])
+        .map_err(|misfit| refused(misfit.to_string()))?;
+    // Batch dims stay plain and coarsest, each a whole run of the matrices finer than it.
+    let mut shape: Vec<usize> = batches.clone();
+    let mut strides = vec![0; batches.len()];
+    let mut run = rows * cols;
+    for (b, &extent) in batches.iter().enumerate().rev() {
+        strides[b] = run;
+        run *= extent;
+    }
+    shape.extend_from_slice(matrix.shape());
+    strides.extend_from_slice(matrix.strides());
+    let fragments: Vec<usize> = batches
+        .iter()
+        .map(|_| 1)
+        .chain([tiling.fragments(0), tiling.fragments(1)])
+        .collect();
+    let config = |e| refused(format!("{e:?}"));
+    let tiling = Tiling::new(&fragments).map_err(config)?;
+    let metadata = Metadata::new(Shape::from(shape.clone()), Strides::from(strides))
+        .with_tiling(tiling)
+        .map_err(config)?;
+    let mut dst = TensorHandle::empty(client, Shape::from(shape), dtype);
+    dst.metadata = Box::new(metadata);
+    let tile = MatrixBinding::new(&dst.clone().binding(), "tile")
+        .tile()?
+        .expect("the destination is storage-tiled");
+    relayout_launch(
+        client,
+        src,
+        dst.clone().binding(),
+        dtype,
+        &batches,
+        (rows, cols),
+        tile,
+    );
+    Ok(dst)
+}
+
+/// Lay a storage-tiled matrix back out as a plain row-major one.
+///
+/// # Errors
+///
+/// A source that is not storage-tiled, or one that stores a batch dim in pieces.
+#[allow(clippy::result_large_err)]
+pub fn untile(
+    client: &Client,
+    src: TensorBinding,
+    dtype: ElemType,
+) -> Result<TensorHandle, MatmulSetupError> {
+    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("untile: {why}")));
+    if !src.tiling.is_tiled() {
+        return Err(refused("the source is not storage-tiled".to_string()));
+    }
+    let matrix = MatrixBinding::new(&src, "untile");
+    let tile = matrix.tile()?.expect("the source is storage-tiled");
+    let (batches, rows, cols) = matrix.dims();
+    let shape: Vec<usize> = batches.iter().copied().chain([rows, cols]).collect();
+    let dst = TensorHandle::empty(client, Shape::from(shape), dtype);
+    relayout_launch(
+        client,
+        src,
+        dst.clone().binding(),
+        dtype,
+        &batches,
+        (rows, cols),
+        tile,
+    );
+    Ok(dst)
+}
+
+/// The one launch both directions share: the matrix's space cut by one level, the outermost
+/// storage tile, a cube of one plane per tile; the levels inside it are the tiled side's to
+/// decode. Each side's binding says whether it is the tiled one.
+fn relayout_launch(
+    client: &Client,
+    src: TensorBinding,
+    dst: TensorBinding,
+    dtype: ElemType,
+    batches: &[usize],
+    (rows, cols): (usize, usize),
+    (tr, tc): StorageTile,
+) {
+    let batch: Vec<(Axis, usize)> = batches
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| b > 1)
+        .map(|(i, &b)| (batch_axis(i), b))
+        .collect();
+    let batch_axes: Vec<Axis> = batch.iter().map(|&(a, _)| a).collect();
+    let all_batch_axes: Vec<Axis> = (0..batches.len()).map(batch_axis).collect();
+    let extents: Vec<(Axis, usize)> = batch
+        .iter()
+        .copied()
+        .chain([(MatrixBinding::ROWS, rows), (MatrixBinding::COLS, cols)])
+        .collect();
+    let space = Space::new(&extents);
+    // One level, leaf up: the tile is the leaf and there is a cube for every one of them.
+    let level = Levels::leaf(&[(MatrixBinding::ROWS, tr), (MatrixBinding::COLS, tc)])
+        .cubes(&[MatrixBinding::ROWS, MatrixBinding::COLS])
+        .batches(&batch_axes)
+        .build()
+        .remove(0);
+    let partitioning = Partitioning::new(space, vec![level.clone()]);
+    let cube_count = partitioning.cube_count();
+    let cube_dim = CubeDim::new_1d(client.properties().hardware.plane_size_max);
+    let launch = {
+        let partitioning = partitioning;
+        let concrete = partitioning.space().clone();
+        let (cube_count, cube_dim) = (cube_count.clone(), cube_dim);
+        Launcher::new(
+            client,
+            partitioning.all_dynamic(),
+            &concrete,
+            Grid::Stated {
+                cube_count,
+                cube_dim,
+            },
+        )
+    };
+    // A line runs along the columns of both sides: a tiled side's pieces are labelled as its
+    // tiling lists them, so its width is the read it stored, taken whole.
+    let src_labels = MatrixBinding::new(&src, "relayout").labels();
+    let dst_labels = MatrixBinding::new(&dst, "relayout").labels();
+    let v = match (src_labels.last(), dst_labels.last()) {
+        (Some(&MatrixBinding::COLS), Some(&MatrixBinding::COLS)) => launch.vector_size(
+            MatrixBinding::COLS,
+            &[
+                (&Geometry::from(&src), &src_labels),
+                (&Geometry::from(&dst), &dst_labels),
+            ],
+            dtype.size(),
+        ),
+        _ => 1,
+    };
+    let s = launch
+        .arg(src)
+        .axes(&[MatrixBinding::ROWS, MatrixBinding::COLS])
+        .batches(&all_batch_axes)
+        .vectorize(v)
+        .build();
+    let d = launch
+        .arg(dst)
+        .axes(&[MatrixBinding::ROWS, MatrixBinding::COLS])
+        .batches(&all_batch_axes)
+        .vectorize(v)
+        .build();
+    relayout::launch(
+        client,
+        cube_count,
+        cube_dim,
+        v,
+        s.arg(),
+        d.arg(),
+        launch.partitioning_arg(),
+        level,
+        dtype,
+    );
+}

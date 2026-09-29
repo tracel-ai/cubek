@@ -5,8 +5,9 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, BoundaryPolicy, DequantAt, Grid, Launcher, Partitioning, QuantTileArg, Quantization,
-    Space, TileArg,
+    Axis, Launcher, Partitioning, Space, TileArg,
+    launch::{BoundaryPolicy, Grid},
+    quant::{DequantAt, QuantTileArg, Quantization},
 };
 
 // Input axes

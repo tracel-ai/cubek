@@ -93,7 +93,7 @@ pub(crate) fn rfft_large_launch(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * m, cube_dim);
 
-        rfft_pack_kernel::launch::<f32>(
+        rfft_pack_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -104,6 +104,7 @@ pub(crate) fn rfft_large_launch(
             signal_len as u32,
             m,
             dim,
+            dtype,
         );
     }
 
@@ -127,7 +128,7 @@ pub(crate) fn rfft_large_launch(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * n_freq, cube_dim);
 
-        rfft_post_kernel::launch::<f32>(
+        rfft_post_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -139,6 +140,7 @@ pub(crate) fn rfft_large_launch(
             n_fft,
             m,
             dim,
+            dtype,
         );
     }
 
@@ -200,7 +202,7 @@ pub(crate) fn irfft_large_launch(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * m, cube_dim);
 
-        irfft_pre_kernel::launch::<f32>(
+        irfft_pre_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -213,6 +215,7 @@ pub(crate) fn irfft_large_launch(
             n_fft,
             m,
             dim,
+            dtype,
         );
     }
 
@@ -237,7 +240,7 @@ pub(crate) fn irfft_large_launch(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * m, cube_dim);
 
-        irfft_unpack_kernel::launch::<f32>(
+        irfft_unpack_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -247,6 +250,7 @@ pub(crate) fn irfft_large_launch(
             (count * m) as u32,
             m,
             dim,
+            dtype,
         );
     }
 
@@ -265,6 +269,7 @@ fn rfft_pack_kernel<F: Float>(
     signal_len: u32,
     #[comptime] m: usize,
     #[comptime] dim: usize,
+    #[define(F)] _dtype: ElemType,
 ) {
     let pos = ABSOLUTE_POS;
     if pos >= total as usize {
@@ -311,6 +316,7 @@ fn rfft_post_kernel<F: Float>(
     #[comptime] n_fft: usize,
     #[comptime] m: usize,
     #[comptime] dim: usize,
+    #[define(F)] _dtype: ElemType,
 ) {
     let pos = ABSOLUTE_POS;
     if pos >= total as usize {
@@ -384,6 +390,7 @@ fn irfft_pre_kernel<F: Float>(
     #[comptime] n_fft: usize,
     #[comptime] m: usize,
     #[comptime] dim: usize,
+    #[define(F)] _dtype: ElemType,
 ) {
     let pos = ABSOLUTE_POS;
     if pos >= total as usize {
@@ -462,6 +469,7 @@ fn irfft_unpack_kernel<F: Float>(
     total: u32,
     #[comptime] m: usize,
     #[comptime] dim: usize,
+    #[define(F)] _dtype: ElemType,
 ) {
     let pos = ABSOLUTE_POS;
     if pos >= total as usize {

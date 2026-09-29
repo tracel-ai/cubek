@@ -14,7 +14,7 @@ use crate::*;
 #[expand(derive(Clone))]
 pub enum TileKind<T: Numeric> {
     /// An addressable buffer with a window, in global or shared memory
-    /// ([`address`](Memory::address)).
+    /// (`address`).
     Memory(Memory<T>),
     /// One plane-level tile: owned by a plane and sliced across its units, so never addressable
     /// (no memory view). The [`Instruction`] picks the encoding; the contraction is its own.

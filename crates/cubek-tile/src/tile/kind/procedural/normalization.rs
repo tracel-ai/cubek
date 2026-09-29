@@ -9,7 +9,7 @@ use crate::Space;
 /// describes: a level below it that split a contracted axis would normalize each chunk on its
 /// own, which the gather leaf refuses by comparing against `over`.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Normalization {
+pub(crate) struct Normalization {
     pub taps: TapSupport,
     pub guard: DivGuard,
     pub over: Space,

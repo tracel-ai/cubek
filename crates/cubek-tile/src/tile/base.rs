@@ -219,7 +219,7 @@ impl<T: Numeric> Tile<T> {
     /// Whether this tile is backed by shared memory, which is what a `sync_cube()` between two
     /// units' accesses actually orders: the barrier covers the workgroup address space, so a
     /// tile a cube communicates *through* has to live there and not in a global buffer.
-    pub(crate) fn is_shared(&self) -> comptime_type!(bool) {
+    pub fn is_shared(&self) -> comptime_type!(bool) {
         match &self.kind {
             TileKind::Memory(m) => comptime!(m.address == AddressSpace::Shared),
             TileKind::Procedural(_)
@@ -324,10 +324,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile can state `axis`'s runtime size: it spans it [`Dynamic`](crate::Extent),
-    /// has a buffer to read a bound off, and the bound is the axis's own extent ([`bound_states`]).
-    /// An operation sizes a `Dynamic` axis from any operand witnessing it ([`witnessed_space`]).
-    pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
+    /// Whether this tile can state `axis`'s runtime size: it spans it `Dynamic`,
+    /// has a buffer to read a bound off, and the bound is the axis's own extent (`bound_states`).
+    /// An operation sizes a `Dynamic` axis from any operand witnessing it (`witnessed_space`).
+    pub(crate) fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
         let bounded = self.bounded();
         let projection = self.projection();
         comptime!(
@@ -575,7 +575,7 @@ impl<T: Numeric> Tile<T> {
     ///
     /// A scale covering everything the accumulator sums belongs here rather than on the terms: one
     /// multiply per cell instead of one per value read. A scale that does *not* cover everything
-    /// summed cannot come here at all and rides its factor instead ([`Tile::scaled`]).
+    /// summed cannot come here at all and rides its factor instead (`Tile::scaled`).
     pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
         #[comptime]
         match factor {
@@ -630,14 +630,14 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's own width): index `i`
-    /// reads line `origin + i`, one add and no layout walk. See [`Memory::dense_lines`] for the
+    /// reads line `origin + i`, one add and no layout walk. See `Memory::dense_lines` for the
     /// caller-owned contiguity contract; the streaming fold's operands satisfy it by construction.
     pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
         self.mem("dense").dense_lines::<W>()
     }
 
     /// The mutable twin of [`dense`](Tile::dense).
-    pub(crate) fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+    pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.mem_mut("dense_mut").dense_lines_mut::<W>()
     }
 
@@ -707,7 +707,7 @@ impl<T: Numeric> Tile<T> {
     /// accumulating in a narrower element drains through, register to register, without
     /// touching memory.
     ///
-    /// The resident counterpart of [`copy_cast_from`](Self::copy_cast_from), which drains a block
+    /// The resident counterpart of [`copy_cast_from`](Tile::copy_cast_from), which drains a block
     /// *out* to its sink. It lets a leaf contract in the operands' own element while the sum across
     /// leaf calls stays wide, bounding the error by the leaf's own depth.
     ///
@@ -716,7 +716,7 @@ impl<T: Numeric> Tile<T> {
     /// it end to end stops advancing part way through.
     ///
     /// Both sides are register blocks over one sink, so the add is line for line
-    /// ([`RegisterData::add_cast_from`]). A partition promotes cell by cell.
+    /// (`RegisterData::add_cast_from`). A partition promotes cell by cell.
     pub fn add_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         match (&mut self.kind, &src.kind) {
             (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => d.add_cast_from(s),
@@ -733,13 +733,13 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`copy_from`](Self::copy_from) with a cast: a resident fragment `src`, wider than this
+    /// [`copy_from`](Tile::copy_from) with a cast: a resident fragment `src`, wider than this
     /// memory window, stored down to `T`. How an accumulator's cells reach an output of the
     /// output's own type, one fragment per call, from the loop the kernel writes over its cells.
     ///
     /// Into a destination that folds ([`Write::Accumulate`]) or a window the problem's edge cuts
     /// short, a cmma fragment drains through the scratch its accumulator was opened with, cell by
-    /// cell, since its intrinsic's store can neither add nor mask. [`copy_from`](Self::copy_from)
+    /// cell, since its intrinsic's store can neither add nor mask. [`copy_from`](Tile::copy_from)
     /// drains the same way.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
@@ -753,8 +753,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Spill this plane-resident tile into its slot of the plane's scratch, the first half of a
-    /// bounce. [`drained_into`](Self::drained_into) owns the barriers around it.
-    pub fn spill_to_scratch(&self) {
+    /// bounce. [`drained_into`](Tile::drained_into) owns the barriers around it.
+    pub(crate) fn spill_to_scratch(&self) {
         match &self.kind {
             TileKind::PlaneTile(t) => t.spill_to_scratch(),
             TileKind::PlanePartition(p) => p.fragment().spill_to_scratch(),
@@ -769,7 +769,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Add `src`'s spilled cells into this memory window, the second half of a bounce. Where this
     /// store folds, the add is its atomic one.
-    pub fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
+    pub(crate) fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
             (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch(d, space),
@@ -784,7 +784,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Whether this operand was opened with a landing ([`with_landing`](Tile::with_landing)),
     /// which is what lets a fragment load read it whatever its own window's layout is.
-    pub fn has_landing(&self) -> comptime_type!(bool) {
+    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
         match &self.kind {
             TileKind::Memory(g) => g.has_landing(),
             TileKind::PlaneTile(_)
@@ -806,7 +806,7 @@ impl<T: Numeric> Tile<T> {
     /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
     /// lands them the way a packed global window does, which is what keeps a deep stage the
     /// size of the words rather than of the values they unpack to.
-    pub fn with_landing(&self) -> Tile<T> {
+    pub(crate) fn with_landing(&self) -> Tile<T> {
         match &self.kind {
             TileKind::Memory(g) => Tile::new(
                 TileKind::new_Memory(g.clone().with_landing()),
@@ -824,9 +824,10 @@ impl<T: Numeric> Tile<T> {
 
     /// This operand landed where `instruction` needs it, and untouched where it does not.
     ///
-    /// A fragment loads a window as it lies, so a factor reaching one lands first
-    /// ([`with_landing`](Tile::with_landing)); a register block reads through its layout and lands
-    /// nothing. This crate knows which instructions land, so a kernel opens its operands once.
+    /// A fragment loads a window as it lies, so a factor reaching one lands first: a plane-owned
+    /// window of shared memory the values (and their scales) are written into, one per plane of the
+    /// cube, sized where it lands. A register block reads through its layout and lands nothing.
+    /// This crate knows which instructions land, so a kernel opens its operands once, here.
     pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<T> {
         match comptime!(instruction) {
             Instruction::Registers { .. } => self,

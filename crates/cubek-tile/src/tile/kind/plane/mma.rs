@@ -233,7 +233,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
 ) {
     // `ldmatrix` reads 16-byte rows of 16-bit cells out of shared memory, for an operand: it
     // serves a window only where every one of those holds, and the manual load serves the rest.
-    // A gathered window has no row a lane could address, a line wider than a row starts one
+    // A gathered window has no row a unit could address, a line wider than a row starts one
     // inside it, and a global window, a 4-byte cell or the accumulator is not what the instruction
     // reads at all.
     let gathered = src.gathered();
@@ -266,12 +266,12 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// Manual load: each lane reads its own cells out of `src` through the matrix view, the window
+/// Manual load: each unit reads its own cells out of `src` through the matrix view, the window
 /// lying as the role's `edges` (`layout` row-major) or as their transpose (col-major, a weight
 /// stored `{n, k}`).
 ///
-/// Where a lane's register vector runs along the window's lines — the instruction's
-/// [`vector_layout`](MmaDefinition::vector_layout) is the window's — the lane reads whole lines,
+/// Where a unit's register vector runs along the window's lines — the instruction's
+/// [`vector_layout`](MmaDefinition::vector_layout) is the window's — the unit reads whole lines,
 /// one per `W` cells, rather than one line per cell: a load the device issues wide. Elsewhere
 /// each cell is read on its own.
 #[cube]

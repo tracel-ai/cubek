@@ -16,7 +16,8 @@ use super::{Reads, Recipe, RecipeCoords, RecipeExpand};
 /// [`Integer`], so a constant folds away at expand time like a comptime field; a runtime one stays.
 ///
 /// `coefficient` folds a sign in, so `x = tap - phase` needs no negation recipe. Like a
-/// [`PhysicalAxisMap`], this cannot run an axis backwards; a flip belongs in the coordinate.
+/// [`PhysicalAxisMap`](crate::PhysicalAxisMap), this cannot run an axis backwards; a flip belongs
+/// in the coordinate.
 #[derive(CubeType, Clone)]
 pub struct Phase<T: Float> {
     /// Multiplies the whole fraction, unlike the two terms below, which sit inside the numerator.

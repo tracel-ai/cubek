@@ -1,6 +1,7 @@
 //! Where an operand's axes live: [`Projection`] maps logical axes onto buffer dims, extent-free;
-//! [`Geometry`] is the buffer's extents and strides; the in-kernel halves evaluate both. A stage's
-//! block rows are placed across the banks by [`RowPlacement`] and [`ChunkSwizzle`].
+//! [`Geometry`] is the buffer's extents and strides, [`StoragePartitioning`] where its values sit relative to
+//! one another, as counts; the in-kernel halves evaluate both. A stage's block rows are placed
+//! across the banks by `RowArrangement` and `ChunkSwizzle`.
 
 mod buffer;
 mod build;
@@ -9,8 +10,9 @@ mod dim;
 mod geometry;
 mod in_kernel;
 mod kernel;
-mod placement;
 mod projection;
+mod row_arrangement;
+mod storage_partitioning;
 mod storage_tiling;
 mod swizzle;
 
@@ -21,8 +23,9 @@ pub use dim::*;
 pub use geometry::*;
 pub use in_kernel::*;
 pub(crate) use kernel::*;
-pub(crate) use placement::{LineBytes, RowPlacement, placed_digits, stage_offset};
 pub use projection::*;
+pub(crate) use row_arrangement::{LineBytes, RowArrangement};
+pub use storage_partitioning::*;
 pub use storage_tiling::*;
 pub(crate) use swizzle::ChunkSwizzle;
 pub(crate) use swizzle::swizzled_line;

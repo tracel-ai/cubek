@@ -19,6 +19,9 @@ use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use crate::tile::uncut;
+use cubek_tile::Instruction;
+use cubek_tile::kind::Field;
+use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 use half::f16;
 
@@ -414,10 +417,12 @@ fn packed_cmma_rhs<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     // Both factors land: a fragment loads a window as it lies, and a gmem layout is unchecked.
-    let x = x.tile(comptime!(space.clone())).with_landing();
+    let x = x
+        .tile(comptime!(space.clone()))
+        .landed_for(Instruction::Cmma);
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_landing()
+        .landed_for(Instruction::Cmma)
         .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(&x, Monoid::Sum);

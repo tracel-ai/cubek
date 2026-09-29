@@ -29,8 +29,9 @@ pub struct GlobalOperand<T: Numeric> {
     #[cube(comptime)]
     pub write: Write,
     pub(crate) quant: ComptimeOption<QuantInfo>,
-    /// One per [`Scale::Dynamic`](crate::Scale) term and one per [`Divisor::Dynamic`](crate::Divisor)
-    /// axis, by physical axis, divisor last; empty for a comptime mapping.
+    /// One per [`Scale::Dynamic`](crate::Scale) term and one per
+    /// [`Divisor::Dynamic`](crate::Divisor) axis, by physical axis, divisor last; empty for a
+    /// comptime mapping.
     pub coefficients: Coords<u32>,
     /// One signed value per [`Offset::Dynamic`](crate::Offset) axis; empty for a comptime mapping.
     pub offsets: Coords<i32>,
@@ -56,8 +57,8 @@ impl<T: Numeric> GlobalOperand<T> {
         )
     }
 
-    /// [`tensor`](Self::tensor) for a gather whose affine map is not all comptime (a runtime
-    /// stride, dilation, padding or resize ratio). `coefficients`: one per
+    /// [`tensor`](GlobalOperand::tensor) for a gather whose affine map is not all comptime (a
+    /// runtime stride, dilation, padding or resize ratio). `coefficients`: one per
     /// [`Scale::Dynamic`](crate::Scale) term and one per [`Divisor::Dynamic`](crate::Divisor) axis,
     /// by physical axis, divisor last. `offsets`: one signed value per
     /// [`Offset::Dynamic`](crate::Offset) axis. Only the lengths are checked, so those orders are
@@ -79,13 +80,13 @@ impl<T: Numeric> GlobalOperand<T> {
         )
     }
 
-    /// [`tensor`](Self::tensor) where the stored element `E` and the served element `T` need not
-    /// be the same: a [`packed`](TileSpec::packed) binding holds `u32` words read at `factor`
-    /// values each; one stating no packing reads its own element.
+    /// [`tensor`](GlobalOperand::tensor) where the stored element `E` and the served element `T`
+    /// need not be the same: a [`packed`](TileSpec::packed) binding holds `u32` words read at
+    /// `factor` values each; one stating no packing reads its own element.
     ///
     /// `T` is stated at the call because a packed binding's element is the word, not the value,
     /// so nothing can infer it. Where the binding does read its own element, the two must agree,
-    /// which [`tensor`](Self::tensor) proves in the type system and this checks here.
+    /// which [`tensor`](GlobalOperand::tensor) proves in the type system and this checks here.
     pub fn stored<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
@@ -181,9 +182,10 @@ impl<T: Numeric> GlobalOperand<T> {
         }
     }
 
-    /// An operand whose values come from `source` instead of from memory: the fuse-on-read twin
-    /// of [`sink`](Self::sink), stated geometry and all. A source serves layout-addressed reads
-    /// only: no staging, dense reads, quantization, tensor maps or [`packed`](TileSpec::packed).
+    /// An operand whose values come from `source` instead of from memory: the fuse-on-read twin of
+    /// [`sink`](GlobalOperand::sink), stated geometry and all. A source serves layout-addressed
+    /// reads only: no staging, dense reads, quantization, tensor maps or
+    /// [`packed`](TileSpec::packed).
     pub fn source(
         source: ErasedTensor<T, ReadOnly>,
         geometry: RuntimeGeometry,
@@ -304,9 +306,10 @@ impl<T: Numeric> Memory<T> {
                 physical_strides.push(stride / w);
             }
         }
-        // `BufferLayout`'s own physical-position map: the operand's projection relabeled by position,
-        // since the layout is handed coordinates a gather has already resolved. Storage tiling
-        // survives it, so `physical_shape` is `[pre…, grid…, …, tile…]` in synthetic-axis order.
+        // `BufferLayout`'s own physical-position map: the operand's projection relabeled by
+        // position, since the layout is handed coordinates a gather has already resolved. Storage
+        // tiling survives it, so `physical_shape` is `[pre…, grid…, …, tile…]` in synthetic-axis
+        // order.
         let gmem_projection = comptime!(projection.positional());
         // Logical bound folded from the physical shape, so it's correct for tiled
         // operands too (the physical buffer is padded; the logical extent is not).
@@ -333,7 +336,7 @@ impl<T: Numeric> Memory<T> {
                 physical_shape,
                 physical_strides,
                 projection: gmem_projection,
-                rows: RowPlacement::InOrder,
+                rows: RowArrangement::InOrder,
             },
             window: Window::new(
                 origin,
@@ -467,7 +470,8 @@ fn top_window(
 
 /// Where a gathered physical axis's top window starts and the phase its division left behind:
 /// `⌊offset / divisor⌋` and `offset mod divisor`. A rational mapping absorbs only its divisor's
-/// multiples, handing the rest to [`ProjectionInKernel`](crate::ProjectionInKernel); an integer one all.
+/// multiples, handing the rest to [`ProjectionInKernel`](crate::ProjectionInKernel); an integer one
+/// all.
 ///
 /// The floor is the host's whenever both sides are comptime; only a `Dynamic` offset or divisor
 /// pays for one in the kernel.

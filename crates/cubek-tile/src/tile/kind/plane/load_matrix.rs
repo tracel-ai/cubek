@@ -1,5 +1,5 @@
-//! The `ldmatrix` transport of the manual-mma encoding: a lane hands the instruction its row's
-//! address, placed where the window's layout places it, so padded and swizzled stages alike are
+//! The `ldmatrix` transport of the manual-mma encoding: a unit hands the instruction its row's
+//! address, where the window's layout arranges it, so padded and swizzled stages alike are
 //! read in 16-byte rows rather than a cell at a time.
 
 use cubecl::{
@@ -9,16 +9,16 @@ use cubecl::{
 
 use crate::*;
 
-/// Bytes one row of an `ldmatrix` 8×8 matrix holds, which one lane addresses.
+/// Bytes one row of an `ldmatrix` 8×8 matrix holds, which one unit addresses.
 pub(super) const LDMATRIX_ROW_BYTES: usize = 16;
 
-/// `ldmatrix` load: each lane hands the instruction the address of one 16-byte row of one of the
-/// fragment's 8×8 matrices, and the instruction deals every lane its cells. Lane `l` addresses
+/// `ldmatrix` load: each unit hands the instruction the address of one 16-byte row of one of the
+/// fragment's 8×8 matrices, and the instruction hands every unit its cells. Unit `l` addresses
 /// row `l % 8` of matrix `l / 8`, and the matrices lie where the fragment's registers do
-/// ([`MmaDefinition::position_of_nth`] of lane 0), so the rows a lane addresses are the rows the
+/// ([`MmaDefinition::position_of_nth`] of unit 0), so the rows a unit addresses are the rows the
 /// manual load would read its cells from, taken 16 bytes at a time.
 ///
-/// The address is the window's own placement of that row ([`Masked::line_slice`]): a padded or a
+/// The address is the window's own arrangement of that row ([`Masked::line_slice`]): a padded or a
 /// swizzled stage is read where its fill wrote it, which a base and a row stride could not say of
 /// a swizzled one. The instruction transposes where the window's order is not the one the
 /// fragment's register vectors run along: a col weight bound as `{n, k}` beside a `B` whose
@@ -58,16 +58,16 @@ pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric
     let vector_layout = def.vector_layout(ident);
     // Whether the instruction transposes each 8×8 matrix on its way to the registers.
     let instruction_transposes = comptime!(vector_layout != layout);
-    // Lanes are dealt out eight to a matrix, wrapping where the fragment holds fewer than four.
-    let lane = UNIT_POS_PLANE;
-    let sub_lane = lane % 8;
-    let nth_matrix = lane / 8 % comptime!(num_regs as u32);
+    // Units address a matrix eight at a time, wrapping where the fragment holds fewer than four.
+    let unit = UNIT_POS_PLANE;
+    let row_in_matrix = unit % 8;
+    let nth_matrix = unit / 8 % comptime!(num_regs as u32);
     let (row, col) = def.position_of_nth(0, nth_matrix * comptime!(vector_size as u32), ident);
-    // The lane's row runs along the window's lines, and the next lane's starts a line-row on.
+    // The unit's row runs along the window's lines, and the next unit's starts a line-row on.
     let (line_row, cell) = if comptime!(col_major_window) {
-        (col + sub_lane, row)
+        (col + row_in_matrix, row)
     } else {
-        (row + sub_lane, col)
+        (row + row_in_matrix, col)
     };
     let row_slice = view.line_slice(
         (line_row, cell / comptime!(width as u32)),

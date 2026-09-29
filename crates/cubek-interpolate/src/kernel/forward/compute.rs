@@ -5,8 +5,8 @@ use super::{
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Factors, Partitioning, Phase, Procedural, Region, RegisterBlock, Semiring, StageStorage,
-    Stages, Tile, TileArg, affine_along, sum_of,
+    Axis, Partitioning, Region, RegisterBlock, Semiring, StageStorage, Stages, Tile, TileArg,
+    procedural::{Factors, Phase, Procedural, affine_along, sum_of},
 };
 
 /// The distance from a tap to the source coordinate the output position lands on.
@@ -115,7 +115,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     }
 }
 
-/// One block of the cube's walk: this plane's rows, then this lane's columns and channel
+/// One block of the cube's walk: this plane's rows, then this unit's columns and channel
 /// lines, each output cell contracting its whole tap window at the leaf under `config`.
 #[cube]
 fn interpolate_block<E: Float>(

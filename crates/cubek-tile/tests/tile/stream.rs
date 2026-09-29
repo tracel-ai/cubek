@@ -21,6 +21,8 @@ use cubecl::{
     zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+use cubek_tile::launch::AccumulateArg;
+use cubek_tile::launch::AccumulateArgLaunch;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);

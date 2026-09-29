@@ -26,7 +26,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`smem`](Memory::smem) with a minimum byte alignment on the shared
-    /// buffer. A TMA-filled stage needs one ([`TMA_STAGE_ALIGNMENT`]); every
+    /// buffer. A TMA-filled stage needs one (`TMA_STAGE_ALIGNMENT`); every
     /// stage is aligned to at least one chunk ([`RowChunks::CHUNK_BYTES`]),
     /// which a padded or swizzled row assumes and an `ldmatrix` row address
     /// requires: at the element's own alignment, a shared allocation declared
@@ -525,7 +525,7 @@ pub(crate) struct StageForm {
     /// for a dense stage, which is a copy of the tile and shares its coordinates.
     steps: SmallVec<[usize; Space::MAX_RANK]>,
     /// Where each line of a block row is kept.
-    pub(crate) rows: RowPlacement,
+    pub(crate) rows: RowArrangement,
 }
 
 impl StageForm {
@@ -534,7 +534,7 @@ impl StageForm {
     /// split, so the buffer lays the innermost block down contiguously.
     ///
     /// `line` is a physical line's size, which is what a block's rows are placed by
-    /// ([`RowPlacement`]).
+    /// ([`RowArrangement`]).
     pub(crate) fn dense(
         space: &Space,
         vector_size: usize,
@@ -544,8 +544,8 @@ impl StageForm {
         let nesting = stage.nesting(space);
         let extents = StageForm::dense_extents(space, vector_size, &nesting);
         let rows = match stage {
-            StageStorage::Tiled { chunks, .. } => RowPlacement::new(chunks, &extents, line),
-            StageStorage::Strided | StageStorage::Lines { .. } => RowPlacement::InOrder,
+            StageStorage::Tiled { chunks, .. } => RowArrangement::new(chunks, &extents, line),
+            StageStorage::Strided | StageStorage::Lines { .. } => RowArrangement::InOrder,
         };
         StageForm {
             extents,
@@ -577,7 +577,7 @@ impl StageForm {
         let compaction = Compaction::new(projection, vector_size, |axis| space.extent(axis));
         let extents = compaction.line_extents(vector_size);
         StageForm {
-            rows: RowPlacement::InOrder,
+            rows: RowArrangement::InOrder,
             positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
             projection: compaction.projection().clone(),
             steps: compaction.steps().iter().copied().collect(),
@@ -604,7 +604,7 @@ impl StageForm {
             .collect()
     }
 
-    /// [`extents`](StageForm::extents) with each row widened by the lines its placement pads it
+    /// [`extents`](StageForm::extents) with each row widened by the lines its arrangement pads it
     /// with: what the buffer lays down, where the extents are what it holds.
     fn pitched(&self) -> Vec<usize> {
         let mut pitched = self.extents.clone();
@@ -813,8 +813,8 @@ mod tests {
         };
         assert_eq!(swizzled(4).extents, vec![4, 4, 4, 4]);
         assert_eq!(swizzled(4).strides(), vec![64, 16, 4, 1]);
-        assert_eq!(swizzled(4).rows, RowPlacement::InOrder);
-        let RowPlacement::Swizzled(swizzle) = swizzled(16).rows else {
+        assert_eq!(swizzled(4).rows, RowArrangement::InOrder);
+        let RowArrangement::Swizzled(swizzle) = swizzled(16).rows else {
             panic!("rows of four 16-byte lines are swizzled")
         };
         assert_eq!((swizzle.row_axis(), swizzle.line_axis()), (2, 3));
@@ -835,7 +835,7 @@ mod tests {
             LineBytes(16),
         );
         assert_eq!(padded.extents, vec![4, 4, 4, 4]);
-        assert_eq!(padded.rows, RowPlacement::Padded { lines: 1 });
+        assert_eq!(padded.rows, RowArrangement::Padded { lines: 1 });
         assert_eq!(padded.strides(), vec![80, 20, 5, 1]);
         assert_eq!(padded.cells(), 320);
     }

@@ -16,17 +16,27 @@ use std::path::{Path, PathBuf};
 ///
 /// `RowChunks`, how a tiled stage's block lays its rows down, raised it by one: a caller states it.
 /// Its `CHUNK_BYTES`, what a padded row grows by, raised it by one more: a caller budgeting shared
-/// memory counts it.
-///
-/// The redesign merged three over the ceiling it set itself, while the suite was not running.
-/// The ceiling is the count it merged at.
-const PUB_ITEMS: usize = 766;
+/// memory counts it. The attention walk moving to its client and the resampling filters to
+/// cubek-interpolate took it down to 746. The facade split the root into modules (a few more
+/// `pub mod` and root re-exports) and made crate-private what nothing outside named, and the
+/// questions a selector asks (`Prefetch`, `Delivery::moves`) replaced the limits it re-derived
+/// (`MOST_FETCHED_SCALARS`, `UnitLines`, `TMA_MAX_BOX_DIM`, `validate_tma`): 724. `softmax`
+/// became the one public row op (its unit and plane arms crate-private) and the stencil builder
+/// test-only: 717. `Input` and `Output`, one launch argument each way, replaced the delivery
+/// families (`DeliveryFamily`, `DeliveryLaunch`, `Cooperative`, `Tma`, `Accumulated`): five
+/// concepts to two, but their `tile` and host builders count as lines, four more: 721.
+/// `StoragePartitioning` raised it by fifteen: the type and what it answers (`new`, `tiles`,
+/// `order`, `holds`, `physical`), the `StorageLevels` it is stated with (`new`, `tile`, `grid`),
+/// the misfits a statement and a tile are refused with, `Geometry::serves` and the re-export of
+/// its folder, since a caller writing a storage-tiled buffer states how it is laid down and every
+/// reader asks whether it holds the tile the reader needs: 736. `Destination`, the seam a caller's
+/// own output plugs into (a fused epilogue's sink, which no enum here can name), raised it by
+/// four: the trait, its host half `DestinationLaunch`, `Buffered` (the one implementation, serving
+/// `Output`), and the module's re-export. One seam for outputs only, not the families back: 740.
+const PUB_ITEMS: usize = 740;
 /// Functions whose body runs past this many lines.
-///
-/// The stage row placement added two: `smem_backed`, which states the stage's placement beside its
-/// layout, and the manual mma's `load_manual`, which reads a col-major weight as it lies.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 38;
+const LONG_FNS: usize = 33;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
 const LONG_FILES: usize = 11;
@@ -36,9 +46,6 @@ const TOO_MANY_ARGUMENTS: usize = 27;
 
 /// Words the redesign retires, each checked as a whole identifier. A phase that deletes a concept
 /// moves its word here, and the count must be zero from then on.
-///
-/// Distribution is not here: the redesign's last phase made it the name of how a level's units
-/// share an axis (`AxisDistribution`, `Count::Distributed`).
 const RETIRED: &[&str] = &[
     "Fold",
     "FoldSeq",
@@ -50,6 +57,20 @@ const RETIRED: &[&str] = &[
     "unravel_const",
     "concat3",
     "within_2d",
+    // A level distributes its tiles over a compute scope ("distribution over deal"), and a
+    // plane is made of units, not lanes.
+    "Deal",
+    "Dealt",
+    "deal",
+    "dealt",
+    "deals",
+    "lane",
+    "lanes",
+    "Takers",
+    // A unit share reduces its partials; a stage's rows are arranged, not placed.
+    "fold_of",
+    "fold_mask",
+    "RowPlacement",
 ];
 
 #[test]

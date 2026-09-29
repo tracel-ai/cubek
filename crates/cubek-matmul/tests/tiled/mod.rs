@@ -1,8 +1,8 @@
 //! Tests for the routines written on the tile DSL.
 
 mod cmma;
-mod pack;
 mod quant_gemv;
+mod storage;
 
 #[cfg(feature = "benchmarks")]
 mod bench_catalog;

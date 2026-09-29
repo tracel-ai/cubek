@@ -7,8 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Bound, Cooperative, DeliveryLaunch, Geometry, Grid, Launcher, Space, Tma, TmaBox,
-    TmaTileArgLaunch,
+    Axis, Geometry, Launcher, Space,
+    launch::{Grid, InputArgs, TmaBox, TmaTileArgLaunch},
 };
 
 use crate::{
@@ -21,21 +21,8 @@ use crate::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, StoredTiles},
         kernel::cmma_kernel,
     },
-    tiled::{K, M, N, batch_axis, logical_dims, storage_tile},
+    tiled::{K, M, MatrixBinding, N, batch_axis},
 };
-
-/// A cmma operand must be row-major contiguous: the transport addresses each window
-/// by a row stride off a scalar offset.
-#[allow(clippy::result_large_err)]
-fn validate_row_major(strides: &[usize]) -> Result<(), MatmulSetupError> {
-    if strides.last() == Some(&1) {
-        Ok(())
-    } else {
-        Err(MatmulSetupError::InvalidConfig(Box::new(
-            "Cmma: operand is not row-major contiguous".to_string(),
-        )))
-    }
-}
 
 /// Cmma carries one type per input from global memory down to the fragment (the kernel's
 /// `EL`/`ER`), so a stage or register type of its own is a cast this routine does not emit.
@@ -55,26 +42,6 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
              {register:?} would need a cast it does not emit"
         ))))
     }
-}
-
-/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes.
-/// A plain input passes.
-#[allow(clippy::result_large_err)]
-fn validate_storage_tiled(
-    name: &str,
-    binding: &TensorBinding,
-    stage: (usize, usize),
-) -> Result<(), MatmulSetupError> {
-    let Some(tile) = storage_tile(binding, name)? else {
-        return Ok(());
-    };
-    if tile != stage {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
-             tile names the stage, so pack the tensor to the plan's stage or plan for the tile"
-        ))));
-    }
-    Ok(())
 }
 
 /// The derivation both entries share: reject what the routine can't run, build the
@@ -97,17 +64,21 @@ fn setup(
             "Cmma does not support quantized inputs".to_string(),
         )));
     }
-    validate_row_major(&lhs.data().strides)?;
-    validate_row_major(&rhs.data().strides)?;
-    validate_row_major(&out.strides)?;
+    let (lhs_matrix, rhs_matrix) = (
+        MatrixBinding::new(lhs.data(), "lhs"),
+        MatrixBinding::new(rhs.data(), "rhs"),
+    );
+    lhs_matrix.row_major()?;
+    rhs_matrix.row_major()?;
+    MatrixBinding::new(out, "out").row_major()?;
 
     validate_single_type(dtypes, MatmulIdent::Lhs)?;
     validate_single_type(dtypes, MatmulIdent::Rhs)?;
 
     // Logical dims off each operand, folded off a storage-tiled one's fragments: trailing two
     // axes are the matrix, leading dims its own (possibly broadcast) batch shape.
-    let (lhs_batches, m, k) = logical_dims(lhs.data());
-    let (rhs_batches, _, n) = logical_dims(rhs.data());
+    let (lhs_batches, m, k) = lhs_matrix.dims();
+    let (rhs_batches, _, n) = rhs_matrix.dims();
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -145,13 +116,13 @@ fn setup(
     // What the operands' storage tiles fix: an inferred plan stages to them, a forced one is
     // checked against them below.
     let stored = StoredTiles {
-        lhs: storage_tile(lhs.data(), "lhs")?,
-        rhs: storage_tile(rhs.data(), "rhs")?,
+        lhs: lhs_matrix.row_first_tile()?,
+        rhs: rhs_matrix.row_first_tile()?,
     };
     let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc, stored)?;
     let (stage_m, stage_n) = blueprint.stage();
-    validate_storage_tiled("lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
-    validate_storage_tiled("rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
+    lhs_matrix.stages((stage_m, blueprint.stage_k))?;
+    rhs_matrix.stages((blueprint.stage_k, stage_n))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -224,8 +195,10 @@ pub fn launch_ref(
             },
         )
     };
-    let lhs = lhs.into_data();
-    let rhs = rhs.into_data();
+    // A storage-tiled input is moved a whole tile at a time, so its tile is read as one piece,
+    // whatever finer pieces it was stored in.
+    let lhs = MatrixBinding::new(lhs.data(), "lhs").fused()?;
+    let rhs = MatrixBinding::new(rhs.data(), "rhs").fused()?;
 
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());
@@ -236,10 +209,10 @@ pub fn launch_ref(
         acc,
     };
 
-    // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
-    // Every path runs the same kernel body and never branches on the delivery again.
+    // The delivery decides how the inputs are bound; the kernel reads the variant at expansion
+    // and never branches on it at run time.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided::<Cooperative>(
+        CmmaDelivery::Copy => launch_strided(
             client,
             &launch,
             cube_count,
@@ -285,7 +258,7 @@ struct Elems {
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
 /// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
 #[allow(clippy::too_many_arguments)]
-fn launch_strided<D>(
+fn launch_strided(
     client: &Client,
     launch: &Launcher,
     cube_count: CubeCount,
@@ -297,9 +270,7 @@ fn launch_strided<D>(
     rhs: TensorBinding,
     out: TensorBinding,
     out_batch_axes: &[Axis],
-) where
-    D: DeliveryLaunch<Operand = Bound>,
-{
+) {
     let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
     let a = launch
         .arg(lhs)
@@ -321,15 +292,15 @@ fn launch_strided<D>(
         .batches(out_batch_axes)
         .vectorize(v_c)
         .build();
-    cmma_kernel::launch::<D>(
+    cmma_kernel::launch(
         client,
         cube_count,
         cube_dim,
         a.vector_size,
         b.vector_size,
         c.vector_size,
-        D::arg(a),
-        D::arg(b),
+        a.input(),
+        b.input(),
         c.arg(),
         launch.partitioning_arg(),
         blueprint.clone(),
@@ -367,21 +338,21 @@ fn launch_tma(
     // refused it otherwise), so the descriptor's box is one storage tile and each stage is one
     // contiguous run. A plain operand is collapsed to the descriptor's `(batch, row, col)` and
     // its box is the stage cut out of rows.
-    fn operand<E: Numeric>(
+    fn operand<E: Numeric, V: Size>(
         axes: &[Axis],
         dtype: ElemType,
         binding: TensorBinding,
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
-    ) -> TmaTileArgLaunch<E> {
+    ) -> InputArgs<'static, E, V> {
         if binding.tiling.is_tiled() {
             let map = tma_operand_tiled(binding, box_dims, dtype, TensorMapSwizzle::None);
-            return TmaTileArgLaunch::tensor_map_stored(
+            return InputArgs::TensorMap(TmaTileArgLaunch::tensor_map_stored(
                 map,
                 axes,
                 (rows, cols),
                 (box_dims.0 as u32, box_dims.1 as u32),
-            );
+            ));
         }
         let (map, transposed) = tma_operand(
             binding,
@@ -391,7 +362,7 @@ fn launch_tma(
             dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(
+        InputArgs::TensorMap(TmaTileArgLaunch::tensor_map(
             map,
             axes,
             TmaBox {
@@ -400,7 +371,7 @@ fn launch_tma(
                 batch: None,
                 transposed,
             },
-        )
+        ))
     }
     let a = operand(
         &[M, K],
@@ -423,7 +394,7 @@ fn launch_tma(
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();
-    cmma_kernel::launch::<Tma>(
+    cmma_kernel::launch(
         client,
         cube_count,
         cube_dim,

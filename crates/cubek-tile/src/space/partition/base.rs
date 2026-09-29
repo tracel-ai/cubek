@@ -17,8 +17,8 @@ use crate::{
 /// nothing here reorders or invents one. What the kernel *does* with a level — where it opens an
 /// accumulator, what it stages, which instruction its leaf runs under — stays the kernel's own.
 ///
-/// What a kernel is handed ([`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg)),
-/// and what its loops iterate: `for cube in space` distributes the first level, `for plane in cube` the
+/// What a kernel is handed ([`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg)), and
+/// what its loops iterate: `for cube in space` distributes the first level, `for plane in cube` the
 /// next, down to the leaf. Levels are comptime; the space's dynamic extents are the runtime half.
 #[derive(CubeType, CubeLaunch, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Partitioning {
@@ -141,7 +141,7 @@ impl Partitioning {
         &self.space
     }
 
-    /// This partitioning in kernel form: every extent [`Dynamic`](crate::Extent::Dynamic), the
+    /// This partitioning in kernel form: every extent `Dynamic`, the
     /// levels unchanged, so one compiled kernel serves every shape a launch stamps on.
     pub fn all_dynamic(self) -> Self {
         Partitioning {
@@ -188,13 +188,11 @@ impl Partitioning {
             .collect()
     }
 
-    /// The one level covered as `coverage` says, if any. A partitioning has at most one units,
-    /// planes and cubes level; its walks may be several ([`walks`](Self::walks)).
-    pub fn level_of(&self, coverage: Coverage) -> Option<&Level> {
-        assert!(
-            coverage != Coverage::Walk,
-            "Partitioning::level_of: a partitioning may walk several levels; ask `walks`"
-        );
+    /// The one level distributed over `scope`'s workers (the cubes, a cube's planes or a plane's
+    /// units), if any. A partitioning distributes each scope at most once; its walks may be
+    /// several ([`walks`](Self::walks)).
+    pub fn level_distributed(&self, scope: ComputeScope) -> Option<&Level> {
+        let coverage = Coverage::Distribute(scope);
         let mut found = self
             .levels
             .iter()
@@ -202,7 +200,7 @@ impl Partitioning {
         let level = found.next();
         assert!(
             found.next().is_none(),
-            "Partitioning::level_of: two levels are taken by {coverage:?}"
+            "Partitioning::level_distributed: two levels distribute over {scope:?}"
         );
         level
     }
@@ -244,8 +242,8 @@ impl Partitioning {
     }
 
     /// The product over the `levels` selected of the workers sharing the grid as one, or of the
-    /// tiles each `axes` selected is distributed in. Each level's count is read against the space its
-    /// parents hand it; `tiles` is `ceil`, so an indivisible axis adds the instance for its
+    /// tiles each `axes` selected is distributed in. Each level's count is read against the space
+    /// its parents hand it; `tiles` is `ceil`, so an indivisible axis adds the instance for its
     /// partial tile.
     fn count_instances(
         &self,
@@ -294,7 +292,7 @@ impl Partitioning {
     }
 
     /// Planes the cube holds that fill a walk's stages and take no tile
-    /// ([`Level::filled_by`]).
+    /// ([`Levels::filled_by`](crate::Levels::filled_by)).
     ///
     /// Added to the instance count rather than multiplied into it, and read by nothing else: a
     /// filling plane is a disjoint set of planes, not a cut of the ones that compute, and no
@@ -348,8 +346,8 @@ mod tests {
         assert_eq!(plain.cube_dim(32), CubeDim::new_2d(32, 4));
     }
 
-    /// The cube is wider by the count and nothing else moves: the instances a level distributes, and
-    /// so every position decoded below it, are the ones they were.
+    /// The cube is wider by the count and nothing else moves: the instances a level distributes,
+    /// and so every position decoded below it, are the ones they were.
     #[test]
     fn a_filling_plane_widens_the_cube_and_nothing_else() {
         let plain = staged(0);

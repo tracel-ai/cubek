@@ -9,10 +9,10 @@ use cubecl::{
 
 use crate::*;
 
-/// A masked 1-D ([`FlatLayout`]) view: a flat row-major scan over a [`Tile`].
-pub type FlatView<'a, T> = Masked<'a, T, Coords1d>;
+/// A masked 1-D (`FlatLayout`) view: a flat row-major scan over a [`Tile`].
+pub(crate) type FlatView<'a, T> = Masked<'a, T, Coords1d>;
 /// The mutable twin of [`FlatView`].
-pub type FlatViewMut<'a, T> = MaskedMut<'a, T, Coords1d>;
+pub(crate) type FlatViewMut<'a, T> = MaskedMut<'a, T, Coords1d>;
 
 /// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]): the inverse of a
 /// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it

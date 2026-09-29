@@ -8,8 +8,8 @@ use cubecl::zspace::{SmallVec, Tiling};
 
 use super::BoundaryPolicy;
 use crate::{
-    Axis, Boundary, Geometry, Launcher, Level, LineMisfit, PhysicalAxisMap, Projection, Space,
-    Storage, StorageTiling,
+    Axis, Boundary, Geometry, Launcher, LineMisfit, PhysicalAxisMap, Projection, Space,
+    StorageTiling,
 };
 
 /// Why an operand cannot be bound as described.
@@ -46,6 +46,13 @@ pub enum Refusal {
     /// A gathered operand cannot be quantized: its scale grid is shaped over its logical axes,
     /// which its buffer's dims no longer match.
     QuantizedGather,
+    /// A TMA box edge past what the descriptor encodes: the stage's `edge` along `axis`, where a
+    /// box holds at most `most` ([`Delivery::moves`](super::Delivery::moves)).
+    BoxPastDescriptor {
+        axis: Axis,
+        edge: usize,
+        most: usize,
+    },
 }
 
 impl Display for Refusal {
@@ -106,8 +113,17 @@ impl Display for Refusal {
                 "Arg::quantized: a gathered operand cannot be quantized; its scale grid is shaped \
                  over its logical axes, which its buffer's dims no longer match"
             ),
+            Refusal::BoxPastDescriptor { axis, edge, most } => box_past(f, *axis, *edge, *most),
         }
     }
+}
+
+/// [`Refusal::BoxPastDescriptor`]'s message.
+fn box_past(f: &mut Formatter<'_>, axis: Axis, edge: usize, most: usize) -> fmt::Result {
+    write!(
+        f,
+        "TMA: {edge} along {axis:?} exceeds the {most}-per-axis box limit"
+    )
 }
 
 impl std::error::Error for Refusal {}
@@ -215,84 +231,6 @@ impl Labels {
             addressed: projection.logical_axes().to_vec(),
             projection,
         })
-    }
-}
-
-/// Which level of the kernel's nest a storage-tiled operand's storage tile is the tile of. A tensor
-/// stored tiles-of-tiles deep names one level per nesting, coarse to fine; [`at`](crate::Tile::at)
-/// descends to the innermost. Matched on the labelled axes alone: a batch dim is one physical dim.
-pub(crate) struct StorageLevel {
-    innermost: Option<usize>,
-}
-
-impl StorageLevel {
-    pub(crate) fn new(
-        geometry: &Geometry,
-        axes: &[Axis],
-        tiling: &StorageTiling,
-        space: &Space,
-        levels: &[Level],
-    ) -> Self {
-        if levels.is_empty() {
-            return StorageLevel { innermost: None };
-        }
-        let fragments = Self::fragments(geometry, axes, tiling);
-        let tile_of = |i: usize| -> Vec<(Axis, usize)> {
-            let child = space.leaf(&levels[..=i]);
-            axes.iter()
-                .map(|&axis| (axis, child.extent(axis)))
-                .collect()
-        };
-        let mut innermost = None;
-        let mut from = 0;
-        for nesting in 0..tiling.max_fragments() - 1 {
-            // The storage tile at this nesting: what its finer fragments multiply to, per axis. An
-            // axis stored as one fragment is whole; one stored shallower than the nesting reaches
-            // has no storage tile here, and its edge of one matches no tile.
-            let tile: Vec<(Axis, usize)> = axes
-                .iter()
-                .zip(&fragments)
-                .map(|(&axis, extents)| match extents.len() {
-                    1 => (axis, space.extent(axis)),
-                    _ => (
-                        axis,
-                        extents[(nesting + 1).min(extents.len())..].iter().product(),
-                    ),
-                })
-                .collect();
-            // A storage tile that is no level's tile leaves the operand read through the layout
-            // walk alone, which maps every coordinate onto its fragments wherever the levels cut;
-            // only a raw window refuses it ([`Memory::window_offset`]).
-            let Some(level) = (from..levels.len()).find(|&i| tile_of(i) == tile) else {
-                return StorageLevel { innermost: None };
-            };
-            innermost = Some(level);
-            from = level + 1;
-        }
-        StorageLevel {
-            innermost: Some(innermost.expect("a tiled operand has at least one nesting")),
-        }
-    }
-
-    pub(crate) fn storage(&self) -> Storage {
-        Storage::Tiled(self.innermost)
-    }
-
-    /// Each axis's fragment extents, coarsest first, read off the trailing (labelled) dims.
-    fn fragments(geometry: &Geometry, axes: &[Axis], tiling: &StorageTiling) -> Vec<Vec<usize>> {
-        let order = tiling.order(axes);
-        let batch_dims = geometry.rank() - order.len();
-        let dims = &geometry.shape()[batch_dims..];
-        axes.iter()
-            .map(|&axis| {
-                order
-                    .iter()
-                    .zip(dims)
-                    .filter(|&(&a, _)| a == axis)
-                    .map(|(_, &extent)| extent)
-                    .collect()
-            })
-            .collect()
     }
 }
 

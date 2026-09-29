@@ -119,7 +119,7 @@ fn magnitudes_past_the_maximum_saturate() {
 /// Whether this runtime can hold a natively stored fp8 value, which is the same question the
 /// launch asks before it dispatches: an 8-bit float is a byte wherever there is one at all, and a
 /// backend with no 8-bit scalar type has nowhere to put one. WGSL is such a backend — it packs fp8
-/// four lanes to a `u32` — so these tests sit out there, as the `ue8m0` ones in `fp4.rs` do.
+/// four values to a `u32` — so these tests sit out there, as the `ue8m0` ones in `fp4.rs` do.
 fn native_store_is_addressable() -> bool {
     let client = cubecl::test_device().client();
     if i8::supported_uses(&client).contains(TypeUsage::Conversion) {

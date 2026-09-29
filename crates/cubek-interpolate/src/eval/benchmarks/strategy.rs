@@ -41,8 +41,8 @@ impl BenchTier {
 
 /// Which device's catalogue to build.
 ///
-/// The two do not want the same sweep. `c > 1` is a lane's column run, which vectorizes a CPU's
-/// inner loop and is worth 1.32x there; on a GPU the channel axis already fills the lanes, and
+/// The two do not want the same sweep. `c > 1` is a unit's column run, which vectorizes a CPU's
+/// inner loop and is worth 1.32x there; on a GPU the channel axis already fills the units, and
 /// dropping every `c > 1` geometry costs 0.6% on CUDA and nothing on wgpu. Deep row runs split the
 /// same way. A staged input is refused outright on CPU by
 /// [`bench`](super::bench), so a CPU catalogue that offered it would spend half its entries

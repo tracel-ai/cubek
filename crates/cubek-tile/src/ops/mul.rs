@@ -18,8 +18,8 @@ use crate::*;
 impl<T: Numeric> Tile<T> {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
     ///
-    /// The transport alone, like [`copy`](Tile::copy): every unit of the cube fills the whole
-    /// tile, and the levels a product is split across are the kernel's own loops.
+    /// The transport alone, like [`copy_from`](Tile::copy_from): every unit of the cube fills the
+    /// whole tile, and the levels a product is split across are the kernel's own loops.
     pub fn product<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         self.mul_from(a, b)
     }
