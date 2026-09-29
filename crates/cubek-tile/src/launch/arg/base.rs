@@ -9,7 +9,7 @@ use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
+    Axis, Boundary, Delivery, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
     StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
 };
 
@@ -49,6 +49,8 @@ struct ArgData<'a> {
     width: usize,
     boundary: BoundaryPolicy,
     packing: Packing,
+    /// Who moves the operand into a stage ([`delivery`](Arg::delivery)).
+    delivery: Delivery,
     /// Whether the labelled dims bind in the order they step rather than the order the binding
     /// names them ([`in_stride_order`](Arg::in_stride_order)).
     in_stride_order: bool,
@@ -84,6 +86,7 @@ impl<'a> Arg<'a, Unlabelled> {
                 width: 1,
                 boundary: BoundaryPolicy::Derived,
                 packing: Packing::Plain,
+                delivery: Delivery::SyncPerUnit,
                 in_stride_order: false,
             },
             _state: PhantomData,
@@ -160,6 +163,13 @@ impl<'a> Arg<'a, Labelled> {
         self.data.packing = Packing::Packed {
             field: field.into(),
         };
+        self
+    }
+
+    /// Who moves this operand into a stage ([`SyncPerUnit`](Delivery::SyncPerUnit) unless stated).
+    /// The kernel is the same either way; see [`TileSpec::delivery`].
+    pub fn delivery(mut self, delivery: Delivery) -> Self {
+        self.data.delivery = delivery;
         self
     }
 
@@ -249,7 +259,9 @@ impl<'a> Arg<'a, Labelled> {
             units: launch.cube_dim().num_elems() as usize,
             packing: data.packing,
             storage,
-        };
+            delivery: Delivery::SyncPerUnit,
+        }
+        .delivery(data.delivery);
         let tensor = data
             .binding
             .map(|binding| settled_tensor(binding, &geometry, tiling.as_ref(), stored));

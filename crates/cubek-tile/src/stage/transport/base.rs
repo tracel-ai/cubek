@@ -29,6 +29,8 @@ pub(crate) struct StoreForm {
     /// Whether the store has an address: a buffer, rather than an erased call that only stores
     /// or loads through its layout.
     pub(crate) addressed: bool,
+    /// Who moves the store's lines when it is the source of a fill ([`Access::delivery`]).
+    pub(crate) delivery: Delivery,
 }
 
 /// Which transport moves a memory tile's cells into another memory tile's.
@@ -63,8 +65,47 @@ impl TransportKind {
     ///
     /// Every claim a fill rests on is asserted here rather than at the leaf that would trip over
     /// it: what a packed stage owes its source, what a straight fill owes the widths,
-    /// and what the innermost extent owes both ([`fill_extent`]).
+    /// what the innermost extent owes both ([`fill_extent`]), and what an async copy owes the
+    /// transport it rides ([`refuse_async`](TransportKind::refuse_async)).
     pub(crate) fn new(dst: StoreForm, src: StoreForm, access: &Access, space: &Space) -> Self {
+        let kind = Self::choose(dst, src, access, space);
+        match src.delivery {
+            Delivery::AsyncPerUnit => kind.refuse_async(dst, src),
+            Delivery::AsyncBulk => panic!(
+                "TransportKind: a bulk copy moves a stage that is one contiguous run in its \
+                 source's byte order, and no fill checks that yet"
+            ),
+            Delivery::SyncPerUnit | Delivery::Tma | Delivery::Procedural => {}
+        }
+        kind
+    }
+
+    /// An async copy moves a source line's bytes to one destination line, by address, without a
+    /// unit touching them: only a transport whose every line is such a move takes one. A scan
+    /// may fold or window its destination, and a padded stage assembles each line out of
+    /// several source cells.
+    fn refuse_async(self, dst: StoreForm, src: StoreForm) {
+        assert!(
+            !matches!(self, TransportKind::Scanned(_)),
+            "TransportKind: an async copy fills a whole, unmasked stage that replaces, and this \
+             destination is windowed, masked, folding or a sink"
+        );
+        assert!(
+            dst.width == src.width,
+            "TransportKind: an async copy moves whole source lines, but this stage is served in \
+             {}-wide lines out of {}-wide ones",
+            dst.width,
+            src.width
+        );
+        assert!(
+            src.addressed,
+            "TransportKind: an async copy reads its source by address, and this one is an erased call"
+        );
+    }
+
+    /// The transport the two forms and the destination's access leave, before any claim a
+    /// delivery adds.
+    fn choose(dst: StoreForm, src: StoreForm, access: &Access, space: &Space) -> Self {
         if dst.packing != Packing::Plain {
             assert!(
                 access.whole
@@ -126,6 +167,7 @@ impl<T: Numeric> Memory<T> {
                 gathered: !self.projection.is_direct(),
                 masks: self.access.overhang.masks(),
                 addressed,
+                delivery: self.access.delivery,
             },
             StoreForm {
                 packing: src.store.packing,
@@ -133,6 +175,7 @@ impl<T: Numeric> Memory<T> {
                 gathered: !src.projection.is_direct(),
                 masks: src.access.overhang.masks(),
                 addressed: src_addressed,
+                delivery: src.access.delivery,
             },
             &self.access,
             &space
@@ -197,6 +240,7 @@ mod tests {
             write: Write::Replace,
             units: 64,
             storage: Storage::Contiguous,
+            delivery: Delivery::SyncPerUnit,
         }
     }
 
@@ -207,6 +251,14 @@ mod tests {
             gathered: false,
             masks: false,
             addressed: true,
+            delivery: Delivery::SyncPerUnit,
+        }
+    }
+
+    fn asynchronous(form: StoreForm) -> StoreForm {
+        StoreForm {
+            delivery: Delivery::AsyncPerUnit,
+            ..form
         }
     }
 
@@ -296,6 +348,49 @@ mod tests {
                 "{src:?}"
             );
         }
+    }
+
+    /// An async copy rides the transports whose every line is one source line moved whole: the
+    /// straight and packed ones, never a scan.
+    #[test]
+    fn an_async_copy_rides_a_straight_or_packed_fill() {
+        assert_eq!(
+            kind(plain(4), asynchronous(plain(4)), &access()),
+            TransportKind::Straight
+        );
+        assert_eq!(
+            kind(words(8), asynchronous(words(8)), &access()),
+            TransportKind::Packed
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "an async copy fills a whole, unmasked stage")]
+    fn an_async_copy_refuses_a_scan() {
+        let masked = Access {
+            overhang: Overhang::Masked,
+            ..access()
+        };
+        kind(plain(4), asynchronous(plain(4)), &masked);
+    }
+
+    /// A padded stage assembles each line out of scalar cells, which no single copy moves.
+    #[test]
+    #[should_panic(expected = "an async copy moves whole source lines")]
+    fn an_async_copy_refuses_a_padded_stage() {
+        kind(plain(4), asynchronous(plain(1)), &access());
+    }
+
+    /// A bulk copy moves the stage as one run, which only a source laid out byte for byte like the
+    /// stage allows, and nothing checks that yet.
+    #[test]
+    #[should_panic(expected = "a bulk copy moves a stage that is one contiguous run")]
+    fn a_bulk_copy_is_refused_until_its_layout_is_checked() {
+        let bulk = StoreForm {
+            delivery: Delivery::AsyncBulk,
+            ..plain(4)
+        };
+        kind(plain(4), bulk, &access());
     }
 
     /// A gather stages its compacted window, which only a whole plain stage can hold.

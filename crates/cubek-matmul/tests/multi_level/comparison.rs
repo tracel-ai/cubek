@@ -78,7 +78,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
         buffering: 2,
-        delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+        delivery: cubek_matmul::tiled::cmma::CmmaDelivery::SyncPerUnit,
         order: cubek_tile::space::CubeOrder::RowMajor,
     }))
     .into();
@@ -151,7 +151,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,
             buffering: 2,
-            delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+            delivery: cubek_matmul::tiled::cmma::CmmaDelivery::SyncPerUnit,
             order: cubek_tile::space::CubeOrder::RowMajor,
         }))
         .into()

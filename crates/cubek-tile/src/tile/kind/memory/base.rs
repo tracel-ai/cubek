@@ -202,6 +202,9 @@ pub struct Access {
     /// turns [`Tiled`](Storage::Tiled) into [`Contiguous`](Storage::Contiguous) at the storage
     /// tile's own level; the buffer's layout itself never changes.
     pub storage: Storage,
+    /// Who moves this tile's lines into a stage filled from it. Stated by the operand's spec and
+    /// carried down its windows.
+    pub delivery: Delivery,
 }
 
 /// What a write to a store does to the cell it lands on.

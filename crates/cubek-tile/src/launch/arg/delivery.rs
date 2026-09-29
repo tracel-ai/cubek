@@ -1,5 +1,6 @@
-//! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, or the TMA engine). What
-//! is bound for it to move is the [`Input`](crate::launch::Input) the kernel takes.
+//! Who moves an operand's bytes, and whether they have landed when the fill returns: the
+//! [`Delivery`]. What is bound for it to move is the [`Input`](crate::launch::Input) the kernel
+//! takes.
 //!
 //! How the operand is *stored* is a separate fact, riding the spec's [`Storage`](crate::Storage):
 //! a storage-tiled operand states the level its tile is the tile of; every mover here serves it.
@@ -7,19 +8,37 @@
 
 use crate::{Refusal, Rendezvous, Space};
 
-/// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
-/// coordinate-backed materialization with no buffer at all), or the TMA engine. Read off a tile
-/// via [`delivery`](crate::Tile::delivery); the staging sync comes from it.
+/// Who moves an operand into a stage, and whether its bytes have landed when the fill returns. One
+/// variant per mechanism, each named for both. Read off a tile via
+/// [`delivery`](crate::Tile::delivery); the staging sync comes from it.
+///
+/// A tensor is moved by [`SyncPerUnit`](Delivery::SyncPerUnit) unless its spec states
+/// [`AsyncPerUnit`](Delivery::AsyncPerUnit) or [`AsyncBulk`](Delivery::AsyncBulk)
+/// ([`TileSpec::delivery`](crate::TileSpec::delivery)); a tensor map by [`Tma`](Delivery::Tma), and
+/// a coordinate-backed tile by [`Procedural`](Delivery::Procedural).
 ///
 /// Storage-tiledness is not a variant here. A storage tile is a fact of the data, stated by the
 /// spec's [`Storage`](crate::kind::Storage), and it only decides how wide a run each stage is:
-/// under `Copy` the units copy that run, under `Tma` it is the box the engine fetches.
+/// under a per-unit delivery the units copy that run, under `Tma` it is the box the engine fetches.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Delivery {
+    /// Every unit loads its own lines and stores them, through its registers: landed when the fill
+    /// returns, and a line can be decoded on its way.
     #[default]
-    Copy,
-    Procedural,
+    SyncPerUnit,
+    /// Every unit hands its own lines to the copy engine (`cp.async`), memory to memory: they land
+    /// after the fill returns, as they lie, and something the slot waits on tracks them.
+    AsyncPerUnit,
+    /// One unit hands the whole stage to the copy engine as one contiguous run
+    /// (`cp.async.bulk`): it lands after the fill returns, counted in bytes on the slot's barrier.
+    AsyncBulk,
+    /// One unit hands the stage's box to the TMA engine through a tensor map
+    /// (`cp.async.bulk.tensor`): it lands after the fill returns, counted in bytes on the slot's
+    /// barrier.
     Tma,
+    /// Every unit computes its values from their coordinates: nothing is read, and the stage
+    /// holds them when the fill returns.
+    Procedural,
 }
 
 /// CUDA caps each TMA box dimension at 256; a bulk copy fills one smem stage, so the
@@ -35,7 +54,10 @@ impl Delivery {
     /// holding the limit itself.
     pub fn moves(self, stage: &Space) -> Result<(), Refusal> {
         match self {
-            Delivery::Copy | Delivery::Procedural => Ok(()),
+            Delivery::SyncPerUnit
+            | Delivery::AsyncPerUnit
+            | Delivery::AsyncBulk
+            | Delivery::Procedural => Ok(()),
             Delivery::Tma => match stage
                 .extents()
                 .into_iter()
@@ -55,11 +77,30 @@ impl Delivery {
         matches!(self, Delivery::Tma)
     }
 
-    /// The synchronization required to materialize this source in a staging slot.
-    pub(crate) fn rendezvous(&self) -> Rendezvous {
+    /// Whether the fill returns before its bytes land.
+    pub fn is_async(&self) -> bool {
         match self {
-            Delivery::Copy | Delivery::Procedural => Rendezvous::Cube,
-            Delivery::Tma => Rendezvous::Barrier,
+            Delivery::SyncPerUnit | Delivery::Procedural => false,
+            Delivery::AsyncPerUnit | Delivery::AsyncBulk | Delivery::Tma => true,
+        }
+    }
+
+    /// The synchronization required to materialize this source in a staging slot. A bulk copy
+    /// completes only on an mbarrier counting its bytes. A per-unit async copy could also wait on
+    /// its units' own copy groups; the slot tracks it on the same mbarrier for now.
+    pub(crate) fn rendezvous(&self) -> Rendezvous {
+        if self.is_async() {
+            Rendezvous::Barrier
+        } else {
+            Rendezvous::Cube
+        }
+    }
+
+    /// Whether every unit of the cube takes part in the fill, rather than one elected issuer.
+    pub(crate) fn every_unit_fills(&self) -> bool {
+        match self {
+            Delivery::SyncPerUnit | Delivery::AsyncPerUnit | Delivery::Procedural => true,
+            Delivery::AsyncBulk | Delivery::Tma => false,
         }
     }
 }

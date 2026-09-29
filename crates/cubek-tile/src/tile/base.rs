@@ -76,12 +76,12 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Who moves this operand's bytes into a stage: the cube's units, the TMA engine, or nobody
-    /// (a cooperative evaluation). How it is stored does not enter into it, so a storage-tiled
-    /// buffer and a plain one both copy. A plane fragment has no bytes to move and panics here.
+    /// Who moves this operand's bytes into a stage: what a buffer's spec states, the TMA engine for
+    /// a tensor map, or nobody (a cooperative evaluation). How it is stored does not enter into
+    /// it, so a storage-tiled buffer and a plain one move either way. A plane fragment has no bytes to move and panics here.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.kind {
-            TileKind::Memory(_) => comptime!(Delivery::Copy),
+            TileKind::Memory(d) => comptime!(d.access.delivery),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::delivery: a resident fragment is not a stage source")
@@ -705,7 +705,7 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
                 (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window(d, space),
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")

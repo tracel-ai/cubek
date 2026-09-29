@@ -77,7 +77,7 @@ fn cmma_partition_1x1_f32() {
         planes: PlaneGrid { m: 2, n: 1 },
         stage_k: 48,
         buffering: 2,
-        delivery: CmmaDelivery::Copy,
+        delivery: CmmaDelivery::SyncPerUnit,
         order: cubek_tile::space::CubeOrder::RowMajor,
     };
     test_matmul_strategy(
@@ -108,6 +108,17 @@ fn cmma_tma_square_f16() {
         client(),
         square(256, f16_elems()),
         Tiled::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())).into(),
+    );
+}
+
+/// The async copy delivery: the same kernel, its stages filled by `cp.async`. On a backend
+/// without it (Metal, wgpu, CPU) the blueprint returns `Unavailable`, as for TMA.
+#[test]
+fn cmma_async_square_f16() {
+    test_matmul_strategy(
+        client(),
+        square(256, f16_elems()),
+        Tiled::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::async_copy())).into(),
     );
 }
 
@@ -531,8 +542,8 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         .unwrap();
         // The storage tile pins the stage, and leaves the delivery alone: who moves the bytes
         // is a knob, how they are stored is a fact of the data.
-        assert_eq!(free.delivery, CmmaDelivery::Copy);
-        assert_eq!(held.delivery, CmmaDelivery::Copy);
+        assert_eq!(free.delivery, CmmaDelivery::SyncPerUnit);
+        assert_eq!(held.delivery, CmmaDelivery::SyncPerUnit);
         assert_eq!((held.stage_k, held.stage().1), storage_tile, "at m = {m}");
         assert_ne!((free.stage_k, free.stage().1), storage_tile, "at m = {m}");
 
@@ -632,7 +643,7 @@ fn cmma_rejects_a_strip_of_no_boxes() {
             planes: PlaneGrid { m: 1, n: 1 },
             stage_k: 16,
             buffering: 2,
-            delivery: CmmaDelivery::Copy,
+            delivery: CmmaDelivery::SyncPerUnit,
             order,
         };
         match blueprint.validate(&rect(48, 64, 64, f16_elems())) {
@@ -670,7 +681,7 @@ fn cmma_swizzled_cube_order_f32() {
             planes: PlaneGrid { m: 2, n: 1 },
             stage_k: 16,
             buffering: 2,
-            delivery: CmmaDelivery::Copy,
+            delivery: CmmaDelivery::SyncPerUnit,
             order,
         };
         test_matmul_strategy(
@@ -704,7 +715,7 @@ fn cmma_takes_a_strip_the_grid_does_not_divide() {
         planes: PlaneGrid { m: 1, n: 1 },
         stage_k: 16,
         buffering: 2,
-        delivery: CmmaDelivery::Copy,
+        delivery: CmmaDelivery::SyncPerUnit,
         order: CubeOrder::SwizzleRow(2),
     };
     let problem = rect(48, 64, 64, f16_elems());

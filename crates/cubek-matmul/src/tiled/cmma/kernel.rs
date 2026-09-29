@@ -195,7 +195,7 @@ mod tests {
             planes: PlaneGrid { m: 2, n: 2 },
             stage_k: 32,
             buffering: 2,
-            delivery: CmmaDelivery::Copy,
+            delivery: CmmaDelivery::SyncPerUnit,
             order: cubek_tile::space::CubeOrder::RowMajor,
         }
     }
@@ -214,7 +214,7 @@ mod tests {
                 planes,
                 stage_k,
                 buffering: 2,
-                delivery: CmmaDelivery::Copy,
+                delivery: CmmaDelivery::SyncPerUnit,
                 order: cubek_tile::space::CubeOrder::RowMajor,
             };
             let partitioning = bp.partitioning(&space, &[]);

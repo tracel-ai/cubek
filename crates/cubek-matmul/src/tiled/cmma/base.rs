@@ -19,7 +19,7 @@ use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
-use cubek_tile::{Space, space::CubeOrder};
+use cubek_tile::{Space, launch::Delivery, space::CubeOrder};
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -76,9 +76,11 @@ const MAX_TILES_PER_AXIS: usize = 32;
 /// [`cubek_tile::launch::Delivery`], which describes an already-constructed tile's staging behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CmmaDelivery {
-    /// The cube's units move each stage.
+    /// Every unit loads and stores its own lines of each stage.
     #[default]
-    Copy,
+    SyncPerUnit,
+    /// Every unit hands its own lines of each stage to the copy engine (`cp.async`).
+    AsyncPerUnit,
     /// The TMA engine moves each stage.
     Tma,
 }
@@ -86,6 +88,15 @@ pub enum CmmaDelivery {
 impl CmmaDelivery {
     pub(crate) fn is_tma(self) -> bool {
         matches!(self, CmmaDelivery::Tma)
+    }
+
+    /// Who moves a tensor-bound operand's stages; the TMA path binds tensor maps instead.
+    pub(crate) fn tensor(self) -> Delivery {
+        match self {
+            CmmaDelivery::SyncPerUnit => Delivery::SyncPerUnit,
+            CmmaDelivery::AsyncPerUnit => Delivery::AsyncPerUnit,
+            CmmaDelivery::Tma => panic!("CmmaDelivery::tensor: a TMA operand is a tensor map"),
+        }
     }
 
     /// Whether TMA moves `stage` for this problem: cubek bounds the box
@@ -249,12 +260,19 @@ impl CmmaStrategy {
             delivery: CmmaDelivery::Tma,
         }
     }
+
+    pub fn async_copy() -> Self {
+        CmmaStrategy {
+            delivery: CmmaDelivery::AsyncPerUnit,
+        }
+    }
 }
 
 impl Display for CmmaStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.delivery {
-            CmmaDelivery::Copy => Ok(()),
+            CmmaDelivery::SyncPerUnit => Ok(()),
+            CmmaDelivery::AsyncPerUnit => f.write_str("_async"),
             CmmaDelivery::Tma => f.write_str("_tma"),
         }
     }
@@ -464,6 +482,13 @@ impl CmmaRoutine {
         {
             return Err(MatmulSetupError::Unavailable(
                 MatmulAvailabilityError::TmaUnavailable,
+            ));
+        }
+        if blueprint.delivery == CmmaDelivery::AsyncPerUnit
+            && !device_settings.client.properties().features.copy_async
+        {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::AsyncCopyUnavailable,
             ));
         }
         Ok(blueprint)

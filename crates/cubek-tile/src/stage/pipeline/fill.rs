@@ -68,6 +68,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
                 Meeting::new(
                     comptime!(plan.sync()),
                     comptime!(plan.collective_full()),
+                    comptime!(plan.commits()),
                     comptime!(plan.fillers()),
                 ),
                 comptime!(plan.refills(slot)),
@@ -267,7 +268,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
         let lhs = self.sources.lhs.delivery();
         let rhs = self.sources.rhs.delivery();
         comptime!(assert!(
-            self.fillers == 0 && lhs == Delivery::Copy && rhs == Delivery::Copy,
+            self.fillers == 0 && lhs == Delivery::SyncPerUnit && rhs == Delivery::SyncPerUnit,
             "Stages: a register-staged schedule fills its slots with every unit's own copy of \
              memory; these stages are filled by {} plane(s) of their own, or their sources are \
              delivered {lhs:?} and {rhs:?}",

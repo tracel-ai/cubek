@@ -755,6 +755,7 @@ impl<T: Numeric> Memory<T> {
                 write: self.access.write,
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
+                delivery: self.access.delivery,
             }),
             comptime!(UnitShare::new(&step.level, &space).under(self.unit_share)),
             // Joined level by level: the level's whole space still has the axis this operand's
@@ -972,6 +973,7 @@ impl<T: Numeric> Memory<T> {
                 write: self.access.write,
                 units: self.access.units,
                 storage: self.access.storage,
+                delivery: self.access.delivery,
             }),
             comptime!(self.unit_share),
             comptime!(self.split_share),

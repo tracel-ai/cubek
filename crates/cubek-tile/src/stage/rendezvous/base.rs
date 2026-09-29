@@ -14,8 +14,8 @@ pub enum Rendezvous {
     /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
     /// in `write` and covers both this slot's fill→read and the sibling's read→refill.
     Cube,
-    /// Hardware async bulk copy (TMA): `full`/`empty` mbarrier pair with a `phase` parity, producer
-    /// and consumer decoupled so the copy overlaps compute.
+    /// Hardware async copy (TMA, `cp.async`): `full`/`empty` mbarrier pair with a `phase` parity,
+    /// producer and consumer decoupled so the copy overlaps compute.
     Barrier,
 }
 
@@ -42,11 +42,14 @@ impl Rendezvous {
     }
 
     /// Whether a barrier slot needs every unit to publish its writes. Pure TMA has one hardware
-    /// issuer; a mixed slot also contains a synchronous cooperative fill.
+    /// issuer; a mixed slot also contains a fill every unit takes part in.
     pub(crate) fn collective_full(deliveries: &[Delivery]) -> bool {
-        deliveries
-            .iter()
-            .any(|delivery| delivery.rendezvous() == Rendezvous::Cube)
+        deliveries.iter().any(Delivery::every_unit_fills)
+    }
+
+    /// Whether a barrier slot's units copy asynchronously, which `full` must track before it flips.
+    pub(crate) fn commits(deliveries: &[Delivery]) -> bool {
+        deliveries.contains(&Delivery::AsyncPerUnit)
     }
 }
 
@@ -76,6 +79,9 @@ pub enum Meeting {
         /// Whether `full` counts every producer's arrival or only the elected issuer's
         /// ([`Meeting::producers`]).
         all_publish: bool,
+        /// Whether each producer hands `full` the async copies it issued before it arrives, so
+        /// the phase waits for their bytes too ([`Delivery::AsyncPerUnit`]).
+        commits: bool,
         /// The one unit that issues this slot's bulk copies and declares their bytes
         /// ([`Meeting::elected`]).
         elected: u32,
@@ -99,6 +105,7 @@ impl Meeting {
     pub(crate) fn new(
         #[comptime] sync: Rendezvous,
         #[comptime] collective_full: bool,
+        #[comptime] commits: bool,
         #[comptime] fillers: usize,
     ) -> Meeting {
         match sync {
@@ -111,7 +118,7 @@ impl Meeting {
                 sync_cube();
                 let elected = Meeting::elected(fillers);
                 let all_publish = comptime!(collective_full || fillers > 0);
-                Meeting::new_Barrier(full, empty, all_publish, elected, 0, 0)
+                Meeting::new_Barrier(full, empty, all_publish, commits, elected, 0, 0)
             }
         }
     }
@@ -156,7 +163,8 @@ impl Meeting {
     }
 
     /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
-    /// stages under `full`, a `Cube` slot is a blocking [`copy_from`](Tile::copy_from);
+    /// stages under `full` (an async copy is only issued here: the slot's release hands it to
+    /// `full`), a `Cube` slot is a blocking [`copy_from`](Tile::copy_from);
     /// in-place operands allocate no destination and never reach it, reading the source instead.
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind: the fill needs the logical space both
@@ -188,7 +196,8 @@ impl Meeting {
                         s.stage_into(d, full);
                     }
                 }
-                // A strided source under a barrier is a plain synchronous copy.
+                // A strided source under a barrier is a plain synchronous copy, or an async one
+                // its delivery issues and the slot's release commits.
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
@@ -205,7 +214,7 @@ mod tests {
     #[test]
     fn procedural_and_strided_share_a_cube_pipeline() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Copy], 0),
+            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::SyncPerUnit], 0),
             Rendezvous::Cube
         );
     }
@@ -222,6 +231,36 @@ mod tests {
         ]));
     }
 
+    /// An async copy lands after the fill returns, so only the barrier publishes it, and every
+    /// unit issued a share it has to hand over.
+    #[test]
+    fn an_async_copy_rendezvouses_on_a_barrier_every_unit_commits_to() {
+        let deliveries = [Delivery::AsyncPerUnit];
+        assert_eq!(
+            Rendezvous::for_deliveries(&deliveries, 0),
+            Rendezvous::Barrier
+        );
+        assert!(Rendezvous::collective_full(&deliveries));
+        assert!(Rendezvous::commits(&deliveries));
+        assert!(!Rendezvous::commits(&[
+            Delivery::Tma,
+            Delivery::SyncPerUnit
+        ]));
+    }
+
+    /// A bulk copy has one issuer, as TMA does: its bytes are counted on `full`, not handed over
+    /// by every unit.
+    #[test]
+    fn a_bulk_copy_keeps_its_single_producer_arrival() {
+        let deliveries = [Delivery::AsyncBulk];
+        assert_eq!(
+            Rendezvous::for_deliveries(&deliveries, 0),
+            Rendezvous::Barrier
+        );
+        assert!(!Rendezvous::collective_full(&deliveries));
+        assert!(!Rendezvous::commits(&deliveries));
+    }
+
     #[test]
     fn pure_tma_keeps_its_single_producer_arrival() {
         assert!(!Rendezvous::collective_full(&[Delivery::Tma]));
@@ -232,7 +271,7 @@ mod tests {
     #[test]
     fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::Copy], 1),
+            Rendezvous::for_deliveries(&[Delivery::SyncPerUnit], 1),
             Rendezvous::Barrier
         );
     }

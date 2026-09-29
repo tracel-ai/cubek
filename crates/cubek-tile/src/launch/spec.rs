@@ -3,11 +3,12 @@
 
 use cubecl::zspace::SmallVec;
 
+use crate::Delivery;
 use crate::{Axis, Boundary, BoundaryPolicy, Field, Packing, Projection, Space, Storage};
 
 /// The comptime half of an operand: how its logical axes address its buffer ([`Projection`], the
 /// storage tiling in its own repetition), how its edges are checked, how its values sit in words,
-/// and what its storage tiles are to the windows it is read through.
+/// what its storage tiles are to the windows it is read through, and who moves it into a stage.
 /// [`GlobalOperand::tile`](crate::GlobalOperand::tile) projects the kernel's space onto it, so no operand carries a copy.
 ///
 /// Written by the [`Arg`](crate::Arg) builder's derivation; a kernel that states one by hand
@@ -29,6 +30,9 @@ pub struct TileSpec {
     /// What this operand's storage tiles are to the windows it is read through;
     /// [`Strided`](Storage::Strided) for every untiled operand.
     pub storage: Storage,
+    /// Who moves this operand into a stage ([`SyncPerUnit`](Delivery::SyncPerUnit) unless stated):
+    /// [`delivery`](Self::delivery).
+    pub delivery: Delivery,
 }
 
 impl TileSpec {
@@ -42,6 +46,7 @@ impl TileSpec {
             units: 0,
             packing: Packing::Plain,
             storage: Storage::Strided,
+            delivery: Delivery::SyncPerUnit,
         }
     }
 
@@ -93,6 +98,27 @@ impl TileSpec {
         self.packing = Packing::Packed {
             field: field.into(),
         };
+        self
+    }
+
+    /// This spec with its stages moved by `delivery`: each unit its own lines, landed when the fill
+    /// returns or after it, or one unit the whole stage in bulk. The kernel does not change; the
+    /// fill does.
+    ///
+    /// # Panics
+    ///
+    /// [`Tma`](Delivery::Tma), which moves a tensor map rather than a tensor, and
+    /// [`Procedural`](Delivery::Procedural), which moves nothing.
+    pub fn delivery(mut self, delivery: Delivery) -> Self {
+        assert!(
+            matches!(
+                delivery,
+                Delivery::SyncPerUnit | Delivery::AsyncPerUnit | Delivery::AsyncBulk
+            ),
+            "TileSpec::delivery: a tensor is moved per unit or in bulk; {delivery:?} is a tensor \
+             map's or a coordinate tile's"
+        );
+        self.delivery = delivery;
         self
     }
 

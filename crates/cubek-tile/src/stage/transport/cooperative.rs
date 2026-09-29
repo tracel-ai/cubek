@@ -3,6 +3,7 @@
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
+use super::async_copy::copy_line_async;
 use super::padded::{read_stage_line, widened_shape};
 use crate::*;
 
@@ -88,6 +89,8 @@ impl<T: Numeric> Memory<T> {
         ));
         let straight =
             comptime!(matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8));
+        // Who moves each line: this unit through its registers, or the copy engine it hands it to.
+        let delivery = comptime!(src.access.delivery);
         let d = self.lines_storage_mut::<I2, WP2>();
         if comptime!(sw == w) {
             let s = if comptime!(steps.is_empty()) {
@@ -102,7 +105,9 @@ impl<T: Numeric> Memory<T> {
                     check,
                 )
             };
-            fill_lines::<I2, WP2, WP2>(d, &s, &layout, total, total_c, units, straight, padding);
+            fill_lines::<I2, WP2, WP2>(
+                d, &s, &layout, total, total_c, units, straight, padding, delivery,
+            );
         } else {
             let s = if comptime!(steps.is_empty()) {
                 Masked::new(
@@ -120,7 +125,7 @@ impl<T: Numeric> Memory<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, &layout, total, total_c, units, straight, padding,
+                d, &s, &layout, total, total_c, units, straight, padding, delivery,
             );
         }
     }
@@ -158,8 +163,8 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
 
 /// Schedule cooperative cyclic writing of destination stage lines across cube units.
 ///
-/// Dispatches line reads via [`read_stage_line`], taking an unrolled loop when the task count
-/// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
+/// Moves each line by [`move_line`], taking an unrolled loop when the task count is small and
+/// static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
 #[cube]
 pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
@@ -170,6 +175,7 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     #[comptime] units: usize,
     #[comptime] straight: bool,
     #[comptime] padding: Option<Padding>,
+    #[comptime] delivery: Delivery,
 ) {
     if comptime!(straight) {
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
@@ -178,24 +184,39 @@ pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             let i = UNIT_POS as usize + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
-                    d[layout.line_offset(i)] = read_stage_line::<I2, WP2, SW>(
-                        s,
-                        &layout.line_coords(i),
-                        comptime!(padding),
-                    );
+                    move_line::<I2, WP2, SW>(d, s, layout, i, padding, delivery);
                 }
             } else {
-                d[layout.line_offset(i)] =
-                    read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding));
+                move_line::<I2, WP2, SW>(d, s, layout, i, padding, delivery);
             }
         }
     } else {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            d[layout.line_offset(i)] =
-                read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding));
+            move_line::<I2, WP2, SW>(d, s, layout, i, padding, delivery);
             i += workers;
         }
+    }
+}
+
+/// Move destination line `i` out of the source as `delivery` says: loaded and stored by this unit,
+/// or handed to the copy engine, landing after the fill returns.
+#[cube]
+fn move_line<I2: Numeric, WP2: Size, SW: Size>(
+    d: &mut [Vector<I2, WP2>],
+    s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
+    layout: &BufferLayout,
+    i: usize,
+    #[comptime] padding: Option<Padding>,
+    #[comptime] delivery: Delivery,
+) {
+    match comptime!(delivery) {
+        Delivery::SyncPerUnit => {
+            d[layout.line_offset(i)] =
+                read_stage_line::<I2, WP2, SW>(s, &layout.line_coords(i), comptime!(padding))
+        }
+        Delivery::AsyncPerUnit => copy_line_async::<I2, WP2, SW>(d, s, layout, i),
+        _ => panic!("move_line: a stage's lines are moved per unit, never {delivery:?}"),
     }
 }

@@ -53,20 +53,26 @@ impl<T: CubeType> Slot<T> {
         }
     }
 
-    /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
-    /// declared by [`Meeting::fill`] land. Which units arrive is the slot's to say
-    /// ([`Meeting::producers`]).
+    /// Producer release publishes a barrier slot after its required arrivals, any TMA bytes
+    /// declared by [`Meeting::fill`] and any async copies it issued land. Which units arrive is
+    /// the slot's to say ([`Meeting::producers`]).
     #[allow(dead_code)] // Reached through its expand, from `Slot::fill` / `Slot::consume`.
     pub(crate) fn release_write(&mut self) {
         match &mut self.pipeline {
             Meeting::Barrier {
                 full,
                 all_publish,
+                commits,
                 elected,
                 writes,
                 ..
             } => {
                 if *all_publish || UNIT_POS == *elected {
+                    // Handed over before the arrival, so the phase cannot flip on the arrivals
+                    // with this unit's copies still in flight.
+                    if *commits {
+                        full.commit_copy_async();
+                    }
                     full.arrive();
                 }
                 *writes ^= 1;

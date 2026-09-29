@@ -78,6 +78,24 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'static> Masked<'a, T, C> {
             .slice_unchecked(pos, size)
             .as_linear_slice()
     }
+
+    /// The one item at `pos` as a run of the buffer, what an async copy reads by address: empty
+    /// where the view masks and `pos` falls past the bound, so the copy reads nothing and the
+    /// engine zero-fills the item a masked read would have zeroed.
+    pub(crate) fn item_run(&self, pos: C) -> &[T] {
+        let one = C::from_int(pos.clone(), 1i64);
+        let run = self
+            .view
+            .clone()
+            .slice_unchecked(pos.clone(), one)
+            .as_linear_slice();
+        if comptime!(self.check) {
+            let len = select(self.view.is_in_bounds(pos), 1usize, 0usize);
+            &run[0..len]
+        } else {
+            run
+        }
+    }
 }
 
 /// The mutable twin of [`Masked`]. Its `write` skips the overhang under `check`, matching

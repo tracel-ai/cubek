@@ -8,7 +8,7 @@ use cubek_std::{
 };
 use cubek_tile::{
     Axis, Geometry, Launcher, Space,
-    launch::{Grid, InputArgs, TmaBox, TmaTileArgLaunch},
+    launch::{Delivery, Grid, InputArgs, TmaBox, TmaTileArgLaunch},
 };
 
 use crate::{
@@ -212,7 +212,7 @@ pub fn launch_ref(
     // The delivery decides how the inputs are bound; the kernel reads the variant at expansion
     // and never branches on it at run time.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided(
+        CmmaDelivery::SyncPerUnit | CmmaDelivery::AsyncPerUnit => launch_strided(
             client,
             &launch,
             cube_count,
@@ -224,7 +224,7 @@ pub fn launch_ref(
             rhs,
             out,
             &out_batch_axes,
-        ),
+        )?,
         CmmaDelivery::Tma => launch_tma(
             client,
             &launch,
@@ -253,8 +253,9 @@ struct Elems {
     acc: ElemType,
 }
 
-/// The tensor-bound path, the cube's units moving each stage: each operand lined at the widest
-/// width the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
+/// The tensor-bound path, the cube's units moving each stage, themselves or through the async copy
+/// engine as the blueprint's delivery says: each operand lined at the widest width the launcher's
+/// gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
 /// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
 #[allow(clippy::too_many_arguments)]
@@ -270,20 +271,34 @@ fn launch_strided(
     rhs: TensorBinding,
     out: TensorBinding,
     out_batch_axes: &[Axis],
-) {
+) -> Result<(), MatmulSetupError> {
+    let delivery = blueprint.delivery.tensor();
     let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
+    let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
+    // The copy engine moves a line whole, 4, 8 or 16 bytes of it.
+    if delivery == Delivery::AsyncPerUnit
+        && [v_a * elems.lhs.size(), v_b * elems.rhs.size()]
+            .iter()
+            .any(|bytes| ![4, 8, 16].contains(bytes))
+    {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "Cmma async: the inputs are served {v_a} and {v_b} wide, and an async copy moves \
+             lines of 4, 8 or 16 bytes"
+        ))));
+    }
     let a = launch
         .arg(lhs)
         .axes(&[M, K])
         .batches(out_batch_axes)
         .vectorize(v_a)
+        .delivery(delivery)
         .build();
-    let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
     let b = launch
         .arg(rhs)
         .axes(&[K, N])
         .batches(out_batch_axes)
         .vectorize(v_b)
+        .delivery(delivery)
         .build();
     let v_c = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
@@ -310,6 +325,7 @@ fn launch_strided(
         elems.out,
         elems.acc,
     );
+    Ok(())
 }
 
 /// The TMA path: each input rides a tensor map whose box is the stage (scalar; TMA moves
