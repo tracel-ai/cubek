@@ -1,8 +1,4 @@
-//! Bringing an operand's values to where an instruction reads them: where a stage lives
-//! (`base`) and the tile it is staged into (`staged`), which transport moves its cells
-//! (`transport`), the slots a walk fills ahead of
-//! (`pipeline`), and the barriers that sequence a fill against the read it feeds
-//! (`rendezvous`).
+//! Staging an operand: storage, transports, pipelined slots and the barriers between fill and read.
 
 mod base;
 mod pipeline;

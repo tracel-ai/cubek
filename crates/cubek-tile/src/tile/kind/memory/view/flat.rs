@@ -1,6 +1,4 @@
-//! The flat 1-D view over a [`Tile`]. [`FlatLayout`] is a [`Layout`] that re-views the tile's N-D
-//! [`Space`] as one row-major [`Coords1d`] index; [`Tile::flat`]/[`Tile::flat_mut`] wrap it as a
-//! [`FlatView`]/[`FlatViewMut`] (a [`Masked`] with the comptime overhang-`check` flag).
+//! The flat 1-D view over a [`Tile`]: [`FlatLayout`] and its masked [`FlatView`].
 
 use cubecl::{
     prelude::*,
@@ -9,14 +7,12 @@ use cubecl::{
 
 use crate::*;
 
-/// A masked 1-D (`FlatLayout`) view: a flat row-major scan over a [`Tile`].
+/// A masked flat row-major scan over a [`Tile`].
 pub(crate) type FlatView<'a, T> = Masked<'a, T, Coords1d>;
 /// The mutable twin of [`FlatView`].
 pub(crate) type FlatViewMut<'a, T> = MaskedMut<'a, T, Coords1d>;
 
-/// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]): the inverse of a
-/// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it
-/// linearly (`shape()` is the element count). A static window's extents make the divisors constant.
+/// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct FlatLayout {
@@ -57,9 +53,8 @@ impl Layout for FlatLayout {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A flat 1-D view over `Vector<T, W>` lines (`W` = [`vector_size`](Tile::vector_size)): a
-    /// row-major scan over the tile's window, masking the overhang per its comptime `check` flag.
-    /// A packed store is refused: it unpacks under the fill ([`Tile::copy_from`]) and packed views.
+    /// A flat row-major view over `Vector<T, W>` lines of the tile's window, masking the overhang.
+    /// A packed store is refused.
     pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         let g = self.mem("flat");
         if comptime!(g.store.packing != Packing::Plain) {
@@ -68,9 +63,7 @@ impl<T: Numeric> Tile<T> {
         g.flat::<W>()
     }
 
-    /// The mutable twin of [`flat`](Tile::flat). Public because a routine outside this crate that
-    /// computes its cells (a fold's drain, a delta in place) has no other verb for "each unit
-    /// writes its own flat positions"; [`copy_from`](Tile::copy_from) chooses the value per cell.
+    /// The mutable twin of [`flat`](Tile::flat).
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         self.mem_mut("flat_mut").flat_mut::<W>()
     }

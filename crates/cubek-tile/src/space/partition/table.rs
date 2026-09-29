@@ -1,28 +1,17 @@
 //! The table a [`Partitioning`] prints as: one row a level, leaf up.
-//!
-//! Two blocks of the same shape: the count block is how many tiles a level takes along each axis,
-//! the tile block what one of those tiles holds. A row's tile is the row below times the count
-//! beside it, axis by axis: a row that fails to multiply out is a partitioning that answers wrong.
-//!
-//! The level column is the coverage's glyph and what it covers: how many cubes, planes a cube or
-//! units, or how many steps a walk, with the spread and the filling planes where stated.
 
 use std::fmt::{self, Display, Formatter};
 
 use crate::{Axis, ComputeScope, Coverage, Level, Partitioning, Space, Spread};
 
-/// The leaf row's glyph: the tile the levels reach, which no level of its own cuts.
+/// The leaf row's glyph.
 const LEAF: char = '◦';
-/// The left margin, and the gap after the level's glyph, before what it covers.
 const MARGIN: &str = "  ";
 const LEVEL: &str = "  ";
-/// Between two axes of a block, and between the blocks.
 const TIMES: &str = " × ";
 const GAP: &str = "    ";
 
-/// How many tiles a level takes along one axis, as the table prints it. A level that does not
-/// name the axis contributes a factor of one; one taking every tile of an extent the launch has
-/// not stamped has a count only the launch knows, and says so rather than inventing one.
+/// How many tiles a level takes along one axis, as printed.
 fn count(level: &Level, space: &Space, axis: Axis) -> String {
     match level.count(axis) {
         None => "·".to_string(),
@@ -33,9 +22,7 @@ fn count(level: &Level, space: &Space, axis: Axis) -> String {
     }
 }
 
-/// A [`Partitioning`] with a name for each of its axes, which is the one thing the value cannot
-/// supply: an [`Axis`] is a client-assigned index and the labels are the client's. An axis the
-/// labels do not name prints that index.
+/// A [`Partitioning`] with a name for each of its axes; unnamed axes print their index.
 pub struct LevelTable<'a> {
     partitioning: &'a Partitioning,
     labels: &'a [(Axis, &'a str)],
@@ -56,8 +43,7 @@ impl<'a> LevelTable<'a> {
         }
     }
 
-    /// Every row of the table, leaf up: the leaf the levels reach, then each level from the one
-    /// that reached it out to the grid.
+    /// Every row of the table, leaf up.
     fn rows(&self) -> Vec<Row> {
         let axes: Vec<Axis> = self.partitioning.space().axes().collect();
         let mut space = self.partitioning.space().clone();
@@ -87,8 +73,7 @@ fn glyph(coverage: Coverage) -> char {
     }
 }
 
-/// What a level covers, in words: the instances the level distributes to (or the steps a walk
-/// takes) multiplied over its axes, with the spread and the filling planes where it states them.
+/// What a level covers, in words.
 fn coverage(level: &Level, space: &Space) -> String {
     let counts: Vec<Option<usize>> = level
         .axes()
@@ -129,8 +114,7 @@ fn coverage(level: &Level, space: &Space) -> String {
     note
 }
 
-/// One line of the table: a level's glyph, what it cuts each axis into, and what one of its
-/// regions holds.
+/// One line of the table.
 struct Row {
     glyph: char,
     coverage: String,
@@ -148,7 +132,7 @@ impl Row {
         }
     }
 
-    /// The tile the levels reach, which no level cuts: every count is a one.
+    /// The leaf row: every count is a one.
     fn leaf(space: &Space, axes: &[Axis]) -> Row {
         Row {
             glyph: LEAF,
@@ -159,8 +143,7 @@ impl Row {
     }
 }
 
-/// `axis`'s extent, or the mark a dynamic one prints as: the launch stamps it, so nothing here
-/// can name it.
+/// `axis`'s extent, or the mark a dynamic one prints as.
 fn extent(space: &Space, axis: Axis) -> String {
     match space.is_dynamic(axis) {
         true => "?".to_string(),
@@ -192,14 +175,12 @@ fn block(cells: &[String], widths: &[usize]) -> String {
         .join(TIMES)
 }
 
-/// The rule naming a block, drawn to the block's own width.
+/// The rule naming a block.
 fn rule(name: &str, width: usize) -> String {
     format!("└─ {name} {}┘", "─".repeat(width - ruled(name) + 1))
 }
 
-/// The narrowest a block can print and still carry its rule, which a block of one short column
-/// is not: the pad below makes up the difference rather than widening a column, so every cell
-/// stays right-aligned where the header put it.
+/// The narrowest a block can print and still carry its rule.
 fn ruled(name: &str) -> usize {
     name.chars().count() + 6
 }
@@ -214,7 +195,6 @@ impl Display for LevelTable<'_> {
         let tiles = widths(&header, rows.iter().map(|row| row.tile.clone()));
         let (counts_wide, counts_pad) = padded(&counts, "count");
         let (tiles_wide, tiles_pad) = padded(&tiles, "tile");
-        // The coverage column, plus the gap before the count block.
         let coverage_wide = rows
             .iter()
             .map(|row| row.coverage.chars().count())
@@ -250,8 +230,7 @@ impl Display for LevelTable<'_> {
     }
 }
 
-/// How wide a block of these columns prints and the indent it takes to get there: its own
-/// span, or its rule's width where that is wider.
+/// How wide a block of these columns prints, and the indent to get there.
 fn padded(widths: &[usize], name: &str) -> (usize, String) {
     let wide = spanned(widths).max(ruled(name));
     (wide, " ".repeat(wide - spanned(widths)))
@@ -262,8 +241,7 @@ fn spanned(widths: &[usize]) -> usize {
     widths.iter().sum::<usize>() + TIMES.chars().count() * (widths.len().saturating_sub(1))
 }
 
-/// A partitioning prints its table with no axis named, which is all a value holding
-/// client-assigned indices can promise; [`Partitioning::table`] is the one worth reading.
+/// Prints the table with no axis named; see [`Partitioning::table`].
 impl Display for Partitioning {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.table(&[]).fmt(f)
@@ -280,8 +258,7 @@ mod tests {
     const N: Axis = Axis(2);
     const K: Axis = Axis(3);
 
-    /// The five levels a staged matmul states, leaf up: the instruction, its grid of fragments,
-    /// its steps through the partition, the plane split, the stage walk, and the cube grid.
+    /// A staged matmul's five levels.
     fn staged() -> Partitioning {
         Partitioning::new(
             Space::new(&[(B, 4), (M, 512), (N, 1024), (K, 4096)]),
@@ -318,7 +295,7 @@ mod tests {
         );
     }
 
-    /// An axis the labels do not name prints its index, so the table stands on its own.
+    /// An unlabelled axis prints its index.
     #[test]
     fn an_unlabelled_axis_prints_its_index() {
         let table = staged().to_string();
@@ -326,8 +303,7 @@ mod tests {
         assert!(table.contains("a0 × a1 × a2 ×  a3"), "{table}");
     }
 
-    /// A count the launch decides is one no table can state: an every-level over an extent that
-    /// is not stamped yet says so rather than inventing a number.
+    /// A dynamic count prints as a question.
     #[test]
     fn a_dynamic_axis_prints_a_question() {
         let partitioning = Partitioning::new(
@@ -342,7 +318,7 @@ mod tests {
         assert!(table.lines().any(|line| line.contains("× ?")), "{table}");
     }
 
-    /// A level whose grid is shared still prints as the cube grid, and says who shares it.
+    /// A shared level still prints as the cube grid.
     #[test]
     fn a_shared_level_still_prints_as_the_cube_grid() {
         let partitioning = Partitioning::new(
@@ -356,9 +332,7 @@ mod tests {
         assert!(partitioning.to_string().contains('▣'));
     }
 
-    /// An overhanging axis counts its partial tile, so the row still multiplies past the extent
-    /// rather than losing it — and a block too narrow for its own rule is padded rather than
-    /// widened, which keeps every cell where the header put it.
+    /// An overhanging axis counts its partial tile.
     #[test]
     fn an_overhanging_axis_counts_its_partial_tile() {
         let partitioning = Partitioning::new(

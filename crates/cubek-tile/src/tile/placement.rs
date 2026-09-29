@@ -1,13 +1,9 @@
-//! Where a tile sits in its partitioning: its own space, how many levels down it is, and the
-//! levels it is walked with.
+//! Where a tile sits in its partitioning.
 
 use crate::{Level, Space};
 
-/// A tile's place in its nest: the box it covers (`space`), how many levels down the partitioning
-/// it sits (`depth`, what `at` skips of a region's path, so a region names the same box from the
-/// root tile and from any window of it), and every level of the partitioning it is walked with
-/// (`levels`; the one at its depth is what `for plane in tile` distributes). Empty levels for a tile no
-/// partitioning states.
+/// A tile's place in its nest: its box (`space`), how many levels down it sits (`depth`), and the
+/// partitioning levels it is walked with (`levels`).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Placement {
     pub space: Space,
@@ -24,22 +20,22 @@ impl Placement {
         }
     }
 
-    /// At the top of `levels`: what a tile served off a kernel argument is.
+    /// At the top of `levels`.
     pub fn root(space: Space, levels: Vec<Level>) -> Self {
         Placement::new(space, 0, levels)
     }
 
-    /// Outside any partitioning: a tile no loop distributes.
+    /// Outside any partitioning.
     pub fn alone(space: Space) -> Self {
         Placement::new(space, 0, Vec::new())
     }
 
-    /// The levels below this depth, the first of which `for plane in tile` distributes.
+    /// The levels below this depth.
     pub fn below(&self) -> &[Level] {
         &self.levels[self.depth..]
     }
 
-    /// One level down, through `level`: its child box, one deeper.
+    /// One level down, through `level`.
     pub(crate) fn at_step(&self, level: &Level) -> Placement {
         Placement::new(
             level.child(&self.space),
@@ -48,7 +44,7 @@ impl Placement {
         )
     }
 
-    /// The same box at `depth` in its nest: what a stage allocated for a walk's regions sits at.
+    /// The same box at `depth` in its nest.
     pub(crate) fn at_depth(mut self, depth: usize) -> Placement {
         self.depth = depth;
         self

@@ -1,22 +1,9 @@
-//! A host model of a barrier slot's protocol, run over every legal interleaving of the two
-//! sides. No device: the point is to answer, before a kernel is ever launched, the question a
-//! device answers by hanging.
-//!
-//! The model is [`Slot`](crate::Slot)'s acquire/release pairs read as a state machine.
-//! A producer unit waits `empty` on the parity its `writes` was not born at, fills if elected,
-//! arrives `full`, flips; a consumer waits `full` on its `reads`, reads, arrives `empty`, flips.
-//!
-//! Both walk the same regions, slot `region % depth`, and neither knows where the other is.
-//!
-//! What it checks is what a wrong arrival count does: nobody reads a slot before it holds its
-//! region, nobody refills one while a reader is in it, both sides take one step per region, each
-//! slot's parities end where they started, and, above all, no reachable state deadlocks.
+//! Host model of a barrier slot's protocol, checked over every interleaving of producers and
+//! consumers for deadlock, early reads and early refills.
 
 use std::collections::HashSet;
 
-/// One mbarrier: the arrivals that complete a phase, how many have come, and the parity of the
-/// phase in progress. A wait on the parity in progress blocks; any other passes, which is why a
-/// producer's first wait, on the parity its counter was *not* born at, goes straight through.
+/// One mbarrier: arrivals per phase, arrivals so far, and the phase's parity.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Mbarrier {
     arrivals: u32,
@@ -46,21 +33,16 @@ impl Mbarrier {
     }
 }
 
-/// One slot: its two barriers, the region its buffer holds, and how many consumers are in it.
+/// One slot: its two barriers, the region it holds, and its current readers.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Slot {
     full: Mbarrier,
     empty: Mbarrier,
-    /// The region the buffer was filled with, `None` before any fill.
     holds: Option<usize>,
     readers: u32,
 }
 
-/// One unit's place in its side's walk: the region it is on, and whether it is still at the wait.
-///
-/// The parity it waits with is not here because it is not the unit's: each slot owns a parity per
-/// side, flipped by that side's release, so a unit waiting at slot `s` waits with the number of
-/// laps it has already made around the stages.
+/// One unit's place in its side's walk.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Unit {
     step: usize,
@@ -75,13 +57,12 @@ impl Unit {
         }
     }
 
-    /// The parity this unit's next wait carries: one flip per lap of the stages.
     fn parity(&self, depth: usize) -> u32 {
         ((self.step / depth) % 2) as u32
     }
 }
 
-/// The protocol's whole state: the stages' slots, the units of each side, and the walk's length.
+/// The protocol's whole state.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct State {
     slots: Vec<Slot>,
@@ -89,22 +70,18 @@ struct State {
     consumers: Vec<Unit>,
 }
 
-/// The shape of one run: how deep the stages are, how many regions the walk has, and how many units
-/// stand on each side. The first producer is the elected one, the only unit that writes; the
-/// others fill nothing and arrive only to keep step.
+/// The shape of one run; producer 0 is the elected unit, the only one that writes.
 #[derive(Clone, Copy, Debug)]
 struct Shape {
     depth: usize,
     regions: usize,
     producers: u32,
     consumers: u32,
-    /// Whether `full` counts every producer's arrival or the elected unit's alone, which is the
-    /// choice [`Meeting::producers`](crate::Meeting::producers) makes.
+    /// Whether `full` counts every producer's arrival or the elected unit's alone.
     publishes_all: bool,
 }
 
 impl Shape {
-    /// The arrivals `full` is armed with.
     fn publishers(&self) -> u32 {
         if self.publishes_all {
             self.producers
@@ -133,14 +110,12 @@ impl Shape {
         walked(&state.producers) && walked(&state.consumers)
     }
 
-    /// Walk every reachable state of this shape, checking the protocol at each. Returns how many
-    /// distinct states the two sides can be in, which is the interleaving count the run covered.
+    /// Walk every reachable state, checking the protocol; returns the state count.
     fn explore(&self) -> usize {
         self.explore_from(self.start())
     }
 
-    /// [`explore`](Shape::explore) from a state of the caller's own, so a test can arm a barrier
-    /// wrongly and watch what it does.
+    /// [`explore`](Shape::explore) from a caller-supplied state.
     fn explore_from(&self, start: State) -> usize {
         let mut seen = HashSet::new();
         let mut stack = vec![start.clone()];
@@ -175,8 +150,7 @@ impl Shape {
 }
 
 impl State {
-    /// Every move one unit could make from here, as the state it would leave behind. A unit that
-    /// has walked every region, or whose wait does not pass, makes none.
+    /// Every state one unit's move could lead to.
     fn moves(&self, shape: Shape) -> Vec<State> {
         let mut next = Vec::new();
 
@@ -191,8 +165,7 @@ impl State {
                 if !after.slots[slot].empty.passes(unit.parity(shape.depth) ^ 1) {
                     continue;
                 }
-                // The wait passed. The elected unit is the one that writes, so it is the one whose
-                // pass has to mean the slot is free; the others fill nothing and only keep step.
+                // Only the elected unit writes, so only its pass must mean the slot is free.
                 if u == 0 {
                     assert!(
                         after.slots[slot].holds.is_none() || after.slots[slot].readers == 0,
@@ -242,7 +215,6 @@ impl State {
     }
 }
 
-/// Every stages the two sides can be run over, from a single slot to one deeper than the walk.
 #[test]
 fn the_two_sides_agree_however_they_interleave() {
     for depth in 1..=3 {
@@ -261,8 +233,6 @@ fn the_two_sides_agree_however_they_interleave() {
     }
 }
 
-/// Stages one slot deep admits no overlap at all: the producer and the consumer alternate, and
-/// each region is filled, read, and freed before the next is touched.
 #[test]
 fn a_single_slot_never_runs_ahead() {
     let shape = Shape {
@@ -275,8 +245,6 @@ fn a_single_slot_never_runs_ahead() {
     shape.explore();
 }
 
-/// The producer may run `depth - 1` regions ahead and no further, which is the whole point of
-/// the stages: the wait on `empty` is what stops it.
 #[test]
 fn the_producer_runs_at_most_a_ring_ahead() {
     let shape = Shape {
@@ -301,9 +269,7 @@ fn the_producer_runs_at_most_a_ring_ahead() {
     assert_eq!(lead, shape.depth);
 }
 
-/// The count `empty` is armed with is the one thing the two sides cannot disagree about. Armed
-/// for the whole cube rather than the units that read, it never completes and the producer waits
-/// forever on a slot every consumer has already freed.
+/// `empty` armed for more units than read it deadlocks.
 #[test]
 #[should_panic(expected = "deadlocks")]
 fn a_slot_freed_by_fewer_units_than_it_waits_for_hangs() {
@@ -315,14 +281,11 @@ fn a_slot_freed_by_fewer_units_than_it_waits_for_hangs() {
         publishes_all: true,
     };
     let mut start = shape.start();
-    // As if `empty` had been armed with `CUBE_DIM` while only the planes that compute arrive.
     start.slots[0].empty.arrivals = 2;
     shape.explore_from(start);
 }
 
-/// And why `full` counts every producer. Published by the elected unit alone, a filling plane
-/// that has not yet reached its first wait finds `empty` already flipped by the consumers, waits
-/// for a parity that has gone by, and never moves again; counting its arrival holds the window.
+/// `full` published by the elected unit alone lets a second filling plane drift and deadlock.
 #[test]
 #[should_panic(expected = "deadlocks")]
 fn a_slot_published_by_the_elected_unit_alone_lets_a_second_filling_plane_drift() {

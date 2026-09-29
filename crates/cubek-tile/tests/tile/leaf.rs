@@ -1,9 +1,8 @@
-//! Unit tests for the leaf steps a verb issues (the online-logsumexp update) and the 1-D
-//! register folds in `Monoid::reduce` and `Monoid::reduce_array`.
+//! Unit tests for the 1-D register folds in `Monoid::reduce` and `Monoid::reduce_array`.
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{Monoid, ops::softmax::logsumexp, space::UnitShare};
+use cubek_tile::{Monoid, space::UnitShare};
 
 #[cube(launch)]
 fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
@@ -81,24 +80,6 @@ fn test_extrema_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
     );
     output[6] = Monoid::reduce_array(&arr, 4usize, 10.0f32, Monoid::Max);
     output[7] = Monoid::reduce_array(&arr, 4usize, -10.0f32, Monoid::Min);
-}
-
-#[cube(launch)]
-fn test_logsumexp_step_kernel(scores: &Tensor<f32>, output: &mut Tensor<f32>) {
-    let m_init = f32::min_value();
-    let l_init = 0.0f32;
-
-    let (m0, l0, corr0, w0) = logsumexp::step::<f32>(m_init, l_init, scores[0]);
-    output[0] = m0;
-    output[1] = l0;
-    output[2] = corr0;
-    output[3] = w0;
-
-    let (m1, l1, corr1, w1) = logsumexp::step::<f32>(m0, l0, scores[1]);
-    output[4] = m1;
-    output[5] = l1;
-    output[6] = corr1;
-    output[7] = w1;
 }
 
 #[cube(launch)]
@@ -233,42 +214,6 @@ fn test_extrema_max_min() {
     assert_eq!(output.get_f32(&[5]), 1.0); // min array (identity seeded with max_value)
     assert_eq!(output.get_f32(&[6]), 10.0); // max array starting from 10.0
     assert_eq!(output.get_f32(&[7]), -10.0); // min array starting from -10.0
-}
-
-#[test]
-fn test_logsumexp_step() {
-    let client: Client = cubecl::test_device().client();
-    let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([2]))
-        .dtype(f32::elem_type_native())
-        .custom(vec![2.0, 5.0])
-        .generate_with_f32_host_data();
-    let output_handle = TestInput::builder(client.clone(), Shape::new([8]))
-        .dtype(f32::elem_type_native())
-        .zeros()
-        .generate_without_host_data();
-
-    test_logsumexp_step_kernel::launch(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_1d(1),
-        input_handle.binding().into_tensor_arg(),
-        output_handle.clone().binding().into_tensor_arg(),
-    );
-
-    let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
-
-    // Step 0: score 2.0 -> m = 2.0, l = exp(2-2) = 1.0, w = 1.0
-    assert_eq!(output.get_f32(&[0]), 2.0);
-    assert_eq!(output.get_f32(&[1]), 1.0);
-    assert_eq!(output.get_f32(&[3]), 1.0);
-
-    // Step 1: score 5.0 -> m = 5.0, corr = exp(2-5), w = exp(5-5) = 1.0, l = 1.0*exp(-3) + 1.0
-    assert_eq!(output.get_f32(&[4]), 5.0);
-    let expected_corr = (-3.0f32).exp();
-    let expected_l = 1.0 * expected_corr + 1.0;
-    assert!((output.get_f32(&[5]) - expected_l).abs() < 1e-6);
-    assert!((output.get_f32(&[6]) - expected_corr).abs() < 1e-6);
-    assert_eq!(output.get_f32(&[7]), 1.0);
 }
 
 #[test]

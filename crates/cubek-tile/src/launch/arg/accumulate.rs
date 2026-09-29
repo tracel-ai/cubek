@@ -11,13 +11,8 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// An output several instances accumulate into, as a single launch argument: [`TileArg`]'s twin
-/// for a destination whose writes add, not replace. `Atomic<E>` carries no served width, so
-/// [`tile`](Self::tile) states it; the drain adds each line's scalars one atomic at a time.
-///
-/// **The buffer arrives holding the monoid's identity.** A cell here belongs to several instances
-/// and none of them may seed it, so the seeding happens once at the launch. Nothing can check it:
-/// the destination cannot read.
+/// An output several instances accumulate into, as a single launch argument.
+/// The buffer must arrive holding the monoid's identity.
 #[derive(CubeType, CubeLaunch)]
 pub struct AccumulateArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<Atomic<E>>,
@@ -27,19 +22,15 @@ pub struct AccumulateArg<'a, E: Numeric> {
 
 #[cube]
 impl<'a, E: Numeric> AccumulateArg<'a, E> {
-    /// Serve the output as a [`Tile`] that accumulates into it at width `V`. [`TileArg::tile`]'s
-    /// twin, and the same call: the kernel's one `space` projected onto this operand's `spec`
-    /// axes.
+    /// Serve the output as a [`Tile`] that accumulates into it at width `V`.
     pub fn tile<V: Size>(&self, #[comptime] space: Partitioning) -> Tile<E> {
-        // The geometry a sink cannot be asked for, taken off the buffer behind it. An atomic
-        // element is scalar, so these strides are already in the scalars the layout wants.
+        // An atomic element is scalar, so these strides are already in scalars.
         let geometry = RuntimeGeometry::of_tensor::<Atomic<E>>(
             self.tensor,
             comptime!(self.spec.projection.physical_rank()),
         );
         let sink = atomic_sink::<E, V>(self.tensor);
-        // Read at expansion, not as a Rust constant: a launch-time `Size` has no `value()`
-        // until the kernel is being defined.
+        // A launch-time `Size` has a value only at expansion.
         let width = V::value();
         GlobalOperand::<E>::sink(
             sink,
@@ -54,9 +45,6 @@ impl<'a, E: Numeric> AccumulateArg<'a, E> {
 }
 
 /// The erased tensor over an atomic buffer, accumulating at width `N`.
-///
-/// A constructor here rather than in cubecl for the reason the backing is here: what a write
-/// *means* is this crate's statement, and cubecl's own backings all replace.
 // `N` is read by the expansion, which is where a `Size` has a value.
 #[allow(clippy::extra_unused_type_parameters)]
 fn atomic_sink<E: Numeric, N: Size>(_values: &Tensor<Atomic<E>>) -> ErasedTensor<E, WriteOnly> {
@@ -77,9 +65,7 @@ mod atomic_sink {
     }
 }
 
-/// A backing that accumulates into an `Atomic<E>` buffer. Writes and never reads, so it declares
-/// [`WritesLines`] alone: a partial that could be read back is one a cube could seed from, which
-/// is the race this exists to avoid.
+/// A write-only backing that accumulates into an `Atomic<E>` buffer.
 struct AtomicAccumulate<E: Numeric, N: Size> {
     values: <Tensor<Atomic<E>> as CubeType>::ExpandType,
     _n: PhantomData<N>,
@@ -110,10 +96,6 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E
 impl<E: Numeric, N: Size> WritesLines<E> for AtomicAccumulate<E, N> {}
 
 /// Accumulate one line into the buffer: `N` scalar adds at the line's own offset.
-///
-/// Scalar because an atomic is: `Atomic<E>` is one element wide whatever the tile serves its
-/// lines at, so the width the walk works in is undone here and nowhere else. The tile above keeps
-/// addressing whole lines, which is what keeps this a backing rather than a second drain.
 #[cube]
 fn accumulate_line<E: Numeric, N: Size>(
     values: &Tensor<Atomic<E>>,

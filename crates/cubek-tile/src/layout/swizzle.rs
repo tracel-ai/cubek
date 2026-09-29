@@ -4,14 +4,8 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-/// The XOR swizzle a [`RowChunks::Swizzled`] stage resolves to, once it knows its physical extents
-/// and how many bytes a line holds.
-///
-/// A block row is cut into chunks of `lines_per_chunk` lines, and the chunk a line sits in is XORed
-/// with a key read off its row. Rows sharing one bank period take one key, and the `keys` periods
-/// that follow take the others, so the rows a fragment load reads at once start in distinct chunks
-/// of the period and never share a bank. An XOR is its own inverse and only moves a chunk within
-/// its row: a line's place inside its chunk, its row, and every digit above the block are kept.
+/// The XOR chunk swizzle a [`RowChunks::Swizzled`] stage resolves to: a line's chunk is
+/// XORed with a key read off its row, so rows read together start on distinct banks.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct ChunkSwizzle {
     /// The physical axis holding a block's rows.
@@ -22,18 +16,16 @@ pub(crate) struct ChunkSwizzle {
     lines_per_chunk: usize,
     /// Consecutive rows taking one key: the rows one bank period holds.
     rows_per_key: usize,
-    /// How many keys the rows cycle through, a power of two: a row's chunks, at most a bank
-    /// period's.
+    /// How many keys the rows cycle through, a power of two.
     keys: usize,
 }
 
 impl ChunkSwizzle {
-    /// Bytes one pass over every bank covers: 32 banks of four bytes, on every GPU this addresses.
+    /// Bytes one pass over every bank covers: 32 banks of four bytes.
     pub(crate) const BANK_PERIOD_BYTES: usize = 128;
 
-    /// The swizzle of a stage whose physical line extents are `extents`, the last two being its
-    /// innermost block's rows and a row's lines, each line `line` long. `None` where a row holds
-    /// one chunk or a whole bank period's worth per chunk: there is nothing to permute.
+    /// The swizzle of a stage with line `extents` (last two: block rows, row lines), `None` where
+    /// there is nothing to permute.
     pub(crate) fn new(extents: &[usize], line: LineBytes) -> Option<Self> {
         let LineBytes(line_bytes) = line;
         let rank = extents.len();
@@ -83,16 +75,14 @@ impl ChunkSwizzle {
         self.line_axis
     }
 
-    /// The line `line` of row `row` is kept at, on the host: [`swizzled_line`]'s twin, which the
-    /// tests hold to its properties.
+    /// Host twin of [`swizzled_line`].
     #[cfg(test)]
     fn line_of(&self, line: usize, row: usize) -> usize {
         line ^ ((row / self.rows_per_key) % self.keys * self.lines_per_chunk)
     }
 }
 
-/// The line `line` of block row `row` is kept at under `swizzle`; also the line kept at `line`,
-/// the XOR being its own inverse.
+/// Where line `line` of block row `row` is kept under `swizzle`; its own inverse.
 #[cube]
 pub(crate) fn swizzled_line(#[comptime] swizzle: ChunkSwizzle, line: u32, row: u32) -> u32 {
     let key = row
@@ -116,8 +106,7 @@ mod tests {
         (row * row_lines + line) * line_bytes % ChunkSwizzle::BANK_PERIOD_BYTES
     }
 
-    /// A 64-byte row, 8-wide f16 lines (the cmma `16×32` block): the eight rows one pass of eight
-    /// units reads start on eight distinct 16-byte slots of the bank period.
+    /// Eight rows of a 64-byte block start on distinct 16-byte bank slots.
     #[test]
     fn eight_rows_of_a_64_byte_block_start_on_distinct_banks() {
         let swizzle = ChunkSwizzle::new(&[2, 16, 4], LineBytes(16)).unwrap();
@@ -129,8 +118,6 @@ mod tests {
         assert_eq!(slots.len(), 8);
     }
 
-    /// A 32-byte row (the mma `16×16` block) and a 256-byte one, and rows of 8- and 4-byte lines:
-    /// the same, whatever the row holds. Every case permutes: none is a row of one chunk.
     #[test]
     fn rows_short_and_long_start_on_distinct_banks() {
         for (row_lines, line_bytes) in [(2, 16), (16, 16), (8, 8), (16, 4)] {
@@ -148,8 +135,6 @@ mod tests {
         }
     }
 
-    /// Every row's lines are a permutation of themselves, and a line keeps its place inside its
-    /// chunk: a 4-byte line moves with the three beside it.
     #[test]
     fn a_row_is_permuted_within_itself_a_chunk_at_a_time() {
         let swizzle = ChunkSwizzle::new(&[16, 16], LineBytes(4)).unwrap();
@@ -164,8 +149,6 @@ mod tests {
         }
     }
 
-    /// A row of one chunk has nothing to permute, and neither has a row whose every chunk is a
-    /// whole bank period.
     #[test]
     fn a_row_of_one_chunk_is_left_in_order() {
         assert!(ChunkSwizzle::new(&[16, 1], LineBytes(16)).is_none());

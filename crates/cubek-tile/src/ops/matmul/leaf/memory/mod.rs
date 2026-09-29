@@ -1,8 +1,5 @@
-//! The software nest for an accumulator that lives in memory: seeded from the sink per visit and
-//! committed back, so partials round-trip through its element.
-//!
-//! [`base`] resolves each operand's packing and routes to [`direct`] (2-D, one contracted axis off
-//! directly addressed operands) or [`gather`] (N-D, coordinates resolved per tap).
+//! The register nest for an accumulator in memory, seeded from and committed to the sink per
+//! visit.
 
 mod base;
 mod direct;

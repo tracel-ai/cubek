@@ -107,7 +107,7 @@ pub fn tile(
         ));
     }
     let (batches, rows, cols) = MatrixBinding::new(&src, "tile").dims();
-    let (matrix, tiling) = storage
+    let matrix = storage
         .physical(&[(axes[0], rows), (axes[1], cols)])
         .map_err(|misfit| refused(misfit.to_string()))?;
     // Batch dims stay plain and coarsest, each a whole run of the matrices finer than it.
@@ -123,7 +123,7 @@ pub fn tile(
     let fragments: Vec<usize> = batches
         .iter()
         .map(|_| 1)
-        .chain([tiling.fragments(0), tiling.fragments(1)])
+        .chain(matrix.tiling().fragments(2))
         .collect();
     let config = |e| refused(format!("{e:?}"));
     let tiling = Tiling::new(&fragments).map_err(config)?;

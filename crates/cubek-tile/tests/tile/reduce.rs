@@ -438,7 +438,8 @@ fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoi
         ),
         Form::Static,
     );
-    // Every caller of this helper stages: the stages depth is what the buffering coverage exercises.
+    // Every caller of this helper stages: the stages depth is what the buffering coverage
+    // exercises.
     let got = run_reduce_staged(
         shape![m, k],
         shape![m],

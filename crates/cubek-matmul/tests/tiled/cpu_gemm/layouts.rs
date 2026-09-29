@@ -14,7 +14,8 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
 use cubek_tile::{
-    Axis, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, launch::Grid,
+    Axis, Geometry, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
+    launch::Grid,
 };
 
 use super::Dims;
@@ -167,9 +168,11 @@ fn physical_binding(op: &Operand) -> TensorBinding {
 /// The operand as one launch argument: its tensor arg (with the layout's physical
 /// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
 fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V> {
-    let (tensor, tiling) = op.layout.tensor_arg(physical_binding(op), 1);
+    let binding = physical_binding(op);
     let axes: Vec<_> = op.launcher.space().axes().collect();
-    TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, tiling)))
+    let labels = Geometry::from(&binding).labels(&axes);
+    let tensor = op.layout.tensor_arg(binding, 1);
+    TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, &labels)))
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.

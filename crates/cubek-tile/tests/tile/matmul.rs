@@ -889,7 +889,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     }
 }
 
-/// The legacy register budget as a level structure: a staged K walk (`depth` in flight), the plane
+/// A register budget as a level structure: a staged K walk (`depth` in flight), the plane
 /// split, a windowing-only step walk, an N walk loading one B fragment per step beside the A
 /// column loaded once above, and an M-only fragment walk; both fragment walks unroll (they select).
 #[cube(launch)]
@@ -1154,10 +1154,10 @@ fn matmul_one_tile_per_cube() {
     );
 }
 
-/// Cubes distributed their boxes in a swizzled order whose strips the grid does not divide: a 3x5 grid
-/// in strips of 2 and of 4 along either axis, the last strip narrower than the rest. Each box must
-/// still go to exactly one cube: one distributed twice doubles its product, one distributed to no cube keeps
-/// the poison `c` came in with.
+/// Cubes distributed their boxes in a swizzled order whose strips the grid does not divide: a 3x5
+/// grid in strips of 2 and of 4 along either axis, the last strip narrower than the rest. Each box
+/// must still go to exactly one cube: one distributed twice doubles its product, one distributed to
+/// no cube keeps the poison `c` came in with.
 #[test]
 fn matmul_ragged_swizzle_distributes_every_box_once() {
     for order in [
@@ -2503,8 +2503,8 @@ fn matmul_buffered_deeper_than_the_walk() {
     check_matmul_vectorized((8, 8, 8), Staged::Both, 9);
 }
 
-/// A depth-2 stages whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
-/// window. It is filled once above the loop and its buffer serves both slots, `Refill::Shared`:
+/// A depth-2 stages whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves
+/// its window. It is filled once above the loop and its buffer serves both slots, `Refill::Shared`:
 /// the one sound way for two slots to share a buffer, and why a stage count is derived, not stated.
 #[test]
 fn matmul_double_buffered_with_a_fixed_operand() {
@@ -3660,7 +3660,7 @@ fn cmma_matmul_double_buffered_odd_k_walk() {
     check_cmma_matmul_k_walk(24, 2, 1, StageLayout::Tiled);
 }
 
-/// The K walk staged into a plain strided stage (the legacy `sync_full_strided` storage):
+/// The K walk staged into a plain strided stage:
 /// the cmma window transport reads through the layout stack either way.
 #[test]
 fn cmma_matmul_staged_k_walk_strided_stage() {
@@ -4010,7 +4010,7 @@ fn cmma_matmul_multi_fragment_partition() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// The legacy register budget as a level structure: a contraction-step walk (windowing only), an
+/// A register budget as a level structure: a contraction-step walk (windowing only), an
 /// N-walk loading one B fragment per step while the A column loads once above it, and an M-only
 /// fragment walk below: sub-block partition selection and unrolled fragment walks. Tensor-core only
 #[test]

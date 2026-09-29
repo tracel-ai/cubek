@@ -1,8 +1,9 @@
 //! Distributing a level's work as one index, which is stream-K.
 //!
-//! Distributing each axis on its own gives a cube the product of its per-axis runs, which is a box of
-//! the grid. A share of the work is not a box: it is a range of the index the axes make together,
-//! and may start in one tile and end in another; no box of a four by two grid holds three regions.
+//! Distributing each axis on its own gives a cube the product of its per-axis runs, which is a box
+//! of the grid. A share of the work is not a box: it is a range of the index the axes make
+//! together, and may start in one tile and end in another; no box of a four by two grid holds three
+//! regions.
 //!
 //! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
 //! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat index
@@ -488,8 +489,8 @@ fn a_stream_of_one_run_is_the_whole_contraction() {
     stream_k_agrees_with_the_whole(1);
 }
 
-/// Runs that end on a tile boundary: the same work a split of `K` would do, reached by distributing a
-/// line rather than by cutting an axis.
+/// Runs that end on a tile boundary: the same work a split of `K` would do, reached by distributing
+/// a line rather than by cutting an axis.
 #[test]
 fn runs_that_end_on_a_tile_do_the_split_a_cut_would() {
     if !folds_atomically() {

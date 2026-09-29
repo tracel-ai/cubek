@@ -1,5 +1,4 @@
-//! The general N-D gather nest, K-major with each operand read hoisted to its widest valid reuse
-//! scope.
+//! The general N-D gather nest, K-major with each operand read hoisted to its widest reuse scope.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -10,8 +9,7 @@ use crate::*;
 use super::base::{GatherProblem, LhsRole, RhsRole};
 use super::coords::cell_read;
 
-/// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
-/// accumulator's.
+/// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and block's, `A` the accumulator's.
 #[cube]
 pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     acc: &mut Memory<E>,
@@ -26,23 +24,16 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
 
     let lhs_view = lhs.nd_packed::<L>(comptime!(Guard::Checked));
     let rhs_view = rhs.nd_packed::<V>(comptime!(Guard::Checked));
-    // Loop-invariant, and `comptime!`-bound so the `unroll` flag below stays a comptime binding:
-    // `#[unroll(flag)]` silently rolls the loop when the macro cannot see `flag` as one.
+    // `comptime!`-bound so `#[unroll(flag)]` sees a comptime flag; otherwise it silently rolls.
     let lhs_check = comptime!(lhs_view.check);
     let rhs_check = comptime!(rhs_view.check);
 
-    // The block only lives in registers while it fits the budget, and a rolled block gains
-    // nothing from an unguarded view: the split is worth its second copy of the walk only when
-    // the fast side would actually unroll.
     let eligible = comptime!(problem.block.scalars() <= config.budget);
-    // Not every guard is a redundant zero mask the corner check below can retire; a clamp is
-    // the one it cannot. `Tile::guard_provable` is where that list lives.
+    // A clamp guard can't be retired by the corner check; see `Tile::guard_provable`.
     let lhs_provable = lhs.guard_provable();
     let rhs_provable = rhs.guard_provable();
     let provable = comptime!(lhs_provable && rhs_provable);
-    // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
-    // extent, one past the far corner [`box_in_bounds`] proves. [`registers::seed`]/[`registers::commit`]
-    // mask those spare units; an unguarded operand read has nothing, so keep the leaf checked.
+    // A spread block's last column reads past the proven box, so keep the leaf checked.
     let spread_overhang = comptime!(registers::spread_guard(
         problem.block.spread,
         problem.block.cols
@@ -50,9 +41,6 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let split_operands = comptime!(
         config.split_edge && eligible && provable && !spread_overhang && (lhs_check || rhs_check)
     );
-    // Whether the operands' whole boxes are inside their buffers. Hoisted out of the matrix loop
-    // because it is a statement about the operand, not about which batch matrix is being read,
-    // and computed only when something below would act on it.
     let operands_inside = if comptime!(split_operands) {
         box_in_bounds::<EL, L>(
             &lhs_view,
@@ -70,7 +58,6 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     for mat in 0..matrices {
         let batch = Coords::constant(comptime!(batch_extents.clone())).unravel(mat.cast::<u32>());
 
-        // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
             comptime!(problem.block.acc_axes),
@@ -78,17 +65,11 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
             comptime!(semiring.add()),
         );
 
-        // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
         let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
 
-        // A checked operand rolls the whole walk: every read re-proves its bounds, and the block
-        // leaves registers since its indices stop being comptime. Splitting the leaf lets an
-        // interior instance prove its box once, then read unguarded; edges keep the masked walk.
-        //
-        // The *operands* only. The accumulator keeps its guard on both sides: it is written once
-        // per cell against `kc` operand reads, so dropping its guard buys a fraction of a percent
-        // and risks the one thing a leaf must never do: write outside the output.
+        // Interior instances prove the operand box once and read unguarded. The accumulator stays
+        // guarded on both sides: it must never write outside the output.
         if comptime!(split_operands) {
             let inside = operands_inside;
             if inside {
@@ -99,8 +80,6 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     &batch,
                     comptime!(problem.clone()),
                     config,
-                    // Every read on this side is proved in bounds, so the block's indices stay
-                    // comptime and it can live in registers whatever the accumulator's guard is.
                     comptime!(true),
                     semiring,
                 );
@@ -131,15 +110,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     }
 }
 
-/// Whether every read the walk will take through `view` lands inside it.
-///
-/// The two extreme corners of the operand's box are enough: a [`Projection`] scales each logical
-/// coordinate by a non-negative factor and adds a constant, so the physical coordinate is monotone
-/// in each logical one. `is_in_bounds` covers the whole view stack: extents, padded window, buffer.
-///
-/// The far corner is the operand's extent in *whole* lines, so this proves only the reads of a
-/// walk staying inside that box. A caller whose columns overhang the extent (the spread block's
-/// rounded-up `nr`) reaches a line this never looked at and must not act on a `true` from here.
+/// Whether every read the walk takes through `view` lands inside it, proven at the box's two
+/// extreme corners. Does not cover columns overhanging the extent (a spread block's `nr`).
 #[cube]
 #[allow(clippy::needless_range_loop)]
 fn box_in_bounds<T: Numeric, W: Size>(
@@ -161,9 +133,7 @@ fn box_in_bounds<T: Numeric, W: Size>(
     view.is_in_bounds(near) && view.is_in_bounds(far)
 }
 
-/// The `K` walk over one batch matrix: seed the `mr × nr` block, fold `kc` rank-1 updates into
-/// it, commit it back. Split out of [`nest`] so the same walk serves both sides of the edge
-/// split, differing only in the views handed to it and whether it unrolls.
+/// The `K` walk over one batch matrix: seed the block, fold `kc` rank-1 updates, commit it back.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
@@ -176,8 +146,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] unroll: bool,
     #[comptime] semiring: Semiring,
 ) {
-    // Bound as comptime locals because the loops below index them: `#[unroll(flag)]` and a
-    // `0..n` bound both silently roll when the macro cannot see the value as comptime.
+    // Comptime locals: `#[unroll(flag)]` and `0..n` bounds silently roll otherwise.
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
     let cols = comptime!(problem.block.cols);
@@ -187,13 +156,10 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let lw = comptime!(problem.block.lw);
     let kc = comptime!(problem.block.kc);
 
-    // The fan-out walk names the unit with a comptime extract. Its final physical line can be
-    // partial, just as the direct leaf's can, so retain a short tail rather than rejecting a
-    // perfectly valid checked tile.
+    // The last physical line can be partial, so keep a short tail.
     let k_lines = comptime!(kc / lw);
     let k_tail = comptime!(kc % lw);
-    // A col-lined lhs has no `K` component for a fixed extract to name -- its line *is* the cell
-    // -- so the fan-out buys it nothing.
+    // A col-lined lhs has no `K` component to extract, so the fan-out buys nothing.
     let component_fanout = comptime!(
         config.component_fanout
             && problem.lhs != LhsRole::LinedAlongColumn
@@ -211,9 +177,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         unroll,
     );
 
-    // One rhs line per accumulator column, reused by every row of the rank-1 update. Held across
-    // the whole K walk so the trace allocates it once however many unit bodies the fan-out emits.
-    // An rhs varying down the rows has no per-column value and leaves this unwritten to fold away.
+    // One rhs line per column, reused by every row; allocated once for the whole K walk.
     let mut b = Array::<Vector<E, V>>::new(comptime!(nr));
 
     if comptime!(contracted_per_step > 1) {
@@ -265,9 +229,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             );
         }
     } else {
-        // CPU and scalar lines keep the compact flat walk. Besides respecting the selected
-        // configuration, this avoids cloning a wide fan-out body into LLVM IR when its fixed
-        // extracts provide no benefit.
+        // CPU and scalar lines keep the flat walk, avoiding a wide fan-out body in LLVM IR.
         #[unroll(unroll)]
         for p in 0..kc {
             rank1_update::<E, EL, L, ER, V>(
@@ -298,13 +260,8 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     );
 }
 
-/// One gathered rank-1 update. `unit` names the component to take when the caller walks `K` as
-/// (line, component), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
-/// the component from `reduce_coords` on the fastest contracted axis instead.
-///
-/// The operands' roles say which reads hoist out of the cell loop: each read is taken at the
-/// coarsest cell the operand is invariant over, so the plain outer product still reads one lhs
-/// per row and one rhs per column.
+/// One gathered rank-1 update, each read hoisted to the coarsest cell its operand is invariant
+/// over. `unit` is the fixed component to extract; `None` resolves it from `reduce_coords`.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
@@ -326,8 +283,6 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     let reduce_coords =
         Coords::constant(comptime!(problem.block.reduce_extents.clone())).unravel(p.cast::<u32>());
 
-    // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
-    // down the `i` loop.
     let k_axis_idx = comptime!(problem.block.reduce.len() - 1);
     if comptime!(problem.rhs == RhsRole::FreeOfRow) {
         #[unroll(unroll)]
@@ -346,12 +301,10 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        // Whatever is invariant across the row's cells is read once here. Each stays at zero, and
-        // folds away, when the cell loop reads that operand for itself.
+        // Row-invariant reads, taken once; zero and folded away when the cell loop reads them.
         let mut a_row = Vector::<E, V>::cast_from(E::from_int(0));
         if comptime!(problem.lhs == LhsRole::FreeOfColumn) {
-            // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line
-            // index, so this is the same position for every component of one line.
+            // Same position for every component of one line.
             let line = cell_read::<EL, L>(
                 lhs_view,
                 batch,
@@ -387,9 +340,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         #[unroll(unroll)]
         for n in 0..nr {
             let a = if comptime!(problem.lhs != LhsRole::FreeOfColumn) {
-                // A col-lined lhs addresses its innermost axis in lines, exactly as the rhs
-                // does, and the line it reads is the cell: every column of it is a different
-                // value, which is the whole point of lining along that axis.
+                // A col-lined lhs's line is the cell: each column is a different value.
                 let line = cell_read::<EL, L>(
                     lhs_view,
                     batch,
@@ -437,9 +388,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     }
 }
 
-/// The `K` component of one lhs line, widened into the accumulate element. The whole line at a
-/// folded step, fixed when the caller walks `K` as (line, component), resolved from the fastest
-/// contracted coordinate in `reduce_coords` on the flat walk.
+/// The `K` component of one lhs line, widened into the accumulate element.
 #[cube]
 fn line_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     line: Vector<EL, L>,

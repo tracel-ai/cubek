@@ -1,17 +1,6 @@
-//! The row ops at plane ownership: a plane owns every row of the tile it is handed (windowed per
-//! plane by the kernel), its units split the reduced axis, and each row's reduction closes in one
-//! plane op. In the [`rowwise`](super::rowwise) twin a unit owns the row; [`RowShare`] picks.
-//!
-//! A unit touches only the lines `unit, unit + units, …` of its plane's rows (a line being the
-//! tile's vector width of adjacent columns), so nothing reads a cell another unit wrote and the
-//! leaf keeps the twin's promise of no syncs; only the reduced scalar crosses units, in hardware.
-//!
-//! Every loop is over a comptime bound and unrolls; the edge compare compiles out when the units
-//! divide the lines, which a fold sized to its plane arranges.
-//!
-//! **The plane must be the cube's**: `units` is the width the device commits to, and a plane may
-//! not straddle the x dim, so `CUBE_DIM_X` has to be a whole number of planes. A wrong width
-//! reduces over the wrong units, silently, which is why the caller states it rather than reads it.
+//! The row ops at plane ownership: a plane owns the rows, its units split the reduced axis.
+//! `units` must be the device's committed plane width and `CUBE_DIM_X` whole planes, else
+//! the reduction is silently wrong.
 
 use cubecl::prelude::*;
 
@@ -58,9 +47,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`row_max`](Tile::row_max) at plane ownership: a unit's partial over its own lines, then
-    /// one plane reduction per row. Seeding with `base` on every unit is free: a max is
-    /// idempotent, so the seed survives the fold whichever unit carried it.
+    /// [`row_max`](Tile::row_max) at plane ownership.
     pub(crate) fn row_max_planar(
         &self,
         acc: &mut Array<EA>,
@@ -97,9 +84,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`exp_diff`](Tile::exp_diff) at plane ownership. `rowwise` is
-    /// plane-uniform coming out of [`row_max_planar`](Tile::row_max_planar),
-    /// so every unit exponentiates against the same row max.
+    /// [`exp_diff`](Tile::exp_diff) at plane ownership.
     pub(crate) fn exp_diff_planar(
         &mut self,
         rowwise: &Array<EA>,
@@ -137,9 +122,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`row_sum`](Tile::row_sum) at plane ownership. Unlike the max there is
-    /// no seed: a sum's identity is zero and every unit must contribute its
-    /// own lines exactly once.
+    /// [`row_sum`](Tile::row_sum) at plane ownership. Every unit must contribute its lines once.
     pub(crate) fn row_sum_planar(
         &self,
         acc: &mut Array<EA>,
@@ -175,8 +158,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`write_rows_to`](Tile::write_rows_to) at plane ownership. The
-    /// destination is laid out in the same lines.
+    /// [`write_rows_to`](Tile::write_rows_to) at plane ownership.
     pub(crate) fn write_rows_to_planar<EP: Numeric>(
         &self,
         dest: &mut Tile<EP>,

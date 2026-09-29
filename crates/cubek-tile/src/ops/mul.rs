@@ -1,13 +1,5 @@
 //! `dst.product(&a, &b)`: the elementwise product of two tiles, each broadcasting over the axes it
 //! omits.
-//!
-//! Not a quantization verb. A scale is a tile spanning fewer axes than the values it multiplies,
-//! "one scale per block" being what its axes say, not arithmetic; dequantizing is this operation
-//! with a packed operand on one side. Written and tested alone, so the mechanism stands by itself.
-//!
-//! Both operands are read at the destination's logical coordinate through their own
-//! [`Projection`](crate::Projection), so an axis an operand does not address costs it nothing and
-//! spreads its value across every position of that axis. That is the whole of the broadcast.
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
@@ -17,19 +9,11 @@ use crate::*;
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
-    ///
-    /// The transport alone, like [`copy_from`](Tile::copy_from): every unit of the cube fills the
-    /// whole tile, and the levels a product is split across are the kernel's own loops.
     pub fn product<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         self.mul_from(a, b)
     }
 
-    /// The transport: every unit of the cube strides the destination's groups, reading `b` once
-    /// per group and taking a unit of it per fold.
-    ///
-    /// Each operand is addressed over *its own* axes, so an axis it does not span costs it nothing
-    /// and one value serves every position of it. A packed operand serves a whole stored word per
-    /// line, hence the walk in lines: values sharing a word cannot be read cell by cell.
+    /// The transport: every unit of the cube strides the destination's groups.
     fn mul_from<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
@@ -58,13 +42,11 @@ impl<T: Numeric> Tile<T> {
                 folds,
             );
 
-            // The fold is a *unit* of `b`'s read, not a step of it, so its address is the group's
-            // and the read happens here rather than once per unit.
+            // The fold is a unit of `b`'s read, so its address is the group's.
             let scales = b_reader
                 .view
                 .read(b_reader.map.anchor(b_base, comptime!(Vec::new())));
-            // `a`'s address does step with the fold, so its map folds once here and each step is
-            // the addition [`advance`](crate::ProjectionInKernel::advance) puts back.
+            // `a`'s address steps with the fold: its map folds once here, each step an addition.
             let moving = comptime!(vec![split.axis]);
             let a_anchor = a_reader
                 .map
@@ -86,11 +68,7 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-/// How a product's walk divides: one read of the broadcast operand per group, and the folds inside
-/// a group taken as units of it.
-///
-/// The fold is the walk's unrolled dimension because a unit index is not addressable at runtime,
-/// and the runs under one fold are not, because only the unit has to be a constant.
+/// How a product's walk divides: one broadcast-operand read per group, folds inside it.
 #[derive(Clone, Debug)]
 struct FoldWalk {
     /// The axis the fold steps: the one the broadcast operand's own lines run along.
@@ -104,8 +82,7 @@ struct FoldWalk {
 }
 
 impl FoldWalk {
-    /// How `dst` divides against an operand spanning `b`, served `width` lines wide against
-    /// `folds` of that operand per read.
+    /// How `dst` divides against `b`, read `width` lines wide with `folds` folds per read.
     fn of(dst: &Space, b: &Space, width: usize, folds: usize) -> Self {
         let rank = dst.rank();
         let axis = b.axis_at(b.rank() - 1);
@@ -131,8 +108,7 @@ impl FoldWalk {
     }
 }
 
-/// A group's own line coordinate in the destination's box: its position with the fold axis back at
-/// the scale it was cut by.
+/// A group's line coordinate in the destination's box.
 #[cube]
 fn group_line(at: &Coords<u32>, #[comptime] split: FoldWalk) -> CoordsDyn {
     let mut out = CoordsDyn::new();
@@ -147,8 +123,7 @@ fn group_line(at: &Coords<u32>, #[comptime] split: FoldWalk) -> CoordsDyn {
     out
 }
 
-/// Each operand's own coordinate for a group, resolved over its own axes: an axis it does not span
-/// drops out, and its innermost divides by the width it is read at.
+/// Each operand's own coordinate for a group; an axis it does not span drops out.
 #[cube]
 fn bases(
     group: &CoordsDyn,
@@ -158,7 +133,6 @@ fn bases(
     #[comptime] width: usize,
     #[comptime] folds: usize,
 ) -> (CoordsDyn, CoordsDyn) {
-    // Back in values, which is what each operand's own resolution divides by its own width.
     let mut cells = Coords::<u32>::new();
     #[unroll]
     for p in 0..comptime!(dst.rank()) {
