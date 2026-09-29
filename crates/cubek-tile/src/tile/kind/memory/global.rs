@@ -1,5 +1,4 @@
-//! A launched memory operand ([`GlobalOperand`]): a tensor, a fused sink or a fused producer,
-//! and the [`Memory`] tile it becomes, its top window boxed over the operand's physical axes.
+//! A launched memory operand ([`GlobalOperand`]) and the [`Memory`] tile it becomes.
 
 use cubecl::{
     prelude::*,
@@ -8,19 +7,16 @@ use cubecl::{
 
 use crate::*;
 
-/// A launched memory operand, as the kernel receives it: a buffer, a fused sink or a fused
-/// producer, with the geometry that addresses it and the statement the launch bound it under.
-/// What a [`Memory`] tile is built from ([`tile`](Self::tile)); the kernel arguments build one.
+/// A launched memory operand: a buffer, a fused sink or a fused producer, with its geometry.
 #[derive(CubeType)]
 pub struct GlobalOperand<T: Numeric> {
     pub(crate) backing: Backing<T>,
     /// The buffer's physical extents and strides in scalars, one per physical axis.
     pub geometry: RuntimeGeometry,
-    /// The binding's own line width, on top of which a packed operand serves
-    /// `packing.factor()` values per stored element.
+    /// The binding's own line width, before any packing factor.
     #[cube(comptime)]
     pub bound_width: usize,
-    /// The kernel's space; the tile's own is its projection onto the spec's axes.
+    /// The kernel's space.
     #[cube(comptime)]
     pub space: Space,
     #[cube(comptime)]
@@ -29,18 +25,15 @@ pub struct GlobalOperand<T: Numeric> {
     #[cube(comptime)]
     pub write: Write,
     /// One per [`Scale::Dynamic`](crate::Scale) term and one per
-    /// [`Divisor::Dynamic`](crate::Divisor) axis, by physical axis, divisor last; empty for a
-    /// comptime mapping.
+    /// [`Divisor::Dynamic`](crate::Divisor) axis, by physical axis, divisor last.
     pub coefficients: Coords<u32>,
-    /// One signed value per [`Offset::Dynamic`](crate::Offset) axis; empty for a comptime mapping.
+    /// One signed value per [`Offset::Dynamic`](crate::Offset) axis.
     pub offsets: Coords<i32>,
 }
 
 #[cube]
 impl<T: Numeric> GlobalOperand<T> {
-    /// A launched tensor: the kernel's one `space` projected onto the operand's `spec` axes. The
-    /// element type carries the line width, so the served width *is* the binding's. Shape and
-    /// strides arrive scalar-unit and convert to lines in the tile.
+    /// A launched tensor, `space` projected onto the `spec` axes; shape and strides in scalars.
     pub fn tensor<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -55,12 +48,8 @@ impl<T: Numeric> GlobalOperand<T> {
         )
     }
 
-    /// [`tensor`](GlobalOperand::tensor) for a gather whose affine map is not all comptime (a
-    /// runtime stride, dilation, padding or resize ratio). `coefficients`: one per
-    /// [`Scale::Dynamic`](crate::Scale) term and one per [`Divisor::Dynamic`](crate::Divisor) axis,
-    /// by physical axis, divisor last. `offsets`: one signed value per
-    /// [`Offset::Dynamic`](crate::Offset) axis. Only the lengths are checked, so those orders are
-    /// the contract: swap a coefficient for a divisor and the read is silently wrong.
+    /// [`tensor`](GlobalOperand::tensor) for a gather with a runtime affine map.
+    /// `coefficients` and `offsets` follow the field order; only their lengths are checked.
     pub fn gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -71,13 +60,8 @@ impl<T: Numeric> GlobalOperand<T> {
         GlobalOperand::<T>::of_tensor::<E>(tensor, space, spec, coefficients, offsets)
     }
 
-    /// [`tensor`](GlobalOperand::tensor) where the stored element `E` and the served element `T`
-    /// need not be the same: a [`packed`](TileSpec::packed) binding holds `u32` words read at
-    /// `factor` values each; one stating no packing reads its own element.
-    ///
-    /// `T` is stated at the call because a packed binding's element is the word, not the value,
-    /// so nothing can infer it. Where the binding does read its own element, the two must agree,
-    /// which [`tensor`](GlobalOperand::tensor) proves in the type system and this checks here.
+    /// [`tensor`](GlobalOperand::tensor) where stored `E` may differ from served `T`
+    /// (a [`packed`](TileSpec::packed) binding).
     pub fn stored<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
@@ -99,8 +83,7 @@ impl<T: Numeric> GlobalOperand<T> {
         )
     }
 
-    /// The shared body: `E` is the *binding* element, `T` the served scalar, differing only for
-    /// a packed operand, whose store truly holds `E` and whose read view downcasts back.
+    /// The shared body: `E` is the binding element, `T` the served scalar.
     pub(crate) fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -127,18 +110,8 @@ impl<T: Numeric> GlobalOperand<T> {
         }
     }
 
-    /// An operand whose values are handed to `sink` instead of stored: the walk a buffer gets,
-    /// with only its last step a call. The geometry is *stated* because a destination with no
-    /// address has none to read; stating the product's own metadata gives the unfused kernel's
-    /// store.
-    ///
-    /// A sink serves the layout-addressed writes and only those: it cannot be staged into shared
-    /// memory, written dense, filled by a tensor map, or [`packed`](TileSpec::packed),
-    /// each of which wants an address rather than a call.
-    ///
-    /// `write` is what the sink does with a value. [`Accumulate`](Write::Accumulate) lets several
-    /// instances write one cell, and requires the buffer behind it to hold the monoid's identity
-    /// before the launch. Nothing here can check that: the sink cannot read.
+    /// An operand whose values are handed to `sink` instead of stored, under the stated geometry.
+    /// Under [`Accumulate`](Write::Accumulate) the buffer must hold the monoid's identity.
     pub fn sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,
@@ -147,9 +120,6 @@ impl<T: Numeric> GlobalOperand<T> {
         #[comptime] spec: TileSpec,
         #[comptime] write: Write,
     ) -> GlobalOperand<T> {
-        // A packing multiplies a binding's own width, but a sink has only the width it states.
-        // Refused here, where the spec says it, rather than left to the width mismatch cubecl
-        // reports off the erased tensor.
         comptime!(assert!(
             spec.packing == Packing::Plain,
             "GlobalOperand::sink: a sink is written at the width it states, so its spec may not \
@@ -168,10 +138,7 @@ impl<T: Numeric> GlobalOperand<T> {
         }
     }
 
-    /// An operand whose values come from `source` instead of from memory: the fuse-on-read twin of
-    /// [`sink`](GlobalOperand::sink), stated geometry and all. A source serves layout-addressed
-    /// reads only: no staging, dense reads, tensor maps or
-    /// [`packed`](TileSpec::packed).
+    /// An operand whose values come from `source` instead of memory, under the stated geometry.
     pub fn source(
         source: ErasedTensor<T, ReadOnly>,
         geometry: RuntimeGeometry,
@@ -197,8 +164,7 @@ impl<T: Numeric> GlobalOperand<T> {
         }
     }
 
-    /// This operand as a [`Tile`] at the top of `levels`: a memory kind over the operand's own
-    /// axes, placed where a kernel argument's tile is.
+    /// This operand as a [`Tile`] at the top of `levels`.
     pub fn tile(self, #[comptime] levels: Vec<Level>) -> Tile<T> {
         let place = comptime!(Placement::root(
             self.space.subspace(self.spec.axes()),
@@ -210,9 +176,9 @@ impl<T: Numeric> GlobalOperand<T> {
 
 #[cube]
 impl<T: Numeric> Memory<T> {
-    /// The memory tile a launched operand becomes: the top window boxed over the operand's
-    /// physical axes, in global memory.
-    #[allow(clippy::too_many_arguments)]
+    /// The memory tile a launched operand becomes, its top window boxed over the physical axes.
+    // The unrolled loop over the buffer's dims indexes a compile-time list by the dim.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
     pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
         let backing = operand.backing;
         let geometry = operand.geometry;
@@ -222,21 +188,12 @@ impl<T: Numeric> Memory<T> {
         let space = comptime!(operand.space.clone());
         let spec = comptime!(operand.spec.clone());
         let write = comptime!(operand.write);
-        // The one projection: the kernel's space narrowed to this operand's axes. What the
-        // instances and units are to these cells is stamped level by level on the way down
-        // ([`Memory::at`]): a fresh tile has been distributed out by nothing yet.
         let split_share = comptime!(SplitShare::Whole);
         let space = comptime!(space.subspace(spec.axes()));
         let projection = comptime!(spec.projection.clone());
-        // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
-        // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
         let coords = comptime!(projection.untiled());
-        // How the buffer holds its values: what the spec states.
         let packing = comptime!(spec.packing);
-        // A packed store serves `factor` values per stored element, on top of the binding's own
-        // line width; a sub-word store serves its stated width out of one word.
         let vector_size = comptime!(packing.served(bound_width));
-        // The runtime lists, checked against the statement here, where they arrive.
         let dims_given = geometry.shape.len();
         let coefficients_given = coefficients.len();
         let offsets_given = offsets.len();
@@ -257,44 +214,37 @@ impl<T: Numeric> Memory<T> {
             coords.dynamic_offset_count()
         ));
         comptime!(check_operand(&space, &spec, vector_size));
-        // Off the projection rather than the space: a gathered operand's buffer has fewer
-        // physical axes than its logical space has axes, and a storage-tiled one has more.
+        // Gathered buffers have fewer physical axes than logical; storage-tiled ones have more.
         let rank = comptime!(projection.physical_rank());
-        let last = comptime!(rank - 1);
-        let w = comptime!(vector_size as u32);
+        // The buffer read in loads: each dim's extent over what one load covers of it, every
+        // stride counted in loads. A plain buffer's innermost dim counts lines one line apart and
+        // the coarser strides divide by the width; a stored tile a load takes whole is one.
+        let load = comptime!(
+            VectorTile::new(
+                &spec.stored_tiles,
+                space.axis_at(space.rank() - 1),
+                vector_size
+            )
+            .unwrap_or_else(|why| panic!("GlobalOperand: {vector_size} values a load: {why}"))
+        );
+        let parts = comptime!(load.parts(&spec.stored_tiles, &projection.dense_labels(), rank));
         let mut physical_shape = Coords::<u32>::new();
         let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
-            let extent = geometry.shape.at(i);
-            let stride = geometry.strides.at(i);
-            if comptime!(i == last) {
-                // Innermost (contiguous, scalar stride 1): count lines; consecutive lines
-                // are one line apart.
-                physical_shape.push(extent / w);
-                physical_strides.push(stride);
-            } else {
-                // Coarser axes re-express their scalar strides in lines.
-                physical_shape.push(extent);
-                physical_strides.push(stride / w);
-            }
+            let part = comptime!(parts[i] as u32);
+            physical_shape.push(geometry.shape.at(i) / part);
+            physical_strides.push(geometry.strides.at(i) * part / comptime!(vector_size as u32));
         }
-        // `BufferLayout`'s own physical-position map: the operand's projection relabeled by
-        // position, since the layout is handed coordinates a gather has already resolved. Storage
-        // tiling survives it, so `physical_shape` is `[pre…, grid…, …, tile…]` in synthetic-axis
-        // order.
         let gmem_projection = comptime!(projection.positional());
-        // Logical bound folded from the physical shape, so it's correct for tiled
-        // operands too (the physical buffer is padded; the logical extent is not).
+        // Folded from the physical shape, so tiled (padded) operands get the logical extent.
         let bound = logical_extent(comptime!(gmem_projection.clone()), &physical_shape);
-        // The whole-tile window. A `Dynamic` axis takes its runtime size from `bound`, so the
-        // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
         let (origin, extent, map) = top_window(
             comptime!(space.clone()),
             &bound,
             &offsets,
             coefficients,
-            vector_size,
+            comptime!(load.clone()),
             comptime!(coords.clone()),
         );
         Memory::<T> {
@@ -303,6 +253,7 @@ impl<T: Numeric> Memory<T> {
                 backing,
                 vector_size: comptime!(vector_size),
                 packing: comptime!(packing),
+                stored_tiles: comptime!(spec.stored_tiles.clone()),
             },
             layout: BufferLayout {
                 physical_shape,
@@ -330,7 +281,7 @@ impl<T: Numeric> Memory<T> {
                     Overhang::Fits
                 },
                 write,
-                units: spec.units,
+                fill: FillUnits::cube(spec.units),
                 storage: spec.storage,
                 delivery: spec.delivery,
             }),
@@ -344,17 +295,10 @@ impl<T: Numeric> Memory<T> {
     }
 }
 
-/// The contract an operand's statement owes, refused at `of` on the host, the one place the
-/// spec, the projection, the space and the served width are all in hand. `coords` is the
-/// projection in coordinate space ([`Projection::untiled`]).
+/// The contract an operand's statement owes, checked on the host.
 fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
     let projection = &spec.projection;
-    // The operand's own contract, checked here rather than at `TileSpec` construction because it
-    // turns on the served width, which only this call knows. `StridedTileSource` already checked
-    // a padded stage width for the specs it builds; this catches hand-built ones too.
     projection.validate(vector_size);
-    // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
-    // and the space are both in hand.
     projection.validate_composition(|axis| space.extent(axis));
     let coord_rank = projection.coordinate_rank();
     assert!(
@@ -362,8 +306,6 @@ fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
         "GlobalOperand: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
         spec.boundaries.len()
     );
-    // A clamped vector line is only valid if the innermost coordinate axis is not clamped. The
-    // source builder derives that per-axis mask; this catches hand-built specs too.
     assert!(
         vector_size == 1 || spec.boundaries.last().copied().flatten() != Some(Boundary::Clamp),
         "GlobalOperand: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
@@ -371,23 +313,20 @@ fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
     );
 }
 
-/// [`full_window`] for the top gmem tile, over the *physical* axes, where an axis may be
-/// [`Dynamic`](crate::Extent) and read its runtime size from `bound`, so the problem shape never
-/// specializes the kernel; a gathered operand always reads `bound`, no one extent sizing its axes.
+/// [`full_window`] for the top gmem tile over the physical axes; `Dynamic` axes read `bound`.
 #[cube]
 fn top_window(
     #[comptime] space: Space,
     bound: &Coords<u32>,
     offsets: &Coords<i32>,
     coefficients: Coords<u32>,
-    #[comptime] vector_size: usize,
+    #[comptime] load: VectorTile,
     #[comptime] projection: Projection,
 ) -> (Coords<i32>, Coords<u32>, RuntimeMap) {
     let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
     let mut residues = Coords::<u32>::new();
     let rank = comptime!(projection.physical_rank());
-    let last = comptime!(rank - 1);
 
     #[unroll]
     for pa in 0..rank {
@@ -395,12 +334,8 @@ fn top_window(
             origin.push(0);
             residues.push(0u32);
             let axis = comptime!(space.axis_at(pa));
-            // The innermost (vectorized) axis is a line count, `/ vector_size`. A `Dynamic` axis
-            // reads its size from `bound`, already lined from the physical shape.
             match comptime!(space.extent_raw(axis)) {
-                Extent::Static(e) => {
-                    (comptime!(if pa == last { e / vector_size } else { e }) as u32).runtime()
-                }
+                Extent::Static(e) => (comptime!(e / load.extent_along(axis)) as u32).runtime(),
                 Extent::Dynamic => bound.at(pa),
             }
         } else {
@@ -423,13 +358,7 @@ fn top_window(
     )
 }
 
-/// Where a gathered physical axis's top window starts and the phase its division left behind:
-/// `⌊offset / divisor⌋` and `offset mod divisor`. A rational mapping absorbs only its divisor's
-/// multiples, handing the rest to [`ProjectionInKernel`](crate::ProjectionInKernel); an integer one
-/// all.
-///
-/// The floor is the host's whenever both sides are comptime; only a `Dynamic` offset or divisor
-/// pays for one in the kernel.
+/// Where a gathered physical axis's top window starts, and the phase its division left behind.
 #[cube]
 fn gathered_origin(
     #[comptime] projection: Projection,
@@ -445,8 +374,7 @@ fn gathered_origin(
             comptime!(axis_map.residue().unwrap() as u32).runtime(),
         )
     } else {
-        // A signed offset places the window before the buffer's origin (a padding), which is
-        // exactly where truncating division would land a cell too high.
+        // Floor division: a negative (padding) offset must not round toward zero.
         let offset = match comptime!(axis_map.offset()) {
             Offset::Static(o) => comptime!(o as i32).runtime(),
             Offset::Dynamic => offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap())),

@@ -1,9 +1,4 @@
-//! The decoding transport: a source carrying scales ([`Tile::mul`]) or indexing a table
-//! ([`Tile::lookup`]) copied into a destination that holds plain values, each line decoded as it
-//! lands.
-//!
-//! This is where a kernel decodes on purpose: `stage.copy_from(&w.lookup(&t).mul(&scales))` states
-//! the decode at the copy, and nothing decodes behind a read the kernel did not write.
+//! The decoding copy through a table or scales ([`Tile::lookup`], [`Tile::mul`]).
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
@@ -11,245 +6,112 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// [`copy_from`](Tile::copy_from) a scaled `src`: each unit of the cube takes the lines `u`,
-    /// `u + CUBE_DIM`, … of the window, reads each through the source's packed view (so packed
-    /// values unpack), multiplies it by every level of the source's scales at the line's first
-    /// value, and writes it where it lies in `self`.
-    ///
-    /// **A line reads one scale**, the innermost level's at its first value, as every scaled read
-    /// does: a block of scales spans whole lines of the values it covers.
-    ///
-    /// **The two span one box.** The source may carry axes the destination does not, each one
-    /// wide (a batch or head the cube already fixed); every other axis is the destination's, in
-    /// its order and at its extent.
+    /// [`copy_from`](Tile::copy_from) a source carrying a table or scales, read in the source's
+    /// own loads ([`vector_tile`](Tile::vector_tile)), a run or a rectangle of its stored tiles.
+    /// The source may carry extra axes only if each is one wide.
     pub(crate) fn copy_scaled_from(&mut self, src: &Tile<T>) {
+        // It decodes in the unit that loads each line; an async copy lands the bytes as they lie.
         let delivery = src.delivery();
         comptime!(assert!(
             !delivery.is_async(),
-            "Tile::copy_from: a decoding copy decodes each line in the unit that loads it, and \
-             this source is delivered {delivery:?}, which lands its bytes as they lie; deliver it \
+            "Tile::copy_from: a decoding copy cannot be delivered {delivery:?}; deliver it \
              SyncPerUnit, or stage it as it lies and decode out of the stage"
         ));
-        let space = comptime!(src.place.space.clone());
-        comptime!(kept_axes(&space, &self.place.space));
-        comptime!(assert!(
-            space.axes().all(|axis| !space.is_dynamic(axis)),
-            "Tile::copy_from: a decoding copy reads its window through the values' own axes, which \
-             needs their extents at expansion; this window spans a dynamic axis. Copy a region a \
-             level cuts to (a stage, a leaf) rather than the whole dynamic tile"
-        ));
-        // The source is read a whole line at a time (a packed source's line is a whole word), and
-        // each line is written as the destination's lines it holds: several where the destination
-        // is served narrower than a word.
-        let vw = self.vector_size();
-        let sw = src.vector_size();
-        comptime!(assert!(
-            sw.is_multiple_of(vw),
-            "Tile::copy_from: a decoding copy writes each source line as whole destination lines, \
-             and a {sw}-wide source line does not split into {vw}-wide ones"
-        ));
-        let decode = src.mem("Tile::copy_from");
-        // A packed source whose destination is served narrower than its line is read as the words
-        // it lies in and unpacked a destination line at a time, so no line wider than the
-        // destination's is ever held: a device's vectors may be narrower than a word.
-        match comptime!(decode.store.packing) {
-            Packing::Packed { field } if vw < sw => self.copy_decoded_words(src, field),
-            _ => self.copy_decoded_lines(src),
+        let load = src.vector_tile();
+        let sw = comptime!(load.values());
+        let packing = src.packing();
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(SW) = sw;
+                self.copy_decoded(src, src.nd_packed::<SW>(comptime!(Guard::Checked)));
+            }
+            Packing::Packed { field: _ } => {
+                let size!(WP) = comptime!(packing.physical(sw));
+                self.copy_decoded(src, src.nd_words::<WP>(comptime!(Guard::Checked)));
+            }
         }
     }
 
-    /// [`copy_scaled_from`](Tile::copy_scaled_from) reading the source a whole line at a time and
-    /// splitting it into the destination's lines.
-    fn copy_decoded_lines(&mut self, src: &Tile<T>) {
-        let space = comptime!(src.place.space.clone());
-        let kept = comptime!(kept_axes(&space, &self.place.space));
-        let (vw, sw) = (self.vector_size(), src.vector_size());
+    /// The copy, over `stored`: the source's loads as its buffer holds them.
+    fn copy_decoded<I: Numeric, WP: Size>(
+        &mut self,
+        src: &Tile<T>,
+        stored: Masked<'_, Vector<I, WP>, CoordsDyn>,
+    ) {
+        let (load, lands) = (src.vector_tile(), self.vector_tile());
+        let (sw, vw) = comptime!((load.values(), lands.values()));
         let size!(VW) = vw;
-        let size!(SW) = sw;
+        let packing = src.packing();
+        let space = comptime!(src.place.space.clone());
+        let dst = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
-        let decode = src.mem("Tile::copy_from");
-        let looked_up = src.looked_up();
-        let values = src.nd_packed::<SW>(comptime!(Guard::Checked));
+        let mem = src.mem("Tile::copy_from");
+        let along = comptime!(dst.axis_at(dst.rank() - 1));
+        let varies = mem.factor.varies_along(comptime!(along));
+        comptime!(check_decoding_copy(&space, &dst, &load, vw, varies));
+        let fill = self.fill_units();
         let mut out = self.nd_mut::<VW>();
-        let shape = values.shape();
-        for line in range_stepped(UNIT_POS, line_count(&shape, rank), CUBE_DIM) {
-            let digits = line_digits(line, &shape, rank);
-            let whole = values.read(digits_at(&digits, rank));
+        let first = fill_worker(fill) as u32;
+        let stride = fill_workers(fill) as u32;
+        for line in range_stepped(first, load.count(&space), stride) {
+            let start = load.start(line, &space);
+            let held = stored.read(load.index(&start, &space));
+            // The destination lines this load holds, `offset` their place in it, and where they land.
             #[unroll]
             for c in 0..comptime!(sw / vw) {
-                let mut chunk = Vector::<T, VW>::empty();
+                let offset = comptime!(c * vw);
+                let mut at = Coords::<u32>::new();
+                let mut to = Coords::<u32>::new();
                 #[unroll]
-                for j in 0..vw {
-                    chunk.insert(j, whole.extract(comptime!(c * vw) + j));
+                for p in 0..rank {
+                    let inner = comptime!(load.offset_along(offset, space.axis_at(p)) as u32);
+                    let coord = start.at(p) + inner;
+                    at.push(coord);
+                    if comptime!(dst.contains(space.axis_at(p))) {
+                        to.push(coord);
+                    }
                 }
-                land_chunk::<T, VW>(
-                    &mut out,
-                    decode,
-                    &digits,
-                    chunk,
-                    c,
-                    sw,
-                    space.clone(),
-                    kept.clone(),
-                    looked_up,
-                );
-            }
-        }
-    }
-
-    /// [`copy_scaled_from`](Tile::copy_scaled_from) reading a packed source's words and unpacking
-    /// each destination line's fields straight out of the word that holds them.
-    fn copy_decoded_words(&mut self, src: &Tile<T>, #[comptime] field: Field) {
-        let space = comptime!(src.place.space.clone());
-        let kept = comptime!(kept_axes(&space, &self.place.space));
-        let (vw, sw) = (self.vector_size(), src.vector_size());
-        let size!(VW) = vw;
-        let rank = comptime!(space.rank());
-        let decode = src.mem("Tile::copy_from");
-        let looked_up = src.looked_up();
-        let physical = comptime!(decode.store.packing.physical(sw));
-        let size!(WP) = physical;
-        let layout = decode.axis_projection(comptime!(space.clone()));
-        let words = decode.nd_words::<WP>(layout, comptime!(Guard::Checked));
-        let mut out = self.nd_mut::<VW>();
-        let shape = words.shape();
-        let (bits, per_word) = comptime!((field.size_bits(), field.per_word()));
-        for line in range_stepped(UNIT_POS, line_count(&shape, rank), CUBE_DIM) {
-            let digits = line_digits(line, &shape, rank);
-            let line_words = words.read(digits_at(&digits, rank));
-            #[unroll]
-            for c in 0..comptime!(sw / vw) {
-                let (word, shift) = comptime!(((c * vw) / per_word, ((c * vw) % per_word) * bits));
-                let mut one = Vector::<u32, Const<1>>::empty();
-                one.insert(0usize, line_words.extract(word) >> comptime!(shift as u32));
-                let chunk = unpack_line::<T, Const<1>, VW>(one, field);
-                land_chunk::<T, VW>(
-                    &mut out,
-                    decode,
-                    &digits,
-                    chunk,
-                    c,
-                    sw,
-                    space.clone(),
-                    kept.clone(),
-                    looked_up,
-                );
+                let values = values_at::<T, I, WP, VW>(held, offset, packing);
+                let scale = mem.factor.at_coords(&at, comptime!(space.clone()));
+                let decoded = mem.codebook.entries(values) * Vector::<T, VW>::cast_from(scale);
+                out.write(lands.index(&to, &dst), decoded);
             }
         }
     }
 }
 
-/// Which of `src`'s axes `dst` spans, positionally: the destination is the source with its
-/// one-wide extra axes dropped, the rest in the same order at the same extents, the innermost
-/// shared.
-fn kept_axes(src: &Space, dst: &Space) -> Vec<bool> {
-    let kept: Vec<bool> = src
-        .axes()
-        .map(|axis| dst.axes().any(|a| a == axis))
-        .collect();
-    let shared: Vec<Axis> = src
-        .axes()
-        .filter(|&axis| dst.axes().any(|a| a == axis))
-        .collect();
-    let mismatch = || {
-        format!(
-            "Tile::copy_from: a decoding copy writes the box it reads, and {src:?} does not \
-             narrow to {dst:?} by dropping one-wide axes"
-        )
-    };
-    assert!(shared == dst.axes().collect::<Vec<_>>(), "{}", mismatch());
-    assert!(kept.last() == Some(&true), "{}", mismatch());
-    for axis in src.axes() {
-        match kept[src.position(axis)] {
-            true => assert!(src.extent(axis) == dst.extent(axis), "{}", mismatch()),
-            false => assert!(src.extent(axis) == 1, "{}", mismatch()),
-        }
-    }
-    kept
-}
-
-/// Lines in a view of `shape`, its innermost counted in lines.
-#[cube]
-fn line_count(shape: &CoordsDyn, #[comptime] rank: usize) -> u32 {
-    let mut lines = 1u32;
-    #[unroll]
-    for p in 0..rank {
-        lines *= *shape.index(p);
-    }
-    lines
-}
-
-/// The `line`-th line's digits under `shape`, innermost fastest.
-#[cube]
-fn line_digits(line: u32, shape: &CoordsDyn, #[comptime] rank: usize) -> Array<u32> {
-    let mut digits = Array::<u32>::new(comptime!(rank));
-    let mut rest = line;
-    #[unroll]
-    for i in 0..rank {
-        let p = comptime!(rank - 1 - i);
-        let extent = *shape.index(p);
-        digits[p] = rest % extent;
-        rest /= extent;
-    }
-    digits
-}
-
-/// `digits` as a view addresses them.
-#[cube]
-fn digits_at(digits: &Array<u32>, #[comptime] rank: usize) -> CoordsDyn {
-    let mut at = CoordsDyn::new();
-    #[unroll]
-    for p in 0..rank {
-        at.push(digits[p]);
-    }
-    at
-}
-
-/// Decode the `c`-th destination line of the source line at `digits` (`sw` values wide) and
-/// write it: every index replaced by its table entry, the line scaled at its first value.
-#[cube]
-fn land_chunk<T: Numeric, VW: Size>(
-    out: &mut MaskedMut<'_, Vector<T, VW>, CoordsDyn>,
-    decode: &Memory<T>,
-    digits: &Array<u32>,
-    stored: Vector<T, VW>,
-    #[comptime] c: usize,
-    #[comptime] sw: usize,
-    #[comptime] space: Space,
-    #[comptime] kept: Vec<bool>,
-    #[comptime] looked_up: bool,
-) {
-    let vw = VW::value();
-    let rank = comptime!(space.rank());
-    // An index names its table entry before anything scales it.
-    let decoded = if comptime!(looked_up) {
-        let mut entries = Vector::<T, VW>::empty();
-        #[unroll]
-        for j in 0..vw {
-            let index = u32::cast_from(stored.extract(j));
-            entries.insert(j, T::cast_from(decode.codebook.entry(index)));
-        }
-        entries
-    } else {
-        stored
-    };
-    // The chunk's first value: where it is written (its innermost counted in the destination's
-    // lines) and where its scales are looked up.
-    let first = digits[comptime!(rank - 1)] * comptime!(sw as u32) + comptime!((c * vw) as u32);
-    let mut write_at = CoordsDyn::new();
-    let mut coords = Coords::<u32>::new();
-    #[unroll]
-    for p in 0..rank {
-        if comptime!(p == rank - 1) {
-            write_at.push(first / comptime!(vw as u32));
-            coords.push(first);
-        } else {
-            if comptime!(kept[p]) {
-                write_at.push(digits[p]);
-            }
-            coords.push(digits[p]);
-        }
-    }
-    let scale = decode.factor.at_coords(&coords, space);
-    out.write(write_at, decoded * Vector::<T, VW>::cast_from(scale));
+/// What a decoding copy from `src`, read in `load`s, into `dst` (written `vw` wide) rests on.
+/// `varies` is whether the scales vary along the destination's innermost axis.
+fn check_decoding_copy(src: &Space, dst: &Space, load: &VectorTile, vw: usize, varies: bool) {
+    assert!(
+        src.axes().all(|axis| !src.is_dynamic(axis)),
+        "Tile::copy_from: a decoding copy reads its window through the values' own axes, which \
+         needs their extents at expansion; this window spans a dynamic axis. Copy a region a level \
+         cuts to (a stage, a leaf) rather than the whole dynamic tile"
+    );
+    assert!(
+        src.narrows_to(dst),
+        "Tile::copy_from: a decoding copy writes the box it reads, and {src:?} does not narrow to \
+         {dst:?} by dropping one-wide axes"
+    );
+    // A destination line is `vw` consecutive values along its innermost axis, so it sits inside
+    // one load only where that is the load's finest axis and its extent there holds whole lines.
+    let along = dst.axis_at(dst.rank() - 1);
+    let &(finest, run) = load
+        .extents()
+        .first()
+        .expect("a load holds at least one value");
+    assert!(
+        vw == 1 || (finest == along && run.is_multiple_of(vw)),
+        "Tile::copy_from: a decoding copy reads each destination line out of one load, and a \
+         {vw}-wide line along {along:?} does not sit inside a load of {:?}",
+        load.extents()
+    );
+    // One scale a destination line, at its first value.
+    assert!(
+        vw == 1 || !varies,
+        "Tile::copy_from: a destination line runs {vw} values along {along:?}, which the scales \
+         vary along, so one line lies under several scales; write the destination one value a \
+         line, or omit {along:?} from the scales"
+    );
 }

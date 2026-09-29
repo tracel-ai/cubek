@@ -1,6 +1,5 @@
-//! N-D contraction dispatch for multiple contracted axes, projected operands, and procedural
-//! filters. The execution schedules live separately because their opposite loop orders are their
-//! principal performance invariant.
+//! N-D contraction dispatch for multiple contracted axes, projected operands and procedural
+//! filters.
 
 use cubecl::prelude::*;
 
@@ -9,41 +8,29 @@ use super::{coords, nd, separable};
 use super::super::shape::ContractShape;
 use crate::*;
 
-/// How the lhs varies over the accumulator's axes, which is what decides how much one read of
-/// it covers.
-///
-/// The outer product the nest is written around holds only in the first case; the other two are
-/// what a gathered or batched operand degenerates to, and they differ in whether one read still
-/// covers a whole cell.
+/// How the lhs varies over the accumulator's innermost axis.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LhsRole {
-    /// Free of the accumulator's innermost axis, so one read serves every cell of a row.
+    /// Free of the column: one read serves every cell of a row.
     FreeOfColumn,
-    /// Lined *along* that axis: the line it reads is the cell, every unit a different column,
-    /// and there is no `K` component to extract. What a batched contraction needs -- an axis
-    /// every operand spans, like a depthwise convolution's channel.
+    /// Lined along the column: the line it reads is the cell.
     LinedAlongColumn,
-    /// Spans that axis without lining along it, so the value differs cell by cell and the
-    /// rank-1 update degenerates to a per-cell `fma`.
+    /// Spans the column without lining along it: read per cell.
     PerCell,
 }
 
-/// The same for the rhs, over the row the outer product assumes it is free of.
+/// How the rhs varies over the accumulator's row.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum RhsRole {
-    /// Free of the row: its `nr` lines are read once per step and reused down every row.
+    /// Free of the row: its `nr` lines are reused down every row.
     FreeOfRow,
-    /// Varies down the rows, but still holds for a whole row of cells.
+    /// Varies down the rows but holds for a whole row of cells.
     PerRow,
     /// Varies cell by cell.
     PerCell,
 }
 
 /// The accumulator scope at which one factor's complete tap walk is computed and cached.
-///
-/// The same question a memory-backed operand answers through
-/// [`Tile::invariant_over`](crate::Tile): the axes a value does not vary over are the ones one
-/// read serves, so how far the read lifts. A factor answers through its recipe, not a projection.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum FactorReuse {
     /// Once for the entire accumulator block.
@@ -68,24 +55,17 @@ impl FactorReuse {
     }
 }
 
-/// The gather-specific half of a contraction's comptime geometry, over the
-/// [`ContractShape`] every schedule shares.
-///
-/// Gather coordinates are resolved many times in the generated nest. Keeping the facts that
-/// define that geometry together prevents a call site from accidentally mixing spaces, reduce
-/// axes, or block dimensions derived under different widths.
+/// The gather-specific comptime geometry over the shared [`ContractShape`].
 #[derive(Clone, Debug)]
 pub(crate) struct GatherProblem {
     pub block: ContractShape,
     pub lhs_space: Space,
     pub rhs_space: Space,
-    /// The lhs's stated factorization, one factor per contracted axis. `None` for an lhs that
-    /// answers only as a whole, which takes the general schedule.
+    /// The lhs's factor count, one per contracted axis; `None` takes the general schedule.
     pub factors: Option<usize>,
     /// Factor-local normalization requested by the procedural lhs.
     pub normalization: Option<Normalization>,
-    /// The separable walk's weight count: one per tap of each factor, summed rather than
-    /// multiplied out.
+    /// The separable walk's weight count: taps of each factor, summed.
     pub taps: usize,
     /// Where each factor's taps start in that walk.
     pub offsets: Vec<usize>,
@@ -110,9 +90,7 @@ impl GatherProblem {
     ) -> Self {
         let rank = block.space.rank();
         let col = block.space.axis_at(rank - 1);
-        // A separable lhs is never col-lined however it states its axes: its factors answer one
-        // scalar at a time, so no read of it covers a cell, and it takes the schedule below that
-        // evaluates the weights per cell.
+        // A separable lhs answers one scalar at a time, so it is never col-lined.
         let lhs_role = match lhs.contains(col) {
             false => LhsRole::FreeOfColumn,
             true if factors.is_none() && lhs.axis_at(lhs.rank() - 1) == col => {
@@ -209,9 +187,8 @@ impl GatherProblem {
     }
 }
 
-/// A rectangular source mask factorizes only when no physical input axis is moved by two
-/// contracted axes. Output axes may share the same physical axis: they are fixed for one cached
-/// tap walk and therefore do not couple factor sums.
+/// Whether a rectangular source mask factorizes: no physical input axis is moved by two
+/// contracted axes.
 fn assert_factorized_mask(rhs: &Projection, reduce: &[Axis]) {
     for (f, &axis) in reduce.iter().enumerate() {
         if !rhs.logical_axes().contains(&axis) {
@@ -250,20 +227,8 @@ fn masked_bound_depends_on(
         })
 }
 
-/// N-D variant of [`direct::contract`](super::direct::contract) for operations with
-/// multiple contracted axes or projected operands.
-///
-/// The outer product is an optimization, not the contraction's definition: it holds only while
-/// the lhs is free of the accumulator's column and the rhs of its row, so one read of each serves
-/// a whole row or column of cells.
-///
-/// A resampling or procedural operand's value depends on the output position, so one spanning
-/// the other's free axis is read at the cell and the rank-1 update degenerates to a per-cell
-/// `fma`. Only the reads change; the contraction and the register block across `kc` do not.
-///
-/// A *separable* lhs takes its own schedule: one factor per contracted axis lets the weights be
-/// walked in 1-D per cell, not over their Cartesian product, where a procedural filter's cost is.
-/// Rank is the recipe's, so one stated factor takes it too: its row cache saves `nr` evaluations.
+/// N-D variant of [`direct::contract`](super::direct::contract) for multiple contracted axes or
+/// projected operands; a separable lhs takes its own schedule.
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory<E>,
@@ -277,8 +242,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
-    // `step_served` only returns 1 for an rhs lining along the accumulator, where it already
-    // refused anything but a matched pair or a scalar sink, so the division is exact.
+    // `step_served` refused anything but a matched pair or scalar sink, so this divides exactly.
     comptime!(assert!(
         rw == aw || aw == 1,
         "contract gather: a rhs staged wider than its sink spreads its units across scalar cells, \
@@ -315,8 +279,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     ));
 
     if comptime!(factors.is_some()) {
-        // A separable lhs is a scalar procedural weight, so it never lines along the contracted
-        // axis and its step serves one value. The block is then the accumulator's own width.
+        // A separable lhs serves one value a step; the block is the accumulator's width.
         comptime!(assert!(
             contracted_per_step == 1 && lw == 1,
             "contract gather: a separable lhs needs scalar weights contracted_per_step one value a step"
@@ -325,8 +288,6 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         let size!(A) = aw;
         separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
     } else if comptime!(contracted_per_step > 1) {
-        // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a
-        // folded step, `aw`-wide neighbouring cells otherwise.
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
         nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config, semiring);
@@ -383,7 +344,6 @@ mod tests {
         assert_eq!((block.mr, block.nr), (4, 2));
         assert_eq!(block.batch_extents(), Vec::<usize>::new());
         assert_eq!(block.matrices(), 1);
-        // `mr * nr` lines of `contracted_per_step * aw`.
         assert_eq!(block.scalars(), 32);
     }
 
@@ -393,8 +353,7 @@ mod tests {
         problem(Some(3), 1);
     }
 
-    /// The count is checked whatever it is: a rank-one factorization against a two-axis reduction
-    /// is the same mismatch, and it now reaches the separable schedule rather than falling back.
+    /// A rank-one factorization of a two-axis reduction is rejected.
     #[test]
     #[should_panic(expected = "one factor per contracted axis")]
     fn problem_rejects_a_rank_one_factorization_of_a_two_axis_reduction() {
@@ -453,8 +412,6 @@ mod tests {
     #[test]
     fn a_masked_bound_blocks_only_the_unsafe_column_hoist() {
         let (lhs, rhs, acc) = spaces();
-        // K0's checked carrier also moves with N. K1 has its own carrier, while the final N
-        // carrier satisfies the separable reader's innermost-axis requirement.
         let map = vec![
             PhysicalAxisMap::affine(&[(K0, 1), (N, 1)]),
             PhysicalAxisMap::of(K1),
@@ -525,15 +482,13 @@ mod tests {
         );
     }
 
-    /// An unfactorized lhs states no factor count, so the reduction's rank is unconstrained.
+    /// An unfactorized lhs leaves the reduction's rank unconstrained.
     #[test]
     fn problem_accepts_an_unfactorized_lhs() {
         assert_eq!(problem(None, 4).factors, None);
     }
 
-    /// Every operand spanning one axis, with the lhs lining along it, is what a batched
-    /// contraction is -- a depthwise convolution's channel. `lhs` names how the lhs orders its
-    /// own axes, which is what separates lining along the column from merely spanning it.
+    /// A batched problem whose lhs spans one axis with every operand, in the given order.
     fn batched(lhs: &[(Axis, usize)], factors: Option<usize>, width: usize) -> GatherProblem {
         let lhs = Space::new(lhs);
         let rhs = Space::new(&[(M, 4), (K0, 2), (K1, 3), (N, 8)]);
@@ -552,8 +507,7 @@ mod tests {
         )
     }
 
-    /// An lhs lined along the accumulator's column reads its line *as* the cell, with no `K`
-    /// component left to extract -- so it is exempt from lining along the contracted axis.
+    /// A col-lined lhs is read as the cell.
     #[test]
     fn a_col_lined_lhs_is_read_as_the_cell() {
         let problem = batched(&[(K0, 2), (K1, 3), (N, 8)], None, 4);
@@ -562,8 +516,7 @@ mod tests {
         assert_eq!(problem.rhs, RhsRole::PerCell);
     }
 
-    /// Spanning the column without lining along it is the other case: the value differs cell by
-    /// cell, so one read cannot cover a line of them and the accumulator has to be scalar.
+    /// An lhs spanning the column off its line is read per cell.
     #[test]
     fn an_lhs_spanning_the_column_off_its_line_is_read_per_cell() {
         let problem = batched(&[(K0, 2), (N, 8), (K1, 3)], None, 1);
@@ -571,8 +524,7 @@ mod tests {
         assert_eq!(problem.lhs, LhsRole::PerCell);
     }
 
-    /// A separable lhs answers one scalar at a time, so no read of it covers a cell and it takes
-    /// the per-cell schedule whatever its axis order says.
+    /// A separable lhs is never col-lined.
     #[test]
     fn a_separable_lhs_is_never_col_lined() {
         let problem = batched(&[(K0, 2), (N, 8), (K1, 3)], Some(2), 1);

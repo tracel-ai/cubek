@@ -1,22 +1,11 @@
 //! The `mr × nr` register block: seed it from the accumulator, contract into it, commit it back.
-//!
-//! The block is a parameter, not owned here, which is the only difference between its two
-//! callers: the memory-backed nest ([`contract`](super::contract)) seeds a local one and commits
-//! it back per visit, while a promoted [`RegisterData`] *is* the accumulator across the walk.
 
 use cubecl::prelude::*;
 
 use crate::*;
 
-/// `c += lhs · rhs` over the block, one line of the contraction at a time.
-///
-/// Each factor is its values' matrix and the scales riding it, looked up at every line's own
-/// coordinates ([`FactorReader`]): a factor carrying none goes through as it lies, and the walk
-/// is the same either way — the lines of the contraction, in order.
-///
-/// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line along the
-/// contracted axis and the block's units are one cell's partials, folded by [`commit`]. At one, the
-/// rhs lines along the accumulator and the lhs is read unit by unit (comptime under `component_fanout`).
+/// `c += lhs · rhs` over the block, one line of the contraction at a time, each factor times its
+/// scales.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
@@ -36,16 +25,13 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 ) {
     let mut b = Array::<Vector<E, V>>::new(nr);
     let folded = comptime!(contracted_per_step > 1);
-    // Values one line holds: a folded step takes the whole line at once, an unfolded one a unit of
-    // it per step.
     let width = comptime!(match folded {
         true => contracted_per_step,
         false => lw,
     });
     let lines = comptime!(kc / width);
     let tail = comptime!(kc % width);
-    // Units as constants, which is what lets the backend fold an `mr`-row fan-out's repeated line
-    // reads into one. Where the caller did not ask for that, the unit is the walk's own index.
+    // Constant units let the backend fold an `mr`-row fan-out's repeated line reads into one.
     let fixed = comptime!(folded || (component_fanout && lw > 1) || lw == 1);
 
     for line in 0..lines {
@@ -111,8 +97,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         }
     }
 
-    // A line width that does not divide `kc` leaves a partial last line. Its unit count is
-    // comptime too, so the tail is straight-line code rather than a second, dynamic walk.
+    // A partial last line, unrolled at comptime.
     #[unroll]
     for unit in 0..tail {
         rank1_update::<E, EL, L, ER, V>(
@@ -135,15 +120,8 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     }
 }
 
-/// One step `c += outer(A[:, k], B[k, :])`, at scalar contraction step `k` off the `k_line`-th
-/// K-line of each lhs row, each line under the scale covering it.
-///
-/// At `contracted_per_step > 1` both reads are whole lines off the contracted axis, which is why
-/// the rhs is addressed `(n, k_line)` there and `(k, n)` otherwise.
-///
-/// `fixed` names the component to take when the walk unrolled its units, so `extract` is a
-/// constant and the backend folds the fan-out's `mr` repeated line reads into one; `None` takes
-/// `unit` at runtime. `k_line` stays a parameter so each unit body sees a loop-invariant index.
+/// One step `c += outer(A[:, k], B[k, :])` off the `k_line`-th line, each line under its scale.
+/// `fixed` is the comptime component to extract; `None` takes `unit` at runtime.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
@@ -164,18 +142,13 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] semiring: Semiring,
 ) {
     if comptime!(contracted_per_step > 1) {
-        // The rhs lines along the contraction with the lhs.
         #[unroll(unroll)]
         for n in 0..nr {
             let pos = (n as u32, k_line);
-            // The value promotes to the accumulator's element before its scale folds in: a
-            // scale is a factor of the term, and a term is formed in `E`. Folding it in the
-            // operand's own element would round the scale to that element (an `i8` store
-            // would see `0.5` as `0`) and wrap the product it forms.
+            // Promote to `E` before scaling so an integer operand doesn't round the scale or wrap.
             b[n] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(rhs.read(pos)), pos);
         }
     } else {
-        // The rhs lines along the accumulator.
         #[unroll(unroll)]
         for n in 0..nr {
             let pos = (k as u32, n as u32);
@@ -195,17 +168,13 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         };
         #[unroll(unroll)]
         for n in 0..nr {
-            // One step of the semiring, a single `fma` for the ordinary one: `+= a * b` would
-            // lower to a separate mul + dependent add (no fast-math contraction on the CPU
-            // backend), doubling the FP instruction count and serializing the accumulate.
+            // A single fma; `+= a * b` would lower to a mul and a dependent add.
             c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
         }
     }
 }
 
-/// What [`seed`] and [`commit`] both need to hold before they spread a block column's units across
-/// several sink cells: the units mean one thing at a time, and a spread one addresses cells the
-/// accumulator serves singly.
+/// Checks shared by [`seed`] and [`commit`] before spreading a block column across sink cells.
 fn assert_spread(contracted_per_step: usize, spread: usize, accumulator_width: usize, who: &str) {
     assert!(
         contracted_per_step == 1 || spread == 1,
@@ -219,25 +188,13 @@ fn assert_spread(contracted_per_step: usize, spread: usize, accumulator_width: u
     );
 }
 
-/// Whether a spread block's units must be tested against the sink's extent before they touch it.
-/// The N-D nest rounds `nr` up, so the last column's spare units address cells past `cols` exactly
-/// when `spread` does not divide it, and an unchecked [`AccumulateView`] writes straight through.
-///
-/// The nest reads this too: those same spare units address a column past the *operands'* last
-/// line, so a walk that has dropped its guard would read one line outside them.
+/// Whether a spread block's units must be bounds-checked against the sink's `cols`.
 pub(crate) fn spread_guard(spread: usize, cols: usize) -> bool {
     spread > 1 && !cols.is_multiple_of(spread)
 }
 
-/// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the steps
-/// never touch memory. The algebra is the view's, stated where it was built.
-///
-/// Where a step consumes more than one, the block's units are partials of one cell, so its value
-/// seeds unit 0 alone and the rest start at the identity.
-///
-/// At `spread > 1` they instead hold neighbouring cells of a scalar sink: a padded shared-memory
-/// operand serves whole lines even when source and sink are scalar, so each block column gathers
-/// `spread` sink cells. `cols` is the sink's innermost extent; see [`spread_guard`] for overhang.
+/// Seed the `mr × nr` register block from the accumulator. Folded partials seed unit 0 and start
+/// the rest at the identity; at `spread > 1` each block column gathers `spread` sink cells.
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
@@ -264,8 +221,6 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
         for n in 0..nr {
             if comptime!(spread > 1) {
                 let base = (n as u32).times(comptime!(spread as u32));
-                // The spare units of an overhanging last column have no cell to seed from, and
-                // the identity they keep contributes nothing to the fold.
                 let mut units = Vector::<E, V>::cast_from(Monoid::identity::<E>(monoid));
                 #[unroll]
                 for l in 0..spread {
@@ -295,12 +250,8 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     c
 }
 
-/// The twin of [`seed`]: commit the block back once the contraction is folded into it, first
-/// collapsing units holding one cell's partials (`contracted_per_step > 1`) or scattering units
-/// holding neighbours (`spread > 1`).
-///
-/// Through [`AccumulateView`], so a unit-split accumulator reduces across units on the way out
-/// rather than the leaf knowing it was split.
+/// Commit the block back through the accumulator, collapsing folded partials or scattering
+/// spread units.
 #[cube]
 pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
@@ -335,8 +286,6 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
             let cell = c[i * nr + n];
             if comptime!(spread > 1) {
                 let base = (n as u32).times(comptime!(spread as u32));
-                // One commit per unit, which the assert above holds to an unfolded share: each
-                // is a bare write, not `spread` plane folds where the plain path does one.
                 #[unroll]
                 for l in 0..spread {
                     let col = base.plus(comptime!(l as u32));

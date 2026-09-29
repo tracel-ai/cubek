@@ -1,9 +1,8 @@
-//! An identity and an associative operation: what every merge of values runs under.
+//! An identity and an associative operation.
 
 use cubecl::prelude::*;
 
-/// What a monoid asks of the values it combines: ordering and arithmetic. Every bound here is
-/// one the four operations need, and the set stays well below `Numeric`, which `Vector` does not have.
+/// The ordering and arithmetic a [`Monoid`] needs of the values it combines.
 pub trait Carrier:
     CubePartialOrd
     + CubeAdd
@@ -23,8 +22,7 @@ impl<T> Carrier for T where
 {
 }
 
-/// An identity and an associative operation, taken by everything that merges values: the plane
-/// reductions, the register nests, the reduce verb, and the drain that combines a plane's partials.
+/// An identity and an associative operation, used by everything that merges values.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Monoid {
     /// `acc + val`, identity `0`.
@@ -39,9 +37,7 @@ pub enum Monoid {
 
 #[cube]
 impl Monoid {
-    /// This monoid's identity element, which a masked read past an operand's valid extent must
-    /// return instead of a shared zero: zero is `Sum`'s identity but biases `Max` and `Min` toward
-    /// it and annihilates `Prod`.
+    /// This monoid's identity element; a masked read past an operand's extent must return it.
     pub fn identity<E: Numeric>(#[comptime] monoid: Monoid) -> E {
         match comptime!(monoid) {
             Monoid::Sum => E::from_int(0),
@@ -51,8 +47,7 @@ impl Monoid {
         }
     }
 
-    /// `lhs ∗ rhs`, this monoid's operation: pointwise on vectors, which form the same monoid
-    /// component by component.
+    /// `lhs ∗ rhs`, pointwise on vectors.
     fn combine_of<T: Carrier>(lhs: T, rhs: T, #[comptime] monoid: Monoid) -> T {
         match comptime!(monoid) {
             Monoid::Sum => lhs + rhs,
@@ -62,8 +57,7 @@ impl Monoid {
         }
     }
 
-    /// `v₀ ∗ v₁ ∗ … ∗ v_{width-1}`: a vector's first `width` components combined into one value,
-    /// starting from the identity.
+    /// A vector's first `width` components combined into one value.
     pub fn reduce<E: Numeric, N: Size>(
         v: Vector<E, N>,
         #[comptime] width: usize,
@@ -93,13 +87,7 @@ impl Monoid {
     }
 }
 
-/// `monoid.combine(a, b)`, the form call sites use.
-///
-/// Written out rather than generated: `#[cube]` hangs a method's expansion on `{Name}Expand`,
-/// which a comptime-only value lacks, so the operation is an associated function above and this
-/// pair forwards to it (the plain half for unexpanded `#[cube]` bodies, `__expand` for the macro).
-///
-/// [`identity`](Monoid::identity) needs no pair: its call is fully comptime and folds on the host.
+/// `monoid.combine(a, b)`, hand-written since a comptime-only type has no `{Name}Expand`.
 impl Monoid {
     pub fn combine<T: Carrier>(self, lhs: T, rhs: T) -> T {
         Monoid::combine_of::<T>(lhs, rhs, self)
@@ -115,10 +103,7 @@ impl Monoid {
     }
 }
 
-/// An algebra is comptime-only: a kernel reads one to decide which instruction to emit, never
-/// holds one in a register. Expanding as itself lets a [`CubeType`] carry one in a
-/// `#[cube(comptime)]` field. Each impl below is one `CubeType` requires of an expand type, the
-/// same seven cubecl writes by hand for `MatrixLayout`.
+/// Makes a comptime-only type expand as itself.
 macro_rules! comptime_only {
     ($ty:ty) => {
         impl CubeType for $ty {
@@ -141,7 +126,7 @@ macro_rules! comptime_only {
 
         impl ExpandTypeClone for $ty {
             fn clone_unchecked(&self) -> Self {
-                *self
+                Clone::clone(self)
             }
         }
 

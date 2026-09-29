@@ -654,7 +654,8 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
 
 /// **The scales read as a line.** Their innermost axis is `NB`, the block index, an axis they
 /// actually vary over, so a read of four serves four *different* scales covering four blocks of
-/// columns. A value line's component is its ordinal along the shared edge, constant across the block.
+/// columns. A value line's component is its ordinal along the shared edge, constant across the
+/// block.
 #[test]
 fn scales_are_served_several_at_a_time() {
     let (rows, blocks, inside, depth, units) = (4, 4, 2, 8, 4);

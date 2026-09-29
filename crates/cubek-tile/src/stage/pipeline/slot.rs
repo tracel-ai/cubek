@@ -1,7 +1,4 @@
-//! The [`Slot`] slot: a [`Payload`](crate::stage::pipeline::payload::Payload) plus the [`Meeting`]
-//! sequencing its fill against its read. Generic slot mechanics only: the producer/consumer
-//! acquire/release and the final publish; what a payload is made of and how it is brought to a
-//! region are the payload's own.
+//! [`Slot`]: a payload plus the [`Meeting`] sequencing its fill against its read.
 
 use cubecl::prelude::*;
 
@@ -9,23 +6,19 @@ use crate::*;
 
 pub(crate) const FIRST_SLOT: usize = 0;
 
-/// One slot of a buffered walk: its payload `T` and the [`Meeting`] sequencing fill vs read.
-/// Generic over `T` and how many operands it holds, so the slot knows nothing of the operation; it
-/// hands out a synchronized `&mut T` to fill (`write`) and a synchronized `&T` to consume (`read`).
+/// One slot of a buffered walk: payload `T` and the rendezvous sequencing fill against read.
 #[derive(CubeType)]
 pub struct Slot<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Meeting,
-    /// When each operand the payload `T` holds is filled, in the order `T` holds them, so the
-    /// arity is the payload's and nothing here has to name a left or a right.
+    /// When each operand of `T` is filled, in the order `T` holds them.
     #[cube(comptime)]
     pub(crate) refills: Vec<Refill>,
 }
 
 #[cube]
 impl<T: CubeType> Slot<T> {
-    /// Wrap an already-built payload and pipeline. (Split out so the tuple `T` never sits in a
-    /// struct-literal turbofish, which `#[cube]` can't parse; `Slot::<T>` can.)
+    /// Wrap an already-built payload and pipeline.
     pub(crate) fn wrap(data: T, pipeline: Meeting, #[comptime] refills: Vec<Refill>) -> Slot<T> {
         Slot::<T> {
             data,
@@ -40,22 +33,18 @@ impl<T: CubeType> Slot<T> {
         comptime!(self.refills.contains(&Refill::Once))
     }
 
-    /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`
-    /// slot rendezvouses on `sync_cube`; a lone-unit one does nothing.
-    ///
-    /// The first wait is on the parity `writes` was not born at, which a fresh mbarrier already
-    /// carries, so it passes straight through.
+    /// Producer acquire: wait until the slot is free; a `Plane` slot waits on `sync_plane`.
     #[allow(dead_code)] // Reached through its expand, from `Slot::fill` / `Slot::consume`.
     pub(crate) fn acquire_write(&self) {
         match &self.pipeline {
             Meeting::Barrier { empty, writes, .. } => empty.wait_parity(*writes ^ 1),
             Meeting::Cube => sync_cube(),
+            Meeting::Plane => sync_plane(),
         }
     }
 
-    /// Producer release publishes a barrier slot after its required arrivals, any TMA bytes
-    /// declared by [`Meeting::fill`] and any async copies it issued land. Which units arrive is
-    /// the slot's to say ([`Meeting::producers`]).
+    /// Producer release: publish the fill, async copies included ([`Meeting::producers`] say
+    /// who arrives).
     #[allow(dead_code)] // Reached through its expand, from `Slot::fill` / `Slot::consume`.
     pub(crate) fn release_write(&mut self) {
         match &mut self.pipeline {
@@ -77,22 +66,20 @@ impl<T: CubeType> Slot<T> {
                 }
                 *writes ^= 1;
             }
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
-    /// Consumer acquire: wait the slot's fill (`full`, RAW) for `Barrier`; nothing for `Cube`
-    /// (already rendezvoused in `write`).
+    /// Consumer acquire: wait for the slot's fill.
     #[allow(dead_code)] // Reached through its expand, from `Slot::fill` / `Slot::consume`.
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {
             Meeting::Barrier { full, reads, .. } => full.wait_parity(*reads),
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
-    /// Consumer release: arrive `empty` (free the slot) and flip the read parity for `Barrier`;
-    /// nothing for `Cube`.
+    /// Consumer release: free the slot.
     #[allow(dead_code)] // Reached through its expand, from `Slot::fill` / `Slot::consume`.
     pub(crate) fn release_read(&mut self) {
         match &mut self.pipeline {
@@ -100,16 +87,16 @@ impl<T: CubeType> Slot<T> {
                 empty.arrive();
                 *reads ^= 1;
             }
-            Meeting::Cube => {}
+            Meeting::Cube | Meeting::Plane => {}
         }
     }
 
-    /// Publish this slot's last fill when no successor fill's rendezvous will (the walk's final
-    /// regions). Only a collective `Cube` slot needs it; callers invoke this immediately before
+    /// Publish this slot's last fill where no later fill will; call right before
     /// [`consume`](Slot::consume).
     pub fn publish(&self) {
         match &self.pipeline {
             Meeting::Cube => sync_cube(),
+            Meeting::Plane => sync_plane(),
             Meeting::Barrier { .. } => {}
         }
     }

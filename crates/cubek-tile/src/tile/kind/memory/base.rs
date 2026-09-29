@@ -1,6 +1,4 @@
-//! What a [`Memory`] is: the erased buffer it addresses ([`Backing`]), what its values mean
-//! ([`Store`]), and how it may be touched ([`Access`] and the comptime flags qualifying a
-//! read or a write).
+//! What a [`Memory`] is: its [`Backing`], its [`Store`], and how it may be touched ([`Access`]).
 
 use cubecl::{
     prelude::*,
@@ -9,139 +7,128 @@ use cubecl::{
 
 use crate::*;
 
-/// A lifetime-erased buffer, how to address it (`layout`), and which part of it this
-/// tile is looking at ([`window`](Window)). The layout is fixed at construction, so a staged smem
-/// sub-tile keeps addressing its whole buffer after [`at`](Tile::at) windows it down.
+/// A lifetime-erased buffer, its fixed `layout`, and the window this tile looks at.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Memory<T: Numeric> {
-    /// Which memory the bytes sit in: what a barrier orders and where a fill may write straight.
+pub(crate) struct Memory<T: Numeric> {
+    /// Which memory the bytes sit in.
     #[cube(comptime)]
     pub(crate) address: AddressSpace,
     /// What the bytes are and mean.
     pub(crate) store: Store<T>,
-    /// How a logical coordinate becomes a buffer offset. Fixed at construction.
+    /// How a logical coordinate becomes a buffer offset; fixed at construction.
     pub(crate) layout: BufferLayout,
-    /// The region of the *physical* buffer this tile covers; narrowed by [`at`](Tile::at).
+    /// The region of the physical buffer this tile covers; narrowed by [`at`](Tile::at).
     pub(crate) window: Window,
-    /// How the tile's logical axes address the buffer's physical ones:
-    /// [`direct`](Projection::direct) for every non-gather operand, an affine map for a gather.
-    /// Fixed at construction, like the layout: `at` moves the window, never the mapping.
+    /// How the tile's logical axes address the buffer's physical ones; fixed at construction.
     #[cube(comptime)]
     pub(crate) projection: Projection,
-    /// What [`projection`](Self::projection) only knows in the kernel: its runtime coefficients and
-    /// the phase its window origin sits at. [`integral`](RuntimeMap::integral) for every operand
-    /// but a runtime-strided or fractionally scaled gather.
+    /// The runtime half of [`projection`](Self::projection): its coefficients and window phase.
     pub(crate) map: RuntimeMap,
-    /// The runtime half of the projection's constant terms: one signed value per
-    /// [`Offset::Dynamic`](crate::Offset) axis, signed since a padding starts before the buffer.
-    /// Not in [`map`](Self::map): it only places the top [`window`](Self::window).
+    /// The runtime constant terms of the projection, one signed value per dynamic-offset axis.
     pub(crate) offsets: Coords<i32>,
-    /// The window origin's offset through the layout, accumulated across [`at`](Tile::at)s rather
-    /// than re-derived: each descent shifts by a *comptime* edge, so [`step_offset`] folds to a
-    /// multiply-add, where re-deriving it would divide per [`window_slice`](Memory::window_slice).
+    /// The window origin's line offset, accumulated across [`at`](Tile::at)s.
     pub(crate) window_start: u32,
-    /// How this store may be touched. All comptime, all decided at construction.
+    /// How this store may be touched; decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
-    /// What the plane's units are to these cells, stamped across [`at`](Tile::at)s, since the
-    /// level that spreads an axis is only known on the way down.
+    /// What the plane's units are to these cells, stamped across [`at`](Tile::at)s.
     #[cube(comptime)]
     pub(crate) unit_share: UnitShare,
-    /// What one instance holds of these cells, stamped across [`at`](Tile::at)s like
-    /// [`units`](Self::units), since only each level's whole space still has the axis this
-    /// operand's projection dropped. Read by accumulators only; meaningless (`Partial`) elsewhere.
+    /// What one instance holds of these cells; read by accumulators only.
     #[cube(comptime)]
     pub(crate) split_share: SplitShare,
-    /// What the accumulation being lowered starts from ([`InitFrom`]), a claim about what the
-    /// caller asked for, not the bytes: [`Identity`](InitFrom::Identity) where [`Tile::mm`] or
-    /// [`Tile::reduce_axis`] proves its leaf visits each cell once, else [`Cell`](InitFrom::Cell).
+    /// What the accumulation being lowered starts from ([`InitFrom`]).
     #[cube(comptime)]
     pub(crate) init_from: InitFrom,
-    /// Where this tile's cells sit inside the buffer they were *filled from*. `None` for a tile
-    /// reading its source directly ([`window`](Self::window) is the source one); `Some` only for
-    /// a gathered stage, whose fill replaced out-of-bounds samples its own window cannot name.
+    /// Where this tile's cells sit in the buffer they were filled from; `Some` only for a gathered
+    /// stage.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
-    /// Whether this operand lands on its way to a tensor-core fragment: unpacked and scaled by the
-    /// plane's units into plane-owned shared memory ([`Tile::landed`](crate::Tile::landed)).
-    /// Opened by [`with_landing`](Tile::with_landing); without one the leaf takes it unscaled only.
+    /// Whether this operand lands on its way to a tensor-core fragment.
     #[cube(comptime)]
     pub(crate) lands: bool,
-    /// The scales these values carry, attached by [`Tile::mul`](crate::Tile::mul) and read where
-    /// the values are read. Empty is an operand carrying none.
+    /// The scales these values carry ([`Tile::mul`](crate::Tile::mul)); empty when none.
     pub(crate) factor: Factor,
-    /// The table these values index, attached by [`Tile::lookup`](crate::Tile::lookup) and read
-    /// only where the kernel copies them. Empty is values that are numbers.
+    /// The table these values index ([`Tile::lookup`](crate::Tile::lookup)); empty when none.
     pub(crate) codebook: Codebook,
 }
 
-/// Which memory a [`Memory`] tile's buffer sits in. The payload is the same either way; the
-/// difference is three facts about it: a `sync_cube()` orders shared accesses only, a shared
-/// buffer is allocated to exactly its tile and so never overhangs, and a shared stage remembers
-/// the window it was filled from.
+/// Which memory a [`Memory`] tile's buffer sits in.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum AddressSpace {
     Global,
     Shared,
 }
 
-/// What backs a [`Memory`]'s values, and what can be done with them there.
-///
-/// A [`Buffer`](Backing::Buffer) has an address: it can be read back, sliced, re-typed, staged or
-/// handed to a tensor-map load. The erased two end the walk in a *call* (a generated epilogue or
-/// producer), so every address-shaped operation on them is a comptime panic, not a fallback.
-///
-/// Each erased backing serves one layout-addressed view: [`write_view`](Memory::write_view) for a
-/// [`WriteCall`](Backing::WriteCall) and [`read_view`](Memory::read_view) for a
-/// [`ReadCall`](Backing::ReadCall).
-///
-/// The visibility markers carry the direction. A destination is written and
-/// never read, a producer read and never written, and neither can be handed
-/// where the other belongs without the type saying so.
+/// What backs a [`Memory`]'s values: an addressable buffer or an erased call.
+/// Address-shaped operations on a call are a comptime panic.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 #[allow(dead_code)] // Built through the derived `new_*` expand constructors.
 pub(crate) enum Backing<T: Numeric> {
-    /// Bytes this kernel addresses directly. Scalar-typed by Rust-side erasure
-    /// only: the real binding/alloc element is `Vector<T, vector_size>`, so
-    /// re-grouping to lines at that width is a no-op.
+    /// Bytes this kernel addresses directly, grouped into lines at `vector_size`.
     Buffer(Box<[T]>),
-    /// A destination that is not memory: written through its layout and never read,
-    /// which is what [`WriteOnly`] states. See [`ErasedTensor`].
+    /// A write-only destination that is not memory ([`ErasedTensor`]).
     WriteCall(ErasedTensor<T, WriteOnly>),
-    /// A producer that is not memory: read through its layout and never written,
-    /// which is what [`ReadOnly`] states. The fuse-on-read twin of
-    /// [`WriteCall`](Backing::WriteCall).
+    /// A read-only producer that is not memory.
     ReadCall(ErasedTensor<T, ReadOnly>),
 }
 
-/// What a [`Memory`]'s values are and mean: where they go, the width they group into lines at,
-/// and how a *stored* value becomes a *served* one where the buffer packs them.
+/// What a [`Memory`]'s values are: their backing, line width and packing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Store<T: Numeric> {
+pub(crate) struct Store<T: Numeric> {
     /// What backs the values.
     pub(crate) backing: Backing<T>,
-    /// Physical line size (`Vector<T, vector_size>`) of the destination, `1` when
-    /// unvectorized; held comptime so `size!` can read it.
+    /// Physical line size of the destination, `1` when unvectorized.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    /// How the buffer's values sit in it: whether a stored element *is* a served one, and what a
-    /// read has to unpack if it is not. Stated at construction, from the operand's spec
-    /// ([`TileSpec::packed`]), so no reader re-derives it.
+    /// How the buffer's values sit in it, from [`TileSpec::packed`].
     #[cube(comptime)]
     pub(crate) packing: Packing,
+    /// How the buffer is stored: its stated storage tiles, finest first
+    /// ([`TileSpec::stored_tiles`]); empty for a plain buffer and every stage. What one load of it
+    /// covers follows from these and the width ([`Tile::vector_tile`]).
+    #[cube(comptime)]
+    pub(crate) stored_tiles: Vec<(Axis, usize)>,
+}
+
+#[cube]
+impl<T: Numeric> Memory<T> {
+    /// What one vector load of this memory covers over a window spanning `space`: the stored
+    /// tiles that hold [`vector_size`](Store::vector_size) values, a run along the innermost axis
+    /// where none are stated ([`VectorTile::new`]).
+    pub(crate) fn vector_tile(&self, #[comptime] space: &Space) -> comptime_type!(VectorTile) {
+        let width = comptime!(self.store.vector_size);
+        comptime!(
+            VectorTile::new(
+                &self.store.stored_tiles,
+                space.axis_at(space.rank() - 1),
+                width
+            )
+            .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"))
+        )
+    }
 }
 
 #[cube]
 impl<T: Numeric> Store<T> {
+    /// A store whose buffer is laid down in rows, stored in no tiles: every stage.
+    pub(crate) fn untiled(
+        backing: Backing<T>,
+        #[comptime] vector_size: usize,
+        #[comptime] packing: Packing,
+    ) -> Store<T> {
+        Store::<T> {
+            backing,
+            vector_size,
+            packing,
+            stored_tiles: comptime!(Vec::new()),
+        }
+    }
+
     /// The bytes, for a destination that has an address.
-    ///
-    /// Every reader goes through here, so an erased backing meets one message
-    /// rather than a different confusion per call site.
-    // `Box<[T]>` is cubecl's owned-slice handle rather than a Rust box, and `&[T]` is a different
-    // kernel type with different operations (the re-typing and re-grouping every reader below
-    // does), so the lint's suggestion does not apply.
+    // `Box<[T]>` is cubecl's owned-slice handle, not a Rust box; `&[T]` is a different kernel type.
     #[allow(clippy::borrowed_box)]
     pub(crate) fn buffer(&self) -> &Box<[T]> {
         match &self.backing {
@@ -159,8 +146,7 @@ impl<T: Numeric> Store<T> {
         }
     }
 
-    /// Whether the values have an address: a buffer, rather than a call that stores or loads
-    /// them. Only an addressed store serves the slice-shaped paths ([`buffer`](Self::buffer)).
+    /// Whether the values have an address: a buffer, rather than a call.
     pub(crate) fn has_address(&self) -> comptime_type!(bool) {
         match &self.backing {
             Backing::Buffer(_) => comptime!(true),
@@ -185,37 +171,73 @@ impl<T: Numeric> Store<T> {
     }
 }
 
-/// How a [`Memory`] may be touched: whether the fill can write straight through, how the store
-/// handles overhang, and how a cooperative fill spreads. Plain data held comptime.
+/// How a [`Memory`] may be touched; plain comptime data.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Access {
-    /// Whether the window still covers the whole buffer (constructors yes, [`at`](Tile::at) no):
-    /// such a tile can be written in physical order.
+pub(crate) struct Access {
+    /// Whether the window still covers the whole buffer.
     pub whole: bool,
     pub overhang: Overhang,
     /// What a write here does to the cell it lands on.
     pub write: Write,
-    /// The launch's cube size (units per cube), `0` when unknown: a stage filled from this tile
-    /// emits its fill straight-line when it knows how many units share it.
-    pub units: usize,
-    /// What the storage tiles are to this window. [`at`](crate::Tile::at) carries it down and
-    /// turns [`Tiled`](Storage::Tiled) into [`Contiguous`](Storage::Contiguous) at the storage
-    /// tile's own level; the buffer's layout itself never changes.
+    /// The units that share a cooperative fill of this window.
+    pub fill: FillUnits,
+    /// What the storage tiles are to this window.
     pub storage: Storage,
     /// Who moves this tile's lines into a stage filled from it. Stated by the operand's spec and
     /// carried down its windows; a stage copied onward is copied by its units.
     pub delivery: Delivery,
 }
 
-/// What a write to a store does to the cell it lands on.
+/// The units that share a cooperative fill of a window: every unit of the cube, or the units of
+/// one plane, for a stage that plane owns and fills alone ([`Stages::smem`](crate::Stages::smem)).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FillUnits {
+    /// Whose units they are: the cube's, or one plane's.
+    pub scope: ComputeScope,
+    /// How many there are, `0` when unknown: a stage filled from this tile emits its fill
+    /// straight-line when it knows. The launch's cube size, or one plane's width.
+    pub count: usize,
+}
+
+impl FillUnits {
+    /// Every unit of the cube, `count` of them (`0` when unknown).
+    pub(crate) fn cube(count: usize) -> Self {
+        FillUnits {
+            scope: ComputeScope::Cube,
+            count,
+        }
+    }
+}
+
+/// This unit's position among the units `fill` names, which a cooperative fill takes its lines
+/// at: its position in the cube, or in its plane.
 ///
-/// `Replace` is every buffer and every plain sink: the cell is its writer's own. `Accumulate` is
-/// what lets a contraction be cut at cube scope: instances each holding a slice of one cell all
-/// write it and the store adds, so none knows about the others and no second pass is needed.
-///
-/// Stated by the operand that binds the store ([`AccumulateArg`]), never derived. A backing
-/// cannot be asked what its writes mean: an accumulating sink and a fused epilogue are both calls
-/// through a layout, and only the caller knows which it built.
+/// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
+/// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
+#[cube]
+pub(crate) fn fill_worker(#[comptime] fill: FillUnits) -> usize {
+    match comptime!(fill.scope) {
+        ComputeScope::Cube => UNIT_POS as usize,
+        ComputeScope::Plane => UNIT_POS_X as usize,
+        ComputeScope::Unit => comptime!(panic!(
+            "fill_worker: a cooperative fill is shared by a cube or a plane, never one unit"
+        )),
+    }
+}
+
+/// How many units `fill` names at runtime: the cube's, or one plane's ([`fill_worker`]).
+#[cube]
+pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
+    match comptime!(fill.scope) {
+        ComputeScope::Cube => CUBE_DIM as usize,
+        ComputeScope::Plane => CUBE_DIM_X as usize,
+        ComputeScope::Unit => comptime!(panic!(
+            "fill_workers: a cooperative fill is shared by a cube or a plane, never one unit"
+        )),
+    }
+}
+
+/// What a write to a store does to the cell it lands on; stated by the binding operand.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Write {
     /// Replaces the cell.
@@ -225,12 +247,7 @@ pub enum Write {
 }
 
 impl Write {
-    /// Refuse an accumulation `split` leaves in pieces unless this write adds them. Called where
-    /// an accumulator is opened and where it is written, the two places a partial can escape.
-    ///
-    /// A replacing destination is silently wrong: a register drain stores, so the last instance
-    /// erases the rest, and one accumulating in place loses the update.
-    /// [`Accumulate`](Write::Accumulate) is the case this lets through.
+    /// Refuse an accumulation `split` leaves in pieces unless this write adds them.
     pub(crate) fn admits(self, split: SplitShare, site: &str) {
         match (split, self) {
             (SplitShare::Whole, _) | (SplitShare::Partial, Write::Accumulate) => {}
@@ -249,22 +266,18 @@ impl Write {
     }
 }
 
-/// How a store relates to the window overhanging its valid data (`origin + pos` past
-/// [`Window`]'s `bound`); where gmem and smem genuinely differ.
+/// How a store relates to the window overhanging its valid data (past [`Window`]'s `bound`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Overhang {
-    /// Structurally impossible: the buffer is allocated to exactly the tile (smem).
+pub(crate) enum Overhang {
+    /// Impossible: the buffer is allocated to exactly the tile (smem).
     Never,
-    /// Possible in principle, excluded at launch: every shape divides its tiling (unchecked gmem).
+    /// Excluded at launch: every shape divides its tiling (unchecked gmem).
     Fits,
-    /// Possible: reads/writes past `bound` are masked, per the window's [`Boundary`] (zero for
-    /// reads and skipped for writes under `Zero`, the edge cell under `Clamp`).
+    /// Reads/writes past `bound` are masked per the window's [`Boundary`].
     Masked,
 }
 
-/// Boundary handling mode for out-of-bounds reads/writes, carried by [`Window`] (the layer that
-/// owns `origin`/`bound`/`signed` and so is the one that can turn an out-of-range coordinate into
-/// a valid physical one).
+/// Boundary handling mode for out-of-bounds reads/writes, carried by `Window`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Boundary {
     /// Out-of-bounds reads return zero; writes are skipped.
@@ -274,24 +287,18 @@ pub enum Boundary {
 }
 
 impl Overhang {
-    /// The flag a [`Masked`] is built with; the one place the states collapse to a bool.
+    /// The flag a [`Masked`] is built with.
     pub fn masks(&self) -> bool {
         matches!(self, Overhang::Masked)
     }
 }
 
-/// Whether a read still proves its own bounds, stated by the reader rather than read off the
-/// tile. Comptime, so the arm not taken costs nothing.
-///
-/// A tile records what it *could* need ([`Overhang`], the window's [`Boundary`]); this records
-/// what a particular reader has established it needs, which is the weaker claim and the only one
-/// a leaf splitting itself across an edge can make.
+/// Whether a read still proves its own bounds, stated by the reader.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Guard {
+pub(crate) enum Guard {
     /// Mask the overhang and apply the window's [`Boundary`] on every access.
     Checked,
-    /// The reader has proved the whole box it will touch lands inside the buffer, so the view
-    /// carries neither. Reading through it past that box is out of bounds, not masked.
+    /// The reader proved its whole box is in bounds; reading past it is out of bounds, not masked.
     Proved,
 }
 
@@ -303,26 +310,13 @@ impl Guard {
 }
 
 /// What a storage tile is to the window an operand is read through.
-///
-/// A storage-tiled tensor's storage tile is the tile of a level of the kernel's nest, as a scale
-/// block is an axis of a scaled matmul: the space owns the block size, so a window that descended
-/// through that level lies inside one storage tile by construction, not by a divisibility check.
-///
-/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand.
-/// A comptime fact in the kernel; [`at`](crate::Tile::at) makes [`Tiled`](Storage::Tiled)
-/// [`Contiguous`](Storage::Contiguous).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Storage {
-    /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
-    /// window lies inside it.
+    /// Untiled storage: every window lies inside the one storage tile.
     Strided,
-    /// Storage-tiled, and this window may span several storage tiles, so only a layout walk
-    /// addresses its cells. The level is the one of the kernel's nest whose tile the storage tile
-    /// is: descending through it makes the window [`Contiguous`](Self::Contiguous). `None` where
-    /// the storage tile is no level's tile, and then no window is ever known to lie inside one.
+    /// Storage-tiled, and the window may span several tiles.
+    /// The level is the one whose tile the storage tile is; `None` if no level's.
     Tiled(Option<usize>),
-    /// Storage-tiled and inside one storage tile: one contiguous run from its origin, addressed
-    /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
-    /// want.
+    /// Storage-tiled and inside one storage tile: one contiguous run from its origin.
     Contiguous,
 }

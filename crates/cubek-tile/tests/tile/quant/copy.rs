@@ -6,9 +6,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Levels, Partitioning, Projection, Space, StageStorage, TileArg, TileArgLaunch, TileSpec,
-    kind::{Field, Memory},
-    layout::PhysicalAxisMap,
+    Axis, Levels, Partitioning, Projection, Space, StageStorage, Tile, TileArg, TileArgLaunch,
+    TileSpec, kind::Field, layout::PhysicalAxisMap,
 };
 
 const M: Axis = Axis(0);
@@ -274,7 +273,7 @@ fn batched_scaled_stage<O: Numeric, V: Size>(
         .mul(&scales.tile(comptime!(space.clone())));
     let output = output.tile(comptime!(space.clone()));
     for cube in &space {
-        let mut stage = Memory::<O>::smem(
+        let mut stage = Tile::<O>::smem(
             comptime!(Space::new(&[(M, rows), (N, cols)])),
             output.vector_size(),
             StageStorage::Strided,

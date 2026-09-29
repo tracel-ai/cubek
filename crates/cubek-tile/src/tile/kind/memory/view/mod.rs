@@ -1,5 +1,4 @@
-//! The layouts a leaf reads a memory tile through, and the views that wrap them: flat, 2-D
-//! matrix, gathered, and masked.
+//! The layouts and masked views a leaf reads a memory tile through.
 
 mod flat;
 mod masked;

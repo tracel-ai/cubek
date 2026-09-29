@@ -1,5 +1,4 @@
-//! A coordinate or extent list whose entries keep their constness: the value every window,
-//! region and walk is written in.
+//! A coordinate or extent list whose entries keep their constness.
 
 use cubecl::ir::{ExpandValue, Scope};
 use cubecl::prelude::*;
@@ -8,10 +7,8 @@ use cubecl::unexpanded;
 
 use crate::algebra::{Integer, IntegerExpand, fold_add, fold_mul};
 
-/// An immutable coordinate/extent list: [`CoordsDyn`]'s stored-data sibling, whose expand's
-/// `IntoMut` is the identity. Elements are never reassigned, so a `let mut` holder (a staging
-/// slot, a windowed tile) must not copy them into mutable slots as `Sequence` does; that erases
-/// constness.
+/// An immutable coordinate/extent list whose expand's `IntoMut` is the identity.
+/// Copying into mutable slots (as `Sequence` does) would erase constness.
 pub struct Coords<C: Int> {
     _c: core::marker::PhantomData<C>,
 }
@@ -41,7 +38,7 @@ impl<C: Int> Coords<C> {
     pub fn len(&self) -> usize {
         unexpanded!()
     }
-    /// Re-view as boundary [`CoordsDyn`] (same handles; cubecl layouts flow those).
+    /// Re-view as boundary [`CoordsDyn`].
     pub(crate) fn to_dyn(&self) -> CoordsDyn {
         unexpanded!()
     }
@@ -54,15 +51,12 @@ impl<C: Int> Coords<C> {
         unexpanded!()
     }
 
-    /// Copy these coordinates into mutable kernel registers. Unlike [`clone`](Clone::clone),
-    /// which deliberately keeps the same expression handles, this gives a staging slot durable
-    /// storage whose values can be replaced on every fill.
+    /// Copy these coordinates into mutable kernel registers.
     pub(crate) fn stored(&self) -> Coords<C> {
         unexpanded!()
     }
 
-    /// Assign every coordinate into this stored carrier. Both lists must have the same comptime
-    /// length; the receiver must have been produced by [`stored`](Coords::stored).
+    /// Assign every coordinate into this carrier, produced by [`stored`](Coords::stored).
     pub(crate) fn store_from(&mut self, _src: &Coords<C>) {
         unexpanded!()
     }
@@ -88,11 +82,8 @@ impl Coords<u32> {
         out
     }
 
-    /// The digits of a flat row-major index `i` over these extents: entry `p` is
-    /// `i / extents[p+1..].product() % extents[p]`. A constant extent folds its divide.
-    ///
-    /// The leading entry skips the modulo: an index within the box never overflows it, and
-    /// dropping the operation lets the divide fold when the extents are constant.
+    /// The digits of a flat row-major index `i` over these extents.
+    /// The leading entry skips the modulo so the divide folds for constant extents.
     pub(crate) fn unravel(&self, i: u32) -> Coords<u32> {
         let n = self.len();
         let mut out = Coords::<u32>::new();
@@ -131,18 +122,14 @@ impl Coords<u32> {
     }
 }
 
-/// `n / d` rounded toward minus infinity, for a numerator that may sit below the buffer's origin
-/// (a padded window), where the stock `/` lands one cell too high. Reached only for a runtime
-/// operand; the comptime floor is [`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin).
+/// `n / d` rounded toward minus infinity, for numerators that may be negative.
 #[cube]
 pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
     let q = n / d;
     select(n % d < 0, q - 1, q)
 }
 
-/// [`floor_div`] with the remainder it leaves, `n - d * floor(n/d)`, non-negative for a positive
-/// `d` where the stock `%` is not: the phase a floored division hands on to a child window or a
-/// resampling filter. A pair, since the quotient is computed on the way.
+/// [`floor_div`] with its non-negative remainder `n - d * floor(n/d)`.
 #[cube]
 pub(crate) fn floor_div_rem(n: i32, d: i32) -> (i32, i32) {
     let q = floor_div(n, d);
@@ -164,7 +151,7 @@ impl<C: Int> IntoExpand for CoordsExpand<C> {
     }
 }
 
-/// Identity: the whole point of the type (see [`Coords`]).
+/// Identity, to keep constness (see [`Coords`]).
 impl<C: Int> IntoMut for CoordsExpand<C> {
     fn into_mut(self, _scope: &Scope) -> Self {
         self
@@ -220,7 +207,6 @@ impl<C: Int> CoordsExpand<C> {
     pub fn __expand_to_dyn_method(&self, scope: &Scope) -> SequenceExpand<u32> {
         let mut out = Sequence::<u32>::__expand_new(scope);
         for v in &self.values {
-            // Same handles, re-typed to the boundary element (u32 coordinates).
             out.__expand_push_method(scope, unsafe { *v.as_type_ref_unchecked::<u32>() });
         }
         out

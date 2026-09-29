@@ -1,5 +1,4 @@
-//! Accumulators: how one is opened over a tile ([`base`]), how its cells reach memory
-//! ([`drain`]), and the shared-memory destination a contraction cut across planes drains into
+//! Accumulators: opening ([`base`]), draining ([`drain`]) and the shared-memory destination
 //! ([`smem_accumulation`]).
 
 mod base;

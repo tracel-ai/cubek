@@ -4,4 +4,4 @@ mod base;
 #[cfg(test)]
 mod protocol;
 
-pub use base::*;
+pub(crate) use base::*;

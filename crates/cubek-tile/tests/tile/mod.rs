@@ -1,4 +1,3 @@
-mod arrival;
 mod async_copy;
 mod attention;
 mod blocked;
@@ -33,6 +32,7 @@ mod softmax;
 mod space;
 mod split_k;
 mod stream;
+mod vector_tile;
 
 use cubecl::prelude::*;
 use cubek_tile::{Axis, Launcher, Partitioning, Space, launch::Grid};

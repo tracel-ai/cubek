@@ -1,29 +1,21 @@
-//! What every slot of one stages decides at comptime ([`StagePlan`]): how it rendezvouses, and
-//! per operand when it is filled.
-//!
-//! Deduced once from the operands, so the stages' slots agree by construction rather than by each
-//! re-deriving the same answers off the same tiles.
+//! Comptime plan shared by every slot of one stages ([`StagePlan`]).
 
 use super::payload::base::StageOperand;
 use crate::*;
 
-/// When a slot's buffer is brought to its region across the walk. The walk moves each operand's
-/// window or it does not, and a window that never moves need be neither refilled nor duplicated
-/// per slot; those two savings are the same fact, so one mode carries both.
+/// When a slot's buffer is brought to its region across the walk.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Refill {
-    /// The walk moves this operand's window, so every region refills it.
+pub(crate) enum Refill {
+    /// Refilled every region.
     EveryRegion,
-    /// The window does not move across the walk: filled once, above the loop.
+    /// Filled once, above the loop.
     Once,
-    /// Filled once, and this slot reads the first slot's buffer rather than one of its own.
-    /// Nobody fills it here.
+    /// Reads the first slot's buffer; never filled here.
     Shared,
 }
 
 impl Refill {
-    /// This operand's refill in a later slot, given its refill in the first: a window that does
-    /// not move is read from the first slot's buffer, one that moves is rebuilt per slot.
+    /// This operand's refill in a later slot, given its refill in the first.
     fn in_later_slot(self) -> Refill {
         match self {
             Refill::Once => Refill::Shared,
@@ -33,8 +25,7 @@ impl Refill {
     }
 }
 
-/// What every slot of one stages decides at comptime: how it rendezvouses, and per operand when
-/// it is filled.
+/// Comptime plan for every slot of one stages: rendezvous and per-operand refill.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct StagePlan {
     refills: Vec<Refill>,
@@ -43,22 +34,22 @@ pub(crate) struct StagePlan {
     commits: bool,
     fences: bool,
     fillers: usize,
+    owner: StageOwner,
 }
 
 impl StagePlan {
-    /// Read the operands a walk of `level` over `op_space` stages, or refuse a walk whose fill
-    /// cannot reach every cell it must.
+    /// Plan the operands a walk of `level` over `op_space` stages for `owner`.
     ///
-    /// # Panics
-    ///
-    /// A walk that sets planes aside to fill stages one of its operands fills cooperatively: the
-    /// cooperative fill distributes its elements out over every unit position of the cube, so planes
-    /// that are not there leave their share of the stage unwritten, and quietly — the slot
-    /// publishes on schedule and the wrong bytes are read.
-    pub(crate) fn new(operands: &[StageOperand], op_space: &Space, level: &Level) -> StagePlan {
+    /// Panics if the walk sets planes aside to fill a cooperatively filled operand.
+    pub(crate) fn new(
+        operands: &[StageOperand],
+        op_space: &Space,
+        level: &Level,
+        owner: StageOwner,
+    ) -> StagePlan {
         let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
         let fillers = level.fillers();
-        let sync = Rendezvous::for_deliveries(&deliveries, fillers);
+        let sync = Rendezvous::for_deliveries(&deliveries, fillers, owner);
         let collective_full = Rendezvous::collective_full(&deliveries);
         let commits = Rendezvous::commits(&deliveries);
         let fences = Rendezvous::fences(&deliveries);
@@ -67,9 +58,7 @@ impl StagePlan {
             "Slot: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
              a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
         );
-        // Fix an operand only when its window is invariant across the walk. A barrier slot arrives
-        // `full` once per fill, so lifting one operand out of the joint fill leaves its parity
-        // counting fills that no longer happen; that and a dynamic level fall back to streaming.
+        // A barrier slot arrives `full` once per fill, so fixing one operand would break parity.
         let can_fix_invariants = op_space.is_static() && sync != Rendezvous::Barrier;
         let refills = operands
             .iter()
@@ -87,12 +76,11 @@ impl StagePlan {
             commits,
             fences,
             fillers,
+            owner,
         }
     }
 
-    /// When each of slot `slot`'s operands is filled, in the order the payload holds them. The
-    /// first slot owns every buffer; a later slot reuses the first slot's for whatever the walk
-    /// never rewrites.
+    /// When each of slot `slot`'s operands is filled, in payload order.
     pub(crate) fn refills(&self, slot: usize) -> Vec<Refill> {
         match slot {
             FIRST_SLOT => self.refills.clone(),
@@ -120,15 +108,18 @@ impl StagePlan {
         self.fences
     }
 
-    /// Planes of the cube that fill this walk's stages and take no tile ([`Level::filled_by`]).
+    /// Planes that fill this walk's stages and take no tile.
     pub(crate) fn fillers(&self) -> usize {
         self.fillers
     }
+
+    /// Who this walk's stages belong to: the cube, or each plane a copy of its own.
+    pub(crate) fn owner(&self) -> StageOwner {
+        self.owner
+    }
 }
 
-/// Whether a walk of `level` over `space` leaves `operand`'s window unchanged: every axis the
-/// walk steps (more than one tile) is absent from the operand, as in broadcast omission. A staged
-/// walk fills such an operand once, above the loop. Host-side, static extents.
+/// Whether a walk of `level` over `space` leaves `operand`'s window unchanged.
 fn walk_invariant(level: &Level, space: &Space, operand: &Space) -> bool {
     space
         .axes()
@@ -143,8 +134,7 @@ mod tests {
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
 
-    /// A space over `M`/`N`/`K` cut once by `level`, plus a projection per operand so a slot can
-    /// be planned against it. `lhs` spans `M`/`K`, `rhs` spans `K`/`N`, so a `K` walk moves both.
+    /// An `M`/`N`/`K` space with `lhs` over `M`/`K` and `rhs` over `K`/`N`.
     fn spaces() -> (Space, Space, Space) {
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
         let lhs = space.subspace(&[M, K]);
@@ -170,13 +160,13 @@ mod tests {
             ],
             &space,
             &level,
+            StageOwner::Cube,
         );
         for slot in 0..2 {
             assert_eq!(plan.refills(slot)[0], Refill::EveryRegion);
         }
     }
 
-    /// An operand whose window the walk never moves is filled once and shares its buffer.
     #[test]
     fn a_fixed_operand_reuses_the_first_slots_buffer() {
         let (space, lhs, rhs) = spaces();
@@ -188,13 +178,13 @@ mod tests {
             ],
             &space,
             &level,
+            StageOwner::Cube,
         );
         assert_eq!(plan.refills(0)[0], Refill::Once);
         assert_eq!(plan.refills(1)[0], Refill::Shared);
         assert_eq!(plan.refills(1)[1], Refill::EveryRegion);
     }
 
-    /// The count a walk states rides down onto every slot it plans.
     #[test]
     fn a_slot_of_a_filled_walk_carries_the_count() {
         let (space, lhs, rhs) = spaces();
@@ -206,12 +196,11 @@ mod tests {
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
         assert_eq!(plan.fillers(), 2);
     }
 
-    /// A cooperative fill is spread over every unit position of the cube, so planes that are not
-    /// there leave their share unwritten. Refused by name rather than read back as wrong bytes.
     #[test]
     #[should_panic(expected = "cannot be filled by a subset of the cube")]
     fn a_walk_cannot_set_planes_aside_to_fill_a_slot_it_also_fills_cooperatively() {
@@ -227,10 +216,10 @@ mod tests {
             ],
             &space,
             &level,
+            StageOwner::Cube,
         );
     }
 
-    /// A barrier pipeline arrives once per fill, so a TMA operand streams even when fixed.
     #[test]
     fn a_tma_operand_is_never_fixed() {
         let (space, lhs, rhs) = spaces();
@@ -239,6 +228,7 @@ mod tests {
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
             &level,
+            StageOwner::Cube,
         );
         assert_eq!(plan.refills(0)[0], Refill::EveryRegion);
     }

@@ -1,5 +1,4 @@
-//! The one-operand payload: what a reduction's and a copy's slots hold. The operand is its own
-//! payload, so a walk over a single tile needs no wrapper around it.
+//! The one-operand payload.
 
 use cubecl::prelude::*;
 

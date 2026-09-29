@@ -9,7 +9,7 @@ mod mma;
 mod registers;
 
 pub use base::*;
-pub use cmma::*;
-pub use lines::*;
+pub(crate) use cmma::*;
+pub(crate) use lines::*;
 pub use mma::*;
-pub use registers::*;
+pub(crate) use registers::*;

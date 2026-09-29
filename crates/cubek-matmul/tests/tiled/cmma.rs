@@ -395,7 +395,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
                     .tile(&[(N, stage_n / 4), (K, stage_k)])
                     .grid(&[N, K]),
             };
-            let tiled = tile(c, rhs.clone().binding(), [K, N], dtype, storage)?;
+            let tiled = tile(c, rhs.clone().binding(), &[K, N], dtype, None, storage)?;
 
             launch_ref(
                 c,
@@ -517,7 +517,7 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     .generate_with_f32_host_data();
     let (tile_k, tile_n) = storage_tile;
     let storage = StorageLevels::new(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
-    let tiled = tile(&client, rhs.binding(), [K, N], dtype, storage).unwrap();
+    let tiled = tile(&client, rhs.binding(), &[K, N], dtype, None, storage).unwrap();
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());
@@ -764,7 +764,15 @@ fn cmma_refuses_the_storage_it_cannot_read() {
         (column_first, "not stored a row at a time"),
         (interleaved, "32x32 tiles a row at a time"),
     ] {
-        let tiled = tile(&client, rhs.clone().binding(), [K, N], dtype, storage).unwrap();
+        let tiled = tile(
+            &client,
+            rhs.clone().binding(),
+            &[K, N],
+            dtype,
+            None,
+            storage,
+        )
+        .unwrap();
         let refused = launch_ref(
             &client,
             InputBinding::Normal(lhs.clone().binding(), dtype),

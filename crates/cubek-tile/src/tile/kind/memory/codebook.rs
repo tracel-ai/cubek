@@ -1,9 +1,5 @@
-//! A table these values index: stored fields that are positions rather than numbers
-//! ([`Tile::lookup`](crate::Tile::lookup)), read back as `table[index]` where the kernel copies
-//! them, and nowhere else.
-//!
-//! Like a [`Factor`], it rides the values it was attached to, and the table's element is the
-//! table's business: it is erased while the kernel is expanded and read back as `f32`.
+//! A table the stored values index ([`Tile::lookup`](crate::Tile::lookup)), read back as
+//! `table[index]` widened to `f32`.
 
 use std::sync::Arc;
 
@@ -32,6 +28,18 @@ fn table_entry<S: Numeric>(table: &Tile<S>, index: u32) -> f32 {
     f32::cast_from(entries.read(at).extract(0usize))
 }
 
+/// Each of `indices` replaced by its entry in `codebook`.
+#[cube]
+fn look_up<T: Numeric, V: Size>(codebook: &Codebook, indices: Vector<T, V>) -> Vector<T, V> {
+    let mut entries = Vector::<T, V>::empty();
+    #[unroll]
+    for j in 0..V::value() {
+        let index = u32::cast_from(indices.extract(j));
+        entries.insert(j, T::cast_from(codebook.entry(index)));
+    }
+    entries
+}
+
 /// The table these values index, if any. Empty is values that are numbers.
 #[derive(Clone)]
 pub(crate) struct Codebook;
@@ -42,14 +50,18 @@ pub(crate) struct CodebookExpand {
 }
 
 impl Codebook {
-    /// No table: what every operand carries until [`Tile::lookup`](crate::Tile::lookup) says
-    /// otherwise.
+    /// No table: what every operand carries until [`Tile::lookup`](crate::Tile::lookup).
     pub(crate) fn none() -> Codebook {
         unexpanded!()
     }
 
     /// The entry the stored `index` names.
     pub(crate) fn entry(&self, _index: u32) -> f32 {
+        unexpanded!()
+    }
+
+    /// Every value of `indices` replaced by its entry; unchanged when there is no table.
+    pub(crate) fn entries<T: Numeric, V: Size>(&self, _indices: Vector<T, V>) -> Vector<T, V> {
         unexpanded!()
     }
 
@@ -69,6 +81,17 @@ impl CodebookExpand {
     /// Whether these values index a table at all.
     pub(crate) fn present(&self) -> bool {
         self.table.is_some()
+    }
+
+    pub(crate) fn __expand_entries_method<T: Numeric, V: Size>(
+        &self,
+        scope: &Scope,
+        indices: NativeExpand<Vector<T, V>>,
+    ) -> NativeExpand<Vector<T, V>> {
+        match self.table {
+            Some(_) => look_up::expand::<T, V>(scope, self, indices),
+            None => indices,
+        }
     }
 
     pub(crate) fn __expand_entry_method(

@@ -1,6 +1,4 @@
-//! The online-softmax step at unit ownership. Each op runs over the rows a [`RowState`] owns
-//! ([`owned_row`](RowState::owned_row)) with no syncs, a line (the tile's vector width of adjacent
-//! columns) at a time, every loop over a comptime bound.
+//! The online-softmax step at unit ownership: each op runs over the rows a [`RowState`] owns.
 
 use cubecl::prelude::*;
 
@@ -8,9 +6,7 @@ use crate::*;
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// `self = self * scale`, masked entries driven to `min_value` (below the
-    /// masked-logit threshold), per owned row. A row is read and written a
-    /// line at a time, the tile's vector width of adjacent columns.
+    /// `self = self * scale`, masked entries driven to `min_value`, per owned row.
     pub(crate) fn scale_and_mask(
         &mut self,
         scale: EA,
@@ -73,8 +69,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// `self = exp(self - rowwise)` per owned row, with the fully-masked
-    /// guard: a row whose max is below the threshold goes entirely to zero.
+    /// `self = exp(self - rowwise)` per owned row; a fully-masked row goes to zero.
     pub(crate) fn exp_diff(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));

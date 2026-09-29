@@ -34,7 +34,7 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
     layout: &BufferLayout,
     total: usize,
     #[comptime] total_c: Option<u64>,
-    #[comptime] units: usize,
+    #[comptime] fill: FillUnits,
     #[comptime] straight: bool,
 ) {
     // Both read outside `comptime!`: in there, `size` is the host's `size_of` of the generic and
@@ -48,10 +48,11 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
          are {bytes}: serve the operand in lines one copy moves"
     ));
     if comptime!(straight) {
+        let units = comptime!(fill.count);
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
         #[unroll]
         for t in 0..tasks {
-            let i = UNIT_POS as usize + comptime!(t * units);
+            let i = fill_worker(fill) + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
                     copy_line_async::<I2, W>(d, s, layout, i);
@@ -61,11 +62,11 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
             }
         }
     } else {
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
+        let stride = fill_workers(fill);
+        let mut i = fill_worker(fill);
         while i < total {
             copy_line_async::<I2, W>(d, s, layout, i);
-            i += workers;
+            i += stride;
         }
     }
 }
@@ -102,6 +103,13 @@ impl<T: Numeric> Memory<T> {
     /// its readers.
     pub(crate) fn load_from(&mut self, src: &Memory<T>, #[comptime] space: Space) {
         if comptime!(src.access.delivery == Delivery::AsyncPerUnit) {
+            // The wait is the cube's: a stage one plane fills on its own would leave the others'
+            // arrivals missing.
+            comptime!(assert!(
+                self.access.fill.scope == ComputeScope::Cube,
+                "Tile::copy_from: an async copy into a stage waits on a barrier the whole cube \
+                 arrives at, and this stage is filled by one plane"
+            ));
             let landed = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
             self.fill_from(src, space);
             landed.commit_copy_async();

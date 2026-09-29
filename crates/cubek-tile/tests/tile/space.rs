@@ -238,8 +238,8 @@ fn overhangs_dynamic_axis_panics() {
 
 // ---- Level constructors ----------------------------------------------------------
 
-/// The tiles of several axes distributed as one index: the shares ride the cubes even though no axis
-/// does, so the launch grid is their count.
+/// The tiles of several axes distributed as one index: the shares ride the cubes even though no
+/// axis does, so the launch grid is their count.
 #[test]
 fn shared_tiles_launch_their_instances() {
     let launcher = implied(
@@ -299,8 +299,8 @@ fn batches_are_a_dial_each() {
     assert!(matches!(one_line.cube_count(), CubeCount::Static(4, 2, 6)));
 }
 
-/// One axis is a box whatever the count, so `across` on it distributes the axis's own tiles over the
-/// scope, which is what a cut has always meant: no work is stated.
+/// One axis is a box whatever the count, so `across` on it distributes the axis's own tiles over
+/// the scope, which is what a cut has always meant: no work is stated.
 #[test]
 fn one_axis_across_a_count_is_a_dial() {
     let launcher = implied(

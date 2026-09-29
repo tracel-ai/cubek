@@ -3,8 +3,7 @@
 use crate::{Integer, IntegerExpand};
 use cubecl::prelude::*;
 
-/// The direction a walk's steps take through its grid. A new order is a new variant here plus a
-/// `step` arm.
+/// The direction a walk's steps take through its grid.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub(crate) enum StepOrder {
     /// Step `i` visits odometer index `i` (the identity).
@@ -20,8 +19,7 @@ impl StepOrder {
     pub(crate) fn step(i: usize, total: usize, #[comptime] order: StepOrder) -> usize {
         match order {
             StepOrder::Forward => i,
-            // Folded: an unrolled walk's constant `i` must stay constant through the
-            // reversal, or its regions lose their comptime coordinates.
+            // Folded so an unrolled walk's constant `i` stays comptime.
             StepOrder::Reversed => total.minus(i).minus(1),
         }
     }
