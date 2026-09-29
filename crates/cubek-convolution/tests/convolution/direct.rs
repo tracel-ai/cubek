@@ -5,7 +5,9 @@
 //! however that path summed.
 
 use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::Shape};
-use cubek_convolution::{ConvolutionArgs, DirectTensors, launch_direct};
+use cubek_convolution::{
+    ConvolutionArgs, DirectTensors, eval::cpu_reference::ConvSpec, launch_direct,
+};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 /// One convolution, in the layout the routine takes: NHWC in and out, `[C_out, kh, kw, C_in /
@@ -28,89 +30,50 @@ struct Case {
 }
 
 impl Case {
-    fn out_size(&self, k: usize) -> usize {
-        (self.size + 2 * self.padding - self.dilation * (k - 1) - 1) / self.stride + 1
-    }
-
     /// Small integers on a short period. Every product is at most 2 and every partial sum stays
     /// under 2048, so the accumulation is exact even in `f16` and any summation order is equal.
     fn ramp(n: usize, period: usize) -> Vec<f32> {
         (0..n).map(|i| ((i % period) as f32) - 1.0).collect()
     }
 
-    fn reference(&self, input: &[f32], weight: &[f32], bias: &[f32]) -> Vec<f32> {
-        let (oh_n, ow_n) = (self.out_size(self.kh), self.out_size(self.kw));
-        let c_in_group = self.c_in / self.groups;
-        let c_out_group = self.c_out / self.groups;
-        let mut result = vec![0.0f32; self.b * oh_n * ow_n * self.c_out];
-
-        for b in 0..self.b {
-            for oh in 0..oh_n {
-                for ow in 0..ow_n {
-                    for oc in 0..self.c_out {
-                        let group = oc / c_out_group;
-                        let mut acc = if self.bias { bias[oc] } else { 0.0 };
-                        for ic in 0..c_in_group {
-                            for rh in 0..self.kh {
-                                for rw in 0..self.kw {
-                                    let h = (oh * self.stride + rh * self.dilation) as isize
-                                        - self.padding as isize;
-                                    let w = (ow * self.stride + rw * self.dilation) as isize
-                                        - self.padding as isize;
-                                    if h < 0
-                                        || w < 0
-                                        || h >= self.size as isize
-                                        || w >= self.size as isize
-                                    {
-                                        continue;
-                                    }
-                                    let x = input[((b * self.size + h as usize) * self.size
-                                        + w as usize)
-                                        * self.c_in
-                                        + group * c_in_group
-                                        + ic];
-                                    let f = weight
-                                        [((oc * self.kh + rh) * self.kw + rw) * c_in_group + ic];
-                                    acc += x * f;
-                                }
-                            }
-                        }
-                        result[((b * oh_n + oh) * ow_n + ow) * self.c_out + oc] = acc;
-                    }
-                }
-            }
-        }
-
-        result
-    }
-
     fn check(&self, dtype: ElemType) -> Result<(), String> {
         let client = cubecl::test_device().client();
-        let (oh_n, ow_n) = (self.out_size(self.kh), self.out_size(self.kw));
+        let args = ConvolutionArgs::<2> {
+            stride: [self.stride; 2],
+            padding: [self.padding; 2],
+            dilation: [self.dilation; 2],
+        };
+        let spec = ConvSpec {
+            batches: self.b,
+            in_h: self.size,
+            in_w: self.size,
+            channels: self.c_in,
+            out_channels: self.c_out,
+            args: args.clone(),
+            kernel_size: [self.kh, self.kw],
+        };
 
         let in_shape = [self.b, self.size, self.size, self.c_in];
         let w_shape = [self.c_out, self.kh, self.kw, self.c_in / self.groups];
-        let out_shape = [self.b, oh_n, ow_n, self.c_out];
+        let out_shape = [self.b, spec.out_h(), spec.out_w(), self.c_out];
 
-        let in_data = Self::ramp(in_shape.iter().product(), 4);
-        let w_data = Self::ramp(w_shape.iter().product(), 3);
-        let b_data = Self::ramp(self.c_out, 5);
-
-        let (input, _) = TestInput::builder(client.clone(), Shape::new(in_shape))
+        let (input, input_host) = TestInput::builder(client.clone(), Shape::new(in_shape))
             .dtype(dtype)
-            .custom(in_data.clone())
+            .custom(Self::ramp(in_shape.iter().product(), 4))
             .generate_with_f32_host_data();
-        let (weight, _) = TestInput::builder(client.clone(), Shape::new(w_shape))
+        let (weight, weight_host) = TestInput::builder(client.clone(), Shape::new(w_shape))
             .dtype(dtype)
-            .custom(w_data.clone())
+            .custom(Self::ramp(w_shape.iter().product(), 3))
             .generate_with_f32_host_data();
-        let bias: Option<TensorHandle> = self.bias.then(|| {
-            TestInput::builder(client.clone(), Shape::new([self.c_out]))
-                .dtype(dtype)
-                .custom(b_data.clone())
-                .generate_with_f32_host_data()
-                .0
-        });
+        let (bias, bias_host) = self
+            .bias
+            .then(|| {
+                TestInput::builder(client.clone(), Shape::new([self.c_out]))
+                    .dtype(dtype)
+                    .custom(Self::ramp(self.c_out, 5))
+                    .generate_with_f32_host_data()
+            })
+            .unzip();
         // No output reaches 4096 and f16 holds it exactly, so a cell the kernel never writes fails.
         let out: TensorHandle = TestInput::builder(client.clone(), Shape::new(out_shape))
             .dtype(dtype)
@@ -125,25 +88,23 @@ impl Case {
                 bias: bias.map(|bias| bias.binding()),
                 out: out.clone().binding(),
             },
-            ConvolutionArgs::<2> {
-                stride: [self.stride; 2],
-                padding: [self.padding; 2],
-                dilation: [self.dilation; 2],
-            },
+            args,
             self.groups,
             dtype,
         )
         .map_err(|e| format!("setup: {e:?}"))?;
 
         let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-        let want = self.reference(&in_data, &w_data, &b_data);
+        let want = spec.cpu_reference(&input_host, &weight_host, bias_host.as_ref());
 
         for b in 0..self.b {
-            for oh in 0..oh_n {
-                for ow in 0..ow_n {
+            for oh in 0..out_shape[1] {
+                for ow in 0..out_shape[2] {
                     for oc in 0..self.c_out {
-                        let g = got.get_f32(&[b, oh, ow, oc]);
-                        let w = want[((b * oh_n + oh) * ow_n + ow) * self.c_out + oc];
+                        let (g, w) = (
+                            got.get_f32(&[b, oh, ow, oc]),
+                            want.get_f32(&[b, oh, ow, oc]),
+                        );
                         if g != w {
                             return Err(format!("({b},{oh},{ow},{oc}) got {g} want {w}"));
                         }
