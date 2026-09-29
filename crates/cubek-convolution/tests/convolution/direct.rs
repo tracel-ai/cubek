@@ -111,10 +111,10 @@ impl Case {
                 .generate_with_f32_host_data()
                 .0
         });
-        // Zeroed, so a cell the kernel never writes reads as the zero it started as.
+        // No output reaches 4096 and f16 holds it exactly, so a cell the kernel never writes fails.
         let out: TensorHandle = TestInput::builder(client.clone(), Shape::new(out_shape))
             .dtype(dtype)
-            .zeros()
+            .custom(vec![4096.0; out_shape.iter().product::<usize>()])
             .generate_without_host_data();
 
         launch_direct::<2>(

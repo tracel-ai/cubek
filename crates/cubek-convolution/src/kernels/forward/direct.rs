@@ -110,6 +110,11 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     let vector_size_in = input.vector_size();
 
     if accumulate_components {
+        comptime!(assert!(
+            vector_size_out.is_multiple_of(channel_block),
+            "a block of {channel_block} channels does not divide the output vector of {vector_size_out}"
+        ));
+
         #[unroll]
         for bi in 0..comptime![vector_size_out / channel_block] {
             let base_v = bi * channel_block;
@@ -467,7 +472,7 @@ fn channel_block(
     (1 << block.ilog2()).min(vector_size_out)
 }
 
-/// A host without half arithmetic evaluates a half float in f32 registers.
+/// Half floats are sized as f32 on every host: the device does not state whether it promotes them.
 fn register_elem_size(dtype: ElemType) -> usize {
     match dtype {
         ElemType::Float(FloatKind::F16 | FloatKind::BF16) => size_of::<f32>(),
@@ -527,9 +532,18 @@ mod tests {
         registers(512, 32, elem_size)
     }
 
+    fn neon(elem_size: usize) -> VectorRegisters {
+        registers(128, 32, elem_size)
+    }
+
     #[test]
     fn a_two_register_accumulator_halves_the_block() {
         assert_eq!(channel_block(avx2(4), 16, 16), 4);
+    }
+
+    #[test]
+    fn a_four_register_accumulator_quarters_the_block() {
+        assert_eq!(channel_block(neon(4), 16, 16), 4);
     }
 
     #[test]
@@ -545,8 +559,9 @@ mod tests {
 
     #[test]
     fn a_half_float_accumulator_spends_f32_registers() {
-        let f16 = avx2(register_elem_size(ElemType::Float(FloatKind::F16)));
-        assert_eq!(channel_block(f16, 32, 32), 2);
+        let f16 = register_elem_size(ElemType::Float(FloatKind::F16));
+        assert_eq!(channel_block(avx2(f16), 32, 32), 2);
+        assert_eq!(channel_block(neon(f16), 32, 32), 2);
     }
 
     #[test]
