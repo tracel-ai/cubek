@@ -31,6 +31,38 @@ struct ShapeSpec {
 /// previous `entry()` heuristic (target ~2 * 6144^3 ops, b clamped to a power
 /// of two and to 4096) or from the explicit tuples that bypassed it.
 const SHAPES: &[ShapeSpec] = &[
+    ShapeSpec {
+        tag: "qwen3_4b_qkv_512",
+        label: "Qwen3-4B qkv (m=512 k=2560 n=6144)",
+        b: 1,
+        m: 512,
+        n: 6144,
+        k: 2560,
+    },
+    ShapeSpec {
+        tag: "qwen3_4b_outproj_512",
+        label: "Qwen3-4B outproj (m=512 k=4096 n=2560)",
+        b: 1,
+        m: 512,
+        n: 2560,
+        k: 4096,
+    },
+    ShapeSpec {
+        tag: "qwen3_4b_gateup_512",
+        label: "Qwen3-4B gateup (m=512 k=2560 n=19456)",
+        b: 1,
+        m: 512,
+        n: 19456,
+        k: 2560,
+    },
+    ShapeSpec {
+        tag: "qwen3_4b_down_512",
+        label: "Qwen3-4B down (m=512 k=9728 n=2560)",
+        b: 1,
+        m: 512,
+        n: 2560,
+        k: 9728,
+    },
     // Default vector × matrix.
     ShapeSpec {
         tag: "vecmat_2x1x4096x4096",
