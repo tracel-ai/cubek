@@ -231,13 +231,22 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     let leaf = launch.arg(leaf_tiles).axes(&[M, K]).build();
     assert_eq!(leaf.spec.storage, Storage::Tiled(Some(2)));
 
-    // Storage of (16, K whole) are the cube's tile, the first level's: an axis stored as one
-    // fragment is whole, and a level that leaves it whole matches it. Level-major, the whole
-    // K dim sits between M's grid and tile fragments.
-    let mut cube_tiles = binding(&client, &[4, 8, 16]);
-    cube_tiles.tiling = Tiling::new(&[2, 1]).unwrap();
-    let cube = launch.arg(cube_tiles).axes(&[M, K]).build();
+    // Storage of (16, K whole) are the cube's tile, the first level's, where that level hands K
+    // down static: a level that leaves an axis whole matches a tile stored whole along it. With
+    // K dynamic in the kernel the level has no fixed tile, so nothing matches.
+    let cube_tiles = || {
+        let mut tiles = binding(&client, &[4, 8, 16]);
+        tiles.tiling = Tiling::new(&[2, 1]).unwrap();
+        tiles
+    };
+    let fixed = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 8);
+        implied(&client, Partitioning::new(space, levels), Form::Static)
+    };
+    let cube = fixed.arg(cube_tiles()).axes(&[M, K]).build();
     assert_eq!(cube.spec.storage, Storage::Tiled(Some(0)));
+    let cube = launch.arg(cube_tiles()).axes(&[M, K]).build();
+    assert_eq!(cube.spec.storage, Storage::Tiled(None));
 
     let plain = launch.arg(binding(&client, &[64, 8])).axes(&[M, K]).build();
     assert_eq!(plain.spec.storage, Storage::Strided);

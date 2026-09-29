@@ -11,7 +11,7 @@ use crate::*;
 /// `Clone` duplicates the handle, not the fragment.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct CmmaData<T: Numeric> {
+pub(crate) struct CmmaData<T: Numeric> {
     pub matrix: Matrix<T>,
     #[cube(comptime)]
     pub ident: MatrixIdent,

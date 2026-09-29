@@ -9,9 +9,13 @@ use cubecl::{
 use crate::*;
 
 /// One plane-level tile, by encoding ([`Instruction`]).
+#[expect(
+    dead_code,
+    reason = "built through the expand type's generated constructors"
+)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum PlaneTile<T: Numeric> {
+pub(crate) enum PlaneTile<T: Numeric> {
     Cmma(CmmaData<T>),
     Mma(MmaData<T>),
     /// The software leaf's accumulator: a register block, not a hardware fragment.

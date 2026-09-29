@@ -796,7 +796,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
+                Space::merge(&[&a.space(), &b.space()]),
                 vec![outer.clone(), inner.clone()]
             )
             .leaf()
@@ -849,7 +849,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
+                Space::merge(&[&a.space(), &b.space()]),
                 vec![stage.clone(), plane.clone(), fragment.clone()]
             )
             .leaf()
@@ -911,7 +911,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.place.space, &b.place.space]),
+                Space::merge(&[&a.space(), &b.space()]),
                 vec![
                     stage.clone(),
                     plane.clone(),

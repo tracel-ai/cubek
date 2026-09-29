@@ -10,7 +10,7 @@ use crate::*;
 /// A lifetime-erased buffer, its fixed `layout`, and the window this tile looks at.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Memory<T: Numeric> {
+pub(crate) struct Memory<T: Numeric> {
     /// Which memory the bytes sit in.
     #[cube(comptime)]
     pub(crate) address: AddressSpace,

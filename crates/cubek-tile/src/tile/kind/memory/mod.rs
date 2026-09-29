@@ -15,6 +15,6 @@ pub(crate) use codebook::*;
 pub(crate) use factor::*;
 pub use global::*;
 pub(crate) use stage::*;
-pub use tma::*;
+pub(crate) use tma::*;
 pub use view::*;
 pub(crate) use window::*;

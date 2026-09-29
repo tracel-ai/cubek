@@ -10,4 +10,4 @@ pub use accumulator::*;
 pub use base::*;
 pub use kind::*;
 pub use packing::*;
-pub use placement::*;
+pub(crate) use placement::*;

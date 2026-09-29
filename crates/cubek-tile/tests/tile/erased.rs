@@ -335,7 +335,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
 /// The same contraction again, this time reading its **lhs** through an erased source.
 ///
 /// The mirror of [`sink_matmul`], and the reason the read path had to become a view: an operand
-/// tile reads through `matrix_packed`, composed onto `Memory::read_view` as the drain is
+/// tile reads through `matrix_packed`, composed onto the memory's read view as the drain is
 /// onto `write_view`. The leaf asks the same layout for the same coordinates, and a call answers.
 #[cube(launch)]
 fn source_matmul<E: Numeric, EA: Numeric>(

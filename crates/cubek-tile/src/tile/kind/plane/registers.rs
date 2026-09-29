@@ -12,7 +12,7 @@ define_size!(pub(crate) RA);
 /// An `mr × nr` block of `RA`-wide register accumulators, the software [`PlaneTile`].
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct RegisterData<T: Numeric> {
+pub(crate) struct RegisterData<T: Numeric> {
     /// `mr * nr` lines, each `Vector<T, RA>` (width registered in [`alloc`](Self::alloc)).
     pub(crate) data: Array<Vector<T, RA>>,
     /// Physical line width, the numeric twin of `RA`; comptime, for the line arithmetic.

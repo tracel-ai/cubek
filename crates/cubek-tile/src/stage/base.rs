@@ -12,7 +12,7 @@ pub enum StageStorage {
         chunks: RowChunks,
     },
     Strided,
-    /// The plane's units, one line per unit ([`Lines`](crate::Lines)).
+    /// The plane's units, one line per unit.
     Lines {
         read: UnitRead,
     },

@@ -12,7 +12,7 @@ pub(crate) const TMA_STAGE_ALIGNMENT: usize = 128;
 impl<T: Numeric> Memory<T> {
     /// Allocate a shared-memory tile over `space` at physical `vector_size`.
     /// `units` is the launch's cube size, `0` when unknown.
-    pub fn smem(
+    pub(crate) fn smem(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
@@ -23,7 +23,7 @@ impl<T: Numeric> Memory<T> {
 
     /// [`smem`](Memory::smem) with a minimum byte alignment on the buffer, never below one
     /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it.
-    pub fn smem_aligned(
+    pub(crate) fn smem_aligned(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,

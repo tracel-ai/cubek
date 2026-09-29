@@ -109,7 +109,7 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
     /// Contract this plane tile, each factor times whatever scales it carries.
-    pub fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,

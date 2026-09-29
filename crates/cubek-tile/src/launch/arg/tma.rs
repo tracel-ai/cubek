@@ -19,7 +19,7 @@ pub struct TmaTileArg<E: Numeric> {
 
 #[cube]
 impl<E: Numeric> TmaTileArg<E> {
-    /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over `space`.
+    /// Serve the tensor map as a TMA-filled tile over `space`.
     pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
         let own = comptime!(space.space().subspace(self.spec.axes()));
         let data = TmaData::from_tensor_map(
