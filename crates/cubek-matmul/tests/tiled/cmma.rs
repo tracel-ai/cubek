@@ -317,7 +317,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaRoutine, StoredTiles, launch_ref},
-            storage::{LayoutBuilder, tile},
+            storage::{StorageLevels, tile},
         },
     };
     use cubek_std::InputBinding;
@@ -373,18 +373,18 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
             let stage_k = blueprint.stage_k;
 
             // The weight, tiled to the plan's stage, each tile stored a row at a time.
-            let layout = match order {
+            let storage = match order {
                 TileOrder::AlongN => {
-                    LayoutBuilder::new(&[(N, stage_n), (K, stage_k)]).grid(&[N, K])
+                    StorageLevels::new(&[(N, stage_n), (K, stage_k)]).grid(&[N, K])
                 }
                 TileOrder::AlongK => {
-                    LayoutBuilder::new(&[(N, stage_n), (K, stage_k)]).grid(&[K, N])
+                    StorageLevels::new(&[(N, stage_n), (K, stage_k)]).grid(&[K, N])
                 }
-                TileOrder::AlongNWithRead => LayoutBuilder::new(&[(N, 4)])
+                TileOrder::AlongNWithRead => StorageLevels::new(&[(N, 4)])
                     .tile(&[(N, stage_n / 4), (K, stage_k)])
                     .grid(&[N, K]),
             };
-            let tiled = tile(c, rhs.clone().binding(), [K, N], dtype, layout)?;
+            let tiled = tile(c, rhs.clone().binding(), [K, N], dtype, storage)?;
 
             launch_ref(
                 c,
@@ -465,7 +465,7 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         routine::DeviceSettings,
         tiled::{
             cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
-            storage::{LayoutBuilder, tile},
+            storage::{StorageLevels, tile},
         },
     };
     use cubek_std::InputBinding;
@@ -505,8 +505,8 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     .uniform(5678, -1., 1.)
     .generate_with_f32_host_data();
     let (tile_k, tile_n) = storage_tile;
-    let layout = LayoutBuilder::new(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
-    let tiled = tile(&client, rhs.binding(), [K, N], dtype, layout).unwrap();
+    let storage = StorageLevels::new(&[(N, tile_n), (K, tile_k)]).grid(&[N, K]);
+    let tiled = tile(&client, rhs.binding(), [K, N], dtype, storage).unwrap();
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());
@@ -722,7 +722,7 @@ fn cmma_refuses_the_storage_it_cannot_read() {
         definition::{MatmulElems, MatmulSetupError},
         tiled::{
             cmma::launch_ref,
-            storage::{LayoutBuilder, tile},
+            storage::{StorageLevels, tile},
         },
     };
     use cubek_std::InputBinding;
@@ -745,15 +745,15 @@ fn cmma_refuses_the_storage_it_cannot_read() {
     let rhs = input(problem.rhs_shape.clone(), 2);
     let out = input(problem.out_shape.clone(), 3);
 
-    let column_first = LayoutBuilder::new(&[(K, 32), (N, 32)]).grid(&[N, K]);
-    let interleaved = LayoutBuilder::new(&[(N, 16), (K, 2)])
+    let column_first = StorageLevels::new(&[(K, 32), (N, 32)]).grid(&[N, K]);
+    let interleaved = StorageLevels::new(&[(N, 16), (K, 2)])
         .tile(&[(N, 2), (K, 16)])
         .grid(&[N, K]);
-    for (layout, says) in [
+    for (storage, says) in [
         (column_first, "not stored a row at a time"),
         (interleaved, "32x32 tiles a row at a time"),
     ] {
-        let tiled = tile(&client, rhs.clone().binding(), [K, N], dtype, layout).unwrap();
+        let tiled = tile(&client, rhs.clone().binding(), [K, N], dtype, storage).unwrap();
         let refused = launch_ref(
             &client,
             InputBinding::Normal(lhs.clone().binding(), dtype),

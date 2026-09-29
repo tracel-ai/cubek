@@ -24,19 +24,23 @@ use std::path::{Path, PathBuf};
 /// became the one public row op (its unit and plane arms crate-private) and the stencil builder
 /// test-only: 717. `Input` and `Output`, one launch argument each way, replaced the delivery
 /// families (`DeliveryFamily`, `DeliveryLaunch`, `Cooperative`, `Tma`, `Accumulated`): five
-/// concepts to two, but their `tile` and host builders count as lines, four more: 721. `Layout`
-/// raised it by sixteen: the type and its constructor, its builder stages (`LayoutBuilder::new`,
-/// `grid`, `over` the extents), `physical`, `refines`, `pieces`, the misfits a stated layout and a
-/// reader are refused with, and the re-exports of its own folder, since a caller writing a
-/// storage-tiled buffer states how it is laid out and every reader of one asks whether it refines
-/// the layout it needs: 737. `Tile::lookup`, the explicit codebook a copy decodes (with its
-/// expansion), raised it by two, ahead of the implicit quantization path it retires: 739. That
-/// path went (`DequantAt`, `Quantization`, `QuantTileArg`, `Packing::Native`, the storage-element
-/// parameter of `nd` and `fragment_matrix`): 722.
-const PUB_ITEMS: usize = 722;
+/// concepts to two, but their `tile` and host builders count as lines, four more: 721.
+/// `StoragePartitioning` raised it by fifteen: the type and what it answers (`new`, `tiles`,
+/// `order`, `holds`, `physical`), the `StorageLevels` it is stated with (`new`, `tile`, `grid`),
+/// the misfits a statement and a tile are refused with, `Geometry::serves` and the re-export of
+/// its folder, since a caller writing a storage-tiled buffer states how it is laid down and every
+/// reader asks whether it holds the tile the reader needs: 736. `Destination`, the seam a caller's
+/// own output plugs into (a fused epilogue's sink, which no enum here can name), raised it by
+/// four: the trait, its host half `DestinationLaunch`, `Buffered` (the one implementation, serving
+/// `Output`), and the module's re-export. One seam for outputs only, not the families back: 740.
+/// `Tile::lookup`, the explicit codebook a copy decodes (with its expansion), raised it by two,
+/// ahead of the implicit quantization path it retires, which then went (`DequantAt`,
+/// `Quantization`, `QuantTileArg`, `Packing::Native`, the storage-element parameter of `nd` and
+/// `fragment_matrix`): 725.
+const PUB_ITEMS: usize = 725;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 33;
+const LONG_FNS: usize = 31;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
 const LONG_FILES: usize = 10;

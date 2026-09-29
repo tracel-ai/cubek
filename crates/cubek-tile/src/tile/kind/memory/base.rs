@@ -159,6 +159,15 @@ impl<T: Numeric> Store<T> {
         }
     }
 
+    /// Whether the values have an address: a buffer, rather than a call that stores or loads
+    /// them. Only an addressed store serves the slice-shaped paths ([`buffer`](Self::buffer)).
+    pub(crate) fn has_address(&self) -> comptime_type!(bool) {
+        match &self.backing {
+            Backing::Buffer(_) => comptime!(true),
+            Backing::WriteCall(_) | Backing::ReadCall(_) => comptime!(false),
+        }
+    }
+
     /// The mutable twin of [`buffer`](Self::buffer).
     #[allow(clippy::borrowed_box)]
     pub(crate) fn buffer_mut(&mut self) -> &mut Box<[T]> {
