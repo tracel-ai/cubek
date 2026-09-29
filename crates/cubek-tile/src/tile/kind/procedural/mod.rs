@@ -10,6 +10,7 @@ mod phase;
 mod product;
 mod separable;
 mod sum;
+mod visibility;
 
 pub use affine::*;
 pub use base::*;
@@ -21,3 +22,4 @@ pub use phase::*;
 pub use product::*;
 pub use separable::*;
 pub use sum::*;
+pub use visibility::*;

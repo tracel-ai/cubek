@@ -3,6 +3,7 @@
 pub mod matmul;
 mod mul;
 pub mod reduce;
+mod row_factors;
 mod rows;
 pub mod softmax;
 mod team;
@@ -10,4 +11,4 @@ mod team;
 pub(crate) use matmul::*;
 pub(crate) use softmax::*;
 pub use team::*;
-// mul and rows add `Tile` impls only; nothing to re-export.
+// mul, rows and row_factors add `Tile` impls only; nothing to re-export.

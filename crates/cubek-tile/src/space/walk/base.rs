@@ -25,7 +25,7 @@ pub struct Walk {
     routed_at: Vec<usize>,
     base: usize,
     steps: usize,
-    parent: Region,
+    pub(crate) parent: Region,
     #[cube(comptime)]
     pub(crate) space: Space,
     #[cube(comptime)]

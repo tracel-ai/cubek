@@ -69,6 +69,12 @@ impl Path {
             .unwrap_or(ComputeScope::Cube)
     }
 
+    /// The root partitioning's levels, outermost first: what a tile placed on this path is walked
+    /// with.
+    pub(crate) fn root_levels(&self) -> Vec<Level> {
+        self.root.levels().to_vec()
+    }
+
     /// The planes one cube of the root's partitioning holds ([`Partitioning::planes_per_cube`]).
     pub(crate) fn planes_per_cube(&self) -> usize {
         self.root.planes_per_cube() as usize
@@ -195,6 +201,21 @@ impl Region {
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         let last = comptime!(self.path.len() - 1);
         self.step(last).coord(axis)
+    }
+
+    /// The first coordinate along `axis` of the box this region covers, counted from its root's:
+    /// every level's coordinate along `axis` times the tile it cuts there. What a kernel bounds a
+    /// walk of its own by, as an attention's causal rows bound the keys they read.
+    pub fn origin(&self, #[comptime] axis: Axis) -> usize {
+        let mut origin = 0usize;
+        #[unroll]
+        for i in 0..comptime!(self.path.len()) {
+            let tile = comptime!(self.path.level(i).tile(axis));
+            if comptime!(tile.is_some()) {
+                origin += self.step(i).coord(axis) * comptime!(tile.unwrap());
+            }
+        }
+        origin
     }
 
     /// This path with one more level's coordinates below it.

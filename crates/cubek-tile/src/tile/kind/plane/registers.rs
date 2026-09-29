@@ -117,6 +117,20 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
+    /// `self[r, :] *= factors[first + r]`, in the registers that hold the block.
+    pub(crate) fn mul_rows(&mut self, factors: &Array<T>, #[comptime] first: usize) {
+        let lines = comptime!(self.nr);
+        #[unroll]
+        for r in 0..comptime!(self.mr) {
+            let factor = Vector::<T, RA>::cast_from(factors[comptime!(first + r)]);
+            #[unroll]
+            for n in 0..lines {
+                let at = comptime!(r * lines + n);
+                self.data[at] *= factor;
+            }
+        }
+    }
+
     /// Multiply every partial this block holds by `factor`.
     pub(crate) fn scale(&mut self, factor: T) {
         let count = comptime!(self.mr * self.nr);

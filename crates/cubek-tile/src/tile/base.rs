@@ -617,6 +617,38 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
+    /// A fresh shared-memory tile over `axes` of one region of `walk`, laid out as `storage` and
+    /// served one value a line: placed where the walk's regions sit, and owned as the walk's
+    /// stages are, one for the cube or a copy for each plane ([`Stages`]).
+    ///
+    /// What a kernel holds between two steps of its walk that no operand is: an attention's
+    /// scores between its two contractions. Placed in the partitioning, it opens an accumulator
+    /// and is windowed by the walk's regions like an operand.
+    pub fn scratch(
+        walk: &Walk,
+        #[comptime] axes: Vec<Axis>,
+        #[comptime] storage: StageStorage,
+    ) -> Tile<T> {
+        let owner = walk.stage_owner();
+        let (space, depth, levels) = comptime!({
+            let region = walk.level.child(&walk.space);
+            (
+                region.subspace(&axes),
+                walk.depth(),
+                walk.parent.path.root_levels(),
+            )
+        });
+        let tile = Memory::<T>::smem_owned(
+            comptime!(space.clone()),
+            comptime!(1usize),
+            storage,
+            comptime!(0usize),
+            comptime!(0usize),
+            owner,
+        );
+        Tile::new(tile.kind, comptime!(Placement::new(space, depth, levels)))
+    }
+
     /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.
     pub fn shared(#[comptime] space: Space, #[comptime] storage: StageStorage) -> Tile<T> {
         Memory::<T>::smem(space, comptime!(1usize), storage, comptime!(0usize))
@@ -698,15 +730,35 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`.
+    /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`,
+    /// or casts one window of memory into another of the same box, cell by cell, the units of
+    /// whoever holds the destination taking its cells in turns ([`Placement::holder`]).
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
+        let holder = comptime!(self.place.holder());
         match (&mut self.kind, &src.kind) {
             (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
                 s.fragment().store_cast_window(d, space)
             }
-            _ => panic!("Tile::copy_cast_from: a fragment stores into memory; nothing else casts"),
+            (TileKind::Memory(d), TileKind::Memory(s)) => {
+                comptime!(assert!(
+                    src.place.space.cells() == space.cells(),
+                    "Tile::copy_cast_from: a window is cast into one of the same box"
+                ));
+                let cells = comptime!(space.cells());
+                let size!(W) = 1usize;
+                let from = s.flat::<W>();
+                let mut into = d.flat_mut::<W>();
+                let mut at = holder_worker(holder);
+                while at < cells {
+                    into.write(at, Vector::cast_from(from.read(at)));
+                    at += holder_workers(holder);
+                }
+            }
+            _ => panic!(
+                "Tile::copy_cast_from: a fragment stores into memory, or memory casts into memory"
+            ),
         }
     }
 

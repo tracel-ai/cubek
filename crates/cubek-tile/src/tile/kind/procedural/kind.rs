@@ -301,6 +301,17 @@ impl<T: Numeric> Procedural<T> {
             comptime!(Placement::alone(space)),
         )
     }
+
+    /// This source as a tile at the root of `partitioning`, windowed by its regions like an
+    /// operand bound to it: its space must be the partitioning's, or some of its axes.
+    pub fn tile_in(self, partitioning: &Partitioning) -> Tile<T> {
+        let space = comptime!(self.space.clone());
+        let levels = comptime!(partitioning.levels().to_vec());
+        Tile::new(
+            TileKind::new_Procedural(self),
+            comptime!(Placement::root(space, levels)),
+        )
+    }
 }
 
 impl<T: Numeric> Procedural<T> {

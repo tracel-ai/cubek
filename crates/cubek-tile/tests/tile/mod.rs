@@ -15,6 +15,7 @@ mod imperative;
 mod launcher;
 mod leaf;
 mod matmul;
+mod online_softmax;
 mod packed;
 mod paged;
 mod procedural;

@@ -78,6 +78,21 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    /// `self[r, :] *= factors[first + r]`: a register block in place, a cmma fragment bounced
+    /// through its slot of the plane's scratch on `sync_plane`.
+    pub(crate) fn mul_rows(&self, factors: &Array<T>, #[comptime] first: usize) {
+        match self {
+            PlaneTile::Registers(block) => {
+                let mut block = block.clone();
+                block.mul_rows(factors, first);
+            }
+            PlaneTile::Cmma(fragment) => fragment.mul_rows(factors, first),
+            PlaneTile::Mma(_) => {
+                panic!("PlaneTile::mul_rows: a manual fragment's rows are not scaled in place yet")
+            }
+        }
+    }
+
     /// This tile carrying its partition's scratch. Only a cmma tile bounces.
     pub(crate) fn with_scratch(self, scratch: Shared<[T]>) -> PlaneTile<T> {
         match self {
@@ -394,6 +409,18 @@ impl<T: Numeric> PlanePartition<T> {
                     tile.load_scratch(&scratch);
                 }
                 sync_cube();
+            }
+        }
+    }
+
+    /// `self[r, :] *= factors[r]`, each tile scaled where it is held ([`PlaneTile::mul_rows`]),
+    /// row `r` counted down the partition's rows.
+    pub(crate) fn mul_rows(&self, factors: &Array<T>) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                self.at(mi, ni).mul_rows(factors, comptime!(mi * self.rows));
             }
         }
     }
