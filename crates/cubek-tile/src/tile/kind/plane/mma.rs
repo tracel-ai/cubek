@@ -123,15 +123,6 @@ impl<T: Numeric> MmaData<T> {
     /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile, not
     /// its store: the manual path reads through the quant-transparent matrix view, decoding here.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
-        let dequant_at = src.dequant_at();
-        let io = comptime!(self.io);
-        comptime!(assert!(
-            dequant_at == DequantAt::Load
-                || (matches!(io.lhs_load_method, LoadMethod::Manual)
-                    && matches!(io.rhs_load_method, LoadMethod::Manual)),
-            "MmaData::load_window: the ldmatrix transport copies raw units, so it cannot decode a \
-             quantized source as it reads; serve that operand by its load (DequantAt::Load)"
-        ));
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -234,10 +225,13 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     // `ldmatrix` reads 16-byte rows of 16-bit cells out of shared memory, for an operand: it
     // serves a window only where every one of those holds, and the manual load serves the rest.
     // A gathered window has no row a unit could address, a line wider than a row starts one
-    // inside it, and a global window, a 4-byte cell or the accumulator is not what the instruction
-    // reads at all.
+    // inside it, a quantized or packed window holds words its read decodes where `ldmatrix` would
+    // copy them raw, and a global window, a 4-byte cell or the accumulator is not what the
+    // instruction reads at all.
     let gathered = src.gathered();
     let shared = src.is_shared();
+    let dequant_at = src.dequant_at();
+    let holds_served_values = comptime!(dequant_at == DequantAt::Load);
     let served = src.vector_size();
     // An element's size read at expansion, where the launch has registered it: inside
     // `comptime!` the call would size the generic placeholder instead.
@@ -246,6 +240,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     let ldmatrix_serves = comptime!(
         shared
             && !gathered
+            && holds_served_values
             && elem_size == 2
             && ident != MatrixIdent::Accumulator
             && row_cells.is_multiple_of(served)

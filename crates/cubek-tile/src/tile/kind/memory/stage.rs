@@ -26,11 +26,13 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`smem`](Memory::smem) with a minimum byte alignment on the shared
-    /// buffer. A TMA-filled stage needs one (`TMA_STAGE_ALIGNMENT`); every
-    /// stage is aligned to at least one chunk ([`RowChunks::CHUNK_BYTES`]),
-    /// which a padded or swizzled row assumes and an `ldmatrix` row address
-    /// requires: at the element's own alignment, a shared allocation declared
-    /// before the stage could leave its rows off 16 bytes.
+    /// buffer. A TMA-filled stage needs one (`TMA_STAGE_ALIGNMENT`), and a
+    /// stage made here is aligned to at least one chunk
+    /// ([`RowChunks::CHUNK_BYTES`]), which an `ldmatrix` row address requires:
+    /// at the element's own alignment, a shared allocation declared before the
+    /// stage could leave its rows off 16 bytes. The gathered, packed and
+    /// quantized stages and a landing are made elsewhere and keep their
+    /// element's alignment; `ldmatrix` reads none of them.
     pub fn smem_aligned(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,

@@ -127,11 +127,36 @@ fn staged<EI: Numeric, EA: Numeric>(
     #[comptime] staging: Staging,
 ) {
     if comptime!(staging == Staging::StageAfterSmallAllocation) {
+        // Written before the stage is declared and read after the walk, so the allocation lives
+        // across the stage and cannot be dropped: an unread write would leave the stage at 0.
         let mut small = Shared::<[u32]>::new_slice(1usize);
         if UNIT_POS == 0 {
             small[0] = 1u32;
         }
+        sync_cube();
+        walk_stages::<EI, EA>(a, b, acc, walk, inner, storage, depth, schedule);
+        sync_cube();
+        if small[0] != 1u32 {
+            acc.zero();
+        }
+    } else {
+        walk_stages::<EI, EA>(a, b, acc, walk, inner, storage, depth, schedule);
     }
+}
+
+/// `a · b` into `acc`, a stage of `storage` at a time.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn walk_stages<EI: Numeric, EA: Numeric>(
+    a: &Tile<EI>,
+    b: &Tile<EI>,
+    acc: &mut Tile<EA>,
+    walk: Walk,
+    #[comptime] inner: Level,
+    #[comptime] storage: StageStorage,
+    #[comptime] depth: usize,
+    #[comptime] schedule: Schedule,
+) {
     let mut stages = Stages::smem(&walk, a, b, storage, depth);
     match comptime!(schedule) {
         Schedule::AheadInSlots => {
@@ -159,14 +184,16 @@ fn staged<EI: Numeric, EA: Numeric>(
     }
 }
 
-/// The `m × n × k` shape this device offers `leaf` at in `f16` summed in `f32`: `16×16×16` where
+/// The `m × n × k` shape this device offers `leaf` at in `input` summed in `f32`: `16×16×16` where
 /// it does, else the first other it lists (NVIDIA's manual mma is `16×8×16`), so the stages are
-/// read by the instruction each device has. Reported rather than silently passed where it has
-/// none.
-fn f16_shape(
+/// read by the instruction each device has. Where `reads_ldmatrix`, the device must also load
+/// `input` through `ldmatrix`; a case the transport reads manually whatever it was asked needs only
+/// the mma. Reported rather than silently passed where the device has neither.
+fn instruction_shape(
     client: &cubecl::client::Client,
     leaf: Leaf,
-    f16: ElemType,
+    input: ElemType,
+    reads_ldmatrix: bool,
 ) -> Option<(usize, usize, usize)> {
     let f32 = f32::elem_type_native();
     let matmul = &client.properties().features.matmul;
@@ -174,16 +201,16 @@ fn f16_shape(
         Leaf::Mma | Leaf::MmaLoadMatrix => &matmul.mma,
         Leaf::Cmma => &matmul.cmma,
     };
-    if leaf == Leaf::MmaLoadMatrix && !matmul.ldmatrix.contains(&f16) {
+    if reads_ldmatrix && !matmul.ldmatrix.contains(&input) {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device has no {f16:?} ldmatrix"
+            "device has no {input:?} ldmatrix"
         )))
         .enforce();
         return None;
     }
     let shapes: Vec<(usize, usize, usize)> = configs
         .iter()
-        .filter(|cfg| cfg.a_type == f16 && cfg.b_type == f16 && cfg.cd_type == f32)
+        .filter(|cfg| cfg.a_type == input && cfg.b_type == input && cfg.cd_type == f32)
         .map(|cfg| (cfg.m as usize, cfg.n as usize, cfg.k as usize))
         .collect();
     let shape = shapes
@@ -193,7 +220,7 @@ fn f16_shape(
         .or_else(|| shapes.first().copied());
     if shape.is_none() {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device has no {f16:?} {leaf:?} summed in f32"
+            "device has no {input:?} {leaf:?} summed in f32"
         )))
         .enforce();
     }
@@ -220,6 +247,8 @@ struct Case {
     v: usize,
     /// The rhs stored `{n, k}` rather than `{k, n}`.
     transposed: bool,
+    /// The lhs stored `{k, m}` rather than `{m, k}`.
+    lhs_transposed: bool,
     /// Stages in flight.
     depth: usize,
     schedule: Schedule,
@@ -239,6 +268,7 @@ impl Case {
         stage_k: 32,
         v: 8,
         transposed: false,
+        lhs_transposed: false,
         depth: 1,
         schedule: Schedule::AheadInSlots,
         leaf: Leaf::Mma,
@@ -254,6 +284,7 @@ fn check(case: Case) {
         stage_k,
         v,
         transposed,
+        lhs_transposed,
         depth,
         schedule,
         leaf,
@@ -261,7 +292,13 @@ fn check(case: Case) {
         input,
     } = case;
     let client = cubecl::test_device().client();
-    let Some((edge_m, edge_n, edge_k)) = f16_shape(&client, leaf, input) else {
+    // Where the transport reads through `ldmatrix`: a stage whose lines a 16-byte row holds whole.
+    // A global window or wider lines are read manually whatever the case asked.
+    let reads_ldmatrix = leaf == Leaf::MmaLoadMatrix
+        && staging != Staging::Global
+        && (16 / input.size()).is_multiple_of(v);
+    let Some((edge_m, edge_n, edge_k)) = instruction_shape(&client, leaf, input, reads_ldmatrix)
+    else {
         return;
     };
     let (m, n, k) = (mn, mn, 128usize);
@@ -270,6 +307,14 @@ fn check(case: Case) {
     if leaf != Leaf::Cmma && !transposed && edge_n < v {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
             "a {v}-wide line runs past the {edge_n}-wide mma fragment along N"
+        )))
+        .enforce();
+        return;
+    }
+    // The same for a `{k, m}` lhs, whose lines run along `M`.
+    if leaf != Leaf::Cmma && lhs_transposed && edge_m < v {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "a {v}-wide line runs past the {edge_m}-wide mma fragment along M"
         )))
         .enforce();
         return;
@@ -291,9 +336,17 @@ fn check(case: Case) {
         false => b.clone(),
         true => (0..n * k).map(|idx| b[(idx % k) * n + idx / k]).collect(),
     };
-    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+    // A `{k, m}` lhs holds the same logical `a`, laid down along `m`.
+    let (a_stored, a_shape) = match lhs_transposed {
+        false => (a.clone(), shape![m, k]),
+        true => (
+            (0..k * m).map(|idx| a[(idx % m) * k + idx / m]).collect(),
+            shape![k, m],
+        ),
+    };
+    let (a_handle, _) = TestInput::builder(client.clone(), a_shape)
         .dtype(input)
-        .custom(a)
+        .custom(a_stored)
         .generate_with_f32_host_data();
     let b_shape = if transposed {
         shape![n, k]
@@ -326,6 +379,7 @@ fn check(case: Case) {
         block: vec![(M, edge_m), (N, edge_n), (K, stage_k)],
         chunks,
     };
+    let a_axes: &'static [Axis] = if lhs_transposed { &[K, M] } else { &[M, K] };
     let b_axes: &'static [Axis] = if transposed { &[N, K] } else { &[K, N] };
     let bind = |binding, axes: &'static [Axis], width| {
         launcher.arg(binding).axes(axes).vectorize(width).build()
@@ -335,7 +389,7 @@ fn check(case: Case) {
         launcher.cube_count(),
         launcher.cube_dim(),
         v,
-        bind(a_handle.clone().binding(), &[M, K], v).arg(),
+        bind(a_handle.clone().binding(), a_axes, v).arg(),
         bind(b_handle.clone().binding(), b_axes, v).arg(),
         bind(out.clone().binding(), &[M, N], 1).arg(),
         launcher.partitioning_arg(),
@@ -523,6 +577,25 @@ fn the_ldmatrix_transport_reads_every_arrangement() {
                     depth: 2,
                     schedule,
                     leaf: Leaf::MmaLoadMatrix,
+                    ..Case::DEFAULT
+                });
+            }
+        }
+    }
+}
+
+/// An lhs stored `{k, m}`, whose rows `ldmatrix` hands out transposed, beside either rhs, in every
+/// arrangement: the manual transport reads the same product.
+#[test]
+fn the_ldmatrix_transport_reads_a_col_major_lhs() {
+    for leaf in [Leaf::Mma, Leaf::MmaLoadMatrix] {
+        for chunks in [RowChunks::InOrder, RowChunks::Swizzled, RowChunks::Padded] {
+            for transposed in [false, true] {
+                check(Case {
+                    chunks,
+                    transposed,
+                    lhs_transposed: true,
+                    leaf,
                     ..Case::DEFAULT
                 });
             }
