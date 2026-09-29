@@ -1,8 +1,7 @@
-//! How packed values sit in words and decode: the statement ([`base`]) and the view that unpacks
-//! a line ([`view`]).
+//! Packed values in words: the statement ([`base`]) and the unpacking view ([`view`]).
 
-mod base;
-mod view;
+pub(crate) mod base;
+pub(crate) mod view;
 
-pub use base::*;
+pub(crate) use base::*;
 pub(crate) use view::*;

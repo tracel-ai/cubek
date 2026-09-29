@@ -1,21 +1,14 @@
-//! Where a loop is: a [`Region`] is the path of levels a kernel's loops took from a root space to
-//! the box the innermost one handed out, one [`Step`] per level. A tile windows itself to a region
-//! with `at`, applying the steps below its own depth, so the root tile and any window read alike.
+//! Where a loop is: the path of levels a kernel's loops took from a root space to a box.
 
-use super::{Level, Partitioning, Space};
+use super::{ComputeScope, Level, Partitioning, Space};
 use crate::{Axis, Coords, Integer, IntegerExpand, MatrixAxes, Walk};
 use cubecl::{prelude::*, unexpanded};
 
-/// The comptime shape of a [`Region`]'s path: the levels taken from a root space down, outermost
-/// first, where the first sits in the root's partitioning, and the partitioning itself, whose
-/// level at the path's depth is the one below.
+/// The comptime shape of a [`Region`]'s path: the levels taken from a root space, outermost first.
 #[derive(Clone, Debug)]
 pub(crate) struct Path {
-    /// The first level's depth in the root's partitioning.
     base: usize,
-    /// The root space and every level of the partitioning it sits in, the path's own included.
     root: Partitioning,
-    /// The levels taken so far, outermost first.
     levels: Vec<Level>,
 }
 
@@ -24,37 +17,34 @@ impl Path {
         Path { base, root, levels }
     }
 
-    /// The depth of the box this path names: below every level of it.
+    /// The depth of the box this path names.
     pub(crate) fn depth(&self) -> usize {
         self.base + self.levels.len()
     }
 
-    /// The first level's depth in the root's partitioning.
     pub(crate) fn base(&self) -> usize {
         self.base
     }
 
-    /// How many levels the path has taken.
     pub(crate) fn len(&self) -> usize {
         self.levels.len()
     }
 
-    /// The `i`-th level taken, outermost first.
     pub(crate) fn level(&self, i: usize) -> &Level {
         &self.levels[i]
     }
 
-    /// The space the `i`-th level of the path cuts: the root, through the levels above it.
+    /// The space the `i`-th level of the path cuts.
     pub(crate) fn space_at(&self, i: usize) -> Space {
         self.root.space().leaf(&self.levels[..i])
     }
 
-    /// The box this path names: the root through every level taken.
+    /// The box this path names.
     pub(crate) fn child(&self) -> Space {
         self.root.space().leaf(&self.levels)
     }
 
-    /// The partitioning's level below this path: the one at its depth.
+    /// The partitioning's level at this path's depth.
     pub(crate) fn next(&self) -> Level {
         let depth = self.depth();
         let levels = self.root.levels();
@@ -67,6 +57,23 @@ impl Path {
         levels[depth].clone()
     }
 
+    /// Who runs the box this path names: the narrowest scope any level from the root down to it
+    /// hands its tiles to — a unit, a plane, or, where every level is walked or distributed over
+    /// cubes, the cube.
+    pub(crate) fn scope(&self) -> ComputeScope {
+        self.root.levels()[..self.base]
+            .iter()
+            .chain(&self.levels)
+            .filter_map(|level| level.coverage().scope())
+            .min()
+            .unwrap_or(ComputeScope::Cube)
+    }
+
+    /// The planes one cube of the root's partitioning holds ([`Partitioning::planes_per_cube`]).
+    pub(crate) fn planes_per_cube(&self) -> usize {
+        self.root.planes_per_cube() as usize
+    }
+
     /// This path one level further down.
     pub(crate) fn below(&self, level: Level) -> Path {
         let mut levels = self.levels.clone();
@@ -75,16 +82,13 @@ impl Path {
     }
 }
 
-/// The path a kernel's loops took to a box: the levels from a root space down, outermost first,
-/// and the coordinates each loop handed out. A tile at any depth applies the steps below it.
+/// The path a kernel's loops took to a box, with the coordinates each loop handed out.
 /// Iterating distributes the next level.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Region {
-    /// One coordinate set per level, outermost first.
     digits: Sequence<Coords<u32>>,
-    /// The runtime sizes of the root's dynamic axes, positional: what a loop below this region
-    /// walks its child space with.
+    /// The runtime sizes of the root's dynamic axes, positional.
     sizes: Sequence<usize>,
     #[cube(comptime)]
     pub(crate) path: Path,
@@ -104,7 +108,7 @@ impl Region {
         }
     }
 
-    /// The empty path at the partitioning's space: where a loop over it starts from.
+    /// The empty path at the partitioning's space.
     pub(crate) fn root(partitioning: &Partitioning) -> Region {
         Region::rooted(
             &partitioning.space,
@@ -113,8 +117,7 @@ impl Region {
         )
     }
 
-    /// The empty path at `space`, which sits at `depth` in a partitioning of `levels`: where a
-    /// loop over a tile's own box starts from.
+    /// The empty path at `space`, which sits at `depth` in a partitioning of `levels`.
     pub(crate) fn rooted(
         space: &Space,
         #[comptime] levels: Vec<Level>,
@@ -131,18 +134,13 @@ impl Region {
         )
     }
 
-    /// The regions of the level below this one: what `for plane in cube` iterates, as a value
-    /// for a schedule that indexes them by hand or a loop that unrolls or reverses.
+    /// The regions of the level below this one.
     pub fn walk(&self) -> Walk {
         Walk::of(&self.child(), comptime!(self.path.next()), self.clone())
     }
 
     /// The region one level below the root at trailing-two coordinates `(c0, c1)` under `level`,
-    /// `0` elsewhere, for a tile at `depth`: what a leaf states to cut an operand its own way.
-    ///
-    /// The coordinates carry their own constness ([`cast`](crate::Integer::cast) keeps a constant
-    /// constant): comptime ones fold to constants and can select fragments; kernel-computed ones
-    /// (the visit a worker picked out of a grid by hardware position) window memory.
+    /// `0` elsewhere, for a tile at `depth`. Comptime coordinates stay constant.
     pub fn trailing(
         #[comptime] depth: usize,
         #[comptime] space: Space,
@@ -155,9 +153,7 @@ impl Region {
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            // `fcast`, not `as`: a comptime coordinate has to stay a constant or it could no
-            // longer select a fragment. `runtime` on the `0` moves the literal into the expand
-            // domain and keeps it constant too.
+            // `cast`, not `as`, and `runtime` on the `0`: both keep a comptime coordinate constant.
             let c = if comptime!(p == edges.row_split) {
                 c0.cast::<u32>()
             } else if comptime!(p == edges.col_split) {
@@ -190,14 +186,12 @@ impl Region {
         )
     }
 
-    /// The box this region covers, as the runtime space a loop below it walks: the root through
-    /// every level, an axis left whole keeping the root's size.
+    /// The box this region covers, as a runtime space.
     pub(crate) fn child(&self) -> Space {
         Space::with_sizes(comptime!(self.path.child()), self.sizes.clone())
     }
 
-    /// The innermost level's coordinate along `axis`; `0` when the axis is absent (broadcast by
-    /// omission: the tile spans all of it).
+    /// The innermost level's coordinate along `axis`; `0` when the axis is absent.
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         let last = comptime!(self.path.len() - 1);
         self.step(last).coord(axis)
@@ -222,15 +216,13 @@ impl Region {
 
 #[cube]
 impl Region {
-    /// The regions of `level` over this region's own box, a level of the kernel's own rather
-    /// than the partitioning's next ([`walk`](Region::walk)).
+    /// The regions of `level` over this region's own box.
     pub fn over(&self, #[comptime] level: &Level) -> Walk {
         Walk::of(&self.child(), comptime!(level.clone()), self.clone())
     }
 }
 
-/// One level's cut of one space: the tile coordinates a loop over `level` handed out, and the
-/// space they index.
+/// One level's cut of one space: the tile coordinates a loop handed out, and the space.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct Step {
@@ -239,8 +231,7 @@ pub(crate) struct Step {
     pub(crate) space: Space,
     #[cube(comptime)]
     pub(crate) level: Level,
-    /// Where `level` sits in the nest, outermost `0`: what a storage tile's level is matched
-    /// against on the way down ([`Storage`](crate::Storage)).
+    /// Where `level` sits in the nest, outermost `0`.
     #[cube(comptime)]
     pub(crate) depth: usize,
 }
@@ -261,8 +252,7 @@ impl Step {
         }
     }
 
-    /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
-    /// the tile spans all of it).
+    /// The coordinate along `axis`; `0` when the axis is absent.
     pub(crate) fn coord(&self, #[comptime] axis: Axis) -> usize {
         if comptime!(self.space.contains(axis)) {
             self.coords
@@ -274,8 +264,7 @@ impl Step {
     }
 }
 
-/// The runtime twin of `for plane in cube`, which a kernel's host-side body names but never
-/// runs: every loop over a region expands in-kernel.
+/// Host-side stand-in for `for plane in cube`; never runs.
 impl IntoIterator for Region {
     type Item = Region;
     type IntoIter = std::vec::IntoIter<Region>;
@@ -294,8 +283,7 @@ impl IntoIterator for &Region {
     }
 }
 
-/// `for plane in cube` iterates the level below `cube`. A walk of one region runs straight
-/// through, as [`Walk`]'s own iteration does, so a level that cuts nothing costs no loop.
+/// `for plane in cube` iterates the level below `cube`.
 impl Iterable for RegionExpand {
     type Item = RegionExpand;
 

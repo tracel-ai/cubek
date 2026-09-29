@@ -1,7 +1,6 @@
-//! Moving an operand's cells into the tile an instruction reads them from: which transport a
-//! pairing takes ([`base`]), the four that do the work, and the straight one split around a
-//! contraction ([`prefetch`]).
+//! Transports that move an operand's cells into the tile an instruction reads them from.
 
+pub(crate) mod async_copy;
 pub(crate) mod base;
 pub(crate) mod cooperative;
 pub(crate) mod padded;

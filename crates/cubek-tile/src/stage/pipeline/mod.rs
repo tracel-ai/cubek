@@ -1,14 +1,11 @@
-//! The slots a walk fills ahead of the region that reads them: what a slot holds ([`payload`]),
-//! when each of its operands is filled ([`plan`]), the slot itself ([`slot`]), the one
-//! constructor and fill over them ([`fill`]), and the schedule that drives them ([`base`]).
+//! The slots a walk fills ahead of the region that reads them, and the schedule driving them.
 
-mod base;
-mod fill;
-mod payload;
-mod plan;
-mod slot;
+pub(crate) mod base;
+pub(crate) mod fill;
+pub(crate) mod payload;
+pub(crate) mod plan;
+pub(crate) mod slot;
 
-pub use base::*;
-pub use payload::pair::OperandPair;
-pub use plan::*;
-pub use slot::*;
+pub(crate) use base::*;
+pub(crate) use plan::*;
+pub(crate) use slot::*;

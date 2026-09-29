@@ -1,6 +1,5 @@
-//! The manual-mma leaf, the raw-mma twin of [`cmma`](super::cmma): `acc += lhs · rhs` via
-//! [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition). The accumulator is a register
-//! fragment; operands are fragments or smem/gmem windows, the latter loaded into `A`/`B` here.
+//! The manual-mma leaf: `acc += lhs · rhs` via
+//! [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition).
 
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
@@ -9,8 +8,7 @@ use crate::*;
 
 #[cube]
 impl<A: Numeric> MmaData<A> {
-    /// Manual contraction `self += lhs · rhs`. Fragment operands execute directly; memory windows
-    /// are loaded into transient `A`/`B` fragments each call, each in the order it lies.
+    /// `self += lhs · rhs`; memory-window operands are loaded into transient fragments each call.
     pub(crate) fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
@@ -29,8 +27,7 @@ impl<A: Numeric> MmaData<A> {
                     _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
                 (TileKind::Memory(_), TileKind::Memory(_)) => {
-                    // Each window is read in the order it lies: the role's own, or its transpose
-                    // where the contraction is not its trailing axis (a weight stored `{n, k}`).
+                    // Read each window in its stored order (`{n, k}` reads transposed).
                     let (lhs_layout, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
                     let mut la = MmaData::<L>::lhs(m, n, k, lhs_layout, io);
@@ -53,12 +50,8 @@ impl<A: Numeric> MmaData<A> {
     }
 }
 
-/// The layout each factor's window is read in: `A` row-major where its trailing axis is
-/// contracted, `B` col-major there (the rule [`rhs_layout`](super::cmma::rhs_layout) states for
-/// one contracted axis). A factor's trailing
-/// axis is contracted exactly when the other factor holds it too, so a contraction over several
-/// axes (a convolution's taps and channels, which the window's matrix edges flatten) reads the
-/// same way as one over one, and a batch axis, never trailing, does not enter.
+/// Each factor's window layout: `A` row-major and `B` col-major when its trailing axis is
+/// contracted, the opposite otherwise.
 fn window_layouts(lhs: &Space, rhs: &Space) -> (MatrixLayout, MatrixLayout) {
     let trailing = |space: &Space| space.axis_at(space.rank() - 1);
     let lhs_layout = match rhs.contains(trailing(lhs)) {
@@ -82,8 +75,7 @@ mod tests {
     const K: Axis = Axis(3);
     const TAPS: Axis = Axis(4);
 
-    /// Each factor reads row- or col-major by whether its trailing axis is contracted: a col
-    /// weight `{n, k}` col-major, a transposed lhs `{k, m}` col-major, a batch axis ignored.
+    /// Layout follows whether each factor's trailing axis is contracted.
     #[test]
     fn a_window_reads_in_its_trailing_axis_order() {
         let lhs = Space::new(&[(B, 2), (M, 16), (K, 16)]);
@@ -105,8 +97,7 @@ mod tests {
         ));
     }
 
-    /// A contraction over taps and channels both, the weight stored with them trailing: both
-    /// factors' two trailing axes are contracted, and each reads as over one.
+    /// Two contracted trailing axes read the same as one.
     #[test]
     fn a_window_contracted_over_two_axes_reads_as_over_one() {
         let lhs = Space::new(&[(M, 16), (TAPS, 3), (K, 16)]);

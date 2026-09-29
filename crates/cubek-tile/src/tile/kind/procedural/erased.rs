@@ -65,7 +65,7 @@ pub(crate) struct ErasedRecipeExpand<T: Numeric> {
 }
 
 impl<T: Numeric> ErasedRecipe<T> {
-    pub fn __expand_new<R: Recipe<T> + 'static>(
+    pub(crate) fn __expand_new<R: Recipe<T> + 'static>(
         _scope: &Scope,
         recipe: R::ExpandType,
     ) -> ErasedRecipeExpand<T> {
@@ -75,7 +75,7 @@ impl<T: Numeric> ErasedRecipe<T> {
         }
     }
 
-    pub fn __expand_new_separable<R: super::Separable<T> + 'static>(
+    pub(crate) fn __expand_new_separable<R: super::Separable<T> + 'static>(
         _scope: &Scope,
         recipe: R::ExpandType,
     ) -> ErasedRecipeExpand<T>
@@ -89,14 +89,12 @@ impl<T: Numeric> ErasedRecipe<T> {
         }
     }
 
-    pub fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
+    pub(crate) fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
         unexpanded!()
     }
 
-    /// The factorization the recipe states, if it states one: one factor per contracted axis.
-    /// `None` for a recipe with no separable structure, which is a different answer from a
-    /// factorization of rank one and reaches a different contraction schedule.
-    pub fn factorization(&self) -> comptime_type!(Option<usize>) {
+    /// One factor per contracted axis if the recipe is separable, else `None`.
+    pub(crate) fn factorization(&self) -> comptime_type!(Option<usize>) {
         unexpanded!()
     }
 
@@ -112,7 +110,7 @@ impl<T: Numeric> ErasedRecipe<T> {
 }
 
 impl<T: Numeric> ErasedRecipeExpand<T> {
-    pub fn __expand_evaluate_method(
+    pub(crate) fn __expand_evaluate_method(
         &self,
         scope: &Scope,
         coordinates: &RecipeCoordsExpand,
@@ -120,13 +118,13 @@ impl<T: Numeric> ErasedRecipeExpand<T> {
         self.state.call(scope, coordinates)
     }
 
-    pub fn __expand_factorization_method(&self, scope: &Scope) -> Option<usize> {
+    pub(crate) fn __expand_factorization_method(&self, scope: &Scope) -> Option<usize> {
         self.separable
             .as_ref()
             .map(|separable| separable.call_factors(scope))
     }
 
-    pub fn __expand_factor_method(
+    pub(crate) fn __expand_factor_method(
         &self,
         scope: &Scope,
         coordinates: &RecipeCoordsExpand,
@@ -134,8 +132,7 @@ impl<T: Numeric> ErasedRecipeExpand<T> {
     ) -> NativeExpand<T> {
         match &self.separable {
             Some(separable) => separable.call_factor(scope, coordinates, factor),
-            // An unfactorized recipe is still its own factor zero, which keeps this total for a
-            // consumer that reached it without asking `factors` first.
+            // An unfactorized recipe is its own factor zero.
             None => {
                 assert_eq!(factor, 0, "recipe states no factorization beyond itself");
                 self.state.call(scope, coordinates)
@@ -143,7 +140,12 @@ impl<T: Numeric> ErasedRecipeExpand<T> {
         }
     }
 
-    pub fn __expand_factor_reads_method(&self, scope: &Scope, factor: usize, axis: Axis) -> bool {
+    pub(crate) fn __expand_factor_reads_method(
+        &self,
+        scope: &Scope,
+        factor: usize,
+        axis: Axis,
+    ) -> bool {
         match &self.separable {
             Some(separable) => separable.call_factor_reads(scope, factor, axis),
             None => true,

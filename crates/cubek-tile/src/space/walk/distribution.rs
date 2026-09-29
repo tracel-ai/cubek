@@ -1,7 +1,5 @@
-//! How one axis of a walk's space is distributed at its level ([`AxisDistribution`]), settled on the host so
-//! the walk asks each distribution for its share and its position instead of asking the level six
-//! questions per axis, and where an instance finds its own position ([`ComputeScope::position`],
-//! [`CubeAxis::position`]).
+//! How one axis of a walk's space is distributed at its level, and where an instance finds its
+//! own position.
 
 use cubecl::prelude::*;
 
@@ -9,8 +7,7 @@ use crate::{
     Axis, ComputeScope, Count, CubeAxis, Extent, Integer, IntegerExpand, Level, Space, Spread,
 };
 
-/// One axis of a level, as a walk distributes it: walked whole by every instance, or distributed
-/// over the level's scope.
+/// One axis of a level: walked whole by every instance, or distributed over the level's scope.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum AxisDistribution {
     /// Every instance steps the whole grid along this axis.
@@ -19,8 +16,7 @@ pub(crate) enum AxisDistribution {
     Distributed(Distribution),
 }
 
-/// How an axis's grid is distributed over a level's scope: one tile an instance, or `across` of them in
-/// runs.
+/// How an axis's grid is distributed over a level's scope.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Distribution {
     /// The scope whose instances take the tiles.
@@ -28,28 +24,22 @@ pub(crate) struct Distribution {
     /// The grid dimension a cube level's axis rides.
     pub(crate) dim: Option<CubeAxis>,
     pub(crate) spread: Spread,
-    /// The workers an [`AllAcross`](Count::AllAcross) axis is distributed to in runs; `None`
-    /// where each worker takes one tile.
+    /// The workers an [`AllAcross`](Count::AllAcross) axis is distributed to in runs.
     pub(crate) across: Option<usize>,
-    /// Whether the tiles are taken in turns by as many units as the launch runs
-    /// ([`Count::Distributed`]): the instances are the launch's, not the grid's.
+    /// Whether the tiles are taken in turns by as many units as the launch runs.
     pub(crate) in_turns: bool,
     /// Whether the host proved every worker's run whole, so the kernel skips clamping it.
     pub(crate) divides: bool,
-    /// The later axes sharing this axis's hardware dimension, whose instance counts weight
-    /// this axis's digit (the earlier axis is the more significant digit).
+    /// The later axes sharing this axis's hardware dimension.
     pub(crate) inner: Vec<usize>,
-    /// The instance weight of the same-dimension axes inside this one that the walked space
-    /// does not span, read off the level since the space has dropped them.
+    /// The instance weight of same-dimension axes inside this one that the space does not span.
     pub(crate) unspanned: usize,
-    /// Which of the two jointly decoded in-plane positions this axis takes, when the cube
-    /// level distributes its boxes in a swizzled order.
+    /// Which of the two jointly decoded in-plane positions this axis takes, when swizzled.
     pub(crate) swizzled: Option<usize>,
 }
 
 impl AxisDistribution {
-    /// How `level` distributes axis `p` of `space`, `swizzled` the two in-plane positions where the
-    /// cube level states an order.
+    /// How `level` distributes axis `p` of `space`.
     pub(crate) fn new(
         level: &Level,
         space: &Space,
@@ -88,9 +78,7 @@ impl AxisDistribution {
         })
     }
 
-    /// Whether every worker's run along an axis distributed across workers is the full one: the grid
-    /// divides the worker count, provable only of a static extent. Any other count distributes one tile
-    /// a worker, which every grid divides.
+    /// Whether every worker's run along an axis is the full one.
     fn divides(level: &Level, space: &Space, axis: Axis) -> bool {
         match level.cut(axis).count {
             Count::AllAcross(workers) => match space.extent_raw(axis) {
@@ -99,18 +87,13 @@ impl AxisDistribution {
                     .is_multiple_of(workers),
                 Extent::Dynamic => false,
             },
-            // The units are the launch's, so nothing here can prove they divide the count.
             Count::Distributed(_) => false,
             Count::Stated(_) | Count::All => true,
         }
     }
 
-    /// The instance-index weight `space`'s own axis list cannot see: the instance counts of the
-    /// same-dimension axes *inside* `axis` that `level` distributes and `space` does not span. The
-    /// odometer is the level's, so an operand divides out contracted axes it does not span.
-    ///
-    /// Reading omitted axes as weight `1` aliases the outer digits onto one value, so this panics
-    /// where such an axis has no comptime count: assuming `1` would be exactly that aliasing.
+    /// The instance counts of same-dimension axes inside `axis` that `space` does not span.
+    /// Panics where such an axis has no comptime count.
     pub(crate) fn unspanned_weight(level: &Level, space: &Space, axis: Axis) -> usize {
         let dim = level.cube_axis(axis);
         level
@@ -134,10 +117,7 @@ impl AxisDistribution {
 
 #[cube]
 impl AxisDistribution {
-    /// The tiles the instance at `pos` of `instances` takes of a `grid` distributed in runs of `run`:
-    /// the whole run where the host proved the grid `divides`, else the run cut where the grid
-    /// ends (contiguous) or the turns left to it (interleaved). Saturating: an instance past the
-    /// grid takes nothing.
+    /// The tiles instance `pos` of `instances` takes of a `grid` distributed in runs of `run`.
     pub(crate) fn tiles(
         grid: usize,
         pos: usize,
@@ -163,8 +143,7 @@ impl AxisDistribution {
         }
     }
 
-    /// The raw hardware position of the instances this distribution hands tiles to, before it is folded
-    /// through the axis's shared-dimension stride.
+    /// The raw hardware position of the instances this distribution hands tiles to.
     pub(crate) fn hardware(
         #[comptime] compute_scope: ComputeScope,
         #[comptime] dim: Option<CubeAxis>,
@@ -180,12 +159,8 @@ impl AxisDistribution {
 
 #[cube]
 impl ComputeScope {
-    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of the
-    /// plane. A cube's is per grid dimension (`CubeAxis::position`).
-    ///
-    /// `cube_dim = new_2d(plane_size, num_planes)`: `Y` is the plane index, `X` the plane-relative
-    /// unit. Units agree on `UNIT_POS_Y`, so they cooperate. The plane-relative unit, not the flat
-    /// `UNIT_POS`: flat would fold in `UNIT_POS_Y` and double-count a sibling plane axis's digit.
+    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of
+    /// the plane.
     pub fn position(#[comptime] compute_scope: ComputeScope) -> usize {
         match comptime!(compute_scope) {
             ComputeScope::Plane => UNIT_POS_Y as usize,
@@ -202,7 +177,7 @@ impl ComputeScope {
 #[cube]
 impl CubeAxis {
     /// This cube's position on grid dimension `dim`.
-    pub fn position(#[comptime] dim: CubeAxis) -> usize {
+    pub(crate) fn position(#[comptime] dim: CubeAxis) -> usize {
         let cube_pos = match comptime!(dim) {
             CubeAxis::X => CUBE_POS_X,
             CubeAxis::Y => CUBE_POS_Y,

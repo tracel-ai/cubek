@@ -65,6 +65,9 @@ pub enum MatmulAvailabilityError {
     /// TMA (Tensor Memory Access) is not available in the runtime.
     TmaUnavailable,
 
+    /// Async copy (`cp.async`) is not available in the runtime.
+    AsyncCopyUnavailable,
+
     /// Reinterpreting memory is unsupported in the current runtime.
     ReinterpretMemoryUnavailable,
 
@@ -177,6 +180,9 @@ impl Debug for MatmulAvailabilityError {
             }
             MatmulAvailabilityError::TmaUnavailable => {
                 writeln!(f, "TMA is not available.")
+            }
+            MatmulAvailabilityError::AsyncCopyUnavailable => {
+                writeln!(f, "Async copy is not available.")
             }
             MatmulAvailabilityError::ReinterpretMemoryUnavailable => {
                 writeln!(f, "Memory reinterpretation is not available.")

@@ -44,9 +44,12 @@ pub(crate) fn select_max<E: Numeric, N: Size>(
 ) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
-        let current_is_nan = numeric_is_nan(current);
-        let keep_current = current_is_nan.or(current.greater_than(&candidate));
-        select_many(keep_current, current, candidate)
+        intrinsic!(|scope| {
+            let current = current.read_value(scope);
+            let candidate = candidate.read_value(scope);
+            let op = cubecl::ir::dialect::cmp::FMaxNanOp::new(scope.ctx_mut(), current, candidate);
+            scope.register_with_result(&op).into()
+        })
     } else {
         select_many(current.greater_than(&candidate), current, candidate)
     }
@@ -59,9 +62,12 @@ pub(crate) fn select_min<E: Numeric, N: Size>(
 ) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
-        let current_is_nan = numeric_is_nan(current);
-        let keep_current = current_is_nan.or(current.less_than(&candidate));
-        select_many(keep_current, current, candidate)
+        intrinsic!(|scope| {
+            let current = current.read_value(scope);
+            let candidate = candidate.read_value(scope);
+            let op = cubecl::ir::dialect::cmp::FMinNanOp::new(scope.ctx_mut(), current, candidate);
+            scope.register_with_result(&op).into()
+        })
     } else {
         select_many(current.less_than(&candidate), current, candidate)
     }

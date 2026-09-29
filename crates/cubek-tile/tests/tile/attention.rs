@@ -13,7 +13,6 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Scratch, Semiring,
     Space, StageStorage, Tile, TileArg, TileArgLaunch, TileSpec,
-    kind::{Memory, Placement},
     ops::softmax::{MaskProbe, RowState},
 };
 
@@ -63,20 +62,20 @@ fn attention_fold_cmma_kernel<E: Float>(
     let mask_tile = mask.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    let rows = comptime!(q.place.space.extent(QP));
-    let d = comptime!(q.place.space.extent(D));
-    let val_dim = comptime!(v.place.space.extent(V));
+    let rows = comptime!(q.space().extent(QP));
+    let d = comptime!(q.space().extent(D));
+    let val_dim = comptime!(v.space().extent(V));
     let rows_p = comptime!(rows / planes);
     let (rm, cn, vn, ks) = comptime!((rows_p / frag, block / frag, val_dim / frag, d / frag));
 
-    let mut q_s = Memory::<E>::smem(
+    let mut q_s = Tile::<E>::smem(
         comptime!(Space::new(&[(QP, rows), (D, d)])),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     q_s.copy_from(&q);
-    let score = Memory::<f32>::smem(
+    let score = Tile::<f32>::smem(
         comptime!(Space::new(&[(QP, rows), (S, block)])),
         score_vec,
         StageStorage::Strided,
@@ -86,14 +85,8 @@ fn attention_fold_cmma_kernel<E: Float>(
     let k_walk = k.over(&blocks);
     let k_probe = k.at(&k_walk.region(0usize));
     let v_probe = v.at(&k_walk.region(0usize));
-    let mut k_stage = Tile::<E>::shared(
-        comptime!(k_probe.place.space.clone()),
-        StageStorage::Strided,
-    );
-    let mut v_stage = Tile::<E>::shared(
-        comptime!(v_probe.place.space.clone()),
-        StageStorage::Strided,
-    );
+    let mut k_stage = Tile::<E>::shared(comptime!(k_probe.space()), StageStorage::Strided);
+    let mut v_stage = Tile::<E>::shared(comptime!(v_probe.space()), StageStorage::Strided);
     let bound_s = bound as usize;
     sync_cube();
 
@@ -120,31 +113,23 @@ fn attention_fold_cmma_kernel<E: Float>(
                 .planes(&[(QP, planes)])
                 .level()
         );
-        let out_g = Tile::new(
-            out_w.kind.clone(),
-            comptime!(Placement::new(
-                out_w.place.space.clone(),
-                1,
-                vec![
-                    plane_level.clone(),
-                    Levels::leaf(&[(QP, frag), (V, frag), (S, frag)])
-                        .walk(&[(QP, rm), (V, vn), (S, cn)])
-                        .level(),
-                ]
-            )),
+        let out_g = out_w.with_levels(
+            1usize,
+            comptime!(vec![
+                plane_level.clone(),
+                Levels::leaf(&[(QP, frag), (V, frag), (S, frag)])
+                    .walk(&[(QP, rm), (V, vn), (S, cn)])
+                    .level(),
+            ]),
         );
-        let score_g = Tile::new(
-            score_w.kind.clone(),
-            comptime!(Placement::new(
-                score_w.place.space.clone(),
-                1,
-                vec![
-                    plane_level.clone(),
-                    Levels::leaf(&[(QP, frag), (S, frag), (D, frag)])
-                        .walk(&[(QP, rm), (S, cn), (D, ks)])
-                        .level(),
-                ]
-            )),
+        let score_g = score_w.with_levels(
+            1usize,
+            comptime!(vec![
+                plane_level.clone(),
+                Levels::leaf(&[(QP, frag), (S, frag), (D, frag)])
+                    .walk(&[(QP, rm), (S, cn), (D, ks)])
+                    .level(),
+            ]),
         );
         let mut acc = out_g
             .cmma_accumulator::<f32, f32>(&score_w, Monoid::Sum)

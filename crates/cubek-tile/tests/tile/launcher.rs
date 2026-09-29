@@ -6,7 +6,7 @@ use cubek_tile::launch::BoundaryPolicy;
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
     kind::{Boundary, Storage},
-    layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageTiling},
+    layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageLevels, VectorTile},
 };
 
 const M: Axis = Axis(0);
@@ -210,7 +210,7 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
 
     assert_eq!(
         off_the_tensor.spec.projection,
-        Projection::tiled(&[M, K], StorageTiling::uniform(2, 1))
+        Projection::tiled(&[M, K], &[M, K, M, K])
     );
 }
 
@@ -231,16 +231,83 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     let leaf = launch.arg(leaf_tiles).axes(&[M, K]).build();
     assert_eq!(leaf.spec.storage, Storage::Tiled(Some(2)));
 
-    // Storage of (16, K whole) are the cube's tile, the first level's: an axis stored as one
-    // fragment is whole, and a level that leaves it whole matches it. Level-major, the whole
-    // K dim sits between M's grid and tile fragments.
-    let mut cube_tiles = binding(&client, &[4, 8, 16]);
-    cube_tiles.tiling = Tiling::new(&[2, 1]).unwrap();
-    let cube = launch.arg(cube_tiles).axes(&[M, K]).build();
+    // Storage of (16, K whole) are the cube's tile, the first level's, where that level hands K
+    // down static: a level that leaves an axis whole matches a tile stored whole along it. With
+    // K dynamic in the kernel the level has no fixed tile, so nothing matches.
+    let cube_tiles = || {
+        let mut tiles = binding(&client, &[4, 8, 16]);
+        tiles.tiling = Tiling::new(&[2, 1]).unwrap();
+        tiles
+    };
+    let fixed = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 8);
+        implied(&client, Partitioning::new(space, levels), Form::Static)
+    };
+    let cube = fixed.arg(cube_tiles()).axes(&[M, K]).build();
     assert_eq!(cube.spec.storage, Storage::Tiled(Some(0)));
+    let cube = launch.arg(cube_tiles()).axes(&[M, K]).build();
+    assert_eq!(cube.spec.storage, Storage::Tiled(None));
 
     let plain = launch.arg(binding(&client, &[64, 8])).axes(&[M, K]).build();
     assert_eq!(plain.spec.storage, Storage::Strided);
+}
+
+/// A `[m, k]` buffer of 64 by 64 stored in NVFP4-shaped tiles: a word of 8 along `K`, then 2
+/// words along `K` by 2 rows, then 4 of those along `K` by 4 rows, the tiles down `K`.
+fn nvfp4_shaped(client: &Client) -> TensorBinding {
+    let geometry = StorageLevels::new(&[(K, 8)])
+        .tile(&[(K, 2), (M, 2)])
+        .tile(&[(K, 4), (M, 4)])
+        .grid(&[K, M])
+        .physical(&[(M, 64), (K, 64)])
+        .unwrap();
+    let mut tiled = binding(client, geometry.shape());
+    tiled.strides = geometry.strides().into();
+    tiled.tiling = geometry.tiling();
+    tiled
+}
+
+/// A buffer stored in tiles says so in its spec, and a load of 32 values binds as the 16 by 2
+/// rectangle those tiles make: how the buffer is stored is the operand's to state, what a load
+/// covers the kernel's to pick out of it.
+#[test]
+fn arg_binds_a_load_across_the_tiles_a_buffer_stores() {
+    let client = cubecl::test_device().client();
+    let launch = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 64);
+        implied(&client, Partitioning::new(space, levels), Form::Dynamic)
+    };
+    let arg = launch
+        .arg(nvfp4_shaped(&client))
+        .axes(&[M, K])
+        .vectorize(32)
+        .build();
+    assert_eq!(
+        arg.spec.stored_tiles,
+        vec![(K, 8), (K, 2), (M, 2), (K, 4), (M, 4)]
+    );
+    assert_eq!(
+        VectorTile::new(&arg.spec.stored_tiles, K, 32)
+            .unwrap()
+            .extents(),
+        &[(K, 16), (M, 2)]
+    );
+}
+
+/// A load that would cut a stored tile does not bind: four values are half a word.
+#[test]
+#[should_panic(expected = "cannot be served 4 wide")]
+fn arg_refuses_a_load_that_cuts_a_stored_tile() {
+    let client = cubecl::test_device().client();
+    let launch = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 64);
+        implied(&client, Partitioning::new(space, levels), Form::Dynamic)
+    };
+    launch
+        .arg(nvfp4_shaped(&client))
+        .axes(&[M, K])
+        .vectorize(4)
+        .build();
 }
 
 /// A tensor whose block is no level's tile is still an operand: (16, 4) is the cube's M with the
@@ -474,7 +541,7 @@ fn window(stride: usize, dilation: usize, offset: impl Into<Offset>) -> Projecti
     Projection::new(
         &[M, K, N],
         &[
-            PhysicalAxisMap::affine_with_offset(&[(M, stride), (K, dilation)], offset),
+            PhysicalAxisMap::affine(&[(M, stride), (K, dilation)]).shifted(offset),
             PhysicalAxisMap::of(N),
         ],
     )
@@ -778,7 +845,17 @@ fn arg_gathered_cancelling_divisor_stages() {
             PhysicalAxisMap::of(N),
         ],
     );
-    assert!(!projection.is_rational());
+    // Every coefficient divides by 4, so the division reduces away.
+    assert_eq!(
+        projection,
+        Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 2), (K, 1)]),
+                PhysicalAxisMap::of(N)
+            ],
+        )
+    );
     let _ = staged
         .arg(binding(&client, &[512, 64]))
         .gathered(projection)

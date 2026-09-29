@@ -470,8 +470,8 @@ pub fn launch_depthwise(
         &[B, OH, OW, RH, RW, C],
         &[
             PhysicalAxisMap::of(B),
-            PhysicalAxisMap::affine_with_offset(&[(OH, sh), (RH, dh)], -(ph as isize)),
-            PhysicalAxisMap::affine_with_offset(&[(OW, sw), (RW, dw)], -(pw as isize)),
+            PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]).shifted(-(ph as isize)),
+            PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]).shifted(-(pw as isize)),
             PhysicalAxisMap::of(C),
         ],
     ))

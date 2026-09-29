@@ -1,32 +1,19 @@
-//! Building a walk's slots and filling them: the one constructor ([`Stages::new`]) and the one
-//! fill, both over a [`Payload`], plus the two entries a kernel spells its own schedule with.
-//!
-//! [`consume`](Slot::consume) is expanded by hand, per payload shape: it takes a closure so the
-//! body stays the caller's, and closure-parameter inference cannot resolve `&T::ExpandType`
-//! through a generic `T` the way it resolves a concrete `TileExpand`.
+//! Building a walk's slots and filling them over a [`Payload`].
 
 use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 use super::payload::base::{Payload, PayloadExpand, StageSpec};
-use super::payload::pair::{OperandPair, OperandPairExpand};
+use super::payload::pair::OperandPair;
 use super::plan::StagePlan;
 use crate::*;
 
 #[cube]
 impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
-    /// Build the `depth` slots staging `sources` into shared memory laid out as `storage`, for a
-    /// kernel walking `walk` itself, with [`Rendezvous`] deduced from the operands' delivery.
+    /// Build the `depth` slots staging `sources` into shared memory laid out as `storage`.
     ///
-    /// Slot 0 allocates every buffer. A later slot allocates only what the walk refills: an
-    /// operand whose window the walk leaves fixed is filled once, above the loop, and never
-    /// rewritten, so one buffer serves the whole stages ([`Shared`](Refill::Shared)).
-    ///
-    /// `width` serves the stage in lines that wide rather than the operand's own: the buffer owns
-    /// its layout, so an axis gmem cannot vectorize still reaches the leaf in lines. The operand
-    /// must then be scalar and unpacked, with reads past its extent masked.
-    // Reached through its expand, from the constructors below.
+    /// `width` overrides the stage's line width; the operand must then be scalar and unpacked.
     #[allow(dead_code)]
     pub(crate) fn new(
         walk: &Walk,
@@ -36,16 +23,17 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
         #[comptime] depth: usize,
     ) -> Stages<P> {
         let operands = sources.operands();
-        let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level));
+        let owner = walk.stage_owner();
+        let plan = comptime!(StagePlan::new(&operands, &walk.space, &walk.level, owner));
         let spec = comptime!(StageSpec {
             level: walk.level.clone(),
             depth: walk.depth(),
             storage,
             width,
+            owner: plan.owner(),
         });
 
-        // The first slot owns every buffer, so it is built before the loop and handed to the
-        // slots that share it. Nothing is shared at the first slot, so it stages against itself.
+        // Later slots share buffers the first slot owns, so it is built first.
         let first = sources.staged(
             sources,
             comptime!(spec.clone()),
@@ -68,6 +56,8 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
                 Meeting::new(
                     comptime!(plan.sync()),
                     comptime!(plan.collective_full()),
+                    comptime!(plan.commits()),
+                    comptime!(plan.fences()),
                     comptime!(plan.fillers()),
                 ),
                 comptime!(plan.refills(slot)),
@@ -77,11 +67,6 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
     }
 
     /// Fill slot `slot` from `region`'s window: one step of a [`Fill`](Role::Fill) plane's walk.
-    /// The stages knows its sources, so the caller names only which slot and which region.
-    ///
-    /// This is the same fill [`pipelined`](Stages::pipelined) runs one lap ahead of its own
-    /// reads; here the two halves are separate walks, so the kernel spells the schedule and the
-    /// stages spells the step.
     pub fn fill(&mut self, #[comptime] slot: usize, region: &Region) {
         let sources = self.sources.clone();
         self.slot_mut(slot)
@@ -92,10 +77,6 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
 #[cube]
 impl<P: Payload<P> + CubeType<ExpandType: Clone>> Slot<P> {
     /// Bring `src`'s window at `region` into this slot, for every operand whose refill is `only`.
-    ///
-    /// A streamed refill rendezvouses whatever it writes — the pipeline's phase belongs to the
-    /// slot, not to any one operand — while a fixed one that has nothing to fill is skipped
-    /// whole: it runs above the loop, where no reader is waiting on it.
     pub(crate) fn refill(&mut self, src: &P, region: &Region, #[comptime] only: Refill) {
         let refills = comptime!(self.refills.clone());
         let writes = comptime!(refills.contains(&only));
@@ -108,8 +89,6 @@ impl<P: Payload<P> + CubeType<ExpandType: Clone>> Slot<P> {
     }
 }
 
-/// How the stages fill their own slots, at expand level: written once over any payload, since
-/// none of it is the payload's shape.
 impl<P: Payload<P> + CubeType<ExpandType: Clone>> StagesFill for StagesExpand<P> {
     fn has_fixed(&self, scope: &Scope) -> bool {
         self.slots
@@ -138,11 +117,7 @@ impl<P: Payload<P> + CubeType<ExpandType: Clone>> StagesFill for StagesExpand<P>
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     /// The `depth` slots staging both operands of a contraction into shared memory laid out as
-    /// `storage`, for a kernel walking `walk` itself.
-    ///
-    /// Slot 0 allocates every buffer. A later slot allocates only what the walk refills: an
-    /// operand whose window the walk leaves fixed is filled once, above the loop, and never
-    /// rewritten, so one buffer serves the whole stages ([`Shared`](Refill::Shared)).
+    /// `storage`.
     pub fn smem(
         walk: &Walk,
         lhs: &Tile<Lhs>,
@@ -160,8 +135,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
 
 #[cube]
 impl<T: Numeric> Stages<Tile<T>> {
-    /// [`smem`](Stages::smem) for the sole operand `input`, which is what a reduction or a copy
-    /// stages.
+    /// [`smem`](Stages::smem) for the sole operand `input`.
     pub fn smem_single(
         walk: &Walk,
         input: &Tile<T>,
@@ -171,8 +145,7 @@ impl<T: Numeric> Stages<Tile<T>> {
         Stages::new(walk, input, storage, comptime!(None), depth)
     }
 
-    /// [`smem_single`](Stages::smem_single) with the stage served in `width`-wide lines rather
-    /// than the operand's own.
+    /// [`smem_single`](Stages::smem_single) with the stage served in `width`-wide lines.
     pub fn smem_single_at(
         walk: &Walk,
         input: &Tile<T>,
@@ -184,12 +157,11 @@ impl<T: Numeric> Stages<Tile<T>> {
     }
 }
 
-// The widths of the lines a register-staged fill holds of each operand, scope-registered sizes as
-// `RA` is: bound by `fetch_buffers`, read by `fetch` and `store`, never part of the stages' type.
+// Line widths of a register-staged fill, bound by `fetch_buffers`.
 define_size!(pub(crate) FL);
 define_size!(pub(crate) FR);
 
-/// The registers one unit holds a register-staged fill of both operands in, a line a slot.
+/// Registers holding one unit's register-staged fill of both operands.
 pub(crate) type FetchBuffers<Lhs, Rhs> = (Array<Vector<Lhs, FL>>, Array<Vector<Rhs, FR>>);
 
 /// Bind the fetched line widths `FL` and `FR` for the rest of the kernel's scope.
@@ -203,9 +175,7 @@ fn register_fetched_widths(#[comptime] lhs: usize, #[comptime] rhs: usize) {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
-    /// The registers one unit holds a fill of both operands' stages in, across a contraction
-    /// ([`prefetched`](Stages::prefetched)): whole lines at each stage's width, at most
-    /// `MOST_FETCHED_SCALARS` scalars between them ([`Prefetch::fits`]).
+    /// Registers holding one unit's fill of both operands across a contraction.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
     pub(crate) fn fetch_buffers(&self) -> FetchBuffers<Lhs, Rhs> {
         let staged = self.slots.index(FIRST_SLOT);
@@ -225,8 +195,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
         )
     }
 
-    /// This unit's share of filling slot `slot` for `region`, read into `lhs` and `rhs` and not
-    /// yet written: the loads a schedule issues before a contraction and lands after it.
+    /// Read this unit's share of filling slot `slot` for `region` into `lhs` and `rhs`.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
     pub(crate) fn fetch(
         &self,
@@ -246,7 +215,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
             .fetch_from(&self.sources.rhs.at(region), rhs);
     }
 
-    /// Write what [`fetch`](Stages::fetch) read into slot `slot`. The caller owns the rendezvous.
+    /// Write what [`fetch`](Stages::fetch) read into slot `slot`; the caller owns the rendezvous.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
     pub(crate) fn store(
         &mut self,
@@ -259,15 +228,13 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
         slot.data.rhs.store_fetched(rhs);
     }
 
-    /// Refuse stages a register-staged schedule cannot drive: ones filled by planes of their own,
-    /// by the TMA engine, whose copies land on a barrier rather than in a unit's registers, or
-    /// from a procedural source, which has no memory to read a line of.
+    /// Refuse stages a register-staged schedule cannot drive.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
     pub(crate) fn assert_copied_by_every_unit(&self) {
         let lhs = self.sources.lhs.delivery();
         let rhs = self.sources.rhs.delivery();
         comptime!(assert!(
-            self.fillers == 0 && lhs == Delivery::Copy && rhs == Delivery::Copy,
+            self.fillers == 0 && lhs == Delivery::SyncPerUnit && rhs == Delivery::SyncPerUnit,
             "Stages: a register-staged schedule fills its slots with every unit's own copy of \
              memory; these stages are filled by {} plane(s) of their own, or their sources are \
              delivered {lhs:?} and {rhs:?}",
@@ -276,34 +243,15 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     }
 }
 
-// `consume` takes a closure so the body stays caller-defined, which is why it is spelled per
-// payload shape: inference resolves the pair's concrete `TileExpand` fields, not `P::ExpandType`.
+// `consume` is spelled per payload shape: closure inference cannot resolve `P::ExpandType`.
 impl<Lhs: Numeric, Rhs: Numeric> Slot<OperandPair<Lhs, Rhs>> {
-    /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
-    /// A filled payload is already this region's; an in-place one is the whole operand, the caller
-    /// selecting the region. See [`SlotExpand::__expand_consume_method`].
+    /// Wait for the slot's fill, pass its two tiles to `compute`, then free the slot.
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
-        unexpanded!()
-    }
-
-    /// Producer: wait the slot is free, run `fill` over the staged buffers and the slot's
-    /// [`Meeting`], then publish. What a fill *does* is the kernel's, which is why it is a
-    /// closure. See [`SlotExpand::__expand_fill_method`].
-    pub fn fill(&mut self, _fill: impl FnOnce(&mut OperandPair<Lhs, Rhs>, &Meeting)) {
         unexpanded!()
     }
 }
 
 impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<OperandPair<Lhs, Rhs>> {
-    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
-    where
-        F: FnOnce(&Scope, &mut OperandPairExpand<Lhs, Rhs>, &MeetingExpand),
-    {
-        self.__expand_acquire_write_method(scope);
-        fill(scope, &mut self.data, &self.pipeline);
-        self.__expand_release_write_method(scope);
-    }
-
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
@@ -319,23 +267,9 @@ impl<T: Numeric> Slot<Tile<T>> {
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<T>)) {
         unexpanded!()
     }
-
-    /// [`fill`](Slot::fill) for the sole operand.
-    pub fn fill(&mut self, _fill: impl FnOnce(&mut Tile<T>, &Meeting)) {
-        unexpanded!()
-    }
 }
 
 impl<T: Numeric> SlotExpand<Tile<T>> {
-    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
-    where
-        F: FnOnce(&Scope, &mut TileExpand<T>, &MeetingExpand),
-    {
-        self.__expand_acquire_write_method(scope);
-        fill(scope, &mut self.data, &self.pipeline);
-        self.__expand_release_write_method(scope);
-    }
-
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
         F: FnOnce(&Scope, &TileExpand<T>),
@@ -347,8 +281,7 @@ impl<T: Numeric> SlotExpand<Tile<T>> {
 }
 
 impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
-    /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk. Waits the
-    /// slot's fill, hands the staged tiles to `compute`, then frees the slot.
+    /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk.
     pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }

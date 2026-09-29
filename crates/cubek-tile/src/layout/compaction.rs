@@ -1,22 +1,12 @@
-//! The smallest physical box a gathered operand's sub-tile can be staged in, and the mapping that
-//! addresses it: what turns a stage from a copy of the *logical* tile into a copy of the *window*
-//! the tile reads.
+//! The smallest physical box a gathered operand's sub-tile can be staged in, and its mapping.
 
 use cubecl::zspace::SmallVec;
 
 use super::dim::gcd;
 use crate::{Axis, PhysicalAxisMap, Projection, Scale, Space};
 
-/// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
-/// what step in the source one of its cells is, plus the projection addressing it.
-///
-/// A gathered sub-tile reads a *window* in which several logical cells share a physical one, so
-/// staging the logical tile replicates by roughly the tap count; staging the window holds each
-/// element once and leaves the gather at the leaf's read.
-///
-/// The window on `pa` is the offsets `Sum aa*ss` its terms reach: step `g = gcd{ ss : ee > 1 }`,
-/// extent `1 + Sum (ee - 1)*(ss/g)`, the rest padding. It wins when taps outrun the stride and
-/// windows overlap (the usual convolution), loses when the stride outruns them.
+/// The compacted stage of a [`Projection`]: per physical axis, its cell count and source step,
+/// plus the projection addressing it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Compaction {
     steps: SmallVec<[usize; Space::MAX_RANK]>,
@@ -25,9 +15,7 @@ pub struct Compaction {
 }
 
 impl Compaction {
-    /// Compact `projection`'s window, `extent_of` giving each logical axis's extent over the
-    /// sub-tile staged; a [`direct`](Projection::direct) one compacts to itself. `vector_size` is
-    /// the width the stage is served at, threaded through to [`Projection::validate`].
+    /// Compact `projection`'s window over the sub-tile whose extents `extent_of` gives.
     pub fn new(
         projection: &Projection,
         vector_size: usize,
@@ -40,20 +28,14 @@ impl Compaction {
 
         for pa in 0..rank {
             let axis_map = projection.physical_axis(pa);
-            // The stage is placed at offset 0 (gmem windowing absorbs the offset), so a static
-            // divisor can reduce away here even if the source operand carried a Dynamic offset.
+            // At offset 0 on the stage, a static divisor may reduce even under a Dynamic offset.
             let scaled: Vec<(Axis, Scale)> =
                 axis_map.terms().iter().map(|t| (t.axis, t.scale)).collect();
             let stage_map = PhysicalAxisMap::scaled(&scaled).over(axis_map.divisor());
             let terms = stage_map.terms();
 
             if stage_map.is_rational() {
-                // A rational axis advances by one physical cell on some steps and none on others,
-                // so its window has no single step to quotient by: its step is 1 (dense, no holes).
-                //
-                // Its extent is the conservative receptive field over all runtime phase residues,
-                // 1 + ⌊(Σ (extent - 1) * scale + divisor - 1) / divisor⌋; a Dynamic coefficient or
-                // divisor takes the widest its bound admits: the box holds every launchable window.
+                // A rational axis has no single step: dense, sized at its widest bounds.
                 let d = stage_map.divisor().bound();
                 let field: usize = terms
                     .iter()
@@ -64,11 +46,7 @@ impl Compaction {
                 steps.push(1);
                 physical.push(stage_map);
             } else {
-                // Only a term that moves contributes an offset, so only its coefficient constrains
-                // the step; a single-tap axis (extent 1) sits at a fixed offset the origin absorbs.
-                //
-                // A moving Dynamic coefficient has no comptime lattice to quotient by (the runtime
-                // value need share no factor with anything), so any of those forces the dense step.
+                // Only moving terms constrain the step; a moving Dynamic coefficient forces step 1.
                 let step = terms
                     .iter()
                     .filter(|t| extent_of(t.axis) > 1)
@@ -78,12 +56,7 @@ impl Compaction {
                     })
                     .unwrap_or(1);
                 let step = step.max(1);
-                // `step` divides every moving static coefficient by construction; a non-moving one
-                // need not divide, and its value is unobservable, so it is pinned, not truncated.
-                //
-                // A Dynamic one passes untouched: `step` is 1 wherever one moves, and pinning a
-                // non-moving one would drop its slot from the coefficient array, which the stage
-                // inherits verbatim ([`Memory::fill_from`](crate::Memory)) so must index alike.
+                // Non-moving static terms pin to 1; Dynamic ones keep their coefficient-array slot.
                 let scaled: Vec<(Axis, Scale)> = terms
                     .iter()
                     .map(|t| {
@@ -107,8 +80,6 @@ impl Compaction {
         }
 
         let projection = Projection::new(projection.logical_axes(), &physical);
-        // The compacted map is what the staged tile is addressed by, so it has to be as legal as
-        // the operand's own: same axes, same innermost identity, still untiled.
         projection.validate(vector_size);
 
         Compaction {
@@ -118,15 +89,12 @@ impl Compaction {
         }
     }
 
-    /// How the stage's own logical axes address its cells: `projection` with every moving
-    /// coefficient divided by its step; the staged tile's [`projection`](crate::Memory), so its
-    /// reads and [`at`](crate::Tile::at) descents run through the machinery a gmem operand's do.
+    /// How the stage's own logical axes address its cells.
     pub fn projection(&self) -> &Projection {
         &self.projection
     }
 
-    /// The step per physical axis: what a stage coordinate is multiplied by to land on the source
-    /// coordinate it was filled from. All `1` exactly when `is_dense`.
+    /// The step per physical axis: stage coordinate times step is the source coordinate.
     pub fn steps(&self) -> &[usize] {
         &self.steps
     }
@@ -136,23 +104,12 @@ impl Compaction {
         &self.extents
     }
 
-    /// Whether the window has no holes to skip, so a fill reads the source box straight through and
-    /// emits exactly what a direct operand's fill does. True for every direct operand, and for a
-    /// gather whose taps land on consecutive offsets (a unit-dilation convolution, at any stride).
+    /// Whether the window has no holes, so a fill reads the source box straight through.
     pub(crate) fn is_dense(&self) -> bool {
         self.steps.iter().all(|&g| g == 1)
     }
 
-    /// [`extents`](Compaction::extents) with the innermost in `vector_size`-wide lines, the unit
-    /// every physical shape in this crate is counted in.
-    ///
-    /// The innermost physical axis is one logical axis at coefficient `1`
-    /// ([`Projection::validate`]), so it is never gathered: step `1`, no holes, extent the logical
-    /// edge itself, so a stage keeps the store's full line width, padding this axis to whole lines.
-    ///
-    /// That rounding is only sound for a *padded* stage, one served wider than the source it is
-    /// filled from. `fill_extent` is where the two boxes meet, so it is what refuses an
-    /// extent that is not a whole number of source lines, on every path a fill can take.
+    /// [`extents`](Compaction::extents) with the innermost in `vector_size`-wide lines.
     pub(crate) fn line_extents(&self, vector_size: usize) -> Vec<usize> {
         let last = self.extents.len() - 1;
         assert!(
@@ -182,8 +139,7 @@ mod tests {
     const RH: Axis = Axis(1);
     const CI: Axis = Axis(2);
 
-    /// `Ih <- Oh*stride + Rh*dilation`, `Ci` passed through: the shape every convolution input
-    /// carries.
+    /// `Ih <- Oh*stride + Rh*dilation`, `Ci` passed through.
     fn conv(stride: usize, dilation: usize) -> Projection {
         Projection::new(
             &[OH, RH, CI],
@@ -202,7 +158,6 @@ mod tests {
         }
     }
 
-    /// [`extents`] for a projection with no `CI` axis at all, so there is no third extent to name.
     fn extents2(oh: usize, rh: usize) -> impl Fn(Axis) -> usize {
         move |a| match a {
             OH => oh,
@@ -211,7 +166,6 @@ mod tests {
         }
     }
 
-    /// A direct operand compacts to itself: the stage is the logical tile, as it has always been.
     #[test]
     fn direct_compacts_to_itself() {
         let p = Projection::direct(&[OH, CI]);
@@ -222,8 +176,6 @@ mod tests {
         assert_eq!(c.projection(), &p);
     }
 
-    /// Unit stride and dilation: the window is the receptive field, `oh + rh - 1` against the
-    /// `oh * rh` cells the logical stage held.
     #[test]
     fn a_unit_stride_window_is_the_receptive_field() {
         let c = Compaction::new(&conv(1, 1), 4, extents(8, 3, 16));
@@ -232,8 +184,6 @@ mod tests {
         assert_eq!(c.cells(4), 10 * 4);
     }
 
-    /// Stride 2 with unit-dilation taps still reaches every offset (`gcd(2, 1) = 1`), so the box is
-    /// dense and only the extent grows.
     #[test]
     fn a_strided_window_with_adjacent_taps_stays_dense() {
         let c = Compaction::new(&conv(2, 1), 4, extents(8, 3, 16));
@@ -242,9 +192,6 @@ mod tests {
         assert_eq!(c.extents(), &[17, 16]);
     }
 
-    /// A single tap at stride 2 reaches only the even offsets, so the stage keeps every second row
-    /// and its projection loses the stride. `Rh` does not move, so its coefficient is the pinned
-    /// `1` whatever the dilation was: the stage's `Rh` coordinate is always `0`.
     #[test]
     fn a_single_tap_at_stride_two_halves_the_stage() {
         for dilation in [1, 3] {
@@ -257,8 +204,6 @@ mod tests {
         }
     }
 
-    /// Stride and dilation sharing a factor: the whole window is on the even lattice, so the stage
-    /// stores half of the bounding box and both coefficients halve.
     #[test]
     fn a_shared_factor_quotients_the_window() {
         let c = Compaction::new(&conv(2, 2), 4, extents(8, 3, 16));
@@ -269,8 +214,7 @@ mod tests {
         assert_eq!(c.projection().scale(0, RH), 1);
     }
 
-    /// Taps the step cannot describe stay as padding: `{0, 1}` at stride 3 reaches
-    /// `{0, 1, 3, 4, 6, 7}`, whose gcd is 1, so the box spans the holes.
+    /// `{0, 1}` at stride 3 reaches `{0, 1, 3, 4, 6, 7}`: gcd 1, holes kept as padding.
     #[test]
     fn unreachable_offsets_inside_the_box_stay_as_padding() {
         let c = Compaction::new(&conv(3, 1), 4, extents(3, 2, 16));
@@ -278,16 +222,12 @@ mod tests {
         assert_eq!(c.extents(), &[8, 16]);
     }
 
-    /// A ragged innermost extent is padded out to whole lines.
     #[test]
     fn a_ragged_innermost_extent_is_padded() {
         let lines = Compaction::new(&conv(1, 1), 4, extents(8, 3, 6)).line_extents(4);
         assert_eq!(lines, &[10, 2]);
     }
 
-    /// A 1-D resample gathers its only axis, with no passthrough axis behind it: illegal at any
-    /// vectorized width, but at `vector_size == 1` there are no lines to protect, so the compacted
-    /// window's own innermost axis may stay gathered too.
     #[test]
     fn a_scalar_gather_may_compact_its_only_axis() {
         let p = Projection::new(&[OH, RH], &[PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)])]);
@@ -296,13 +236,12 @@ mod tests {
         assert_eq!(c.extents(), &[17]);
     }
 
-    /// A constant offset shifts source placement without changing compacted extents.
     #[test]
     fn padded_projection_compacts_identically() {
         let p = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(OH, 2), (RH, 1)], -2),
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)]).shifted(-2),
                 PhysicalAxisMap::of(CI),
             ],
         );
@@ -313,13 +252,12 @@ mod tests {
         assert_eq!(c.projection().offset(0), Offset::Static(0));
     }
 
-    /// A dynamic offset shifts source placement without changing compacted extents.
     #[test]
     fn dynamic_offset_projection_compacts_identically() {
         let p = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(OH, 2), (RH, 1)], Offset::Dynamic),
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)]).shifted(Offset::Dynamic),
                 PhysicalAxisMap::of(CI),
             ],
         );
@@ -330,9 +268,6 @@ mod tests {
         assert_eq!(c.projection().offset(0), Offset::Static(0));
     }
 
-    /// A moving runtime coefficient has no comptime lattice to quotient by, so the box goes dense
-    /// and is sized at the coefficient's `max`, as the same map spelled statically at that bound.
-    /// The coefficient survives into the stage's mapping; addressing the box still needs its value.
     #[test]
     fn a_dynamic_coefficient_compacts_dense_against_its_max() {
         let p = Projection::new(
@@ -354,9 +289,6 @@ mod tests {
         assert_eq!(c.projection().dynamic_scale_index(0, 0), Some(0));
     }
 
-    /// A step the static coefficients would otherwise share is given up as soon as one of them
-    /// moves at runtime: `gcd(2, 2)` is `2`, but a runtime coefficient need share no factor with
-    /// anything, so the lattice cannot be assumed and the box stays dense.
     #[test]
     fn a_moving_dynamic_coefficient_gives_up_the_lattice() {
         let p = Projection::new(
@@ -373,9 +305,6 @@ mod tests {
         assert_eq!(c.extents(), &[19, 16]);
     }
 
-    /// A non-moving term is pinned to `1` only when it is static: pinning a `Dynamic` one would
-    /// drop its slot from the coefficient array, which the stage inherits from its source
-    /// position for position and so must index identically.
     #[test]
     fn a_non_moving_dynamic_coefficient_keeps_its_array_slot() {
         let p = Projection::new(
@@ -385,7 +314,6 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        // RH does not move, so it contributes nothing to the box: 1 + 7*2 on the even lattice.
         let c = Compaction::new(&p, 4, extents(8, 1, 16));
         assert_eq!(c.steps(), &[2, 1]);
         assert_eq!(c.extents(), &[8, 16]);
@@ -393,8 +321,6 @@ mod tests {
         assert_eq!(c.projection().dynamic_scale_index(0, 1), Some(0));
     }
 
-    /// A rational axis steps one physical cell on some outputs and none on others, so its window
-    /// has no lattice to quotient. It compacts densely (step = 1) with conservative extent.
     #[test]
     fn rational_axis_compacts_dense_with_conservative_extent() {
         let p = Projection::new(
@@ -404,9 +330,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        // OH: 8, RH: 3, CI: 16
-        // field = (8-1)*2 + (3-1)*3 = 14 + 6 = 20
-        // extent = 1 + (20 + 3 - 1) / 3 = 1 + 22 / 3 = 1 + 7 = 8
+        // field = 7*2 + 2*3 = 20, extent = 1 + ⌈20 / 3⌉ = 8
         let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
@@ -415,8 +339,6 @@ mod tests {
         assert_eq!(c.projection().divisor(0), Divisor::Static(3));
     }
 
-    /// A dynamic divisor sizes the same box its `min` spelled statically would, and carries over
-    /// into the stage's mapping bound and all, so the stage divides by the same runtime value.
     #[test]
     fn a_dynamic_divisor_compacts_against_its_min() {
         let p = Projection::new(
@@ -428,14 +350,11 @@ mod tests {
         );
         let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
-        // Identical to the static `over(3)` box above: field 20 over divisor 3 is 1 + 7 = 8.
         assert_eq!(c.extents(), &[8, 16]);
         assert_eq!(c.projection().divisor(0), Divisor::Dynamic { min: 3 });
         assert_eq!(c.projection().dynamic_divisor_index(0), Some(0));
     }
 
-    /// The box a bound sizes dominates every divisor the launch may then pass, which is what makes
-    /// staging one safe: a wider divisor reads a narrower window out of the same allocation.
     #[test]
     fn a_dynamic_divisor_box_holds_every_divisor_above_its_min() {
         let bounded = Projection::new(
@@ -454,25 +373,20 @@ mod tests {
                     PhysicalAxisMap::of(CI),
                 ],
             );
-            // `over` reduces a divisor the coefficients cancel, which is a different shape.
             if exact.physical_axis(0).is_rational() {
                 assert!(Compaction::new(&exact, 4, extents(8, 3, 16)).extents()[0] <= box_extent);
             }
         }
     }
 
-    /// A fraction whose coefficients cancel the divisor reduces on the stage (where offset is 0)
-    /// even if the source operand carried a dynamic offset, recovering the integer gcd step.
     #[test]
     fn dynamic_offset_with_cancelling_divisor_compacts_as_integers() {
         let p_dynamic_offset = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::scaled_with_offset(
-                    &[(OH, Scale::Static(16)), (RH, Scale::Static(8))],
-                    Offset::Dynamic,
-                )
-                .over(4),
+                PhysicalAxisMap::scaled(&[(OH, Scale::Static(16)), (RH, Scale::Static(8))])
+                    .shifted(Offset::Dynamic)
+                    .over(4),
                 PhysicalAxisMap::of(CI),
             ],
         );

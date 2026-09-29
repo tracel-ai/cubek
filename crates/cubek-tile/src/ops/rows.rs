@@ -1,10 +1,5 @@
-//! Row verbs on a tile: publish a per-row register into a row unit, scale a row by its factor,
-//! copy the owned rows elsewhere. Structure, not algebra: nothing here reads the state of its
-//! callers, the online softmax ([`softmax`](crate::Tile::softmax)) and the attention leaves.
-//!
-//! Who owns row `r` is the caller's [`RowShare`], the same statement the
-//! softmax leaf reads, so a row is written exactly once whether its owner is a
-//! unit or a plane. No op here syncs; the caller owns the barriers.
+//! Row verbs on a tile: publish per-row values, scale rows, copy owned rows.
+//! No op here syncs; the caller owns the barriers.
 
 use cubecl::prelude::*;
 
@@ -12,18 +7,8 @@ use crate::*;
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// Publish per-owned-row `values` into this factors tile, one cell per
-    /// score row. The caller syncs before any cross-worker read.
-    ///
-    /// Takes the [`RowShare`] rather than a count, because it has to agree with the leaf about
-    /// who owns row `r`, and under [`Plane`](RowShare::Plane) it also has to write each row once
-    /// where every unit of the plane holds the value.
-    ///
-    /// A row unit at any rank: a fold's window on a split-wide tile is
-    /// `{1, rows}`, the same cells as a plain `{rows}`.
-    ///
-    /// `state` says who owns which rows: its share, and the unit's place in its team, which a
-    /// unit-owned row is numbered from.
+    /// Publish per-owned-row `values` into this factors tile, one cell per score row.
+    /// The caller syncs before any cross-worker read.
     pub fn store_rows(&mut self, values: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         let rpu = comptime!(share.rows());
@@ -39,8 +24,7 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
-        // One writer per row: the owning unit, or the owning plane's first
-        // unit, every other unit holding the same value.
+        // One writer per row: the owning unit, or the owning plane's first unit.
         let writer = owned_unit(share) == 0;
         #[unroll]
         for ri in 0..rpu {
@@ -51,15 +35,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// The online-softmax rescale by the row's owner: `self[r, :] *= corr[ri]` over `share`'s rows,
-    /// straight out of [`softmax`](Tile::softmax), before the sync handing the accumulator to the
-    /// value matmul; no factors tile or barrier. [`Plane`](RowShare::Plane) units split the lines.
-    ///
-    /// A plane-resident accumulator ([`cmma_accumulator`](Tile::cmma_accumulator)) is scaled
-    /// where it sits, tile by tile through its scratch ([`with_scratch`](Tile::with_scratch)); the
-    /// owner is the plane, so `share` is its plane share and the rows are the accumulator's own.
-    ///
-    /// `state` as [`store_rows`](Tile::store_rows) takes it.
+    /// Online-softmax rescale by the row's owner: `self[r, :] *= corr[ri]` over `share`'s rows.
     pub fn rescale_rows(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         match &self.kind {
@@ -111,11 +87,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// Multiply each row by its factor: `self[r, c] *= factors[r]`.
-    ///
-    /// The accumulator rescale between fold steps, and the epilogue normalize when the factors
-    /// are `recip_l`. Cyclic over the whole cube so each cell is touched exactly once, whatever
-    /// ownership the interleaved matmuls use; the caller syncs on both sides.
+    /// Multiply each row by its factor: `self[r, c] *= factors[r]`. The caller syncs on both sides.
     pub fn scale_rows(&mut self, factors: &Tile<EA>) {
         let cols = comptime!(self.place.space.extent_at(1));
         comptime!(assert!(
@@ -142,8 +114,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// Cast-copy the owned rows into `dest`, which is laid out in the same
-    /// lines.
+    /// Cast-copy the owned rows into `dest`, laid out in the same lines.
     pub(crate) fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));

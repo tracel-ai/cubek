@@ -1,6 +1,5 @@
-//! The in-kernel evaluation of a [`Projection`]: [`ProjectionInKernel`] turns a tile's logical
-//! coordinate into the physical one its window is boxed in, and [`CompactionStep`] undoes the
-//! lattice a [`Compaction`] quotients a gathered window by.
+//! In-kernel evaluation of a [`Projection`] ([`ProjectionInKernel`]) and of a [`Compaction`]'s
+//! steps ([`CompactionStep`]).
 
 use cubecl::{
     prelude::*,
@@ -10,24 +9,13 @@ use cubecl::{
 use crate::*;
 
 /// A [`Layout`] mapping a tile's logical coordinate to its window's physical one:
-/// `phys[pa] = (Σ logical[axis] * scale + residue) / divisor`. Folds axes and nothing else, so the
-/// window's own [`Boundary`](crate::Boundary) still governs what an out-of-range tap reads.
-///
-/// Static terms a static divisor divides exactly leave the numerator before the floor
-/// ([`static_offset_step`](crate::PhysicalAxisMap)), so a resampling map's taps advance by a static
-/// physical step under the one necessary divide.
-///
-/// Constant offsets belong to the [`Window`](crate::Window) and are omitted here, all but the
-/// phase a division starts the floor at, which the `RuntimeMap` carries.
+/// `phys[pa] = (Σ logical[axis] * scale + residue) / divisor`, constant offsets excluded.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct ProjectionInKernel {
-    /// The tile's per-logical-axis extents, in the space's axis order. The innermost is a
-    /// line count, matching the window's innermost physical axis.
+pub(crate) struct ProjectionInKernel {
+    /// Per-logical-axis extents in space order, the innermost in lines.
     shape: Coords<u32>,
-    /// The projection's runtime half: the coefficients a tap folds through, and the phase its
-    /// window origin left over. The constant offsets are not among them: a tap is relative to the
-    /// window, which they placed.
+    /// The runtime coefficients and division residues.
     map: RuntimeMap,
     #[cube(comptime)]
     space: Space,
@@ -40,7 +28,7 @@ pub struct ProjectionInKernel {
 
 #[cube]
 impl ProjectionInKernel {
-    pub fn new(
+    pub(crate) fn new(
         shape: Coords<u32>,
         map: RuntimeMap,
         #[comptime] space: Space,
@@ -76,9 +64,7 @@ impl ProjectionInKernel {
     }
 }
 
-/// A term's coefficient in the units its physical axis is addressed in: scalars for every axis but
-/// the innermost, addressed in *lines*, whose coefficients divide by the width. A coefficient the
-/// width does not divide is refused: the axes above the line change within it; no read serves that.
+/// A term's coefficient in its physical axis's units: lines on the innermost, which must divide.
 fn line_scale(
     space: &Space,
     projection: &Projection,
@@ -100,9 +86,7 @@ fn line_scale(
     scale / width
 }
 
-/// The static physical step a term contributes once taken out of its axis's evaluation: under a
-/// floor only what the divisor factors out, elsewhere the coefficient itself, `None` for a dynamic
-/// coefficient. Panics for a term a rational axis keeps inside its floor: it is not additive there.
+/// A term's static additive step, `None` if dynamic; panics for one kept inside a floor.
 fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
     if map.is_rational() {
         return Some(map.static_offset_step(term).unwrap_or_else(|| {
@@ -121,11 +105,8 @@ fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
 
 #[cube]
 impl ProjectionInKernel {
-    /// The source coordinate of `pos` with every axis in `moving` held at zero: the part of the map
-    /// a walk over those axes leaves alone, which [`advance`](ProjectionInKernel::advance) puts
-    /// back. This gives a gather one floor per accumulator cell rather than per tap on its rational
-    /// axes.
-    pub fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
+    /// The source coordinate of `pos` with every axis in `moving` held at zero.
+    pub(crate) fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
         let mut out = CoordsDyn::new();
 
         #[unroll]
@@ -136,8 +117,7 @@ impl ProjectionInKernel {
         out
     }
 
-    /// [`anchor`](Self::anchor) for one physical axis. Factor-local boundary normalization uses
-    /// this narrow form so checking one tap does not rebuild unrelated source coordinates.
+    /// [`anchor`](Self::anchor) for one physical axis.
     pub(crate) fn project_axis(
         &self,
         pos: &CoordsDyn,
@@ -147,15 +127,12 @@ impl ProjectionInKernel {
         let axis_map = comptime!(self.projection.physical_axis(pa));
         let n = comptime!(axis_map.terms().len());
 
-        // Per-term products left in the numerator, summed below (chained, so a single
-        // coefficient-1 term folds to the coordinate itself). Under a division the sum starts at
-        // the phase the window origin could not absorb.
+        // Per-term products kept in the numerator; under a division the sum starts at the residue.
         let mut terms = Coords::<u32>::new();
         if comptime!(axis_map.is_rational()) {
             terms.push(self.map.residues.at(pa));
         }
-        // Exact steps stay outside the numerator so a rational projection takes one spatial floor
-        // and adds the tap step to it.
+        // Exact steps stay outside the numerator, added after the floor.
         let mut offsets = Coords::<u32>::new();
         #[unroll]
         for t in 0..n {
@@ -205,11 +182,8 @@ impl ProjectionInKernel {
         }
     }
 
-    /// `anchor` moved to where `pos` places the `moving` axes, which must be the ones it was
-    /// [anchored](ProjectionInKernel::anchor) against. Every one enters linearly, so the move is an
-    /// exact add: the term's own coefficient outside a division, the divisor's static step under
-    /// one.
-    pub fn advance(
+    /// `anchor` moved to where `pos` places the `moving` axes it was anchored against.
+    pub(crate) fn advance(
         &self,
         anchor: &CoordsDyn,
         pos: CoordsDyn,
@@ -230,8 +204,7 @@ impl ProjectionInKernel {
                 if comptime!(moving.contains(&term.axis)) {
                     let p = comptime!(self.space.position(term.axis));
                     match comptime!(split_step(axis_map, t)) {
-                        // In the units this physical axis is read at, like the fold `anchor` did:
-                        // the two are added together, so they cannot be counted differently.
+                        // Same units as `anchor`'s fold, since the two are added.
                         Some(step) => steps.push(pos[p].times(comptime!(line_scale(
                             &self.space,
                             &self.projection,
@@ -273,19 +246,16 @@ impl Layout for ProjectionInKernel {
         self.shape.to_dyn()
     }
 
-    /// The logical box. Whether the physical coordinate it maps to is within the operand's valid
-    /// data is the [`Window`](crate::Window)'s question, asked one layer down.
+    /// The logical box; physical validity is the [`Window`](crate::Window)'s question.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         self.shape.within(pos)
     }
 }
 
-/// A [`Layout`] scaling a *physical* coordinate by one step per axis: `src[pa] = pos[pa] * step`.
-/// The inverse of the lattice a [`Compaction`] quotients a gathered operand's window by, so a fill
-/// walking the compacted stage lands on the source cells it keeps. Not built for a dense window.
+/// A [`Layout`] scaling a physical coordinate by one step per axis: `src[pa] = pos[pa] * step`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct CompactionStep {
+pub(crate) struct CompactionStep {
     /// The compacted extents this steps through, innermost a line count.
     shape: Coords<u32>,
     #[cube(comptime)]
@@ -294,7 +264,7 @@ pub struct CompactionStep {
 
 #[cube]
 impl CompactionStep {
-    pub fn new(shape: Coords<u32>, #[comptime] steps: Vec<usize>) -> Self {
+    pub(crate) fn new(shape: Coords<u32>, #[comptime] steps: Vec<usize>) -> Self {
         let rank = shape.len();
         comptime!(assert!(
             rank == steps.len(),
@@ -330,8 +300,7 @@ impl Layout for CompactionStep {
         self.shape.to_dyn()
     }
 
-    /// The compacted box, the source cell it steps up to being the [`Window`](crate::Window)'s
-    /// question.
+    /// The compacted box.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         self.shape.within(pos)
     }
@@ -344,8 +313,6 @@ mod tests {
     const OUT: Axis = Axis(0);
     const TAP: Axis = Axis(1);
 
-    /// Outside a floor a term steps by its own coefficient, which is what makes `advance` an
-    /// addition.
     #[test]
     fn a_plain_affine_term_steps_by_its_coefficient() {
         let map = PhysicalAxisMap::affine(&[(OUT, 2), (TAP, 3)]);
@@ -353,7 +320,6 @@ mod tests {
         assert_eq!(split_step(&map, 1), Some(3));
     }
 
-    /// A dynamic coefficient is a runtime read, not a static step.
     #[test]
     fn a_dynamic_coefficient_has_no_static_step() {
         let map =
@@ -361,16 +327,13 @@ mod tests {
         assert_eq!(split_step(&map, 1), None);
     }
 
-    /// Under a floor a term steps by what the divisor factors out: `⌊(x + m·4)/2⌋` moves by `2`
-    /// per `m`, exactly.
+    /// `⌊(x + m·4)/2⌋` moves by `2` per `m`.
     #[test]
     fn a_divisible_term_steps_by_what_the_floor_factors_out() {
         let map = PhysicalAxisMap::affine(&[(OUT, 3), (TAP, 4)]).over(2);
         assert_eq!(split_step(&map, 1), Some(2));
     }
 
-    /// The same map's indivisible term: `⌊(3·out + …)/2⌋` is not `out` times anything, so it has
-    /// to stay anchored rather than be stepped.
     #[test]
     #[should_panic(expected = "stays inside this axis's floor")]
     fn an_indivisible_term_under_a_floor_cannot_be_stepped() {

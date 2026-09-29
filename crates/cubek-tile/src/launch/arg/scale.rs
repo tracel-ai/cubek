@@ -1,15 +1,10 @@
 //! A scale level a launch may or may not have bound, as the tile it serves.
-//!
-//! A scheme binds the levels it has, and a kernel written for the scheme says
-//! [`mul_bound`](crate::Tile::mul_bound) once per level whether or not this launch bound it: an
-//! absent level multiplies nothing and emits nothing.
 
 use cubecl::prelude::*;
 
 use crate::*;
 
-/// A scale level a launch may or may not have bound, as the tile it serves: `u32` words read in
-/// the level's own width, which its [`Field`](crate::Field) states and nothing here asks about.
+/// A scale level a launch may or may not have bound, as the tile it serves.
 #[cube]
 pub fn scale_tile<S: Numeric>(
     level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
@@ -33,12 +28,7 @@ pub trait MaybeTile: CubeType {
     /// This level at `region`, descending it as [`Tile::at`] descends a factor.
     fn at(&self, region: &Region) -> ComptimeOption<Tile<Self::E>>;
 
-    /// This level as the steps under one region of `level` read it: a stage refilled once a
-    /// region with [`copy_from`](MaybeTile::copy_from). Where `level` names none the steps read
-    /// the level where it lies, and this is that level.
-    ///
-    /// A level a scheme never bound stages nothing and stays absent, so a kernel stages its
-    /// scales without asking whether it has any.
+    /// This level staged per region of `level`, or as it lies where `level` is `None`.
     fn staged(
         &self,
         #[comptime] level: Option<Level>,
@@ -46,9 +36,6 @@ pub trait MaybeTile: CubeType {
     ) -> ComptimeOption<Tile<Self::E>>;
 
     /// This level filled from `src`, where both are there; nothing where either is not.
-    ///
-    /// The pair is what a stage and the scales it stages are: they are bound together or not at
-    /// all, so a caller says "fill" once rather than testing both.
     fn copy_from(&mut self, src: &ComptimeOption<Tile<Self::E>>);
 }
 

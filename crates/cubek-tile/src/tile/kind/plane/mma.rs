@@ -1,6 +1,4 @@
 //! The manual-mma encoding of a plane tile ([`MmaData`]) and its fragment↔memory transports.
-//! The raw-mma twin of [`cmma`](super::cmma), issuing [`MmaDefinition::execute`] over per-unit
-//! registers instead of `cmma::execute`.
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout, MmaDefinition},
@@ -10,18 +8,17 @@ use cubecl::{
 use super::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
 use crate::*;
 
-// Per-role fragment register widths, bound at allocation via `scope.register_size` to match
-// `def.vector_size(role)`. Independent of the outer tile's stage vector width.
+// Per-role fragment register widths, bound at allocation to `def.vector_size(role)`.
 define_size!(pub NL);
 define_size!(pub NR);
 define_size!(pub NA);
 
-/// A single manual-mma fragment: the register array for one role plus the comptime shape/transport
-/// its load/store paths dispatch on. `Clone` duplicates the handle, not the registers.
+/// One manual-mma fragment: a role's registers plus the shape and transport it dispatches on.
+/// `Clone` duplicates the handle, not the registers.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct MmaData<T: Numeric> {
-    pub fragment: MmaFragment<T>,
+pub(crate) struct MmaData<T: Numeric> {
+    pub(crate) fragment: MmaFragment<T>,
     #[cube(comptime)]
     pub m: usize,
     #[cube(comptime)]
@@ -34,11 +31,14 @@ pub struct MmaData<T: Numeric> {
     pub io: MmaIo,
 }
 
-/// One role's register array. The role rides inside the fragment because each carries a different
-/// inner width (`NL`/`NR`/`NA`).
+/// One role's register array, each role at its own width (`NL`/`NR`/`NA`).
+#[expect(
+    dead_code,
+    reason = "built through the expand type's generated constructors"
+)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum MmaFragment<T: Numeric> {
+pub(crate) enum MmaFragment<T: Numeric> {
     Lhs(Array<Vector<T, NL>>),
     Rhs(Array<Vector<T, NR>>),
     Acc(Array<Vector<T, NA>>),
@@ -46,8 +46,7 @@ pub enum MmaFragment<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> MmaData<T> {
-    /// Allocate an accumulator fragment. A role's register width depends only on its own element
-    /// type, so `<T,T,T>` gives correct `Accumulator` metadata without the real `(L,R,A)` triple.
+    /// Allocate an accumulator fragment.
     pub(crate) fn acc(
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -119,9 +118,7 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
-    /// Fill this fragment from `src`'s window (row-major stage), by the role's transport
-    /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile, not
-    /// its store: the manual path reads through the quant-transparent matrix view, decoding here.
+    /// Fill this fragment from `src`'s window by the role's transport.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
@@ -143,12 +140,7 @@ impl<T: Numeric> MmaData<T> {
         self.store_cast_window::<T>(mem, space)
     }
 
-    /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's, casting
-    /// `T` down to the sink element: each unit writing its own cells through the destination's
-    /// write, which masks a cell past the window's edge and adds into a destination that folds. A
-    /// unit knows which cells it holds, so every cell has one writer and no scratch is needed to
-    /// elect it. The `stmatrix` transport does not reach a memory window, so the store is always
-    /// this one, whatever [`MmaIo::store_method`] says.
+    /// Drain this (accumulator) fragment into `mem`'s window, casting down to the sink element.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
         mem: &mut Memory<Out>,
@@ -167,10 +159,6 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 }
-
-// ===========================================================================
-// Register-size binding
-// ===========================================================================
 
 #[cube]
 fn register_acc_size<A: Numeric>(def: &MmaDefinition<A, A, A>) {
@@ -196,10 +184,6 @@ fn register_rhs_size<R: Numeric>(def: &MmaDefinition<R, R, R>) {
     });
 }
 
-// ===========================================================================
-// Fill / load / store primitives over cubek-tile's `Memory` window: a row-major stage addressed by
-// `window_slice()` + scalar `row_stride()`. (Adapted from cubek-std's mma module.)
-
 /// Fill every register slot with `value`.
 #[cube]
 fn fill_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, value: E) {
@@ -222,12 +206,8 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] io: MmaIo,
     #[comptime] edges: (usize, usize),
 ) {
-    // `ldmatrix` reads 16-byte rows of 16-bit cells out of shared memory, for an operand: it
-    // serves a window only where every one of those holds, and the manual load serves the rest.
-    // A gathered window has no row a unit could address, a line wider than a row starts one
-    // inside it, a packed window holds its stored words, which its read decodes and `ldmatrix`
-    // would copy raw, and a global window, a 4-byte cell or the accumulator is not what the
-    // instruction reads at all.
+    // `ldmatrix` reads 16-byte rows of 16-bit served cells from shared memory; any other window
+    // takes the manual load.
     let gathered = src.gathered();
     let shared = src.is_shared();
     let element = src.stage_element();
@@ -261,14 +241,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// Manual load: each unit reads its own cells out of `src` through the matrix view, the window
-/// lying as the role's `edges` (`layout` row-major) or as their transpose (col-major, a weight
-/// stored `{n, k}`).
-///
-/// Where a unit's register vector runs along the window's lines — the instruction's
-/// [`vector_layout`](MmaDefinition::vector_layout) is the window's — the unit reads whole lines,
-/// one per `W` cells, rather than one line per cell: a load the device issues wide. Elsewhere
-/// each cell is read on its own.
+/// Manual load: each unit reads its own cells of `src` through the matrix view.
 #[cube]
 fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile<T>,
@@ -292,9 +265,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
             panic!("MmaData::load: a manual fragment load reads a row- or col-major window")
         }
     });
-    // A line is addressed by its index within the window, so the window's edge along its lines
-    // must hold whole lines: a fragment narrower than a line (NVIDIA's `n = 8` beside a 16-wide
-    // line) starts inside one, and its index would round down to the line before.
+    // The window's edge along its lines must hold whole lines, or a line index rounds down.
     let line_edge = comptime!(if transposed { rows } else { cols });
     comptime!(assert!(
         line_edge.is_multiple_of(width),
@@ -318,7 +289,6 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
     for i in 0..num_vectors {
         let mut vector = Vector::empty();
         if comptime!(along_lines) {
-            // The vector's cells are consecutive along the window's line axis, from its first.
             let (row, col) = def.position_of_nth(unit_id, comptime!(i * vector_size) as u32, ident);
             let (line_row, cell) = if comptime!(transposed) {
                 (col, row)
@@ -326,10 +296,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
                 (row, col)
             };
             if comptime!(width >= vector_size) {
-                // One line holds the whole vector: a register vector of a matrix instruction
-                // starts at a multiple of its own size along the axis it runs down (the unit's
-                // share of a row or column is whole vectors), and `width` is a multiple of
-                // `vector_size`, so `start + vector_size` never passes `width`.
+                // A register vector starts at a multiple of its size, so it stays within `width`.
                 let line = view.read((line_row, cell / comptime!(width as u32)));
                 let start = cell % comptime!(width as u32);
                 #[unroll]
@@ -370,9 +337,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
     }
 }
 
-/// Each unit's accumulator cells written through `mem`'s own write, one element at a time: the
-/// write masks a cell past the window's edge and adds into a destination that folds. A cell is one
-/// unit's, so each is written once.
+/// Each unit's accumulator cells written one element at a time through `mem`'s own write.
 #[cube]
 fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     mem: &mut Memory<Out>,
@@ -412,8 +377,7 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// Execute `acc += lhs · rhs` over three role fragments via the manual `MmaDefinition::execute`,
-/// copying the result registers back into `acc`.
+/// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`.
 #[cube]
 pub(crate) fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<Vector<L, NL>>,

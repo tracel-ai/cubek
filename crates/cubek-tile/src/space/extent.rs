@@ -1,11 +1,8 @@
-//! One axis's size ([`Extent`]), and every axis's at once ([`Shape`]): the comptime half of a
-//! [`Space`](crate::Space), the same value on the host and in a kernel.
+//! One axis's size ([`Extent`]) and every axis's at once ([`Shape`]).
 
 use crate::{Axis, AxisMap};
 
-/// One axis's size.
-/// `Static` is a comptime constant (a tile edge);
-/// `Dynamic` is a runtime scalar resolved in-kernel from the tensor shape.
+/// One axis's size: `Static` is comptime, `Dynamic` is resolved in-kernel from the tensor shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Extent {
     Static(usize),
@@ -13,9 +10,8 @@ pub(crate) enum Extent {
 }
 
 impl Extent {
-    /// The comptime size; panics on `Dynamic` (a runtime extent has no comptime value;
-    /// resolve it from the tensor shape).
-    pub fn get(self) -> usize {
+    /// The comptime size; panics on `Dynamic`.
+    pub(crate) fn get(self) -> usize {
         match self {
             Extent::Static(n) => n,
             Extent::Dynamic => {
@@ -24,14 +20,12 @@ impl Extent {
         }
     }
 
-    pub fn is_dynamic(self) -> bool {
+    pub(crate) fn is_dynamic(self) -> bool {
         matches!(self, Extent::Dynamic)
     }
 }
 
-/// Every axis with its comptime extent, in canonical order: what a space is at compile time,
-/// and what its identity is. A `Dynamic` axis has its size beside it at runtime, on the
-/// [`Space`](crate::Space).
+/// Every axis with its comptime extent, in canonical order.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Shape {
     extents: AxisMap<Extent>,
@@ -68,8 +62,7 @@ impl Shape {
         self.extents.get(axis)
     }
 
-    /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
-    /// smem consumers all run on fully-divided (`Static`) spaces, so this is what they call.
+    /// The axis's comptime size; panics on a dynamic axis.
     pub fn extent(&self, axis: Axis) -> usize {
         self.extent_raw(axis).get()
     }

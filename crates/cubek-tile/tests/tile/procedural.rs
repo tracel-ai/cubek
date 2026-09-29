@@ -16,7 +16,6 @@ use cubek_tile::procedural::Sum;
 use cubek_tile::procedural::affine_along;
 use cubek_tile::procedural::product_of;
 use cubek_tile::procedural::sum_of;
-use cubek_tile::space::Coords;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -190,20 +189,7 @@ fn rebase_kernel<E: Float>(
         },
     )
     .tile();
-    // The second region starts at (2, 3), so its first logical coordinate reads row 2.
-    let region = Region::trailing(
-        comptime!(0usize),
-        comptime!(space.space().clone()),
-        comptime!(level.clone()),
-        1usize,
-        1usize,
-    );
-    let source = source.at(&region);
-    let mut pos = Coords::<u32>::new();
-    pos.push(0u32.runtime());
-    pos.push(0u32.runtime());
-    let mut output = output.tile(comptime!(space.clone()));
-    output.init(source.value_at(pos));
+    materialize(&source, output, &space, level);
 }
 
 #[cube(launch)]
@@ -415,7 +401,7 @@ fn selecting_a_region_rebases_the_recipe_origin() {
         h.launcher.partitioning().level(0),
         h.dtype,
     );
-    assert_grid(&h.read(output), |_, _| 4.0);
+    assert_grid(&h.read(output), |row, _| 2.0 * row as f32);
 }
 
 /// Walk the affine-plus-phase recipe with the fraction folded or passed at launch; the grid is the

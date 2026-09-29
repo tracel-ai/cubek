@@ -1,16 +1,5 @@
 //! A tile the plane holds in its units: loaded once, coalesced, and shared by shuffle.
-//!
-//! Unit `t` holds line `t`. A value is reached at its coordinates, the line named by the
-//! coordinates along the lines' axes and the byte by the coordinate along the line, and arrives
-//! at the unit that asks by a plane shuffle, a word at a time.
-//!
-//! **One line per unit**, so a box deeper than the plane is wide does not fit. The plane's width
-//! is the launch's, not a comptime fact, so nothing here can refuse one; a caller wanting more
-//! lines than it has units wants a shared-memory stage, a different tile, not a mode of this one.
-//!
-//! The lines are held as the words they lie in and decoded at the read. Nothing here windows a
-//! line: a window into the box is a scalar origin, so a step one block deep into a line of four is
-//! a coordinate, never a line index ([`Memory::at`](crate::Memory) refuses exactly that cut).
+//! Unit `t` holds line `t`, so the box must not hold more lines than the plane has units.
 
 use std::marker::PhantomData;
 
@@ -18,8 +7,7 @@ use cubecl::{ir::ElemType, prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
-// Words one line holds, as a scope-registered size rather than a generic: bound where the tile
-// is opened, so the width stays a storage detail of it and never reaches `TileKind`.
+// Words one line holds, bound where the tile is opened.
 define_size!(pub(crate) LW);
 
 /// Bind the line width `LW` for the rest of the kernel's scope.
@@ -33,30 +21,23 @@ fn register_line_words(#[comptime] words: usize) {
 /// The lines a plane holds in its units, and where inside them a window sits.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Lines<T: Numeric> {
-    /// This unit's line, as the words it lies in: unit `t` holds line `t`. One entry, held in an
-    /// array so a load can replace it. Filled under [`UnitRead::Shuffle`], where the units are
-    /// where the lines stay.
+pub(crate) struct Lines<T: Numeric> {
+    /// This unit's line, as words (unit `t` holds line `t`); filled under [`UnitRead::Shuffle`].
     line: Array<Vector<u32, LW>>,
-    /// Every line one after the other, in a window of shared memory this plane owns. Filled
-    /// under [`UnitRead::PlaneShared`], absent otherwise.
+    /// Every line, in this plane's shared-memory window; only under [`UnitRead::PlaneShared`].
     window: ComptimeOption<Shared<[u32]>>,
     /// Where this window starts inside the box, in scalars, one entry per axis of it.
     origin: Coords<u32>,
-    /// The box the lines were loaded as: the lines' axes, then the line's. The tile's own space
-    /// narrows as [`at`](Lines::at) windows it; this stays what was loaded.
+    /// The box the lines were loaded as: the lines' axes, then the line's.
     #[cube(comptime)]
     loaded: Space,
-    /// What a coordinate along each axis of the box counts in lines: the product of the
-    /// addressed extents inside it, and nothing along an axis the operand spans without
-    /// addressing (one value holding the whole of it) or along the line itself.
+    /// What a coordinate along each axis of the box counts in lines; zero if not addressed.
     #[cube(comptime)]
     strides: Vec<usize>,
     /// Lines the box holds, which is the units it takes.
     #[cube(comptime)]
     lines: usize,
-    /// The projection of the operand these lines stage: which of its axes address a line and
-    /// which one value holds whole.
+    /// The projection of the operand these lines stage.
     #[cube(comptime)]
     projection: Projection,
     /// The slot one value occupies in a word.
@@ -73,14 +54,11 @@ pub struct Lines<T: Numeric> {
 }
 
 impl<T: Numeric> Lines<T> {
-    /// How `loaded` counts in lines: what a coordinate along each of its axes is worth, row-major
-    /// over the axes `projection` addresses above the line and zero along the rest, and how many
-    /// lines that leaves. The count is the last stride the walk writes, so one pass gives both.
+    /// Each axis of `loaded` counted in lines, and the total line count.
     fn line_strides(loaded: &Space, projection: &Projection) -> (Vec<usize>, usize) {
         let rank = loaded.rank();
         let mut strides = vec![0; rank];
         let mut lines = 1;
-        // Indexed, not iterated: each addressed stride is the product of the ones written below it.
         #[allow(clippy::needless_range_loop)]
         for p in (0..rank - 1).rev() {
             if projection.addresses(loaded.axis_at(p)) {
@@ -94,8 +72,7 @@ impl<T: Numeric> Lines<T> {
 
 #[cube]
 impl<T: Numeric> Lines<T> {
-    /// The box one region of `level` over `operand` fills, held one line to a unit, empty until
-    /// [`load`](Self::load).
+    /// The empty box one region of `level` over `operand` fills, one line per unit.
     pub(crate) fn new(
         operand: &Tile<T>,
         #[comptime] level: Level,
@@ -112,8 +89,6 @@ impl<T: Numeric> Lines<T> {
         let (strides, lines) = comptime!(Lines::<T>::line_strides(&loaded, &projection));
         let packing = operand.packing();
         let served = elem_type_of::<T>();
-        // The lines are held as words: a packed operand's as they lie, a plain one's as the
-        // 32-bit values it serves, reinterpreted.
         let field = comptime!(match packing {
             Packing::Packed { field } => field,
             Packing::Plain => match served {
@@ -131,8 +106,6 @@ impl<T: Numeric> Lines<T> {
         ));
         let words = comptime!(line / per_word);
         register_line_words(words);
-        // One window per plane of the cube, this plane's found by the walk's own decode of the
-        // hardware position, as a landing is.
         let window = match comptime!(read) {
             UnitRead::Shuffle => ComptimeOption::new_None(),
             UnitRead::PlaneShared => {
@@ -187,9 +160,7 @@ impl<T: Numeric> Lines<T> {
         comptime!(Packing::Packed { field: self.field })
     }
 
-    /// Load from `src`, the memory window of the box: unit `t` reads line `t`, whole — in one
-    /// read where the source serves a line at a time, else in the few consecutive reads a line
-    /// takes. Lines past the lines read nothing.
+    /// Load from `src`, the box's memory window: unit `t` reads line `t`.
     pub(crate) fn load(&mut self, src: &Tile<T>) {
         let rank = comptime!(self.loaded.rank());
         let line = self.line();
@@ -210,9 +181,7 @@ impl<T: Numeric> Lines<T> {
         if unit < comptime!(lines as u32) {
             #[unroll]
             for r in 0..reads {
-                // The line's coordinate along every axis: its digits along the addressed
-                // ones, zero along the rest (which one line holds whole), and the read along the
-                // line itself, counted in the lines the source serves.
+                // Digits along addressed axes, zero elsewhere, the read `r` along the line.
                 let mut at = CoordsDyn::new();
                 #[unroll]
                 for p in 0..rank - 1 {
@@ -249,9 +218,7 @@ impl<T: Numeric> Lines<T> {
             }
         }
         match comptime!(self.read) {
-            // The lines stay where they were loaded; every read reaches them by shuffle.
             UnitRead::Shuffle => self.line[0usize] = held,
-            // Written once, read by index for the rest of the region, at one plane barrier.
             UnitRead::PlaneShared =>
             {
                 #[comptime]
@@ -272,8 +239,7 @@ impl<T: Numeric> Lines<T> {
         }
     }
 
-    /// This window one level down, to `step`'s box: the origin moves, in scalars, and nothing is
-    /// cropped.
+    /// This window one level down, to `step`'s box: only the origin moves.
     pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Lines<T> {
         let rank = comptime!(space.rank());
         let mut origin = Coords::<u32>::new();
@@ -302,10 +268,7 @@ impl<T: Numeric> Lines<T> {
         }
     }
 
-    /// The value at `coords` of this window, one entry per axis of the box: the line the
-    /// coordinates along the lines' axes name, the word and the field of it the coordinate
-    /// along the line names.
-    ///
+    /// The value at `coords` of this window, one entry per axis of the box.
     /// The shuffle is the whole plane's, so a caller keeps its units converged around this.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     pub(crate) fn read(&self, coords: &Coords<u32>) -> T {
@@ -325,9 +288,7 @@ impl<T: Numeric> Lines<T> {
         let field = byte.remainder(comptime!(per_word as u32));
         let held = match comptime!(self.read) {
             UnitRead::Shuffle => {
-                // Every unit offers its word `j`; the unit that asked receives line `line`'s.
-                // Which word is wanted is a runtime coordinate, so all of them are fetched and
-                // one is kept — `words` shuffles for the one word a value sits in.
+                // `word` is runtime, so every word is shuffled and one kept.
                 let mine = self.line[0usize];
                 let mut got = Vector::<u32, LW>::empty();
                 #[unroll]
@@ -351,9 +312,7 @@ impl<T: Numeric> Lines<T> {
                 }
             }
         };
-        // **One field, not the word it sits in.** Decoding the whole word costs `per_word` decodes
-        // to use one value, and a minifloat decode is around twenty integer operations (about
-        // eighty for one `ue4m3` scale). Shifting the wanted field down first leaves one to decode.
+        // Shift the wanted field down first: decoding the whole word costs `per_word` decodes.
         let bits = comptime!(self.field.size_bits() as u32);
         let only = match comptime!(per_word > 1) {
             true => held >> field.times(bits),

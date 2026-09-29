@@ -93,7 +93,7 @@ fn swizzle_width_probe() {
                 planes: PlaneGrid { m: 4, n: 2 },
                 stage_k: 64,
                 buffering: 2,
-                delivery: CmmaDelivery::Copy,
+                delivery: CmmaDelivery::SyncPerUnit,
                 order,
             }))
             .into();
