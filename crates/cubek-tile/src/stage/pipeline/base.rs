@@ -220,6 +220,37 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
         let laps = total
             .__expand_plus_method(scope, (depth - 1).into_expand(scope))
             .__expand_divided_by_method(scope, depth.into_expand(scope));
+        // The laps whose every region has a next one to fetch: no branch around the fetch, so what
+        // it computes that no lap changes (each unit's place in the stage) leaves the loop.
+        let steady = steady_laps(scope, total, 1, depth);
+        let mut steady_body = |scope: &Scope, lap: NativeExpand<usize>| {
+            for j in 0..depth {
+                let target = (j + 1) % depth;
+                let region_idx = lap
+                    .__expand_times_method(scope, depth.into_expand(scope))
+                    .__expand_plus_method(scope, j.into_expand(scope));
+                let next = region_idx.__expand_plus_method(scope, 1usize.into_expand(scope));
+                let upcoming = walk.__expand_region_method(scope, next);
+                self.__expand_fetch_method(scope, target, &upcoming, &mut lhs, &mut rhs);
+                let region = walk.__expand_region_method(scope, region_idx);
+                let slot = self.__expand_slot_mut_method(scope, j);
+                compute(scope, slot, &region);
+                // One slot: every unit has read it before any overwrites it.
+                if depth == 1 {
+                    self.publish(scope, FIRST_SLOT);
+                }
+                self.__expand_store_method(scope, target, &lhs, &rhs);
+                self.publish(scope, target);
+            }
+        };
+        run_laps(
+            scope,
+            0usize.into_expand(scope),
+            steady,
+            unroll,
+            &mut steady_body,
+        );
+        // The last laps, where the walk runs out under them.
         let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let target = (j + 1) % depth;
@@ -248,12 +279,38 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
                 });
             }
         };
-        let range = RangeExpand::new(0usize.into_expand(scope), laps);
-        if unroll {
-            range.expand_unroll(scope, &mut body);
-        } else {
-            range.expand(scope, &mut body);
-        }
+        run_laps(scope, steady, laps, unroll, &mut body);
+    }
+}
+
+/// Laps of `depth` regions each, out of a walk of `total`, in which every region has the one
+/// `ahead` of it to fill: `(total - ahead) / depth`, none where the walk is shorter than `ahead`.
+/// What a schedule runs with no branch around its fills before the laps where the walk runs out.
+fn steady_laps(
+    scope: &Scope,
+    total: NativeExpand<usize>,
+    ahead: usize,
+    depth: usize,
+) -> NativeExpand<usize> {
+    total
+        .__expand_max_with_method(scope, ahead.into_expand(scope))
+        .__expand_minus_method(scope, ahead.into_expand(scope))
+        .__expand_divided_by_method(scope, depth.into_expand(scope))
+}
+
+/// `body` on every lap in `from..to`, unrolled where the walk says.
+fn run_laps(
+    scope: &Scope,
+    from: NativeExpand<usize>,
+    to: NativeExpand<usize>,
+    unroll: bool,
+    body: &mut dyn FnMut(&Scope, NativeExpand<usize>),
+) {
+    let range = RangeExpand::new(from, to);
+    if unroll {
+        range.expand_unroll(scope, body);
+    } else {
+        range.expand(scope, body);
     }
 }
 
@@ -295,6 +352,37 @@ mod schedule {
         let laps = total
             .__expand_plus_method(scope, (depth - 1).into_expand(scope))
             .__expand_divided_by_method(scope, depth.into_expand(scope));
+        // Deeper than one slot, the laps whose every region has the one `depth - 1` ahead to fill
+        // run with no branch around the fill, so what it computes that no lap changes (each
+        // unit's place in the stage) leaves the loop; the last laps keep the branches.
+        let steady = match depth {
+            1 => 0usize.into_expand(scope),
+            _ => {
+                let steady = steady_laps(scope, total, depth - 1, depth);
+                let mut steady_body = |scope: &Scope, lap: NativeExpand<usize>| {
+                    for j in 0..depth {
+                        let region_idx = lap
+                            .__expand_times_method(scope, depth.into_expand(scope))
+                            .__expand_plus_method(scope, j.into_expand(scope));
+                        let ahead =
+                            region_idx.__expand_plus_method(scope, (depth - 1).into_expand(scope));
+                        let prefetch = walk.__expand_region_method(scope, ahead);
+                        fill(scope, stages, (j + depth - 1) % depth, &prefetch);
+                        let region = walk.__expand_region_method(scope, region_idx);
+                        let slot = stages.__expand_slot_mut_method(scope, j);
+                        compute(scope, slot, &region);
+                    }
+                };
+                run_laps(
+                    scope,
+                    0usize.into_expand(scope),
+                    steady,
+                    unroll,
+                    &mut steady_body,
+                );
+                steady
+            }
+        };
         let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let region_idx = lap
@@ -330,11 +418,6 @@ mod schedule {
                 }
             }
         };
-        let range = RangeExpand::new(0usize.into_expand(scope), laps);
-        if unroll {
-            range.expand_unroll(scope, &mut body);
-        } else {
-            range.expand(scope, &mut body);
-        }
+        run_laps(scope, steady, laps, unroll, &mut body);
     }
 }
