@@ -2,15 +2,18 @@
 //! its lines to the copy engine rather than loading and storing them, so they land in the stage
 //! without passing through its registers, after the fill has returned.
 //!
-//! Which lines a unit takes is the straight fill's; only who carries each one differs. Nothing
-//! here waits: the slot's barrier is handed the copies and flips once they land
+//! A unit takes as many lines as under the straight fill, but walks them in the source's order
+//! rather than the stage's: the copy bypasses L1, so the neighbouring lanes of a warp must read
+//! neighbouring source bytes for the requests to coalesce into whole sectors. Walking a blocked
+//! stage in its own order hands a warp two lines of each of sixteen rows, and every sector is
+//! fetched from L2 more than once. Nothing here waits: the slot's barrier is handed the copies and flips once they land
 //! ([`Slot::release_write`](crate::Slot)), or a blocking copy waits on one of its own
 //! ([`Memory::load_from`]).
 
 use cubecl::{
     prelude::barrier::{Barrier, copy_async, copy_async_checked},
     prelude::*,
-    std::tensor::layout::CoordsDyn,
+    std::tensor::layout::{CoordsDyn, Layout, LayoutExpand},
 };
 
 use crate::*;
@@ -18,8 +21,9 @@ use crate::*;
 /// The widths of one copy the engine takes, in bytes: `cp.async` moves 4, 8 or 16.
 const COPY_BYTES: [usize; 3] = [4, 8, 16];
 
-/// Copy destination line `i` asynchronously: the source line at the same coordinates, whole, or
-/// zeros where the source masks it off. It has not landed when this returns.
+/// Copy the `i`-th line of the stage, counted in the source's order ([`source_order`]),
+/// asynchronously: the source line at those coordinates, whole, or zeros where the source masks it
+/// off. It has not landed when this returns.
 #[cube]
 pub(crate) fn copy_line_async<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
@@ -37,8 +41,9 @@ pub(crate) fn copy_line_async<I2: Numeric, WP2: Size, SW: Size>(
         "copy_line_async: the copy engine moves 4, 8 or 16 bytes at once, and this stage's lines are \
          {bytes}: serve the operand in lines one copy moves"
     ));
-    let offset = layout.line_offset(i);
-    let run = s.item_run(layout.line_coords(i));
+    let coords = source_order(layout, i);
+    let offset = layout.to_source_pos(coords.clone());
+    let run = s.item_run(coords);
     let dst = &mut d[offset..offset + 1];
     // One type on both sides: the transport already refused a stage served at another width.
     let dst = dst.downcast_mut::<Vector<I2, SW>>();
@@ -47,6 +52,29 @@ pub(crate) fn copy_line_async<I2: Numeric, WP2: Size, SW: Size>(
     } else {
         copy_async(run, dst, comptime!(width as u32));
     }
+}
+
+/// The logical coordinates of the `i`-th line of `layout`'s buffer in row-major order over its
+/// logical extents, innermost axis fastest: the order the source lies in, whatever blocking or
+/// swizzle places the lines in the stage.
+#[cube]
+fn source_order(layout: &BufferLayout, i: usize) -> CoordsDyn {
+    let rank = comptime!(layout.projection.logical_rank());
+    let extent = logical_extent(comptime!(layout.projection.clone()), &layout.physical_shape);
+    let x = i.cast::<u32>();
+    let mut coords = CoordsDyn::new();
+    #[unroll]
+    for p in 0..rank {
+        let inner = comptime!((p + 1..rank).collect::<Vec<_>>());
+        let quot = x.divided_by(extent.product(inner));
+        let digit = if comptime!(p == 0) {
+            quot
+        } else {
+            quot.remainder(extent.at(p))
+        };
+        coords.push(digit);
+    }
+    coords
 }
 
 #[cube]
