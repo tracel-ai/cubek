@@ -1,13 +1,16 @@
-//! Storing a matrix in storage tiles and back: the tiled buffer holds the tiles it states,
+//! Storing a tensor in storage tiles and back: the tiled buffer holds the tiles it states,
 //! the round trip is the identity, and what cannot be tiled is refused on the host.
 
-use cubecl::{ir::ElemType, prelude::*, zspace::Shape};
+use cubecl::{
+    bytes::Bytes, ir::ElemType, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
+    zspace::Shape,
+};
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{StorageLevels, tile, untile},
+    tiled::storage::{StorageLevels, StoragePartitioning, tile, untile},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
-use cubek_tile::Axis;
+use cubek_tile::{Axis, Geometry, kind::Field};
 
 const ROWS: Axis = Axis(0);
 const COLS: Axis = Axis(1);
@@ -32,7 +35,7 @@ fn round_trip(
         .generate_with_f32_host_data();
 
     let storage = StorageLevels::new(&[(COLS, tc), (ROWS, tr)]).grid(grid);
-    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, storage).unwrap();
+    let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
     let physical: Vec<usize> = batches
         .iter()
         .copied()
@@ -107,7 +110,7 @@ fn tiling_orders_the_grid_as_the_storage_states() {
         .custom((0..64 * 96).map(|i| i as f32).collect())
         .generate_with_f32_host_data();
     let storage = StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[ROWS, COLS]);
-    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, storage).unwrap();
+    let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
     // [64/16, 96/32, 16, 32]: a tile is 512 values, the next down the rows 512 on, across 2048.
     assert_eq!(tiled.metadata.strides().to_vec(), vec![512, 2048, 32, 1]);
 }
@@ -139,8 +142,9 @@ fn tiling_refuses_a_tile_that_does_not_divide() {
         tile(
             &client,
             src.binding(),
-            [ROWS, COLS],
+            &[ROWS, COLS],
             dtype,
+            None,
             StorageLevels::new(&[(COLS, 32), (ROWS, 32)]).grid(&[COLS, ROWS])
         ),
         Err(MatmulSetupError::InvalidConfig(_))
@@ -162,8 +166,9 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
     let tiled = tile(
         &client,
         src.binding(),
-        [ROWS, COLS],
+        &[ROWS, COLS],
         dtype,
+        None,
         StorageLevels::new(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS]),
     )
     .unwrap();
@@ -171,8 +176,9 @@ fn tiling_refuses_a_tiled_source_and_untiling_a_plain_one() {
         tile(
             &client,
             tiled.binding(),
-            [ROWS, COLS],
+            &[ROWS, COLS],
             dtype,
+            None,
             StorageLevels::new(&[(COLS, 16), (ROWS, 16)]).grid(&[COLS, ROWS])
         ),
         Err(MatmulSetupError::InvalidConfig(_))
@@ -195,7 +201,7 @@ fn tiles_and_comes_back(
         .dtype(dtype)
         .custom(data.clone())
         .generate_with_f32_host_data();
-    let tiled = tile(&client, src.binding(), [ROWS, COLS], dtype, storage).unwrap();
+    let tiled = tile(&client, src.binding(), &[ROWS, COLS], dtype, None, storage).unwrap();
     let stored = (
         tiled.shape().as_slice().to_vec(),
         tiled.metadata.strides().to_vec(),
@@ -247,4 +253,123 @@ fn tiling_stores_a_tile_column_first() {
         tiles_and_comes_back(storage, 64, 96, |r, c| vec![r / 16, c / 32, r % 16, c % 32]);
     assert_eq!(shape, vec![4, 3, 16, 32]);
     assert_eq!(strides, vec![1536, 512, 1, 16]);
+}
+
+/// Where the value at `coords` (one per named axis) sits in a stored tensor, in values: each
+/// coordinate split over its axis's dims, finest last, dotted with their strides.
+fn value_offset(stored: &Geometry, axes: &[Axis], coords: &[usize]) -> usize {
+    let labels = stored.labels(axes);
+    let mut rest = coords.to_vec();
+    let mut offset = 0;
+    for d in (0..labels.len()).rev() {
+        let a = axes.iter().position(|&a| a == labels[d]).unwrap();
+        offset += (rest[a] % stored.shape()[d]) * stored.strides()[d];
+        rest[a] /= stored.shape()[d];
+    }
+    offset
+}
+
+/// Tile a row-major tensor over `extents` (named axes and their sizes) of `field`-wide values
+/// packed along the last axis, as `storage` states, and check every value's field lands where the
+/// statement puts its value, the result stated in values.
+fn packs_and_lands(field: Field, extents: &[(Axis, usize)], storage: StoragePartitioning) {
+    let client = client();
+    let axes: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
+    let shape: Vec<usize> = extents.iter().map(|&(_, extent)| extent).collect();
+    let total: usize = shape.iter().product();
+    let (bits, per_word) = (field.size_bits(), field.per_word());
+    let mask = (1u32 << bits) - 1;
+    let code = |i: usize| (i as u32 * 7 + 3) & mask;
+    let words: Vec<u32> = (0..total)
+        .collect::<Vec<_>>()
+        .chunks(per_word)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &i)| acc | (code(i) << (j * bits)))
+        })
+        .collect();
+    let strides: Vec<usize> = (0..shape.len())
+        .map(|d| shape[d + 1..].iter().product())
+        .collect();
+    let src = TensorHandle::new(
+        client.create(Bytes::from_elems(words)),
+        shape.clone(),
+        strides.clone(),
+        u32::elem_type_native(),
+    );
+    let dtype = u32::elem_type_native();
+    let tiled = tile(
+        &client,
+        src.binding(),
+        &axes,
+        dtype,
+        Some(field),
+        storage.clone(),
+    )
+    .unwrap();
+    let stored = Geometry::from(&tiled.clone().binding());
+    assert_eq!(stored, storage.physical(extents).unwrap());
+    let raw = u32::from_bytes(&client.read_one_unchecked(tiled.handle)).to_vec();
+    for i in 0..total {
+        let coords: Vec<usize> = (0..shape.len())
+            .map(|d| i / strides[d] % shape[d])
+            .collect();
+        let at = value_offset(&stored, &axes, &coords);
+        let got = (raw[at / per_word] >> ((at % per_word) * bits)) & mask;
+        assert_eq!(got, code(i), "value {coords:?} at {at}");
+    }
+}
+
+const N: Axis = Axis(0);
+const KB: Axis = Axis(1);
+const KI: Axis = Axis(2);
+
+/// NVFP4 values, 8 to a word along `KI`, stored for a load of 2 words along `KI` by 2 columns:
+/// the words move whole and every value is where the statement puts it, the result stated in
+/// values.
+#[test]
+fn tiling_moves_packed_words_whole() {
+    let storage = StorageLevels::new(&[(KI, 8)])
+        .tile(&[(KI, 2), (N, 2)])
+        .tile(&[(KB, 4), (N, 2)])
+        .grid(&[KI, KB, N]);
+    packs_and_lands(
+        Field::Quant(QuantValue::E2M1),
+        &[(N, 8), (KB, 8), (KI, 16)],
+        storage,
+    );
+}
+
+/// Byte-wide scales, 4 to a word along the blocks, stored for a load of 16 blocks of one column
+/// and a plane's read of 4 columns by 32 blocks: scales tile the same way values do.
+#[test]
+fn tiling_moves_packed_scales_whole() {
+    let storage = StorageLevels::new(&[(KB, 4)])
+        .tile(&[(KB, 4)])
+        .tile(&[(N, 4), (KB, 2)])
+        .grid(&[KB, N]);
+    packs_and_lands(Field::Quant(QuantValue::Q8S), &[(N, 8), (KB, 64)], storage);
+}
+
+/// A packed tensor moves whole words, so a statement whose finest tile is not the word is
+/// refused on the host, naming the word it needed.
+#[test]
+fn tiling_refuses_packed_values_whose_word_is_not_the_finest_tile() {
+    let client = client();
+    let src = TensorHandle::new(
+        client.create(Bytes::from_elems(vec![0u32; 64])),
+        vec![4, 2, 64],
+        vec![128, 64, 1],
+        u32::elem_type_native(),
+    );
+    let refused = tile(
+        &client,
+        src.binding(),
+        &[N, KB, KI],
+        u32::elem_type_native(),
+        Some(Field::Quant(QuantValue::E2M1)),
+        StorageLevels::new(&[(KI, 16)]).grid(&[KI, KB, N]),
+    );
+    assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
