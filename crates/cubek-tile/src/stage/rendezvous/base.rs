@@ -51,6 +51,13 @@ impl Rendezvous {
     pub(crate) fn commits(deliveries: &[Delivery]) -> bool {
         deliveries.contains(&Delivery::AsyncPerUnit)
     }
+
+    /// Whether a barrier slot's barriers must be fenced into the async proxy once initialized:
+    /// only a bulk copy completes on them from there. The fence is sm90+, so a slot without one
+    /// must not emit it.
+    pub(crate) fn fences(deliveries: &[Delivery]) -> bool {
+        deliveries.iter().any(Delivery::through_async_proxy)
+    }
 }
 
 /// The rendezvous for one slot, and every barrier it owns. The acquire/release operations live
@@ -97,7 +104,8 @@ pub enum Meeting {
 #[cube]
 impl Meeting {
     /// Allocate the pipeline for `sync`: the `full`/`empty` mbarrier pair, sealed by a proxy fence
-    /// before any bulk copy, for [`Barrier`](Rendezvous::Barrier); nothing to allocate otherwise.
+    /// when a bulk copy completes on them (`fences`), for [`Barrier`](Rendezvous::Barrier);
+    /// nothing to allocate otherwise.
     ///
     /// Both barriers are armed and fenced before any plane takes a role, which is why the
     /// election here is unit 0 and the `sync_cube` is the whole cube's: every unit is still
@@ -106,6 +114,7 @@ impl Meeting {
         #[comptime] sync: Rendezvous,
         #[comptime] collective_full: bool,
         #[comptime] commits: bool,
+        #[comptime] fences: bool,
         #[comptime] fillers: usize,
     ) -> Meeting {
         match sync {
@@ -114,7 +123,9 @@ impl Meeting {
                 let full =
                     Barrier::shared(Meeting::producers(collective_full, fillers), UNIT_POS == 0);
                 let empty = Barrier::shared(Meeting::consumers(fillers), UNIT_POS == 0);
-                sync_async_proxy_shared();
+                if comptime!(fences) {
+                    sync_async_proxy_shared();
+                }
                 sync_cube();
                 let elected = Meeting::elected(fillers);
                 let all_publish = comptime!(collective_full || fillers > 0);
@@ -259,6 +270,22 @@ mod tests {
         );
         assert!(!Rendezvous::collective_full(&deliveries));
         assert!(!Rendezvous::commits(&deliveries));
+    }
+
+    /// Only a bulk copy completes on the barrier from the async proxy. `cp.async` stays in the
+    /// generic proxy, and the fence it would otherwise emit does not exist before sm90.
+    #[test]
+    fn only_a_bulk_copy_fences_the_barrier_into_the_async_proxy() {
+        assert!(Rendezvous::fences(&[Delivery::Tma]));
+        assert!(Rendezvous::fences(&[
+            Delivery::SyncPerUnit,
+            Delivery::AsyncBulk
+        ]));
+        assert!(!Rendezvous::fences(&[Delivery::AsyncPerUnit]));
+        assert!(!Rendezvous::fences(&[
+            Delivery::SyncPerUnit,
+            Delivery::Procedural
+        ]));
     }
 
     #[test]

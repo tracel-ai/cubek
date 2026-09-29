@@ -69,6 +69,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
                     comptime!(plan.sync()),
                     comptime!(plan.collective_full()),
                     comptime!(plan.commits()),
+                    comptime!(plan.fences()),
                     comptime!(plan.fillers()),
                 ),
                 comptime!(plan.refills(slot)),

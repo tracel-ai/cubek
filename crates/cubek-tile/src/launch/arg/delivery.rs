@@ -96,6 +96,13 @@ impl Delivery {
         }
     }
 
+    /// Whether the copy writes through the async proxy and completes on the slot's barrier as
+    /// transaction bytes (`cp.async.bulk`, TMA), so the barrier's initialization must be fenced
+    /// into that proxy before the first copy. A per-unit `cp.async` stays in the generic proxy.
+    pub(crate) fn through_async_proxy(&self) -> bool {
+        matches!(self, Delivery::AsyncBulk | Delivery::Tma)
+    }
+
     /// Whether every unit of the cube takes part in the fill, rather than one elected issuer.
     pub(crate) fn every_unit_fills(&self) -> bool {
         match self {

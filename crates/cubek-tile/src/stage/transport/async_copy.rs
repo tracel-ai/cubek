@@ -28,7 +28,10 @@ pub(crate) fn copy_line_async<I2: Numeric, WP2: Size, SW: Size>(
     i: usize,
 ) {
     let width = WP2::value();
-    let bytes = comptime!(width * I2::size().comptime());
+    // Outside `comptime!`: in there, `size` is the host's `size_of` of the generic, not the
+    // element's.
+    let elem_size = I2::size().comptime();
+    let bytes = comptime!(width * elem_size);
     comptime!(assert!(
         COPY_BYTES.contains(&bytes),
         "copy_line_async: the copy engine moves 4, 8 or 16 bytes at once, and this stage's lines are \
