@@ -32,11 +32,12 @@ pub const AVX512: HardwareProperties = HardwareProperties {
     ..AVX2
 };
 
-/// An 8-core ARM host with NEON: thirty-two 128-bit vector registers and a 128 KiB L1d.
+/// An 8-core ARM host with NEON, as an M1 reports it: thirty-two 128-bit vector registers and
+/// its efficiency cores' 64 KiB L1d.
 pub const NEON: HardwareProperties = HardwareProperties {
     load_width: 128,
     vector_register_count: Some(32),
-    max_shared_memory_size: 128 * 1024,
+    max_shared_memory_size: 64 * 1024,
     max_units_per_cube: 8,
     max_cube_dim: (8, 8, 8),
     num_cpu_cores: Some(8),
