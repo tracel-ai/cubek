@@ -32,6 +32,18 @@ fn table_entry<S: Numeric>(table: &Tile<S>, index: u32) -> f32 {
     f32::cast_from(entries.read(at).extract(0usize))
 }
 
+/// Each of `indices` replaced by its entry in `codebook`.
+#[cube]
+fn look_up<T: Numeric, V: Size>(codebook: &Codebook, indices: Vector<T, V>) -> Vector<T, V> {
+    let mut entries = Vector::<T, V>::empty();
+    #[unroll]
+    for j in 0..V::value() {
+        let index = u32::cast_from(indices.extract(j));
+        entries.insert(j, T::cast_from(codebook.entry(index)));
+    }
+    entries
+}
+
 /// The table these values index, if any. Empty is values that are numbers.
 #[derive(Clone)]
 pub(crate) struct Codebook;
@@ -53,6 +65,12 @@ impl Codebook {
         unexpanded!()
     }
 
+    /// Every value of `indices` replaced by the entry it names; values that index no table are
+    /// returned as they are.
+    pub(crate) fn entries<T: Numeric, V: Size>(&self, _indices: Vector<T, V>) -> Vector<T, V> {
+        unexpanded!()
+    }
+
     pub(crate) fn __expand_none(_scope: &Scope) -> CodebookExpand {
         CodebookExpand::default()
     }
@@ -69,6 +87,17 @@ impl CodebookExpand {
     /// Whether these values index a table at all.
     pub(crate) fn present(&self) -> bool {
         self.table.is_some()
+    }
+
+    pub(crate) fn __expand_entries_method<T: Numeric, V: Size>(
+        &self,
+        scope: &Scope,
+        indices: NativeExpand<Vector<T, V>>,
+    ) -> NativeExpand<Vector<T, V>> {
+        match self.table {
+            Some(_) => look_up::expand::<T, V>(scope, self, indices),
+            None => indices,
+        }
     }
 
     pub(crate) fn __expand_entry_method(

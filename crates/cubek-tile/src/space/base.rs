@@ -93,6 +93,19 @@ impl Space {
         &self.shape
     }
 
+    /// Whether `other` is this space with some one-wide axes dropped: every other axis kept, in
+    /// order and at its extent, the innermost among them.
+    pub(crate) fn narrows_to(&self, other: &Space) -> bool {
+        self.axes()
+            .filter(|&axis| other.contains(axis))
+            .eq(other.axes())
+            && self.axes().last().is_some_and(|axis| other.contains(axis))
+            && self.axes().all(|axis| match other.contains(axis) {
+                true => self.extent(axis) == other.extent(axis),
+                false => self.extent(axis) == 1,
+            })
+    }
+
     pub fn rank(&self) -> usize {
         self.shape.rank()
     }
