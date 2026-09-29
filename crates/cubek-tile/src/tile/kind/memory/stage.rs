@@ -21,7 +21,8 @@ impl<T: Numeric> Memory<T> {
         Memory::smem_aligned(space, vector_size, storage, units, comptime!(0usize))
     }
 
-    /// [`smem`](Memory::smem) with a minimum byte alignment on the buffer; `0` keeps the element's.
+    /// [`smem`](Memory::smem) with a minimum byte alignment on the buffer, never below one
+    /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it.
     pub fn smem_aligned(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
@@ -29,6 +30,7 @@ impl<T: Numeric> Memory<T> {
         #[comptime] units: usize,
         #[comptime] alignment: usize,
     ) -> Tile<T> {
+        let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let elem_bytes = T::size().comptime();
         let form = comptime!(StageForm::dense(
             &space,

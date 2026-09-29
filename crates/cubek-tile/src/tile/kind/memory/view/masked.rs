@@ -51,6 +51,23 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
     }
 }
 
+#[cube]
+impl<'a, T: CubePrimitive, C: Coordinates + 'static> Masked<'a, T, C> {
+    /// The buffer the stage's arrangement places at `pos`, spanning `size`: the address `ldmatrix`
+    /// reads. Panics where the view masks.
+    pub(crate) fn line_slice(&self, pos: C, size: C) -> &[T] {
+        comptime!(assert!(
+            !self.check,
+            "Masked::line_slice: an address reads past the overhang a masked read would zero; \
+             serve the operand from a stage whose accesses the launch proved in bounds"
+        ));
+        self.view
+            .clone()
+            .slice_unchecked(pos, size)
+            .as_linear_slice()
+    }
+}
+
 /// The mutable twin of [`Masked`].
 #[derive(CubeType)]
 pub struct MaskedMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
