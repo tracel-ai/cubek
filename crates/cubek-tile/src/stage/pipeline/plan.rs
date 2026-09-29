@@ -5,7 +5,7 @@ use crate::*;
 
 /// When a slot's buffer is brought to its region across the walk.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Refill {
+pub(crate) enum Refill {
     /// Refilled every region.
     EveryRegion,
     /// Filled once, above the loop.

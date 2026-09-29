@@ -57,10 +57,10 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
 
 /// The scales an operand's values carry, innermost first; empty when none.
 #[derive(Clone)]
-pub struct Factor;
+pub(crate) struct Factor;
 
 #[derive(Clone, Default)]
-pub struct FactorExpand {
+pub(crate) struct FactorExpand {
     pub(crate) levels: Vec<FactorLevel>,
 }
 

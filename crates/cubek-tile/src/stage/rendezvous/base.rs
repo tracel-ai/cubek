@@ -7,7 +7,7 @@ use crate::*;
 
 /// How a slot rendezvouses its fill against its read, fixed at construction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rendezvous {
+pub(crate) enum Rendezvous {
     /// Cooperative copy, synchronized by one `sync_cube` per phase.
     Cube,
     /// Async bulk copy (TMA) over a `full`/`empty` mbarrier pair.

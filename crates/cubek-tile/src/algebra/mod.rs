@@ -1,10 +1,10 @@
-//! Shared arithmetic: [`Monoid`], [`Semiring`] and constant-keeping [`Integer`].
+//! Shared arithmetic: [`Monoid`], [`Semiring`] and constant-keeping `Integer`.
 
 mod constant;
 mod monoid;
 mod semiring;
 
-pub use constant::Integer;
+pub(crate) use constant::Integer;
 pub(crate) use constant::{
     IntegerExpand, IntegerSeq, IntegerSeqExpand, constant, fold_add, fold_mul,
 };

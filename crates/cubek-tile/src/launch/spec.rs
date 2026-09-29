@@ -14,7 +14,7 @@ pub struct TileSpec {
     /// The launch's units per cube, `0` when unknown.
     pub units: usize,
     /// How this operand's values sit in its binding.
-    pub packing: Packing,
+    pub(crate) packing: Packing,
     /// What this operand's storage tiles are to the windows it is read through.
     pub storage: Storage,
 }

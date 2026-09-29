@@ -2,7 +2,6 @@
 //! axis absent from the state's space.
 
 mod leaf;
-pub mod logsumexp;
 mod planewise;
 mod rowwise;
 mod state;

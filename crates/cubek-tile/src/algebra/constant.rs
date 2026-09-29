@@ -9,7 +9,7 @@ use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 /// Arithmetic on an integer kernel value that a constant survives.
-pub trait Integer: Sized {
+pub(crate) trait Integer: Sized {
     /// `self + rhs`; `x + 0` passes through.
     fn plus(self, _rhs: Self) -> Self {
         unexpanded!()

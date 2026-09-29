@@ -18,7 +18,7 @@ define_size!(pub NA);
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct MmaData<T: Numeric> {
-    pub fragment: MmaFragment<T>,
+    pub(crate) fragment: MmaFragment<T>,
     #[cube(comptime)]
     pub m: usize,
     #[cube(comptime)]

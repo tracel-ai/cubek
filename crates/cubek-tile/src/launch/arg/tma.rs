@@ -132,7 +132,7 @@ impl Layout for TmaStoredLayout {
 /// In-kernel tensor-map layout aligning logical [`CoordsDyn`] to the descriptor's
 /// `(batch, row, col)`.
 #[derive(CubeType, CubeLaunch, Clone)]
-pub struct TmaDynLayout {
+pub(crate) struct TmaDynLayout {
     /// Logical `(batch, rows, cols)` of the operand.
     dims: (u32, u32, u32),
     #[cube(comptime)]

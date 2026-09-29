@@ -7,7 +7,7 @@ use cubecl::{
 
 use crate::*;
 
-/// A lifetime-erased buffer, its fixed `layout`, and the [`window`](Window) this tile looks at.
+/// A lifetime-erased buffer, its fixed `layout`, and the window this tile looks at.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Memory<T: Numeric> {
@@ -77,7 +77,7 @@ pub(crate) enum Backing<T: Numeric> {
 /// What a [`Memory`]'s values are: their backing, line width and packing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Store<T: Numeric> {
+pub(crate) struct Store<T: Numeric> {
     /// What backs the values.
     pub(crate) backing: Backing<T>,
     /// Physical line size of the destination, `1` when unvectorized.
@@ -136,7 +136,7 @@ impl<T: Numeric> Store<T> {
 
 /// How a [`Memory`] may be touched; plain comptime data.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Access {
+pub(crate) struct Access {
     /// Whether the window still covers the whole buffer.
     pub whole: bool,
     pub overhang: Overhang,
@@ -179,7 +179,7 @@ impl Write {
 
 /// How a store relates to the window overhanging its valid data (past [`Window`]'s `bound`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Overhang {
+pub(crate) enum Overhang {
     /// Impossible: the buffer is allocated to exactly the tile (smem).
     Never,
     /// Excluded at launch: every shape divides its tiling (unchecked gmem).
@@ -188,7 +188,7 @@ pub enum Overhang {
     Masked,
 }
 
-/// Boundary handling mode for out-of-bounds reads/writes, carried by [`Window`].
+/// Boundary handling mode for out-of-bounds reads/writes, carried by `Window`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Boundary {
     /// Out-of-bounds reads return zero; writes are skipped.

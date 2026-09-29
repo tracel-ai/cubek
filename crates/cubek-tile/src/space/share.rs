@@ -148,7 +148,7 @@ impl UnitShare {
 
 /// What one plane or cube instance holds of a tile's cells.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum SplitShare {
+pub(crate) enum SplitShare {
     /// Every cell this instance writes is its own.
     Whole,
     /// Several instances hold partials of the same cell.

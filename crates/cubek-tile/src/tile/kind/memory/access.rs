@@ -15,7 +15,7 @@ use cubecl::unexpanded;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A read [`View`] over `Vector<T, W>` lines through the base layout and [`Window`].
+    /// A read [`View`] over `Vector<T, W>` lines through the base layout and `Window`.
     /// `W` is the line width (`self.store.vector_size`).
     pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem("view");

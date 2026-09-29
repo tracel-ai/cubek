@@ -2,7 +2,6 @@
 
 use cubecl::prelude::*;
 
-use super::logsumexp;
 use crate::*;
 
 /// Logits at or below this are treated as masked (effectively -inf). Fits f16.
@@ -73,15 +72,6 @@ pub struct RowState<E: Float> {
     pub team: TeamUnit,
 }
 
-/// What one streamed [`absorb`](RowState::absorb) tells the row's accumulators.
-#[derive(CubeType)]
-pub struct Rescale<E: Float> {
-    /// Rescales the accumulated mix: `exp(m_old - m_new)`.
-    pub correction: E,
-    /// Weights the new position's value: `exp(score - m_new)`.
-    pub weight: E,
-}
-
 #[cube]
 impl<E: Float> RowState<E> {
     /// `space` is the kept axes; unit u owns rows `[u*rpu, (u+1)*rpu)` of `units`.
@@ -148,14 +138,6 @@ impl<E: Float> RowState<E> {
             self.m[i] = max_buf[i];
         }
         corr
-    }
-
-    /// Fold one streamed score into row `i`'s `(m, l)`.
-    pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
-        let (m_new, l_new, correction, weight) = logsumexp::step::<E>(self.m[i], self.l[i], score);
-        self.m[i] = m_new;
-        self.l[i] = l_new;
-        Rescale::<E> { correction, weight }
     }
 
     /// Epilogue `lse = m + ln(l)`. Fully-masked rows give -inf via `ln(0)`.

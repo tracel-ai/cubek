@@ -11,7 +11,7 @@ use crate::*;
 /// The layout [`Tile::at`] applies: shift every axis to `origin` and crop it to `extent`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Window {
+pub(crate) struct Window {
     pub(crate) origin: Coords<i32>,
     pub(crate) extent: Coords<u32>,
     /// Absolute logical extent; `is_in_bounds` clips against it, while `shape()` stays `extent`.

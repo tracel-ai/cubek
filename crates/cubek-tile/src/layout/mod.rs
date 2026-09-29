@@ -18,7 +18,7 @@ pub use build::*;
 pub use compaction::*;
 pub use dim::*;
 pub use geometry::*;
-pub use in_kernel::*;
+pub(crate) use in_kernel::*;
 pub(crate) use kernel::*;
 pub use projection::*;
 pub(crate) use row_arrangement::{LineBytes, RowArrangement};

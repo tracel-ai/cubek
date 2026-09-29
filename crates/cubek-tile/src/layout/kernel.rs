@@ -9,7 +9,7 @@ use crate::{Axis, Coords, Integer, IntegerExpand, IntegerSeq, IntegerSeqExpand, 
 /// window origin's phase under each divisor.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct RuntimeMap {
+pub(crate) struct RuntimeMap {
     /// Dynamic coefficients and divisors, physical axis major, each axis's divisor last.
     pub(crate) coefficients: Coords<u32>,
     /// The window origin's phase within its divisor per physical axis, `0` when integer.

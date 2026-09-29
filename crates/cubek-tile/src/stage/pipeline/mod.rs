@@ -8,5 +8,5 @@ mod slot;
 
 pub use base::*;
 pub use payload::pair::OperandPair;
-pub use plan::*;
+pub(crate) use plan::*;
 pub use slot::*;

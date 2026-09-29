@@ -17,4 +17,4 @@ pub use global::*;
 pub(crate) use stage::*;
 pub use tma::*;
 pub use view::*;
-pub use window::*;
+pub(crate) use window::*;

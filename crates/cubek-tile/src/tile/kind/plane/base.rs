@@ -237,7 +237,7 @@ impl<T: Numeric> PlaneTile<T> {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct PlanePartition<T: Numeric> {
-    pub frags: Sequence<PlaneTile<T>>,
+    pub(crate) frags: Sequence<PlaneTile<T>>,
     #[cube(comptime)]
     pub m_tiles: usize,
     #[cube(comptime)]

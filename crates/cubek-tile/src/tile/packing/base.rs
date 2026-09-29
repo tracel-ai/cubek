@@ -7,7 +7,7 @@ use cubecl::quant::scheme::ScaleDtype;
 
 /// How an operand's values sit in memory.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Packing {
+pub(crate) enum Packing {
     /// Served as stored.
     Plain,
     /// Several `field`-wide values per stored `u32`, unpacked at the read.
@@ -97,7 +97,7 @@ impl Field {
     }
 
     /// How this field reads back.
-    pub fn decode(self) -> FieldDecode {
+    pub(crate) fn decode(self) -> FieldDecode {
         match self {
             Field::Quant(
                 QuantValue::Q8F
@@ -119,7 +119,7 @@ impl Field {
 
 /// How a stored field reads back ([`Field::decode`]).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum FieldDecode {
+pub(crate) enum FieldDecode {
     /// An integer slot: the top bit is its sign, so the value sign-extends out of its bits.
     SignExtended,
     /// An index slot: its bits, unsigned.

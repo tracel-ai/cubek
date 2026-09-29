@@ -485,7 +485,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Seed this tile with `monoid`'s identity.
-    pub fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+    pub(crate) fn init_identity(&mut self, #[comptime] monoid: Monoid) {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
             Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
@@ -829,30 +829,6 @@ pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
         }
     }
     Space::with_sizes(space, sizes)
-}
-
-/// Where a tile sits in its partitioning: its space and the levels below its depth.
-pub trait Placed {
-    fn space(&self) -> &Space;
-    fn below(&self) -> &[Level];
-}
-
-impl<T: Numeric> Placed for Tile<T> {
-    fn space(&self) -> &Space {
-        &self.place.space
-    }
-    fn below(&self) -> &[Level] {
-        self.place.below()
-    }
-}
-
-impl<T: Numeric> Placed for TileExpand<T> {
-    fn space(&self) -> &Space {
-        &self.place.space
-    }
-    fn below(&self) -> &[Level] {
-        self.place.below()
-    }
 }
 
 /// Host-side stub of `for plane in tile`; never runs.

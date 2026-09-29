@@ -12,7 +12,7 @@ use crate::*;
 /// `phys[pa] = (Σ logical[axis] * scale + residue) / divisor`, constant offsets excluded.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct ProjectionInKernel {
+pub(crate) struct ProjectionInKernel {
     /// Per-logical-axis extents in space order, the innermost in lines.
     shape: Coords<u32>,
     /// The runtime coefficients and division residues.
@@ -255,7 +255,7 @@ impl Layout for ProjectionInKernel {
 /// A [`Layout`] scaling a physical coordinate by one step per axis: `src[pa] = pos[pa] * step`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct CompactionStep {
+pub(crate) struct CompactionStep {
     /// The compacted extents this steps through, innermost a line count.
     shape: Coords<u32>,
     #[cube(comptime)]
