@@ -33,16 +33,20 @@ use std::path::{Path, PathBuf};
 /// own output plugs into (a fused epilogue's sink, which no enum here can name), raised it by
 /// four: the trait, its host half `DestinationLaunch`, `Buffered` (the one implementation, serving
 /// `Output`), and the module's re-export. One seam for outputs only, not the families back: 740.
-const PUB_ITEMS: usize = 740;
+/// `Tile::lookup`, the explicit codebook a copy decodes (with its expansion), raised it by two,
+/// ahead of the implicit quantization path it retires, which then went (`DequantAt`,
+/// `Quantization`, `QuantTileArg`, `Packing::Native`, the storage-element parameter of `nd` and
+/// `fragment_matrix`): 725.
+const PUB_ITEMS: usize = 725;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 33;
+const LONG_FNS: usize = 31;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
-const LONG_FILES: usize = 11;
+const LONG_FILES: usize = 10;
 /// `#[allow(clippy::too_many_arguments)]` sites. The 27th came in with upstream's
-/// shared-memory accumulator.
-const TOO_MANY_ARGUMENTS: usize = 27;
+/// shared-memory accumulator; the implicit quantization path took one with it: 26.
+const TOO_MANY_ARGUMENTS: usize = 26;
 
 /// Words the redesign retires, each checked as a whole identifier. A phase that deletes a concept
 /// moves its word here, and the count must be zero from then on.
@@ -71,6 +75,11 @@ const RETIRED: &[&str] = &[
     "fold_of",
     "fold_mask",
     "RowPlacement",
+    // Nothing decodes behind a read: a kernel states its decode (`Tile::mul`, `Tile::lookup`).
+    "DequantAt",
+    "QuantTileArg",
+    "QuantInfo",
+    "quant_arg",
 ];
 
 #[test]

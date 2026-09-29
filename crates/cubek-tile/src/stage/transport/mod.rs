@@ -6,7 +6,7 @@ pub(crate) mod base;
 pub(crate) mod cooperative;
 pub(crate) mod padded;
 pub(crate) mod prefetch;
+pub(crate) mod scaled;
 pub(crate) mod scanned;
-pub(crate) mod words;
 
 pub(crate) use prefetch::{MOST_FETCHED_SCALARS, UnitLines};

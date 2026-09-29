@@ -1,6 +1,4 @@
-use cubecl::{
-    features::TypeUsage, ir::ElemType, prelude::*, std::tensor::TensorHandle, zspace::Shape,
-};
+use cubecl::{ir::ElemType, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, assert_equals_approx,
@@ -16,9 +14,6 @@ fn dequantize_tiled_native_per_tensor_matches_reference() {
 
 fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
     let client = cubecl::test_device().client();
-    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
-        return; // backend has no native i8 (e.g. wgpu); native dequant can't run here
-    }
 
     let scheme = QuantScheme::default()
         .per_tensor(ScaleDtype::F32)
@@ -28,11 +23,26 @@ fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
     let shape = Shape::from(tensor_shape.to_vec());
     let input_dtype = ElemType::from_quant_value(scheme.value);
 
-    let input_range = scheme.value.range();
-    let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
-        .dtype(input_dtype)
-        .uniform(SEED, input_range.0, input_range.1)
-        .generate_with_f32_host_data();
+    // The values as the store keeps them, one byte each, written from the host: a device without
+    // native `i8` cannot generate them, and the decode under test never needs it.
+    let (lo, hi) = scheme.value.range();
+    let span = (hi - lo) as i64 + 1;
+    let values: Vec<i8> = (0..shape.num_elements() as u64)
+        .map(|i| {
+            (lo as i64 + ((i.wrapping_mul(0x9e37_79b9).wrapping_add(SEED)) as i64).rem_euclid(span))
+                as i8
+        })
+        .collect();
+    let input = TensorHandle::new_contiguous(
+        tensor_shape.to_vec(),
+        client.create(cubecl::bytes::Bytes::from_elems(values.clone())),
+        input_dtype,
+    );
+    let input_host = HostData {
+        data: HostDataVec::F32(values.iter().map(|&v| v as f32).collect()),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape: shape.clone(),
+    };
 
     let scales = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
         .custom(vec![SCALE])

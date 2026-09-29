@@ -2311,7 +2311,7 @@ fn fragment_matrix_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let size!(W) = input.vector_size();
-    let view = input.fragment_matrix::<E, W, W>(rows, cols);
+    let view = input.fragment_matrix::<W, W>(rows, cols);
 
     #[unroll]
     for r in 0..rows {
@@ -2939,7 +2939,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
-    let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
+    let _view = stage.nd::<Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 
 #[test]

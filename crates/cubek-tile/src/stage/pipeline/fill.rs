@@ -25,7 +25,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
     ///
     /// `width` serves the stage in lines that wide rather than the operand's own: the buffer owns
     /// its layout, so an axis gmem cannot vectorize still reaches the leaf in lines. The operand
-    /// must then be scalar and unquantized, with reads past its extent masked.
+    /// must then be scalar and unpacked, with reads past its extent masked.
     // Reached through its expand, from the constructors below.
     #[allow(dead_code)]
     pub(crate) fn new(

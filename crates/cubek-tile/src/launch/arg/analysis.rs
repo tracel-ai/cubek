@@ -43,9 +43,6 @@ pub enum Refusal {
     /// its tiling, or its map is affine and reaches past any extent stated here); serve it scalar,
     /// or state [`BoundaryPolicy::Unchecked`] if the launch proves its lines are in bounds.
     UncheckableVectorEdge,
-    /// A gathered operand cannot be quantized: its scale grid is shaped over its logical axes,
-    /// which its buffer's dims no longer match.
-    QuantizedGather,
     /// A TMA box edge past what the descriptor encodes: the stage's `edge` along `axis`, where a
     /// box holds at most `most` ([`Delivery::moves`](super::Delivery::moves)).
     BoxPastDescriptor {
@@ -107,11 +104,6 @@ impl Display for Refusal {
                  (it overhangs its tiling, or its map is affine and reaches past any extent stated \
                  here); serve it scalar, or state BoundaryPolicy::Unchecked if the launch proves \
                  its vector lines are in bounds"
-            ),
-            Refusal::QuantizedGather => write!(
-                f,
-                "Arg::quantized: a gathered operand cannot be quantized; its scale grid is shaped \
-                 over its logical axes, which its buffer's dims no longer match"
             ),
             Refusal::BoxPastDescriptor { axis, edge, most } => box_past(f, *axis, *edge, *most),
         }

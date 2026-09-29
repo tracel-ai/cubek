@@ -225,13 +225,13 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     // `ldmatrix` reads 16-byte rows of 16-bit cells out of shared memory, for an operand: it
     // serves a window only where every one of those holds, and the manual load serves the rest.
     // A gathered window has no row a unit could address, a line wider than a row starts one
-    // inside it, a quantized or packed window holds words its read decodes where `ldmatrix` would
-    // copy them raw, and a global window, a 4-byte cell or the accumulator is not what the
+    // inside it, a packed window holds its stored words, which its read decodes and `ldmatrix`
+    // would copy raw, and a global window, a 4-byte cell or the accumulator is not what the
     // instruction reads at all.
     let gathered = src.gathered();
     let shared = src.is_shared();
-    let dequant_at = src.dequant_at();
-    let holds_served_values = comptime!(dequant_at == DequantAt::Load);
+    let element = src.stage_element();
+    let holds_served_values = comptime!(element == StageElement::Served);
     let served = src.vector_size();
     // An element's size read at expansion, where the launch has registered it: inside
     // `comptime!` the call would size the generic placeholder instead.

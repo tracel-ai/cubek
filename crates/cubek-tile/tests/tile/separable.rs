@@ -7,11 +7,8 @@
 #![allow(non_snake_case)]
 
 use super::{Form, implied};
-use cubecl::{features::TypeUsage, ir::ElemType, prelude::*, zspace::shape};
-use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubek_test_utils::{
-    HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
-};
+use cubecl::{ir::ElemType, prelude::*, zspace::shape};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::procedural::AffineCoordinate;
 use cubek_tile::procedural::DivGuard;
@@ -21,10 +18,8 @@ use cubek_tile::procedural::Sum;
 use cubek_tile::procedural::TapSupport;
 use cubek_tile::procedural::affine_along;
 use cubek_tile::procedural::sum_of;
-use cubek_tile::quant::DequantAt;
-use cubek_tile::quant::QuantTileArg;
 use cubek_tile::*;
-use cubek_tile::{kind::Boundary, launch::BoundaryPolicy, quant::Quantization};
+use cubek_tile::{kind::Boundary, launch::BoundaryPolicy};
 
 const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
@@ -334,274 +329,6 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
 }
 
 // ---- separable lhs against a quantized rhs ---------------------------------
-
-/// A quantized rhs is read through a dequantizing view over its *storage* buffer, which the view
-/// reinterprets at `served / pack` elements per line. The two cases below sit on either side of
-/// that ratio, one word per line (packed-u32) or `QV` (native); only native catches a scalar width.
-const QCOLS: usize = 4;
-const QV: usize = 4;
-const QSCALE: f32 = 0.05;
-
-#[cube(launch)]
-fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
-    input: &QuantTileArg<'_, I, VI>,
-    output: &TileArg<'_, E, V>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[define(I)] _input_dtype: ElemType,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile::<E>(comptime!(space.clone()));
-    let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
-    let weights = Procedural::<E>::separable::<Weights<E>>(
-        comptime!(space.space().subspace(&weight_axes)),
-        weights::<E>(),
-    )
-    .tile();
-
-    let output = output.tile(comptime!(space.clone()));
-    for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
-    }
-}
-
-/// Native Q8S served in `QV`-wide lines: `served / pack` is `QV`, so a scalar physical width
-/// would walk the storage buffer one element at a time and serve the wrong `q` per column. The
-/// case that discriminates the width, and the one a backend without native i8 cannot run.
-#[test]
-fn a_separable_lhs_contracts_a_native_quantized_rhs() {
-    let client = cubecl::test_device().client();
-    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no native i8".to_string(),
-        ))
-        .enforce();
-        return;
-    }
-    let max_width = client.properties().hardware.max_vector_size;
-    if QV > max_width {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max_width}, below the {QV}-wide served line"
-        )))
-        .enforce();
-        return;
-    }
-
-    // Per-tensor, so one scale covers every line and nothing can straddle a block.
-    let scheme = QuantScheme::default()
-        .per_tensor(ScaleDtype::F32)
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S);
-
-    let in_shape = shape![TAPS[0], TAPS[1], TAPS[2], QCOLS];
-    let in_dtype = ElemType::from_quant_value(scheme.value);
-    let (lo, hi) = scheme.value.range();
-    let (in_handle, in_host) = TestInput::builder(client.clone(), in_shape)
-        .dtype(in_dtype)
-        .uniform(0x1, lo, hi)
-        .generate_with_f32_host_data();
-    let scales = TestInput::builder(client.clone(), shape![1])
-        .custom(vec![QSCALE])
-        .generate_without_host_data();
-
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[
-                (ROW, ROWS),
-                (COL, QCOLS),
-                (TAP[0], TAPS[0]),
-                (TAP[1], TAPS[1]),
-                (TAP[2], TAPS[2]),
-            ]),
-            Levels::leaf(&[
-                (ROW, ROWS),
-                (COL, QCOLS),
-                (TAP[0], TAPS[0]),
-                (TAP[1], TAPS[1]),
-                (TAP[2], TAPS[2]),
-            ])
-            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
-            .build(),
-        ),
-        Form::Static,
-    );
-
-    let input_op = launcher
-        .arg(in_handle.binding())
-        .axes(&[TAP[0], TAP[1], TAP[2], COL])
-        .vectorize(QV)
-        .quantized(Quantization::new(
-            scales.binding(),
-            None,
-            scheme,
-            DequantAt::Read,
-        ))
-        .build();
-
-    let f32_ty = f32::elem_type_native();
-    let out_handle = TestInput::builder(client.clone(), shape![ROWS, QCOLS])
-        .dtype(f32_ty)
-        .zeros()
-        .generate_without_host_data();
-
-    separable_quant_kernel::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        input_op.bound_width(),
-        QV,
-        input_op.quant_arg(),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        in_dtype,
-        f32_ty,
-    );
-
-    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    for row in 0..ROWS {
-        for col in 0..QCOLS {
-            let mut want = 0.0f32;
-            for k0 in 0..TAPS[0] {
-                for k1 in 0..TAPS[1] {
-                    for k2 in 0..TAPS[2] {
-                        let weight = factor_value(0, k0, row)
-                            * factor_value(1, k1, row)
-                            * factor_value(2, k2, row);
-                        want += weight * in_host.get_f32(&[k0, k1, k2, col]) * QSCALE;
-                    }
-                }
-            }
-            let have = got.get_f32(&[row, col]);
-            assert!(
-                (have - want).abs() < 1e-3,
-                "separable quantized: at ({row}, {col}) got {have}, want {want}"
-            );
-        }
-    }
-}
-
-/// Packed-u32 Q8S: one storage word per served line, so this runs on every backend and covers the
-/// separable walk against a dequantizing view end to end, scales included.
-#[test]
-fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
-    let client = cubecl::test_device().client();
-
-    let scheme = QuantScheme::default()
-        .per_tensor(ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(0))
-        .with_value(QuantValue::Q8S);
-    let pack = scheme.num_quants();
-
-    let max_width = client.properties().hardware.max_vector_size;
-    if pack > max_width {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max_width}, below the packing factor ({pack})"
-        )))
-        .enforce();
-        return;
-    }
-
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[
-                (ROW, ROWS),
-                (COL, pack),
-                (TAP[0], TAPS[0]),
-                (TAP[1], TAPS[1]),
-                (TAP[2], TAPS[2]),
-            ]),
-            Levels::leaf(&[
-                (ROW, ROWS),
-                (COL, pack),
-                (TAP[0], TAPS[0]),
-                (TAP[1], TAPS[1]),
-                (TAP[2], TAPS[2]),
-            ])
-            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
-            .build(),
-        ),
-        Form::Static,
-    );
-
-    let input = TileInput::builder(
-        &client,
-        launcher.space().subspace(&[TAP[0], TAP[1], TAP[2], COL]),
-    )
-    .untiled()
-    .packed(&scheme, DequantAt::Read)
-    .arange();
-
-    let f32_ty = f32::elem_type_native();
-    let out_handle = TestInput::builder(client.clone(), shape![ROWS, pack])
-        .dtype(f32_ty)
-        .zeros()
-        .generate_without_host_data();
-
-    let input_op = launcher
-        .arg(input.tile.handle().binding())
-        .axes(&[TAP[0], TAP[1], TAP[2], COL])
-        .vectorize(pack)
-        .quantized(Quantization::new(
-            input.scales_binding(),
-            None,
-            scheme,
-            DequantAt::Read,
-        ))
-        .build();
-
-    separable_quant_kernel::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        input_op.bound_width(),
-        pack,
-        input_op.quant_arg(),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        u32::elem_type_native(),
-        f32_ty,
-    );
-
-    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    let scale = input.scale_values[0];
-    for row in 0..ROWS {
-        for col in 0..pack {
-            let mut want = 0.0f32;
-            for k0 in 0..TAPS[0] {
-                for k1 in 0..TAPS[1] {
-                    for k2 in 0..TAPS[2] {
-                        let weight = factor_value(0, k0, row)
-                            * factor_value(1, k1, row)
-                            * factor_value(2, k2, row);
-                        let at = ((k0 * TAPS[1] + k1) * TAPS[2] + k2) * pack + col;
-                        want += weight * input.q[at] as f32 * scale;
-                    }
-                }
-            }
-            let have = got.get_f32(&[row, col]);
-            assert!(
-                (have - want).abs() < 1e-3,
-                "separable packed: at ({row}, {col}) got {have}, want {want}"
-            );
-        }
-    }
-}
 
 // ---- separable lhs against a resampling rhs --------------------------------
 
@@ -1352,4 +1079,138 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
     // Factor 1 has sum 4.0 -> recip 0.25 -> taps become [0.5, 0.5].
     // Product sum = (3.0 * 1.0 - 3.0 * 2.0) * (0.5 + 0.5) = -3.0.
     assert!((got + 3.0).abs() < 1.0e-6, "got {got}, want -3.0");
+}
+
+/// [`separable_kernel`] against a packed rhs scaled per tensor, decoded into a stage first:
+/// `weights · stage`, the stage filled from `input ⊗ scale`. A separable contraction reads its
+/// operands cell by cell (the N-D nest), which takes plain values, so the rhs decodes where the
+/// kernel stages it.
+#[cube(launch)]
+fn separable_scaled_kernel<E: Float, V: Size>(
+    input: &TileArg<'_, u32, Const<1>>,
+    scale: &TileArg<'_, f32, Const<1>>,
+    output: &TileArg<'_, E, V>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile_as::<E>(comptime!(space.clone()));
+    let scale = scale.tile(comptime!(space.clone()));
+    let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
+    let weights = Procedural::<E>::separable::<Weights<E>>(
+        comptime!(space.space().subspace(&weight_axes)),
+        weights::<E>(),
+    )
+    .tile();
+
+    let output = output.tile(comptime!(space.clone()));
+    let walk = space.over(&level);
+    let decoded = input.mul(&scale);
+    let mut stages = Stages::smem_single(&walk, &decoded, StageStorage::Strided, 1usize);
+    stages.pipelined(walk, |slot, region| {
+        let mut out = output.at(region);
+        let weights = weights.at(region);
+        slot.consume(|input| {
+            out.mm_with(&weights, input, REGISTER_BLOCK, Semiring::SUM_PROD);
+        });
+    });
+}
+
+/// A separable lhs against a packed, per-tensor scaled rhs, decoded into the stage the separable
+/// contraction reads.
+#[test]
+fn a_separable_lhs_contracts_a_packed_scaled_rhs() {
+    use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubek_test_utils::{TestOutcome, TileInput, ValidationResult};
+
+    let client = cubecl::test_device().client();
+    let scheme = QuantScheme::default()
+        .per_tensor(ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q8S);
+    let pack = scheme.num_quants();
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below the packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[
+                (ROW, ROWS),
+                (COL, pack),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ]),
+            Levels::leaf(&[
+                (ROW, ROWS),
+                (COL, pack),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])
+            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
+            .build(),
+        ),
+        Form::Static,
+    );
+    let input_axes = [TAP[0], TAP[1], TAP[2], COL];
+    let input = TileInput::builder(&client, launcher.space().subspace(&input_axes))
+        .untiled()
+        .packed(&scheme)
+        .arange();
+
+    let f32_ty = f32::elem_type_native();
+    let out_handle = TestInput::builder(client.clone(), shape![ROWS, pack])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    // One scale for the whole rhs: a scale tile over none of its axes.
+    let per_tensor = Projection::new(&input_axes, &[PhysicalAxisMap::broadcast()]);
+    separable_scaled_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        pack,
+        input.values_arg(TileSpec::direct(&input_axes)),
+        input.scales_arg(TileSpec::new(per_tensor)),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    let scale = input.scale_values[0];
+    for row in 0..ROWS {
+        for col in 0..pack {
+            let mut want = 0.0f32;
+            for k0 in 0..TAPS[0] {
+                for k1 in 0..TAPS[1] {
+                    for k2 in 0..TAPS[2] {
+                        let weight = factor_value(0, k0, row)
+                            * factor_value(1, k1, row)
+                            * factor_value(2, k2, row);
+                        let at = ((k0 * TAPS[1] + k1) * TAPS[2] + k2) * pack + col;
+                        want += weight * input.q[at] as f32 * scale;
+                    }
+                }
+            }
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "separable scaled: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
 }

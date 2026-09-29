@@ -70,6 +70,9 @@ pub struct Memory<T: Numeric> {
     /// The scales these values carry, attached by [`Tile::mul`](crate::Tile::mul) and read where
     /// the values are read. Empty is an operand carrying none.
     pub(crate) factor: Factor,
+    /// The table these values index, attached by [`Tile::lookup`](crate::Tile::lookup) and read
+    /// only where the kernel copies them. Empty is values that are numbers.
+    pub(crate) codebook: Codebook,
 }
 
 /// Which memory a [`Memory`] tile's buffer sits in. The payload is the same either way; the
@@ -113,8 +116,7 @@ pub(crate) enum Backing<T: Numeric> {
 }
 
 /// What a [`Memory`]'s values are and mean: where they go, the width they group into lines at,
-/// and, for quantized data, how a *stored* value becomes a *served* one. Reads through
-/// [`Tile::flat`] dequantize into `T`; every other element view refuses a quantized tile.
+/// and how a *stored* value becomes a *served* one where the buffer packs them.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Store<T: Numeric> {
@@ -124,11 +126,9 @@ pub struct Store<T: Numeric> {
     /// unvectorized; held comptime so `size!` can read it.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    /// Present when the destination holds quantized data (see [`QuantInfo`]).
-    pub(crate) quant: ComptimeOption<QuantInfo>,
     /// How the buffer's values sit in it: whether a stored element *is* a served one, and what a
     /// read has to unpack if it is not. Stated at construction, from the operand's spec
-    /// ([`TileSpec::packed`]) or from its scheme where it has one, so no reader re-derives it.
+    /// ([`TileSpec::packed`]), so no reader re-derives it.
     #[cube(comptime)]
     pub(crate) packing: Packing,
 }

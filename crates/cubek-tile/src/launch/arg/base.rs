@@ -9,8 +9,8 @@ use cubecl::zspace::Tiling;
 
 use super::analysis::{Boundaries, Labels, Refusal};
 use crate::{
-    Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, QuantTileArgLaunch,
-    Quantization, Storage, StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
+    Axis, Boundary, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
+    StoragePartitioning, StorageTiling, TileArgLaunch, TileSpec,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -49,7 +49,6 @@ struct ArgData<'a> {
     width: usize,
     boundary: BoundaryPolicy,
     packing: Packing,
-    quant: Option<Quantization>,
     /// Whether the labelled dims bind in the order they step rather than the order the binding
     /// names them ([`in_stride_order`](Arg::in_stride_order)).
     in_stride_order: bool,
@@ -85,7 +84,6 @@ impl<'a> Arg<'a, Unlabelled> {
                 width: 1,
                 boundary: BoundaryPolicy::Derived,
                 packing: Packing::Plain,
-                quant: None,
                 in_stride_order: false,
             },
             _state: PhantomData,
@@ -162,14 +160,6 @@ impl<'a> Arg<'a, Labelled> {
         self.data.packing = Packing::Packed {
             field: field.into(),
         };
-        self
-    }
-
-    /// The operand is quantized: its binding holds the scheme's storage element (declared in
-    /// values), and `quant` says how reads dequantize. [`build`](Self::build)'s product carries
-    /// it and launches as a [`QuantTileArg`](crate::QuantTileArg).
-    pub fn quantized(mut self, quant: Quantization) -> Self {
-        self.data.quant = Some(quant);
         self
     }
 
@@ -260,9 +250,6 @@ impl<'a> Arg<'a, Labelled> {
             packing: data.packing,
             storage,
         };
-        if let Some(quant) = &data.quant {
-            quant.check(&spec, launch.space(), width)?;
-        }
         let tensor = data
             .binding
             .map(|binding| settled_tensor(binding, &geometry, tiling.as_ref(), stored));
@@ -270,7 +257,6 @@ impl<'a> Arg<'a, Labelled> {
             tensor,
             vector_size: width,
             spec,
-            quant: data.quant,
         };
         Ok((bound, geometry))
     }
@@ -347,13 +333,12 @@ fn settled_tensor(
 }
 
 /// A bound operand: its tensor argument (absent for an operand built over geometry alone), its
-/// comptime [`TileSpec`], the served width, and its quantization when it has one.
+/// comptime [`TileSpec`], and the served width.
 pub struct Bound {
     tensor: Option<TensorArg>,
     /// Served width (values per line); a packed binding is narrower by the packing factor.
     pub vector_size: usize,
     pub spec: TileSpec,
-    pub quant: Option<Quantization>,
 }
 
 impl Bound {
@@ -362,22 +347,6 @@ impl Bound {
         let Bound { spec, .. } = &self;
         let spec = spec.clone();
         TileArgLaunch::new(self.tensor(), spec)
-    }
-
-    /// The operand as the kernel's [`QuantTileArg`](crate::QuantTileArg) launch argument: values,
-    /// scales, spec and scheme as one thing. Read [`bound_width`](Self::bound_width) first.
-    ///
-    /// # Panics
-    ///
-    /// When the operand was not [`quantized`](Arg::quantized).
-    pub fn quant_arg<E: Numeric, V: Size>(self) -> QuantTileArgLaunch<'static, E, V> {
-        let quant = self
-            .quant
-            .expect("Bound::quant_arg: this operand was not quantized");
-        quant.arg(
-            self.tensor.expect("a quantized operand is always bound"),
-            self.spec,
-        )
     }
 
     /// The tensor argument itself, for a launch that binds it under another argument type.
@@ -390,10 +359,7 @@ impl Bound {
     /// [`vector_size`](Self::vector_size) is what the operand *serves*, held by a packed store in
     /// fewer words. The two agree without packing.
     pub fn bound_width(&self) -> usize {
-        match &self.quant {
-            Some(quant) => self.vector_size / quant.num_quants(),
-            None => self.spec.packing.physical(self.vector_size),
-        }
+        self.spec.packing.physical(self.vector_size)
     }
 }
 

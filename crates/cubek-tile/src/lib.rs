@@ -36,12 +36,6 @@ pub mod procedural {
     pub use crate::tile::kind::procedural::*;
 }
 
-/// Quantized operands as one launch argument ([`QuantTileArg`]). On its way
-/// out: scales are moving onto [`Tile::mul`](crate::Tile::mul).
-pub mod quant {
-    pub use crate::tile::deprecated::quant::*;
-}
-
 // The crate's own flat namespace: every module's items under `crate::`, for `use crate::*`.
 #[allow(unused_imports)]
 pub(crate) use {algebra::*, launch::*, layout::*, ops::*, space::*, stage::*, tile::*};

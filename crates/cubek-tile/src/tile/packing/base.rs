@@ -18,8 +18,6 @@ pub enum Packing {
     /// Served as stored: the storage element is the served element, the physical line the served
     /// line.
     Plain,
-    /// One `i8` per value, widened at the read.
-    Native,
     /// Several values per stored `u32`, each occupying a `field`-wide slot, unpacked at the read.
     /// A line serves whole words.
     Packed {
@@ -38,6 +36,11 @@ pub enum Field {
     Quant(QuantValue),
     Fp8(Fp8Format),
     Float(FloatKind),
+    /// An index `bits` wide into a table ([`Tile::lookup`](crate::Tile::lookup)): no sign and no
+    /// numeric meaning of its own, so it reads back as the raw bits.
+    Index {
+        bits: usize,
+    },
 }
 
 impl From<QuantValue> for Field {
@@ -68,6 +71,7 @@ impl Field {
             Field::Quant(value) => value.size_bits(),
             Field::Fp8(_) => 8,
             Field::Float(kind) => Field::float_bits(kind),
+            Field::Index { bits } => bits,
         }
     }
 
@@ -134,6 +138,7 @@ impl Field {
             Field::Quant(QuantValue::E5M2) => FieldDecode::Byte(Fp8Format::E5M2),
             Field::Fp8(format) => FieldDecode::Byte(format),
             Field::Float(kind) => FieldDecode::Bits(kind),
+            Field::Index { .. } => FieldDecode::Unsigned,
         }
     }
 }
@@ -143,6 +148,8 @@ impl Field {
 pub enum FieldDecode {
     /// An integer slot: the top bit is its sign, so the value sign-extends out of its bits.
     SignExtended,
+    /// An index slot: its bits, unsigned.
+    Unsigned,
     /// A 4-bit float code, read back by reinterpreting the byte two of them share.
     Reinterpreted,
     /// An 8-bit float code, read back through the format's own decoder.
@@ -155,7 +162,7 @@ impl Packing {
     /// Values per stored element: one, unless a `u32` holds several fields.
     pub fn factor(&self) -> usize {
         match self {
-            Packing::Plain | Packing::Native => 1,
+            Packing::Plain => 1,
             Packing::Packed { field } => field.per_word(),
         }
     }
@@ -176,11 +183,10 @@ impl Packing {
 mod tests {
     use super::*;
 
-    /// A packed line is narrower than the line it serves; the other two are the line itself.
+    /// A packed line is narrower than the line it serves; a plain one is the line itself.
     #[test]
     fn a_packing_narrows_the_line_it_stores() {
         assert_eq!(Packing::Plain.physical(16), 16);
-        assert_eq!(Packing::Native.physical(16), 16);
         assert_eq!(
             Packing::Packed {
                 field: QuantValue::Q4S.into()

@@ -3,7 +3,7 @@
 //! the leaf; the shared machinery they compose lives in [`crate::stage`].
 //!
 //! Moving cells is no verb of its own: a tile is filled from another through
-//! [`Tile::copy_from`](crate::Tile::copy_from), which a quantized store dequantizes on the way.
+//! [`Tile::copy_from`](crate::Tile::copy_from), which multiplies in a scaled source's factor ([`Tile::mul`](crate::Tile::mul)) on the way.
 
 pub mod matmul;
 mod mul;

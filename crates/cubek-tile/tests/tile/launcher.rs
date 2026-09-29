@@ -1,18 +1,12 @@
 //! Unit tests for [`Launcher`]: geometry read off the concrete space, kernel space dynamic.
 
 use super::{Form, implied};
-use cubecl::{
-    prelude::*,
-    quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
-    zspace::Tiling,
-};
+use cubecl::{prelude::*, zspace::Tiling};
 use cubek_tile::launch::BoundaryPolicy;
-use cubek_tile::quant::Quantization;
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
     kind::{Boundary, Storage},
     layout::{Divisor, Offset, PhysicalAxisMap, Scale, StorageTiling},
-    quant::DequantAt,
 };
 
 const M: Axis = Axis(0);
@@ -981,77 +975,4 @@ fn arg_more_batch_dims_than_axes_panics() {
         .axes(&[M, K])
         .batches(&[B1])
         .build();
-}
-
-// ---- StridedTileSource::quantized ------------------------------------------
-
-/// Attach `scheme` to an `M×K` operand served in `v`-wide lines. Every rule below is also an
-/// in-kernel assumption, so the launch is the one place a violation can still be seen: an
-/// in-kernel assert fires on a device thread, which surfaces as zeroed output.
-fn quantize(v: usize, scheme: QuantScheme) {
-    let client = cubecl::test_device().client();
-    let launch = {
-        let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        implied(&client, Partitioning::new(space, levels), Form::Dynamic)
-    };
-    let _ = launch
-        .arg(binding(&client, &[64, 16]))
-        .axes(&[M, K])
-        .vectorize(v)
-        .boundary(BoundaryPolicy::Unchecked)
-        .quantized(Quantization::new(
-            binding(&client, &[1, 8]),
-            None,
-            scheme,
-            DequantAt::Read,
-        ))
-        .build();
-}
-
-fn quant_scheme() -> QuantScheme {
-    QuantScheme::default()
-        .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-}
-
-/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine, but a line is one
-/// read, and a 4-wide line spans two of them.
-#[test]
-#[should_panic(expected = "straddles two scales")]
-fn quantized_line_straddling_two_blocks_panics() {
-    quantize(4, quant_scheme().per_block([64, 2], ScaleDtype::F32));
-}
-
-/// Scales ride an `f32` buffer read straight through, so a narrower param would reinterpret its
-/// bytes rather than convert them.
-#[test]
-#[should_panic(expected = "scales are read as f32")]
-fn quantized_non_f32_param_panics() {
-    quantize(1, quant_scheme().per_tensor(ScaleDtype::F16));
-}
-
-/// A packed store's values are laid down along the innermost axis, so that is the only axis it may
-/// pack on: the view unpacks a line's components into consecutive served values.
-#[test]
-#[should_panic(expected = "must pack along the innermost axis")]
-fn quantized_packed_store_outer_axis_panics() {
-    quantize(
-        1,
-        quant_scheme()
-            .per_tensor(ScaleDtype::F32)
-            .with_store(QuantStore::PackedU32(2)),
-    );
-}
-
-/// A served line must cover whole `u32`s: `Q8S` packs 4 values each, so a 1-wide line would ask
-/// for a quarter of one.
-#[test]
-#[should_panic(expected = "packing factor")]
-fn quantized_packed_store_narrow_line_panics() {
-    quantize(
-        1,
-        quant_scheme()
-            .per_tensor(ScaleDtype::F32)
-            .with_store(QuantStore::PackedU32(0)),
-    );
 }
