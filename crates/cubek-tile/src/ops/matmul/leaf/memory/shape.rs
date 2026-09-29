@@ -3,7 +3,7 @@
 use crate::*;
 
 #[derive(Clone, Debug)]
-pub(super) struct ContractShape {
+pub(crate) struct ContractShape {
     /// The accumulator's space.
     pub space: Space,
     /// The accumulator's matrix edges.

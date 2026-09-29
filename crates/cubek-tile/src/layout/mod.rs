@@ -1,29 +1,33 @@
 //! Where an operand's axes live: [`Projection`] maps logical axes onto buffer dims,
 //! [`Geometry`] holds extents and strides, [`StoragePartitioning`] how values are tiled.
 
-mod buffer;
-mod build;
-mod compaction;
-mod dim;
-mod geometry;
-mod in_kernel;
-mod kernel;
-mod projection;
-mod row_arrangement;
-mod storage_partitioning;
-mod swizzle;
-mod vector_tile;
+pub(crate) mod buffer;
+pub(crate) mod build;
+pub(crate) mod compaction;
+pub(crate) mod dim;
+pub(crate) mod geometry;
+pub(crate) mod in_kernel;
+pub(crate) mod kernel;
+pub(crate) mod projection;
+pub(crate) mod row_arrangement;
+pub(crate) mod storage_partitioning;
+pub(crate) mod swizzle;
+pub(crate) mod vector_tile;
 
 pub(crate) use buffer::*;
-pub use build::*;
-pub use compaction::*;
-pub use dim::*;
-pub use geometry::*;
+pub(crate) use build::*;
+pub(crate) use dim::*;
+pub(crate) use geometry::*;
 pub(crate) use in_kernel::*;
 pub(crate) use kernel::*;
-pub use projection::*;
 pub(crate) use row_arrangement::{LineBytes, RowArrangement};
-pub use storage_partitioning::*;
+pub(crate) use storage_partitioning::*;
 pub(crate) use swizzle::ChunkSwizzle;
 pub(crate) use swizzle::swizzled_line;
-pub use vector_tile::*;
+
+pub use build::split;
+pub use compaction::Compaction;
+pub use dim::{Divisor, Offset, PhysicalAxisMap, Scale};
+pub use geometry::RuntimeGeometry;
+pub use storage_partitioning::base::{StorageLevels, StorageMisfit, StoragePartitioning};
+pub use vector_tile::VectorTile;

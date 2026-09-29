@@ -1,24 +1,29 @@
 //! The logical coordinate space a tile lives in, and how a level of it splits (`partition`).
 
-mod axis;
-mod base;
-mod coords;
-mod extent;
-mod matrix;
-mod partition;
-mod region;
-mod runtime;
-mod share;
-mod walk;
+pub(crate) mod axis;
+pub(crate) mod base;
+pub(crate) mod coords;
+pub(crate) mod extent;
+pub(crate) mod matrix;
+pub(crate) mod partition;
+pub(crate) mod region;
+pub(crate) mod runtime;
+pub(crate) mod share;
+pub(crate) mod walk;
 
-pub use axis::*;
-pub use base::*;
-pub use coords::*;
+pub(crate) use axis::*;
+pub(crate) use base::*;
+pub(crate) use coords::*;
 pub(crate) use extent::*;
 pub(crate) use matrix::*;
-pub use partition::*;
+pub(crate) use partition::*;
 pub(crate) use region::Step;
-pub use region::*;
+pub(crate) use region::*;
 pub(crate) use runtime::Witness;
-pub use share::*;
-pub use walk::*;
+pub(crate) use share::*;
+pub(crate) use walk::*;
+
+pub use coords::Coords;
+pub use partition::cube_order::{CubeOrder, swizzle};
+pub use partition::level::{ComputeScope, Count, Coverage, Spread};
+pub use share::UnitShare;

@@ -1,5 +1,5 @@
-mod base;
+pub(crate) mod base;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use base::*;

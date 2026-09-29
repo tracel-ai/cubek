@@ -1,12 +1,12 @@
 //! What one plane holds of a tile: the encodings ([`cmma`], [`mma`], [`registers`], [`lines`])
 //! and the grid of them a plane owns ([`base`]).
 
-mod base;
-mod cmma;
-mod lines;
-mod load_matrix;
-mod mma;
-mod registers;
+pub(crate) mod base;
+pub(crate) mod cmma;
+pub(crate) mod lines;
+pub(crate) mod load_matrix;
+pub(crate) mod mma;
+pub(crate) mod registers;
 
 pub use base::*;
 pub(crate) use cmma::*;

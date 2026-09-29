@@ -1,14 +1,14 @@
 //! The addressable kind ([`Memory`]): gmem and smem tiles, their windows, views and TMA source.
 
-mod access;
-mod base;
-mod codebook;
-mod factor;
-mod global;
-mod stage;
-mod tma;
-mod view;
-mod window;
+pub(crate) mod access;
+pub(crate) mod base;
+pub(crate) mod codebook;
+pub(crate) mod factor;
+pub(crate) mod global;
+pub(crate) mod stage;
+pub(crate) mod tma;
+pub(crate) mod view;
+pub(crate) mod window;
 
 pub use base::*;
 pub(crate) use codebook::*;

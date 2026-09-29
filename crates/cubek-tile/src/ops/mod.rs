@@ -1,13 +1,14 @@
 //! The verbs a client runs over tiles: [`matmul`] (`mma`), `mul`, [`softmax`] and `rows`.
 
 pub mod matmul;
-mod mul;
-pub mod reduce;
-mod rows;
+pub(crate) mod mul;
+pub(crate) mod reduce;
+pub(crate) mod rows;
 pub mod softmax;
-mod team;
+pub(crate) mod team;
 
 pub(crate) use matmul::*;
 pub(crate) use softmax::*;
-pub use team::*;
 // mul and rows add `Tile` impls only; nothing to re-export.
+
+pub use team::TeamUnit;

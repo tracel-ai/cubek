@@ -1,13 +1,12 @@
 //! One operand's data in the kernel: the [`Tile`], its kinds, packing and accumulators.
 
-mod accumulator;
-mod base;
+pub(crate) mod accumulator;
+pub(crate) mod base;
 pub(crate) mod kind;
-mod packing;
-mod placement;
+pub(crate) mod packing;
+pub(crate) mod placement;
 
 pub use accumulator::*;
-pub use base::*;
 pub use kind::*;
 pub use packing::*;
 pub(crate) use placement::*;

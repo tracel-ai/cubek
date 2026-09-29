@@ -1,13 +1,15 @@
 //! Staging an operand: storage, transports, pipelined slots and the barriers between fill and read.
 
-mod base;
-mod pipeline;
-mod rendezvous;
-mod staged;
-mod transport;
+pub(crate) mod base;
+pub(crate) mod pipeline;
+pub(crate) mod rendezvous;
+pub(crate) mod staged;
+pub(crate) mod transport;
 
-pub use base::*;
-pub use pipeline::*;
+pub(crate) use pipeline::*;
 pub(crate) use rendezvous::*;
 pub(crate) use staged::StageElement;
 pub(crate) use transport::*;
+
+pub use base::{RowChunks, UnitRead};
+pub use pipeline::base::{Prefetch, Role};
