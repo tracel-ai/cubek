@@ -1,17 +1,11 @@
-//! A recipe stated as one factor per contracted axis, which is what lets a contraction
-//! evaluate each factor once per tap run instead of the whole product at every point.
+//! A recipe stated as one factor per contracted axis.
 
 use cubecl::prelude::*;
 
 use super::{FactorReads, Reads, Recipe, RecipeCoords, RecipeExpand, Separable, SeparableExpand};
 
-/// The product of one factor per contracted axis, in contraction order: the separable kernel
-/// `K₀ ⊗ K₁ ⊗ … ⊗ Kₙ₋₁`. Rank is the sequence's length, so one type serves a 1-D, 2-D or
-/// volumetric filter, each factor reading its own axis of the same recipe coordinates.
-///
-/// Each factor states its own axis, so nothing here checks that they are distinct; a factor
-/// reading an axis another one also reads makes the separable evaluation below wrong rather than
-/// merely redundant.
+/// The product of one factor per contracted axis, in contraction order: `K₀ ⊗ K₁ ⊗ … ⊗ Kₙ₋₁`.
+/// Each factor must read a distinct axis; this is not checked.
 #[derive(CubeType, Clone)]
 pub struct Factors<R: CubeType> {
     pub factors: Sequence<R>,
@@ -36,9 +30,7 @@ impl<R: CubeType> Factors<R> {
         Factors::<R> { factors }
     }
 
-    /// The sequence's length, refused when empty: both readings below start at factor zero, so an
-    /// empty product is caught where the rank is stated rather than at the index that would trip
-    /// over it or, worse, in a consumer walking a rank of zero and leaving its accumulator alone.
+    /// The sequence's length; panics when empty.
     pub(crate) fn rank(&self) -> comptime_type!(usize) {
         let rank = self.factors.len();
         comptime!(assert!(

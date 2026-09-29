@@ -1,5 +1,4 @@
-//! The N-D nest: an operand whose contracted axes are gathered rather than lined, its coordinates
-//! resolved per tap ([`coords`]), walked whole ([`nd`]) or one factor at a time ([`separable`]).
+//! The N-D nest, for operands whose contracted axes are gathered rather than lined.
 
 mod base;
 mod coords;

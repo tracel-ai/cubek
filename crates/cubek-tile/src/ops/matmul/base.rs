@@ -1,8 +1,4 @@
-//! `c.mm(a, b)` and `c.mma(a, b)` at a final tile: the leaf dispatch ([`mma_leaf`]) on the
-//! accumulator's form. The levels above the leaf are the kernel's own walk; nothing here
-//! recurses.
-//!
-//! The [`Semiring`] states the accumulation's algebra once, at the call that runs the steps.
+//! `c.mm(a, b)` and `c.mma(a, b)` at a final tile: the leaf dispatch ([`mma_leaf`]).
 
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
@@ -12,12 +8,7 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b` at a final register-resident tile (a plane fragment or a register block):
-    /// the identity, then [`mma`](Tile::mma). A memory accumulator states the block it runs
-    /// under instead ([`mm_with`](Tile::mm_with)).
-    ///
-    /// Each operand carries whatever scales [`mul`](Tile::mul) gave it, read where its values
-    /// are read; one carrying none reads as it lies and costs nothing.
+    /// `c = a · b` at a final register-resident tile.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -28,8 +19,7 @@ impl<Acc: Numeric> Tile<Acc> {
         self.mma(lhs, rhs, semiring);
     }
 
-    /// `c += a · b` at a final register-resident tile. Folds onto whatever `c` holds; nothing
-    /// here initializes it.
+    /// `c += a · b` at a final register-resident tile, folding onto what `c` holds.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -42,9 +32,7 @@ impl<Acc: Numeric> Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b` at a final memory tile through the software instruction run under `config`:
-    /// the leaf a kernel walking its own levels reaches, with the register block stated rather
-    /// than read off the space. `c` owns each cell outright, so the block starts from the identity.
+    /// `c = a · b` at a final memory tile through the software instruction run under `config`.
     pub fn mm_with<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -86,8 +74,7 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form. Each factor
-/// carries its own scales, or none.
+/// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form.
 #[cube]
 pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
     acc: &mut Tile<E>,
@@ -99,8 +86,7 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
     let tile_kind = &mut acc.kind;
     match tile_kind {
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space, semiring),
-        // A partition that reaches a final tile carries exactly one tile; a wider one is
-        // consumed earlier, at its partition level.
+        // A partition reaching a final tile carries exactly one tile.
         TileKind::PlanePartition(p) => {
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,
@@ -109,8 +95,6 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs, space, semiring)
         }
-        // A memory accumulator runs the software instruction under a register block the kernel
-        // states; this dispatch has none to hand it.
         TileKind::Memory(_) => panic!(
             "mma_leaf: a Gmem/Smem accumulator contracts through the software instruction, which \
              runs under a register block; state it with Tile::mma_with(lhs, rhs, config, semiring)"
@@ -125,10 +109,6 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
     /// Contract this plane tile, each factor times whatever scales it carries.
-    ///
-    /// A hardware instruction eats its operands' format, so a scaled factor reaches one through
-    /// memory: `CmmaData::mma` lands it, unpacked and scaled, in the plane's own window and
-    /// loads the fragment from there. The manual-mma form has no landing, so it refuses one.
     pub fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -144,8 +124,7 @@ impl<E: Numeric> PlaneTile<E> {
                 d.mma(lhs, rhs, out)
             }
             PlaneTile::Mma(d) => {
-                // The manual-mma instruction takes its operands from registers, where a scaled
-                // factor has nowhere to land.
+                // The manual-mma instruction reads registers, where a scaled factor cannot land.
                 lhs.refuse_factor("PlaneTile::Mma");
                 rhs.refuse_factor("PlaneTile::Mma");
                 flattened_k(lhs, rhs, out);
@@ -161,7 +140,7 @@ impl<E: Numeric> PlaneTile<E> {
     }
 }
 
-/// Asserts that the algebra is the one a hardware instruction implements: it multiplies and adds.
+/// Asserts that the algebra is one a hardware instruction implements (multiply-add).
 #[cube]
 fn hardware_semiring(#[comptime] semiring: Semiring) {
     comptime!(assert!(
@@ -171,12 +150,7 @@ fn hardware_semiring(#[comptime] semiring: Semiring) {
     ));
 }
 
-/// Asserts that operands are not gathered and read as one matrix each. A fragment contracts over
-/// one `k` edge, not one contracted *axis*: axes carried as one run flatten into an edge (as a
-/// partitioned contraction does); what it cannot read is a contraction its axes give no edge for.
-///
-/// The rhs reads `(k, col)`, or `(col, k)` where a register block folds a step (`rhs_along_k`):
-/// lined along the contraction, its matrix is the transpose.
+/// Asserts that operands are not gathered and read as one matrix each.
 #[cube]
 fn strided_2d<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
@@ -206,10 +180,7 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
     ));
 }
 
-/// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)` window,
-/// the transpose of the role's order, read as the same matrix along the contracted edge
-/// ([`PlanePartition::store`], [`rhs_layout`](crate::ops::matmul::leaf::rhs_layout)), like a folded
-/// step.
+/// Whether `rhs` is read col-major: a col-major cmma fragment or a staged `(col, k)` window.
 #[cube]
 fn transposed_rhs<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
@@ -220,10 +191,8 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
             PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
         },
-        // The contracted axis is the lhs's trailing one, as the leaf reads it: an axis the output
-        // lacks is not always contracted (a spanned leading axis is not).
-        // A shared stage is the one memory a fragment reads as it lies; a gmem rhs never
-        // answers as column-major.
+        // The contracted axis is the lhs's trailing one; not every axis the output lacks is.
+        // Only a shared stage can answer column-major; a gmem rhs never does.
         TileKind::Memory(m) => comptime!(
             m.address == AddressSpace::Shared
                 && crate::ops::matmul::leaf::rhs_layout(

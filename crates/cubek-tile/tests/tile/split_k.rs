@@ -339,9 +339,9 @@ fn atomic_split_matmul<E: Numeric>(
     acc.drained_into(&c);
 }
 
-/// The same, with the columns distributed out to the plane's units: one level more, and the unit level
-/// is walked like any other. A unit's block is then its own columns, which is what makes every
-/// unit a writer on the drain.
+/// The same, with the columns distributed out to the plane's units: one level more, and the unit
+/// level is walked like any other. A unit's block is then its own columns, which is what makes
+/// every unit a writer on the drain.
 #[cube(launch)]
 fn atomic_split_matmul_by_unit<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -841,7 +841,8 @@ fn folds_fragments(client: &cubecl::client::Client) -> bool {
     cmma && adds
 }
 
-/// `a·b` in fragments with `K` distributed to `splits` cubes, folded atomically into a zeroed output.
+/// `a·b` in fragments with `K` distributed to `splits` cubes, folded atomically into a zeroed
+/// output.
 fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();

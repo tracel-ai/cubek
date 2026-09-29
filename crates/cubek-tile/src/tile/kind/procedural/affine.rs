@@ -5,7 +5,6 @@ use crate::Axis;
 use super::{Reads, Recipe, RecipeCoords, RecipeExpand};
 
 /// A one-dimensional affine coordinate expression, `offset + coefficient * coordinate[axis]`.
-/// The axis is compile-time metadata; offset and coefficient can be runtime values.
 #[derive(CubeType, Clone)]
 pub struct AffineCoordinate<T: Numeric> {
     pub offset: T,

@@ -1,5 +1,4 @@
 //! The tensor-core encoding of a plane tile ([`CmmaData`]) and its fragment↔memory transports.
-//! The grid over it is the encoding-blind [`PlanePartition`](super::plane).
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -9,7 +8,7 @@ use cubecl::{
 use crate::*;
 
 /// A tensor-core fragment plus the comptime config its load/store paths dispatch on.
-/// `Clone` duplicates the handle, not the fragment: a clone is the same matrix.
+/// `Clone` duplicates the handle, not the fragment.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct CmmaData<T: Numeric> {
@@ -21,17 +20,13 @@ pub struct CmmaData<T: Numeric> {
     /// The whole MMA tile's `(m, n)`, whatever the role.
     #[cube(comptime)]
     pub shape: (usize, usize),
-    /// This plane's window of shared memory, one tile wide, that the fragment bounces through
-    /// where its intrinsic cannot do the work (a row-wise op, a drain into a folding store). Opened
-    /// on the accumulator ([`with_scratch`](Tile::with_scratch)) and carried by every fragment.
+    /// This plane's one-tile window of shared memory the fragment bounces through.
     pub scratch: ComptimeOption<Shared<[T]>>,
 }
 
 #[cube]
 impl<T: Numeric> CmmaData<T> {
-    /// Allocate an uninitialized fragment. `m`/`n`/`k` are the whole MMA tile, passed in
-    /// full whatever the role; `layout` is how the stage it loads from lays the role's rows
-    /// out.
+    /// Allocate an uninitialized fragment. `m`/`n`/`k` are the whole MMA tile, whatever the role.
     pub(crate) fn alloc(
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
@@ -73,9 +68,8 @@ impl<T: Numeric> CmmaData<T> {
         cmma::load_with_layout(&mut self.matrix, scratch, n, MatrixLayout::RowMajor)
     }
 
-    /// An uninitialized fragment presented as a `Cmma` tile, cut by no level: the form a test
-    /// hands the leaf straight. `m`/`n`/`k` are the whole MMA tile, passed in full whatever the
-    /// role.
+    /// An uninitialized fragment as a `Cmma` tile cut by no level.
+    /// `m`/`n`/`k` are the whole MMA tile, whatever the role.
     pub fn fragment(
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
@@ -97,9 +91,7 @@ impl<T: Numeric> CmmaData<T> {
         cmma::fill(&mut self.matrix, T::from_int(0));
     }
 
-    /// Fill this fragment from `mem`'s *window*: `A`/`B` use `cmma::load`, an
-    /// `Accumulator` uses `load_with_layout`. Rows step by the store's physical row
-    /// stride, so a window into a larger stage loads like a whole buffer.
+    /// Fill this fragment from `mem`'s window, stepping rows by the physical row stride.
     pub(crate) fn load_window(&mut self, mem: &Memory<T>, #[comptime] row: usize) {
         let element = mem.stage_element();
         comptime!(assert!(
@@ -131,22 +123,12 @@ impl<T: Numeric> CmmaData<T> {
         )
     }
 
-    /// Store this fragment into its own slot of the plane's scratch: the first half of a bounce,
-    /// and the one thing a fragment can do with its cells.
-    ///
-    /// **The caller owns the barriers.** A whole partition spilled together pays them once for the
-    /// drain instead of once per tile, which is the whole point of the scratch being sizeable.
+    /// Store this fragment into its slot of the plane's scratch. The caller owns the barriers.
     pub(crate) fn spill_to_scratch(&self) {
         self.store_scratch(&self.scratch_slot("spill_to_scratch"));
     }
 
-    /// Write this fragment's spilled cells into `mem` through the store's own write, which for a
-    /// folding store is the atomic add and for a masked window skips the cells past its edge: the
-    /// second half of a bounce. The intrinsic's store replaces and elects no writer; the scratch is
-    /// what gives each cell one owner.
-    ///
-    /// Lines of the store's width rather than scalars, and the units distribute them between
-    /// themselves, so every cell has exactly one owner and lands once.
+    /// Write this fragment's spilled cells into `mem` through the store's own write.
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
         mem: &mut Memory<Out>,
@@ -165,8 +147,6 @@ impl<T: Numeric> CmmaData<T> {
         let lines = comptime!(m * lines_per_row);
         let axes = comptime!(MatrixAxes::trailing(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
-        // The plane's own width, which the hardware states, so the units distribute the lines
-        // between them whatever shape the launch gave the cube.
         let plane_units = PLANE_DIM as usize;
         let mut line = UNIT_POS_PLANE as usize;
         while line < lines {
@@ -183,11 +163,7 @@ impl<T: Numeric> CmmaData<T> {
         }
     }
 
-    /// Drain this fragment through the plane's scratch, on its own: spill, wait, write, wait. Each
-    /// unit then writes its cells through the store's own write, so every cell has one owner, a
-    /// store that folds adds it, and a window the problem's edge cuts short is written only where
-    /// it lies inside. What a partition drained a tile at a time runs, and the barriers a
-    /// whole-partition drain hoists.
+    /// Drain this fragment through the plane's scratch, with cube-wide syncs.
     pub(crate) fn bounce_cast_window<Out: Numeric>(
         &self,
         mem: &mut Memory<Out>,
@@ -213,9 +189,7 @@ impl<T: Numeric> CmmaData<T> {
         }
     }
 
-    /// Drain this fragment into `mem`'s *window*, casting `T` down to the sink's element
-    /// type first: a register accumulator (e.g. `f32`) is wider than the stored output
-    /// (e.g. `f16`). The cast is a no-op when the types match.
+    /// Drain this fragment into `mem`'s window, casting `T` down to the sink's element type.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
         mem: &mut Memory<Out>,
@@ -235,11 +209,9 @@ impl<T: Numeric> CmmaData<T> {
 /// How a cmma fragment reaches its destination.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum FragmentDrain {
-    /// Through the fragment's own store intrinsic, which writes its whole window at once: only for
-    /// a destination that replaces and a window lying wholly inside it.
+    /// The fragment's store intrinsic: a replacing destination, window wholly inside it.
     Intrinsic,
-    /// Through the plane's scratch, each unit then writing its cells through the destination's
-    /// own write: a destination that adds, or a window the problem's edge cuts short.
+    /// Through the plane's scratch: a destination that adds, or a window cut short by the edge.
     Bounce,
 }
 

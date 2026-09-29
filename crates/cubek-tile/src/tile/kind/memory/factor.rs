@@ -1,19 +1,5 @@
-//! A factor these values carry: another tile, read at their own coordinates, multiplying them
-//! where they are read.
-//!
-//! A quantized tensor is values *and* scales, and a binding names one thing, so the scales arrive
-//! as an operand of their own. [`Tile::mul`](crate::Tile::mul) hands them to the values, and from
-//! there they ride along: windowed by the same `at`, read at the same coordinates, and multiplied
-//! in at the one place that can do it without materializing a dequantized tile, the read.
-//!
-//! **The scales' element is the scales' business.** A `Memory<T>` carries a factor whatever the
-//! scales are served as: the erasure happens while the kernel is expanded, so nothing downstream
-//! of `mul` is generic over it and nothing here is a virtual call in the kernel. A scale arrives
-//! as `f32` from the erasure, which is what every scale element widens to without loss.
-//!
-//! A factor may carry several levels, innermost first. The innermost is read per line, at the
-//! coordinate of the line's first value; every coarser one covers the whole region a leaf runs
-//! over, so [`FactorReader`] reads it once, at the origin, which is what makes depth cheap.
+//! A factor these values carry ([`Tile::mul`](crate::Tile::mul)): scale tiles windowed with the
+//! values and multiplied in where a kernel copies or contracts them. Levels are innermost first.
 
 use std::sync::Arc;
 
@@ -25,22 +11,19 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// One level of a factor, as a leaf meets it: the scale tile erased behind its two reads, and the
-/// comptime facts the statement is checked by.
+/// One level of a factor: the erased scale tile and its comptime facts.
 #[derive(Clone)]
 pub(crate) struct FactorLevel {
     read: Arc<dyn FactorRead>,
-    /// The axes the scales span. Every one is the values': a scale is looked up at the value's own
-    /// coordinate, and an axis one scale holds whole is omitted rather than divided.
+    /// The axes the scales span, each one of the values'.
     pub(crate) space: Space,
-    /// How the scales address their buffer, which says which of their axes they resolve.
+    /// How the scales address their buffer.
     pub(crate) projection: Projection,
     /// Whether reaching this scale is a plane shuffle, which the whole plane takes part in.
     pub(crate) by_shuffle: bool,
 }
 
-/// A scale tile as the values read it. Implemented for the tile's expand type, which is where the
-/// scales' element still exists; a [`FactorLevel`] holds one of these and is generic over nothing.
+/// A scale tile as the values read it.
 pub(crate) trait FactorRead {
     /// The scale covering the value at `coords` of a tile spanning `values`, widened to `f32`.
     fn scale_for(
@@ -72,21 +55,17 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
     }
 }
 
-/// The scales an operand's values carry, innermost first. Empty is an operand carrying none,
-/// which reads as it lies and emits no arithmetic at all.
-///
-/// A [`CubeType`] with no runtime fields of its own: what it holds are the erased scale tiles,
-/// whose handles are the runtime state, as a procedural source holds its recipe.
+/// The scales an operand's values carry, innermost first; empty when none.
 #[derive(Clone)]
-pub struct Factor;
+pub(crate) struct Factor;
 
 #[derive(Clone, Default)]
-pub struct FactorExpand {
+pub(crate) struct FactorExpand {
     pub(crate) levels: Vec<FactorLevel>,
 }
 
 impl Factor {
-    /// No scales: what every operand carries until [`Tile::mul`](crate::Tile::mul) says otherwise.
+    /// No scales: what every operand carries until [`Tile::mul`](crate::Tile::mul).
     pub(crate) fn none() -> Factor {
         unexpanded!()
     }
@@ -96,8 +75,7 @@ impl Factor {
         unexpanded!()
     }
 
-    /// The scale covering the value at `coords` of a tile spanning `values`: the product of every
-    /// level this factor holds, each looked up at its own granularity.
+    /// The scale covering the value at `coords`: the product of every level.
     pub(crate) fn at_coords(&self, _coords: &Coords<u32>, _values: Space) -> f32 {
         unexpanded!()
     }
@@ -149,8 +127,7 @@ impl FactorExpand {
         }
     }
 
-    /// Every level coarser than the innermost, folded into one value read at the region's origin:
-    /// they cover the whole region, so they have no position of their own inside it.
+    /// Every level coarser than the innermost, folded into one value read at the region's origin.
     pub(crate) fn coarse(&self, scope: &Scope) -> NativeExpand<f32> {
         let mut folded: NativeExpand<f32> =
             ExpandValue::constant(1u64.into(), f32::elem_type(scope)).into();
@@ -206,11 +183,7 @@ fn origin_of(scope: &Scope, space: &Space) -> CoordsExpand<u32> {
     origin
 }
 
-/// A factor as a leaf reads it: the innermost level, looked up at the coordinates of every line,
-/// and every coarser level already met and carried as one value.
-///
-/// Built once where a leaf opens its operand and read per line. A factor carrying nothing reads as
-/// the values lie: the multiply is comptime-absent.
+/// A factor as a leaf reads it: the innermost level per line, coarser levels as one value.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct FactorReader {
@@ -218,15 +191,14 @@ pub(crate) struct FactorReader {
     pub(crate) inner: Factor,
     /// Every coarser level, already met.
     pub(crate) coarse: f32,
-    /// The values' space, and the matrix a leaf reads them as: what a line's `(row, col)`
-    /// resolves to a coordinate through.
+    /// The values' space, which a line's `(row, col)` resolves to a coordinate through.
     #[cube(comptime)]
     pub(crate) values: Space,
     #[cube(comptime)]
     pub(crate) axes: MatrixAxes,
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    /// Whether there is a scale at all, which decides whether anything is emitted.
+    /// Whether there is a scale at all.
     #[cube(comptime)]
     pub(crate) scaled: bool,
     /// Which batch matrix the lines are read from.
@@ -234,8 +206,7 @@ pub(crate) struct FactorReader {
 }
 
 impl FactorReader {
-    /// Whether a read of the scales reaches the unit that asks by a plane shuffle, which the
-    /// whole plane takes part in: a reader keeps its units converged around one.
+    /// Whether a scale read is a plane shuffle; a reader keeps its units converged around one.
     pub(crate) fn by_shuffle(&self) -> bool {
         unexpanded!()
     }
@@ -265,8 +236,7 @@ impl FactorReader {
         }
     }
 
-    /// `value`, the line whose first value lies at `coords` of the values' space, under the scale
-    /// covering it.
+    /// `value`, the line whose first value lies at `coords`, under the scale covering it.
     pub(crate) fn apply_at<E: Numeric, V: Size>(
         &self,
         value: Vector<E, V>,

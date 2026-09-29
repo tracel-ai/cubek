@@ -1,41 +1,30 @@
-//! The [`Meeting`]: the fill-vs-read rendezvous for one staging slot, and the [`Rendezvous`] strategy
-//! deduced from the operands' delivery. [`Barrier`](Rendezvous::Barrier) mirrors cubek-matmul's
-//! `specialized/matmul.rs`; [`Cube`](Rendezvous::Cube) is the degenerate case.
+//! [`Meeting`], the fill-vs-read rendezvous of one staging slot, and its [`Rendezvous`] strategy.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 
 use crate::*;
 
-/// How a slot rendezvouses its fill against its read; fixed comptime at construction
-/// from the operands' delivery.
+/// How a slot rendezvouses its fill against its read, fixed at construction.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rendezvous {
-    /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
-    /// in `write` and covers both this slot's fill→read and the sibling's read→refill.
+pub(crate) enum Rendezvous {
+    /// Cooperative copy, synchronized by one `sync_cube` per phase.
     Cube,
-    /// [`Cube`](Rendezvous::Cube) for a stage one plane owns: its own units fill it and read it,
-    /// so one `sync_plane` per phase meets them all and no other plane waits.
+    /// Cooperative copy into a stage one plane owns, synchronized by one `sync_plane` per phase.
     ///
     /// Every plane of the cube still has to reach the same count of them: a backend with no
-    /// plane-wide barrier (WGSL) lowers `sync_plane` to the workgroup's, which every unit of the
-    /// cube must meet.
+    /// plane-wide barrier (WGSL) lowers `sync_plane` to the workgroup's.
     Plane,
-    /// Hardware async bulk copy (TMA): `full`/`empty` mbarrier pair with a `phase` parity, producer
-    /// and consumer decoupled so the copy overlaps compute.
+    /// Async bulk copy (TMA) over a `full`/`empty` mbarrier pair.
     Barrier,
 }
 
 impl Rendezvous {
-    /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill,
-    /// for stages `owner` holds. `Barrier` dominates `Cube` because TMA transaction completion
-    /// must be in the slot's publication, while `Cube` rendezvouses on `sync_cube`, where the two
-    /// roles never meet. A plane's own stages meet on `sync_plane`.
+    /// Join the rendezvous of a slot's sources over a walk `fillers` planes fill, for stages
+    /// `owner` holds; `Barrier` wins, and a plane's own stages meet on `sync_plane`.
     ///
-    /// # Panics
-    ///
-    /// A plane's own stages filled by a bulk copy, or by planes set aside to fill: both meet on
-    /// barriers the whole cube arms, which a plane walking its own stages never shares.
+    /// Panics on a plane's own stages filled by a bulk copy or by planes set aside to fill: both
+    /// meet on barriers the whole cube arms.
     pub(crate) fn for_deliveries(
         deliveries: &[Delivery],
         fillers: usize,
@@ -72,8 +61,7 @@ impl Rendezvous {
         })
     }
 
-    /// Whether a barrier slot needs every unit to publish its writes. Pure TMA has one hardware
-    /// issuer; a mixed slot also contains a synchronous cooperative fill.
+    /// Whether a barrier slot needs every unit to publish its writes.
     pub(crate) fn collective_full(deliveries: &[Delivery]) -> bool {
         deliveries
             .iter()
@@ -81,41 +69,26 @@ impl Rendezvous {
     }
 }
 
-/// The rendezvous for one slot, and every barrier it owns. The acquire/release operations live
-/// on [`Slot`]; [`fill`](Meeting::fill) is the one op a `write` body reaches for directly.
+/// The rendezvous for one slot and the barriers it owns.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum Meeting {
-    /// Synchronous cooperative element copy, rendezvoused on one `sync_cube` per phase.
-    /// The variant (not a flag) carries the choice, so the dispatch is comptime and the
-    /// rendezvous emits a bare barrier, never a branch-wrapped one.
+    /// Synchronous cooperative copy, synchronized by one `sync_cube` per phase.
     Cube,
-    /// [`Cube`](Meeting::Cube) for a stage one plane owns, rendezvoused on `sync_plane`
-    /// ([`Rendezvous::Plane`]).
+    /// Synchronous cooperative copy into a stage one plane owns, synchronized by one `sync_plane`
+    /// per phase ([`Rendezvous::Plane`]).
     Plane,
-    /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair, one parity each,
-    /// so the fill overlaps compute. TMA motivates it, but the barrier itself is
-    /// delivery-agnostic; see [`Meeting::fill`].
-    ///
-    /// Every field here is a runtime value, including the two the construction settles once:
-    /// the `CubeType` derive gives an enum variant's fields no comptime spelling. They are
-    /// constants the backend folds, not decisions this code can branch on at comptime.
+    /// Async producer/consumer over a `full`/`empty` mbarrier pair, one parity each.
     Barrier {
-        /// Producer→consumer: flips after its declared arrivals and all declared TMA transaction
-        /// bytes land.
+        /// Producer to consumer: flips once declared arrivals and TMA bytes land.
         full: Shared<Barrier>,
-        /// Consumer→producer (one arrival per unit that reads): flips once every one of them has
-        /// read and freed the slot.
+        /// Consumer to producer: flips once every reader has freed the slot.
         empty: Shared<Barrier>,
-        /// Whether `full` counts every producer's arrival or only the elected issuer's
-        /// ([`Meeting::producers`]).
+        /// Whether `full` counts every producer's arrival or only the elected issuer's.
         all_publish: bool,
-        /// The one unit that issues this slot's bulk copies and declares their bytes
-        /// ([`Meeting::elected`]).
+        /// The unit that issues this slot's bulk copies and declares their bytes.
         elected: u32,
-        /// `full`'s parity, flipped by the producer's release. Two parities, not one: a unit
-        /// that only fills never reaches a read, so a single counter would stall at the first
-        /// slot it filled.
+        /// `full`'s parity, flipped by the producer's release.
         writes: u32,
         /// `empty`'s parity, flipped by the consumer's release.
         reads: u32,
@@ -124,12 +97,8 @@ pub enum Meeting {
 
 #[cube]
 impl Meeting {
-    /// Allocate the pipeline for `sync`: the `full`/`empty` mbarrier pair, sealed by a proxy fence
-    /// before any bulk copy, for [`Barrier`](Rendezvous::Barrier); nothing to allocate otherwise.
-    ///
-    /// Both barriers are armed and fenced before any plane takes a role, which is why the
-    /// election here is unit 0 and the `sync_cube` is the whole cube's: every unit is still
-    /// present.
+    /// Allocate the pipeline for `sync`; for [`Barrier`](Rendezvous::Barrier), arm and fence the
+    /// mbarrier pair. Must run while every unit of the cube is present.
     pub(crate) fn new(
         #[comptime] sync: Rendezvous,
         #[comptime] collective_full: bool,
@@ -151,13 +120,7 @@ impl Meeting {
         }
     }
 
-    /// Units that arrive on `full`: the one unit that issued a bulk copy into a slot no plane was
-    /// set aside for; every unit that wrote a cooperative fill; every unit of planes filling on
-    /// their own, since nothing else keeps them in step and a plane a lap behind waits forever.
-    ///
-    /// The elected unit is one of the arrivals, and it declares the transaction bytes before it
-    /// arrives, so the phase cannot complete on the others' arrivals with the bytes still to
-    /// come.
+    /// Units that arrive on `full`.
     pub fn producers(#[comptime] collective_full: bool, #[comptime] fillers: usize) -> u32 {
         if comptime!(collective_full) {
             CUBE_DIM
@@ -168,9 +131,7 @@ impl Meeting {
         }
     }
 
-    /// Units that arrive on `empty`: the ones that read the slot. The planes that only fill sit
-    /// at the end of the cube, so what is left below them computes; `CUBE_DIM_X` is a plane's
-    /// width, which is how the partitioning laid the cube out ([`Partitioning::cube_dim`]).
+    /// Units that arrive on `empty`: the ones that read the slot.
     pub fn consumers(#[comptime] fillers: usize) -> u32 {
         if comptime!(fillers == 0) {
             CUBE_DIM
@@ -179,9 +140,7 @@ impl Meeting {
         }
     }
 
-    /// The one unit that issues a bulk copy and declares its bytes: the first producer. That is
-    /// the first filling plane's first unit, or unit 0 where no plane was set aside and every
-    /// unit produces.
+    /// The unit that issues a bulk copy and declares its bytes.
     pub fn elected(#[comptime] fillers: usize) -> u32 {
         if comptime!(fillers == 0) {
             0u32.runtime()
@@ -190,15 +149,10 @@ impl Meeting {
         }
     }
 
-    /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
-    /// stages under `full`, a `Cube` or a `Plane` slot is a blocking [`copy_from`](Tile::copy_from),
-    /// spread over the units `dst` names ([`Access::workers`](crate::Access));
-    /// in-place operands allocate no destination and never reach it, reading the source instead.
+    /// Fill staged `dst` from `src`, spread over the units `dst` names ([`FillUnits`]).
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
-        // Bound before the match, which borrows the kind: the fill needs the logical space both
-        // sides carry (a gathered source is addressed per axis).
+        // Bound before the match, which borrows the kind.
         let space = comptime!(dst.place.space.clone());
-        // A source carrying scales or a table decodes where it is copied, whichever meeting.
         let decodes = src.scaled();
         if comptime!(decodes) {
             dst.copy_from(src);
@@ -207,7 +161,7 @@ impl Meeting {
         }
     }
 
-    /// [`fill`](Meeting::fill) a source that decodes nothing: its values as they lie.
+    /// [`fill`](Meeting::fill) a source that decodes nothing.
     fn fill_as_it_lies<E: Numeric>(
         &self,
         dst: &mut Tile<E>,
@@ -217,14 +171,12 @@ impl Meeting {
         match self {
             Meeting::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
-                    // One issuer, and the same unit that declares the bytes: the transaction
-                    // count is that unit's alone, so a second issuer would over-count the stage.
+                    // Single issuer: the transaction count is the elected unit's alone.
                     if UNIT_POS == *elected {
                         full.expect_tx(d.size_bytes());
                         s.stage_into(d, full);
                     }
                 }
-                // A strided source under a barrier is a plain synchronous copy.
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
@@ -267,8 +219,6 @@ mod tests {
         assert!(!Rendezvous::collective_full(&[Delivery::Tma]));
     }
 
-    /// `sync_cube` needs every unit of the cube, and a walk that sets planes aside to fill has
-    /// none of its slots reached by all of them.
     #[test]
     fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
         assert_eq!(

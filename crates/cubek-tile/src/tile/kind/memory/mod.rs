@@ -1,7 +1,4 @@
-//! The addressable kind ([`Memory`], gmem and smem): what one is ([`base`]), how it is built
-//! from a launched operand ([`global`]) or derived as a shared-memory stage ([`stage`]), how it
-//! is touched ([`access`]), the window it looks through ([`window`]), the tensor-map source
-//! ([`tma`]) and the views a leaf reads it through ([`view`]).
+//! The addressable kind ([`Memory`]): gmem and smem tiles, their windows, views and TMA source.
 
 mod access;
 mod base;
@@ -20,4 +17,4 @@ pub use global::*;
 pub(crate) use stage::*;
 pub use tma::*;
 pub use view::*;
-pub use window::*;
+pub(crate) use window::*;

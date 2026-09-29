@@ -1,7 +1,5 @@
-//! What one plane contracts through, at a tile no stated level cuts further: the two hardware
-//! fragments ([`cmma`], [`mma`]), and the software register nest ([`registers`]) in its two
-//! accumulator forms, one holding its block across calls ([`promoted`]) and one seeding it from
-//! memory per visit ([`memory`]).
+//! Plane-level contraction leaves: hardware fragments ([`cmma`], [`mma`]) and the register nest
+//! ([`registers`]) with its [`promoted`] and [`memory`] accumulator forms.
 
 mod cmma;
 pub(crate) mod memory;

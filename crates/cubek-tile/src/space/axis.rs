@@ -1,5 +1,4 @@
-//! The opaque axis label every layout and space concept is keyed on. A client gives a label
-//! meaning (matmul's `M`/`N`/`K`, reduce's reduce axis); the vocabulary stays agnostic.
+//! The opaque axis label every layout and space concept is keyed on.
 
 use cubecl::zspace::SmallVec;
 use serde::{Deserialize, Serialize};
@@ -7,14 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::Space;
 
 /// A labeled axis. The `u8` is a client-assigned index, not a position.
-///
-/// Serialized as that index, so a client's persisted record (an autotune key naming the axis an
-/// operand is contiguous along) can carry one.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Axis(pub u8);
 
-/// A comptime map from [`Axis`] to a value, in declared order: the canonical axis order, and the
-/// order a [`Region`](crate::Region)'s coordinates come in.
+/// A comptime map from [`Axis`] to a value, in declared (canonical) order.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct AxisMap<T: Copy> {
     entries: SmallVec<[(Axis, T); Space::MAX_RANK]>,

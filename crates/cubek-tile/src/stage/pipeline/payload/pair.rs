@@ -6,10 +6,7 @@ use crate::*;
 
 use super::base::{Payload, PayloadExpand, StageOperand, StageSpec, stage_one};
 
-/// Two operands staged together: what a contraction's slots hold.
-///
-/// A named pair rather than a tuple, because a `#[cube]` trait is implemented for a named type.
-/// `Clone` duplicates the handles, not the buffers.
+/// Two operands staged together; `Clone` duplicates handles, not buffers.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct OperandPair<Lhs: Numeric, Rhs: Numeric> {

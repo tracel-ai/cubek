@@ -1,12 +1,10 @@
-//! Assembling one destination line out of scalar source cells, which is what a stage served in
-//! lines its source cannot hand out whole is filled by, and the coordinate arithmetic under it.
+//! Assembling one destination line out of scalar source cells, for a padded stage.
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
-/// Read one destination line from the masked source view at `pos`: whole for a 1:1 copy, or
-/// assembled unit by unit from scalar source cells for a padded stage ([`widen_line`]).
+/// Read one destination line at `pos`, whole or assembled from scalar cells ([`widen_line`]).
 #[cube]
 pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
@@ -16,17 +14,13 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     if comptime!(padding.is_some()) {
         widen_line::<I2, WP2, SW>(s, pos, comptime!(padding.unwrap()))
     } else {
-        // The unpadded caller builds its view at the destination's own width, so `SW` *is* `WP2`
-        // here and the cast is an identity the trace folds away; the two only differ as types.
+        // `SW` is `WP2` here; the cast is an identity.
         Vector::<I2, WP2>::cast_from(s.read(pos.clone()))
     }
 }
 
 /// Assemble one padded destination line from adjacent scalar source cells.
-///
-/// When `Padding::units` is `None` (a `Dynamic` innermost extent), the source window must be
-/// bounds-checked so that reads past the extent return zero. When it is `Some(n)`, reads past `n`
-/// are masked off explicitly so the padding units keep the zero they start at.
+/// With `Padding::units` `None`, the source must be bounds-checked so padding reads zero.
 #[cube]
 pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
     s: &Masked<'_, Vector<T, SW>, CoordsDyn>,

@@ -1,12 +1,8 @@
-//! Which buffer dim witnesses an axis's runtime extent: the source of a
-//! [`Dynamic`](crate::Extent) axis's size, read off an operand that carries the axis whole.
+//! Which buffer dim witnesses an axis's runtime extent.
 
 use crate::{Axis, Projection};
 
-/// The one physical dim of a projection whose bound is `axis`'s own extent: it carries `axis`
-/// alone, at coefficient `1`. Absent for a gather (the dim holds a receptive field several axes
-/// reach over), for storage tiling (the extent is the product over the dims the axis is split
-/// across) and for a broadcast axis (the buffer holds nothing that sizes it).
+/// The one physical dim carrying `axis` alone at coefficient `1`, whose bound is its extent.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Witness {
     dim: usize,
@@ -37,9 +33,7 @@ mod tests {
     const A: Axis = Axis(0);
     const B: Axis = Axis(1);
 
-    /// The discrimination the operation space rests on: a bound is an axis's own extent only when
-    /// one dim carries that axis alone. A gather's dim holds a receptive field its axes reach over,
-    /// and storage tiling splits the extent across dims, so neither bound is it.
+    /// A bound is an axis's extent only when one dim carries that axis alone.
     #[test]
     fn a_witness_is_one_dim_carrying_the_axis_alone() {
         let direct = Projection::direct(&[A, B]);

@@ -93,9 +93,7 @@ impl<T: Numeric> ErasedRecipe<T> {
         unexpanded!()
     }
 
-    /// The factorization the recipe states, if it states one: one factor per contracted axis.
-    /// `None` for a recipe with no separable structure, which is a different answer from a
-    /// factorization of rank one and reaches a different contraction schedule.
+    /// One factor per contracted axis if the recipe is separable, else `None`.
     pub fn factorization(&self) -> comptime_type!(Option<usize>) {
         unexpanded!()
     }
@@ -134,8 +132,7 @@ impl<T: Numeric> ErasedRecipeExpand<T> {
     ) -> NativeExpand<T> {
         match &self.separable {
             Some(separable) => separable.call_factor(scope, coordinates, factor),
-            // An unfactorized recipe is still its own factor zero, which keeps this total for a
-            // consumer that reached it without asking `factors` first.
+            // An unfactorized recipe is its own factor zero.
             None => {
                 assert_eq!(factor, 0, "recipe states no factorization beyond itself");
                 self.state.call(scope, coordinates)

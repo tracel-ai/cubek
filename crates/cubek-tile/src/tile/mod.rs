@@ -1,5 +1,4 @@
-//! One operand's data in the kernel: the [`Tile`] itself (`base`), the kinds it dispatches on
-//! (`kind`), how packed values decode (`packing`), and the accumulators (`accumulator`).
+//! One operand's data in the kernel: the [`Tile`], its kinds, packing and accumulators.
 
 mod accumulator;
 mod base;

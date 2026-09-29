@@ -1,6 +1,4 @@
-//! The extents and strides an operand is addressed by: [`Geometry`] on the host, where
-//! the derivation settles them, and [`RuntimeGeometry`] in the kernel, which is what a
-//! settled geometry is handed to a tile as. Twins, so they change together.
+//! An operand's extents and strides: [`Geometry`] on the host, [`RuntimeGeometry`] in the kernel.
 
 use cubecl::prelude::*;
 
@@ -12,12 +10,7 @@ use crate::{Axis, StoragePartitioning, TileMisfit};
 
 use crate::Coords;
 
-/// One operand's physical extents and strides, in scalars, one entry per physical dim, and the
-/// storage tiling that says which dims are pieces of one logical dim.
-///
-/// The two are one value because they are never separately true: apart, they are two `Vec<usize>`
-/// a caller can state at two ranks or swap in silence; here a dim is an `(extent, stride)` pair. A
-/// bound operand takes its geometry off its binding ([`From`]), an unbound one states it.
+/// One operand's physical `(extent, stride)` per dim, in scalars, and its storage tiling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Geometry {
     shape: Vec<usize>,
@@ -92,10 +85,8 @@ impl Geometry {
         self.shape.len()
     }
 
-    /// The dims, coarsest first.
-    /// This geometry with its trailing `labels.len()` dims reordered by stride, coarsest first,
-    /// and the labels in that same order; the leading (batch) dims are left alone. How a transposed
-    /// view binds as the buffer it is.
+    /// This geometry with its trailing `labels.len()` dims and labels reordered by stride, coarsest
+    /// first; leading (batch) dims stay put.
     pub fn in_stride_order(&self, labels: &[Axis]) -> (Geometry, Vec<Axis>) {
         let batch_dims = self.rank() - labels.len();
         let mut trailing: Vec<(usize, (usize, usize))> =
@@ -118,13 +109,7 @@ impl Geometry {
     }
 
     /// Whether this buffer can be read a `tile` at a time, `tile` finest first over the axes
-    /// `labels` name (right-aligned to the dims): its [storage
-    /// partitioning](StoragePartitioning) holds the tile, the tile sits in memory as one dense
-    /// run, and every stride outside it steps whole runs, or a coarser step would land inside one.
-    ///
-    /// # Errors
-    ///
-    /// The first of those that fails, with the number that decided it.
+    /// `labels` name, right-aligned to the dims.
     pub fn serves(&self, tile: &[(Axis, usize)], labels: &[Axis]) -> Result<(), LineMisfit> {
         let values: usize = tile.iter().map(|&(_, count)| count).product();
         if values == 1 {
@@ -169,8 +154,7 @@ impl Geometry {
         }
     }
 
-    /// Each labelled axis's extent: the product of the dims it labels, pieces of a tiled axis
-    /// included.
+    /// Each labelled axis's extent: the product of the dims it labels.
     pub(crate) fn extents(&self, labels: &[Axis]) -> Vec<(Axis, usize)> {
         let unlabelled = self.rank().saturating_sub(labels.len());
         let mut extents: Vec<(Axis, usize)> = Vec::new();
@@ -185,8 +169,7 @@ impl Geometry {
     }
 }
 
-/// Why a [`Geometry`] cannot be read a tile at a time ([`Geometry::serves`]): the number that
-/// decided it, so a message names what a reader would otherwise go looking for.
+/// Why a [`Geometry`] cannot be read a tile at a time ([`Geometry::serves`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineMisfit {
     /// The finest dim's own stride, when it is not 1: consecutive values are not one run.
@@ -195,12 +178,11 @@ pub enum LineMisfit {
     Gap(usize),
     /// The storage partitioning does not hold the tile: see [`TileMisfit`].
     Tile(TileMisfit),
-    /// A stride outside the tile that is not a whole number of tiles, so a coarser step lands
-    /// inside one.
+    /// A stride outside the tile that is not a whole number of tiles.
     StrideInsideLine(usize),
     /// The buffer's order is no partitioning: a stated piece coarser than the rest of an axis.
     NotPartitioned,
-    /// No dims at all: there is nothing to read a tile of, so only a single value fits.
+    /// No dims at all, so only a single value fits.
     NoDims,
 }
 
@@ -242,12 +224,7 @@ impl From<&TensorBinding> for Geometry {
     }
 }
 
-/// [`Geometry`]'s kernel-side twin, paired for the same reason. The tile constructor reads the
-/// two in step, counting the innermost extent in lines and dividing every coarser stride by the
-/// served width, so [`push`](Self::push) takes a dim's extent and stride together.
-///
-/// A bound operand reads its geometry off the tensor ([`of_tensor`](Self::of_tensor)); one with
-/// no address states it, which is what [`GlobalOperand::sink`](crate::GlobalOperand::sink) and [`GlobalOperand::source`](crate::GlobalOperand::source) take.
+/// [`Geometry`]'s kernel-side twin.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RuntimeGeometry {
@@ -258,8 +235,7 @@ pub struct RuntimeGeometry {
 #[cube]
 impl RuntimeGeometry {
     /// An empty geometry, grown a dim at a time by `push`.
-    // A cube constructor, so there is no `Default` to implement: `default()` has no expansion
-    // and nothing inside a kernel could call it. Same as `Coords::new`.
+    // A cube constructor: `Default` has no kernel expansion.
     #[allow(clippy::new_without_default)]
     pub fn new() -> RuntimeGeometry {
         RuntimeGeometry {
@@ -268,8 +244,7 @@ impl RuntimeGeometry {
         }
     }
 
-    /// The geometry a launched tensor carries, over its first `rank` dims, the rank the
-    /// operand's projection addresses, which is not always the tensor's own.
+    /// The geometry a launched tensor carries, over its first `rank` dims.
     pub fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] rank: usize,
@@ -298,8 +273,6 @@ mod tests {
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
 
-    /// A transposed view comes back as the buffer it is: the dims in the order they step, the
-    /// labels following them, and a leading batch dim left where it was.
     #[test]
     fn stride_order_reorders_the_dims_and_their_labels() {
         // `[n, k]` behind a `[k, n]` view: `k` strides by one.
@@ -319,10 +292,7 @@ mod tests {
         assert_eq!(dims, Geometry::new(&[(8, 0), (6144, 4096), (4096, 1)]));
     }
 
-    /// Over plain, padded, transposed and broadcast buffers, and a tiled one bound as if it were
-    /// not, at every width a device reads, a line is served exactly where the rule every kernel
-    /// relied on before storage partitionings served it: the innermost dim steps by one and holds
-    /// whole lines, and every coarser stride is a whole number of lines.
+    /// On untiled buffers, `serves` agrees with the line rule it replaced.
     #[test]
     fn a_line_is_served_where_the_line_rule_served_it() {
         let geometries: Vec<(Geometry, Vec<Axis>)> = vec![
@@ -351,8 +321,6 @@ mod tests {
         }
     }
 
-    /// A buffer stored for a four-wide read serves that read and the whole tile it sits in, and
-    /// no width that would split what was stated: the device may read wider elsewhere, not here.
     #[test]
     fn a_tiled_buffer_serves_the_reads_it_was_stored_for() {
         let storage = StorageLevels::new(&[(N, 4)])
@@ -366,8 +334,7 @@ mod tests {
         assert!(geometry.serves(&[(N, 8)], &labels).is_err());
     }
 
-    /// The rule a line was served by before storage partitionings, kept as the gate the new
-    /// question answers the same on an untiled buffer.
+    /// The line rule before storage partitionings.
     fn served_before(geometry: &Geometry, width: usize) -> bool {
         if width == 1 {
             return true;

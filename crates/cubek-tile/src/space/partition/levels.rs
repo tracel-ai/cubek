@@ -1,11 +1,7 @@
-//! [`Levels`]: stating a partitioning's levels from the leaf up, in counts.
-//!
-//! A [`Level`] steps an axis in tiles of some size, which a caller almost always knows as a
-//! product: the instruction is `16x8x16`, a plane holds `2x4` of them, a cube `2x4` planes. As
-//! sizes (`16x8`, `32x32`, `64x128`) the reader divides to relate them; here it is stated once.
+//! [`Levels`]: stating a partitioning's levels from the leaf up, each as a count of the one below.
 //!
 //! ```ignore
-//! Levels::leaf(&[(M, 16), (N, 8), (K, 16)])   // the instruction: the device's, not a choice
+//! Levels::leaf(&[(M, 16), (N, 8), (K, 16)])   // the instruction
 //!     .walk(&[(M, 2), (N, 4)])                // fragments a plane holds
 //!     .walk(&[(K, 2)])                        // instruction steps in one stage
 //!     .planes(&[(M, 2), (N, 4)])              // planes a cube holds
@@ -14,96 +10,51 @@
 //!     .build()
 //! ```
 //!
-//! **The leaf is not a level.** It is the size the first level above it states as its tile, which
-//! is why the instruction disappears from the list and becomes the first line instead.
-//!
-//! **Counts, and "all of it".** Every level says how many of the thing below it
-//! ([`Count::Stated`]); units that cooperate on nothing may take their count in turns, however
-//! many the launch runs ([`units_distributed`](Levels::units_distributed), [`Count::Distributed`]), which is still
-//! a stated count and builds its tile the same way. The exception takes *every* tile of an axis
-//! (a reduction's `K`, the output's boxes, the batch), a count nobody knows until launch
-//! ([`Count::All`]).
-//!
-//! That is [`walk_every`](Levels::walk_every), [`cubes`](Levels::cubes) and
-//! [`batches`](Levels::batches), which name axes and no number, and what they settle is this:
-//!
-//! * "every" means every tile **the level above hands down**: the whole axis only at the outermost
-//!   level that names it; under a cube level that distributes the axis across cubes, the cube's run.
-//!
-//! * It closes the axis. Nothing above may count its tiles, because nothing above knows how many
-//!   there are; a walk above it would have nothing to step through.
-//!
-//! * It returns exactly once, on the cube level, and only to be distributed across cubes
-//!   ([`across`](Levels::across), [`Count::AllAcross`]): the split of a contraction is the walk
-//!   below taking every stage of the run the grid hands its cube.
-//!
-//! * An axis a level does not name is not "all of it"; it is not that level's. The region is
-//!   handed down whole, unstepped, and the [`Level`] has no tile for it.
-//!
-//! So the only division left in a launch is an every-level's tile against the extent it is
-//! handed, taken once, ragged at the end; between two stated levels there is nothing to divide,
-//! and a shape that does not divide cannot be written.
-//!
-//! **One reversal, named.** Levels are stated innermost first and a kernel's loops run outermost
-//! first, so [`build`](Levels::build) reverses. That is the only place the two directions meet.
+//! An `every` level ([`Count::All`]) closes its axis; only [`across`](Levels::across) may name it
+//! again, on the cube level.
 
 use super::CubeOrder;
 use crate::{Axis, ComputeScope, Count, Coverage, Level, Spread};
 
-/// One level, as the builder holds it before it is a [`Level`]: the axes it names with the tile
-/// each is built of, and the modifiers stated after it.
+/// One level as the builder holds it before it is a [`Level`].
 #[derive(Clone, Debug)]
 struct StatedLevel {
-    /// Who takes this level's tiles, which is also the loop verb that states it.
     coverage: Coverage,
-    /// `(axis, the size one tile of this level covers, how many)` — the running size below it,
-    /// and the count stated. An every-level states no count and `takes` says so.
+    /// `(axis, tile size, count)`; an every-level's count is unused.
     tiles: Vec<(Axis, usize, usize)>,
-    /// How this level takes the tiles below it.
     takes: Takes,
-    /// A cube level distributing one of its axes across several cubes ([`Levels::across`]): the axis
-    /// and how many.
+    /// A cube level distributing one of its axes across several cubes.
     across: Option<(Axis, usize)>,
-    /// A cube level distributing its tiles as one index ([`Levels::shared_by`]).
     shared_by: Option<usize>,
-    /// Planes that only fill this walk's stages ([`Levels::filled_by`]).
     fillers: usize,
-    /// Batch axes this cube level hands out one of ([`Levels::batches`]).
     batches: Vec<Axis>,
-    /// Axes whose tiles the workers take in turns rather than in runs ([`Levels::interleaved`]).
     interleaved: Vec<Axis>,
-    /// Axes a level below already took whole, which this cube level names again — legal only to
-    /// distribute them across cubes, checked when the levels are built.
+    /// Closed axes this cube level names again, to distribute across cubes.
     reopened: Vec<Axis>,
-    /// The order a cube level distributes its boxes to the grid ([`Levels::ordered`]).
     order: CubeOrder,
 }
 
-/// How a stated level takes the tiles below it: which [`Count`] its entries carry.
+/// Which [`Count`] a stated level's entries carry.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Takes {
-    /// The count stated, one tile a worker or a step ([`Count::Stated`]).
     Stated,
-    /// Every tile the level above hands down ([`Count::All`]).
     Every,
-    /// The count stated, taken in turns by as many units as the launch runs ([`Count::Distributed`]).
     DistributedToUnits,
 }
 
-/// A partitioning stated from the leaf up. See the module docs.
+/// A partitioning stated from the leaf up.
 #[derive(Clone, Debug)]
 pub struct Levels {
-    /// What one tile of each axis covers so far, leaf up. An axis nobody built covers one.
+    /// What one tile of each axis covers so far, leaf up.
     sizes: Vec<(Axis, usize)>,
-    /// Axes an `every` level finished, which nothing above may multiply again.
+    /// Axes an `every` level closed.
     closed: Vec<Axis>,
     /// Innermost first; [`levels`](Self::levels) reverses.
     stated: Vec<StatedLevel>,
 }
 
 impl Levels {
-    /// The tile one worker holds at the bottom — an instruction's shape, a register block, a
-    /// unit's vector. The only sizes in a partitioning, and the only ones a device dictates.
+    /// The tile one worker holds at the bottom, e.g. an instruction's shape.
     pub fn leaf(tile: &[(Axis, usize)]) -> Self {
         Levels {
             sizes: tile.to_vec(),
@@ -112,13 +63,12 @@ impl Levels {
         }
     }
 
-    /// Every worker steps through this many of the thing below, one at a time.
+    /// Every worker steps through this many of the level below.
     pub fn walk(self, counts: &[(Axis, usize)]) -> Self {
         self.state(Coverage::Walk, counts)
     }
 
-    /// Every worker steps through as many of the thing below as the axis holds — the count the
-    /// levels do not know, and the launch does.
+    /// Every worker steps through every tile of the level below along `axes`.
     pub fn walk_every(self, axes: &[Axis]) -> Self {
         self.every(Coverage::Walk, axes)
     }
@@ -128,10 +78,7 @@ impl Levels {
         self.state(Coverage::Distribute(ComputeScope::Unit), counts)
     }
 
-    /// This many of the thing below, taken in turns by the plane's units, however many the
-    /// launch runs ([`Count::Distributed`]): what units that cooperate on nothing take, so the plane
-    /// width is read by the kernel rather than compiled into it. One axis, since the units are
-    /// all its own.
+    /// This many of the level below, taken in turns by however many units the launch runs.
     pub fn units_distributed(mut self, axis: Axis, count: usize) -> Self {
         let tiles = vec![(axis, self.size(axis), count)];
         let mut stated = StatedLevel::new(
@@ -145,18 +92,12 @@ impl Levels {
         self
     }
 
-    /// This many of the thing below, one per plane of the cube.
+    /// This many of the level below, one per plane of the cube.
     pub fn planes(self, counts: &[(Axis, usize)]) -> Self {
         self.state(Coverage::Distribute(ComputeScope::Plane), counts)
     }
 
-    /// One cube for every box these axes hold. The outermost level of a launch, and the one whose
-    /// count is the problem's rather than the plan's. The entries ride the grid's dimensions in
-    /// order: the first `X`, the second `Y`, the third `Z`.
-    ///
-    /// The two ways several cubes share a box are stated after it:
-    /// [`across`](Self::across) cuts one axis among them, [`shared_by`](Self::shared_by) distributes
-    /// this level's tiles to them as one index.
+    /// One cube for every box these axes hold; the entries ride the grid's `X`, `Y`, `Z` in order.
     pub fn cubes(self, axes: &[Axis]) -> Self {
         assert!(
             axes.len() <= 3,
@@ -166,9 +107,7 @@ impl Levels {
         self.every(Coverage::Distribute(ComputeScope::Cube), axes)
     }
 
-    /// Distribute `axis` — one the cube level just stated — across `cubes` of them, each taking a run
-    /// of its tiles. Split-K, where the axis is the contraction. The axis keeps its place among
-    /// the level's entries, and so its grid dimension.
+    /// Distribute `axis` of the cube level just stated across `cubes` cubes, each a run (split-K).
     pub fn across(mut self, axis: Axis, cubes: usize) -> Self {
         let stated = self.last("across");
         assert!(
@@ -184,17 +123,13 @@ impl Levels {
         self
     }
 
-    /// Distribute this level's tiles to `cubes` of them **as one index**, so a cube's share is a run of
-    /// the whole rather than a box of it. Stream-K.
+    /// Distribute this level's tiles to `cubes` cubes as one flat index (stream-K).
     pub fn shared_by(mut self, cubes: usize) -> Self {
         self.last("shared_by").shared_by = Some(cubes);
         self
     }
 
-    /// The order the cube level just stated distributes its boxes to the grid ([`CubeOrder`]).
-    ///
-    /// The grid's own order unless this is said, so every tiling that says nothing is the
-    /// tiling it was.
+    /// The order the cube level just stated distributes its boxes to the grid.
     pub fn ordered(mut self, order: CubeOrder) -> Self {
         let stated = self.last("ordered");
         assert!(
@@ -206,28 +141,25 @@ impl Levels {
         self
     }
 
-    /// This walk's stages are filled by `n` planes of the cube, which take no tile of any level.
+    /// This walk's stages are filled by `n` extra planes that take no tile.
     pub fn filled_by(mut self, n: usize) -> Self {
         self.last("filled_by").fillers = n;
         self
     }
 
-    /// Batch axes this cube level hands out one of, however they are listed: one call or several.
+    /// Batch axes this cube level hands out one of.
     pub fn batches(mut self, axes: &[Axis]) -> Self {
         self.last("batches").batches.extend_from_slice(axes);
         self
     }
 
-    /// The workers of the level just stated take `axis`'s tiles in turns (worker 0 the first,
-    /// worker 1 the next) rather than each a contiguous run, so neighbouring units read
-    /// neighbouring memory at the same instant, as a unit split of a contiguous contraction wants.
+    /// The workers of the level just stated take `axis`'s tiles in turns rather than in runs.
     pub fn interleaved(mut self, axis: Axis) -> Self {
         self.last("interleaved").interleaved.push(axis);
         self
     }
 
-    /// The levels, **outermost first**: what a kernel's loops walk and a launch reads its grid
-    /// off. The one place the two directions meet.
+    /// The levels, outermost first.
     pub fn build(self) -> Vec<Level> {
         for stated in &self.stated {
             for &axis in &stated.reopened {
@@ -241,9 +173,7 @@ impl Levels {
         self.stated.iter().rev().map(StatedLevel::level).collect()
     }
 
-    /// The one level of a tiling that states one: what a kernel walks a region with
-    /// ([`Region::over`](crate::Region::over)), stated as the leaf it walks in and whether it takes
-    /// every tile of it. A tiling of several levels has no one level to answer with.
+    /// The single level this tiling states. Panics if it states several.
     pub fn level(self) -> Level {
         assert!(
             self.stated.len() == 1,
@@ -253,7 +183,7 @@ impl Levels {
         self.build().remove(0)
     }
 
-    /// State a level of `counts` of the thing below, then grow each axis by its count.
+    /// State a level of `counts` of the level below, then grow each axis by its count.
     fn state(mut self, coverage: Coverage, counts: &[(Axis, usize)]) -> Self {
         let tiles = counts
             .iter()
@@ -266,8 +196,7 @@ impl Levels {
         self
     }
 
-    /// State a level covering every tile these axes hold, and close them: a count nothing above
-    /// can multiply, because nothing above knows it.
+    /// State a level covering every tile these axes hold, and close them.
     fn every(mut self, coverage: Coverage, axes: &[Axis]) -> Self {
         let reopened: Vec<Axis> = axes
             .iter()
@@ -288,7 +217,7 @@ impl Levels {
         self
     }
 
-    /// What one tile of `axis` covers so far. An axis nobody built covers one.
+    /// What one tile of `axis` covers so far; `1` if unbuilt.
     fn size(&self, axis: Axis) -> usize {
         self.sizes
             .iter()
@@ -331,7 +260,7 @@ impl StatedLevel {
         }
     }
 
-    /// How the level's workers take `axis`'s tiles: in turns where it was said to be.
+    /// How the level's workers take `axis`'s tiles.
     fn spread(&self, axis: Axis) -> Spread {
         match self.interleaved.contains(&axis) {
             true => Spread::Interleaved,
@@ -339,8 +268,7 @@ impl StatedLevel {
         }
     }
 
-    /// The [`Level`] this states: every entry with its built tile, its count and its coverage, and
-    /// the modifiers applied in the order the level's own builders take them.
+    /// The [`Level`] this states.
     fn level(&self) -> Level {
         let cuts: Vec<(Axis, usize, Count, Spread)> = self
             .tiles
@@ -387,8 +315,7 @@ mod tests {
     const K: Axis = Axis(2);
     const B: Axis = Axis(3);
 
-    /// The gemm's stack, leaf up: every level's tile is the product of what was stated below it,
-    /// and its count is what it stated.
+    /// Every level's tile is the product of what was stated below it.
     #[test]
     fn every_level_is_a_count_of_the_level_before() {
         let levels = Levels::leaf(&[(M, 16), (N, 8), (K, 16)])
@@ -434,8 +361,7 @@ mod tests {
         );
     }
 
-    /// The split of a contraction: the cube level names the closed axis again to distribute it across
-    /// cubes, in its place on the grid, and the walk below takes every stage of the cube's run.
+    /// A closed axis returns to the cube level to be split across cubes.
     #[test]
     fn a_closed_axis_returns_to_the_cube_level_to_be_distributed_across() {
         let levels = Levels::leaf(&[(M, 16), (N, 8), (K, 16)])
@@ -449,9 +375,7 @@ mod tests {
         assert_eq!(levels[1].count(K), Some(Count::All));
     }
 
-    /// A count cannot fail to divide: three planes of a tile build a tile three times the size,
-    /// and there is nothing left for a refusal to check. What the old spelling refused as "the
-    /// planes do not distribute into whole tiles" cannot be written.
+    /// A count builds its tile, so nothing can fail to divide.
     #[test]
     fn a_count_builds_its_tile_and_nothing_refuses() {
         let levels = Levels::leaf(&[(M, 5)])
@@ -463,7 +387,7 @@ mod tests {
         assert_eq!(levels[1].tile(M), Some(15));
         assert_eq!(levels[1].count(M), Some(Count::Stated(7)));
         assert_eq!(levels[2].count(M), Some(Count::Stated(3)));
-        // Only the every-level at the top can overhang, and only against the problem's extent.
+        // Only the top every-level can overhang.
         let space = Space::new(&[(M, 100)]);
         assert!(levels[0].overhangs(&space, M));
         let cube = levels[0].child(&space);
@@ -471,8 +395,7 @@ mod tests {
         assert!(!levels[2].overhangs(&levels[1].child(&cube), M));
     }
 
-    /// A level that walks every tile and one that walks one of them are different levels: the
-    /// first's count is the launch's, the second's is one.
+    /// Walking every tile is not walking one.
     #[test]
     fn every_is_not_one() {
         let every = Levels::leaf(&[(K, 16)]).walk_every(&[K]).level();
@@ -482,8 +405,7 @@ mod tests {
         assert_eq!(one.count(K), Some(Count::Stated(1)));
     }
 
-    /// Units taking their tiles in turns state a count like any level, so the tile above is built
-    /// the same way, and the launch's unit count is none of the partitioning's.
+    /// A count distributed to the units builds its tile like any other.
     #[test]
     fn a_count_distributed_to_the_units_builds_its_tile() {
         let levels = Levels::leaf(&[(M, 4), (N, 4)])
@@ -515,7 +437,7 @@ mod tests {
         );
     }
 
-    /// The one-liner every walk over a region takes is the chain it stands for.
+    /// A region walk is the chain it stands for.
     #[test]
     fn a_region_walk_is_stated_once() {
         assert_eq!(
