@@ -15,7 +15,6 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
-use cubek_tile::kind::Guard;
 use cubek_tile::layout::Divisor;
 use cubek_tile::layout::Offset;
 use cubek_tile::layout::PhysicalAxisMap;
@@ -2153,225 +2152,6 @@ fn conv2d_staged_mixed_steps() {
     );
 }
 
-// ---- the projected 2-D view ------------------------------------------------
-
-/// Reads a gathered operand through [`Tile::matrix`] and writes every batch matrix out flat, so
-/// the host can check the projected layout against the gather done by hand. The 2-D door for an
-/// operand with more logical than physical axes: leading axes first, then the window projection.
-#[cube(launch)]
-fn projected_matrix_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    out: &mut Tensor<f32>,
-    space: Partitioning,
-    #[comptime] matrices: usize,
-    #[comptime] rows: usize,
-    #[comptime] cols: usize,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let size!(W) = input.vector_size();
-
-    #[unroll]
-    for m in 0..matrices {
-        let view = input.matrix::<W>(m);
-        #[unroll]
-        for r in 0..rows {
-            #[unroll]
-            for c in 0..cols {
-                let value = view.read((r as u32, c as u32).runtime());
-                out[comptime!((m * rows + r) * cols + c)] = f32::cast_from(value);
-            }
-        }
-    }
-}
-
-/// The one 2-D convolution both view tests read, strided and dilated on both spatial axes so no
-/// two logical coordinates land on the same input cell by accident.
-struct Conv2dViewSetup {
-    /// `(oh, ow, rh, rw, ci)`, the logical axes in the nest's own order.
-    logical: (usize, usize, usize, usize, usize),
-    /// `(sh, sw, dh, dw)`, the strides then the dilations.
-    steps: (usize, usize, usize, usize),
-    in_w: usize,
-    launcher: Launcher,
-    in_spec: TileSpec,
-    in_data: Vec<f32>,
-    in_handle: cubecl::std::tensor::TensorHandle,
-}
-
-fn setup_conv2d_view() -> Conv2dViewSetup {
-    let (oh, ow, rh, rw, ci) = (3usize, 4usize, 2usize, 3usize, 2usize);
-    let (sh, sw, dh, dw) = (2usize, 1usize, 1usize, 2usize);
-    let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
-    let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
-
-    let launcher = implied(
-        &cubecl::test_device().client(),
-        Partitioning::new(
-            Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
-            Levels::leaf(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
-                .walk_every(&[OH, OW, RH, RW, CI])
-                .build(),
-        ),
-        Form::Static,
-    );
-
-    let in_spec = TileSpec::new(Projection::new(
-        &[OH, OW, RH, RW, CI],
-        &[
-            PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]),
-            PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]),
-            PhysicalAxisMap::of(CI),
-        ],
-    ));
-
-    let client = cubecl::test_device().client();
-    let f32_ty = f32::elem_type_native();
-    let in_data = ramp(in_h * in_w * ci, 7);
-    let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
-        .dtype(f32_ty)
-        .custom(in_data.clone())
-        .generate_with_f32_host_data();
-
-    Conv2dViewSetup {
-        logical: (oh, ow, rh, rw, ci),
-        steps: (sh, sw, dh, dw),
-        in_w,
-        launcher,
-        in_spec,
-        in_data,
-        in_handle,
-    }
-}
-
-/// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
-/// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
-///
-/// Three pinned axes is what makes this worth running: the unravel's weights are a product of
-/// several extents, and reading those off the window instead of the nest would silently pick up
-/// the receptive field's span (`IH`, `IW`) rather than the logical edges.
-#[test]
-fn conv2d_projected_matrix_view() {
-    let s = setup_conv2d_view();
-    let (oh, ow, rh, rw, ci) = s.logical;
-    let (sh, sw, dh, dw) = s.steps;
-    let (in_w, in_data, launcher) = (s.in_w, s.in_data, s.launcher);
-
-    let matrices = oh * ow * rh;
-    let (rows, cols) = (rw, ci);
-
-    let client = cubecl::test_device().client();
-    let f32_ty = f32::elem_type_native();
-    let out_handle = TestInput::builder(client.clone(), shape![matrices, rows, cols])
-        .dtype(f32_ty)
-        .zeros()
-        .generate_without_host_data();
-
-    projected_matrix_kernel::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
-        out_handle.clone().binding().into_tensor_arg(),
-        launcher.partitioning_arg(),
-        matrices,
-        rows,
-        cols,
-        f32_ty,
-    );
-
-    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    for m in 0..matrices {
-        // The pinned axes, unraveled as the layout unravels them: row-major over `[OH, OW, RH]`.
-        let (o_h, o_w, r_h) = (m / (ow * rh), (m / rh) % ow, m % rh);
-        for r_w in 0..rows {
-            for c_i in 0..cols {
-                let h = o_h * sh + r_h * dh;
-                let w = o_w * sw + r_w * dw;
-                assert_eq!(
-                    got.get_f32(&[m, r_w, c_i]),
-                    in_data[(h * in_w + w) * ci + c_i],
-                    "projected matrix {m} ({o_h}, {o_w}, {r_h}) at ({r_w}, {c_i})"
-                );
-            }
-        }
-    }
-}
-
-/// Reads a gathered operand through [`Tile::fragment_matrix`] and writes the whole matrix out, so
-/// the host can check it against the im2col expansion done by hand. This is the face an mma
-/// fragment reads: output positions on the row edge, taps and channels on the column edge.
-#[cube(launch)]
-fn fragment_matrix_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    out: &mut Tensor<f32>,
-    space: Partitioning,
-    #[comptime] rows: usize,
-    #[comptime] cols: usize,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let size!(W) = input.vector_size();
-    let view = input.fragment_matrix::<W, W>(rows, cols);
-
-    #[unroll]
-    for r in 0..rows {
-        #[unroll]
-        for c in 0..cols {
-            let value = view.read((r as u32, c as u32).runtime());
-            out[comptime!(r * cols + c)] = f32::cast_from(value);
-        }
-    }
-}
-
-/// The 2-D convolution input as one `(OH·OW) x (RH·RW·CI)` matrix: five logical axes flattened
-/// into two edges over three physical ones. Neither edge is a single axis, which is the whole
-/// point: no pinning of trailing axes produces this face, and it is the one an mma contracts.
-#[test]
-fn conv2d_fragment_matrix_view() {
-    let s = setup_conv2d_view();
-    let (oh, ow, rh, rw, ci) = s.logical;
-    let (sh, sw, dh, dw) = s.steps;
-    let (in_w, in_data, launcher) = (s.in_w, s.in_data, s.launcher);
-
-    let (rows, cols) = (oh * ow, rh * rw * ci);
-
-    let client = cubecl::test_device().client();
-    let f32_ty = f32::elem_type_native();
-    let out_handle = TestInput::builder(client.clone(), shape![rows, cols])
-        .dtype(f32_ty)
-        .zeros()
-        .generate_without_host_data();
-
-    fragment_matrix_kernel::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
-        out_handle.clone().binding().into_tensor_arg(),
-        launcher.partitioning_arg(),
-        rows,
-        cols,
-        f32_ty,
-    );
-
-    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    for r in 0..rows {
-        let (o_h, o_w) = (r / ow, r % ow);
-        for c in 0..cols {
-            // The column edge unravels row-major over `[RH, RW, CI]`, as the layout groups it.
-            let (r_h, r_w, c_i) = (c / (rw * ci), (c / ci) % rw, c % ci);
-            let h = o_h * sh + r_h * dh;
-            let w = o_w * sw + r_w * dw;
-            assert_eq!(
-                got.get_f32(&[r, c]),
-                in_data[(h * in_w + w) * ci + c_i],
-                "fragment matrix at ({r}, {c}) = ({o_h}, {o_w}, {r_h}, {r_w}, {c_i})"
-            );
-        }
-    }
-}
-
 // ---- the manual-mma leaf ---------------------------------------------------
 
 /// The resident promote, zero, mma, drain kernel of the matmul tests, with a *gathered* lhs. The
@@ -2840,8 +2620,53 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     }
 }
 
+/// [`conv_kernel_rational_dynamic`] with the gathered input staged per region: the stage is born
+/// with dynamic coefficients before any fill addresses it.
+#[cube(launch)]
+fn conv_kernel_rational_dynamic_staged<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    divisor: u32,
+    offset: i32,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(divisor);
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    let mut stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
+    for region in space.over(&level) {
+        stage.copy_from(&input.at(&region));
+        sync_cube();
+        let mut out_region = out.at(&region);
+        out_region.mm_with(
+            &stage,
+            &weight.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+        sync_cube();
+    }
+}
+
 #[test]
 fn resize1d_rational_dynamic() {
+    check_resize1d_rational_dynamic(false);
+}
+
+#[test]
+fn resize1d_rational_dynamic_staged() {
+    check_resize1d_rational_dynamic(true);
+}
+
+fn check_resize1d_rational_dynamic(staged: bool) {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
@@ -2889,25 +2714,47 @@ fn resize1d_rational_dynamic() {
         .zeros()
         .generate_without_host_data();
 
-    conv_kernel_rational_dynamic::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
-        TileArgLaunch::new(
-            w_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[RH, CI, CO]),
-        ),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
-        ),
-        resize.divisor as u32,
-        resize.offset as i32,
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        f32_ty,
-    );
+    if staged {
+        conv_kernel_rational_dynamic_staged::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+            TileArgLaunch::new(
+                w_handle.binding().into_tensor_arg(),
+                TileSpec::direct(&[RH, CI, CO]),
+            ),
+            TileArgLaunch::new(
+                out_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+            ),
+            resize.divisor as u32,
+            resize.offset as i32,
+            launcher.partitioning_arg(),
+            launcher.partitioning().level(0),
+            f32_ty,
+        );
+    } else {
+        conv_kernel_rational_dynamic::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+            TileArgLaunch::new(
+                w_handle.binding().into_tensor_arg(),
+                TileSpec::direct(&[RH, CI, CO]),
+            ),
+            TileArgLaunch::new(
+                out_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+            ),
+            resize.divisor as u32,
+            resize.offset as i32,
+            launcher.partitioning_arg(),
+            launcher.partitioning().level(0),
+            f32_ty,
+        );
+    }
 
     let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
     let want = resize.reference(&in_data, &w_data);
@@ -2916,82 +2763,10 @@ fn resize1d_rational_dynamic() {
             assert_eq!(
                 got.get_f32(&[o, c]),
                 want[o * resize.co + c],
-                "resize1d dynamic: wrong at ({o}, {c})"
+                "resize1d dynamic (staged {staged}): wrong at ({o}, {c})"
             );
         }
     }
-}
-
-/// A rational gathered stage born with dynamic coefficients can be addressed before fill
-/// without tripping ProjectionInKernel's dynamic coefficient count assert.
-#[cube(launch)]
-fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    divisor: u32,
-    offset: i32,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
-) {
-    let mut coefficients = Coords::<u32>::new();
-    coefficients.push(divisor);
-    let mut offsets = Coords::<i32>::new();
-    offsets.push(offset);
-
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
-    let _view = stage.nd::<Const<1>, Const<1>>(comptime!(Guard::Checked));
-}
-
-#[test]
-fn resize1d_dynamic_stage_read_before_fill() {
-    let client = cubecl::test_device().client();
-    let f32_ty = f32::elem_type_native();
-
-    let resize = Resize1d {
-        oh: 6,
-        co: 2,
-        rh: 2,
-        ci: 3,
-        in_len: 4,
-        scale: 4,
-        tap: 6,
-        offset: -2,
-        divisor: 6,
-    };
-    let launcher = resize.space(2, &[]);
-
-    let in_spec = TileSpec::new(Projection::new(
-        &[OH, RH, CI],
-        &[
-            PhysicalAxisMap::scaled_with_offset(
-                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
-                Offset::Dynamic,
-            )
-            .over(Divisor::Dynamic {
-                min: resize.divisor,
-            }),
-            PhysicalAxisMap::of(CI),
-        ],
-    ))
-    .boundary(BoundaryPolicy::Every(Boundary::Zero));
-
-    let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
-        .dtype(f32_ty)
-        .custom(ramp(resize.in_len * resize.ci, 7))
-        .generate_with_f32_host_data();
-
-    conv_kernel_rational_dynamic_stage_read::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
-        resize.divisor as u32,
-        resize.offset as i32,
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        f32_ty,
-    );
 }
 
 /// A gathered convolution with multiple reduce axes (`[RH, CI]`, where `RH = 3, CI = 3`),

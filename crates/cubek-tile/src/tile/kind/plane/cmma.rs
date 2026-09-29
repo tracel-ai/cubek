@@ -68,24 +68,6 @@ impl<T: Numeric> CmmaData<T> {
         cmma::load_with_layout(&mut self.matrix, scratch, n, MatrixLayout::RowMajor)
     }
 
-    /// An uninitialized fragment as a `Cmma` tile cut by no level.
-    /// `m`/`n`/`k` are the whole MMA tile, whatever the role.
-    pub fn fragment(
-        #[comptime] ident: MatrixIdent,
-        #[comptime] m: usize,
-        #[comptime] n: usize,
-        #[comptime] k: usize,
-        #[comptime] layout: MatrixLayout,
-        #[comptime] space: Space,
-    ) -> Tile<T> {
-        Tile::<T> {
-            kind: TileKind::new_PlaneTile(PlaneTile::new_Cmma(CmmaData::<T>::alloc(
-                ident, m, n, k, layout,
-            ))),
-            place: comptime!(Placement::new(space, 0usize, Vec::new())),
-        }
-    }
-
     /// Zero the fragment.
     pub(crate) fn zero(&mut self) {
         cmma::fill(&mut self.matrix, T::from_int(0));

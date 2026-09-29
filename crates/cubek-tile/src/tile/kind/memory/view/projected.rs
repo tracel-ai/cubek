@@ -108,29 +108,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// `nd_packed` at a stated physical line `WP`.
-    pub fn nd<WP: Size, W: Size>(
-        &self,
-        #[comptime] guard: Guard,
-    ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
-        match &self.kind {
-            TileKind::Memory(g) => {
-                let layout = g.axis_projection(comptime!(self.place.space.clone()));
-                g.unpacked::<WP, W, CoordsDyn, ProjectionInKernel>(layout, guard)
-            }
-            TileKind::Procedural(data) => {
-                procedural_nd::<T, W>(data, comptime!(self.place.space.clone()), guard)
-            }
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::nd: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
-            TileKind::Lines(_) => {
-                panic!("Tile::nd: the plane's units are read at a coordinate (`scale_at`)")
-            }
-        }
-    }
-
     /// The raw words a packed tile holds, one coordinate per axis of its [`Space`](crate::Space).
     pub(crate) fn nd_words<WP: Size>(
         &self,

@@ -55,18 +55,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Evaluate a procedural tile at scalar logical coordinates relative to its current region.
-    pub fn value_at(&self, pos: Coords<u32>) -> T {
-        match &self.kind {
-            TileKind::Procedural(data) => data.evaluate(&pos, comptime!(self.place.space.clone())),
-            TileKind::Memory(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Lines(_) => panic!("Tile::value_at: tile is not procedural"),
-        }
-    }
-
     /// Who moves this operand's bytes into a stage. Panics on a plane fragment.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.kind {
@@ -171,7 +159,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile's mapping has overlapping windows, so only [`nd`](Tile::nd) describes it.
+    /// Whether this tile's mapping has overlapping windows, so only an N-D view describes it.
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
         comptime!(projection.composition() == Composition::Overlapping)

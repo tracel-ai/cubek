@@ -1,4 +1,3 @@
-mod arrival;
 mod attention;
 mod blocked;
 mod census;

@@ -206,7 +206,7 @@ impl Overhang {
 
 /// Whether a read still proves its own bounds, stated by the reader.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Guard {
+pub(crate) enum Guard {
     /// Mask the overhang and apply the window's [`Boundary`] on every access.
     Checked,
     /// The reader proved its whole box is in bounds; reading past it is out of bounds, not masked.
