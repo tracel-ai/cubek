@@ -144,9 +144,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
 
         let (m_id, n_id) = match comptime!(config.planes_split) {
             PlanesSplit::M => {
-                // OuterN splits M (and only OuterN uses split_M in v1).
-                // Plane covers one M-row at `block_id`; cube_n indexes
-                // NR-blocks along N → `n_pos_base = cube_n * vs`.
                 let block_id = cube_m * config.num_planes + UNIT_POS_Y;
                 match comptime!(variant) {
                     Variant::OuterN => (block_id, cube_n * vs_u32),
@@ -155,9 +152,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 }
             }
             PlanesSplit::N => {
-                // OuterM and Dot split N. OuterM: plane covers one
-                // N-col at `block_id`; cube_m indexes MR-blocks along M.
-                // Dot: 1×1 per plane.
                 let block_id = cube_n * config.num_planes + UNIT_POS_Y;
                 match comptime!(variant) {
                     Variant::OuterN => (cube_m, block_id * vs_u32),

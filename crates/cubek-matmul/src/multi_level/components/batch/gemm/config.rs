@@ -76,9 +76,10 @@ pub enum Variant {
 }
 
 impl Variant {
-    /// Which output axis the planes within a cube enumerate. The planes
-    /// step across this axis; the other axis is held constant within the
-    /// cube and only advances via the cube grid.
+    /// Which output axis the planes within a cube enumerate, unless the
+    /// routine crosses to the other to give a CPU's threads a block each.
+    /// The planes step across this axis; the other axis is held constant
+    /// within the cube and only advances via the cube grid.
     pub fn planes_split(self) -> PlanesSplit {
         match self {
             // Vector accumulator is along M: independent per N column,

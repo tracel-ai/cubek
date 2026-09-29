@@ -5,7 +5,11 @@ use std::{
     fmt::Display,
 };
 
-use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
+use cubecl::{
+    CubeCount, CubeDim,
+    client::Client,
+    ir::{AddressType, HardwareProperties},
+};
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 use crate::{
@@ -48,6 +52,31 @@ fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -
         Variant::Dot => (problem.m, problem.n),
         Variant::OuterN => (problem.m, problem.n / vector_size),
         Variant::OuterM => (problem.m / vector_size, problem.n),
+    }
+}
+
+/// The output axis a cube's planes step across: the variant's own, unless it leaves some of a CPU's
+/// planes, which are its worker threads, without a block while the other axis holds more.
+fn split_axis(
+    variant: Variant,
+    (m_units, n_units): (usize, usize),
+    target_num_planes: usize,
+    hardware: &HardwareProperties,
+) -> PlanesSplit {
+    let units = |split| match split {
+        PlanesSplit::M => m_units,
+        PlanesSplit::N => n_units,
+    };
+    let preferred = variant.planes_split();
+    let crossed = match preferred {
+        PlanesSplit::M => PlanesSplit::N,
+        PlanesSplit::N => PlanesSplit::M,
+    };
+    let idles_threads = hardware.num_cpu_cores.is_some() && units(preferred) < target_num_planes;
+    if idles_threads && units(crossed) > units(preferred) {
+        crossed
+    } else {
+        preferred
     }
 }
 
@@ -126,10 +155,15 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                 };
 
                 let variant = MatmulOperandLayouts::from_problem(problem)?.variant()?;
-                let planes_split = variant.planes_split();
                 let vector_size = device_settings.vector_sizes.lhs;
 
                 let (m_units, n_units) = output_units(problem, variant, vector_size);
+                let planes_split = split_axis(
+                    variant,
+                    (m_units, n_units),
+                    target_num_planes,
+                    &properties.hardware,
+                );
                 let split_units = match planes_split {
                     PlanesSplit::M => m_units,
                     PlanesSplit::N => n_units,
@@ -206,5 +240,91 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
             address_type: problem.address_type,
             vector_sizes: device_settings.vector_sizes,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cpu() -> HardwareProperties {
+        HardwareProperties {
+            load_width: 256,
+            vector_register_count: Some(16),
+            plane_size_min: 1,
+            plane_size_max: 1,
+            max_bindings: u32::MAX,
+            max_shared_memory_size: 48 * 1024,
+            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
+            max_units_per_cube: 16,
+            max_cube_dim: (16, 16, 16),
+            num_streaming_multiprocessors: None,
+            num_cpu_cores: Some(16),
+            last_level_cache_size: None,
+            num_tensor_cores: None,
+            min_tensor_cores_dim: None,
+            max_vector_size: usize::MAX,
+            cube_mma_reserved_shared_memory: 0,
+        }
+    }
+
+    fn gpu() -> HardwareProperties {
+        HardwareProperties {
+            vector_register_count: None,
+            plane_size_min: 32,
+            plane_size_max: 32,
+            max_units_per_cube: 1024,
+            max_cube_dim: (1024, 1024, 64),
+            num_cpu_cores: None,
+            ..cpu()
+        }
+    }
+
+    fn split_axis_on(
+        hardware: &HardwareProperties,
+        variant: Variant,
+        units: (usize, usize),
+    ) -> PlanesSplit {
+        split_axis(variant, units, num_concurrent_planes(hardware), hardware)
+    }
+
+    #[test]
+    fn a_cpu_spreads_a_single_row_across_its_columns() {
+        assert_eq!(
+            split_axis_on(&cpu(), Variant::OuterN, (1, 256)),
+            PlanesSplit::N
+        );
+    }
+
+    #[test]
+    fn a_cpu_spreads_a_single_column_across_its_rows() {
+        assert_eq!(
+            split_axis_on(&cpu(), Variant::Dot, (4096, 1)),
+            PlanesSplit::M
+        );
+        assert_eq!(
+            split_axis_on(&cpu(), Variant::OuterM, (256, 1)),
+            PlanesSplit::M
+        );
+    }
+
+    #[test]
+    fn a_cpu_keeps_a_variant_axis_with_a_block_for_every_thread() {
+        assert_eq!(
+            split_axis_on(&cpu(), Variant::OuterN, (64, 1024)),
+            PlanesSplit::M
+        );
+    }
+
+    #[test]
+    fn a_gpu_keeps_the_variant_axis() {
+        assert_eq!(
+            split_axis_on(&gpu(), Variant::Dot, (4096, 1)),
+            PlanesSplit::N
+        );
+        assert_eq!(
+            split_axis_on(&gpu(), Variant::OuterN, (1, 256)),
+            PlanesSplit::M
+        );
     }
 }
