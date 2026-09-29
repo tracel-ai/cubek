@@ -1,8 +1,8 @@
 //! Deriving a shared-memory stage from an operand: the [`StageForm`] it takes (physical extents
 //! plus the two mappings that address them) and the `smem*` constructors that allocate one.
 
+use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
-use cubecl::{prelude::*, quant::scheme::QuantScheme, std::quant::view::KnownScale};
 
 use crate::*;
 
@@ -129,7 +129,6 @@ impl<T: Numeric> Memory<T> {
             vector_size,
             units,
             &smem,
-            ComptimeOption::new_None(),
             comptime!(Packing::Plain),
             form,
             map,
@@ -162,48 +161,7 @@ impl<T: Numeric> Memory<T> {
             vector_size,
             units,
             &smem,
-            ComptimeOption::new_None(),
             comptime!(packing),
-            form,
-            map,
-            ComptimeOption::new_None(),
-        )
-    }
-
-    /// [`smem`](Memory::smem) staging the element `I` an operand is *stored* in (`i8`, or packed
-    /// `u32`) rather than the one it serves: the line narrows to `vector_size / pack`, so the stage
-    /// is that much smaller and the leaf dequantizes at read, not the fill inflating to `T`.
-    ///
-    /// Carries a compact `Shared` scales buffer beside the values: one f32 per block of the
-    /// sub-tile, refilled per region by [`fill_from`](Memory::fill_from).
-    pub(crate) fn smem_quant<I: Numeric>(
-        #[comptime] space: Space,
-        #[comptime] vector_size: usize,
-        #[comptime] storage: StageStorage,
-        #[comptime] units: usize,
-        table: ComptimeOption<Box<[f32]>>,
-        #[comptime] scheme: QuantScheme,
-    ) -> Tile<T> {
-        // One stored line is one served line, just narrower, so only the element and width change:
-        // the layout and window below are the same grid either way.
-        let stored_bytes = I::size().comptime();
-        let form = comptime!(StageForm::dense(
-            &space,
-            vector_size,
-            storage,
-            LineBytes(vector_size / scheme.num_quants() * stored_bytes)
-        ));
-        let size!(WP) = comptime!(vector_size / scheme.num_quants());
-        let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
-        let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
-        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        Memory::smem_over(
-            space,
-            vector_size,
-            units,
-            &smem,
-            quant,
-            comptime!(scheme_packing(scheme)),
             form,
             map,
             ComptimeOption::new_None(),
@@ -221,7 +179,6 @@ impl<T: Numeric> Memory<T> {
         #[comptime] vector_size: usize,
         #[comptime] units: usize,
         smem: &Shared<[S]>,
-        quant: ComptimeOption<QuantInfo>,
         #[comptime] packing: Packing,
         #[comptime] form: StageForm,
         map: RuntimeMap,
@@ -239,7 +196,6 @@ impl<T: Numeric> Memory<T> {
             vector_size,
             units,
             backing,
-            quant,
             packing,
             form,
             map,
@@ -257,7 +213,6 @@ impl<T: Numeric> Memory<T> {
         #[comptime] vector_size: usize,
         #[comptime] units: usize,
         backing: Backing<T>,
-        quant: ComptimeOption<QuantInfo>,
         #[comptime] packing: Packing,
         #[comptime] form: StageForm,
         map: RuntimeMap,
@@ -275,7 +230,6 @@ impl<T: Numeric> Memory<T> {
                 store: Store::<T> {
                     backing,
                     vector_size,
-                    quant,
                     packing: comptime!(packing),
                 },
                 layout: BufferLayout {
@@ -307,6 +261,7 @@ impl<T: Numeric> Memory<T> {
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 factor: Factor::none(),
+                codebook: Codebook::none(),
                 source_window: source,
                 lands: false,
             }),
@@ -344,7 +299,6 @@ impl<T: Numeric> Memory<T> {
             1usize,
             units,
             &window,
-            ComptimeOption::new_None(),
             comptime!(Packing::Plain),
             form,
             map,
@@ -392,83 +346,6 @@ fn full_window(#[comptime] form: StageForm) -> (Coords<i32>, Coords<u32>) {
     }
 
     (origin, extent)
-}
-
-/// The staged scales side-channel for a quantized smem stage: a compact `Shared` buffer, one f32
-/// per block of the sub-tile, row-major, self-relative (`window_start = 0`), refilled per region
-/// by [`fill_from`](Memory::fill_from), read by [`transparent`](Memory::transparent) as gmem's.
-#[cube]
-fn smem_quant_info(
-    #[comptime] space: Space,
-    table: ComptimeOption<Box<[f32]>>,
-    #[comptime] scheme: QuantScheme,
-) -> ComptimeOption<QuantInfo> {
-    let rank = comptime!(space.rank());
-    let block = comptime!(block_edges(scheme, rank));
-    let (nb, strides_c) = comptime!(smem_scale_grid(&space, &block, scheme));
-    let count = comptime!(nb.iter().product::<usize>());
-    let scales = Shared::<[f32]>::new_slice(comptime!(count));
-    let buffer = unsafe {
-        scales
-            .inner_ref()
-            .downcast_unchecked::<f32>()
-            .as_boxed_unchecked()
-    };
-    let mut strides = Coords::<u32>::new();
-    #[allow(clippy::needless_range_loop)]
-    #[unroll]
-    for p in 0..rank {
-        strides.push(comptime!(strides_c[p] as u32).runtime());
-    }
-    ComptimeOption::new_Some(QuantInfo {
-        buffer,
-        // The fill folds a two-level source's global level into the staged grid
-        // ([`Memory::stage_scales`]), so the stage serves effective scales under the one-level
-        // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
-        known: KnownScale::new_None(),
-        strides,
-        window_start: 0u32,
-        block: comptime!(block),
-        extent: comptime!(window_extents(&space, rank)),
-        // A stage only keeps its quantized form when the read is what decodes it; that is the one
-        // path reaching here.
-        dequant_at: comptime!(DequantAt::Read),
-        scale_shape: comptime!(nb),
-        // The gmem table rides through: it is never staged, only re-read.
-        table,
-        scheme: comptime!(staged_scheme(scheme)),
-    })
-}
-
-/// [`smem_quant_info`]'s host data: the per-axis distinct-scale count (`nb`) and its row-major
-/// suffix-product strides. Per-tensor is the degenerate single scale; every count `1` and every
-/// stride `0`, so a read pins index `0`; a block scheme grids `ceil(extent / block)` per axis.
-fn smem_scale_grid(
-    space: &Space,
-    block: &[usize],
-    scheme: QuantScheme,
-) -> (Vec<usize>, Vec<usize>) {
-    let rank = space.rank();
-    let per_tensor = scheme.block_size().is_none();
-    let nb: Vec<usize> = (0..rank)
-        .map(|p| {
-            if per_tensor {
-                1
-            } else {
-                space.extent_at(p).div_ceil(block[p])
-            }
-        })
-        .collect();
-    let strides: Vec<usize> = (0..rank)
-        .map(|p| {
-            if per_tensor {
-                0
-            } else {
-                nb[p + 1..].iter().product::<usize>()
-            }
-        })
-        .collect();
-    (nb, strides)
 }
 
 /// How a gathered fill's two sides relate: the [`Compaction`] of the source's own map, which the

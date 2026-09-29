@@ -101,12 +101,12 @@ impl<T: Numeric> CmmaData<T> {
     /// `Accumulator` uses `load_with_layout`. Rows step by the store's physical row
     /// stride, so a window into a larger stage loads like a whole buffer.
     pub(crate) fn load_window(&mut self, mem: &Memory<T>, #[comptime] row: usize) {
-        let dequant_at = mem.dequant_at();
+        let element = mem.stage_element();
         comptime!(assert!(
-            dequant_at == DequantAt::Load,
+            element == StageElement::Served,
             "CmmaData::load_window: a cmma fragment loads at one element type, so it cannot \
-             decode a quantized source as it reads; serve that operand by its load \
-             (DequantAt::Load) or stage it into shared memory first"
+             unpack a packed source as it reads; land it first (`landed_for`) or decode it into a \
+             stage (`stage.copy_from(&w.mul(&scales))`)"
         ));
         let stride = mem.row_stride_at(row);
         match comptime!(self.ident) {

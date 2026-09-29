@@ -28,7 +28,6 @@ pub struct GlobalOperand<T: Numeric> {
     /// What a write does to the cell it lands on.
     #[cube(comptime)]
     pub write: Write,
-    pub(crate) quant: ComptimeOption<QuantInfo>,
     /// One per [`Scale::Dynamic`](crate::Scale) term and one per
     /// [`Divisor::Dynamic`](crate::Divisor) axis, by physical axis, divisor last; empty for a
     /// comptime mapping.
@@ -51,7 +50,6 @@ impl<T: Numeric> GlobalOperand<T> {
             tensor,
             space,
             spec,
-            ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
         )
@@ -70,14 +68,7 @@ impl<T: Numeric> GlobalOperand<T> {
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> GlobalOperand<T> {
-        GlobalOperand::<T>::of_tensor::<E>(
-            tensor,
-            space,
-            spec,
-            ComptimeOption::new_None(),
-            coefficients,
-            offsets,
-        )
+        GlobalOperand::<T>::of_tensor::<E>(tensor, space, spec, coefficients, offsets)
     }
 
     /// [`tensor`](GlobalOperand::tensor) where the stored element `E` and the served element `T`
@@ -103,20 +94,17 @@ impl<T: Numeric> GlobalOperand<T> {
             values,
             space,
             spec,
-            ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
         )
     }
 
     /// The shared body: `E` is the *binding* element, `T` the served scalar, differing only for
-    /// a packed or quantized operand, whose store truly holds `E` and whose read view downcasts
-    /// back.
+    /// a packed operand, whose store truly holds `E` and whose read view downcasts back.
     pub(crate) fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
-        quant: ComptimeOption<QuantInfo>,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> GlobalOperand<T> {
@@ -134,7 +122,6 @@ impl<T: Numeric> GlobalOperand<T> {
             space,
             spec,
             write: comptime!(Write::Replace),
-            quant,
             coefficients,
             offsets,
         }
@@ -146,7 +133,7 @@ impl<T: Numeric> GlobalOperand<T> {
     /// store.
     ///
     /// A sink serves the layout-addressed writes and only those: it cannot be staged into shared
-    /// memory, written dense, quantized, filled by a tensor map, or [`packed`](TileSpec::packed),
+    /// memory, written dense, filled by a tensor map, or [`packed`](TileSpec::packed),
     /// each of which wants an address rather than a call.
     ///
     /// `write` is what the sink does with a value. [`Accumulate`](Write::Accumulate) lets several
@@ -176,7 +163,6 @@ impl<T: Numeric> GlobalOperand<T> {
             space,
             spec,
             write,
-            quant: ComptimeOption::new_None(),
             coefficients: Coords::<u32>::new(),
             offsets: Coords::<i32>::new(),
         }
@@ -184,7 +170,7 @@ impl<T: Numeric> GlobalOperand<T> {
 
     /// An operand whose values come from `source` instead of from memory: the fuse-on-read twin of
     /// [`sink`](GlobalOperand::sink), stated geometry and all. A source serves layout-addressed
-    /// reads only: no staging, dense reads, quantization, tensor maps or
+    /// reads only: no staging, dense reads, tensor maps or
     /// [`packed`](TileSpec::packed).
     pub fn source(
         source: ErasedTensor<T, ReadOnly>,
@@ -206,7 +192,6 @@ impl<T: Numeric> GlobalOperand<T> {
             space,
             spec,
             write: comptime!(Write::Replace),
-            quant: ComptimeOption::new_None(),
             coefficients: Coords::<u32>::new(),
             offsets: Coords::<i32>::new(),
         }
@@ -231,7 +216,6 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
         let backing = operand.backing;
         let geometry = operand.geometry;
-        let quant = operand.quant;
         let coefficients = operand.coefficients;
         let offsets = operand.offsets;
         let bound_width = comptime!(operand.bound_width);
@@ -247,13 +231,8 @@ impl<T: Numeric> Memory<T> {
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
         let coords = comptime!(projection.untiled());
-        // How the buffer holds its values: what a quantized operand's scheme says, else what the
-        // spec states. One statement, whichever door minted it, so nothing below asks twice.
-        let packing = #[comptime]
-        match &quant {
-            ComptimeOption::Some(info) => comptime!(scheme_packing(info.scheme)),
-            ComptimeOption::None => comptime!(spec.packing),
-        };
+        // How the buffer holds its values: what the spec states.
+        let packing = comptime!(spec.packing);
         // A packed store serves `factor` values per stored element, on top of the binding's own
         // line width; a sub-word store serves its stated width out of one word.
         let vector_size = comptime!(packing.served(bound_width));
@@ -277,13 +256,7 @@ impl<T: Numeric> Memory<T> {
             "GlobalOperand: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
-        comptime!(check_operand(
-            &space,
-            &spec,
-            &coords,
-            quant.is_some(),
-            vector_size
-        ));
+        comptime!(check_operand(&space, &spec, vector_size));
         // Off the projection rather than the space: a gathered operand's buffer has fewer
         // physical axes than its logical space has axes, and a storage-tiled one has more.
         let rank = comptime!(projection.physical_rank());
@@ -329,7 +302,6 @@ impl<T: Numeric> Memory<T> {
             store: Store::<T> {
                 backing,
                 vector_size: comptime!(vector_size),
-                quant,
                 packing: comptime!(packing),
             },
             layout: BufferLayout {
@@ -365,6 +337,7 @@ impl<T: Numeric> Memory<T> {
             split_share,
             init_from: comptime!(InitFrom::Cell),
             factor: Factor::none(),
+            codebook: Codebook::none(),
             lands: false,
         }
     }
@@ -373,27 +346,8 @@ impl<T: Numeric> Memory<T> {
 /// The contract an operand's statement owes, refused at `of` on the host, the one place the
 /// spec, the projection, the space and the served width are all in hand. `coords` is the
 /// projection in coordinate space ([`Projection::untiled`]).
-fn check_operand(
-    space: &Space,
-    spec: &TileSpec,
-    coords: &Projection,
-    quantized: bool,
-    vector_size: usize,
-) {
+fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
     let projection = &spec.projection;
-    // The scales are gridded over the operand's *logical* axes, while `at` re-windows them over
-    // the physical ones. The two ranks coincide for every direct operand, tiled or not, and
-    // diverge under a gather.
-    assert!(
-        !quantized || coords.is_direct(),
-        "GlobalOperand: a gathered operand cannot be quantized; its scale grid is shaped over its \
-         logical axes, which its buffer's physical axes no longer match"
-    );
-    assert!(
-        !quantized || spec.packing == Packing::Plain,
-        "GlobalOperand: a quantized operand's scheme already states how its values are stored, so \
-         its spec may not state a packing too"
-    );
     // The operand's own contract, checked here rather than at `TileSpec` construction because it
     // turns on the served width, which only this call knows. `StridedTileSource` already checked
     // a padded stage width for the specs it builds; this catches hand-built ones too.

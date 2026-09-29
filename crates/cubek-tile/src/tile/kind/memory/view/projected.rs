@@ -127,15 +127,15 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// `nd_packed` at a stated storage element `I` and physical line `WP`.
-    pub fn nd<I: Numeric, WP: Size, W: Size>(
+    /// `nd_packed` at a stated physical line `WP`.
+    pub fn nd<WP: Size, W: Size>(
         &self,
         #[comptime] guard: Guard,
     ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
         match &self.kind {
             TileKind::Memory(g) => {
                 let layout = g.axis_projection(comptime!(self.place.space.clone()));
-                g.transparent::<I, WP, W, CoordsDyn, ProjectionInKernel>(layout, guard)
+                g.unpacked::<WP, W, CoordsDyn, ProjectionInKernel>(layout, guard)
             }
             TileKind::Procedural(data) => {
                 procedural_nd::<T, W>(data, comptime!(self.place.space.clone()), guard)
@@ -291,4 +291,42 @@ pub(crate) fn line_extents(
             }
         })
         .collect()
+}
+
+/// The scalar coordinate of the `line`-th line of a window whose innermost axis counts in
+/// `vw`-wide lines: one entry per axis, the line's first value.
+#[cube]
+pub(crate) fn coords_of_line(
+    line: u32,
+    #[comptime] line_extents: Vec<usize>,
+    #[comptime] vw: usize,
+) -> Coords<u32> {
+    let n = comptime!(line_extents.len());
+    let digits = Coords::constant(line_extents).unravel(line);
+    let mut coords = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            coords.push(digits.at(p).times(comptime!(vw as u32)));
+        } else {
+            coords.push(digits.at(p));
+        }
+    }
+    coords
+}
+
+/// `coords` as an N-D view addresses them: the innermost a line index.
+#[cube]
+pub(crate) fn as_dyn(coords: &Coords<u32>, #[comptime] vw: usize) -> CoordsDyn {
+    let n = coords.len();
+    let mut at = CoordsDyn::new();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            at.push(coords.at(p).divided_by(comptime!(vw as u32)));
+        } else {
+            at.push(coords.at(p));
+        }
+    }
+    at
 }

@@ -168,9 +168,7 @@ impl<T: Numeric> Memory<T> {
     /// fill would otherwise read or write the wrong cells rather than fail.
     fn refuse_unfetchable(&self, src: &Memory<T>) {
         comptime!(assert!(
-            self.store.quant.is_none()
-                && src.store.quant.is_none()
-                && self.store.packing == Packing::Plain
+            self.store.packing == Packing::Plain
                 && src.store.packing == Packing::Plain
                 && self.access.whole
                 && !self.access.overhang.masks()

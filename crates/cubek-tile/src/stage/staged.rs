@@ -6,6 +6,19 @@ use cubecl::prelude::*;
 
 use crate::*;
 
+/// What a stage of an operand holds: the values it serves, or the form it stores them in.
+///
+/// A plain operand's two are one element. A packed one keeps its words (**stored**) unless the
+/// operand carries a decode, a [`mul`](Tile::mul) or a [`lookup`](Tile::lookup): stated before
+/// the stage, it is decoded by the copy that fills it, and the stage holds **served** values.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum StageElement {
+    /// The values the operand serves, decoded as they land.
+    Served,
+    /// The operand's stored form, words for a packed one, read back where a leaf reads them.
+    Stored,
+}
+
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
@@ -42,9 +55,9 @@ impl<T: Numeric> Memory<T> {
     /// laid out as `storage` and, where `width` is stated, served in lines that wide (an axis gmem
     /// could not vectorize still reaches the leaf in lines). Both are the stages' to state.
     ///
-    /// The stage takes the element the operand needs staged: the one it *serves* when the load
-    /// decodes it ([`DequantAt::Load`], always so for a plain operand), else the one it is *stored*
-    /// in ([`smem_stored`](Memory::smem_stored)). The operand carries which, so no caller asks.
+    /// The stage takes the element the operand needs staged: the one it *serves* when the fill
+    /// decodes it (a plain operand, or a scaled or looked-up one: [`Tile::copy_from`]), else the
+    /// one it is *stored* in ([`smem_stored`](Memory::smem_stored)). The operand carries which, so no caller asks.
     pub(crate) fn stage(
         operand: &Tile<T>,
         #[comptime] level: Level,
@@ -78,9 +91,17 @@ impl<T: Numeric> Memory<T> {
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
     ) -> Tile<T> {
-        let dequant_at = operand.dequant_at();
-        match comptime!(dequant_at) {
-            DequantAt::Load => {
+        // A source carrying scales or a table is staged decoded: its `mul` or `lookup` came before
+        // the stage, so the copy filling it is where it decodes. Otherwise the stage keeps what
+        // the source stores, words for a packed one.
+        let decodes = operand.scaled();
+        let stored = operand.stage_element();
+        match comptime!(if decodes {
+            StageElement::Served
+        } else {
+            stored
+        }) {
+            StageElement::Served => {
                 let space = comptime!(level.child(&operand.place.space));
                 let projection = operand.projection();
                 let units = operand.units();
@@ -110,7 +131,9 @@ impl<T: Numeric> Memory<T> {
                     true => TMA_STAGE_ALIGNMENT,
                     false => 0usize,
                 });
-                if comptime!(projection.is_direct()) {
+                // A decoded stage is written through the values' own axes, so it is dense over them
+                // whatever the source's map: the copy that fills it resolves the source's gather.
+                if comptime!(projection.is_direct() || decodes) {
                     Memory::smem_aligned(space, vector_size, storage, units, alignment)
                 } else {
                     Memory::smem_gathered(
@@ -125,13 +148,13 @@ impl<T: Numeric> Memory<T> {
                     )
                 }
             }
-            DequantAt::Read => Memory::smem_stored(operand, level, storage),
+            StageElement::Stored => Memory::smem_stored(operand, level, storage),
         }
     }
 
     /// [`stage`](Memory::stage) in the element the operand is *stored* in rather than the one it
-    /// serves, under [`DequantAt::Read`]: a quantized operand keeps its stored form (`i8` or packed
-    /// `u32`) plus scales ([`smem_quant`](Memory::smem_quant)), and the leaf dequantizes on read.
+    /// serves ([`StageElement::Stored`]): a packed operand keeps its words, which the leaf unpacks
+    /// where it reads them.
     fn smem_stored(
         operand: &Tile<T>,
         #[comptime] level: Level,
@@ -142,41 +165,13 @@ impl<T: Numeric> Memory<T> {
         let units = operand.units();
         match &operand.kind {
             TileKind::Memory(g) => {
-                #[comptime]
-                match &g.store.quant {
-                    // No scheme: the words as they lie where the operand is packed, which is
-                    // the only stored form a scheme-less operand has, else a plain stage.
-                    ComptimeOption::None => match comptime!(g.store.packing) {
-                        Packing::Plain => Memory::smem(space, vector_size, storage, units),
-                        packing => Memory::smem_packed(space, vector_size, storage, units, packing),
-                    },
-                    // The store was allocated at the scheme's own storage ([`scheme_packing`]).
-                    ComptimeOption::Some(info) => match comptime!(g.store.packing) {
-                        Packing::Native => Memory::smem_quant::<i8>(
-                            space,
-                            vector_size,
-                            storage,
-                            units,
-                            info.table.clone(),
-                            comptime!(info.scheme),
-                        ),
-                        Packing::Packed { field: _ } => Memory::smem_quant::<u32>(
-                            space,
-                            vector_size,
-                            storage,
-                            units,
-                            info.table.clone(),
-                            comptime!(info.scheme),
-                        ),
-                        Packing::Plain => {
-                            panic!("Memory::smem_stored: a quantized store is never plain")
-                        }
-                    },
+                // The words as they lie where the operand is packed, else a plain stage.
+                match comptime!(g.store.packing) {
+                    Packing::Plain => Memory::smem(space, vector_size, storage, units),
+                    packing => Memory::smem_packed(space, vector_size, storage, units, packing),
                 }
             }
-            // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
-            // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
-            // one must not reuse this arm; see `Slot::new`, which refuses that combination.
+            // A tma source has no stored form to keep: it packs nothing, so served == stored.
             TileKind::TmaGmem(_) => Memory::smem(space, vector_size, storage, units),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Memory::smem_stored: a fragment is not a stage source")

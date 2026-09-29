@@ -13,4 +13,5 @@ mod transport;
 pub use base::*;
 pub use pipeline::*;
 pub use rendezvous::*;
+pub(crate) use staged::StageElement;
 pub(crate) use transport::*;

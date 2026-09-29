@@ -16,25 +16,20 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn fill_scanned<W: Size>(&mut self, src: &Memory<T>, #[comptime] scan: Scan) {
         match comptime!(scan) {
             // The source's served element, one line for one line.
-            Scan::Element => self.scan_transparent::<T, W, W>(src),
+            Scan::Element => self.scan_unpacked::<W, W>(src),
             // `u32` words, one for one: the values unpack as they are read.
             Scan::Words => {
                 let size!(WP) = comptime!(src.store.packing.physical(src.store.vector_size));
-                self.scan_transparent::<u32, WP, W>(src)
+                self.scan_unpacked::<WP, W>(src)
             }
-            // `i8` codes under a scheme, served and stored being the same line.
-            Scan::Codes => self.scan_transparent::<i8, W, W>(src),
-            // The source's line is one whole word and this stage is narrower: unpack each word
-            // across several lines.
-            Scan::SubWord => self.scan_words::<W>(src),
         }
     }
 
     /// The cooperative flat scan behind [`fill_from`](Memory::fill_from)'s general path: cyclic
-    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …, read at storage element
-    /// `I` via [`flat_transparent`](Memory::flat_transparent), so a quantized source dequantizes.
-    pub(crate) fn scan_transparent<I: Numeric, WP: Size, W: Size>(&mut self, src: &Memory<T>) {
-        let s = src.flat_transparent::<I, WP, W>();
+    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …, read through
+    /// [`flat_unpacked`](Memory::flat_unpacked), so a packed source unpacks.
+    pub(crate) fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
+        let s = src.flat_unpacked::<WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
         // One line per unit, striding by the cube: **the distribution is disjoint**, which a folding

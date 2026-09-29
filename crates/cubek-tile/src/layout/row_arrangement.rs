@@ -4,7 +4,7 @@
 use crate::*;
 
 /// Bytes one physical line of a buffer holds: what a stage's block rows are placed by, which is
-/// not its vector size once a packed or quantized line stores several values a word.
+/// not its vector size once a packed line stores several values a word.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct LineBytes(pub(crate) usize);
 

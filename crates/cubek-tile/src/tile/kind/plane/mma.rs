@@ -122,14 +122,14 @@ impl<T: Numeric> MmaData<T> {
     /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile, not
     /// its store: the manual path reads through the quant-transparent matrix view, decoding here.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
-        let dequant_at = src.dequant_at();
+        let element = src.stage_element();
         let io = comptime!(self.io);
         comptime!(assert!(
-            dequant_at == DequantAt::Load
+            element == StageElement::Served
                 || (matches!(io.lhs_load_method, LoadMethod::Manual)
                     && matches!(io.rhs_load_method, LoadMethod::Manual)),
-            "MmaData::load_window: the ldmatrix transport copies raw units, so it cannot decode a \
-             quantized source as it reads; serve that operand by its load (DequantAt::Load)"
+            "MmaData::load_window: the ldmatrix transport copies raw units, so it cannot unpack a \
+             packed source as it reads; decode it into a stage (`stage.copy_from(&w.mul(&scales))`)"
         ));
         let m = comptime!(self.m);
         let n = comptime!(self.n);

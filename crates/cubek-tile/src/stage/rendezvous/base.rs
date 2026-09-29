@@ -162,6 +162,22 @@ impl Meeting {
         // Bound before the match, which borrows the kind: the fill needs the logical space both
         // sides carry (a gathered source is addressed per axis).
         let space = comptime!(dst.place.space.clone());
+        // A source carrying scales or a table decodes where it is copied, whichever meeting.
+        let decodes = src.scaled();
+        if comptime!(decodes) {
+            dst.copy_from(src);
+        } else {
+            self.fill_as_it_lies(dst, src, space);
+        }
+    }
+
+    /// [`fill`](Meeting::fill) a source that decodes nothing: its values as they lie.
+    fn fill_as_it_lies<E: Numeric>(
+        &self,
+        dst: &mut Tile<E>,
+        src: &Tile<E>,
+        #[comptime] space: Space,
+    ) {
         match self {
             Meeting::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
