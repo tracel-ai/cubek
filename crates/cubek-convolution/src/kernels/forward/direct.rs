@@ -401,11 +401,9 @@ pub fn launch_direct<const N: usize>(
     );
 
     // Only a single-unit plane pays the dependency chain in full; a wide plane hides it and is
-    // left with the extra input read per output channel. One component is exactly as serial as `sum`,
-    // and a channel loop of one step has nothing to amortize the fold over.
-    let accumulate_components = client.properties().hardware.plane_size_max == 1
-        && vector_size_in > 1
-        && weight.shape[dim_c] > vector_size_in as usize;
+    // left with the extra input read per output channel. One component is exactly as serial as `sum`.
+    let accumulate_components =
+        client.properties().hardware.plane_size_max == 1 && vector_size_in > 1;
     let channel_block =
         VectorRegisters::new(&client.properties().hardware, register_elem_size(dtype))
             .map_or(1, |registers| {
