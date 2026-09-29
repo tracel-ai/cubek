@@ -54,56 +54,6 @@ fn ring_matmul<E: Numeric>(
     });
 }
 
-/// [`ring_matmul`] with the fill the kernel's own: same schedule, and the operands are written
-/// into the slot by this kernel rather than by the stages.
-///
-/// What it proves is that the two halves are separable: the prologue, the lap that prefetches one
-/// region ahead of the one it computes, and the publish on the draining consume are the part worth
-/// sharing; where the bytes come from and what happens to them on the way in is the kernel's.
-///
-/// Here the fill is the stages' own sources and the answer is unchanged, which is the honest
-/// control: a fill that read somewhere else would be testing the caller, not the seam.
-#[cube(launch)]
-fn ring_matmul_filled_by_the_kernel<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-    c.zero();
-
-    let walk = space.walk();
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    stages.pipelined_with(
-        walk,
-        |slot, region| {
-            slot.fill(|staged, pipe| {
-                pipe.fill(&mut staged.lhs, &a.at(region));
-                pipe.fill(&mut staged.rhs, &b.at(region));
-            });
-        },
-        |slot, region| {
-            let c_block = c.at(region);
-            slot.consume(|a_s, b_s| {
-                for cell in region {
-                    let mut c_cell = c_block.at(&cell);
-                    c_cell.mma_with(
-                        &a_s.at(&cell),
-                        &b_s.at(&cell),
-                        REGISTER_BLOCK,
-                        Semiring::SUM_PROD,
-                    );
-                }
-            });
-        },
-    );
-}
-
 /// The same contraction with the stages' two steps written out and the plane's role read off it:
 /// the shape a specialized kernel takes. With no plane set aside to fill, every plane computes,
 /// so the fill arm is emitted and never entered and the compute arm does both halves itself.
@@ -151,18 +101,6 @@ fn role_split_matmul<E: Numeric>(
 }
 
 fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize) {
-    check_ring_matmul_with(m, n, k, block_k, depth, false)
-}
-
-/// [`check_ring_matmul`], filling through the stages or through the kernel's own closure.
-fn check_ring_matmul_with(
-    m: usize,
-    n: usize,
-    k: usize,
-    block_k: usize,
-    depth: usize,
-    kernel_fills: bool,
-) {
     let client = cubecl::test_device().client();
     let tile = 4usize;
     let dtype = f32::elem_type_native();
@@ -188,30 +126,17 @@ fn check_ring_matmul_with(
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
-    match kernel_fills {
-        false => ring_matmul::launch(
-            &client,
-            launcher.cube_count(),
-            CubeDim::new_single(),
-            a.arg(),
-            b.arg(),
-            c.arg(),
-            launcher.partitioning_arg(),
-            depth,
-            dtype,
-        ),
-        true => ring_matmul_filled_by_the_kernel::launch(
-            &client,
-            launcher.cube_count(),
-            CubeDim::new_single(),
-            a.arg(),
-            b.arg(),
-            c.arg(),
-            launcher.partitioning_arg(),
-            depth,
-            dtype,
-        ),
-    }
+    ring_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        CubeDim::new_single(),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launcher.partitioning_arg(),
+        depth,
+        dtype,
+    );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let expected = references::tiled_matmul(m, n, k, tile);
@@ -305,24 +230,4 @@ fn a_hand_written_ring_walk_double_buffered() {
 #[test]
 fn a_hand_written_ring_walk_triple_buffered_over_an_odd_walk() {
     check_ring_matmul(8, 8, 20, 4, 3);
-}
-
-/// The kernel's own fill through the stages' schedule, at each buffering depth.
-///
-/// Same walk, same answer, and the only difference is who writes the slot. A kernel that wants a
-/// third operand or a transform on the way in keeps the protocol it would otherwise have had to
-/// re-derive.
-#[test]
-fn a_kernel_may_bring_its_own_fill_single_buffered() {
-    check_ring_matmul_with(8, 8, 16, 8, 1, true);
-}
-
-#[test]
-fn a_kernel_may_bring_its_own_fill_double_buffered() {
-    check_ring_matmul_with(8, 8, 16, 8, 2, true);
-}
-
-#[test]
-fn a_kernel_may_bring_its_own_fill_over_an_odd_walk() {
-    check_ring_matmul_with(8, 8, 24, 8, 3, true);
 }

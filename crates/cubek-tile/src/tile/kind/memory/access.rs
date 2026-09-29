@@ -550,13 +550,16 @@ impl<T: Numeric> Memory<T> {
         )
     }
 
-    /// The operand's [`Projection`] applied to this window's logical box: the N-D read surface.
+    /// The operand's [`Projection`] applied to this window's logical box: the N-D read surface,
+    /// each axis counted in this memory's loads ([`vector_tile`](Memory::vector_tile)).
     pub(crate) fn axis_projection(&self, #[comptime] space: Space) -> ProjectionInKernel {
-        axis_projection(
-            space,
-            comptime!(self.projection.clone()),
+        let load = self.vector_tile(&space);
+        ProjectionInKernel::new(
+            Coords::constant(comptime!(load.counts(&space))),
             self.map.clone(),
-            comptime!(self.store.vector_size),
+            comptime!(space.clone()),
+            comptime!(self.projection.clone()),
+            comptime!(load.values()),
         )
     }
 
@@ -687,8 +690,7 @@ impl<T: Numeric> Memory<T> {
         let mut extent = Coords::<u32>::new();
         let mut advances = Coords::<u32>::new();
         let rank = comptime!(self.projection.physical_rank());
-        let last = comptime!(rank - 1);
-        let w = comptime!(self.store.vector_size);
+        let load = self.vector_tile(&space);
 
         #[unroll]
         for p in 0..rank {
@@ -702,20 +704,12 @@ impl<T: Numeric> Memory<T> {
                 extent.push(self.window.extent.at(p));
                 advances.push(0u32);
             } else {
-                let edge = comptime!(if p == last {
-                    let e = step.level.extent_in(&space, axis).get();
-                    assert!(
-                        e.is_multiple_of(w)
-                            || matches!(space.extent_raw(axis), Extent::Static(x) if x == e),
-                        "Memory::at: the innermost edge {e} is neither a whole number of \
-                         {w}-wide lines nor the axis's whole extent ({:?}), so a step would \
-                         start mid-line",
-                        space.extent_raw(axis)
-                    );
-                    e.div_ceil(w)
-                } else {
-                    step.level.extent_in(&space, axis).get()
-                });
+                // The edge counts loads: along an axis a load spans, over its extent there.
+                let edge = comptime!(load.loads_in(
+                    axis,
+                    step.level.extent_in(&space, axis).get(),
+                    space.extent_raw(axis)
+                ));
                 let index = step.coord(axis);
 
                 origin.push(
@@ -781,6 +775,7 @@ impl<T: Numeric> Memory<T> {
                 backing: self.store.backing.clone(),
                 vector_size: comptime!(self.store.vector_size),
                 packing: comptime!(self.store.packing),
+                stored_tiles: comptime!(self.store.stored_tiles.clone()),
             },
             layout: self.layout.clone(),
             window,

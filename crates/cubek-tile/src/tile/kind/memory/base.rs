@@ -86,10 +86,47 @@ pub(crate) struct Store<T: Numeric> {
     /// How the buffer's values sit in it, from [`TileSpec::packed`].
     #[cube(comptime)]
     pub(crate) packing: Packing,
+    /// How the buffer is stored: its stated storage tiles, finest first
+    /// ([`TileSpec::stored_tiles`]); empty for a plain buffer and every stage. What one load of it
+    /// covers follows from these and the width ([`Tile::vector_tile`]).
+    #[cube(comptime)]
+    pub(crate) stored_tiles: Vec<(Axis, usize)>,
+}
+
+#[cube]
+impl<T: Numeric> Memory<T> {
+    /// What one vector load of this memory covers over a window spanning `space`: the stored
+    /// tiles that hold [`vector_size`](Store::vector_size) values, a run along the innermost axis
+    /// where none are stated ([`VectorTile::new`]).
+    pub(crate) fn vector_tile(&self, #[comptime] space: &Space) -> comptime_type!(VectorTile) {
+        let width = comptime!(self.store.vector_size);
+        comptime!(
+            VectorTile::new(
+                &self.store.stored_tiles,
+                space.axis_at(space.rank() - 1),
+                width
+            )
+            .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"))
+        )
+    }
 }
 
 #[cube]
 impl<T: Numeric> Store<T> {
+    /// A store whose buffer is laid down in rows, stored in no tiles: every stage.
+    pub(crate) fn untiled(
+        backing: Backing<T>,
+        #[comptime] vector_size: usize,
+        #[comptime] packing: Packing,
+    ) -> Store<T> {
+        Store::<T> {
+            backing,
+            vector_size,
+            packing,
+            stored_tiles: comptime!(Vec::new()),
+        }
+    }
+
     /// The bytes, for a destination that has an address.
     // `Box<[T]>` is cubecl's owned-slice handle, not a Rust box; `&[T]` is a different kernel type.
     #[allow(clippy::borrowed_box)]

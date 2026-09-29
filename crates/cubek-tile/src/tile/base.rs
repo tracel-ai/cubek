@@ -100,16 +100,37 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Physical vector width of the backing store; `1` for a fragment or tma source.
+    /// Physical vector width of the backing store; `1` for a fragment or tma source. Refuses a
+    /// memory whose loads span several axes: its reader asks [`vector_tile`](Tile::vector_tile).
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.kind {
-            TileKind::Memory(d) => d.store.vector_size,
+            TileKind::Memory(d) => {
+                let load = d.vector_tile(&comptime!(self.place.space.clone()));
+                comptime!(load.along_one_axis("a reader asking Tile::vector_size").1)
+            }
             TileKind::Lines(c) => c.line(),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 comptime!(1usize)
+            }
+        }
+    }
+
+    /// What one vector load of this tile covers: a run along the innermost axis, or the stored
+    /// tiles that hold [`vector_size`](Tile::vector_size) values ([`VectorTile::new`]).
+    pub fn vector_tile(&self) -> comptime_type!(VectorTile) {
+        let space = comptime!(self.place.space.clone());
+        match &self.kind {
+            TileKind::Memory(d) => d.vector_tile(&space),
+            TileKind::Lines(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                let width = self.vector_size();
+                comptime!(VectorTile::run(space.axis_at(space.rank() - 1), width))
             }
         }
     }

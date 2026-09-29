@@ -43,9 +43,13 @@ impl Rendezvous {
 }
 
 /// The rendezvous for one slot and the barriers it owns.
+#[expect(
+    dead_code,
+    reason = "built through the expand type's generated constructors"
+)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum Meeting {
+pub(crate) enum Meeting {
     /// Synchronous cooperative copy, synchronized by one `sync_cube` per phase.
     Cube,
     /// Async producer/consumer over a `full`/`empty` mbarrier pair, one parity each.
@@ -90,7 +94,7 @@ impl Meeting {
     }
 
     /// Units that arrive on `full`.
-    pub fn producers(#[comptime] collective_full: bool, #[comptime] fillers: usize) -> u32 {
+    pub(crate) fn producers(#[comptime] collective_full: bool, #[comptime] fillers: usize) -> u32 {
         if comptime!(collective_full) {
             CUBE_DIM
         } else if comptime!(fillers > 0) {
@@ -101,7 +105,7 @@ impl Meeting {
     }
 
     /// Units that arrive on `empty`: the ones that read the slot.
-    pub fn consumers(#[comptime] fillers: usize) -> u32 {
+    pub(crate) fn consumers(#[comptime] fillers: usize) -> u32 {
         if comptime!(fillers == 0) {
             CUBE_DIM
         } else {
@@ -110,7 +114,7 @@ impl Meeting {
     }
 
     /// The unit that issues a bulk copy and declares its bytes.
-    pub fn elected(#[comptime] fillers: usize) -> u32 {
+    pub(crate) fn elected(#[comptime] fillers: usize) -> u32 {
         if comptime!(fillers == 0) {
             0u32.runtime()
         } else {
@@ -119,7 +123,7 @@ impl Meeting {
     }
 
     /// Fill staged `dst` from `src`.
-    pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
+    pub(crate) fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind.
         let space = comptime!(dst.place.space.clone());
         let decodes = src.scaled();

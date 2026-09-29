@@ -12,6 +12,7 @@ mod projection;
 mod row_arrangement;
 mod storage_partitioning;
 mod swizzle;
+mod vector_tile;
 
 pub(crate) use buffer::*;
 pub use build::*;
@@ -25,3 +26,4 @@ pub(crate) use row_arrangement::{LineBytes, RowArrangement};
 pub use storage_partitioning::*;
 pub(crate) use swizzle::ChunkSwizzle;
 pub(crate) use swizzle::swizzled_line;
+pub use vector_tile::*;

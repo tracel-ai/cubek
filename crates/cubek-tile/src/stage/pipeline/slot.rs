@@ -6,7 +6,7 @@ use crate::*;
 
 pub(crate) const FIRST_SLOT: usize = 0;
 
-/// One slot of a buffered walk: payload `T` and the [`Meeting`] sequencing fill against read.
+/// One slot of a buffered walk: payload `T` and the rendezvous sequencing fill against read.
 #[derive(CubeType)]
 pub struct Slot<T: CubeType> {
     pub(crate) data: T,
