@@ -8,7 +8,7 @@ use cubecl::{
 use crate::*;
 
 /// In-kernel twin of cubecl's `TiledViewLayout` over a physical coordinate, `projection` being
-/// [`Projection::of_tiling`]'s positional map.
+/// [`Projection::positional`]'s synthetic map.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct BufferLayout {

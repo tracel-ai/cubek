@@ -21,10 +21,7 @@ use cubecl::{
         layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
     },
 };
-use cubek_tile::{
-    Axis, Projection, Space, TileArgLaunch, TileSpec as CubekTileSpec, kind::Field,
-    layout::StorageTiling,
-};
+use cubek_tile::{Axis, Projection, Space, TileArgLaunch, TileSpec as CubekTileSpec, kind::Field};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -146,8 +143,8 @@ impl TileInput {
             .map(|i| self.space.axis_at(i))
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
-        let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling))
+        // Every axis is stored at every level, so the dims name the axes once per level.
+        CubekTileSpec::new(Projection::tiled(&axes, &axes.repeat(levels + 1)))
     }
 
     /// The semantic space the tile lives in.

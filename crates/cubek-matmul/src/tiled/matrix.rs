@@ -4,7 +4,7 @@ use cubecl::{
     prelude::TensorBinding,
     zspace::{Tiling, metadata::Metadata},
 };
-use cubek_tile::{Axis, Geometry, Level, Partitioning, Space, layout::StorageTiling};
+use cubek_tile::{Axis, Geometry, Level, Partitioning, Space};
 
 use crate::{definition::MatmulSetupError, tiled::labels};
 
@@ -43,11 +43,7 @@ impl<'a> MatrixBinding<'a> {
     /// The labels of its trailing dims: [`ROWS`](Self::ROWS) and [`COLS`](Self::COLS), or one per
     /// piece of a storage-tiled one, in the order its tiling lists them.
     pub(crate) fn labels(&self) -> Vec<Axis> {
-        match self.binding.tiling.is_tiled() {
-            true => StorageTiling::stored(self.binding.tiling, 2, self.binding.shape.len())
-                .order(&[Self::ROWS, Self::COLS]),
-            false => vec![Self::ROWS, Self::COLS],
-        }
+        Geometry::from(self.binding).labels(&[Self::ROWS, Self::COLS])
     }
 
     /// Its outermost storage tile, `(rows, cols)`, whatever finer pieces it holds and in whatever

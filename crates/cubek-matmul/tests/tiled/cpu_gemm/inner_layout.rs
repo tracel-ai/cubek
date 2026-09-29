@@ -6,7 +6,6 @@
 use cubecl::prelude::{TensorArg, TensorBinding};
 use cubek_matmul::definition::MatmulSetupError;
 use cubek_std::MatrixLayout;
-use cubek_tile::layout::StorageTiling;
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,24 +118,11 @@ impl InnerLayout {
         }
     }
 
-    /// The raw [`TensorArg`] (strides preserved) plus the [`StorageTiling`] a launch pairs with the
-    /// operand's axes into the `TileSpec` of its `TileArg`. `vector_size > 1` lines the innermost
-    /// (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
-    pub fn tensor_arg(
-        &self,
-        mut binding: TensorBinding,
-        vector_size: usize,
-    ) -> (TensorArg, StorageTiling) {
+    /// The raw [`TensorArg`] (strides preserved, the binding's tiling kept). `vector_size > 1`
+    /// lines the innermost (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
+    pub fn tensor_arg(&self, mut binding: TensorBinding, vector_size: usize) -> TensorArg {
         match self {
-            InnerLayout::Tiled { tiles } => {
-                // Only the trailing matrix pair is split; the batch dims ahead of it pass through.
-                let levels = tiles.len();
-                let num_batch = binding.shape.len() - 2 * (levels + 1);
-                (
-                    binding.into_tensor_arg(),
-                    StorageTiling::suffix(num_batch + 2, num_batch, levels),
-                )
-            }
+            InnerLayout::Tiled { .. } => binding.into_tensor_arg(),
             _ => {
                 let n = binding.strides.len();
                 let mut shape = binding.shape.to_vec();
@@ -147,8 +133,7 @@ impl InnerLayout {
                 }
                 binding.shape = shape[..].into();
                 binding.strides = strides[..].into();
-                let rank = binding.shape.len();
-                (binding.into_tensor_arg(), StorageTiling::uniform(rank, 0))
+                binding.into_tensor_arg()
             }
         }
     }
