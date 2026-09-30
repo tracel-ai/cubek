@@ -435,7 +435,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// [`mul_rows`](Self::mul_rows) over a grid of cmma fragments each with a slot of its own.
     fn mul_rows_whole_grid(&self, factors: &Array<T>) {
         #[unroll]
-        for i in 0..self.m_tiles * self.n_tiles {
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
             self.cmma_at(i).spill_to_scratch();
         }
         sync_plane();
@@ -449,7 +449,7 @@ impl<T: Numeric> PlanePartition<T> {
         }
         sync_plane();
         #[unroll]
-        for i in 0..self.m_tiles * self.n_tiles {
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
             self.cmma_at(i).reload_from_scratch();
         }
         sync_plane();
