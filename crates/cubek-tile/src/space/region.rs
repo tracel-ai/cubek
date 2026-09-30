@@ -80,6 +80,11 @@ impl Path {
         self.root.planes_per_cube() as usize
     }
 
+    /// Whether this path reaches the partitioning's innermost level, with no level below it.
+    pub(crate) fn at_bottom(&self) -> bool {
+        self.depth() == self.root.levels().len()
+    }
+
     /// This path one level further down.
     pub(crate) fn below(&self, level: Level) -> Path {
         let mut levels = self.levels.clone();
@@ -143,6 +148,14 @@ impl Region {
     /// The regions of the level below this one.
     pub fn walk(&self) -> Walk {
         Walk::of(&self.child(), comptime!(self.path.next()), self.clone())
+    }
+
+    /// The regions at the partitioning's innermost level below this one, one loop per level
+    /// between: a kernel reads the same however many levels its partitioning stacks there.
+    pub fn leaves(&self) -> Leaves {
+        Leaves {
+            region: self.clone(),
+        }
     }
 
     /// The region one level below the root at trailing-two coordinates `(c0, c1)` under `level`,
@@ -331,5 +344,54 @@ impl Iterable for &RegionExpand {
 
     fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         self.clone().expand_unroll(scope, body)
+    }
+}
+
+/// The regions at a partitioning's innermost level below one region ([`Region::leaves`]).
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct Leaves {
+    #[allow(dead_code)] // Read at expansion, through `LeavesExpand`.
+    region: Region,
+}
+
+/// Host-side stand-in for `for unit in plane.leaves()`; never runs.
+impl IntoIterator for Leaves {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+/// One loop per level between the region and the partitioning's innermost level.
+impl Iterable for LeavesExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        each_leaf(scope, self.region, body, false);
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        each_leaf(scope, self.region, body, true);
+    }
+}
+
+/// `body` over every region at the bottom of `region`'s partitioning below it.
+fn each_leaf(
+    scope: &Scope,
+    region: RegionExpand,
+    body: &mut dyn FnMut(&Scope, RegionExpand),
+    unroll: bool,
+) {
+    if region.path.at_bottom() {
+        body(scope, region);
+        return;
+    }
+    let mut below = |scope: &Scope, child: RegionExpand| each_leaf(scope, child, body, unroll);
+    match unroll {
+        true => region.expand_unroll(scope, &mut below),
+        false => region.expand(scope, &mut below),
     }
 }

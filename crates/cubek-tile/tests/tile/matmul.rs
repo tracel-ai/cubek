@@ -569,10 +569,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
         let mut acc_r = acc.at(&region);
         acc_r.mma(&a.at(&region), &b.at(&region), semiring);
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// [`promoted_matmul_in_place`] over the two-level cube/plane nest a real gemm composes: the
@@ -601,10 +598,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
                 let mut acc_s = acc.at(&step);
                 acc_s.mma(&a_p.at(&step), &b_p.at(&step), Semiring::SUM_PROD);
             }
-            for r0 in c_p.walk().unrolled() {
-                let mut c_p_w = c_p.at(&r0);
-                c_p_w.copy_cast_from(&acc.at(&r0));
-            }
+            acc.drained_into(&c_p);
         }
     }
 }
@@ -640,19 +634,14 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
             });
         });
     }
-    for r0 in c.over(&outer).unrolled() {
-        for r1 in r0.over(&inner).unrolled() {
-            let mut c_w = c.at(&r1);
-            c_w.copy_cast_from(&acc.at(&r1));
-        }
-    }
+    acc.drained_into(&c);
 }
 
 // ---- the tensor-core kernels ------------------------------------------------------
 
 /// `c = a · b` through tensor cores over a K walk: the accumulator fragment opened before the
-/// walk, both operands staged per region (laid out as `storage`, `depth` in flight), the copy back
-/// to global memory the epilogue.
+/// walk, both operands staged per region (laid out as `storage`, `depth` in flight), the drain to
+/// global memory the epilogue.
 #[cube(launch)]
 fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -677,10 +666,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// [`cmma_matmul_k_walk`] through the manual-mma instruction, whose fragment transports are
@@ -708,10 +694,7 @@ fn mma_matmul_k_walk<E: Numeric>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// The multi-plane cmma stage: the outer K walk fills a shared stage cooperatively (`depth` in
@@ -758,12 +741,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
             }
         });
     });
-    for r0 in c.over(&outer).unrolled() {
-        for r1 in r0.over(&inner).unrolled() {
-            let mut c_w = c.at(&r1);
-            c_w.copy_cast_from(&acc.at(&r1));
-        }
-    }
+    acc.drained_into(&c);
 }
 
 /// The multi-fragment partition: each plane owns a grid of fragments, resident across the outer
@@ -816,14 +794,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
             }
         });
     });
-    for r0 in c.over(&stage).unrolled() {
-        for r1 in r0.over(&plane).unrolled() {
-            for r2 in r1.over(&fragment).unrolled() {
-                let mut c_w = c.at(&r2);
-                c_w.copy_cast_from(&acc.at(&r2));
-            }
-        }
-    }
+    acc.drained_into(&c);
 }
 
 /// A register budget as a level structure: a staged K walk (`depth` in flight), the plane
@@ -894,18 +865,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
             }
         });
     });
-    for r0 in c.over(&stage).unrolled() {
-        for r1 in r0.over(&plane).unrolled() {
-            for r2 in r1.over(&step).unrolled() {
-                for r3 in r2.over(&col).unrolled() {
-                    for r4 in r3.over(&row).unrolled() {
-                        let mut c_w = c.at(&r4);
-                        c_w.copy_cast_from(&acc.at(&r4));
-                    }
-                }
-            }
-        }
-    }
+    acc.drained_into(&c);
 }
 
 // ---- quantized operands through the register leaf --------------------------------
@@ -2732,10 +2692,7 @@ fn plane_staged_matmul<E: Numeric>(
                     acc_s.mma(a_s, b_s, Semiring::SUM_PROD);
                 });
             });
-            for r0 in c_p.walk().unrolled() {
-                let mut c_p_w = c_p.at(&r0);
-                c_p_w.copy_cast_from(&acc.at(&r0));
-            }
+            acc.drained_into(&c_p);
         }
     }
 }
@@ -2772,10 +2729,7 @@ fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
                 let b_f = PlanePartition::<E>::operand(&b_p.at(&step), &acc_s, instruction);
                 acc_s.mma(&a_f, &b_f, Semiring::SUM_PROD);
             }
-            for r0 in c_p.walk().unrolled() {
-                let mut c_p_w = c_p.at(&r0);
-                c_p_w.copy_cast_from(&acc.at(&r0));
-            }
+            acc.drained_into(&c_p);
         }
     }
 }
@@ -3392,7 +3346,7 @@ fn register_matmul_promoted_folded_step_unit_group_fold() {
 // ---- the cmma K walk ----------------------------------------------------------------
 
 /// A matmul through tensor cores with a K walk: the kernel opens the accumulator fragment, the
-/// staged K regions accumulate into it, and the copy back to gmem is the epilogue. Tensor-core
+/// staged K regions accumulate into it, and the drain to gmem is the epilogue. Tensor-core
 /// only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
@@ -3538,10 +3492,7 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// The staged body at a register block, which every device runs.

@@ -298,10 +298,7 @@ fn stream_matmul<E: Numeric>(
                 None => contract::<E>(&acc, &a_region, &b_region, &cell),
             }
         }
-        for r0 in c_region.over(&inner).unrolled() {
-            let mut c_region_w = c_region.at(&r0);
-            c_region_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c_region);
     }
 }
 
@@ -344,10 +341,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
                 acc_cell.mma(&a_cell, b_s, Semiring::SUM_PROD);
             });
         });
-        for r0 in c_region.over(&inner).unrolled() {
-            let mut c_region_w = c_region.at(&r0);
-            c_region_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c_region);
     }
 }
 

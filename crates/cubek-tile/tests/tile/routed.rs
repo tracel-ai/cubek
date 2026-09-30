@@ -326,10 +326,7 @@ fn routed_block_matmul_kernel<E: Numeric>(
                 let mut acc_s = acc.at(&step);
                 acc_s.mma(&x_s.at(&step), &w_s.at(&step), Semiring::SUM_PROD);
             }
-            for cell in out_s.walk().unrolled() {
-                let mut o = out_s.at(&cell);
-                o.copy_cast_from(&acc.at(&cell));
-            }
+            acc.drained_into(&out_s);
         }
     }
 }

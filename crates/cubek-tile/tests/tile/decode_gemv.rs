@@ -122,14 +122,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             }
         }
     }
-    for r0 in out.walk().unrolled() {
-        for r1 in r0.walk().unrolled() {
-            for r2 in r1.walk().unrolled() {
-                let mut out_w = out.at(&r2);
-                out_w.copy_cast_from(&acc.at(&r2));
-            }
-        }
-    }
+    acc.drained_into(&out);
 }
 
 #[test]

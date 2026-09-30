@@ -52,10 +52,7 @@ fn column_gemv<E: Numeric, VX: Size, W: Size, VS: Size>(
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 
