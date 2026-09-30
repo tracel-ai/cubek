@@ -283,6 +283,7 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
     #[comptime] steps: Level,
     #[comptime] depth: usize,
     #[comptime] schedule: Schedule,
+    #[comptime] unrolled: bool,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -296,7 +297,10 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
             let mut c_w = c.at(&region);
             c_w.zero();
         }
-        let walk = cube.over(&steps);
+        let walk = match comptime!(unrolled) {
+            true => cube.over(&steps).unrolled(),
+            false => cube.over(&steps),
+        };
         let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
         match comptime!(schedule) {
             Schedule::AheadInSlots => {
@@ -1099,6 +1103,7 @@ fn check_matmul_scheduled(
     schedule: Schedule,
     units: u32,
     width: usize,
+    unrolled: bool,
 ) {
     let client = cubecl::test_device().client();
     let levels = tiling.build();
@@ -1140,6 +1145,7 @@ fn check_matmul_scheduled(
         launcher.partitioning().level(1),
         depth,
         schedule,
+        unrolled,
         f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
@@ -1190,6 +1196,43 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
                         schedule,
                         units,
                         width,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every walk of one to seven regions under both schedules, at every depth each takes, walked at
+/// runtime and unrolled: a ring runs the laps whose every region has the one ahead of it to fill
+/// with no branch around the fill, then the laps where the walk runs out with it. Walks shorter
+/// than the ring, one region past it, and ones whose last laps are two all land here.
+#[test]
+fn every_walk_length_matches_the_whole_under_both_schedules() {
+    let tiling = || {
+        Levels::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[K])
+            .cubes(&[M, N])
+    };
+    let schedules: [(Schedule, &[usize]); 2] = [
+        (Schedule::AheadInSlots, &[1, 2, 3]),
+        (Schedule::ThroughRegisters, &[1, 2]),
+    ];
+    for regions in 1..=7 {
+        for (schedule, depths) in schedules {
+            for &depth in depths {
+                for unrolled in [false, true] {
+                    check_matmul_scheduled(
+                        8,
+                        8,
+                        4 * regions,
+                        tiling(),
+                        depth,
+                        schedule,
+                        3,
+                        1,
+                        unrolled,
                     );
                 }
             }

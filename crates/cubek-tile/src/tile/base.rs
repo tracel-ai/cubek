@@ -75,6 +75,22 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether a cmma fragment draining into this tile goes through a scratch
+    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address.
+    pub(crate) fn fragments_bounce(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::Memory(m) => {
+                let addressed = m.store.addressed();
+                comptime!(FragmentDrain::of(&m.access, addressed) == FragmentDrain::Bounce)
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
+    }
+
     pub(crate) fn runtime_map(&self) -> RuntimeMap {
         match &self.kind {
             TileKind::Memory(g) => g.map.clone(),
@@ -157,7 +173,7 @@ impl<T: Numeric> Tile<T> {
         match &mut self.kind {
             TileKind::Memory(d) => {
                 let init_from = comptime!(match d.access.write {
-                    Write::Accumulate => InitFrom::Identity,
+                    Write::Accumulate | Write::Relay => InitFrom::Identity,
                     Write::Replace => init_from,
                 });
                 d.set_init_from(comptime!(init_from));
@@ -698,7 +714,8 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`.
+    /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`,
+    /// or copies a memory window of the same box, the units sharing it a line at a time.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
@@ -706,7 +723,11 @@ impl<T: Numeric> Tile<T> {
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
                 s.fragment().store_cast_window(d, space)
             }
-            _ => panic!("Tile::copy_cast_from: a fragment stores into memory; nothing else casts"),
+            (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_cast_from(s, space),
+            _ => panic!(
+                "Tile::copy_cast_from: a fragment or a memory window stores into memory; nothing \
+                 else casts"
+            ),
         }
     }
 

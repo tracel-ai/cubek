@@ -193,8 +193,9 @@ impl<T: Numeric> PlaneTile<T> {
 
     /// Store this tile into `mem`; `space` is the sink window's.
     pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
+        let addressed = mem.store.addressed();
         match self {
-            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
+            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access, addressed)) {
                 FragmentDrain::Intrinsic => {
                     d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
                 }
@@ -223,8 +224,9 @@ impl<T: Numeric> PlaneTile<T> {
         mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
+        let addressed = mem.store.addressed();
         match self {
-            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
+            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access, addressed)) {
                 FragmentDrain::Intrinsic => {
                     d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
                 }
@@ -260,6 +262,14 @@ pub struct PlanePartition<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> PlanePartition<T> {
+    /// Whether this grid's tiles are cmma fragments, the one form that drains through a scratch.
+    pub(crate) fn is_cmma(&self) -> comptime_type!(bool) {
+        match self.frags.index(0usize) {
+            PlaneTile::Cmma(_) => comptime!(true),
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
+        }
+    }
+
     /// The `(mi, ni)` tile (a handle clone); comptime indices only.
     pub(crate) fn at(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> PlaneTile<T> {
         self.frags.index(comptime!(mi * self.n_tiles + ni)).clone()
