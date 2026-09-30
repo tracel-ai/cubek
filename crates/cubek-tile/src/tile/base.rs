@@ -709,7 +709,7 @@ impl<T: Numeric> Tile<T> {
         comptime!(assert!(
             !scaled || into_memory,
             "Tile::copy_from: a scaled source decodes into memory only; to load it into \
-             fragments, land it first (`Tile::landed`)"
+             fragments, open it with `landed_for` and contract it"
         ));
         if comptime!(scaled) {
             self.copy_scaled_from(src);
@@ -1212,7 +1212,7 @@ impl<E: Numeric> TileExpand<E> {
         if let TileKindExpand::Memory(memory) = &self.kind {
             assert!(
                 !memory.factor.scaled(),
-                "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; land them first (Tile::landed) or contract in memory"
+                "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; open them with `landed_for` or contract in memory"
             );
         }
     }

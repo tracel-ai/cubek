@@ -641,6 +641,8 @@ impl<T: Numeric> PlanePartition<T> {
              into shared memory first"
         ));
         let (grid, m, n) = acc.fragment_grid();
+        let scaled = src.scaled();
+        let landed = src.has_landing();
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.place.space.clone()),
             comptime!(form),
@@ -651,7 +653,17 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(src.place.depth),
             comptime!(src.place.levels.clone()),
         );
-        frags.copy_from(src);
+        if comptime!(scaled || landed) {
+            // A scaled operand, or one opened to reach fragments through a landing, loads from its
+            // plane's landing, as the direct contraction does.
+            let side = comptime!(Side::of(&src.place.space, &acc.place.space));
+            let landing = src.landed(side, comptime!(acc.place.space.clone()));
+            frags.copy_from(&landing);
+            // The landing is this region's until every unit's load has read it.
+            sync_plane();
+        } else {
+            frags.copy_from(src);
+        }
         frags
     }
 

@@ -3,11 +3,22 @@
 use crate::*;
 /// Which factor of a contraction an operand is.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Side {
+pub(crate) enum Side {
     /// The left factor.
     Lhs,
     /// The right factor.
     Rhs,
+}
+
+impl Side {
+    /// The side a factor spanning `own` takes in a contraction into `out`: the rhs is the one
+    /// carrying the output's innermost axis.
+    pub(crate) fn of(own: &Space, out: &Space) -> Side {
+        match own.contains(out.axis_at(out.rank() - 1)) {
+            true => Side::Rhs,
+            false => Side::Lhs,
+        }
+    }
 }
 
 /// Refuse scales spanning axes only the other operand varies over.
