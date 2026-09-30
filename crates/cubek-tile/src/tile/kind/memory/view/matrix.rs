@@ -113,12 +113,14 @@ pub(crate) fn batch_matrix(
     let rank = comptime!(space.rank());
     // Rounded up like the buffer's own load count, so a checked read covers a partial last load.
     let counts = comptime!(load.counts(space));
+    // A row, or a column, steps the innermost axis of its group, so a load may reach along that
+    // axis and no other: the loads of a group are then consecutive rows (or columns), in order.
     comptime!(assert!(
-        counts[..axes.row_split]
-            .iter()
-            .zip(0..axes.row_split)
-            .all(|(&count, p)| count == space.extent_at(p)),
-        "batch_matrix: a load of {:?} spans a batch axis of {space:?}, which a matrix pins",
+        (0..rank).all(|p| counts[p] == space.extent_at(p)
+            || p + 1 == rank
+            || (p + 1 == axes.col_split && axes.col_split > axes.row_split)),
+        "batch_matrix: a load of {:?} over {space:?} reaches along an axis that is neither the \
+         innermost of the matrix's rows nor of its columns",
         load.extents()
     ));
     let rows = comptime!(

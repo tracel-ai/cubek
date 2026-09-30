@@ -91,6 +91,12 @@ impl VectorTile {
         &self.extents
     }
 
+    /// Values one load holds along its finest axis: one line of it, the whole load where it spans
+    /// one axis. A reader walking lines along that axis takes `values() / run()` of them a load.
+    pub(crate) fn run_length(&self) -> usize {
+        self.extents.first().map_or(1, |&(_, run)| run)
+    }
+
     /// How many values the load brings.
     pub fn values(&self) -> usize {
         self.extents.iter().map(|&(_, extent)| extent).product()

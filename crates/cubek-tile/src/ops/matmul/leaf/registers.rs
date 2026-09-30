@@ -24,6 +24,11 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
     #[comptime] component_fanout: bool,
     #[comptime] semiring: Semiring,
 ) {
+    comptime!(assert!(
+        columns == 1 || contracted_per_step > 1,
+        "mm: a rhs load holds the runs of {columns} columns along the contraction, and this rhs \
+         lines along the accumulator"
+    ));
     let mut b = Array::<Vector<E, V>>::new(nr);
     let folded = comptime!(contracted_per_step > 1);
     let width = comptime!(match folded {
@@ -148,17 +153,20 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size
     #[comptime] semiring: Semiring,
 ) {
     if comptime!(contracted_per_step > 1) {
-        // A load holds the runs along the contraction of `columns` columns, in order (one for a
-        // plain rhs): read it once and split it, each run under its own column's scale. Promote
-        // to `E` before scaling so an integer operand doesn't round the scale or wrap.
+        // A load holds `columns` columns' runs, in order: read it once, split it, scale each run
+        // (in `E`, so an integer operand doesn't round the scale or wrap).
         #[unroll(unroll)]
         for g in 0..comptime!(nr / columns) {
             let held = rhs.read((g as u32, k_line));
             #[unroll]
             for j in 0..columns {
                 let pos = ((g * columns + j) as u32, k_line);
-                let run = run_of::<ER, RL, V>(held, comptime!(j * contracted_per_step));
-                b[g * columns + j] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(run), pos);
+                let run = values_at::<E, ER, RL, V>(
+                    held,
+                    comptime!(j * contracted_per_step),
+                    comptime!(Packing::Plain),
+                );
+                b[g * columns + j] = rhs_scales.apply::<E, V>(run, pos);
             }
         }
     } else {
@@ -184,26 +192,6 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size
             // A single fma; `+= a * b` would lower to a mul and a dependent add.
             c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
         }
-    }
-}
-
-/// The `V` values of `held` from `offset` on: one column's run of a load holding several, or the
-/// load itself where it holds one.
-#[cube]
-fn run_of<T: Numeric, RL: Size, V: Size>(
-    held: Vector<T, RL>,
-    #[comptime] offset: usize,
-) -> Vector<T, V> {
-    let (load, run) = (RL::value(), V::value());
-    if comptime!(load == run) {
-        Vector::<T, V>::cast_from(held)
-    } else {
-        let mut out = Vector::<T, V>::empty();
-        #[unroll]
-        for i in 0..run {
-            out.insert(i, held.extract(offset + i));
-        }
-        out
     }
 }
 

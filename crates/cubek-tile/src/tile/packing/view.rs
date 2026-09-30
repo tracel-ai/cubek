@@ -40,7 +40,9 @@ pub(crate) fn values_at<F: Numeric, I: Numeric, WP: Size, NF: Size>(
     #[comptime] packing: Packing,
 ) -> Vector<F, NF> {
     let nf = NF::value();
+    let wp = WP::value();
     match comptime!(packing) {
+        Packing::Plain if comptime!(offset == 0 && wp == nf) => Vector::<F, NF>::cast_from(line),
         Packing::Plain => {
             let mut out = Vector::<F, NF>::empty();
             #[unroll]

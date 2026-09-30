@@ -26,8 +26,8 @@ impl<T: Numeric> RegisterData<T> {
             self.monoid
         ));
         // A load stored across several columns reads as their runs along the contraction.
-        let rhs_load = rhs.rhs_load();
-        let vw = comptime!(rhs_load.run);
+        let rhs_load = rhs.vector_tile();
+        let vw = comptime!(rhs_load.run_length());
         let lw = lhs.vector_size();
         let fold = comptime!(self.fold);
         // A packed rhs is served at its packing factor, so this checks the block was opened by it.
@@ -74,8 +74,7 @@ impl<T: Numeric> RegisterData<T> {
             MatrixAxes::new(&rhs.place.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
         });
 
-        comptime!(rhs_load.check(&rhs.place.space, rhs_axes, fold > 1, nr));
-        let size!(RL) = comptime!(rhs_load.run * rhs_load.columns);
+        let size!(RL) = comptime!(rhs_load.values());
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
@@ -106,7 +105,7 @@ impl<T: Numeric> RegisterData<T> {
             &mut self.data,
             lw,
             fold,
-            comptime!(rhs_load.columns),
+            comptime!(rhs_load.values() / vw),
             mr,
             nr,
             kc,

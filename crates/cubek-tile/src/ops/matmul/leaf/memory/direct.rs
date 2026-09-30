@@ -28,8 +28,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     ));
 
     let lw = lhs.vector_size();
-    let rhs_load = rhs.rhs_load();
-    let rw = comptime!(rhs_load.run);
+    let rhs_load = rhs.vector_tile();
+    let rw = comptime!(rhs_load.run_length());
     let aw = comptime!(acc.store.vector_size);
     comptime!(assert!(
         rw == aw || contracted_per_step > 1,
@@ -52,18 +52,12 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
          gives one; the N-D nest reads them a cell at a time"
     ));
 
-    let rhs_axes = comptime!(shape.rhs_axes(&rhs.place.space));
-    comptime!(rhs_load.check(
-        &rhs.place.space,
-        rhs_axes,
-        contracted_per_step > 1,
-        shape.nr
-    ));
-    let columns = comptime!(rhs_load.columns);
+    // A load holds this many runs along the contraction, each its own column.
+    let columns = comptime!(rhs_load.values() / rw);
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        let size!(RL) = comptime!(rhs_load.run * columns);
+        let size!(RL) = comptime!(rhs_load.values());
         nest::<E, EL, W, ER, W, A, RL>(acc, lhs, rhs, shape, columns, config, semiring);
     } else {
         let size!(W) = lw;
