@@ -3,7 +3,8 @@
 //! `split_k`'s in-kernel combine one scope down: every plane of a cube contracts its own slice of
 //! `K` in registers and drains it into the cube's [`SmemAccumulation`], the cube synchronizes, and
 //! the sum leaves through a plain store. Nothing reaches global memory but the finished box, so
-//! the output is not zeroed first and binds as an ordinary tile.
+//! the output is not zeroed first and binds as an ordinary tile. The planes meet atomically
+//! ([`SmemAccumulation`]) or in cyclic rounds ([`SmemCyclicAccumulation`]).
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -60,6 +61,40 @@ fn smem_split_matmul<E: Numeric>(
     }
 }
 
+/// The same product, the planes meeting in cyclic rounds rather than atomically: each drains its
+/// slice every round, landing one chunk a round, the cube synchronized between rounds.
+#[cube(launch)]
+fn smem_cyclic_split_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] planes: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in &space {
+        let mut c_cube = c.at(&cube);
+        let sum = c_cube.smem_cyclic_accumulation::<E>(planes);
+        for plane in cube {
+            let a_plane = a.at(&plane);
+            let b_plane = b.at(&plane);
+            let mut partial = c_cube.at(&plane).block_accumulator::<E, E, E>(
+                &a_plane,
+                &b_plane,
+                REGISTER_BLOCK,
+                Monoid::Sum,
+            );
+            partial.zero();
+            partial.mma(&a_plane, &b_plane, Semiring::SUM_PROD);
+            sum.drain_at(&partial, &plane, plane.coord(K));
+        }
+        c_cube.copy_from(&sum.source);
+    }
+}
+
 fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
     let a = |i: usize, p: usize| ((i * k + p) % 7) as f32 - 3.0;
     let b = |p: usize, j: usize| ((p * n + j) % 5) as f32 - 2.0;
@@ -71,8 +106,23 @@ fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-/// `a·b` over boxes of `box_m × box_n`, each box's `K` distributed to `planes` planes of its cube.
-fn run(m: usize, n: usize, k: usize, (box_m, box_n): (usize, usize), planes: usize) -> HostData {
+/// How the planes of a cube meet.
+#[derive(Clone, Copy)]
+enum Meet {
+    Atomic,
+    Cyclic,
+}
+
+/// `a·b` over boxes of `box_m × box_n`, each box's `K` distributed to `planes` planes of its cube,
+/// which meet as `meet` says.
+fn run(
+    m: usize,
+    n: usize,
+    k: usize,
+    (box_m, box_n): (usize, usize),
+    planes: usize,
+    meet: Meet,
+) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
@@ -103,25 +153,47 @@ fn run(m: usize, n: usize, k: usize, (box_m, box_n): (usize, usize), planes: usi
         Form::Static,
     );
 
-    smem_split_matmul::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(
-            a_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]),
+    match meet {
+        Meet::Atomic => smem_split_matmul::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            TileArgLaunch::new(
+                a_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[M, K]),
+            ),
+            TileArgLaunch::new(
+                b_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[K, N]),
+            ),
+            TileArgLaunch::new(
+                out.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[M, N]),
+            ),
+            launcher.partitioning_arg(),
+            dtype,
         ),
-        TileArgLaunch::new(
-            b_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[K, N]),
+        Meet::Cyclic => smem_cyclic_split_matmul::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            TileArgLaunch::new(
+                a_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[M, K]),
+            ),
+            TileArgLaunch::new(
+                b_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[K, N]),
+            ),
+            TileArgLaunch::new(
+                out.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[M, N]),
+            ),
+            launcher.partitioning_arg(),
+            planes,
+            dtype,
         ),
-        TileArgLaunch::new(
-            out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
-        ),
-        launcher.partitioning_arg(),
-        dtype,
-    );
+    }
 
     HostData::from_tensor_handle(&client, out, HostDataType::F32)
 }
@@ -170,7 +242,7 @@ fn planes_fold_their_slices_in_shared_memory() {
         return;
     }
     let (m, n, k) = (4, 4, 32);
-    assert_matches(&run(m, n, k, (4, 4), 4), m, n, k);
+    assert_matches(&run(m, n, k, (4, 4), 4, Meet::Atomic), m, n, k);
 }
 
 /// Several cubes, each with its own accumulator: a box's sum never sees another box's planes.
@@ -180,7 +252,37 @@ fn each_cube_folds_only_its_own_box() {
         return;
     }
     let (m, n, k) = (8, 12, 24);
-    assert_matches(&run(m, n, k, (4, 4), 3), m, n, k);
+    assert_matches(&run(m, n, k, (4, 4), 3, Meet::Atomic), m, n, k);
+}
+
+/// Four planes meeting in cyclic rounds: every cell is the sum of four partials, each landed by
+/// one writer alone in its round, with no atomic, so this runs wherever shared memory does.
+#[test]
+fn planes_meet_in_cyclic_rounds() {
+    let (m, n, k) = (4, 4, 32);
+    assert_matches(&run(m, n, k, (4, 4), 4, Meet::Cyclic), m, n, k);
+}
+
+/// Several cubes, three planes each, meeting in cyclic rounds: three chunks of a box that does not
+/// divide by them, and no box sees another's planes.
+#[test]
+fn each_cube_meets_its_planes_in_cyclic_rounds() {
+    let (m, n, k) = (8, 12, 24);
+    assert_matches(&run(m, n, k, (4, 4), 3, Meet::Cyclic), m, n, k);
+}
+
+/// The cyclic rounds fix the order every cell takes its partials in, so two launches sum the same
+/// bits, where an atomic meeting may not.
+#[test]
+fn cyclic_rounds_sum_the_same_every_run() {
+    let (m, n, k) = (8, 12, 96);
+    let bits = |data: &HostData| -> Vec<u32> {
+        (0..m * n)
+            .map(|i| data.get_f32(&[i / n, i % n]).to_bits())
+            .collect()
+    };
+    let first = bits(&run(m, n, k, (4, 4), 4, Meet::Cyclic));
+    assert_eq!(bits(&run(m, n, k, (4, 4), 4, Meet::Cyclic)), first);
 }
 
 // -- A fragment written into a window the edge cuts short --------------------------------------

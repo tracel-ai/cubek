@@ -268,6 +268,10 @@ pub enum Schedule {
     /// One writer at a time over the whole box, in the order of their runs, handed on through a
     /// counter: the cubes of a split taking turns at a [`Relay`](crate::launch::Relay)'s carry.
     Sequential,
+    /// Every writer every round, each on its own chunk of the box: in round `r`, writer `w` takes
+    /// chunk `(w + r) mod writers`, a cube barrier between rounds. The planes of one cube meeting
+    /// in shared memory ([`SmemCyclicAccumulation`]), where a barrier orders them.
+    Cyclic,
 }
 
 impl Write {
@@ -291,13 +295,18 @@ impl Write {
                 SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes,
                 Write::Accumulate,
             )
-            | (SplitShare::PartialAcrossCubes, Write::Exclusive(Schedule::Sequential)) => {}
+            | (SplitShare::PartialAcrossCubes, Write::Exclusive(Schedule::Sequential))
+            | (SplitShare::PartialAcrossPlanes, Write::Exclusive(Schedule::Cyclic)) => {}
+            (SplitShare::PartialAcrossCubes, Write::Exclusive(Schedule::Cyclic)) => panic!(
+                "{site}: this accumulator's cells are split across cubes and its destination                  takes its writers in cyclic rounds, which a cube barrier orders: it orders the                  planes of one cube, never cubes. Take the cubes' turns through a `Relay`, or                  combine them atomically."
+            ),
             (SplitShare::PartialAcrossPlanes, Write::Exclusive(Schedule::Sequential)) => panic!(
                 "{site}: this accumulator's cells are split across the planes of one cube and its \
                  destination is relayed, a plain read and write taken one cube at a time; the planes \
                  would write the same line at once and lose each other's partial. \
                  Drain into an atomic destination (bind it as an `AccumulateArg`), or combine \
-                 the planes' partials in the cube before its turn at the relay."
+                 the planes' partials in the cube before its turn at the relay, atomically or in \
+                 cyclic rounds (`smem_cyclic_accumulation`)."
             ),
             (SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes, Write::Replace) => {
                 panic!(
