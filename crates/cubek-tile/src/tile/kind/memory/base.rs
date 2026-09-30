@@ -127,6 +127,15 @@ impl<T: Numeric> Store<T> {
         }
     }
 
+    /// Whether these values sit at an address, which a slice-shaped write such as a fragment's
+    /// store intrinsic needs; a write call has none.
+    pub(crate) fn addressed(&self) -> comptime_type!(bool) {
+        match &self.backing {
+            Backing::Buffer(_) | Backing::ReadCall(_) => comptime!(true),
+            Backing::WriteCall(_) => comptime!(false),
+        }
+    }
+
     /// The bytes, for a destination that has an address.
     // `Box<[T]>` is cubecl's owned-slice handle, not a Rust box; `&[T]` is a different kernel type.
     #[allow(clippy::borrowed_box)]

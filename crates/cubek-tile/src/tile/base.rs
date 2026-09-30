@@ -75,6 +75,22 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether a cmma fragment draining into this tile goes through a scratch
+    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address.
+    pub(crate) fn fragments_bounce(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::Memory(m) => {
+                let addressed = m.store.addressed();
+                comptime!(FragmentDrain::of(&m.access, addressed) == FragmentDrain::Bounce)
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
+    }
+
     pub(crate) fn runtime_map(&self) -> RuntimeMap {
         match &self.kind {
             TileKind::Memory(g) => g.map.clone(),

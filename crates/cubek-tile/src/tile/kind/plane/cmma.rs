@@ -198,11 +198,12 @@ pub(crate) enum FragmentDrain {
 }
 
 impl FragmentDrain {
-    /// How a fragment drains into a destination written as `access` says.
-    pub(crate) const fn of(access: &Access) -> Self {
-        match (access.write, access.overhang) {
-            (Write::Replace, Overhang::Never | Overhang::Fits) => FragmentDrain::Intrinsic,
-            (Write::Replace, Overhang::Masked) | (Write::Accumulate | Write::Relay, _) => {
+    /// How a fragment drains into a destination written as `access` says, `addressed` when its
+    /// values sit at an address the intrinsic can store to.
+    pub(crate) const fn of(access: &Access, addressed: bool) -> Self {
+        match (access.write, access.overhang, addressed) {
+            (Write::Replace, Overhang::Never | Overhang::Fits, true) => FragmentDrain::Intrinsic,
+            (Write::Replace, _, _) | (Write::Accumulate | Write::Relay, _, _) => {
                 FragmentDrain::Bounce
             }
         }
@@ -227,23 +228,33 @@ mod fragment_drain_tests {
     #[test]
     fn a_replacing_window_inside_its_buffer_stores_through_the_intrinsic() {
         for overhang in [Overhang::Never, Overhang::Fits] {
-            let drain = FragmentDrain::of(&access(Write::Replace, overhang));
+            let drain = FragmentDrain::of(&access(Write::Replace, overhang), true);
             assert_eq!(drain, FragmentDrain::Intrinsic);
         }
     }
 
     #[test]
     fn an_overhanging_or_folding_window_bounces() {
-        let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked));
+        let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked), true);
         assert_eq!(masked, FragmentDrain::Bounce);
         for overhang in [Overhang::Never, Overhang::Fits, Overhang::Masked] {
             for write in [Write::Accumulate, Write::Relay] {
                 assert_eq!(
-                    FragmentDrain::of(&access(write, overhang)),
+                    FragmentDrain::of(&access(write, overhang), true),
                     FragmentDrain::Bounce,
                     "{write:?} {overhang:?}"
                 );
             }
+        }
+    }
+
+    /// A write call has no address for the intrinsic to store to, so even a replacing window
+    /// wholly inside it bounces.
+    #[test]
+    fn a_window_with_no_address_bounces() {
+        for overhang in [Overhang::Never, Overhang::Fits] {
+            let drain = FragmentDrain::of(&access(Write::Replace, overhang), false);
+            assert_eq!(drain, FragmentDrain::Bounce);
         }
     }
 }
