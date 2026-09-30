@@ -212,16 +212,16 @@ impl Labels {
 impl Boundaries {
     /// The mode: the stated policy, else whether the operand overhangs or underflows.
     fn mode(
-        policy: BoundaryPolicy,
+        policy: Option<BoundaryPolicy>,
         projection: &Projection,
         addressed: &[Axis],
         concrete: &Space,
         overhangs: &[Axis],
     ) -> Option<Boundary> {
         match policy {
-            BoundaryPolicy::Unchecked => None,
-            BoundaryPolicy::Every(boundary) => Some(boundary),
-            BoundaryPolicy::Derived => {
+            Some(BoundaryPolicy::Unchecked) => None,
+            Some(BoundaryPolicy::Every(boundary)) => Some(boundary),
+            None => {
                 let overhangs = addressed
                     .iter()
                     .filter(|&&axis| concrete.contains(axis))
@@ -241,7 +241,7 @@ pub(crate) struct Boundaries {
 impl Boundaries {
     /// `concrete` is the launch's real-extent space and `overhangs` the axes its tiles reach past.
     pub(crate) fn new(
-        policy: BoundaryPolicy,
+        policy: Option<BoundaryPolicy>,
         projection: &Projection,
         addressed: &[Axis],
         concrete: &Space,

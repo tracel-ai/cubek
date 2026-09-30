@@ -283,7 +283,7 @@ impl<T: Numeric> Memory<T> {
                 },
                 write,
                 fill: FillUnits::cube(spec.units),
-                storage: spec.storage,
+                storage: WindowStorage::Stored(spec.storage),
                 delivery: spec.delivery,
             }),
             unit_share: comptime!(UnitShare::Repeated),

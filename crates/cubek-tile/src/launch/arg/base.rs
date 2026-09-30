@@ -15,12 +15,10 @@ pub struct Unlabelled;
 /// Typestate marker: the operand's axes are stated.
 pub struct Labelled;
 
-/// Whether an operand's reads are bounds-checked, and how.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// How an operand's reads are bounds-checked, where the caller states it. An operand that states
+/// none is checked with [`Boundary::Zero`] on the axes that can leave the buffer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BoundaryPolicy {
-    /// Checked with [`Boundary::Zero`] on the axes that can leave the buffer.
-    #[default]
-    Derived,
     /// Unchecked; the caller guarantees every read is in bounds.
     Unchecked,
     /// Checked with this boundary on every axis that is not provably in bounds.
@@ -38,7 +36,8 @@ struct ArgData<'a> {
     /// The operand's own affine mapping; `None` derives it from the labelled dims.
     projection: Option<Projection>,
     width: usize,
-    boundary: BoundaryPolicy,
+    /// The stated policy; `None` derives one from the overhangs.
+    boundary: Option<BoundaryPolicy>,
     packing: Packing,
     /// Who moves the operand into a stage ([`delivery`](Arg::delivery)).
     delivery: Delivery,
@@ -72,7 +71,7 @@ impl<'a> Arg<'a, Unlabelled> {
                 batches: &[],
                 projection: None,
                 width: 1,
-                boundary: BoundaryPolicy::Derived,
+                boundary: None,
                 packing: Packing::Plain,
                 delivery: Delivery::SyncPerUnit,
                 in_stride_order: false,
@@ -123,7 +122,7 @@ impl<'a> Arg<'a, Labelled> {
 
     /// How this operand's edges are checked.
     pub fn boundary(mut self, policy: BoundaryPolicy) -> Self {
-        self.data.boundary = policy;
+        self.data.boundary = Some(policy);
         self
     }
 
@@ -238,7 +237,7 @@ fn stride_ordered(
 }
 
 /// The coarsest level whose windows the operand's storage tiles address with one stride per axis
-/// ([`Contiguous`](Storage::Contiguous)), every other window walked through the layout; and the
+/// (one contiguous run each), every other window walked through the layout; and the
 /// stored tiles themselves, finest first ([`TileSpec::stored_tiles`]).
 fn storage_of(
     geometry: &Geometry,
