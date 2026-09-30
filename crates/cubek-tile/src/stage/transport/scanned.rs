@@ -3,6 +3,7 @@
 use cubecl::prelude::*;
 
 use super::base::Scan;
+use super::cooperative::fill_extent;
 use crate::*;
 
 #[cube]
@@ -26,7 +27,7 @@ impl<T: Numeric> Memory<T> {
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
         // One line per unit, striding by the units that fill: the distribution must stay
-        // disjoint, or a `Write::Accumulate` destination folds a value more than once.
+        // disjoint, or a destination that adds (`Accumulate`, `Fold`) takes a value more than once.
         let stride = fill_workers(fill);
         let mut i = fill_worker(fill);
         while i < total {
@@ -40,7 +41,7 @@ impl<T: Numeric> Memory<T> {
     /// line: what a sum held in a wider buffer becomes when it lands in its output. The two are
     /// the same box, plain, and served at one width; the same cyclic scan as
     /// [`fill_scanned`](Memory::fill_scanned), each unit casting the lines it moves.
-    pub(crate) fn fill_cast_from<S: Numeric>(&mut self, src: &Memory<S>) {
+    pub(crate) fn fill_cast_from<S: Numeric>(&mut self, src: &Memory<S>, #[comptime] space: Space) {
         comptime!(assert!(
             src.store.packing == Packing::Plain
                 && self.store.packing == Packing::Plain
@@ -49,6 +50,14 @@ impl<T: Numeric> Memory<T> {
                 && self.projection.is_direct(),
             "Memory::fill_cast_from: a cast copy moves plain lines between two boxes served at \
              one width"
+        ));
+        // The innermost extent is whole lines, as the uncast scan asks (`Scan::new`): nothing on
+        // this path would notice the last line the source cannot fill.
+        comptime!(fill_extent(
+            &space,
+            src.store.vector_size,
+            self.store.vector_size,
+            src.access.overhang.masks()
         ));
         let size!(W) = comptime!(self.store.vector_size);
         let s = src.flat_unpacked::<W, W>();

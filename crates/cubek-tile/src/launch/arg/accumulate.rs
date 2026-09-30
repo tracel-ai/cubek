@@ -12,7 +12,7 @@ use cubecl::unexpanded;
 use crate::*;
 
 /// An output several instances accumulate into, as a single launch argument.
-/// The buffer must arrive holding the monoid's identity.
+/// The buffer must arrive holding zero: the atomic only ever adds.
 #[derive(CubeType, CubeLaunch)]
 pub struct AccumulateArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<Atomic<E>>,

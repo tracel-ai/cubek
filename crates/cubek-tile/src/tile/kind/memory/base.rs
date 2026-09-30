@@ -249,18 +249,44 @@ pub enum Write {
     /// Adds into the cell by reading it and writing the sum back, a line at a time. One writer at
     /// a time: the kernel serializes the instances sharing a cell (a turnstile across the cubes
     /// of a split contraction), and two writing at once lose one's partial.
+    ///
+    /// The read and the write are plain loads and stores, so the turns carry the ordering: a
+    /// writer publishes its lines at device scope before handing the cell on (`sync_storage`,
+    /// then the atomic that passes the turn), and the next acquires at device scope after taking
+    /// it (the atomic, then `sync_storage`), or it can read a line its own cache still holds stale.
     Fold,
 }
 
 impl Write {
-    /// Refuse an accumulation `split` leaves in pieces unless this write adds them.
-    pub(crate) fn admits(self, split: SplitShare, site: &str) {
+    /// Refuse an accumulation `split` leaves in pieces unless this write adds them, a fold whose
+    /// partials the planes of one cube write at once, which no turn across cubes serializes, and
+    /// a `monoid` other than a sum into a destination that adds.
+    pub(crate) fn admits(self, split: SplitShare, monoid: Monoid, site: &str) {
+        match (self, monoid) {
+            (Write::Accumulate | Write::Fold, Monoid::Prod | Monoid::Max | Monoid::Min) => panic!(
+                "{site}: this destination adds ({self:?}), atomically or in turns, so a \
+                 {monoid:?} accumulation into it would come out summed. Drain it into a \
+                 replacing destination, combining the partials first where they are split."
+            ),
+            (Write::Accumulate | Write::Fold, Monoid::Sum) | (Write::Replace, _) => {}
+        }
         match (split, self) {
             (SplitShare::Whole, _)
-            | (SplitShare::Partial, Write::Accumulate)
-            | (SplitShare::Partial, Write::Fold) => {}
-            (SplitShare::Partial, Write::Replace) => panic!(
-                "{site}: this accumulator's cells are split across planes or cubes and its \
+            | (
+                SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes,
+                Write::Accumulate,
+            )
+            | (SplitShare::PartialAcrossCubes, Write::Fold) => {}
+            (SplitShare::PartialAcrossPlanes, Write::Fold) => panic!(
+                "{site}: this accumulator's cells are split across the planes of one cube and its \
+                 destination folds, a plain read and write taken one writer at a time; the planes \
+                 would write the same line at once and lose each other's partial. \
+                 Drain into an atomic destination (bind it as an `AccumulateArg`), or combine \
+                 the planes' partials in the cube before its turn at the fold."
+            ),
+            (SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes, Write::Replace) => {
+                panic!(
+                    "{site}: this accumulator's cells are split across planes or cubes and its \
                  destination replaces rather than accumulates, so every partial but one would be \
                  lost. \
                  A contracted axis distributed across planes or cubes gives each instance a \
@@ -269,7 +295,8 @@ impl Write {
                  distribute the contraction across the plane's units instead \
                  (`distribute(units(n), ..)`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
-            ),
+                )
+            }
         }
     }
 }
@@ -327,4 +354,46 @@ pub enum Storage {
     Tiled(Option<usize>),
     /// Storage-tiled and inside one storage tile: one contiguous run from its origin.
     Contiguous,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fold takes one writer at a time: the cubes of a split meet it in turns, and an atomic
+    /// destination takes a split at either scope.
+    #[test]
+    fn a_fold_takes_a_split_across_cubes() {
+        Write::Fold.admits(SplitShare::PartialAcrossCubes, Monoid::Sum, "test");
+        Write::Accumulate.admits(SplitShare::PartialAcrossCubes, Monoid::Sum, "test");
+        Write::Accumulate.admits(SplitShare::PartialAcrossPlanes, Monoid::Sum, "test");
+    }
+
+    /// The planes of one cube write a cell at once, which no turn across cubes serializes.
+    #[test]
+    #[should_panic(expected = "split across the planes of one cube")]
+    fn a_fold_refuses_a_split_across_planes() {
+        Write::Fold.admits(SplitShare::PartialAcrossPlanes, Monoid::Sum, "test");
+    }
+
+    /// A destination that adds sums whatever it is handed, so it takes only a sum.
+    #[test]
+    #[should_panic(expected = "would come out summed")]
+    fn an_atomic_destination_refuses_a_max() {
+        Write::Accumulate.admits(SplitShare::Whole, Monoid::Max, "test");
+    }
+
+    #[test]
+    #[should_panic(expected = "would come out summed")]
+    fn a_fold_refuses_a_max() {
+        Write::Fold.admits(SplitShare::PartialAcrossCubes, Monoid::Max, "test");
+    }
+
+    /// A replacing destination takes any monoid: each cell is its writer's own.
+    #[test]
+    fn a_replacing_destination_takes_any_monoid() {
+        for monoid in [Monoid::Sum, Monoid::Prod, Monoid::Max, Monoid::Min] {
+            Write::Replace.admits(SplitShare::Whole, monoid, "test");
+        }
+    }
 }

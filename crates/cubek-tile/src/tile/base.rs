@@ -707,7 +707,7 @@ impl<T: Numeric> Tile<T> {
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
                 s.fragment().store_cast_window(d, space)
             }
-            (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_cast_from(s),
+            (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_cast_from(s, space),
             _ => panic!(
                 "Tile::copy_cast_from: a fragment or a memory window stores into memory; nothing \
                  else casts"

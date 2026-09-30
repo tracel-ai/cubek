@@ -75,16 +75,17 @@ impl Bound {
         OutputArgs::Tensor(self.arg())
     }
 
-    /// This operand as an [`Output::Atomic`]; the buffer must arrive holding the monoid's identity.
+    /// This operand as an [`Output::Atomic`]; the buffer must arrive holding zero, since it only
+    /// ever adds.
     pub fn atomic<E: Numeric, V: Size>(self) -> OutputArgs<'static, E, V> {
         let spec = self.spec.clone();
         OutputArgs::Atomic(AccumulateArgLaunch::new(self.tensor(), spec))
     }
 
     /// This operand as an [`Output::Folded`]: added into by reading each line and writing the sum
-    /// back, one writer at a time. The first writer of a cell replaces nothing: the buffer has to
-    /// arrive holding the monoid's identity, or the kernel's first turn writes it with
-    /// [`Write::Replace`](crate::kind::Write::Replace) through an [`Output::Tensor`] of its own.
+    /// back, one writer at a time. The buffer arrives holding zero, or the kernel's first turn
+    /// writes it through [`TileArg::tile`], replacing, before any turn folds through
+    /// [`TileArg::folded_tile`]: one argument, two tiles over it.
     pub fn folded<E: Numeric, V: Size>(self) -> OutputArgs<'static, E, V> {
         OutputArgs::Folded(self.arg())
     }
