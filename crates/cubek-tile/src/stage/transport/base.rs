@@ -267,7 +267,11 @@ mod tests {
             write: Write::Accumulate,
             ..access()
         };
-        for access in [windowed, masked, folding] {
+        let folding_in_turns = Access {
+            write: Write::Fold,
+            ..access()
+        };
+        for access in [windowed, masked, folding, folding_in_turns] {
             assert_eq!(
                 kind(plain(4), plain(4), &access),
                 TransportKind::Scanned(Scan::Element),

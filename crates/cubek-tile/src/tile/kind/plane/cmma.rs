@@ -237,8 +237,13 @@ mod fragment_drain_tests {
         let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked));
         assert_eq!(masked, FragmentDrain::Bounce);
         for overhang in [Overhang::Never, Overhang::Fits, Overhang::Masked] {
-            let folding = FragmentDrain::of(&access(Write::Accumulate, overhang));
-            assert_eq!(folding, FragmentDrain::Bounce);
+            for write in [Write::Accumulate, Write::Fold] {
+                assert_eq!(
+                    FragmentDrain::of(&access(write, overhang)),
+                    FragmentDrain::Bounce,
+                    "{write:?} {overhang:?}"
+                );
+            }
         }
     }
 }

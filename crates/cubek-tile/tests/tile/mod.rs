@@ -11,6 +11,7 @@ mod destination;
 mod distributed;
 mod dynamic_contraction;
 mod erased;
+mod fold;
 mod imperative;
 mod launcher;
 mod leaf;

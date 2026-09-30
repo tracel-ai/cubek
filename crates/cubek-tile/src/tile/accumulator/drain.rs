@@ -199,3 +199,28 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A destination that adds, atomically or in turns, is never read back by the drain, and
+    /// units repeating each other's cells elect one to add them, or the cell would take the value
+    /// once per unit.
+    #[test]
+    fn a_destination_that_adds_is_written_once_and_never_read() {
+        for write in [Write::Accumulate, Write::Fold] {
+            assert_eq!(Drain::of(UnitShare::Repeated, write), Drain::UnitZero);
+            for init_from in [InitFrom::Cell, InitFrom::Identity] {
+                assert_eq!(
+                    CellRead::of(UnitShare::Whole, init_from, write),
+                    CellRead::Never
+                );
+            }
+        }
+        assert_eq!(
+            Drain::of(UnitShare::Repeated, Write::Replace),
+            Drain::EachUnit
+        );
+    }
+}
