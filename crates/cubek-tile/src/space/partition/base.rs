@@ -116,8 +116,19 @@ impl Iterable for &PartitioningExpand {
 }
 
 impl Partitioning {
-    /// `space` cut by `levels`, outermost first.
+    /// `space` cut by `levels`, outermost first. Panics where two levels distribute over one
+    /// scope: a scope's instances take one level's tiles.
     pub fn new(space: Space, levels: Vec<Level>) -> Self {
+        for (i, level) in levels.iter().enumerate() {
+            if let Some(scope) = level.coverage().scope() {
+                assert!(
+                    levels[i + 1..]
+                        .iter()
+                        .all(|other| other.coverage() != level.coverage()),
+                    "Partitioning::new: two levels distribute over {scope:?}"
+                );
+            }
+        }
         Self { space, levels }
     }
 
@@ -171,16 +182,23 @@ impl Partitioning {
     /// The one level distributed over `scope`'s workers, if any.
     pub fn level_distributed(&self, scope: ComputeScope) -> Option<&Level> {
         let coverage = Coverage::Distribute(scope);
-        let mut found = self
-            .levels
+        self.levels
             .iter()
-            .filter(|level| level.coverage() == coverage);
-        let level = found.next();
-        assert!(
-            found.next().is_none(),
-            "Partitioning::level_distributed: two levels distribute over {scope:?}"
-        );
-        level
+            .find(|level| level.coverage() == coverage)
+    }
+
+    /// The box one of `scope`'s instances covers: the space cut down through the level distributed
+    /// over it. Panics where no level distributes over `scope`.
+    pub fn box_of(&self, scope: ComputeScope) -> Space {
+        let coverage = Coverage::Distribute(scope);
+        let mut space = self.space.clone();
+        for level in &self.levels {
+            space = level.child(&space);
+            if level.coverage() == coverage {
+                return space;
+            }
+        }
+        panic!("Partitioning::box_of: no level distributes over {scope:?}")
     }
 
     /// The levels one instance walks, outermost first.
@@ -340,5 +358,29 @@ mod tests {
             .planes(&[(M, 2)])
             .filled_by(1)
             .build();
+    }
+
+    /// A scope's instances take one level's tiles, so a second level over the same scope is
+    /// refused.
+    #[test]
+    #[should_panic(expected = "two levels distribute over Plane")]
+    fn two_levels_over_one_scope_are_refused() {
+        Partitioning::new(
+            Space::new(&[(M, 64), (N, 64)]),
+            Levels::leaf(&[(M, 8), (N, 8)])
+                .planes(&[(M, 2)])
+                .planes(&[(N, 2)])
+                .build(),
+        );
+    }
+
+    /// A scope's box is the space cut down through its level, whatever walks inside it.
+    #[test]
+    fn a_scope_covers_the_box_its_level_cuts() {
+        let partitioning = staged(0);
+        let cube = Space::new(&[(M, 128), (N, 128), (K, 512)]);
+        assert_eq!(partitioning.box_of(ComputeScope::Cube), cube);
+        let plane = Space::new(&[(M, 64), (N, 64), (K, 64)]);
+        assert_eq!(partitioning.box_of(ComputeScope::Plane), plane);
     }
 }
