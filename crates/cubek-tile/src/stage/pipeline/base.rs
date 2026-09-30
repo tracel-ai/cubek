@@ -217,9 +217,6 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
         let depth = self.depth;
         let unroll = walk.unroll;
         let (mut lhs, mut rhs) = self.__expand_fetch_buffers_method(scope);
-        let laps = total
-            .__expand_plus_method(scope, (depth - 1).into_expand(scope))
-            .__expand_divided_by_method(scope, depth.into_expand(scope));
         // The laps whose every region has a next one to fetch: no branch around the fetch, so what
         // it computes that no lap changes (each unit's place in the stage) leaves the loop.
         let steady = steady_laps(scope, total, 1, depth);
@@ -279,7 +276,10 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
                 });
             }
         };
-        run_laps(scope, steady, laps, unroll, &mut body);
+        // One lap is left whenever the walk holds a region (`ceil(t / d) - floor((t - 1) / d)`),
+        // none when it holds nothing, and the body guards every region it names: it runs once,
+        // straight, rather than as a loop around a copy of the contraction.
+        body(scope, steady);
     }
 }
 
