@@ -247,18 +247,27 @@ pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
 }
 
 /// What a write to a store does to the cell it lands on; stated by the binding operand. `Replace`
-/// is the writer's own cell, `Accumulate` adds atomically so cubes need not know of each other,
-/// `Relay` adds with a plain read and write, the cubes of a split taking turns ([`Relay`](crate::launch::Relay)).
+/// is the writer's own cell, `Accumulate` adds atomically so writers need not know of each other,
+/// `Exclusive` adds with a plain read and write, one writer at a cell at a time in the order its
+/// [`Schedule`] sets.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Write {
     /// Replaces the cell.
     Replace,
-    /// Adds into the cell, atomically.
+    /// Adds into the cell, atomically: the writers' partials land in any order.
     Accumulate,
-    /// Replaces the cell on the first turn and adds into it, reading it and writing the sum back
-    /// a line at a time, on every later one: the carry of a [`Relay`](crate::launch::Relay), whose
-    /// turns keep one cube at a cell at a time and order each turn's lines before the next.
-    Relay,
+    /// Replaces the cell on its first writer's turn and adds into it, reading it and writing the
+    /// sum back a line at a time, on every later one. One writer reaches a cell at a time, in the
+    /// order the schedule sets, so the sum is the same bits from run to run.
+    Exclusive(Schedule),
+}
+
+/// The order a destination's [`Exclusive`](Write::Exclusive) writers take their turns at a cell in.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Schedule {
+    /// One writer at a time over the whole box, in the order of their runs, handed on through a
+    /// counter: the cubes of a split taking turns at a [`Relay`](crate::launch::Relay)'s carry.
+    Sequential,
 }
 
 impl Write {
@@ -267,12 +276,14 @@ impl Write {
     /// a `monoid` other than a sum into a destination that adds.
     pub(crate) fn admits(self, split: SplitShare, monoid: Monoid, site: &str) {
         match (self, monoid) {
-            (Write::Accumulate | Write::Relay, Monoid::Prod | Monoid::Max | Monoid::Min) => panic!(
-                "{site}: this destination adds ({self:?}), atomically or relayed, so a \
+            (Write::Accumulate | Write::Exclusive(_), Monoid::Prod | Monoid::Max | Monoid::Min) => {
+                panic!(
+                    "{site}: this destination adds ({self:?}), atomically or relayed, so a \
                  {monoid:?} accumulation into it would come out summed. Drain it into a \
                  replacing destination, combining the partials first where they are split."
-            ),
-            (Write::Accumulate | Write::Relay, Monoid::Sum) | (Write::Replace, _) => {}
+                )
+            }
+            (Write::Accumulate | Write::Exclusive(_), Monoid::Sum) | (Write::Replace, _) => {}
         }
         match (split, self) {
             (SplitShare::Whole, _)
@@ -280,8 +291,8 @@ impl Write {
                 SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes,
                 Write::Accumulate,
             )
-            | (SplitShare::PartialAcrossCubes, Write::Relay) => {}
-            (SplitShare::PartialAcrossPlanes, Write::Relay) => panic!(
+            | (SplitShare::PartialAcrossCubes, Write::Exclusive(Schedule::Sequential)) => {}
+            (SplitShare::PartialAcrossPlanes, Write::Exclusive(Schedule::Sequential)) => panic!(
                 "{site}: this accumulator's cells are split across the planes of one cube and its \
                  destination is relayed, a plain read and write taken one cube at a time; the planes \
                  would write the same line at once and lose each other's partial. \
@@ -368,7 +379,11 @@ mod tests {
     /// destination takes a split at either scope.
     #[test]
     fn a_relay_takes_a_split_across_cubes() {
-        Write::Relay.admits(SplitShare::PartialAcrossCubes, Monoid::Sum, "test");
+        Write::Exclusive(Schedule::Sequential).admits(
+            SplitShare::PartialAcrossCubes,
+            Monoid::Sum,
+            "test",
+        );
         Write::Accumulate.admits(SplitShare::PartialAcrossCubes, Monoid::Sum, "test");
         Write::Accumulate.admits(SplitShare::PartialAcrossPlanes, Monoid::Sum, "test");
     }
@@ -377,7 +392,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "split across the planes of one cube")]
     fn a_relay_refuses_a_split_across_planes() {
-        Write::Relay.admits(SplitShare::PartialAcrossPlanes, Monoid::Sum, "test");
+        Write::Exclusive(Schedule::Sequential).admits(
+            SplitShare::PartialAcrossPlanes,
+            Monoid::Sum,
+            "test",
+        );
     }
 
     /// A destination that adds sums whatever it is handed, so it takes only a sum.
@@ -390,7 +409,11 @@ mod tests {
     #[test]
     #[should_panic(expected = "would come out summed")]
     fn a_relay_refuses_a_max() {
-        Write::Relay.admits(SplitShare::PartialAcrossCubes, Monoid::Max, "test");
+        Write::Exclusive(Schedule::Sequential).admits(
+            SplitShare::PartialAcrossCubes,
+            Monoid::Max,
+            "test",
+        );
     }
 
     /// A replacing destination takes any monoid: each cell is its writer's own.

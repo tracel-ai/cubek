@@ -235,7 +235,7 @@ impl FragmentDrain {
     pub(crate) const fn of(access: &Access, addressed: bool) -> Self {
         match (access.write, access.overhang, addressed) {
             (Write::Replace, Overhang::Never | Overhang::Fits, true) => FragmentDrain::Intrinsic,
-            (Write::Replace, _, _) | (Write::Accumulate | Write::Relay, _, _) => {
+            (Write::Replace, _, _) | (Write::Accumulate | Write::Exclusive(_), _, _) => {
                 FragmentDrain::Bounce
             }
         }
@@ -270,7 +270,7 @@ mod fragment_drain_tests {
         let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked), true);
         assert_eq!(masked, FragmentDrain::Bounce);
         for overhang in [Overhang::Never, Overhang::Fits, Overhang::Masked] {
-            for write in [Write::Accumulate, Write::Relay] {
+            for write in [Write::Accumulate, Write::Exclusive(Schedule::Sequential)] {
                 assert_eq!(
                     FragmentDrain::of(&access(write, overhang), true),
                     FragmentDrain::Bounce,

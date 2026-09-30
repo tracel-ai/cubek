@@ -112,7 +112,7 @@ impl<T: Numeric> GlobalOperand<T> {
 
     /// An operand whose values are handed to `sink` instead of stored, under the stated geometry.
     /// Under [`Accumulate`](Write::Accumulate) the buffer must hold zero; under
-    /// [`Relay`](Write::Relay), anything: the first turn replaces it.
+    /// [`Exclusive`](Write::Exclusive), anything: the first turn replaces it.
     pub fn sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,

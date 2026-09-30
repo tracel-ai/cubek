@@ -186,7 +186,7 @@ impl<T: Numeric> Tile<T> {
         match &mut self.kind {
             TileKind::Memory(d) => {
                 let init_from = comptime!(match d.access.write {
-                    Write::Accumulate | Write::Relay => InitFrom::Identity,
+                    Write::Accumulate | Write::Exclusive(_) => InitFrom::Identity,
                     Write::Replace => init_from,
                 });
                 d.set_init_from(comptime!(init_from));

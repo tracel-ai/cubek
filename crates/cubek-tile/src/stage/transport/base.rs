@@ -268,7 +268,7 @@ mod tests {
             ..access()
         };
         let relayed = Access {
-            write: Write::Relay,
+            write: Write::Exclusive(Schedule::Sequential),
             ..access()
         };
         for access in [windowed, masked, folding, relayed] {

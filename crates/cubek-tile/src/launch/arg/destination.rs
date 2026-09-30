@@ -51,7 +51,7 @@ impl DestinationLaunch for Buffered {
         match write {
             Write::Replace => bound.output(),
             Write::Accumulate => bound.atomic(),
-            Write::Relay => panic!(
+            Write::Exclusive(_) => panic!(
                 "Buffered: a relayed output is opened in the kernel with `TileArg::relay`, which \
                  takes its turn counters beside it; bind the carry as a plain `TileArg`"
             ),
