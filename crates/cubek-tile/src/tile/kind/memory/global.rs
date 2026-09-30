@@ -299,6 +299,8 @@ impl<T: Numeric> Memory<T> {
 /// The contract an operand's statement owes, checked on the host.
 fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
     let projection = &spec.projection;
+    // At expansion no caller takes a refusal; a spec stated by hand, not bound, arrives here
+    // unchecked.
     if let Err(refusal) = projection.validate(vector_size) {
         panic!("{refusal}");
     }
