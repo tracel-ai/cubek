@@ -105,22 +105,22 @@ impl<T: Numeric> CmmaData<T> {
         )
     }
 
-    /// `self[r, :] *= factors[first + r]`, bounced through this fragment's slot of the plane's
-    /// scratch: spilled, scaled by the plane's units in turns, and reloaded, each step met on
-    /// `sync_plane`. The slot is the plane's own, so no other plane waits; every unit of the plane
-    /// calls it.
-    pub(crate) fn mul_rows(&self, factors: &Array<T>, #[comptime] first: usize) {
+    /// `self[i, :] *= factors[first + i]` for every slice `i` along the fragment's columns,
+    /// bounced through its slot of the plane's scratch: spilled, scaled by the plane's units in
+    /// turns, and reloaded, each step met on `sync_plane`. The slot is the plane's own, so no
+    /// other plane waits; every unit of the plane calls it.
+    pub(crate) fn mul_along(&self, factors: &Array<T>, #[comptime] first: usize) {
         self.spill_to_scratch();
         sync_plane();
-        self.scale_spilled_rows(factors, first);
+        self.mul_spilled(factors, first);
         sync_plane();
         self.reload_from_scratch();
         sync_plane();
     }
 
-    /// `slot[r, :] *= factors[first + r]` over this fragment's spilled cells, the plane's units
+    /// `slot[i, :] *= factors[first + i]` over this fragment's spilled cells, the plane's units
     /// taking them in turns. The caller owns the barriers.
-    pub(crate) fn scale_spilled_rows(&self, factors: &Array<T>, #[comptime] first: usize) {
+    pub(crate) fn mul_spilled(&self, factors: &Array<T>, #[comptime] first: usize) {
         let mut scratch = self.scratch_slot();
         let (m, n) = self.shape;
         let mut cell = UNIT_POS_PLANE as usize;
@@ -196,7 +196,7 @@ impl<T: Numeric> CmmaData<T> {
         match &self.scratch {
             ComptimeOption::Some(scratch) => scratch.clone(),
             ComptimeOption::None => panic!(
-                "CmmaData: a fragment bounces through a scratch, to scale its rows, to reach a \
+                "CmmaData: a fragment bounces through a scratch, to scale its slices, to reach a \
                  store that folds, or a window the problem's edge cuts short; open the \
                  accumulator with `with_scratch`"
             ),

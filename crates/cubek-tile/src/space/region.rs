@@ -205,7 +205,7 @@ impl Region {
 
     /// The first coordinate along `axis` of the box this region covers, counted from its root's:
     /// every level's coordinate along `axis` times the tile it cuts there. What a kernel bounds a
-    /// walk of its own by, as an attention's causal rows bound the keys they read.
+    /// walk of its own by, as an attention's causal queries bound the keys they read.
     pub fn origin(&self, #[comptime] axis: Axis) -> usize {
         let mut origin = 0usize;
         #[unroll]

@@ -107,13 +107,13 @@ impl<T: Numeric> Procedural<T> {
         self.recipe.evaluate(&absolute)
     }
 
-    /// This recipe's value at cell `column` of row `row` of a tile over `space`, windowed to the
-    /// same region: the row unravelled over every axis of `space` but the innermost, the column
-    /// along the innermost, and an axis `space` does not span at zero.
-    pub(crate) fn at_cell(&self, row: u32, column: u32, #[comptime] space: Space) -> T {
-        // Where each of this recipe's axes reads its coordinate from: the column, a digit of the
-        // row, or nowhere.
-        let (row_extents, sources) = comptime!({
+    /// This recipe's value at position `position` of slice `slice` of a tile over `space` along
+    /// its innermost axis, windowed to the same region: the slice unravelled over every other axis
+    /// of `space`, the position along the innermost, and an axis `space` does not span at zero.
+    pub(crate) fn value_at(&self, slice: u32, position: u32, #[comptime] space: Space) -> T {
+        // Where each of this recipe's axes reads its coordinate from: the position, a digit of the
+        // slice, or nowhere.
+        let (slice_extents, sources) = comptime!({
             let rank = space.rank();
             let extents: Vec<usize> = (0..rank - 1).map(|p| space.extent_at(p)).collect();
             let sources: Vec<Option<usize>> = self
@@ -126,16 +126,16 @@ impl<T: Numeric> Procedural<T> {
                 .collect();
             (extents, sources)
         });
-        let columns_at = comptime!(space.rank() - 1);
-        let row_digits = Coords::<u32>::constant(row_extents).unravel(row);
+        let position_at = comptime!(space.rank() - 1);
+        let slice_digits = Coords::<u32>::constant(slice_extents).unravel(slice);
         let mut coords = Coords::<u32>::new();
         // `#[unroll]` needs a range loop.
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for p in 0..sources.len() {
             match sources[p] {
-                Some(at) if at == columns_at => coords.push(column),
-                Some(at) => coords.push(row_digits.at(at)),
+                Some(at) if at == position_at => coords.push(position),
+                Some(at) => coords.push(slice_digits.at(at)),
                 None => coords.push(0u32.runtime()),
             }
         }

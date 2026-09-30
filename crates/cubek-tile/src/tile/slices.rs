@@ -13,7 +13,7 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) enum AxisSlicesKind<E: Float> {
-    /// A register block a unit holds whole: a slice is one of its rows, in its registers.
+    /// A register block a unit holds whole: a slice runs along its columns, in its registers.
     Registers(RegisterData<E>),
     /// A window of shared memory a plane holds: its units take a slice's cells in turns and meet
     /// on the slice's partials.
@@ -93,7 +93,7 @@ impl<E: Float> PlanePartition<E> {
 
 #[cube]
 impl<E: Float> PlaneTile<E> {
-    /// This tile's slices along its columns: a register block's rows, or one fragment's.
+    /// This tile's slices along its columns: a register block's, or one fragment's.
     pub(crate) fn slices(&self) -> AxisSlicesKind<E> {
         match self {
             PlaneTile::Registers(block) => AxisSlicesKind::new_Registers(block.clone()),
@@ -110,7 +110,7 @@ impl<E: Float> AxisSlices<E> {
         let recipe = bias.recipe();
         match &mut self.kind {
             AxisSlicesKind::Registers(block) => {
-                block.scale_add_rows(scale, recipe, self.space.clone())
+                block.scale_add_along(scale, recipe, self.space.clone())
             }
             AxisSlicesKind::Window(window) => {
                 window.scale_add_along(scale, recipe, self.space.clone(), self.axis)
@@ -124,7 +124,7 @@ impl<E: Float> AxisSlices<E> {
     /// Each slice's max, starting from `seed`'s.
     pub(crate) fn maxima(&self, seed: &Array<E>) -> Array<E> {
         match &self.kind {
-            AxisSlicesKind::Registers(block) => block.row_maxima(seed),
+            AxisSlicesKind::Registers(block) => block.maxima_along(seed),
             AxisSlicesKind::Window(window) => {
                 window.maxima_along(seed, self.space.clone(), self.axis)
             }
@@ -137,7 +137,7 @@ impl<E: Float> AxisSlices<E> {
     /// `self[i, s] = exp(self[i, s] − slices[i])` ([`exp_minus_cell`](Self::exp_minus_cell)).
     pub(crate) fn exp_minus(&mut self, slices: &Array<E>) {
         match &mut self.kind {
-            AxisSlicesKind::Registers(block) => block.exp_minus_rows(slices),
+            AxisSlicesKind::Registers(block) => block.exp_minus_along(slices),
             AxisSlicesKind::Window(window) => {
                 window.exp_minus_along(slices, self.space.clone(), self.axis)
             }
@@ -150,7 +150,7 @@ impl<E: Float> AxisSlices<E> {
     /// Each slice's sum.
     pub(crate) fn sums(&self) -> Array<E> {
         match &self.kind {
-            AxisSlicesKind::Registers(block) => block.row_sums(),
+            AxisSlicesKind::Registers(block) => block.sums_along(),
             AxisSlicesKind::Window(window) => window.sums_along(self.space.clone(), self.axis),
             AxisSlicesKind::Fragments(_) | AxisSlicesKind::Fragment(_) => {
                 AxisSlices::<E>::refuse_reading()
@@ -162,12 +162,12 @@ impl<E: Float> AxisSlices<E> {
     /// `sync_plane`: every unit of the plane calls it.
     pub fn mul(&mut self, factors: &Array<E>) {
         match &mut self.kind {
-            AxisSlicesKind::Registers(block) => block.mul_rows(factors, 0usize),
+            AxisSlicesKind::Registers(block) => block.mul_along(factors, 0usize),
             AxisSlicesKind::Window(window) => {
                 window.mul_along(factors, self.space.clone(), self.axis)
             }
-            AxisSlicesKind::Fragments(partition) => partition.mul_rows(factors),
-            AxisSlicesKind::Fragment(tile) => tile.mul_rows(factors, 0usize),
+            AxisSlicesKind::Fragments(partition) => partition.mul_along(factors),
+            AxisSlicesKind::Fragment(tile) => tile.mul_along(factors, 0usize),
         }
     }
 

@@ -6,7 +6,6 @@ use cubecl::unexpanded;
 
 use super::payload::base::{Payload, PayloadExpand, StageSpec};
 use super::payload::pair::OperandPair;
-use super::payload::triple::OperandTriple;
 use super::plan::StagePlan;
 use crate::*;
 
@@ -129,26 +128,6 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
         let sources = OperandPair::<Lhs, Rhs> {
             lhs: lhs.clone(),
             rhs: rhs.clone(),
-        };
-        Stages::new(walk, &sources, storage, comptime!(None), depth)
-    }
-}
-
-#[cube]
-impl<A: Numeric, B: Numeric, C: Numeric> Stages<OperandTriple<A, B, C>> {
-    /// [`smem`](Stages::smem) for three operands: one fixed across the walk is filled once.
-    pub fn smem_triple(
-        walk: &Walk,
-        a: &Tile<A>,
-        b: &Tile<B>,
-        c: &Tile<C>,
-        #[comptime] storage: StageStorage,
-        #[comptime] depth: usize,
-    ) -> Stages<OperandTriple<A, B, C>> {
-        let sources = OperandTriple::<A, B, C> {
-            a: a.clone(),
-            b: b.clone(),
-            c: c.clone(),
         };
         Stages::new(walk, &sources, storage, comptime!(None), depth)
     }
@@ -279,24 +258,6 @@ impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<OperandPair<Lhs, Rhs>> {
     {
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.lhs, &self.data.rhs);
-        self.__expand_release_read_method(scope);
-    }
-}
-
-impl<A: Numeric, B: Numeric, C: Numeric> Slot<OperandTriple<A, B, C>> {
-    /// [`consume`](Slot::consume) for three operands.
-    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<A>, &Tile<B>, &Tile<C>)) {
-        unexpanded!()
-    }
-}
-
-impl<A: Numeric, B: Numeric, C: Numeric> SlotExpand<OperandTriple<A, B, C>> {
-    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
-    where
-        F: FnOnce(&Scope, &TileExpand<A>, &TileExpand<B>, &TileExpand<C>),
-    {
-        self.__expand_acquire_read_method(scope);
-        compute(scope, &self.data.a, &self.data.b, &self.data.c);
         self.__expand_release_read_method(scope);
     }
 }

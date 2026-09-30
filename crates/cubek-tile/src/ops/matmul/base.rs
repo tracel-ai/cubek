@@ -132,14 +132,14 @@ impl<E: Numeric> PlaneTile<E> {
                 d.mma(lhs, rhs)
             }
             PlaneTile::Registers(d) => match &lhs.kind {
-                TileKind::PlaneTile(held) => match held {
-                    PlaneTile::Registers(held) => d.mma_held_lhs(held, rhs, semiring),
+                TileKind::PlaneTile(block) => match block {
+                    PlaneTile::Registers(block) => d.mma_block(block, rhs, semiring),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
                 },
-                TileKind::PlanePartition(held) => match held.fragment() {
-                    PlaneTile::Registers(held) => d.mma_held_lhs(&held, rhs, semiring),
+                TileKind::PlanePartition(block) => match block.fragment() {
+                    PlaneTile::Registers(block) => d.mma_block(&block, rhs, semiring),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),

@@ -117,8 +117,9 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
-    /// `self[r, :] *= factors[first + r]`, in the registers that hold the block.
-    pub(crate) fn mul_rows(&mut self, factors: &Array<T>, #[comptime] first: usize) {
+    /// `self[i, :] *= factors[first + i]` for every slice `i` along the block's columns, in the
+    /// registers that hold it.
+    pub(crate) fn mul_along(&mut self, factors: &Array<T>, #[comptime] first: usize) {
         #[unroll]
         for r in 0..self.mr {
             let factor = Vector::<T, RA>::cast_from(factors[first + r]);
@@ -242,14 +243,14 @@ fn cell<T: Numeric, Out: Numeric, A: Size>(
     }
 }
 
-/// The block's rows, each a unit holds whole: the verbs [`AxisSlices`] runs on a register block,
-/// whose slices along its columns are its rows. The block holds whole cells, never a line of
-/// partials of one.
+/// The block cut into slices along its columns, each a unit holds whole: the verbs
+/// [`AxisSlices`] runs on a register block. The block holds whole cells, never a line of partials
+/// of one.
 #[cube]
 impl<E: Float> RegisterData<E> {
-    /// `self[r, c] = self[r, c] · scale + bias` at every cell, the bias read at the cell of a tile
-    /// over `space` that the block holds.
-    pub(crate) fn scale_add_rows(
+    /// `self[i, s] = self[i, s] · scale + bias[i, s]` at every cell, the bias read at the cell of
+    /// a tile over `space` that the block holds.
+    pub(crate) fn scale_add_along(
         &mut self,
         scale: E,
         bias: &Procedural<E>,
@@ -264,7 +265,7 @@ impl<E: Float> RegisterData<E> {
                 #[unroll]
                 for j in 0..self.vector_size {
                     let column = n * self.vector_size + j;
-                    let cell = bias.at_cell(r as u32, column as u32, space.clone());
+                    let cell = bias.value_at(r as u32, column as u32, space.clone());
                     line.insert(j, line.extract(j) * scale + cell);
                 }
                 self.data[at] = line;
@@ -272,27 +273,27 @@ impl<E: Float> RegisterData<E> {
         }
     }
 
-    /// Each row's max, starting from `seed`'s.
-    pub(crate) fn row_maxima(&self, seed: &Array<E>) -> Array<E> {
+    /// Each slice's max, starting from `seed`'s.
+    pub(crate) fn maxima_along(&self, seed: &Array<E>) -> Array<E> {
         let mut maxima = Array::<E>::new(self.mr);
         #[unroll]
         for r in 0..self.mr {
-            let mut row = seed[r];
+            let mut slice = seed[r];
             #[unroll]
             for n in 0..self.nr {
                 let line = self.data[r * self.nr + n];
                 #[unroll]
                 for j in 0..self.vector_size {
-                    row = max(row, line.extract(j));
+                    slice = max(slice, line.extract(j));
                 }
             }
-            maxima[r] = row;
+            maxima[r] = slice;
         }
         maxima
     }
 
-    /// `self[r, c] = exp(self[r, c] − rows[r])` ([`AxisSlices::exp_minus_cell`]).
-    pub(crate) fn exp_minus_rows(&mut self, rows: &Array<E>) {
+    /// `self[i, s] = exp(self[i, s] − slices[i])` ([`AxisSlices::exp_minus_cell`]).
+    pub(crate) fn exp_minus_along(&mut self, slices: &Array<E>) {
         #[unroll]
         for r in 0..self.mr {
             #[unroll]
@@ -301,28 +302,31 @@ impl<E: Float> RegisterData<E> {
                 let mut line = self.data[at];
                 #[unroll]
                 for j in 0..self.vector_size {
-                    line.insert(j, AxisSlices::<E>::exp_minus_cell(line.extract(j), rows[r]));
+                    line.insert(
+                        j,
+                        AxisSlices::<E>::exp_minus_cell(line.extract(j), slices[r]),
+                    );
                 }
                 self.data[at] = line;
             }
         }
     }
 
-    /// Each row's sum.
-    pub(crate) fn row_sums(&self) -> Array<E> {
+    /// Each slice's sum.
+    pub(crate) fn sums_along(&self) -> Array<E> {
         let mut sums = Array::<E>::new(self.mr);
         #[unroll]
         for r in 0..self.mr {
-            let mut row = E::from_int(0);
+            let mut slice = E::from_int(0);
             #[unroll]
             for n in 0..self.nr {
                 let line = self.data[r * self.nr + n];
                 #[unroll]
                 for j in 0..self.vector_size {
-                    row += line.extract(j);
+                    slice += line.extract(j);
                 }
             }
-            sums[r] = row;
+            sums[r] = slice;
         }
         sums
     }

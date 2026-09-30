@@ -97,20 +97,23 @@ fn plane_attention<E: Float>(
                 .with_scratch(Scratch::OneTile);
             acc.zero();
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
-            let mut stages =
-                Stages::smem_triple(&walk, &q_p, &k_p, &v_p, StageStorage::Strided, 1usize);
+            // The query spans no key: staged once, before the walk, where the keys are staged.
+            let mut q_s = Tile::<E>::scratch(&walk, comptime!(vec![Q, D]), StageStorage::Strided);
+            q_s.copy_from(&q_p);
+            sync_plane();
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
-                slot.consume(|q_s, k_s, v_s| {
-                    let mut logits = score.cmma_accumulator::<f32, E>(q_s, Monoid::Sum);
+                slot.consume(|k_s, v_s| {
+                    let mut logits = score.cmma_accumulator::<f32, E>(&q_s, Monoid::Sum);
                     logits.zero();
                     for fragment in stage.walk().routed(V, 0).unrolled() {
                         let mut cell = logits.at(&fragment);
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment), Semiring::SUM_PROD);
                     }
                     logits.drained_into(&score);
-                    // The score's cells were stored by the fragments' layout; the softmax reads
-                    // them by rows.
+                    // The score's cells were stored in the fragments' layout; the softmax reads
+                    // them slice by slice.
                     sync_plane();
                     let correction = softmax.step(&score, &bias_s, scale);
                     p.copy_cast_from(&score);

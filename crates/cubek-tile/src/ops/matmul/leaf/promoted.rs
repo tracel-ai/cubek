@@ -118,11 +118,11 @@ impl<T: Numeric> RegisterData<T> {
 
 #[cube]
 impl<T: Numeric> RegisterData<T> {
-    /// `self += lhs · rhs` where `lhs` is a register block this unit already holds, over the
-    /// same rows: each of its cells is a factor read where it lies, and `rhs` is read a row of
-    /// the contraction at a time. What an attention's unit does with the probabilities it just
-    /// computed in registers, contracting them with the values.
-    pub(crate) fn mma_held_lhs<EL: Numeric, ER: Numeric>(
+    /// `self += lhs · rhs` where `lhs` is a register block over the same rows as this one: each
+    /// of its cells is a factor read in registers, and `rhs` is read one step of the contraction
+    /// at a time. What an attention's unit does with the probabilities it just computed,
+    /// contracting them with the values without leaving registers.
+    pub(crate) fn mma_block<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &RegisterData<EL>,
         rhs: &Tile<ER>,
@@ -130,17 +130,17 @@ impl<T: Numeric> RegisterData<T> {
     ) {
         comptime!(assert!(
             semiring.add() == self.monoid,
-            "RegisterData::mma_held_lhs: this block folds its partials under {:?}, so it cannot \
+            "RegisterData::mma_block: this block folds its partials under {:?}, so it cannot \
              contract under {semiring:?}",
             self.monoid
         ));
         comptime!(assert!(
             lhs.fold == 1 && self.fold == 1,
-            "RegisterData::mma_held_lhs: both blocks hold whole cells, a line of neighbours"
+            "RegisterData::mma_block: both blocks hold whole cells, a line of neighbours"
         ));
         comptime!(assert!(
             lhs.mr == self.mr,
-            "RegisterData::mma_held_lhs: the held block has {} rows and this one {}; they are \
+            "RegisterData::mma_block: the lhs block has {} rows and this one {}; they are \
              the same rows",
             lhs.mr,
             self.mr
@@ -148,7 +148,7 @@ impl<T: Numeric> RegisterData<T> {
         let vw = rhs.vector_size();
         comptime!(assert!(
             vw == self.vector_size,
-            "RegisterData::mma_held_lhs: the block's lines are {} wide but the rhs serves {vw}",
+            "RegisterData::mma_block: the block's lines are {} wide but the rhs serves {vw}",
             self.vector_size
         ));
         let (mr, nr, lw) = (self.mr, self.nr, lhs.vector_size);
