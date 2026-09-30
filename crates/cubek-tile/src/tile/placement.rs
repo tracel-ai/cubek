@@ -1,6 +1,6 @@
 //! Where a tile sits in its partitioning.
 
-use crate::{Level, Space};
+use crate::{ComputeScope, Level, Space};
 
 /// A tile's place in its nest: its box (`space`), how many levels down it sits (`depth`), and the
 /// partitioning levels it is walked with (`levels`).
@@ -28,6 +28,17 @@ impl Placement {
     /// Outside any partitioning.
     pub(crate) fn alone(space: Space) -> Self {
         Placement::new(space, 0, Vec::new())
+    }
+
+    /// Who holds this tile: the narrowest scope a level above it in its nest hands its tiles to,
+    /// the cube where none distributes below it. A plane's window of a cube's buffer is the
+    /// plane's, whoever filled the buffer.
+    pub(crate) fn holder(&self) -> ComputeScope {
+        self.levels[..self.depth.min(self.levels.len())]
+            .iter()
+            .filter_map(|level| level.coverage().scope())
+            .min()
+            .unwrap_or(ComputeScope::Cube)
     }
 
     /// The levels below this depth.

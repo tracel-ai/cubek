@@ -308,6 +308,15 @@ impl Space {
     pub fn cells(&self) -> usize {
         self.axes().map(|axis| self.extent(axis)).product()
     }
+
+    /// How many slices along `axis` the space holds: one for every index of its other axes. The
+    /// extent of `axis` itself may be one a walk has yet to cut, which only the launch knows.
+    pub fn slices_along(&self, axis: Axis) -> usize {
+        self.axes()
+            .filter(|&other| other != axis)
+            .map(|other| self.extent(other))
+            .product()
+    }
 }
 
 #[cube]

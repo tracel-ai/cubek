@@ -5,6 +5,7 @@ pub(crate) mod base;
 pub(crate) mod kind;
 pub(crate) mod packing;
 pub(crate) mod placement;
+pub(crate) mod slices;
 
 pub(crate) use accumulator::*;
 pub(crate) use kind::*;

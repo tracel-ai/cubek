@@ -298,13 +298,7 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for RelaySink<E, N> {
         index: NativeExpand<usize>,
         value: ExpandValue,
     ) {
-        relay_line::expand::<E, N>(
-            scope,
-            &mut self.values,
-            index,
-            value.into(),
-            self.first,
-        );
+        relay_line::expand::<E, N>(scope, &mut self.values, index, value.into(), self.first);
     }
 }
 

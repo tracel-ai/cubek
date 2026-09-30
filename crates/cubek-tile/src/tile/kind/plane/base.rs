@@ -78,6 +78,24 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    /// `self[i, :] *= factors[first + i]` for every slice `i` along the tile's columns: a register
+    /// block in place, a cmma fragment bounced through its slot of the plane's scratch on
+    /// `sync_plane`.
+    pub(crate) fn mul_along(&self, factors: &Array<T>, #[comptime] first: usize) {
+        match self {
+            PlaneTile::Registers(block) => {
+                let mut block = block.clone();
+                block.mul_along(factors, first);
+            }
+            PlaneTile::Cmma(fragment) => fragment.mul_along(factors, first),
+            PlaneTile::Mma(_) => {
+                panic!(
+                    "PlaneTile::mul_along: a manual fragment's slices are not scaled in place yet"
+                )
+            }
+        }
+    }
+
     /// This tile carrying its partition's scratch. Only a cmma tile bounces.
     pub(crate) fn with_scratch(self, scratch: Shared<[T]>) -> PlaneTile<T> {
         match self {
@@ -404,6 +422,59 @@ impl<T: Numeric> PlanePartition<T> {
                     tile.load_scratch(&scratch);
                 }
                 sync_cube();
+            }
+        }
+    }
+
+    /// `self[i, :] *= factors[i]` for every slice `i` along the grid's columns, counted down the
+    /// whole grid. Each tile is scaled where it is held ([`PlaneTile::mul_along`]), unless the
+    /// scratch holds every fragment of the grid at once: then the plane spills them all, meets
+    /// once, scales, meets once, and reloads them all.
+    pub(crate) fn mul_along(&self, factors: &Array<T>) {
+        // Only a cmma grid is opened with a scratch, so one that holds the whole grid is one.
+        if comptime!(self.held == Scratch::WholeGrid) {
+            self.mul_along_whole_grid(factors);
+        } else {
+            #[unroll]
+            for mi in 0..self.m_tiles {
+                #[unroll]
+                for ni in 0..self.n_tiles {
+                    self.at(mi, ni)
+                        .mul_along(factors, comptime!(mi * self.rows));
+                }
+            }
+        }
+    }
+
+    /// [`mul_along`](Self::mul_along) over a grid of cmma fragments each with a slot of its own.
+    fn mul_along_whole_grid(&self, factors: &Array<T>) {
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            self.cmma_at(i).spill_to_scratch();
+        }
+        sync_plane();
+        #[unroll]
+        for mi in 0..self.m_tiles {
+            #[unroll]
+            for ni in 0..self.n_tiles {
+                self.cmma_at(comptime!(mi * self.n_tiles + ni))
+                    .mul_spilled(factors, comptime!(mi * self.rows));
+            }
+        }
+        sync_plane();
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            self.cmma_at(i).reload_from_scratch();
+        }
+        sync_plane();
+    }
+
+    /// The `i`-th tile of a grid of cmma fragments, in row-major order.
+    fn cmma_at(&self, #[comptime] i: usize) -> CmmaData<T> {
+        match self.frags.index(i).clone() {
+            PlaneTile::Cmma(fragment) => fragment,
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+                panic!("PlanePartition: a grid holds one kind of tile")
             }
         }
     }

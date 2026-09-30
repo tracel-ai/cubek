@@ -1,7 +1,6 @@
 mod async_copy;
 mod attention;
 mod blocked;
-mod census;
 mod coarse;
 mod conv;
 mod decode_gemv;
@@ -15,6 +14,7 @@ mod imperative;
 mod launcher;
 mod leaf;
 mod matmul;
+mod online_softmax;
 mod packed;
 mod paged;
 mod procedural;

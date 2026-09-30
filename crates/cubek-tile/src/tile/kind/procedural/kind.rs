@@ -107,6 +107,41 @@ impl<T: Numeric> Procedural<T> {
         self.recipe.evaluate(&absolute)
     }
 
+    /// This recipe's value at position `position` of slice `slice` of a tile over `space` along
+    /// its innermost axis, windowed to the same region: the slice unravelled over every other axis
+    /// of `space`, the position along the innermost, and an axis `space` does not span at zero.
+    pub(crate) fn value_at(&self, slice: u32, position: u32, #[comptime] space: Space) -> T {
+        // Where each of this recipe's axes reads its coordinate from: the position, a digit of the
+        // slice, or nowhere.
+        let (slice_extents, sources) = comptime!({
+            let rank = space.rank();
+            let extents: Vec<usize> = (0..rank - 1).map(|p| space.extent_at(p)).collect();
+            let sources: Vec<Option<usize>> = self
+                .space
+                .axes()
+                .map(|axis| match space.contains(axis) {
+                    true => Some(space.position(axis)),
+                    false => None,
+                })
+                .collect();
+            (extents, sources)
+        });
+        let position_at = comptime!(space.rank() - 1);
+        let slice_digits = Coords::<u32>::constant(slice_extents).unravel(slice);
+        let mut coords = Coords::<u32>::new();
+        // `#[unroll]` needs a range loop.
+        #[allow(clippy::needless_range_loop)]
+        #[unroll]
+        for p in 0..sources.len() {
+            match sources[p] {
+                Some(at) if at == position_at => coords.push(position),
+                Some(at) => coords.push(slice_digits.at(at)),
+                None => coords.push(0u32.runtime()),
+            }
+        }
+        self.evaluate(&coords, comptime!(self.space.clone()))
+    }
+
     pub(crate) fn factorization(&self) -> comptime_type!(Option<usize>) {
         self.recipe.factorization()
     }
@@ -299,6 +334,17 @@ impl<T: Numeric> Procedural<T> {
         Tile::new(
             TileKind::new_Procedural(self),
             comptime!(Placement::alone(space)),
+        )
+    }
+
+    /// This source as a tile at the root of `partitioning`, windowed by its regions like an
+    /// operand bound to it: its space must be the partitioning's, or some of its axes.
+    pub fn tile_in(self, partitioning: &Partitioning) -> Tile<T> {
+        let space = comptime!(self.space.clone());
+        let levels = comptime!(partitioning.levels().to_vec());
+        Tile::new(
+            TileKind::new_Procedural(self),
+            comptime!(Placement::root(space, levels)),
         )
     }
 }

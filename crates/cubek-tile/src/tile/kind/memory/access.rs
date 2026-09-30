@@ -797,6 +797,30 @@ impl<T: Numeric> Memory<T> {
         }
     }
 
+    /// This window filled by the units of `holder` where they are fewer than the ones that fill
+    /// its buffer: a plane's window of a buffer the cube fills is the plane's to fill.
+    pub(crate) fn filled_by(&self, #[comptime] holder: ComputeScope) -> Memory<T> {
+        let fill = comptime!(match holder < self.access.fill.scope {
+            true => FillUnits {
+                scope: holder,
+                count: 0,
+            },
+            false => self.access.fill,
+        });
+        self.moved_to(
+            self.window.clone(),
+            self.window_start,
+            self.map.clone(),
+            comptime!(Access {
+                fill,
+                ..self.access
+            }),
+            comptime!(self.unit_share),
+            comptime!(self.split_share),
+            self.factor.clone(),
+        )
+    }
+
     /// This window placed at element `from` on `axis`, reading up to `until` (zero past it).
     pub(crate) fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Memory<T> {
         let proj = comptime!(self.projection.clone());

@@ -115,3 +115,67 @@ impl<T: Numeric> RegisterData<T> {
         );
     }
 }
+
+#[cube]
+impl<T: Numeric> RegisterData<T> {
+    /// `self += lhs · rhs` where `lhs` is a register block over the same rows as this one: each
+    /// of its cells is a factor read in registers, and `rhs` is read one step of the contraction
+    /// at a time. What an attention's unit does with the probabilities it just computed,
+    /// contracting them with the values without leaving registers.
+    pub(crate) fn mma_block<EL: Numeric, ER: Numeric>(
+        &mut self,
+        lhs: &RegisterData<EL>,
+        rhs: &Tile<ER>,
+        #[comptime] semiring: Semiring,
+    ) {
+        comptime!(assert!(
+            semiring.add() == self.monoid,
+            "RegisterData::mma_block: this block folds its partials under {:?}, so it cannot \
+             contract under {semiring:?}",
+            self.monoid
+        ));
+        comptime!(assert!(
+            lhs.fold == 1 && self.fold == 1,
+            "RegisterData::mma_block: both blocks hold whole cells, a line of neighbours"
+        ));
+        comptime!(assert!(
+            lhs.mr == self.mr,
+            "RegisterData::mma_block: the lhs block has {} rows and this one {}; they are \
+             the same rows",
+            lhs.mr,
+            self.mr
+        ));
+        let vw = rhs.vector_size();
+        comptime!(assert!(
+            vw == self.vector_size,
+            "RegisterData::mma_block: the block's lines are {} wide but the rhs serves {vw}",
+            self.vector_size
+        ));
+        let (mr, nr, lw) = (self.mr, self.nr, lhs.vector_size);
+        let kc = comptime!(lhs.nr * lw);
+        let rhs_axes = comptime!(
+            MatrixAxes::new(&rhs.place.space, kc, nr * vw).unwrap_or_else(|e| panic!("{e}"))
+        );
+        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
+        let mut b = Array::<Vector<T, RA>>::new(nr);
+        #[unroll]
+        for k in 0..kc {
+            #[unroll]
+            for n in 0..nr {
+                b[n] = Vector::<T, RA>::cast_from(
+                    rhs_mat.read(((k as u32).runtime(), (n as u32).runtime())),
+                );
+            }
+            #[unroll]
+            for i in 0..mr {
+                let line = lhs.data[i * lhs.nr + k / lw];
+                let a = Vector::<T, RA>::cast_from(line.extract(comptime!(k % lw)));
+                #[unroll]
+                for n in 0..nr {
+                    let at = i * nr + n;
+                    self.data[at] = semiring.step::<Vector<T, RA>>(a, b[n], self.data[at]);
+                }
+            }
+        }
+    }
+}

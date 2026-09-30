@@ -131,11 +131,28 @@ impl<E: Numeric> PlaneTile<E> {
                 hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
-            PlaneTile::Registers(d) => {
-                let folded = comptime!(d.fold > 1);
-                strided_2d(lhs, rhs, comptime!(out.clone()), folded);
-                d.mma(lhs, rhs, out, semiring)
-            }
+            PlaneTile::Registers(d) => match &lhs.kind {
+                TileKind::PlaneTile(block) => match block {
+                    PlaneTile::Registers(block) => d.mma_block(block, rhs, semiring),
+                    PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                        "mma: a register block contracts a register block it holds, or memory"
+                    ),
+                },
+                TileKind::PlanePartition(block) => match block.fragment() {
+                    PlaneTile::Registers(block) => d.mma_block(&block, rhs, semiring),
+                    PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                        "mma: a register block contracts a register block it holds, or memory"
+                    ),
+                },
+                TileKind::Memory(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    let folded = comptime!(d.fold > 1);
+                    strided_2d(lhs, rhs, comptime!(out.clone()), folded);
+                    d.mma(lhs, rhs, out, semiring)
+                }
+            },
         }
     }
 }

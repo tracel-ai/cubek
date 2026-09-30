@@ -5,6 +5,7 @@ pub(crate) mod base;
 pub(crate) mod codebook;
 pub(crate) mod factor;
 pub(crate) mod global;
+pub(crate) mod slices;
 pub(crate) mod stage;
 pub(crate) mod tma;
 pub(crate) mod view;

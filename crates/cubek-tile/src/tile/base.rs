@@ -4,6 +4,7 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn, unexpanded};
 
 use cubecl::zspace::SmallVec;
 
+use crate::stage::pipeline::payload::base::{StageSpec, stage_one};
 use crate::*;
 
 /// One operand's data: a runtime backing store and the comptime [`Space`] it projects.
@@ -47,6 +48,18 @@ impl<T: Numeric> Tile<T> {
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::{site}: a procedural tile and the plane's units have no memory view")
             }
+        }
+    }
+
+    /// The recipe this procedural tile evaluates; panics for every other kind.
+    pub(crate) fn recipe(&self) -> &Procedural<T> {
+        match &self.kind {
+            TileKind::Procedural(recipe) => recipe,
+            TileKind::Memory(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Lines(_) => panic!("Tile::recipe: only a procedural tile has a recipe"),
         }
     }
 
@@ -633,6 +646,47 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
+    /// A fresh stage of this operand for one region of `walk`, laid out as `storage`: shaped,
+    /// owned and placed as the walk's stages are, the cube's or each plane's own copy. What a
+    /// kernel stages once before a walk that leaves the operand unchanged, as an attention's
+    /// query beside the keys it walks.
+    pub fn stage_for(&self, walk: &Walk, #[comptime] storage: StageStorage) -> Tile<T> {
+        let owner = walk.stage_owner();
+        stage_one(
+            self,
+            comptime!(StageSpec {
+                level: walk.level.clone(),
+                depth: walk.depth(),
+                storage,
+                width: None,
+                owner,
+            }),
+        )
+    }
+
+    /// A fresh shared-memory tile over `axes` of one region of `walk`, laid out as `storage` and
+    /// served one value a line: placed where the walk's regions sit, and owned as the walk's
+    /// stages are, one for the cube or a copy for each plane ([`Stages`]).
+    ///
+    /// What a kernel holds between two steps of its walk that no operand is: an attention's
+    /// scores between its two contractions. Placed in the partitioning, it opens an accumulator
+    /// and is windowed by the walk's regions like an operand.
+    pub fn scratch(
+        walk: &Walk,
+        #[comptime] axes: Vec<Axis>,
+        #[comptime] storage: StageStorage,
+    ) -> Tile<T> {
+        let owner = walk.stage_owner();
+        let place = comptime!(Placement::new(
+            walk.level.child(&walk.space).subspace(&axes),
+            walk.depth(),
+            walk.parent.path.root_levels(),
+        ));
+        let tile =
+            Memory::<T>::smem_owned(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
+        Tile::new(tile.kind, place)
+    }
+
     /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.
     pub fn shared(#[comptime] space: Space, #[comptime] storage: StageStorage) -> Tile<T> {
         Memory::<T>::smem(space, comptime!(1usize), storage, comptime!(0usize))
@@ -718,12 +772,17 @@ impl<T: Numeric> Tile<T> {
     /// or copies a memory window of the same box, the units sharing it a line at a time.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
+        let holder = comptime!(self.place.holder());
         match (&mut self.kind, &src.kind) {
             (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
                 s.fragment().store_cast_window(d, space)
             }
-            (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_cast_from(s, space),
+            // A window its holder shares is filled by the holder's units, whoever filled the
+            // buffer it windows: a plane's window of the cube's scratch is the plane's.
+            (TileKind::Memory(d), TileKind::Memory(s)) => {
+                d.filled_by(holder).fill_cast_from(s, space)
+            }
             _ => panic!(
                 "Tile::copy_cast_from: a fragment or a memory window stores into memory; nothing \
                  else casts"

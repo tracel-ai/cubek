@@ -265,14 +265,8 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
     {
         let depth = self.depth;
         let (mut lhs, mut rhs) = self.__expand_fetch_buffers_method(scope);
-        let steady = self.steady_prefetching_laps(
-            scope,
-            &walk,
-            total,
-            &mut lhs,
-            &mut rhs,
-            &mut compute,
-        );
+        let steady =
+            self.steady_prefetching_laps(scope, &walk, total, &mut lhs, &mut rhs, &mut compute);
         // The last laps, where the walk runs out under them.
         let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {

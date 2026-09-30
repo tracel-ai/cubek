@@ -105,9 +105,41 @@ impl<T: Numeric> CmmaData<T> {
         )
     }
 
+    /// `self[i, :] *= factors[first + i]` for every slice `i` along the fragment's columns,
+    /// bounced through its slot of the plane's scratch: spilled, scaled by the plane's units in
+    /// turns, and reloaded, each step met on `sync_plane`. The slot is the plane's own, so no
+    /// other plane waits; every unit of the plane calls it.
+    pub(crate) fn mul_along(&self, factors: &Array<T>, #[comptime] first: usize) {
+        self.spill_to_scratch();
+        sync_plane();
+        self.mul_spilled(factors, first);
+        sync_plane();
+        self.reload_from_scratch();
+        sync_plane();
+    }
+
+    /// `slot[i, :] *= factors[first + i]` over this fragment's spilled cells, the plane's units
+    /// taking them in turns. The caller owns the barriers.
+    pub(crate) fn mul_spilled(&self, factors: &Array<T>, #[comptime] first: usize) {
+        let mut scratch = self.scratch_slot();
+        let (m, n) = self.shape;
+        let mut cell = UNIT_POS_PLANE as usize;
+        while cell < m * n {
+            scratch[cell] *= factors[first + cell / n];
+            cell += PLANE_DIM as usize;
+        }
+    }
+
+    /// Load this fragment back from its slot of the plane's scratch. The caller owns the barriers.
+    pub(crate) fn reload_from_scratch(&self) {
+        let scratch = self.scratch_slot();
+        let mut fragment = self.clone();
+        fragment.load_scratch(&scratch);
+    }
+
     /// Store this fragment into its slot of the plane's scratch. The caller owns the barriers.
     pub(crate) fn spill_to_scratch(&self) {
-        self.store_scratch(&self.scratch_slot("spill_to_scratch"));
+        self.store_scratch(&self.scratch_slot());
     }
 
     /// Write this fragment's spilled cells into `mem` through the store's own write.
@@ -116,7 +148,7 @@ impl<T: Numeric> CmmaData<T> {
         mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
-        let scratch = self.scratch_slot("add_from_scratch");
+        let scratch = self.scratch_slot();
         let (m, n) = comptime!(self.shape);
         let width = comptime!(mem.store.vector_size);
         comptime!(assert!(
@@ -159,14 +191,14 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// This fragment's slot of the plane's scratch, or the reason there is none.
-    fn scratch_slot(&self, #[comptime] site: &str) -> Shared<[T]> {
+    fn scratch_slot(&self) -> Shared<[T]> {
         #[comptime]
         match &self.scratch {
             ComptimeOption::Some(scratch) => scratch.clone(),
             ComptimeOption::None => panic!(
-                "CmmaData::{site}: a fragment reaches a store that folds, or a window the \
-                 problem's edge cuts short, through a scratch; open the accumulator with \
-                 `with_scratch`"
+                "CmmaData: a fragment bounces through a scratch, to scale its slices, to reach a \
+                 store that folds, or a window the problem's edge cuts short; open the \
+                 accumulator with `with_scratch`"
             ),
         }
     }
