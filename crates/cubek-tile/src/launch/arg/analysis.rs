@@ -30,6 +30,12 @@ pub enum Refusal {
     WidthNotServed { width: usize, why: LineMisfit },
     /// The innermost axis is served in vector lines but is not provably in bounds.
     UncheckableVectorEdge,
+    /// A gathered mapping read in vector lines whose innermost physical axis does not step by the
+    /// operand's last logical axis at coefficient 1.
+    GatherInnermostNotInLines,
+    /// A gathered mapping that reads `axis` off several physical axes: the operand is
+    /// storage-tiled, or reads one axis from two places.
+    GatherAxisAddressedTwice(Axis),
     /// A TMA box edge past the descriptor's per-axis limit `most`.
     BoxPastDescriptor {
         axis: Axis,
@@ -86,6 +92,17 @@ impl Display for Refusal {
                  (it overhangs its tiling, or its map is affine and reaches past any extent stated \
                  here); serve it scalar, or state BoundaryPolicy::Unchecked if the launch proves \
                  its vector lines are in bounds"
+            ),
+            Refusal::GatherInnermostNotInLines => write!(
+                f,
+                "Arg::gathered: the innermost physical axis must step by the operand's last \
+                 logical axis at coefficient 1 (it is addressed in vector lines)"
+            ),
+            Refusal::GatherAxisAddressedTwice(axis) => write!(
+                f,
+                "Arg::gathered: logical axis {axis:?} addresses several physical axes, so it is \
+                 either storage-tiled (a gathered operand must be untiled gmem) or read off two \
+                 places at once"
             ),
             Refusal::BoxPastDescriptor { axis, edge, most } => box_past(f, *axis, *edge, *most),
         }

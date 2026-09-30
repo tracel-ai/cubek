@@ -108,7 +108,7 @@ pub fn launch_ref(
         .packed(problem.field)
         // The served width, which is a whole word: the buffer binds one word wide.
         .vectorize(factor)
-        .build();
+        .build()?;
     let x_op = launch
         .arg(x)
         .gathered(Projection::new(
@@ -119,7 +119,7 @@ pub fn launch_ref(
         // contraction folds a whole line. Leave it scalar and the engine serves one value a
         // step, unpacks the word's other values and discards them.
         .vectorize(factor)
-        .build();
+        .build()?;
     // The block level first, the factor over the whole tensor where the scheme has one; each
     // addresses exactly the axes its own shape distinguishes. An extent of one is an axis a level
     // does not vary along, which is what makes it cover a tile of the tiles below it.
@@ -185,7 +185,7 @@ pub fn launch_ref(
                 .arg(binding)
                 .gathered(projection)
                 .packed(field)
-                .build(),
+                .build()?,
         );
     }
     let mut levels = levels.into_iter();
@@ -196,7 +196,7 @@ pub fn launch_ref(
     };
     // Each unit holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
-    let out_op = launch.arg(out).axes(&[M, N]).build();
+    let out_op = launch.arg(out).axes(&[M, N]).build()?;
 
     quant_gemv_kernel::launch(
         client,

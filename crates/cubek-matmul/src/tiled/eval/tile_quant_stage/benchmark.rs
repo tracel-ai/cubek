@@ -207,7 +207,11 @@ impl Benchmark for TileQuantStageBench {
             let concrete = partitioning.space().clone();
             Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
         };
-        let a = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
+        let a = launcher
+            .arg(a.handle().binding())
+            .axes(&[M, K])
+            .build()
+            .map_err(|refusal| refusal.to_string())?;
         let b_projection = Projection::new(&[K, NB, NI], &[PhysicalAxisMap::of(K), self.n_dim()]);
         // The register instruction lines the accumulator at the RHS's served width.
         let c_spec = TileSpec::new(Projection::new(

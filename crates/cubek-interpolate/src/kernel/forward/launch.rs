@@ -220,12 +220,12 @@ fn dispatch<F: SeparableFilterFamily>(
             false => BoundaryPolicy::Unchecked,
         })
         .vectorize(vector_size)
-        .build();
+        .build()?;
     let output_arg = launch
         .arg(output)
         .axes(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
-        .build();
+        .build()?;
     interpolate_tile_kernel::launch::<F>(
         client,
         launch.cube_count(),

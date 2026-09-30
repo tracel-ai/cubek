@@ -197,7 +197,7 @@ pub fn tile(
         &batch_dims,
         &words,
         &tiles,
-    );
+    )?;
     Ok(TensorHandle::from_metadata(handle, dst_values, dtype))
 }
 
@@ -241,7 +241,7 @@ pub fn untile(
         &logical[..batches],
         &extents,
         &tiles,
-    );
+    )?;
     Ok(dst)
 }
 
@@ -256,7 +256,7 @@ fn relayout_launch(
     batches: &[usize],
     extents: &[(Axis, usize)],
     tiles: &[(Axis, usize)],
-) {
+) -> Result<(), MatmulSetupError> {
     let named: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
     // Batch axes the named ones leave free.
     let batch_axes: Vec<Axis> = (0..=u8::MAX)
@@ -309,7 +309,7 @@ fn relayout_launch(
             .vectorize(v)
             .build()
     };
-    let (s, d) = (bind(src), bind(dst));
+    let (s, d) = (bind(src)?, bind(dst)?);
     relayout::launch(
         client,
         cube_count,
@@ -321,4 +321,5 @@ fn relayout_launch(
         level,
         dtype,
     );
+    Ok(())
 }

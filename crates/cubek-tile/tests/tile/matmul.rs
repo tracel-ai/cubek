@@ -1798,9 +1798,21 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         ),
         Form::Dynamic,
     );
-    let a_op = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
-    let b_op = launcher.arg(b.handle().binding()).axes(&[K, N]).build();
-    let c_op = launcher.arg(c.handle().binding()).axes(&[M, N]).build();
+    let a_op = launcher
+        .arg(a.handle().binding())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
+    let b_op = launcher
+        .arg(b.handle().binding())
+        .axes(&[K, N])
+        .build()
+        .unwrap();
+    let c_op = launcher
+        .arg(c.handle().binding())
+        .axes(&[M, N])
+        .build()
+        .unwrap();
 
     matmul_padded_rhs_stage::launch(
         &client,
@@ -1859,9 +1871,21 @@ fn matmul_padded_lhs_stage_direct_tail() {
         ),
         Form::Dynamic,
     );
-    let a_op = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
-    let b_op = launcher.arg(b.handle().binding()).axes(&[K, N]).build();
-    let c_op = launcher.arg(c.handle().binding()).axes(&[M, N]).build();
+    let a_op = launcher
+        .arg(a.handle().binding())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
+    let b_op = launcher
+        .arg(b.handle().binding())
+        .axes(&[K, N])
+        .build()
+        .unwrap();
+    let c_op = launcher
+        .arg(c.handle().binding())
+        .axes(&[M, N])
+        .build()
+        .unwrap();
 
     matmul_padded_lhs_stage_two_levels::launch(
         &client,

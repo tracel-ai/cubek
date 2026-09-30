@@ -299,7 +299,9 @@ impl<T: Numeric> Memory<T> {
 /// The contract an operand's statement owes, checked on the host.
 fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
     let projection = &spec.projection;
-    projection.validate(vector_size);
+    if let Err(refusal) = projection.validate(vector_size) {
+        panic!("{refusal}");
+    }
     projection.validate_composition(|axis| space.extent(axis));
     let coord_rank = projection.coordinate_rank();
     assert!(

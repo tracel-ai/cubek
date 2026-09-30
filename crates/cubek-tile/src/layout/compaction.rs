@@ -80,7 +80,9 @@ impl Compaction {
         }
 
         let projection = Projection::new(projection.logical_axes(), &physical);
-        projection.validate(vector_size);
+        if let Err(refusal) = projection.validate(vector_size) {
+            panic!("Compaction: {refusal}");
+        }
 
         Compaction {
             steps,

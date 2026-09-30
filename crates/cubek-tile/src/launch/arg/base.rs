@@ -142,20 +142,19 @@ impl<'a> Arg<'a, Labelled> {
         self
     }
 
-    /// The operand, bound; panics with the [`Refusal`] if it cannot be.
-    pub fn build(self) -> Bound {
-        let (bound, _) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
-        bound
+    /// The operand, bound, or the [`Refusal`] saying why it cannot be.
+    pub fn build(self) -> Result<Bound, Refusal> {
+        self.realize().map(|(bound, _)| bound)
     }
 
     /// [`build`](Self::build) without the tensor argument, for an operand with no address.
-    pub fn build_spec(self) -> Unbound {
-        let (bound, geometry) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
-        Unbound {
+    pub fn build_spec(self) -> Result<Unbound, Refusal> {
+        let (bound, geometry) = self.realize()?;
+        Ok(Unbound {
             spec: bound.spec,
             vector_size: bound.vector_size,
             geometry,
-        }
+        })
     }
 
     /// The derivation both builds share.
@@ -180,7 +179,7 @@ impl<'a> Arg<'a, Labelled> {
             projection,
             addressed,
         } = labels;
-        projection.validate(width);
+        projection.validate(width)?;
         // A stated width is checked here: `stride / width` would truncate silently.
         // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
         let labels = projection.dense_labels();

@@ -14,5 +14,15 @@ pub(crate) use matrix::*;
 pub(crate) use operands::*;
 pub use strategy::Strategy;
 
+use crate::definition::MatmulSetupError;
+use cubek_tile::launch::Refusal;
+
+/// An operand the tile engine refused to bind is a configuration this routine cannot run.
+impl From<Refusal> for MatmulSetupError {
+    fn from(refusal: Refusal) -> Self {
+        MatmulSetupError::InvalidConfig(Box::new(refusal))
+    }
+}
+
 #[cfg(feature = "benchmarks")]
 pub mod eval;
