@@ -14,6 +14,8 @@ use cubecl::{
     std::tensor::{ViewMut, layout::Coords2d},
 };
 
+use cubek_std::InvalidConfigError;
+
 pub type WriterStage<GW, MT> = <<GW as GlobalWriterFamily>::Stage as StageFamily>::Stage<
     definition::Stage<MT>,
     definition::StageSize<MT>,
@@ -27,6 +29,12 @@ pub trait GlobalWriterFamily: 'static + Send + Sync {
             IP,
             Stage = <Self::Stage as StageFamily>::Stage<IP::Stage, IP::StageSize, WriteTiling>,
         >;
+
+    /// Validate the writer before kernel compilation so autotuning can reject
+    /// incompatible configurations with a recoverable setup error.
+    fn validate_with_config(_config: &GlobalWriterConfig) -> Result<(), InvalidConfigError> {
+        Ok(())
+    }
 }
 
 #[cube]

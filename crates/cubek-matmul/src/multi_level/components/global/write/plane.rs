@@ -19,6 +19,8 @@ use cubecl::{
     std::tensor::{ViewMut, layout::Coords2d},
 };
 
+use cubek_std::InvalidConfigError;
+
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory
 /// using a plane for each tile
@@ -171,4 +173,81 @@ pub struct PlaneWriterFamily;
 impl GlobalWriterFamily for PlaneWriterFamily {
     type Stage = PartitionedStageFamily;
     type Writer<'a, IP: MatrixTypes> = PlaneWriter<'a, IP>;
+
+    fn validate_with_config(config: &GlobalWriterConfig) -> Result<(), InvalidConfigError> {
+        let tile_width = config.smem_config.elements_per_tile_along_contiguous_dim() as usize;
+        let vector_size = config.gmem_config.vector_size;
+
+        // Each write belongs to one tile row. A wider vector would spill into
+        // another row in shared memory but contiguous columns in global memory.
+        if !tile_width.is_multiple_of(vector_size) {
+            return Err(Box::new(format!(
+                "Plane writer tile width ({tile_width}) must be divisible by output vector size ({vector_size})"
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::multi_level::{
+        components::global::{
+            PlaneFlowPartitionRule,
+            memory::{GlobalMemoryConfig, ViewDirection},
+        },
+        stage::SwizzleMode,
+    };
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_std::MatrixLayout;
+
+    fn writer_config(tile_width: u32, vector_size: usize) -> GlobalWriterConfig {
+        let dtype = ElemType::Float(FloatKind::F16);
+        GlobalWriterConfig {
+            gmem_config: GlobalMemoryConfig {
+                vector_size,
+                check_row_bounds: true,
+                check_col_bounds: true,
+                matrix_layout: MatrixLayout::RowMajor,
+                view_direction: ViewDirection::None,
+                dtype,
+            },
+            smem_config: StageMemoryConfig {
+                num_planes: 1,
+                elements_per_tile_along_row: 16,
+                elements_per_tile_along_col: tile_width,
+                tiles_per_partition_along_row: 2,
+                tiles_per_partition_along_col: 4,
+                partitions_per_stage_along_row: 2,
+                partitions_per_stage_along_col: 1,
+                vector_size: vector_size as u32,
+                matrix_layout: MatrixLayout::RowMajor,
+                swizzle: SwizzleMode::None,
+                num_stages: 1,
+                dtype,
+            },
+            plane_flow_partition_rule: PlaneFlowPartitionRule::MainFlowOnly,
+            plane_dim: 32,
+        }
+    }
+
+    #[test]
+    fn rejects_output_vectors_crossing_tile_rows() {
+        // Masked f16 matmul fusion can choose 16-wide vectors with 16x8 MMA
+        // tiles. The partition is wide enough, but each write addresses one tile.
+        let config = writer_config(8, 16);
+        let err = PlaneWriterFamily::validate_with_config(&config).unwrap_err();
+        assert!(err.to_string().contains("tile width (8)"));
+        assert!(err.to_string().contains("output vector size (16)"));
+    }
+
+    #[test]
+    fn accepts_output_vectors_dividing_tile_rows() {
+        for (tile_width, vector_size) in [(8, 1), (8, 4), (8, 8), (16, 16)] {
+            PlaneWriterFamily::validate_with_config(&writer_config(tile_width, vector_size))
+                .unwrap_or_else(|err| panic!("{err}"));
+        }
+    }
 }

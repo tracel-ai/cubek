@@ -155,6 +155,8 @@ where
         LL::validate_with_config(device_props, &lhs_reader_config)?;
         RL::validate_with_config(device_props, &rhs_reader_config)?;
 
+        GW::validate_with_config(&writer_config)?;
+
         Ok(SharedGlobalMatmulConfig {
             stage_config,
             num_planes: plane_flow_config.counts.total_count(),
