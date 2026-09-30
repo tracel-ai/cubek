@@ -1181,26 +1181,29 @@ impl<S: Numeric> Tile<S> {
         self.scale_at(&own)
     }
 
-    /// The one value at `coords` of a tile that serves lines.
+    /// The one value at `coords` of a tile that serves lines: the load holding it, read whole,
+    /// and the value's place in it, whatever axes the load spans.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     fn value_in_line(&self, coords: &Coords<u32>) -> S {
-        let rank = coords.len();
-        let width = self.vector_size();
+        let space = comptime!(self.place.space.clone());
+        let rank = comptime!(space.rank());
+        let load = self.vector_tile();
+        let width = comptime!(load.values());
         let size!(W) = width;
-        let mut at = CoordsDyn::new();
-        let mut field = 0u32.runtime();
-        #[unroll]
-        for p in 0..rank {
-            let coord = coords.at(p);
-            if comptime!(p == rank - 1 && width > 1) {
-                field = coord.remainder(comptime!(width as u32));
-                at.push(coord.divided_by(comptime!(width as u32)));
-            } else {
-                at.push(coord);
-            }
-        }
-        let line = self.nd_packed::<W>(comptime!(Guard::Checked)).read(at);
+        let line = self
+            .nd_packed::<W>(comptime!(Guard::Checked))
+            .read(load.index(coords, &space));
         if comptime!(width > 1) {
+            let mut field = 0u32.runtime();
+            #[unroll]
+            for p in 0..rank {
+                let axis = comptime!(space.axis_at(p));
+                let extent = comptime!(load.extent_along(axis) as u32);
+                if comptime!(extent > 1) {
+                    let step = comptime!(load.step_along(axis) as u32);
+                    field += coords.at(p).remainder(extent).times(step);
+                }
+            }
             line.extract_dynamic(field.cast::<usize>())
         } else {
             line.extract(0usize)

@@ -120,6 +120,19 @@ impl VectorTile {
             .map_or(1, |&(_, extent)| extent)
     }
 
+    /// How many values of one load lie between two neighbours along `axis`: the product of the
+    /// extents finer than `axis`'s. `0` off the axes the load spans.
+    pub(crate) fn step_along(&self, axis: Axis) -> usize {
+        let mut step = 1;
+        for &(a, extent) in &self.extents {
+            if a == axis {
+                return step;
+            }
+            step *= extent;
+        }
+        0
+    }
+
     /// How far along `axis` the value at `position` of one load sits from the load's first: the
     /// position read as a number whose digits are the load's extents, finest first. `20` of a
     /// 16 by 2 load along `K` then `N` is 4 along `K` and 1 along `N`.

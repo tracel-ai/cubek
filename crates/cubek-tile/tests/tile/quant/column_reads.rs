@@ -21,13 +21,13 @@ const KI: Axis = Axis(3);
 const BLOCK: usize = 16;
 const PER_WORD: usize = 8;
 
-/// `c = x · (W ⊗ s)`, the weight read `W` words a load, into a register block that lives across
+/// `c = x · (W ⊗ s)`, the weight read `W` words a load and the scales `VS` a load, into a register block that lives across
 /// the walk over `K` and drains once.
 #[cube(launch)]
-fn column_gemv<E: Numeric, VX: Size, W: Size>(
+fn column_gemv<E: Numeric, VX: Size, W: Size, VS: Size>(
     x: &TileArg<'_, E, VX>,
     w: &TileArg<'_, u32, W>,
-    scale: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, VS>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -62,10 +62,10 @@ fn column_gemv<E: Numeric, VX: Size, W: Size>(
 /// [`column_gemv`] with the accumulator in memory: the output zeroed once, and every step's
 /// block seeded from it and committed back ([`Tile::mma_with`]).
 #[cube(launch)]
-fn column_gemv_in_memory<E: Numeric, VX: Size, W: Size>(
+fn column_gemv_in_memory<E: Numeric, VX: Size, W: Size, VS: Size>(
     x: &TileArg<'_, E, VX>,
     w: &TileArg<'_, u32, W>,
-    scale: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, VS>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -109,10 +109,55 @@ fn offset(geometry: &Geometry, labels: &[Axis], axes: &[Axis], coords: &[usize])
     offset
 }
 
+/// The scales `[N, KB]`, plain, or stored 2 blocks along `KB` then `columns` columns and read a
+/// stored tile a load: the handle, how it is bound, and the load's width.
+fn scales(
+    client: &Client,
+    s: &[f32],
+    (cols, blocks): (usize, usize),
+    columns: Option<usize>,
+) -> (TensorHandle, TileSpec, usize) {
+    let dtype = f32::elem_type_native();
+    let Some(columns) = columns else {
+        let handle = TensorHandle::new_contiguous(
+            vec![cols, blocks],
+            client.create(Bytes::from_elems(s.to_vec())),
+            dtype,
+        );
+        return (handle, TileSpec::direct(&[N, KB]), 1);
+    };
+    let axes = [N, KB];
+    let storage = StorageLevels::new(&[(KB, 2)])
+        .tile(&[(N, columns)])
+        .grid(&[N, KB]);
+    let geometry = storage.physical(&[(N, cols), (KB, blocks)]).unwrap();
+    let labels = geometry.labels(&axes);
+    let mut stored = vec![0f32; cols * blocks];
+    for n in 0..cols {
+        for kb in 0..blocks {
+            stored[offset(&geometry, &labels, &axes, &[n, kb])] = s[n * blocks + kb];
+        }
+    }
+    let handle = TensorHandle::new(
+        client.create(Bytes::from_elems(stored)),
+        geometry.shape().to_vec(),
+        geometry.strides().to_vec(),
+        dtype,
+    );
+    let mut spec = TileSpec::new(Projection::tiled(&axes, &labels));
+    spec.stored_tiles = storage.tiles().to_vec();
+    (handle, spec, 2 * columns)
+}
+
 /// `columns` columns a load, `leaf_columns` a leaf: the weight `[N, KB, KI]` stored a word of 8
 /// along `KI`, then `columns` columns, the rest `N`-major so a group of columns keeps its whole
-/// `K` together.
-fn gemv_against_the_reference(columns: usize, leaf_columns: usize, in_memory: bool) {
+/// `K` together. The scales plain, or stored `scale_columns` columns a load.
+fn gemv_against_the_reference(
+    columns: usize,
+    leaf_columns: usize,
+    in_memory: bool,
+    scale_columns: Option<usize>,
+) {
     let (cols, blocks) = (16, 8);
     let client = cubecl::test_device().client();
 
@@ -153,10 +198,7 @@ fn gemv_against_the_reference(columns: usize, leaf_columns: usize, in_memory: bo
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let (s_tensor, _) = TestInput::builder(client.clone(), shape![cols, blocks])
-        .dtype(dtype)
-        .custom(s.clone())
-        .generate_with_f32_host_data();
+    let (s_tensor, s_spec, scale_width) = scales(&client, &s, (cols, blocks), scale_columns);
     let c = TestInput::builder(client.clone(), shape![1, cols])
         .dtype(dtype)
         .zeros()
@@ -185,15 +227,13 @@ fn gemv_against_the_reference(columns: usize, leaf_columns: usize, in_memory: bo
                 launcher.cube_dim(),
                 PER_WORD,
                 columns,
+                scale_width,
                 TileArgLaunch::new(
                     x_tensor.binding().into_tensor_arg(),
                     TileSpec::direct(&[M, KB, KI]),
                 ),
                 TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
-                TileArgLaunch::new(
-                    s_tensor.binding().into_tensor_arg(),
-                    TileSpec::direct(&[N, KB]),
-                ),
+                TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), s_spec),
                 TileArgLaunch::new(
                     c.clone().binding().into_tensor_arg(),
                     TileSpec::direct(&[M, N]),
@@ -220,7 +260,7 @@ fn gemv_against_the_reference(columns: usize, leaf_columns: usize, in_memory: bo
         let have = got.get_f32(&[0, n]);
         assert!(
             (have - want).abs() < 1e-3,
-            "{columns} columns a load, column {n}: got {have}, want {want}"
+            "{columns} columns a load, scales {scale_columns:?}, column {n}: got {have}, want {want}"
         );
     }
 }
@@ -228,29 +268,42 @@ fn gemv_against_the_reference(columns: usize, leaf_columns: usize, in_memory: bo
 /// One column a load: the word alone, the path every untiled weight already takes.
 #[test]
 fn one_column_a_load_is_a_word_along_k() {
-    gemv_against_the_reference(1, 4, false);
+    gemv_against_the_reference(1, 4, false, None);
 }
 
 /// Two words a load, one of each column, split into their runs along `K`.
 #[test]
 fn two_columns_a_load_split_into_their_runs() {
-    gemv_against_the_reference(2, 4, false);
+    gemv_against_the_reference(2, 4, false, None);
 }
 
 /// Four words a load, the leaf's every column in one read.
 #[test]
 fn four_columns_a_load_cover_the_leaf() {
-    gemv_against_the_reference(4, 4, false);
+    gemv_against_the_reference(4, 4, false, None);
 }
 
 /// A leaf of eight columns reads two loads of four per step of `K`.
 #[test]
 fn a_leaf_wider_than_a_load_reads_several() {
-    gemv_against_the_reference(4, 8, false);
+    gemv_against_the_reference(4, 8, false, None);
 }
 
 /// The accumulator in memory takes the same loads the same way.
 #[test]
 fn an_accumulator_in_memory_splits_the_same_loads() {
-    gemv_against_the_reference(4, 8, true);
+    gemv_against_the_reference(4, 8, true, None);
+}
+
+/// The scales stored 2 blocks by 2 columns: one load a pair of columns' scales.
+#[test]
+fn scales_stored_across_columns_read_a_load_for_several() {
+    gemv_against_the_reference(4, 4, false, Some(2));
+}
+
+/// Four columns' scales a load, beside four columns' values a load, both accumulators.
+#[test]
+fn scales_and_values_both_read_four_columns_a_load() {
+    gemv_against_the_reference(4, 8, false, Some(4));
+    gemv_against_the_reference(4, 8, true, Some(4));
 }
