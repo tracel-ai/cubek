@@ -413,14 +413,54 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// `self[r, :] *= factors[r]`, each tile scaled where it is held ([`PlaneTile::mul_rows`]),
-    /// row `r` counted down the partition's rows.
+    /// `self[r, :] *= factors[r]`, row `r` counted down the partition's rows. Each tile is
+    /// scaled where it is held ([`PlaneTile::mul_rows`]), unless the scratch holds every fragment
+    /// of the grid at once: then the plane spills them all, meets once, scales, meets once, and
+    /// reloads them all.
     pub(crate) fn mul_rows(&self, factors: &Array<T>) {
+        // Only a cmma grid is opened with a scratch, so one that holds the whole grid is one.
+        if comptime!(self.held == Scratch::WholeGrid) {
+            self.mul_rows_whole_grid(factors);
+        } else {
+            #[unroll]
+            for mi in 0..comptime!(self.m_tiles) {
+                #[unroll]
+                for ni in 0..comptime!(self.n_tiles) {
+                    self.at(mi, ni).mul_rows(factors, comptime!(mi * self.rows));
+                }
+            }
+        }
+    }
+
+    /// [`mul_rows`](Self::mul_rows) over a grid of cmma fragments each with a slot of its own.
+    fn mul_rows_whole_grid(&self, factors: &Array<T>) {
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            self.cmma_at(i).spill_to_scratch();
+        }
+        sync_plane();
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
             for ni in 0..comptime!(self.n_tiles) {
-                self.at(mi, ni).mul_rows(factors, comptime!(mi * self.rows));
+                self.cmma_at(comptime!(mi * self.n_tiles + ni))
+                    .scale_spilled_rows(factors, comptime!(mi * self.rows));
+            }
+        }
+        sync_plane();
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            self.cmma_at(i).reload_from_scratch();
+        }
+        sync_plane();
+    }
+
+    /// The `i`-th tile of a grid of cmma fragments, in row-major order.
+    fn cmma_at(&self, #[comptime] i: usize) -> CmmaData<T> {
+        match self.frags.index(i).clone() {
+            PlaneTile::Cmma(fragment) => fragment,
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+                panic!("PlanePartition: a grid holds one kind of tile")
             }
         }
     }

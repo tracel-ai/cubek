@@ -106,23 +106,35 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// `self[r, :] *= factors[first + r]`, bounced through this fragment's slot of the plane's
-    /// scratch: stored, scaled by the plane's units in turns, and loaded back, each step met on
+    /// scratch: spilled, scaled by the plane's units in turns, and reloaded, each step met on
     /// `sync_plane`. The slot is the plane's own, so no other plane waits; every unit of the plane
     /// calls it.
     pub(crate) fn mul_rows(&self, factors: &Array<T>, #[comptime] first: usize) {
-        let mut scratch = self.scratch_slot("mul_rows");
-        let (m, n) = comptime!(self.shape);
-        self.store_scratch(&scratch);
+        self.spill_to_scratch();
         sync_plane();
+        self.scale_spilled_rows(factors, first);
+        sync_plane();
+        self.reload_from_scratch();
+        sync_plane();
+    }
+
+    /// `slot[r, :] *= factors[first + r]` over this fragment's spilled cells, the plane's units
+    /// taking them in turns. The caller owns the barriers.
+    pub(crate) fn scale_spilled_rows(&self, factors: &Array<T>, #[comptime] first: usize) {
+        let mut scratch = self.scratch_slot("scale_spilled_rows");
+        let (m, n) = comptime!(self.shape);
         let mut cell = UNIT_POS_PLANE as usize;
         while cell < comptime!(m * n) {
             scratch[cell] *= factors[first + cell / n];
             cell += PLANE_DIM as usize;
         }
-        sync_plane();
+    }
+
+    /// Load this fragment back from its slot of the plane's scratch. The caller owns the barriers.
+    pub(crate) fn reload_from_scratch(&self) {
+        let scratch = self.scratch_slot("reload_from_scratch");
         let mut fragment = self.clone();
         fragment.load_scratch(&scratch);
-        sync_plane();
     }
 
     /// Store this fragment into its slot of the plane's scratch. The caller owns the barriers.

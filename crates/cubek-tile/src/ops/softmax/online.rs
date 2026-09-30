@@ -129,23 +129,6 @@ impl<E: Float> OnlineSoftmax<E> {
         }
     }
 
-    /// Merge `other`'s rows into these: the state of both runs of blocks together. Returns the
-    /// factors each side's sums are multiplied by, these rows' first.
-    pub fn merge(&mut self, other: &OnlineSoftmax<E>) -> (Array<E>, Array<E>) {
-        let rows = comptime!(self.rows);
-        let mut mine = Array::<E>::new(rows);
-        let mut theirs = Array::<E>::new(rows);
-        #[unroll]
-        for r in 0..rows {
-            let m = max(self.m[r], other.m[r]);
-            mine[r] = (self.m[r] - m).exp();
-            theirs[r] = (other.m[r] - m).exp();
-            self.l[r] = mine[r] * self.l[r] + theirs[r] * other.l[r];
-            self.m[r] = m;
-        }
-        (mine, theirs)
-    }
-
     /// Each row's `1 / l`, what its sum of probabilities times values is normalized by; zero for
     /// a row whose every cell was masked.
     pub fn recip_l(&self) -> Array<E> {
