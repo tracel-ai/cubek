@@ -1,5 +1,6 @@
 mod config;
 mod correctness;
+pub mod hardware;
 mod progress;
 pub mod quant_layout;
 mod registry;

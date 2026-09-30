@@ -148,12 +148,12 @@ impl<E: Numeric> Tile<E> {
 
     /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
     /// that fragments load from.
-    pub fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
+    pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
         let lands = self.has_landing();
         comptime!(assert!(
             lands,
             "Tile::landed: a scaled operand reaches a tensor-core fragment through a landing in \
-             shared memory; open the operand with `with_landing()`"
+             shared memory; open the operand with `landed_for`"
         ));
         let space = comptime!(self.place.space.clone());
         let units = self.units();
