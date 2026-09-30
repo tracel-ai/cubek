@@ -56,4 +56,4 @@ pub use stage::base::StageStorage;
 pub use stage::pipeline::base::Stages;
 pub use tile::accumulator::base::{Accumulate, AccumulateExpand, Scratch};
 pub use tile::base::{Tile, TileExpand};
-pub use tile::rows::{Rows, RowsExpand};
+pub use tile::slices::{AxisSlices, AxisSlicesExpand};

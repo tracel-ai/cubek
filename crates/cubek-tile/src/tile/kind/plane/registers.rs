@@ -242,8 +242,9 @@ fn cell<T: Numeric, Out: Numeric, A: Size>(
     }
 }
 
-/// The block's rows, each a unit holds whole: the verbs [`Rows`] runs on a register block. The
-/// block holds whole cells, never a line of partials of one.
+/// The block's rows, each a unit holds whole: the verbs [`AxisSlices`] runs on a register block,
+/// whose slices along its columns are its rows. The block holds whole cells, never a line of
+/// partials of one.
 #[cube]
 impl<E: Float> RegisterData<E> {
     /// `self[r, c] = self[r, c] · scale + bias` at every cell, the bias read at the cell of a tile
@@ -290,7 +291,7 @@ impl<E: Float> RegisterData<E> {
         maxima
     }
 
-    /// `self[r, c] = exp(self[r, c] − rows[r])` ([`Rows::exp_minus_cell`]).
+    /// `self[r, c] = exp(self[r, c] − rows[r])` ([`AxisSlices::exp_minus_cell`]).
     pub(crate) fn exp_minus_rows(&mut self, rows: &Array<E>) {
         #[unroll]
         for r in 0..self.mr {
@@ -300,7 +301,7 @@ impl<E: Float> RegisterData<E> {
                 let mut line = self.data[at];
                 #[unroll]
                 for j in 0..self.vector_size {
-                    line.insert(j, Rows::<E>::exp_minus_cell(line.extract(j), rows[r]));
+                    line.insert(j, AxisSlices::<E>::exp_minus_cell(line.extract(j), rows[r]));
                 }
                 self.data[at] = line;
             }

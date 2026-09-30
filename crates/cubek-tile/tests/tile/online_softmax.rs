@@ -96,7 +96,7 @@ fn plane_attention<E: Float>(
                 .cmma_accumulator::<f32, f32>(&bias_p, Monoid::Sum)
                 .with_scratch(Scratch::OneTile);
             acc.zero();
-            let mut softmax = OnlineSoftmax::<f32>::over(&score);
+            let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             let mut stages =
                 Stages::smem_triple(&walk, &q_p, &k_p, &v_p, StageStorage::Strided, 1usize);
             stages.pipelined(walk, |slot, stage| {
@@ -116,14 +116,14 @@ fn plane_attention<E: Float>(
                     p.copy_cast_from(&score);
                     // The probabilities land before the fragments load them.
                     sync_plane();
-                    acc.rows().mul(&correction);
+                    acc.along(V).mul(&correction);
                     for fragment in stage.walk().routed(D, 0).unrolled() {
                         let mut cell = acc.at(&fragment);
                         cell.mma(&p.at(&fragment), &v_s.at(&fragment), Semiring::SUM_PROD);
                     }
                 });
             });
-            acc.rows().mul(&softmax.recip_l());
+            acc.along(V).mul(&softmax.recip_l());
             acc.drained_into(&out_p);
         }
     }
@@ -175,7 +175,7 @@ fn unit_attention<E: Float>(
                 Monoid::Sum,
             );
             acc.zero();
-            let mut softmax = OnlineSoftmax::<f32>::over(&bias_u);
+            let mut softmax = OnlineSoftmax::<f32>::along(&bias_u, S);
             for step in unit.walk().range(0, (keys as usize).div_ceil(block_keys)) {
                 let (q_s, k_s, v_s, bias_s) = (
                     q_u.at(&step),
@@ -192,10 +192,10 @@ fn unit_attention<E: Float>(
                 score.zero();
                 score.mma(&q_s, &k_s, Semiring::SUM_PROD);
                 let correction = softmax.step(&score, &bias_s, scale);
-                acc.rows().mul(&correction);
+                acc.along(V).mul(&correction);
                 acc.mma(&score, &v_s, Semiring::SUM_PROD);
             }
-            acc.rows().mul(&softmax.recip_l());
+            acc.along(V).mul(&softmax.recip_l());
             acc.drained_into(&out_u);
         }
     }
