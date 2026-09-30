@@ -2,9 +2,7 @@
 
 pub(crate) mod base;
 pub(crate) mod distribution;
-pub(crate) mod order;
 pub(crate) mod portion;
 
 pub(crate) use base::*;
 pub(crate) use distribution::AxisDistribution;
-pub(crate) use order::*;

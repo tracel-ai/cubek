@@ -36,7 +36,8 @@ impl GridShape {
 /// autotune keys and must not change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Scratch {
-    /// No window: fragments store through their intrinsic, which cannot add.
+    /// No window: fragments store through their intrinsic, which cannot add; a drain that needs
+    /// one opens [`OneTile`](Scratch::OneTile).
     None,
     /// One tile, bounced through shared memory with three cube-wide barriers each.
     OneTile,
@@ -159,10 +160,13 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
     ) -> Tile<EA>;
 
     /// This accumulator opened with a per-plane shared-memory scratch for bouncing drains.
+    /// [`drained_into`](Self::drained_into) opens the smallest one itself where it needs one;
+    /// stating it chooses how much of the grid it holds, or serves a drain region by region.
     fn with_scratch(self, #[comptime] scratch: Scratch) -> Self;
 
     /// Drain this accumulator into `dest`, cast to its element. `self` and `dest` must be
-    /// indexed by the same region.
+    /// indexed by the same region. A cmma grid opened with no scratch opens one where `dest`
+    /// needs its fragments bounced.
     fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>);
 }
 
@@ -225,7 +229,10 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         let lw = lhs.vector_size();
-        let rw = rhs.vector_size();
+        // The block's lines are a run of the rhs's loads: the whole load, or one column's run of
+        // a load stored across several columns.
+        let rhs_load = rhs.vector_tile();
+        let rw = comptime!(rhs_load.run_length());
         let aw = self.vector_size();
         let fold = comptime!(memory::contracted_per_step(
             &lhs.place.space,
@@ -314,6 +321,38 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
     }
 
     fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>) {
+        // A destination the fragments cannot store to directly needs a scratch: where none was
+        // opened, the drain opens the smallest.
+        let unopened = self.scratch_unopened();
+        let bounces = dest.fragments_bounce();
+        if comptime!(unopened && bounces) {
+            let opened = self.clone().with_scratch(Scratch::OneTile);
+            opened.drained_into(dest);
+        } else {
+            self.drain_as_opened(dest);
+        }
+    }
+}
+
+#[cube]
+impl<Acc: Numeric> Tile<Acc> {
+    /// Whether this is a grid of cmma fragments opened with no scratch.
+    fn scratch_unopened(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::PlanePartition(p) => {
+                let cmma = p.is_cmma();
+                comptime!(cmma && p.held == Scratch::None)
+            }
+            TileKind::Memory(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
+    }
+
+    /// [`drained_into`](Accumulate::drained_into) through the scratch this grid was opened with.
+    fn drain_as_opened<Out: Numeric>(&self, dest: &Tile<Out>) {
         match &self.kind {
             TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held)) {
                 DrainPlan::Straight => drain_below::<Acc, Out>(

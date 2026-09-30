@@ -8,14 +8,15 @@ use crate::*;
 /// scales.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
     lhs_scales: &FactorReader,
-    rhs: &MatrixView<'_, Vector<ER, V>>,
+    rhs: &MatrixView<'_, Vector<ER, RL>>,
     rhs_scales: &FactorReader,
     c: &mut Array<Vector<E, V>>,
     #[comptime] lw: usize,
     #[comptime] contracted_per_step: usize,
+    #[comptime] columns: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] kc: usize,
@@ -23,6 +24,11 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] component_fanout: bool,
     #[comptime] semiring: Semiring,
 ) {
+    comptime!(assert!(
+        columns == 1 || contracted_per_step > 1,
+        "mm: a rhs load holds the runs of {columns} columns along the contraction, and this rhs \
+         lines along the accumulator"
+    ));
     let mut b = Array::<Vector<E, V>>::new(nr);
     let folded = comptime!(contracted_per_step > 1);
     let width = comptime!(match folded {
@@ -36,7 +42,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 
     for line in 0..lines {
         if comptime!(folded) {
-            rank1_update::<E, EL, L, ER, V>(
+            rank1_update::<E, EL, L, ER, V, RL>(
                 lhs,
                 lhs_scales,
                 rhs,
@@ -48,6 +54,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 0usize,
                 comptime!(Some(0usize)),
                 contracted_per_step,
+                columns,
                 mr,
                 nr,
                 unroll,
@@ -56,7 +63,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         } else if comptime!(fixed) {
             #[unroll]
             for unit in 0..lw {
-                rank1_update::<E, EL, L, ER, V>(
+                rank1_update::<E, EL, L, ER, V, RL>(
                     lhs,
                     lhs_scales,
                     rhs,
@@ -68,6 +75,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     0usize,
                     comptime!(Some(unit)),
                     contracted_per_step,
+                    columns,
                     mr,
                     nr,
                     unroll,
@@ -76,7 +84,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             }
         } else {
             for unit in 0..lw {
-                rank1_update::<E, EL, L, ER, V>(
+                rank1_update::<E, EL, L, ER, V, RL>(
                     lhs,
                     lhs_scales,
                     rhs,
@@ -88,6 +96,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     unit,
                     comptime!(None),
                     contracted_per_step,
+                    columns,
                     mr,
                     nr,
                     unroll,
@@ -100,7 +109,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     // A partial last line, unrolled at comptime.
     #[unroll]
     for unit in 0..tail {
-        rank1_update::<E, EL, L, ER, V>(
+        rank1_update::<E, EL, L, ER, V, RL>(
             lhs,
             lhs_scales,
             rhs,
@@ -112,6 +121,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             0usize,
             comptime!(Some(unit)),
             contracted_per_step,
+            columns,
             mr,
             nr,
             unroll,
@@ -124,10 +134,10 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 /// `fixed` is the comptime component to extract; `None` takes `unit` at runtime.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
     lhs_scales: &FactorReader,
-    rhs: &MatrixView<'_, Vector<ER, V>>,
+    rhs: &MatrixView<'_, Vector<ER, RL>>,
     rhs_scales: &FactorReader,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
@@ -136,17 +146,28 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     unit: usize,
     #[comptime] fixed: Option<usize>,
     #[comptime] contracted_per_step: usize,
+    #[comptime] columns: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
     #[comptime] semiring: Semiring,
 ) {
     if comptime!(contracted_per_step > 1) {
+        // A load holds `columns` columns' runs, in order: read it once, split it, scale each run
+        // (in `E`, so an integer operand doesn't round the scale or wrap).
         #[unroll(unroll)]
-        for n in 0..nr {
-            let pos = (n as u32, k_line);
-            // Promote to `E` before scaling so an integer operand doesn't round the scale or wrap.
-            b[n] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(rhs.read(pos)), pos);
+        for g in 0..comptime!(nr / columns) {
+            let held = rhs.read((g as u32, k_line));
+            #[unroll]
+            for j in 0..columns {
+                let pos = ((g * columns + j) as u32, k_line);
+                let run = values_at::<E, ER, RL, V>(
+                    held,
+                    comptime!(j * contracted_per_step),
+                    comptime!(Packing::Plain),
+                );
+                b[g * columns + j] = rhs_scales.apply::<E, V>(run, pos);
+            }
         }
     } else {
         #[unroll(unroll)]

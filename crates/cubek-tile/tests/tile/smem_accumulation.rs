@@ -189,8 +189,9 @@ fn each_cube_folds_only_its_own_box() {
 // bounces through the plane's scratch and each unit writes only the cells inside.
 
 /// `c = a · b` in `16×16×16` fragments over boxes that overhang the output, drained into a plain
-/// output that replaces: through [`Tile::drained_into`], or where `copies` through
-/// [`Tile::copy_from`], which bounces the same way.
+/// output that replaces: through [`Tile::drained_into`], which opens the scratch the bounce needs,
+/// or where `copies` through [`Tile::copy_from`], which bounces the same way through the scratch it
+/// is opened with.
 #[cube(launch)]
 fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
     a: &TileArg<'_, EI, Const<1>>,
@@ -208,9 +209,13 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let mut c_cube = c.at(&cube);
-        let mut acc = c_cube
-            .cmma_accumulator::<E, EI>(&a_cube, Monoid::Sum)
-            .with_scratch(Scratch::OneTile);
+        let opened = c_cube.cmma_accumulator::<E, EI>(&a_cube, Monoid::Sum);
+        // The drain opens the scratch the window needs; a copy is handed one.
+        let mut acc = if comptime!(copies) {
+            opened.with_scratch(Scratch::OneTile)
+        } else {
+            opened
+        };
         acc.zero();
         let walk = cube.walk();
         let mut stages = Stages::smem(

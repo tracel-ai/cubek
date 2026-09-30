@@ -267,7 +267,11 @@ mod tests {
             write: Write::Accumulate,
             ..access()
         };
-        for access in [windowed, masked, folding] {
+        let relayed = Access {
+            write: Write::Relay,
+            ..access()
+        };
+        for access in [windowed, masked, folding, relayed] {
             assert_eq!(
                 kind(plain(4), plain(4), &access),
                 TransportKind::Scanned(Scan::Element),

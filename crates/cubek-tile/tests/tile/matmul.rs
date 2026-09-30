@@ -283,6 +283,7 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
     #[comptime] steps: Level,
     #[comptime] depth: usize,
     #[comptime] schedule: Schedule,
+    #[comptime] unrolled: bool,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -296,7 +297,10 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
             let mut c_w = c.at(&region);
             c_w.zero();
         }
-        let walk = cube.over(&steps);
+        let walk = match comptime!(unrolled) {
+            true => cube.over(&steps).unrolled(),
+            false => cube.over(&steps),
+        };
         let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
         match comptime!(schedule) {
             Schedule::AheadInSlots => {
@@ -329,31 +333,6 @@ fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) 
         let mut c = c.clone();
         c.mma_with(a, b, REGISTER_BLOCK, Semiring::SUM_PROD);
     }
-}
-
-/// [`matmul_smem_ring`] walking its regions last to first.
-#[cube(launch)]
-fn matmul_smem_ring_reversed<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-    c.zero();
-    let walk = space.over(&level).reversed();
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
-        slot.consume(|a_s, b_s| {
-            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
-        });
-    });
 }
 
 /// `c += a · b`: [`matmul_smem_ring`] folding onto what `c` holds, for the caller that owns the
@@ -513,41 +492,6 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             for cell in region.over(&inner) {
-                let mut c_r = c_o.at(&cell);
-                c_r.mma_with(
-                    &a_s.at(&cell),
-                    &b_s.at(&cell),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
-            }
-        });
-    });
-}
-
-/// [`matmul_two_levels_smem_then_in_place`] with the inner walk last to first.
-#[cube(launch)]
-fn matmul_two_levels_smem_then_in_place_reversed<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
-    #[comptime] storage: StageStorage,
-    #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
-    c.zero();
-    let walk = space.over(&outer);
-    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
-    stages.pipelined(walk, |slot, region| {
-        let c_o = c.at(region);
-        slot.consume(|a_s, b_s| {
-            for cell in region.over(&inner).reversed() {
                 let mut c_r = c_o.at(&cell);
                 c_r.mma_with(
                     &a_s.at(&cell),
@@ -1037,45 +981,6 @@ fn matmul_whole_k_at_the_leaf() {
 }
 
 #[test]
-fn matmul_reversed_walk_single_cube() {
-    let client = cubecl::test_device().client();
-    let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
-    let launcher = implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(M, 4), (N, 4), (K, 4)])
-                .walk_every(&[M, N, K])
-                .build(),
-        ),
-        Form::Static,
-    );
-    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
-        .tile(&[tile_edge, tile_edge])
-        .arange();
-    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
-        .tile(&[tile_edge, tile_edge])
-        .arange();
-    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
-        .tile(&[tile_edge, tile_edge])
-        .uniform(7, -100.0, 100.0);
-    matmul_smem_ring_reversed::launch(
-        &client,
-        launcher.cube_count(),
-        CubeDim::new_single(),
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        1,
-        f32::elem_type_native(),
-    );
-    assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
-}
-
-#[test]
 fn matmul_contiguous_m_across_cubes() {
     check_matmul(
         16,
@@ -1198,6 +1103,7 @@ fn check_matmul_scheduled(
     schedule: Schedule,
     units: u32,
     width: usize,
+    unrolled: bool,
 ) {
     let client = cubecl::test_device().client();
     let levels = tiling.build();
@@ -1239,6 +1145,7 @@ fn check_matmul_scheduled(
         launcher.partitioning().level(1),
         depth,
         schedule,
+        unrolled,
         f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
@@ -1289,6 +1196,43 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
                         schedule,
                         units,
                         width,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every walk of one to seven regions under both schedules, at every depth each takes, walked at
+/// runtime and unrolled: a ring runs the laps whose every region has the one ahead of it to fill
+/// with no branch around the fill, then the laps where the walk runs out with it. Walks shorter
+/// than the ring, one region past it, and ones whose last laps are two all land here.
+#[test]
+fn every_walk_length_matches_the_whole_under_both_schedules() {
+    let tiling = || {
+        Levels::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[K])
+            .cubes(&[M, N])
+    };
+    let schedules: [(Schedule, &[usize]); 2] = [
+        (Schedule::AheadInSlots, &[1, 2, 3]),
+        (Schedule::ThroughRegisters, &[1, 2]),
+    ];
+    for regions in 1..=7 {
+        for (schedule, depths) in schedules {
+            for &depth in depths {
+                for unrolled in [false, true] {
+                    check_matmul_scheduled(
+                        8,
+                        8,
+                        4 * regions,
+                        tiling(),
+                        depth,
+                        schedule,
+                        3,
+                        1,
+                        unrolled,
                     );
                 }
             }
@@ -1985,7 +1929,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
 // ---- two levels ------------------------------------------------------------------
 
 /// Two levels stacked: the outer stages `4×4×4` blocks, the inner walks `2×2×2` final tiles
-/// of the stage last to first, where they lie.
+/// of the stage where they lie.
 #[test]
 fn matmul_multilevel_staged_then_direct() {
     let client = cubecl::test_device().client();
@@ -2010,7 +1954,7 @@ fn matmul_multilevel_staged_then_direct() {
     let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .tile(&[final_edge, final_edge])
         .zeros();
-    matmul_two_levels_smem_then_in_place_reversed::launch(
+    matmul_two_levels_smem_then_in_place::launch(
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),

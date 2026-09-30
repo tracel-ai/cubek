@@ -27,7 +27,9 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let lhs_procedural = lhs.is_procedural();
     let rhs_procedural = rhs.is_procedural();
     let lw = lhs.vector_size();
-    let rw = rhs.vector_size();
+    // One column's run of a rhs load: the whole load unless it is stored across columns.
+    let rhs_load = rhs.vector_tile();
+    let rw = comptime!(rhs_load.run_length());
     let aw = comptime!(acc.store.vector_size);
     let contracted_per_step = comptime!(contracted_per_step(
         &lhs.place.space,

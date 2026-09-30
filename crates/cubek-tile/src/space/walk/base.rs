@@ -9,8 +9,8 @@ use crate::{
 };
 
 use super::distribution::{AxisDistribution, Distribution};
+use crate::Spread;
 use crate::space::partition::{GridCount, in_plane_axes, swizzled_positions};
-use crate::{Spread, StepOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
@@ -36,8 +36,6 @@ pub struct Walk {
     /// Whether iterating this walk unrolls.
     #[cube(comptime)]
     pub(crate) unroll: bool,
-    #[cube(comptime)]
-    order: StepOrder,
 }
 
 #[cube]
@@ -158,7 +156,6 @@ impl Walk {
             base: 0usize,
             steps,
             parent,
-            order: comptime!(StepOrder::Forward),
             distributes,
             space: host,
             level,
@@ -211,7 +208,6 @@ impl Walk {
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
-            order: comptime!(self.order),
         }
     }
 
@@ -233,11 +229,15 @@ impl Walk {
         self.steps
     }
 
+    /// This instance's position among those the level distributes axis `p` to, `0` for a walked
+    /// axis.
+    pub(crate) fn position_at(&self, #[comptime] p: usize) -> usize {
+        self.positions.at(p)
+    }
+
     /// The `i`-th region of the walk.
     pub fn region(&self, i: usize) -> Region {
-        let idx = self
-            .base
-            .plus(StepOrder::step(i, self.steps, comptime!(self.order)));
+        let idx = self.base.plus(i);
         self.parent
             .below(self.resolve(idx), comptime!(self.level.clone()))
     }
@@ -343,11 +343,6 @@ impl Iterable for WalkExpand {
 
 /// The settings a walk is told after it is built.
 impl Walk {
-    /// This walk with its steps visited last to first.
-    pub fn reversed(self) -> Walk {
-        unexpanded!()
-    }
-
     /// This walk, unrolled when iterated (static spaces only).
     pub fn unrolled(self) -> Walk {
         unexpanded!()
@@ -366,11 +361,6 @@ impl Walk {
 }
 
 impl WalkExpand {
-    pub fn __expand_reversed_method(mut self, _scope: &Scope) -> Self {
-        self.order = StepOrder::Reversed;
-        self
-    }
-
     pub fn __expand_unrolled_method(mut self, _scope: &Scope) -> Self {
         self.unroll = true;
         self
