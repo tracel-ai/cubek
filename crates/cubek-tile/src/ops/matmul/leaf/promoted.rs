@@ -121,7 +121,6 @@ impl<T: Numeric> RegisterData<T> {
         &mut self,
         lhs: &RegisterData<EL>,
         rhs: &Tile<ER>,
-        #[comptime] out: Space,
         #[comptime] semiring: Semiring,
     ) {
         comptime!(assert!(
@@ -147,15 +146,12 @@ impl<T: Numeric> RegisterData<T> {
             "RegisterData::mma_held_lhs: the block's lines are {} wide but the rhs serves {vw}",
             self.vector_size
         ));
-        let (mr, nr) = comptime!((self.mr, self.nr));
-        let lw = comptime!(lhs.vector_size);
+        let (mr, nr, lw) = (self.mr, self.nr, lhs.vector_size);
         let kc = comptime!(lhs.nr * lw);
-        let cols = comptime!(nr * vw);
         let rhs_axes = comptime!(
-            MatrixAxes::new(&rhs.place.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
+            MatrixAxes::new(&rhs.place.space, kc, nr * vw).unwrap_or_else(|e| panic!("{e}"))
         );
         let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
-        let _ = out;
         let mut b = Array::<Vector<T, RA>>::new(nr);
         #[unroll]
         for k in 0..kc {
@@ -167,11 +163,11 @@ impl<T: Numeric> RegisterData<T> {
             }
             #[unroll]
             for i in 0..mr {
-                let line = lhs.data[comptime!(i * lhs.nr + k / lw)];
+                let line = lhs.data[i * lhs.nr + k / lw];
                 let a = Vector::<T, RA>::cast_from(line.extract(comptime!(k % lw)));
                 #[unroll]
                 for n in 0..nr {
-                    let at = comptime!(i * nr + n);
+                    let at = i * nr + n;
                     self.data[at] = semiring.step::<Vector<T, RA>>(a, b[n], self.data[at]);
                 }
             }

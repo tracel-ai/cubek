@@ -17,7 +17,7 @@ use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Levels, Monoid, Partitioning, RegisterBlock, Scratch,
     Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
     ops::softmax::OnlineSoftmax,
-    procedural::{KeyVisibility, Procedural},
+    procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 
 use super::{Form, implied};
@@ -26,6 +26,34 @@ const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
 const D: Axis = Axis(2);
 const V: Axis = Axis(3);
+
+/// The bias a query's scores are summed with: zero at a key it sees, the minimum value past the
+/// attended keys and, under `causal`, past its own position aligned at the bottom right.
+#[derive(CubeType, Clone)]
+struct Attended {
+    keys: u32,
+    queries: u32,
+    #[cube(comptime)]
+    causal: bool,
+}
+
+#[cube]
+impl Recipe<f32> for Attended {
+    fn evaluate(&self, coordinates: &RecipeCoords) -> f32 {
+        let s = coordinates.along(S);
+        let mut seen = s < self.keys;
+        if self.causal {
+            seen = seen && s + self.queries <= coordinates.along(Q) + self.keys;
+        }
+        select(seen, 0.0, f32::min_value())
+    }
+}
+
+impl Reads for AttendedExpand {
+    fn reads(&self, _scope: &cubecl::ir::Scope, axis: Axis) -> bool {
+        axis == S || (self.causal && axis == Q)
+    }
+}
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -47,13 +75,11 @@ fn plane_attention<E: Float>(
     let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
     let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
     let out = out.tile(comptime!(space.clone()));
-    let bias = Procedural::<f32>::new::<KeyVisibility>(
+    let bias = Procedural::<f32>::new::<Attended>(
         comptime!(space.space().subspace(&[Q, S])),
-        KeyVisibility {
+        Attended {
             keys,
             queries,
-            query: Q,
-            key: S,
             causal,
         },
     )
@@ -64,14 +90,13 @@ fn plane_attention<E: Float>(
             let bias_p = bias.at(&plane);
             // No block past the attended keys is stepped to.
             let walk = plane.walk().range(0, (keys as usize).div_ceil(block_keys));
-            let mut score =
-                Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let mut acc = out_p
                 .cmma_accumulator::<f32, f32>(&bias_p, Monoid::Sum)
                 .with_scratch(Scratch::OneTile);
             acc.zero();
-            let mut softmax = OnlineSoftmax::<f32>::over(&score, S);
+            let mut softmax = OnlineSoftmax::<f32>::over(&score);
             let mut stages =
                 Stages::smem_triple(&walk, &q_p, &k_p, &v_p, StageStorage::Strided, 1usize);
             stages.pipelined(walk, |slot, stage| {
@@ -84,19 +109,21 @@ fn plane_attention<E: Float>(
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment), Semiring::SUM_PROD);
                     }
                     logits.drained_into(&score);
+                    // The score's cells were stored by the fragments' layout; the softmax reads
+                    // them by rows.
                     sync_plane();
-                    let correction = softmax.step(&mut score, &bias_s, scale);
+                    let correction = softmax.step(&score, &bias_s, scale);
                     p.copy_cast_from(&score);
+                    // The probabilities land before the fragments load them.
                     sync_plane();
-                    acc.mul_rows(&correction);
+                    acc.rows().mul(&correction);
                     for fragment in stage.walk().routed(D, 0).unrolled() {
                         let mut cell = acc.at(&fragment);
                         cell.mma(&p.at(&fragment), &v_s.at(&fragment), Semiring::SUM_PROD);
                     }
-                    sync_plane();
                 });
             });
-            acc.mul_rows(&softmax.recip_l());
+            acc.rows().mul(&softmax.recip_l());
             acc.drained_into(&out_p);
         }
     }
@@ -122,13 +149,11 @@ fn unit_attention<E: Float>(
     let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
     let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
     let out = out.tile(comptime!(space.clone()));
-    let bias = Procedural::<f32>::new::<KeyVisibility>(
+    let bias = Procedural::<f32>::new::<Attended>(
         comptime!(space.space().subspace(&[Q, S])),
-        KeyVisibility {
+        Attended {
             keys,
             queries,
-            query: Q,
-            key: S,
             causal,
         },
     )
@@ -150,7 +175,7 @@ fn unit_attention<E: Float>(
                 Monoid::Sum,
             );
             acc.zero();
-            let mut softmax = OnlineSoftmax::<f32>::over(&bias_u, S);
+            let mut softmax = OnlineSoftmax::<f32>::over(&bias_u);
             for step in unit.walk().range(0, (keys as usize).div_ceil(block_keys)) {
                 let (q_s, k_s, v_s, bias_s) = (
                     q_u.at(&step),
@@ -166,11 +191,11 @@ fn unit_attention<E: Float>(
                 );
                 score.zero();
                 score.mma(&q_s, &k_s, Semiring::SUM_PROD);
-                let correction = softmax.step(&mut score, &bias_s, scale);
-                acc.mul_rows(&correction);
+                let correction = softmax.step(&score, &bias_s, scale);
+                acc.rows().mul(&correction);
                 acc.mma(&score, &v_s, Semiring::SUM_PROD);
             }
-            acc.mul_rows(&softmax.recip_l());
+            acc.rows().mul(&softmax.recip_l());
             acc.drained_into(&out_u);
         }
     }

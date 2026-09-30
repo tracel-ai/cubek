@@ -50,6 +50,18 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The recipe this procedural tile evaluates; panics for every other kind.
+    pub(crate) fn recipe(&self) -> &Procedural<T> {
+        match &self.kind {
+            TileKind::Procedural(recipe) => recipe,
+            TileKind::Memory(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Lines(_) => panic!("Tile::recipe: only a procedural tile has a recipe"),
+        }
+    }
+
     pub(crate) fn mem_mut(&mut self, #[comptime] site: &str) -> &mut Memory<T> {
         match &mut self.kind {
             TileKind::Memory(g) => g,
@@ -630,23 +642,14 @@ impl<T: Numeric> Tile<T> {
         #[comptime] storage: StageStorage,
     ) -> Tile<T> {
         let owner = walk.stage_owner();
-        let (space, depth, levels) = comptime!({
-            let region = walk.level.child(&walk.space);
-            (
-                region.subspace(&axes),
-                walk.depth(),
-                walk.parent.path.root_levels(),
-            )
-        });
-        let tile = Memory::<T>::smem_owned(
-            comptime!(space.clone()),
-            comptime!(1usize),
-            storage,
-            comptime!(0usize),
-            comptime!(0usize),
-            owner,
-        );
-        Tile::new(tile.kind, comptime!(Placement::new(space, depth, levels)))
+        let place = comptime!(Placement::new(
+            walk.level.child(&walk.space).subspace(&axes),
+            walk.depth(),
+            walk.parent.path.root_levels(),
+        ));
+        let tile =
+            Memory::<T>::smem_owned(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
+        Tile::new(tile.kind, place)
     }
 
     /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.
@@ -750,10 +753,10 @@ impl<T: Numeric> Tile<T> {
                 let size!(W) = 1usize;
                 let from = s.flat::<W>();
                 let mut into = d.flat_mut::<W>();
-                let mut at = holder_worker(holder);
+                let mut at = ComputeScope::unit_in(holder);
                 while at < cells {
                     into.write(at, Vector::cast_from(from.read(at)));
-                    at += holder_workers(holder);
+                    at += ComputeScope::units_in(holder);
                 }
             }
             _ => panic!(

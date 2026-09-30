@@ -210,9 +210,8 @@ impl Region {
         let mut origin = 0usize;
         #[unroll]
         for i in 0..comptime!(self.path.len()) {
-            let tile = comptime!(self.path.level(i).tile(axis));
-            if comptime!(tile.is_some()) {
-                origin += self.step(i).coord(axis) * comptime!(tile.unwrap());
+            if let Some(tile) = comptime!(self.path.level(i).tile(axis)) {
+                origin += self.step(i).coord(axis) * tile;
             }
         }
         origin

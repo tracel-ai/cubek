@@ -119,14 +119,12 @@ impl<T: Numeric> RegisterData<T> {
 
     /// `self[r, :] *= factors[first + r]`, in the registers that hold the block.
     pub(crate) fn mul_rows(&mut self, factors: &Array<T>, #[comptime] first: usize) {
-        let lines = comptime!(self.nr);
         #[unroll]
-        for r in 0..comptime!(self.mr) {
-            let factor = Vector::<T, RA>::cast_from(factors[comptime!(first + r)]);
+        for r in 0..self.mr {
+            let factor = Vector::<T, RA>::cast_from(factors[first + r]);
             #[unroll]
-            for n in 0..lines {
-                let at = comptime!(r * lines + n);
-                self.data[at] *= factor;
+            for n in 0..self.nr {
+                self.data[r * self.nr + n] *= factor;
             }
         }
     }
@@ -241,5 +239,90 @@ fn cell<T: Numeric, Out: Numeric, A: Size>(
         Vector::<Out, A>::cast_from(Monoid::reduce::<T, RA>(line, fold, monoid))
     } else {
         Vector::<Out, A>::cast_from(line)
+    }
+}
+
+/// The block's rows, each a unit holds whole: the verbs [`Rows`] runs on a register block. The
+/// block holds whole cells, never a line of partials of one.
+#[cube]
+impl<E: Float> RegisterData<E> {
+    /// `self[r, c] = self[r, c] · scale + bias` at every cell, the bias read at the cell of a tile
+    /// over `space` that the block holds.
+    pub(crate) fn scale_add_rows(
+        &mut self,
+        scale: E,
+        bias: &Procedural<E>,
+        #[comptime] space: Space,
+    ) {
+        #[unroll]
+        for r in 0..self.mr {
+            #[unroll]
+            for n in 0..self.nr {
+                let at = r * self.nr + n;
+                let mut line = self.data[at];
+                #[unroll]
+                for j in 0..self.vector_size {
+                    let column = n * self.vector_size + j;
+                    let cell = bias.at_cell(r as u32, column as u32, space.clone());
+                    line.insert(j, line.extract(j) * scale + cell);
+                }
+                self.data[at] = line;
+            }
+        }
+    }
+
+    /// Each row's max, starting from `seed`'s.
+    pub(crate) fn row_maxima(&self, seed: &Array<E>) -> Array<E> {
+        let mut maxima = Array::<E>::new(self.mr);
+        #[unroll]
+        for r in 0..self.mr {
+            let mut row = seed[r];
+            #[unroll]
+            for n in 0..self.nr {
+                let line = self.data[r * self.nr + n];
+                #[unroll]
+                for j in 0..self.vector_size {
+                    row = max(row, line.extract(j));
+                }
+            }
+            maxima[r] = row;
+        }
+        maxima
+    }
+
+    /// `self[r, c] = exp(self[r, c] − rows[r])` ([`Rows::exp_minus_cell`]).
+    pub(crate) fn exp_minus_rows(&mut self, rows: &Array<E>) {
+        #[unroll]
+        for r in 0..self.mr {
+            #[unroll]
+            for n in 0..self.nr {
+                let at = r * self.nr + n;
+                let mut line = self.data[at];
+                #[unroll]
+                for j in 0..self.vector_size {
+                    line.insert(j, Rows::<E>::exp_minus_cell(line.extract(j), rows[r]));
+                }
+                self.data[at] = line;
+            }
+        }
+    }
+
+    /// Each row's sum.
+    pub(crate) fn row_sums(&self) -> Array<E> {
+        let mut sums = Array::<E>::new(self.mr);
+        #[unroll]
+        for r in 0..self.mr {
+            let mut row = E::from_int(0);
+            #[unroll]
+            for n in 0..self.nr {
+                let line = self.data[r * self.nr + n];
+                #[unroll]
+                for j in 0..self.vector_size {
+                    row += line.extract(j);
+                }
+            }
+            sums[r] = row;
+        }
+        sums
     }
 }

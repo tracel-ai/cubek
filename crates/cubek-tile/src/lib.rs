@@ -30,7 +30,6 @@ pub mod procedural {
     pub use crate::tile::kind::procedural::product::{Product, product_of};
     pub use crate::tile::kind::procedural::separable::Factors;
     pub use crate::tile::kind::procedural::sum::{Sum, sum_of};
-    pub use crate::tile::kind::procedural::visibility::KeyVisibility;
 }
 
 // Flat crate namespace for `use crate::*`.
@@ -57,3 +56,4 @@ pub use stage::base::StageStorage;
 pub use stage::pipeline::base::Stages;
 pub use tile::accumulator::base::{Accumulate, AccumulateExpand, Scratch};
 pub use tile::base::{Tile, TileExpand};
+pub use tile::rows::{Rows, RowsExpand};

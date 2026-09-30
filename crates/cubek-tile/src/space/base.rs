@@ -308,6 +308,18 @@ impl Space {
     pub fn cells(&self) -> usize {
         self.axes().map(|axis| self.extent(axis)).product()
     }
+
+    /// How many rows the space holds: its cells along every axis but the innermost, which a row
+    /// runs along. The innermost may be one a walk has yet to cut, whose extent only the launch
+    /// knows.
+    pub fn rows(&self) -> usize {
+        (0..self.rank() - 1).map(|p| self.extent_at(p)).product()
+    }
+
+    /// How many cells one row holds: the innermost axis's extent.
+    pub fn columns(&self) -> usize {
+        self.extent_at(self.rank() - 1)
+    }
 }
 
 #[cube]

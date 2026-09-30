@@ -10,7 +10,6 @@ pub(crate) mod phase;
 pub(crate) mod product;
 pub(crate) mod separable;
 pub(crate) mod sum;
-pub(crate) mod visibility;
 
 pub(crate) use base::*;
 pub(crate) use erased::*;

@@ -1,7 +1,5 @@
 //! Where a tile sits in its partitioning.
 
-use cubecl::prelude::*;
-
 use crate::{ComputeScope, Level, Space};
 
 /// A tile's place in its nest: its box (`space`), how many levels down it sits (`depth`), and the
@@ -61,26 +59,5 @@ impl Placement {
     pub(crate) fn at_depth(mut self, depth: usize) -> Placement {
         self.depth = depth;
         self
-    }
-}
-
-/// This unit's position among the units of the scope holding a tile ([`Placement::holder`]): its
-/// position in the cube, in its plane, or zero for a unit's own tile.
-#[cube]
-pub(crate) fn holder_worker(#[comptime] holder: ComputeScope) -> usize {
-    match comptime!(holder) {
-        ComputeScope::Cube => UNIT_POS as usize,
-        ComputeScope::Plane => UNIT_POS_PLANE as usize,
-        ComputeScope::Unit => 0usize,
-    }
-}
-
-/// How many units the scope holding a tile has ([`holder_worker`]).
-#[cube]
-pub(crate) fn holder_workers(#[comptime] holder: ComputeScope) -> usize {
-    match comptime!(holder) {
-        ComputeScope::Cube => CUBE_DIM as usize,
-        ComputeScope::Plane => PLANE_DIM as usize,
-        ComputeScope::Unit => 1usize,
     }
 }

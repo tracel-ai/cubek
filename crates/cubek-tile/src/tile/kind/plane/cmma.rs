@@ -121,10 +121,10 @@ impl<T: Numeric> CmmaData<T> {
     /// `slot[r, :] *= factors[first + r]` over this fragment's spilled cells, the plane's units
     /// taking them in turns. The caller owns the barriers.
     pub(crate) fn scale_spilled_rows(&self, factors: &Array<T>, #[comptime] first: usize) {
-        let mut scratch = self.scratch_slot("scale_spilled_rows");
-        let (m, n) = comptime!(self.shape);
+        let mut scratch = self.scratch_slot();
+        let (m, n) = self.shape;
         let mut cell = UNIT_POS_PLANE as usize;
-        while cell < comptime!(m * n) {
+        while cell < m * n {
             scratch[cell] *= factors[first + cell / n];
             cell += PLANE_DIM as usize;
         }
@@ -132,14 +132,14 @@ impl<T: Numeric> CmmaData<T> {
 
     /// Load this fragment back from its slot of the plane's scratch. The caller owns the barriers.
     pub(crate) fn reload_from_scratch(&self) {
-        let scratch = self.scratch_slot("reload_from_scratch");
+        let scratch = self.scratch_slot();
         let mut fragment = self.clone();
         fragment.load_scratch(&scratch);
     }
 
     /// Store this fragment into its slot of the plane's scratch. The caller owns the barriers.
     pub(crate) fn spill_to_scratch(&self) {
-        self.store_scratch(&self.scratch_slot("spill_to_scratch"));
+        self.store_scratch(&self.scratch_slot());
     }
 
     /// Write this fragment's spilled cells into `mem` through the store's own write.
@@ -148,7 +148,7 @@ impl<T: Numeric> CmmaData<T> {
         mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
-        let scratch = self.scratch_slot("add_from_scratch");
+        let scratch = self.scratch_slot();
         let (m, n) = comptime!(self.shape);
         let width = comptime!(mem.store.vector_size);
         comptime!(assert!(
@@ -191,14 +191,14 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// This fragment's slot of the plane's scratch, or the reason there is none.
-    fn scratch_slot(&self, #[comptime] site: &str) -> Shared<[T]> {
+    fn scratch_slot(&self) -> Shared<[T]> {
         #[comptime]
         match &self.scratch {
             ComptimeOption::Some(scratch) => scratch.clone(),
             ComptimeOption::None => panic!(
-                "CmmaData::{site}: a fragment reaches a store that folds, or a window the \
-                 problem's edge cuts short, through a scratch; open the accumulator with \
-                 `with_scratch`"
+                "CmmaData: a fragment bounces through a scratch, to scale its rows, to reach a \
+                 store that folds, or a window the problem's edge cuts short; open the \
+                 accumulator with `with_scratch`"
             ),
         }
     }
