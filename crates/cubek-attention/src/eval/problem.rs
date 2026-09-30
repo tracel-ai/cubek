@@ -53,6 +53,7 @@ fn dims(
 pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
     let causal_masked = AttentionOptions {
         causal: true,
+        sliding_window: None,
         accumulator_precision: Default::default(),
     };
     vec![
@@ -109,6 +110,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
                 masked: false,
                 options: AttentionOptions {
                     causal: false,
+                    sliding_window: None,
                     accumulator_precision: Default::default(),
                 },
             },
@@ -130,6 +132,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
                 masked: true,
                 options: AttentionOptions {
                     causal: true,
+                    sliding_window: None,
                     accumulator_precision: Default::default(),
                 },
             },

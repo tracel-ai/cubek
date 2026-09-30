@@ -28,6 +28,8 @@ pub struct TileAttention {
     pub num_planes: u32,
     pub inner_layout: InnerLayout,
     pub causal_mask: bool,
+    /// Sliding window as a comptime key count; `0` disables it.
+    pub sliding_window: u32,
     pub materialized_mask: bool,
 }
 
@@ -58,6 +60,10 @@ impl TileAttention {
 
     pub fn causal_mask(&self) -> bool {
         self.causal_mask
+    }
+
+    pub fn sliding_window(&self) -> u32 {
+        self.sliding_window
     }
 
     pub fn materialized_mask(&self) -> bool {
@@ -169,6 +175,7 @@ impl TileAttentionKind {
             num_planes,
             inner_layout,
             causal_mask: blueprint.causal,
+            sliding_window: blueprint.sliding_window,
             materialized_mask: blueprint.masked,
         };
 

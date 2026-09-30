@@ -37,6 +37,7 @@ fn one_tile_simple() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -52,6 +53,7 @@ fn one_tile_simple() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
@@ -96,6 +98,7 @@ fn one_tile_hd_neq_vd() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -111,6 +114,7 @@ fn one_tile_hd_neq_vd() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
@@ -150,6 +154,7 @@ fn partition_hd_neq_vd() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -165,6 +170,7 @@ fn partition_hd_neq_vd() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
@@ -204,6 +210,7 @@ fn one_tile_several_planes() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -219,6 +226,7 @@ fn one_tile_several_planes() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
 
@@ -260,6 +268,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -273,6 +282,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -308,6 +318,7 @@ fn two_rows_in_array_tile() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -321,6 +332,7 @@ fn two_rows_in_array_tile() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -357,6 +369,7 @@ fn one_tile_seqq16() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -370,6 +383,7 @@ fn one_tile_seqq16() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -406,6 +420,7 @@ fn one_tile_seqq4() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -419,6 +434,7 @@ fn one_tile_seqq4() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -454,6 +470,7 @@ fn seqq2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -467,6 +484,7 @@ fn seqq2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -502,6 +520,7 @@ fn kv2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -515,6 +534,7 @@ fn kv2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -550,6 +570,7 @@ fn hd2_vd2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -563,6 +584,7 @@ fn hd2_vd2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -598,6 +620,7 @@ fn all2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -611,6 +634,7 @@ fn all2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -647,6 +671,7 @@ fn global_iterations_2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -660,6 +685,7 @@ fn global_iterations_2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -696,6 +722,7 @@ fn global_iterations_2_kv2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -709,6 +736,7 @@ fn global_iterations_2_kv2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -745,6 +773,7 @@ fn partition_kv1_global1_with_oob() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -758,6 +787,7 @@ fn partition_kv1_global1_with_oob() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -794,6 +824,7 @@ fn partition_seqq2_global2_kv2_global2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -807,6 +838,7 @@ fn partition_seqq2_global2_kv2_global2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -842,6 +874,7 @@ fn partition_many_planes() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -855,6 +888,7 @@ fn partition_many_planes() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -891,6 +925,7 @@ fn partition_kv1_global3_with_oob() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -904,6 +939,7 @@ fn partition_kv1_global3_with_oob() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -939,6 +975,7 @@ fn partition_oob_in_q_with_batches() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -952,6 +989,7 @@ fn partition_oob_in_q_with_batches() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -987,6 +1025,7 @@ fn partition_kv2_with_oob() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1000,6 +1039,7 @@ fn partition_kv2_with_oob() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1035,6 +1075,7 @@ fn partition_kv2_causal() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1048,6 +1089,7 @@ fn partition_kv2_causal() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1083,6 +1125,7 @@ fn partition_kv2_masked() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1096,6 +1139,7 @@ fn partition_kv2_masked() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1131,6 +1175,7 @@ fn stage2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1144,6 +1189,7 @@ fn stage2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1179,6 +1225,7 @@ fn stage4() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1192,6 +1239,7 @@ fn stage4() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1229,6 +1277,7 @@ fn stage2_problem4() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1242,6 +1291,7 @@ fn stage2_problem4() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1277,6 +1327,7 @@ fn double_row_wise() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1290,6 +1341,7 @@ fn double_row_wise() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1325,6 +1377,7 @@ fn one_tile_masked() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1338,6 +1391,7 @@ fn one_tile_masked() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1373,6 +1427,7 @@ fn one_tile_causal() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1386,6 +1441,7 @@ fn one_tile_causal() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1421,6 +1477,7 @@ fn one_tile_masked_causal() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1434,6 +1491,7 @@ fn one_tile_masked_causal() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1470,6 +1528,7 @@ fn masked_oob() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1483,6 +1542,7 @@ fn masked_oob() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1519,6 +1579,7 @@ fn masked_larger() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1532,6 +1593,7 @@ fn masked_larger() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1567,6 +1629,7 @@ fn num_heads_2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1580,6 +1643,7 @@ fn num_heads_2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1615,6 +1679,7 @@ fn batch_2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1628,6 +1693,7 @@ fn batch_2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1663,6 +1729,7 @@ fn batch_2_seqq2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1676,6 +1743,7 @@ fn batch_2_seqq2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1711,6 +1779,7 @@ fn num_heads_2_batch_2() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1724,6 +1793,7 @@ fn num_heads_2_batch_2() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1759,6 +1829,7 @@ fn num_heads_2_masked() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1772,6 +1843,7 @@ fn num_heads_2_masked() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1812,6 +1884,7 @@ fn huge_problem() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1825,6 +1898,7 @@ fn huge_problem() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);
@@ -1863,6 +1937,7 @@ fn causal_several_heads() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: true,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -1876,6 +1951,7 @@ fn causal_several_heads() {
         vector_sizes: launch_settings.vector_sizes,
         masked: problem.masked,
         causal: problem.options.causal,
+        sliding_window: 0,
         check_bounds: tiling_scheme.check_bounds(&problem.dims),
     };
     let strategy = forced_strategy(blueprint);

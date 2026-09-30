@@ -6,6 +6,7 @@ pub mod extended;
 pub mod gqa;
 pub mod lse;
 pub mod masking;
+pub mod sliding_window;
 pub mod tail;
 
 pub(crate) mod launcher;

@@ -234,6 +234,8 @@ impl<
             MaskConfig {
                 layout: config.tile_attention().mask_layout(),
                 causal: config.tile_attention().causal_mask(),
+                windowed: config.tile_attention().sliding_window() > 0,
+                window_minus_one: config.tile_attention().sliding_window().saturating_sub(1),
                 materialized: config.tile_attention().materialized_mask(),
             }
         };

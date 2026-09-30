@@ -60,6 +60,7 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
             GA::init_writer(&heads, stage_q_offset, out, global_config),
             seq_q,
             seq_kv,
+            stage_q_offset,
             config.global_config(),
         )
     }

@@ -34,6 +34,26 @@ pub enum AttentionIdent {
 #[derive(Clone, Debug, Default)]
 pub struct AttentionOptions {
     pub causal: bool,
+
+    /// Sliding window over the KV axis: a query attends at most this many keys,
+    /// ending at its own position. `None` is no window — every key at or before
+    /// the query is visible, which is what `causal` alone means.
+    ///
+    /// Bottom-right aligned, the same convention as [`causal`](Self::causal): a
+    /// query at position `i` sees the `sliding_window` keys ending at `i +
+    /// seq_kv - seq_q`, so the last query row always sits on the last key. A
+    /// window of 1 is "attend only yourself" and, with `causal`, is the diagonal.
+    ///
+    /// Independent of [`causal`](Self::causal) but *subsuming* it: the window's
+    /// right edge is the query's own position, which is exactly the edge causal
+    /// masks at, so `causal + window` and `window` alone see the same keys. A
+    /// `None` window with `causal = false` attends everything.
+    ///
+    /// This bounds what is *masked*, not what is *read* — see
+    /// [`AttentionBlueprint::sliding_window`](crate::forward::definition::AttentionBlueprint::sliding_window)
+    /// for the comptime encoding the kernel carries.
+    pub sliding_window: Option<u32>,
+
     pub accumulator_precision: AccumulatorPrecision,
 }
 

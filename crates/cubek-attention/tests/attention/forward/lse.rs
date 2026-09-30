@@ -67,6 +67,7 @@ fn problem(
         ),
         options: AttentionOptions {
             causal,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),

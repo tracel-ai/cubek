@@ -12,6 +12,13 @@ use cubek_matmul::multi_level::tile::{
 pub struct MaskConfig {
     pub layout: MaskLayout,
     pub causal: bool,
+    /// Whether a sliding window applies. Split from the size because `#[cube]`
+    /// rejects integer patterns, and a windowless problem must compile the
+    /// lower bound out of the predicate entirely.
+    pub windowed: bool,
+    /// The window size minus one, so the predicate below can add it without
+    /// underflowing. Only meaningful when `windowed`.
+    pub window_minus_one: u32,
     pub materialized: bool,
 }
 
@@ -109,6 +116,10 @@ pub struct LogicalTileMask {
     logical_iter_origin: LogicalIterOrigin,
     #[cube(comptime)]
     causal: bool,
+    #[cube(comptime)]
+    windowed: bool,
+    #[cube(comptime)]
+    window_minus_one: u32,
     out_of_bounds: ComptimeOption<Coords2d>,
     #[cube(comptime)]
     fragment_layout: MaskLayout,
@@ -123,6 +134,8 @@ impl LogicalTileMask {
         LogicalTileMask {
             logical_iter_origin: LogicalIterOrigin::init(),
             causal: comptime!(config.causal),
+            windowed: comptime!(config.windowed),
+            window_minus_one: comptime!(config.window_minus_one),
             out_of_bounds,
             fragment_layout: comptime!(config.layout),
         }
@@ -133,15 +146,20 @@ impl LogicalTileMask {
 
         let pos = Coords2d::add(self.logical_iter_origin.read(), pos_in_tile);
 
-        // Bottom-right-aligned causality, matching burn's fallback and the
-        // KV-cache decode contract: mask where `col > row + (seq_kv - seq_q)`,
-        // rearranged to stay in unsigned arithmetic. `bounds` is
-        // `(seq_q, seq_kv)`; without it only the square case is well-defined,
-        // where the alignment reduces to the plain `col > row`.
         #[comptime]
-        let causal_masked = match self.out_of_bounds {
-            ComptimeOption::Some(bounds) => self.causal && pos.1 + bounds.0 > pos.0 + bounds.1,
-            ComptimeOption::None => self.causal && pos.0 < pos.1,
+        let future_masked = match self.out_of_bounds {
+            ComptimeOption::Some(bounds) => {
+                (self.causal || self.windowed) && pos.1 + bounds.0 > pos.0 + bounds.1
+            }
+            ComptimeOption::None => (self.causal || self.windowed) && pos.0 < pos.1,
+        };
+
+        #[comptime]
+        let window_masked = match self.out_of_bounds {
+            ComptimeOption::Some(bounds) => {
+                self.windowed && pos.1 + bounds.0 + self.window_minus_one < pos.0 + bounds.1
+            }
+            ComptimeOption::None => self.windowed && pos.1 + self.window_minus_one < pos.0,
         };
 
         #[comptime]
@@ -150,7 +168,7 @@ impl LogicalTileMask {
             ComptimeOption::None => false,
         };
 
-        causal_masked || oob_masked
+        future_masked || window_masked || oob_masked
     }
 
     pub fn update_origin(&mut self, new_origin: Coords2d) {

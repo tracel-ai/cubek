@@ -59,6 +59,7 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
         writer: Self::Writer<'_>,
         seq_q: u32,
         seq_kv: u32,
+        q_start: u32,
         #[comptime] config: Self::Config,
     );
 

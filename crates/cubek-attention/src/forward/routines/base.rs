@@ -57,7 +57,9 @@ impl core::fmt::Debug for DeviceSettings {
 impl DeviceSettings {
     pub fn new(client: &Client, problem: &AttentionProblem) -> Self {
         DeviceSettings {
-            plane_dim: client.properties().hardware.plane_size_max,
+            // Some runtimes report a plane size of 0. A plane always holds at
+            // least one unit, so clamp to keep the geometry well-defined.
+            plane_dim: client.properties().hardware.plane_size_max.max(1),
             max_cube_count: client.properties().hardware.max_cube_count,
             vector_sizes: AttentionVectorSizes::new_max_for_problem(client, problem),
             client: client.clone(),

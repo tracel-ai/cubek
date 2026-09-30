@@ -58,6 +58,7 @@ fn problem(
         global_dtypes,
         options: AttentionOptions {
             causal,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -371,6 +372,7 @@ fn broadcast_mask(strategy: Strategy) {
         global_dtypes: f16_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -496,6 +498,7 @@ fn padding_mask_broadcast_over_seq_q(strategy: Strategy) {
         global_dtypes: f16_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),

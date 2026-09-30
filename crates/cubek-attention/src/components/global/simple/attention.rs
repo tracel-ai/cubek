@@ -71,6 +71,7 @@ impl<
         mut writer: Self::Writer<'_>,
         seq_q: u32,
         seq_kv: u32,
+        q_start: u32,
         #[comptime] config: Self::Config,
     ) {
         // Load queries which stay alive in registers for all the kernel
@@ -94,10 +95,38 @@ impl<
         let num_stage_iterations =
             seq_kv.div_ceil(config.stage_config.elements_in_partition_seq_kv());
 
+        // Bound KV stages by mask/window to skip masked loads.
+        let kv_per_stage = config.stage_config.elements_in_partition_seq_kv();
+        let stage_rows = config.stage_config.elements_in_stage_seq_q();
+
+        let end = (q_start + stage_rows + seq_kv.saturating_sub(seq_q)).min(seq_kv);
+        let skip_end = if comptime!(
+            config.stage_config.tile_attention().causal_mask()
+                || config.stage_config.tile_attention().sliding_window() > 0
+        ) {
+            num_stage_iterations.min(end.div_ceil(kv_per_stage))
+        } else {
+            num_stage_iterations
+        };
+        #[allow(clippy::useless_conversion)]
+        let skip_start = if comptime!(config.stage_config.tile_attention().sliding_window() > 0) {
+            let window = config.stage_config.tile_attention().sliding_window();
+            let aligned = (q_start + seq_kv).saturating_sub(seq_q);
+            (aligned.saturating_sub(window - 1) / kv_per_stage).min(skip_end)
+        } else {
+            0u32.into()
+        };
+
         let barrier = ();
 
-        // Global loop over seq_kv
-        for _ in 0..num_stage_iterations {
+        // Fast-forward past non-contributing stages.
+        for _ in 0..skip_start {
+            key_reader.advance_view();
+            value_reader.advance_view();
+            mask_reader.advance_view();
+        }
+
+        for _ in skip_start..skip_end {
             // Put key and value into stage
             key_reader.load_stage(&barrier, config.key_reader_config);
             value_reader.load_stage(&barrier, config.value_reader_config);
