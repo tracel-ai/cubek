@@ -30,8 +30,7 @@ pub trait GlobalWriterFamily: 'static + Send + Sync {
             Stage = <Self::Stage as StageFamily>::Stage<IP::Stage, IP::StageSize, WriteTiling>,
         >;
 
-    /// Validate the writer before kernel compilation so autotuning can reject
-    /// incompatible configurations with a recoverable setup error.
+    /// Verify that configs are valid for a writer, otherwise return an error stating why
     fn validate_with_config(_config: &GlobalWriterConfig) -> Result<(), InvalidConfigError> {
         Ok(())
     }
