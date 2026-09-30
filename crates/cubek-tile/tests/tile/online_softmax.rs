@@ -98,7 +98,7 @@ fn plane_attention<E: Float>(
             acc.zero();
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
-            let mut q_s = Tile::<E>::scratch(&walk, comptime!(vec![Q, D]), StageStorage::Strided);
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
             q_s.copy_from(&q_p);
             sync_plane();
             let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);

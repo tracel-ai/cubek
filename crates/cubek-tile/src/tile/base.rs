@@ -4,6 +4,7 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn, unexpanded};
 
 use cubecl::zspace::SmallVec;
 
+use crate::stage::pipeline::payload::base::{StageSpec, stage_one};
 use crate::*;
 
 /// One operand's data: a runtime backing store and the comptime [`Space`] it projects.
@@ -642,6 +643,24 @@ impl<T: Numeric> Tile<T> {
             storage,
             comptime!(None),
             comptime!(StageOwner::Cube),
+        )
+    }
+
+    /// A fresh stage of this operand for one region of `walk`, laid out as `storage`: shaped,
+    /// owned and placed as the walk's stages are, the cube's or each plane's own copy. What a
+    /// kernel stages once before a walk that leaves the operand unchanged, as an attention's
+    /// query beside the keys it walks.
+    pub fn stage_for(&self, walk: &Walk, #[comptime] storage: StageStorage) -> Tile<T> {
+        let owner = walk.stage_owner();
+        stage_one(
+            self,
+            comptime!(StageSpec {
+                level: walk.level.clone(),
+                depth: walk.depth(),
+                storage,
+                width: None,
+                owner,
+            }),
         )
     }
 
