@@ -43,8 +43,7 @@ impl Destination for Buffered {
     }
 }
 
-/// [`Write::Replace`] binds an [`Output::Tensor`], [`Write::Accumulate`] an [`Output::Atomic`],
-/// [`Write::Fold`] an [`Output::Folded`].
+/// [`Write::Replace`] binds an [`Output::Tensor`], [`Write::Accumulate`] an [`Output::Atomic`].
 impl DestinationLaunch for Buffered {
     type Operand = (Bound, Write);
 
@@ -52,7 +51,10 @@ impl DestinationLaunch for Buffered {
         match write {
             Write::Replace => bound.output(),
             Write::Accumulate => bound.atomic(),
-            Write::Fold => bound.folded(),
+            Write::Relay => panic!(
+                "Buffered: a relayed output is opened in the kernel with `TileArg::relay`, which \
+                 takes its turn counters beside it; bind the carry as a plain `TileArg`"
+            ),
         }
     }
 }

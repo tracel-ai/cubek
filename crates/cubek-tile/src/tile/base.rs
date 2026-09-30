@@ -157,7 +157,7 @@ impl<T: Numeric> Tile<T> {
         match &mut self.kind {
             TileKind::Memory(d) => {
                 let init_from = comptime!(match d.access.write {
-                    Write::Accumulate | Write::Fold => InitFrom::Identity,
+                    Write::Accumulate | Write::Relay => InitFrom::Identity,
                     Write::Replace => init_from,
                 });
                 d.set_init_from(comptime!(init_from));
@@ -699,7 +699,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`,
-    /// or copies a memory window of the same box, the whole cube a line at a time.
+    /// or copies a memory window of the same box, the units sharing it a line at a time.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {

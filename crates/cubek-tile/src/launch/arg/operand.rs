@@ -14,14 +14,12 @@ pub enum Input<'a, E: Numeric, V: Size> {
     TensorMap(TmaTileArg<E>),
 }
 
-/// The operand a kernel leaves by: a tensor read and replaced ([`TileArg`]), an atomic tensor
-/// added into and never read ([`AccumulateArg`]), or a tensor the kernel's writers add into in
-/// turns ([`Write::Fold`](crate::kind::Write::Fold)).
+/// The operand a kernel leaves by: a tensor read and replaced ([`TileArg`]), or an atomic tensor
+/// added into and never read ([`AccumulateArg`]).
 #[derive(CubeType, CubeLaunch)]
 pub enum Output<'a, E: Numeric, V: Size> {
     Tensor(TileArg<'a, E, V>),
     Atomic(AccumulateArg<'a, E>),
-    Folded(TileArg<'a, E, V>),
 }
 
 #[cube]
@@ -48,10 +46,6 @@ impl<'a, E: Numeric, V: Size> Output<'a, E, V> {
                 arg.tile(partitioning)
             }
             Output::Atomic(arg) => arg.tile::<V>(partitioning),
-            Output::Folded(arg) => {
-                comptime!(tensor_spec_is_launched(&arg.spec));
-                arg.folded_tile(partitioning)
-            }
         }
     }
 }
@@ -80,14 +74,6 @@ impl Bound {
     pub fn atomic<E: Numeric, V: Size>(self) -> OutputArgs<'static, E, V> {
         let spec = self.spec.clone();
         OutputArgs::Atomic(AccumulateArgLaunch::new(self.tensor(), spec))
-    }
-
-    /// This operand as an [`Output::Folded`]: added into by reading each line and writing the sum
-    /// back, one writer at a time. The buffer arrives holding zero, or the kernel's first turn
-    /// writes it through [`TileArg::tile`], replacing, before any turn folds through
-    /// [`TileArg::folded_tile`]: one argument, two tiles over it.
-    pub fn folded<E: Numeric, V: Size>(self) -> OutputArgs<'static, E, V> {
-        OutputArgs::Folded(self.arg())
     }
 }
 

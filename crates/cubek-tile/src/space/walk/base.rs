@@ -233,6 +233,12 @@ impl Walk {
         self.steps
     }
 
+    /// This instance's position among those the level distributes axis `p` to, `0` for a walked
+    /// axis.
+    pub(crate) fn position_at(&self, #[comptime] p: usize) -> usize {
+        self.positions.at(p)
+    }
+
     /// The `i`-th region of the walk.
     pub fn region(&self, i: usize) -> Region {
         let idx = self
