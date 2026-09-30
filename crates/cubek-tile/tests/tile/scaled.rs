@@ -26,7 +26,6 @@ use cubek_tile::kind::Field;
 use cubek_tile::kind::PlanePartition;
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::layout::split;
-use cubek_tile::ops::matmul::Side;
 use cubek_tile::stage::UnitRead;
 use cubek_tile::*;
 use half::f16;
@@ -2230,10 +2229,10 @@ fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
 }
 
 /// `c = a · (b ⊗ s)` over a weight stored in tile order, walked as the compute-bound body walks
-/// it on the tensor cores: a plane holds a partition of fragments (two rows of two columns) and at
-/// every step lands each factor's window once, the weight unpacked and scaled by the chunk's lines.
+/// it on the tensor cores: a plane holds a partition of fragments (two rows of two columns), the
+/// weight unpacked and scaled by the chunk's lines.
 ///
-/// The partition's fragments then load from the landing a depth at a time, the quant block being
+/// The partition's fragments load through their landing a depth at a time, the quant block being
 /// the loop inside the partition's depth: two instructions under one scale.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -2265,7 +2264,6 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let b_plane = b_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
-            let out = comptime!(c_plane.space());
             let mut lines = scale_plane.stage(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
@@ -2275,12 +2273,8 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
-                    // The step's window of each factor, landed once.
-                    let a_step = a_plane.at(&step).landed(Side::Lhs, comptime!(out.clone()));
-                    let b_step = b_plane
-                        .at(&step)
-                        .mul(&lines.at(&step))
-                        .landed(Side::Rhs, comptime!(out.clone()));
+                    let a_step = a_plane.at(&step);
+                    let b_step = b_plane.at(&step).mul(&lines.at(&step));
                     for block in step.walk().unrolled() {
                         for depth in block.walk().unrolled() {
                             let a_f = PlanePartition::<E>::cmma_fragments(&a_step.at(&depth), &sum);
