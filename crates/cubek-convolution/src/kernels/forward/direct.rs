@@ -496,42 +496,20 @@ fn should_check_spatial_bounds<const N: usize>(
 
 #[cfg(test)]
 mod tests {
-    use cubecl::ir::HardwareProperties;
+    use cubek_test_utils::hardware::{AVX2, AVX512, NEON};
 
     use super::*;
 
-    fn registers(load_width: u32, count: u32, elem_size: usize) -> VectorRegisters {
-        let hardware = HardwareProperties {
-            load_width,
-            vector_register_count: Some(count),
-            plane_size_min: 1,
-            plane_size_max: 1,
-            max_bindings: u32::MAX,
-            max_shared_memory_size: 48 * 1024,
-            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
-            max_units_per_cube: 16,
-            max_cube_dim: (16, 16, 16),
-            num_streaming_multiprocessors: None,
-            num_cpu_cores: Some(16),
-            last_level_cache_size: None,
-            num_tensor_cores: None,
-            min_tensor_cores_dim: None,
-            max_vector_size: usize::MAX,
-            cube_mma_reserved_shared_memory: 0,
-        };
-        VectorRegisters::new(&hardware, elem_size).unwrap()
-    }
-
     fn avx2(elem_size: usize) -> VectorRegisters {
-        registers(256, 16, elem_size)
+        VectorRegisters::new(&AVX2, elem_size).unwrap()
     }
 
     fn avx512(elem_size: usize) -> VectorRegisters {
-        registers(512, 32, elem_size)
+        VectorRegisters::new(&AVX512, elem_size).unwrap()
     }
 
     fn neon(elem_size: usize) -> VectorRegisters {
-        registers(128, 32, elem_size)
+        VectorRegisters::new(&NEON, elem_size).unwrap()
     }
 
     #[test]
