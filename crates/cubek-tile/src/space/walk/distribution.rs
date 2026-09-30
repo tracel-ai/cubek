@@ -172,25 +172,6 @@ impl ComputeScope {
             }
         }
     }
-
-    /// This unit's position among the units of its instance of `compute_scope`: in its cube, in
-    /// its plane, or zero in itself.
-    pub(crate) fn unit_in(#[comptime] compute_scope: ComputeScope) -> usize {
-        match comptime!(compute_scope) {
-            ComputeScope::Cube => UNIT_POS as usize,
-            ComputeScope::Plane => UNIT_POS_PLANE as usize,
-            ComputeScope::Unit => 0usize,
-        }
-    }
-
-    /// How many units one instance of `compute_scope` has ([`unit_in`](Self::unit_in)).
-    pub(crate) fn units_in(#[comptime] compute_scope: ComputeScope) -> usize {
-        match comptime!(compute_scope) {
-            ComputeScope::Cube => CUBE_DIM as usize,
-            ComputeScope::Plane => PLANE_DIM as usize,
-            ComputeScope::Unit => 1usize,
-        }
-    }
 }
 
 #[cube]

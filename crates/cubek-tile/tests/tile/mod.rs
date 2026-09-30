@@ -24,6 +24,7 @@ mod ragged;
 mod recursive;
 mod reduce;
 mod references;
+mod relay;
 mod routed;
 mod row_chunks;
 mod scaled;

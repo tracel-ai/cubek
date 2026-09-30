@@ -91,6 +91,12 @@ impl VectorTile {
         &self.extents
     }
 
+    /// Values one load holds along its finest axis: one line of it, the whole load where it spans
+    /// one axis. A reader walking lines along that axis takes `values() / run()` of them a load.
+    pub(crate) fn run_length(&self) -> usize {
+        self.extents.first().map_or(1, |&(_, run)| run)
+    }
+
     /// How many values the load brings.
     pub fn values(&self) -> usize {
         self.extents.iter().map(|&(_, extent)| extent).product()
@@ -118,6 +124,19 @@ impl VectorTile {
             .iter()
             .find(|&&(a, _)| a == axis)
             .map_or(1, |&(_, extent)| extent)
+    }
+
+    /// How many values of one load lie between two neighbours along `axis`: the product of the
+    /// extents finer than `axis`'s. `0` off the axes the load spans.
+    pub(crate) fn step_along(&self, axis: Axis) -> usize {
+        let mut step = 1;
+        for &(a, extent) in &self.extents {
+            if a == axis {
+                return step;
+            }
+            step *= extent;
+        }
+        0
     }
 
     /// How far along `axis` the value at `position` of one load sits from the load's first: the

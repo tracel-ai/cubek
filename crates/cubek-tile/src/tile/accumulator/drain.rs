@@ -27,10 +27,10 @@ pub(crate) enum CellRead {
 
 impl CellRead {
     /// Derived from `init_from` and the unit share. A folding destination is never read here:
-    /// its atomic store is the fold.
+    /// its store, atomic or relayed, is the sum.
     const fn of(unit_share: UnitShare, init_from: InitFrom, write: Write) -> Self {
         match write {
-            Write::Accumulate => CellRead::Never,
+            Write::Accumulate | Write::Relay => CellRead::Never,
             Write::Replace => match init_from {
                 InitFrom::Identity => CellRead::Never,
                 InitFrom::Cell => match unit_share {
@@ -95,7 +95,7 @@ impl Drain {
             (UnitShare::Plane, _) => Drain::PlaneFold,
             (UnitShare::Group { unit_bits }, _) => Drain::GroupFold { unit_bits },
             // Repeated units hold the same cells: a store may land many times, a fold only once.
-            (UnitShare::Repeated, Write::Accumulate) => Drain::UnitZero,
+            (UnitShare::Repeated, Write::Accumulate | Write::Relay) => Drain::UnitZero,
             (UnitShare::Repeated, Write::Replace) | (UnitShare::Whole, _) => Drain::EachUnit,
         }
     }
@@ -126,7 +126,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         #[comptime] monoid: Monoid,
         #[comptime] init_from: InitFrom,
     ) -> Self {
-        comptime!(write.admits(split_share, "AccumulateView"));
+        comptime!(write.admits(split_share, monoid, "AccumulateView"));
         AccumulateView::<'a, E, V, C> {
             values,
             units,
@@ -197,5 +197,30 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 CellRead::AtSeed | CellRead::Never => self.values.write(pos, combined),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A destination that adds, atomically or in turns, is never read back by the drain, and
+    /// units repeating each other's cells elect one to add them, or the cell would take the value
+    /// once per unit.
+    #[test]
+    fn a_destination_that_adds_is_written_once_and_never_read() {
+        for write in [Write::Accumulate, Write::Relay] {
+            assert_eq!(Drain::of(UnitShare::Repeated, write), Drain::UnitZero);
+            for init_from in [InitFrom::Cell, InitFrom::Identity] {
+                assert_eq!(
+                    CellRead::of(UnitShare::Whole, init_from, write),
+                    CellRead::Never
+                );
+            }
+        }
+        assert_eq!(
+            Drain::of(UnitShare::Repeated, Write::Replace),
+            Drain::EachUnit
+        );
     }
 }

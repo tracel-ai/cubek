@@ -69,7 +69,8 @@ impl Bound {
         OutputArgs::Tensor(self.arg())
     }
 
-    /// This operand as an [`Output::Atomic`]; the buffer must arrive holding the monoid's identity.
+    /// This operand as an [`Output::Atomic`]; the buffer must arrive holding zero, since it only
+    /// ever adds.
     pub fn atomic<E: Numeric, V: Size>(self) -> OutputArgs<'static, E, V> {
         let spec = self.spec.clone();
         OutputArgs::Atomic(AccumulateArgLaunch::new(self.tensor(), spec))

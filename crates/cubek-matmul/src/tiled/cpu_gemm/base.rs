@@ -23,8 +23,12 @@
 //! - **Non-contiguous strided bindings** on the [`Strategy`](crate::strategy::Strategy) path:
 //!   a binding contiguous in neither matrix axis is not a plain row/col matrix and is
 //!   rejected by the strided deduction
+//! - **A plane grid larger than a cube**: a forced blueprint with more planes than the device
+//!   launches in one cube.
 
 use std::fmt::Display;
+
+use cubecl::ir::HardwareProperties;
 
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
@@ -65,6 +69,32 @@ fn nearest_divisor(g: usize, target: usize) -> usize {
         }
     }
     best
+}
+
+/// The planes one cube holds: each is a plane of `plane_size_max` units.
+fn max_planes(hardware: &HardwareProperties) -> usize {
+    (hardware.max_units_per_cube / hardware.plane_size_max.max(1)).max(1) as usize
+}
+
+/// The aspect-ratio split of a `grid_m × grid_n` leaf grid over about `cores` planes, held to the
+/// `max_planes` a cube launches with.
+fn plane_grid(grid_m: usize, grid_n: usize, cores: usize, max_planes: usize) -> PlaneGrid {
+    let target_m = (cores as f64 * grid_m as f64 / grid_n as f64)
+        .sqrt()
+        .round() as usize;
+    let m = nearest_divisor(grid_m, target_m);
+    let m = if m <= max_planes {
+        m
+    } else {
+        divisor_at_most(grid_m, max_planes)
+    };
+    let n = nearest_divisor(grid_n, (cores / m).max(1));
+    let n = if m * n <= max_planes {
+        n
+    } else {
+        divisor_at_most(grid_n, max_planes / m)
+    };
+    PlaneGrid { m, n }
 }
 
 /// The `m × n × k` extent of the innermost instruction
@@ -155,6 +185,13 @@ impl CpuGemmRoutine {
             }
         };
         blueprint.validate(problem)?;
+        let planes = blueprint.planes.m * blueprint.planes.n;
+        let max_planes = max_planes(&device_settings.client.properties().hardware);
+        if planes > max_planes {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "CpuGemm plane grid of {planes} planes exceeds the {max_planes} a cube holds"
+            ))));
+        }
         Ok(blueprint)
     }
 
@@ -168,10 +205,8 @@ impl CpuGemmRoutine {
         let (m, n, k) = (problem.m, problem.n, problem.k);
         let elem = problem.global_dtypes.out.size().max(1);
         let vw = device_settings.vector_sizes.out.max(1); // SIMD width along N
-        let cores = device_settings
-            .client
-            .properties()
-            .hardware
+        let hardware = &device_settings.client.properties().hardware;
+        let cores = hardware
             .num_cpu_cores
             .map(|c| c as usize)
             .unwrap_or(4)
@@ -203,11 +238,7 @@ impl CpuGemmRoutine {
         // planes on the overhang. Snap the aspect-ratio target to grid divisors.
         let grid_m = m.div_ceil(tile_m).max(1);
         let grid_n = n.div_ceil(tile_n).max(1);
-        let target_m = (cores as f64 * grid_m as f64 / grid_n as f64)
-            .sqrt()
-            .round() as usize;
-        let plane_m = nearest_divisor(grid_m, target_m);
-        let plane_n = nearest_divisor(grid_n, (cores / plane_m).max(1));
+        let planes = plane_grid(grid_m, grid_n, cores, max_planes(hardware));
 
         // Tiles already divide their axes; the clamp is a defensive [1, axis] floor.
         let instruction = InstructionShape {
@@ -216,14 +247,32 @@ impl CpuGemmRoutine {
             k: tile_k.clamp(1, k.max(1)),
         };
 
-        let planes = PlaneGrid {
-            m: plane_m,
-            n: plane_n,
-        };
-
         CpuGemmBlueprint {
             instruction,
             planes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tall_matvec_grid_fits_the_cube() {
+        let grid = plane_grid(64, 1, 16, 16);
+        assert!(grid.m * grid.n <= 16, "{grid:?}");
+    }
+
+    #[test]
+    fn a_square_grid_fits_the_cube_of_a_twelve_thread_host() {
+        let grid = plane_grid(512, 32, 12, 12);
+        assert!(grid.m * grid.n <= 12, "{grid:?}");
+    }
+
+    #[test]
+    fn a_split_that_fits_is_the_aspect_ratio_split() {
+        assert_eq!(plane_grid(512, 32, 16, 16), PlaneGrid { m: 16, n: 1 });
+        assert_eq!(plane_grid(512, 32, 32, 32), PlaneGrid { m: 16, n: 2 });
     }
 }

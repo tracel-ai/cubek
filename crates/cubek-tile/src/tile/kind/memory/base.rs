@@ -127,6 +127,15 @@ impl<T: Numeric> Store<T> {
         }
     }
 
+    /// Whether these values sit at an address, which a slice-shaped write such as a fragment's
+    /// store intrinsic needs; a write call has none.
+    pub(crate) fn addressed(&self) -> comptime_type!(bool) {
+        match &self.backing {
+            Backing::Buffer(_) | Backing::ReadCall(_) => comptime!(true),
+            Backing::WriteCall(_) => comptime!(false),
+        }
+    }
+
     /// The bytes, for a destination that has an address.
     // `Box<[T]>` is cubecl's owned-slice handle, not a Rust box; `&[T]` is a different kernel type.
     #[allow(clippy::borrowed_box)]
@@ -237,22 +246,51 @@ pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
     }
 }
 
-/// What a write to a store does to the cell it lands on; stated by the binding operand.
+/// What a write to a store does to the cell it lands on; stated by the binding operand. `Replace`
+/// is the writer's own cell, `Accumulate` adds atomically so cubes need not know of each other,
+/// `Relay` adds with a plain read and write, the cubes of a split taking turns ([`Relay`](crate::launch::Relay)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Write {
     /// Replaces the cell.
     Replace,
     /// Adds into the cell, atomically.
     Accumulate,
+    /// Replaces the cell on the first turn and adds into it, reading it and writing the sum back
+    /// a line at a time, on every later one: the carry of a [`Relay`](crate::launch::Relay), whose
+    /// turns keep one cube at a cell at a time and order each turn's lines before the next.
+    Relay,
 }
 
 impl Write {
-    /// Refuse an accumulation `split` leaves in pieces unless this write adds them.
-    pub(crate) fn admits(self, split: SplitShare, site: &str) {
+    /// Refuse an accumulation `split` leaves in pieces unless this write adds them, a relay whose
+    /// partials the planes of one cube write at once, which no turn across cubes serializes, and
+    /// a `monoid` other than a sum into a destination that adds.
+    pub(crate) fn admits(self, split: SplitShare, monoid: Monoid, site: &str) {
+        match (self, monoid) {
+            (Write::Accumulate | Write::Relay, Monoid::Prod | Monoid::Max | Monoid::Min) => panic!(
+                "{site}: this destination adds ({self:?}), atomically or relayed, so a \
+                 {monoid:?} accumulation into it would come out summed. Drain it into a \
+                 replacing destination, combining the partials first where they are split."
+            ),
+            (Write::Accumulate | Write::Relay, Monoid::Sum) | (Write::Replace, _) => {}
+        }
         match (split, self) {
-            (SplitShare::Whole, _) | (SplitShare::Partial, Write::Accumulate) => {}
-            (SplitShare::Partial, Write::Replace) => panic!(
-                "{site}: this accumulator's cells are split across planes or cubes and its \
+            (SplitShare::Whole, _)
+            | (
+                SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes,
+                Write::Accumulate,
+            )
+            | (SplitShare::PartialAcrossCubes, Write::Relay) => {}
+            (SplitShare::PartialAcrossPlanes, Write::Relay) => panic!(
+                "{site}: this accumulator's cells are split across the planes of one cube and its \
+                 destination is relayed, a plain read and write taken one cube at a time; the planes \
+                 would write the same line at once and lose each other's partial. \
+                 Drain into an atomic destination (bind it as an `AccumulateArg`), or combine \
+                 the planes' partials in the cube before its turn at the relay."
+            ),
+            (SplitShare::PartialAcrossCubes | SplitShare::PartialAcrossPlanes, Write::Replace) => {
+                panic!(
+                    "{site}: this accumulator's cells are split across planes or cubes and its \
                  destination replaces rather than accumulates, so every partial but one would be \
                  lost. \
                  A contracted axis distributed across planes or cubes gives each instance a \
@@ -261,7 +299,8 @@ impl Write {
                  distribute the contraction across the plane's units instead \
                  (`distribute(units(n), ..)`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
-            ),
+                )
+            }
         }
     }
 }
@@ -319,4 +358,46 @@ pub enum Storage {
     Tiled(Option<usize>),
     /// Storage-tiled and inside one storage tile: one contiguous run from its origin.
     Contiguous,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A relay takes one cube at a time: the cubes of a split meet it in turns, and an atomic
+    /// destination takes a split at either scope.
+    #[test]
+    fn a_relay_takes_a_split_across_cubes() {
+        Write::Relay.admits(SplitShare::PartialAcrossCubes, Monoid::Sum, "test");
+        Write::Accumulate.admits(SplitShare::PartialAcrossCubes, Monoid::Sum, "test");
+        Write::Accumulate.admits(SplitShare::PartialAcrossPlanes, Monoid::Sum, "test");
+    }
+
+    /// The planes of one cube write a cell at once, which no turn across cubes serializes.
+    #[test]
+    #[should_panic(expected = "split across the planes of one cube")]
+    fn a_relay_refuses_a_split_across_planes() {
+        Write::Relay.admits(SplitShare::PartialAcrossPlanes, Monoid::Sum, "test");
+    }
+
+    /// A destination that adds sums whatever it is handed, so it takes only a sum.
+    #[test]
+    #[should_panic(expected = "would come out summed")]
+    fn an_atomic_destination_refuses_a_max() {
+        Write::Accumulate.admits(SplitShare::Whole, Monoid::Max, "test");
+    }
+
+    #[test]
+    #[should_panic(expected = "would come out summed")]
+    fn a_relay_refuses_a_max() {
+        Write::Relay.admits(SplitShare::PartialAcrossCubes, Monoid::Max, "test");
+    }
+
+    /// A replacing destination takes any monoid: each cell is its writer's own.
+    #[test]
+    fn a_replacing_destination_takes_any_monoid() {
+        for monoid in [Monoid::Sum, Monoid::Prod, Monoid::Max, Monoid::Min] {
+            Write::Replace.admits(SplitShare::Whole, monoid, "test");
+        }
+    }
 }

@@ -87,6 +87,22 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether a cmma fragment draining into this tile goes through a scratch
+    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address.
+    pub(crate) fn fragments_bounce(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::Memory(m) => {
+                let addressed = m.store.addressed();
+                comptime!(FragmentDrain::of(&m.access, addressed) == FragmentDrain::Bounce)
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
+    }
+
     pub(crate) fn runtime_map(&self) -> RuntimeMap {
         match &self.kind {
             TileKind::Memory(g) => g.map.clone(),
@@ -169,7 +185,7 @@ impl<T: Numeric> Tile<T> {
         match &mut self.kind {
             TileKind::Memory(d) => {
                 let init_from = comptime!(match d.access.write {
-                    Write::Accumulate => InitFrom::Identity,
+                    Write::Accumulate | Write::Relay => InitFrom::Identity,
                     Write::Replace => init_from,
                 });
                 d.set_init_from(comptime!(init_from));
@@ -734,8 +750,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`,
-    /// or casts one window of memory into another of the same box, cell by cell, the units of
-    /// whoever holds the destination taking its cells in turns ([`Placement::holder`]).
+    /// or copies a memory window of the same box, the units sharing it a line at a time.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         let holder = comptime!(self.place.holder());
@@ -744,23 +759,14 @@ impl<T: Numeric> Tile<T> {
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
                 s.fragment().store_cast_window(d, space)
             }
+            // A window its holder shares is filled by the holder's units, whoever filled the
+            // buffer it windows: a plane's window of the cube's scratch is the plane's.
             (TileKind::Memory(d), TileKind::Memory(s)) => {
-                comptime!(assert!(
-                    src.place.space.cells() == space.cells(),
-                    "Tile::copy_cast_from: a window is cast into one of the same box"
-                ));
-                let cells = comptime!(space.cells());
-                let size!(W) = 1usize;
-                let from = s.flat::<W>();
-                let mut into = d.flat_mut::<W>();
-                let mut at = ComputeScope::unit_in(holder);
-                while at < cells {
-                    into.write(at, Vector::cast_from(from.read(at)));
-                    at += ComputeScope::units_in(holder);
-                }
+                d.filled_by(holder).fill_cast_from(s, space)
             }
             _ => panic!(
-                "Tile::copy_cast_from: a fragment stores into memory, or memory casts into memory"
+                "Tile::copy_cast_from: a fragment or a memory window stores into memory; nothing \
+                 else casts"
             ),
         }
     }
@@ -1089,7 +1095,9 @@ impl<E: Numeric> TileExpand<E> {
     ) -> FactorReaderExpand {
         refuse_codebook(self, "a leaf's read");
         let values = self.place.space.clone();
-        let vector_size = self.clone().__expand_vector_size_method(scope);
+        // A line is the run of a load along the innermost axis; a load stored across several
+        // columns is read as their runs, each placed at its own column.
+        let vector_size = self.clone().__expand_vector_tile_method(scope).extents()[0].1;
         let factor = match &self.kind {
             TileKindExpand::Memory(memory) => memory.factor.clone(),
             _ => FactorExpand::default(),
@@ -1234,26 +1242,29 @@ impl<S: Numeric> Tile<S> {
         self.scale_at(&own)
     }
 
-    /// The one value at `coords` of a tile that serves lines.
+    /// The one value at `coords` of a tile that serves lines: the load holding it, read whole,
+    /// and the value's place in it, whatever axes the load spans.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     fn value_in_line(&self, coords: &Coords<u32>) -> S {
-        let rank = coords.len();
-        let width = self.vector_size();
+        let space = comptime!(self.place.space.clone());
+        let rank = comptime!(space.rank());
+        let load = self.vector_tile();
+        let width = comptime!(load.values());
         let size!(W) = width;
-        let mut at = CoordsDyn::new();
-        let mut field = 0u32.runtime();
-        #[unroll]
-        for p in 0..rank {
-            let coord = coords.at(p);
-            if comptime!(p == rank - 1 && width > 1) {
-                field = coord.remainder(comptime!(width as u32));
-                at.push(coord.divided_by(comptime!(width as u32)));
-            } else {
-                at.push(coord);
-            }
-        }
-        let line = self.nd_packed::<W>(comptime!(Guard::Checked)).read(at);
+        let line = self
+            .nd_packed::<W>(comptime!(Guard::Checked))
+            .read(load.index(coords, &space));
         if comptime!(width > 1) {
+            let mut field = 0u32.runtime();
+            #[unroll]
+            for p in 0..rank {
+                let axis = comptime!(space.axis_at(p));
+                let extent = comptime!(load.extent_along(axis) as u32);
+                if comptime!(extent > 1) {
+                    let step = comptime!(load.step_along(axis) as u32);
+                    field += coords.at(p).remainder(extent).times(step);
+                }
+            }
             line.extract_dynamic(field.cast::<usize>())
         } else {
             line.extract(0usize)

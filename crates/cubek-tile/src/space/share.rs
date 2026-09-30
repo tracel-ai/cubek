@@ -146,13 +146,16 @@ impl UnitShare {
     }
 }
 
-/// What one plane or cube instance holds of a tile's cells.
+/// What one plane or cube instance holds of a tile's cells, and across which instances the
+/// partials of one cell lie: what a destination that adds has to serialize.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum SplitShare {
     /// Every cell this instance writes is its own.
     Whole,
-    /// Several instances hold partials of the same cell.
-    Partial,
+    /// Several cubes hold partials of the same cell, each writing it whole from its planes.
+    PartialAcrossCubes,
+    /// Several planes of one cube hold partials of the same cell, and write it at once.
+    PartialAcrossPlanes,
 }
 
 impl SplitShare {
@@ -165,27 +168,30 @@ impl SplitShare {
             | Coverage::Distribute(ComputeScope::Cube) => {}
         }
         // A shared flat index over an unspanned axis may cover part of a cell.
-        if level.shared_by().is_some() {
-            let unspanned = level.axes().iter().any(|axis| !spanned.contains(*axis));
-            return match unspanned {
-                true => SplitShare::Partial,
-                false => SplitShare::Whole,
-            };
-        }
-        let split = level.axes().into_iter().any(|axis: Axis| {
-            !spanned.contains(axis) && level.instances_along(space, axis) != Some(1)
-        });
-        match split {
-            true => SplitShare::Partial,
-            false => SplitShare::Whole,
+        let split = match level.shared_by() {
+            Some(_) => level.axes().iter().any(|axis| !spanned.contains(*axis)),
+            None => level.axes().into_iter().any(|axis: Axis| {
+                !spanned.contains(axis) && level.instances_along(space, axis) != Some(1)
+            }),
+        };
+        match (split, level.coverage()) {
+            (false, _) => SplitShare::Whole,
+            (true, Coverage::Distribute(ComputeScope::Plane)) => SplitShare::PartialAcrossPlanes,
+            (true, _) => SplitShare::PartialAcrossCubes,
         }
     }
 
-    /// This share under `parent`'s: partial stays partial.
+    /// This share under `parent`'s: partial stays partial, and a split across planes, which
+    /// writes a cell from several places at once, outranks one across cubes.
     pub(crate) fn under(self, parent: SplitShare) -> SplitShare {
         match (parent, self) {
+            (SplitShare::PartialAcrossPlanes, _) | (_, SplitShare::PartialAcrossPlanes) => {
+                SplitShare::PartialAcrossPlanes
+            }
+            (SplitShare::PartialAcrossCubes, _) | (_, SplitShare::PartialAcrossCubes) => {
+                SplitShare::PartialAcrossCubes
+            }
             (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
-            (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
         }
     }
 }
@@ -215,7 +221,7 @@ mod tests {
         let level = Levels::leaf(&[(K, 4)]).cubes(&[K]).level();
         assert_eq!(
             SplitShare::new(&level, &space, &space.subspace(&[M, N])),
-            SplitShare::Partial
+            SplitShare::PartialAcrossCubes
         );
         assert_eq!(
             SplitShare::new(&level, &space, &space.subspace(&[M, K])),
@@ -230,7 +236,7 @@ mod tests {
         let level = Levels::leaf(&[(K, 4)]).planes(&[(K, 2)]).level();
         assert_eq!(
             SplitShare::new(&level, &space, &space.subspace(&[M, N])),
-            SplitShare::Partial
+            SplitShare::PartialAcrossPlanes
         );
     }
 
@@ -244,7 +250,7 @@ mod tests {
             .level();
         assert_eq!(
             SplitShare::new(&level, &space, &space.subspace(&[M, N])),
-            SplitShare::Partial
+            SplitShare::PartialAcrossCubes
         );
         assert_eq!(SplitShare::new(&level, &space, &space), SplitShare::Whole);
     }
@@ -306,8 +312,17 @@ mod tests {
             UnitShare::Whole
         );
         assert_eq!(
-            SplitShare::Whole.under(SplitShare::Partial),
-            SplitShare::Partial
+            SplitShare::Whole.under(SplitShare::PartialAcrossCubes),
+            SplitShare::PartialAcrossCubes
+        );
+        // A split across planes under one across cubes still has planes writing a cell at once.
+        assert_eq!(
+            SplitShare::PartialAcrossPlanes.under(SplitShare::PartialAcrossCubes),
+            SplitShare::PartialAcrossPlanes
+        );
+        assert_eq!(
+            SplitShare::PartialAcrossCubes.under(SplitShare::PartialAcrossPlanes),
+            SplitShare::PartialAcrossPlanes
         );
     }
 }
