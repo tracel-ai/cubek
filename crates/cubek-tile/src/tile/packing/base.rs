@@ -85,7 +85,7 @@ impl Field {
     }
 
     /// The bits a whole float occupies.
-    pub fn float_bits(kind: FloatKind) -> usize {
+    pub(crate) fn float_bits(kind: FloatKind) -> usize {
         match kind {
             FloatKind::F32 => 32,
             FloatKind::F16 | FloatKind::BF16 => 16,
@@ -134,7 +134,7 @@ pub(crate) enum FieldDecode {
 
 impl Packing {
     /// Values per stored element: one, unless a `u32` holds several fields.
-    pub fn factor(&self) -> usize {
+    pub(crate) fn factor(&self) -> usize {
         match self {
             Packing::Plain => 1,
             Packing::Packed { field } => field.per_word(),
@@ -142,12 +142,12 @@ impl Packing {
     }
 
     /// The physical line a `served`-wide logical line occupies.
-    pub fn physical(&self, served: usize) -> usize {
+    pub(crate) fn physical(&self, served: usize) -> usize {
         served / self.factor()
     }
 
     /// The width a binding `bound` wide serves.
-    pub fn served(&self, bound: usize) -> usize {
+    pub(crate) fn served(&self, bound: usize) -> usize {
         bound * self.factor()
     }
 }

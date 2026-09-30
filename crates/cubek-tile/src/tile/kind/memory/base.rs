@@ -288,7 +288,7 @@ pub enum Boundary {
 
 impl Overhang {
     /// The flag a [`Masked`] is built with.
-    pub fn masks(&self) -> bool {
+    pub(crate) fn masks(&self) -> bool {
         matches!(self, Overhang::Masked)
     }
 }
@@ -304,7 +304,7 @@ pub(crate) enum Guard {
 
 impl Guard {
     /// Whether this guard still costs a test per access.
-    pub fn checks(self) -> bool {
+    pub(crate) fn checks(self) -> bool {
         matches!(self, Guard::Checked)
     }
 }

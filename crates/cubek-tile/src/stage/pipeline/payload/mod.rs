@@ -2,5 +2,5 @@
 
 pub(crate) mod base;
 pub(crate) mod pair;
-mod single;
+pub(crate) mod single;
 pub(crate) mod triple;

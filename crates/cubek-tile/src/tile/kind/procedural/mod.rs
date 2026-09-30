@@ -1,25 +1,18 @@
 //! A memory-free tile source evaluated from logical coordinates.
 
-mod affine;
-mod base;
-mod constant;
-mod erased;
-mod kind;
-mod normalization;
-mod phase;
-mod product;
-mod separable;
-mod sum;
-mod visibility;
+pub(crate) mod affine;
+pub(crate) mod base;
+pub(crate) mod constant;
+pub(crate) mod erased;
+pub(crate) mod kind;
+pub(crate) mod normalization;
+pub(crate) mod phase;
+pub(crate) mod product;
+pub(crate) mod separable;
+pub(crate) mod sum;
+pub(crate) mod visibility;
 
-pub use affine::*;
-pub use base::*;
-pub use constant::*;
+pub(crate) use base::*;
 pub(crate) use erased::*;
-pub use kind::*;
-pub use normalization::*;
-pub use phase::*;
-pub use product::*;
-pub use separable::*;
-pub use sum::*;
-pub use visibility::*;
+pub(crate) use kind::*;
+pub(crate) use normalization::*;

@@ -413,7 +413,7 @@ impl Level {
     }
 
     /// How many workers `axis` is distributed out to at this level, where comptime.
-    pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
+    pub(crate) fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),
             Some(Count::Distributed(_)) => None,

@@ -25,7 +25,7 @@ impl MatrixAxes {
     }
 
     /// The innermost axis as columns and the last axis above it of extent past one as rows.
-    pub fn edges(space: &Space) -> Self {
+    pub(crate) fn edges(space: &Space) -> Self {
         let rank = space.rank();
         let col_split = rank - 1;
         // A dynamic axis is not a number one.
@@ -40,7 +40,7 @@ impl MatrixAxes {
     }
 
     /// An accumulator's matrix, against the lhs it is contracted with.
-    pub fn accumulator(acc: &Space, lhs: &Space) -> Self {
+    pub(crate) fn accumulator(acc: &Space, lhs: &Space) -> Self {
         let mut col_split = acc.rank() - 1;
         while col_split > 1 && !lhs.contains(acc.axis_at(col_split - 1)) {
             col_split -= 1;
@@ -52,21 +52,21 @@ impl MatrixAxes {
     }
 
     /// The row edge these axes give in `space`.
-    pub fn rows(&self, space: &Space) -> usize {
+    pub(crate) fn rows(&self, space: &Space) -> usize {
         (self.row_split..self.col_split)
             .map(|p| space.extent_at(p))
             .product()
     }
 
     /// The column edge, in scalars.
-    pub fn cols(&self, space: &Space) -> usize {
+    pub(crate) fn cols(&self, space: &Space) -> usize {
         (self.col_split..space.rank())
             .map(|p| space.extent_at(p))
             .product()
     }
 
     /// The axes giving a `rows x cols` matrix, both scalar, found from the innermost axis outwards.
-    pub fn new(space: &Space, rows: usize, cols: usize) -> Result<Self, NoMatrix> {
+    pub(crate) fn new(space: &Space, rows: usize, cols: usize) -> Result<Self, NoMatrix> {
         let rank = space.rank();
         let mut col_split = rank;
         let mut trailing = 1;
@@ -97,7 +97,7 @@ impl MatrixAxes {
     }
 
     /// [`new`](Self::new) over a tile's whole box, the innermost (vectorized) axis in the columns.
-    pub fn whole(space: &Space, rows: usize, cols: usize, vector_size: usize) -> Self {
+    pub(crate) fn whole(space: &Space, rows: usize, cols: usize, vector_size: usize) -> Self {
         let rank = space.rank();
         let axes = MatrixAxes::new(space, rows, cols).unwrap_or_else(|e| panic!("{e}"));
         assert!(

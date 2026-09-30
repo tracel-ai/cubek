@@ -27,7 +27,7 @@ impl CubeOrder {
     }
 
     /// Whether this order permutes anything.
-    pub fn swizzles(self) -> bool {
+    pub(crate) fn swizzles(self) -> bool {
         !matches!(self.canonicalize(), CubeOrder::RowMajor)
     }
 }

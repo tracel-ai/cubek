@@ -40,7 +40,7 @@ pub(crate) struct Projected<L: LogicalLayout> {
 
 #[cube]
 impl<L: LogicalLayout> Projected<L> {
-    pub fn new(inner: L, projection: ProjectionInKernel) -> Self {
+    pub(crate) fn new(inner: L, projection: ProjectionInKernel) -> Self {
         Projected::<L> { inner, projection }
     }
 }

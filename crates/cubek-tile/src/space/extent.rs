@@ -11,7 +11,7 @@ pub(crate) enum Extent {
 
 impl Extent {
     /// The comptime size; panics on `Dynamic`.
-    pub fn get(self) -> usize {
+    pub(crate) fn get(self) -> usize {
         match self {
             Extent::Static(n) => n,
             Extent::Dynamic => {
@@ -20,7 +20,7 @@ impl Extent {
         }
     }
 
-    pub fn is_dynamic(self) -> bool {
+    pub(crate) fn is_dynamic(self) -> bool {
         matches!(self, Extent::Dynamic)
     }
 }
@@ -62,7 +62,7 @@ impl Shape {
         self.extents.get(axis)
     }
 
-    /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis.
+    /// The axis's comptime size; panics on a dynamic axis.
     pub fn extent(&self, axis: Axis) -> usize {
         self.extent_raw(axis).get()
     }

@@ -54,7 +54,7 @@ fn atomic_sink<E: Numeric, N: Size>(_values: &Tensor<Atomic<E>>) -> ErasedTensor
 mod atomic_sink {
     use super::*;
 
-    pub fn expand<E: Numeric, N: Size>(
+    pub(super) fn expand<E: Numeric, N: Size>(
         _scope: &Scope,
         values: &<Tensor<Atomic<E>> as CubeType>::ExpandType,
     ) -> ErasedTensorExpand<E, WriteOnly> {

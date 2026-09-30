@@ -1,4 +1,4 @@
 //! Generic axis reduction on [`Tile`](crate::Tile).
 
-mod base;
-mod leaf;
+pub(crate) mod base;
+pub(crate) mod leaf;

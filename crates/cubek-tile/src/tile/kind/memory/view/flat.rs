@@ -21,7 +21,7 @@ pub(crate) struct FlatLayout {
 
 #[cube]
 impl FlatLayout {
-    pub fn new(shape: Coords<u32>) -> Self {
+    pub(crate) fn new(shape: Coords<u32>) -> Self {
         FlatLayout { shape }
     }
 }

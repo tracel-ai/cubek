@@ -4,11 +4,13 @@
 //! The rest ([`RowState`], [`MaskProbe`], `Tile::softmax`) is the older step, whose caller states
 //! who owns the rows; it stays until its last caller moves.
 
-mod leaf;
-mod online;
-mod planewise;
-mod rowwise;
-mod state;
+pub(crate) mod leaf;
+pub(crate) mod online;
+pub(crate) mod planewise;
+pub(crate) mod rowwise;
+pub(crate) mod state;
 
-pub use online::*;
-pub use state::*;
+pub(crate) use state::*;
+
+pub use online::{OnlineSoftmax, OnlineSoftmaxExpand};
+pub use state::{LOGIT_MASKED, MaskProbe, RowShare, RowState, masked_recip};

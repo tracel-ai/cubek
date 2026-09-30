@@ -607,7 +607,7 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding.
-    pub fn mma_fragments<Acc: Numeric>(
+    pub(crate) fn mma_fragments<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
         #[comptime] io: MmaIo,

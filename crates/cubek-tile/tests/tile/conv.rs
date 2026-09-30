@@ -578,10 +578,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
         &[
-            PhysicalAxisMap::affine_with_offset(
-                &[(OH, stride), (RH, dilation)],
-                -(padding as isize),
-            ),
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]).shifted(-(padding as isize)),
             PhysicalAxisMap::of(CI),
         ],
     ))
@@ -659,10 +656,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
         &[
-            PhysicalAxisMap::affine_with_offset(
-                &[(OH, stride), (RH, dilation)],
-                -(padding as isize),
-            ),
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]).shifted(-(padding as isize)),
             PhysicalAxisMap::of(CI),
         ],
     ))
@@ -736,10 +730,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
         &[
-            PhysicalAxisMap::affine_with_offset(
-                &[(OH, stride), (RH, dilation)],
-                -(padding as isize),
-            ),
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]).shifted(-(padding as isize)),
             PhysicalAxisMap::of(CI),
         ],
     ))
@@ -954,10 +945,8 @@ impl Conv1d {
             .gathered(Projection::new(
                 &[OH, RH, CI],
                 &[
-                    PhysicalAxisMap::affine_with_offset(
-                        &[(OH, self.stride), (RH, self.dilation)],
-                        -(padding as isize),
-                    ),
+                    PhysicalAxisMap::affine(&[(OH, self.stride), (RH, self.dilation)])
+                        .shifted(-(padding as isize)),
                     PhysicalAxisMap::of(CI),
                 ],
             ))
@@ -1450,18 +1439,14 @@ impl Conv1d {
         );
 
         let gathered = if dynamic_scales {
-            PhysicalAxisMap::scaled_with_offset(
-                &[
-                    (OH, Scale::Dynamic { max: self.stride }),
-                    (RH, Scale::Dynamic { max: self.dilation }),
-                ],
-                Offset::Dynamic,
-            )
+            PhysicalAxisMap::scaled(&[
+                (OH, Scale::Dynamic { max: self.stride }),
+                (RH, Scale::Dynamic { max: self.dilation }),
+            ])
+            .shifted(Offset::Dynamic)
         } else {
-            PhysicalAxisMap::affine_with_offset(
-                &[(OH, self.stride), (RH, self.dilation)],
-                Offset::Dynamic,
-            )
+            PhysicalAxisMap::affine(&[(OH, self.stride), (RH, self.dilation)])
+                .shifted(Offset::Dynamic)
         };
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
@@ -2381,11 +2366,9 @@ impl Resize1d {
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OH, self.scale), (RH, self.tap)],
-                    self.offset,
-                )
-                .over(self.divisor),
+                PhysicalAxisMap::affine(&[(OH, self.scale), (RH, self.tap)])
+                    .shifted(self.offset)
+                    .over(self.divisor),
                 PhysicalAxisMap::of(CI),
             ],
         ))
@@ -2686,13 +2669,11 @@ fn check_resize1d_rational_dynamic(staged: bool) {
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
         &[
-            PhysicalAxisMap::scaled_with_offset(
-                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
-                Offset::Dynamic,
-            )
-            .over(Divisor::Dynamic {
-                min: resize.divisor,
-            }),
+            PhysicalAxisMap::scaled(&[(OH, Scale::Static(4)), (RH, Scale::Static(6))])
+                .shifted(Offset::Dynamic)
+                .over(Divisor::Dynamic {
+                    min: resize.divisor,
+                }),
             PhysicalAxisMap::of(CI),
         ],
     ))
@@ -2797,10 +2778,7 @@ fn conv1d_staged_padded_multi_axis_reduce_component_indexing() {
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
         &[
-            PhysicalAxisMap::affine_with_offset(
-                &[(OH, stride), (RH, dilation)],
-                -(padding as isize),
-            ),
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]).shifted(-(padding as isize)),
             PhysicalAxisMap::of(CI),
         ],
     ))
@@ -2876,10 +2854,7 @@ fn conv1d_staged_padded_multi_axis_reduce_component_fanout() {
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
         &[
-            PhysicalAxisMap::affine_with_offset(
-                &[(OH, stride), (RH, dilation)],
-                -(padding as isize),
-            ),
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]).shifted(-(padding as isize)),
             PhysicalAxisMap::of(CI),
         ],
     ))

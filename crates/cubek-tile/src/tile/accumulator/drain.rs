@@ -137,7 +137,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     }
 
     /// The underlying overhang-mask flag.
-    pub fn check(&self) -> comptime_type!(bool) {
+    pub(crate) fn check(&self) -> comptime_type!(bool) {
         comptime!(self.values.check)
     }
 
@@ -148,7 +148,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     }
 
     /// The monoid these cells fold under.
-    pub fn monoid(&self) -> comptime_type!(Monoid) {
+    pub(crate) fn monoid(&self) -> comptime_type!(Monoid) {
         comptime!(self.monoid)
     }
 
@@ -158,7 +158,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     }
 
     /// A block's starting value: the cell where this site reads it, else the monoid's identity.
-    pub fn seed(&self, pos: C) -> Vector<E, V> {
+    pub(crate) fn seed(&self, pos: C) -> Vector<E, V> {
         match comptime!(self.cell_read) {
             CellRead::AtSeed => self.values.read(pos),
             CellRead::AtCommit | CellRead::Never => {
@@ -168,7 +168,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     }
 
     /// Fold a finished block back across the plane; one unit writes the total.
-    pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
+    pub(crate) fn commit(&mut self, pos: C, value: Vector<E, V>) {
         match comptime!(self.drain) {
             Drain::PlaneFold => {
                 let combined = self.units.reduce::<Vector<E, V>>(value, self.monoid);

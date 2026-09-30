@@ -109,7 +109,7 @@ pub(crate) struct AxisTerm {
 
 /// Whether a physical axis's terms can land on the same cell, as stated by the caller.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Composition {
+pub(crate) enum Composition {
     /// No two logical positions share a cell: the terms partition the axis.
     Disjoint,
     /// Two positions may land on the same cell, as with a stencil or a resample.
@@ -160,27 +160,17 @@ impl PhysicalAxisMap {
         map
     }
 
-    /// An affine combination with zero offset, e.g. `affine(&[(Oh, stride), (Rh, dilation)])`.
+    /// An affine combination, e.g. `affine(&[(Oh, stride), (Rh, dilation)])`.
     pub fn affine(terms: &[(Axis, usize)]) -> Self {
-        Self::affine_with_offset(terms, 0)
-    }
-
-    /// An affine combination with a signed constant or dynamic offset.
-    pub fn affine_with_offset(terms: &[(Axis, usize)], offset: impl Into<Offset>) -> Self {
         let terms: SmallVec<[(Axis, Scale); Space::MAX_RANK]> = terms
             .iter()
             .map(|&(axis, scale)| (axis, Scale::Static(scale)))
             .collect();
-        Self::scaled_with_offset(&terms, offset)
+        Self::scaled(&terms)
     }
 
     /// [`affine`](Self::affine) over explicit [`Scale`]s, for runtime coefficients.
     pub fn scaled(terms: &[(Axis, Scale)]) -> Self {
-        Self::scaled_with_offset(terms, 0)
-    }
-
-    /// [`scaled`](Self::scaled) with a signed constant or dynamic offset.
-    pub fn scaled_with_offset(terms: &[(Axis, Scale)], offset: impl Into<Offset>) -> Self {
         for &(axis, scale) in terms {
             assert!(
                 scale.bound() > 0,
@@ -188,10 +178,9 @@ impl PhysicalAxisMap {
                  drop the term instead"
             );
         }
-        let offset = offset.into();
         // Only the identity is known to partition; anything else must be claimed `disjoint`.
-        let composition = match (terms, offset) {
-            ([(_, Scale::Static(1))], Offset::Static(0)) => Composition::Disjoint,
+        let composition = match terms {
+            [(_, Scale::Static(1))] => Composition::Disjoint,
             _ => Composition::Overlapping,
         };
         PhysicalAxisMap {
@@ -199,10 +188,25 @@ impl PhysicalAxisMap {
                 .iter()
                 .map(|&(axis, scale)| AxisTerm { axis, scale })
                 .collect(),
-            offset,
+            offset: Offset::Static(0),
             divisor: Divisor::Static(1),
             composition,
         }
+    }
+
+    /// The same combination plus a signed constant or dynamic `offset`, added before any
+    /// [`over`](Self::over).
+    pub fn shifted(mut self, offset: impl Into<Offset>) -> Self {
+        let offset = offset.into();
+        assert!(
+            self.divisor.is_unit() && self.offset == Offset::Static(0),
+            "PhysicalAxisMap::shifted: shift once, before `over`"
+        );
+        if offset != Offset::Static(0) {
+            self.composition = Composition::Overlapping;
+        }
+        self.offset = offset;
+        self
     }
 
     /// The same combination divided by `divisor`, floored; a divisor every coefficient cancels
@@ -257,7 +261,7 @@ impl PhysicalAxisMap {
     }
 
     /// How this axis's terms sit on it ([`Composition`]).
-    pub fn composition(&self) -> Composition {
+    pub(crate) fn composition(&self) -> Composition {
         self.composition
     }
 
@@ -279,7 +283,7 @@ impl PhysicalAxisMap {
     }
 
     /// The divisor, [`Static(1)`](Divisor::Static) unless [`over`](Self::over) made it rational.
-    pub fn divisor(&self) -> Divisor {
+    pub(crate) fn divisor(&self) -> Divisor {
         self.divisor
     }
 
@@ -292,12 +296,12 @@ impl PhysicalAxisMap {
     }
 
     /// Whether this axis divides by anything but `1`.
-    pub fn is_rational(&self) -> bool {
+    pub(crate) fn is_rational(&self) -> bool {
         !self.divisor.is_unit()
     }
 
     /// The physical cell the logical origin lands on, `⌊offset / divisor⌋`; `None` if dynamic.
-    pub fn origin(&self) -> Option<isize> {
+    pub(crate) fn origin(&self) -> Option<isize> {
         match (self.offset, self.divisor) {
             (Offset::Static(o), Divisor::Static(d)) => Some(o.div_euclid(d as isize)),
             _ => None,
@@ -305,7 +309,7 @@ impl PhysicalAxisMap {
     }
 
     /// The division's starting phase, `offset - divisor * origin`; `None` if dynamic.
-    pub fn residue(&self) -> Option<usize> {
+    pub(crate) fn residue(&self) -> Option<usize> {
         match (self.offset, self.divisor) {
             (Offset::Static(o), Divisor::Static(d)) => Some(o.rem_euclid(d as isize) as usize),
             _ => None,
@@ -323,7 +327,7 @@ impl PhysicalAxisMap {
     }
 
     /// Whether `axis` addresses this physical axis at all.
-    pub fn addresses(&self, axis: Axis) -> bool {
+    pub(crate) fn addresses(&self, axis: Axis) -> bool {
         self.terms.iter().any(|t| t.axis == axis)
     }
 
@@ -383,12 +387,12 @@ mod tests {
         assert!(!PhysicalAxisMap::affine(&[(A, 2)]).is_identity(A));
         assert!(PhysicalAxisMap::affine(&[(A, 1)]).is_identity(A));
 
-        let with_offset = PhysicalAxisMap::affine_with_offset(&[(A, 1)], -2);
+        let with_offset = PhysicalAxisMap::affine(&[(A, 1)]).shifted(-2);
         assert!(!with_offset.is_identity(A));
         assert_eq!(with_offset.scale(A), 1);
         assert_eq!(with_offset.offset(), Offset::Static(-2));
 
-        let with_dynamic_offset = PhysicalAxisMap::affine_with_offset(&[(A, 1)], Offset::Dynamic);
+        let with_dynamic_offset = PhysicalAxisMap::affine(&[(A, 1)]).shifted(Offset::Dynamic);
         assert!(!with_dynamic_offset.is_identity(A));
         assert_eq!(with_dynamic_offset.offset(), Offset::Dynamic);
         assert!(with_dynamic_offset.offset().is_dynamic());
@@ -398,7 +402,7 @@ mod tests {
 
     #[test]
     fn rational_axis_map_properties() {
-        let map = PhysicalAxisMap::affine_with_offset(&[(A, 100)], -50).over(133);
+        let map = PhysicalAxisMap::affine(&[(A, 100)]).shifted(-50).over(133);
         assert!(map.is_rational());
         assert_eq!(map.divisor(), Divisor::Static(133));
         assert_eq!(map.offset(), Offset::Static(-50));
@@ -415,7 +419,9 @@ mod tests {
     /// A rational map's terms whose coefficient the divisor divides step exactly.
     #[test]
     fn a_rational_map_factors_exact_static_terms_into_offsets() {
-        let map = PhysicalAxisMap::affine_with_offset(&[(A, 5), (B, 6)], -2).over(6);
+        let map = PhysicalAxisMap::affine(&[(A, 5), (B, 6)])
+            .shifted(-2)
+            .over(6);
 
         assert!(map.is_rational());
         assert_eq!(map.static_offset_step(0), None);
@@ -467,7 +473,7 @@ mod tests {
     /// `⌊(8a - 3)/4⌋` is `2a - 1`.
     #[test]
     fn reducing_floors_the_offset() {
-        let map = PhysicalAxisMap::affine_with_offset(&[(A, 8)], -3).over(4);
+        let map = PhysicalAxisMap::affine(&[(A, 8)]).shifted(-3).over(4);
         assert!(!map.is_rational());
         assert_eq!(map.scale(A), 2);
         assert_eq!(map.offset(), Offset::Static(-1));
@@ -488,7 +494,8 @@ mod tests {
                 .is_rational()
         );
         assert!(
-            PhysicalAxisMap::scaled_with_offset(&[(A, Scale::Static(4))], Offset::Dynamic)
+            PhysicalAxisMap::scaled(&[(A, Scale::Static(4))])
+                .shifted(Offset::Dynamic)
                 .over(4)
                 .is_rational()
         );

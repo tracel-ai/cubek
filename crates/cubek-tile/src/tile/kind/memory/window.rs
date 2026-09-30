@@ -26,7 +26,7 @@ pub(crate) struct Window {
 
 #[cube]
 impl Window {
-    pub fn new(
+    pub(crate) fn new(
         origin: Coords<i32>,
         extent: Coords<u32>,
         bound: Coords<u32>,

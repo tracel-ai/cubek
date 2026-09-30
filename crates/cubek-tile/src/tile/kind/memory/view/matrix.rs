@@ -31,7 +31,7 @@ pub(crate) type ProjectedMatrix = Projected<TileMatrix>;
 
 #[cube]
 impl TileMatrix {
-    pub fn new(
+    pub(crate) fn new(
         batches: Coords<u32>,
         row_extents: Coords<u32>,
         col_extents: Coords<u32>,

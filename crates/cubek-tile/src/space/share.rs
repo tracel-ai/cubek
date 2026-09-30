@@ -98,7 +98,7 @@ impl UnitShare {
 #[cube]
 impl UnitShare {
     /// Combine the partials of one cell under `monoid`, leaving the total on every holder.
-    pub fn reduce_of<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
+    pub(crate) fn reduce_of<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
         value: T,
         #[comptime] share: UnitShare,
         #[comptime] monoid: Monoid,
@@ -127,7 +127,7 @@ impl UnitShare {
 }
 
 impl UnitShare {
-    /// [`reduce_of`](Self::reduce_of) as a method on the share.
+    /// Combine the partials of one cell under `monoid`, leaving the total on every holder.
     pub fn reduce<T: Carrier + CubePrimitive<Scalar: PlaneNumeric>>(
         self,
         value: T,
@@ -158,7 +158,7 @@ pub(crate) enum SplitShare {
 impl SplitShare {
     /// What one instance of an operand spanning `spanned` holds after `level` is distributed over
     /// `space`. `space` must be the level's whole space, not the operand's projection.
-    pub fn new(level: &Level, space: &Space, spanned: &Space) -> SplitShare {
+    pub(crate) fn new(level: &Level, space: &Space, spanned: &Space) -> SplitShare {
         match level.coverage() {
             Coverage::Walk | Coverage::Distribute(ComputeScope::Unit) => return SplitShare::Whole,
             Coverage::Distribute(ComputeScope::Plane)
@@ -182,7 +182,7 @@ impl SplitShare {
     }
 
     /// This share under `parent`'s: partial stays partial.
-    pub fn under(self, parent: SplitShare) -> SplitShare {
+    pub(crate) fn under(self, parent: SplitShare) -> SplitShare {
         match (parent, self) {
             (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
             (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
