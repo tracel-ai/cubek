@@ -93,7 +93,7 @@ pub fn launch_ref(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
 
     // `K` is one physical dim that `(KB, KI)` partition, so each operand spanning both says so;

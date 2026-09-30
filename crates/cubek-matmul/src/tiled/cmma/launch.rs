@@ -193,7 +193,7 @@ pub fn launch_ref(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
     // A storage-tiled input is moved a whole tile at a time, so its tile is read as one piece,
     // whatever finer pieces it was stored in.

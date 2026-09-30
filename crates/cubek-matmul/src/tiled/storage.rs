@@ -288,7 +288,7 @@ fn relayout_launch(
             cube_count: cube_count.clone(),
             cube_dim,
         },
-    );
+    )?;
     // A line runs along the innermost named axis when both sides end with it.
     let innermost = named[named.len() - 1];
     let (src_geometry, dst_geometry) = (Geometry::from(&src), Geometry::from(&dst));

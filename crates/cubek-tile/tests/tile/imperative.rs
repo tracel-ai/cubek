@@ -3,8 +3,9 @@
 //! routine's rewrite is measured against.
 #![allow(non_snake_case)]
 
-use cubecl::{prelude::*, zspace::shape};
+use cubecl::{ir::OpaqueType, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
+use cubek_tile::launch::{Grid, Refusal};
 use cubek_tile::stage::Role;
 use cubek_tile::*;
 
@@ -151,22 +152,32 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
 /// The two roles meet on a barrier and nowhere else, so a device without one is told so by name
 /// rather than handed two loops with no rendezvous between them.
 #[test]
-#[should_panic(expected = "carries no barrier type")]
 fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
     let (m, n, k, tile) = (8usize, 8usize, 16usize, 4usize);
     let client = cubecl::test_device().client();
-    implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, m), (N, n), (K, k)]),
-            Levels::leaf(&[(M, tile), (N, tile), (K, tile)])
-                .walk(&[(M, m / tile), (N, n / tile), (K, 1)])
-                .walk_every(&[M, N, K])
-                .filled_by(1)
-                .build(),
-        ),
-        Form::Static,
+    let partitioning = Partitioning::new(
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        Levels::leaf(&[(M, tile), (N, tile), (K, tile)])
+            .walk(&[(M, m / tile), (N, n / tile), (K, 1)])
+            .walk_every(&[M, N, K])
+            .filled_by(1)
+            .build(),
     );
+    let concrete = partitioning.space().clone();
+    let launched = Launcher::new(&client, partitioning, &concrete, Grid::FromLevels);
+    let barriers = client
+        .properties()
+        .features
+        .types
+        .opaque
+        .contains(&OpaqueType::Barrier);
+    match barriers {
+        true => assert!(launched.is_ok()),
+        false => assert!(matches!(
+            launched.err(),
+            Some(Refusal::FillersWithoutBarriers { fillers: 1 })
+        )),
+    }
 }
 
 /// The specialized shape runs and is right where no plane is set aside: the compute arm fills

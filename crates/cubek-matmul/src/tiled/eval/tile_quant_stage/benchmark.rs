@@ -206,6 +206,7 @@ impl Benchmark for TileQuantStageBench {
             let partitioning = Partitioning::new(self.space(), self.levels());
             let concrete = partitioning.space().clone();
             Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
+                .map_err(|refusal| refusal.to_string())?
         };
         let a = launcher
             .arg(a.handle().binding())
