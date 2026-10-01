@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 
+use cubecl::e2m1x2;
 use cubecl::ir::FloatKind;
 use cubecl::ir::VectorSize;
 use cubecl::ir::types::Fp8Format;
@@ -27,6 +28,7 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
         FieldDecode::SignExtended => unpack_int_line::<F, NQ, NF>(words, field),
         FieldDecode::Unsigned => unpack_index_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
+        FieldDecode::Converted => unpack_converted_fp4_line::<F, NQ, NF>(words),
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
         FieldDecode::Bits(kind) => unpack_float_line::<F, NQ, NF>(words, kind),
     }
@@ -135,7 +137,8 @@ fn unpack_index_line<F: Numeric, NQ: Size, NF: Size>(
     out
 }
 
-/// The `e2m1` fields, decoded a byte pair at a time in software (the `e2m1x2` cast is CUDA-only).
+/// The `e2m1` fields, decoded a byte pair at a time in software, on a device that does not convert
+/// `e2m1x2` itself.
 #[cube]
 fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Vector<F, NF> {
     let pair = comptime!(QuantValue::E2M1.native_packing());
@@ -157,6 +160,30 @@ fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Ve
             if comptime!(j * pair + 1 < fields) {
                 out.insert(base + j * pair + 1, values.extract(1usize));
             }
+        }
+    }
+    out
+}
+
+/// The `e2m1` fields of a device that converts `e2m1x2`: each word cast as four of them, eight
+/// values, the compiler choosing how. A word whose line takes fewer of its fields keeps the first.
+#[cube]
+fn unpack_converted_fp4_line<F: Numeric, NQ: Size, NF: Size>(
+    words: Vector<u32, NQ>,
+) -> Vector<F, NF> {
+    let nq = NQ::value();
+    let nf = NF::value();
+    let fields = comptime!(fields_per_word(nq, nf, QuantValue::E2M1.size_bits()));
+
+    let mut out = Vector::<F, NF>::empty();
+    #[unroll]
+    for w in 0..words.vector_size() {
+        let values = Vector::<F, Const<8>>::cast_from(Vector::<e2m1x2, Const<4>>::reinterpret(
+            words.extract(w),
+        ));
+        #[unroll]
+        for j in 0..fields {
+            out.insert(w * fields + j, values.extract(j));
         }
     }
     out
