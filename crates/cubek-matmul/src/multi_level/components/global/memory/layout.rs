@@ -320,7 +320,7 @@ impl Layout for BatchLayout {
 
     #[allow(clippy::legacy_numeric_constants)]
     fn shape(&self) -> Self::Coordinates {
-        usize::max_value()
+        usize::MAX
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
@@ -355,7 +355,7 @@ impl Layout for NoopLayout {
 
     #[allow(clippy::legacy_numeric_constants)]
     fn shape(&self) -> Self::Coordinates {
-        usize::max_value()
+        usize::MAX
     }
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {

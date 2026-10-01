@@ -7,8 +7,6 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use core::f32;
-
 use cubecl::{client::Client, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
