@@ -10,6 +10,9 @@ readme.workspace = true
 repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-quant"
 version.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["kernels"]
 kernels = ["std"]
