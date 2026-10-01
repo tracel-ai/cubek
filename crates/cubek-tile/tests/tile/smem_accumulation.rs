@@ -81,14 +81,15 @@ fn smem_cyclic_split_matmul<E: Numeric>(
         for plane in cube {
             let a_plane = a.at(&plane);
             let b_plane = b.at(&plane);
-            let mut partial = c_cube.at(&plane).block_accumulator::<E, E, E>(
+            let mut partial = c_cube.at(&plane).accumulator::<E, E, E>(
                 &a_plane,
                 &b_plane,
-                REGISTER_BLOCK,
-                Monoid::Sum,
+                comptime!(Instruction::Registers {
+                    config: REGISTER_BLOCK
+                }),
+                Semiring::SUM_PROD,
             );
-            partial.zero();
-            partial.mma(&a_plane, &b_plane, Semiring::SUM_PROD);
+            partial.mma(&a_plane, &b_plane);
             sum.drain_at(&partial, &plane, plane.coord(K));
         }
         c_cube.copy_from(&sum.source);
