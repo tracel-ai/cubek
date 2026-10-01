@@ -2161,7 +2161,12 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let acc = out.mma_accumulator::<E, E>(&input, io, Semiring::SUM_PROD);
+    let acc = out.accumulator::<E, E, E>(
+        &input,
+        &weight,
+        comptime!(Instruction::Mma { io }),
+        Semiring::SUM_PROD,
+    );
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);

@@ -104,7 +104,14 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
@@ -182,7 +189,7 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
         .landed_for(Instruction::Cmma);
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let acc = c.cmma_accumulator::<E, E>(&a, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
@@ -1204,7 +1211,14 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
@@ -1643,7 +1657,7 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     let mut stage = b
         .stage(comptime!(level.clone()), StageStorage::Strided)
         .landed_for(Instruction::Cmma);
-    let acc = c.cmma_accumulator::<E, E>(&a, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         stage.copy_from(&b.at(&region));
         sync_cube();
@@ -2223,7 +2237,12 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Semiring::SUM_PROD);
+            let sum = c_plane.accumulator::<E, E, E>(
+                &a_plane,
+                &b_plane,
+                Instruction::Cmma,
+                Semiring::SUM_PROD,
+            );
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {

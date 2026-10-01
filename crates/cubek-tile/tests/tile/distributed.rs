@@ -40,10 +40,12 @@ fn distributed_block_matmul<E: Numeric>(
         for plane in cube {
             for unit in plane {
                 let (a_unit, b_unit, c_unit) = (a.at(&unit), b.at(&unit), c.at(&unit));
-                let sum = c_unit.block_accumulator::<E, E, E>(
+                let sum = c_unit.accumulator::<E, E, E>(
                     &a_unit,
                     &b_unit,
-                    comptime!(RegisterBlock::new(BLOCK[0] * BLOCK[1])),
+                    comptime!(Instruction::Registers {
+                        config: RegisterBlock::new(BLOCK[0] * BLOCK[1])
+                    }),
                     Semiring::SUM_PROD,
                 );
                 for step in &unit {

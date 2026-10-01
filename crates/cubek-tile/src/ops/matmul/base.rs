@@ -66,7 +66,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => panic!(
                 "Tile::mma_with: the software instruction contracts into a memory accumulator; a \
-                 register accumulator carries its own block (Tile::block_accumulator)"
+                 register accumulator carries its own block (Tile::accumulator)"
             ),
         }
     }

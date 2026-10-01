@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Level, Levels, Partitioning, Semiring, Space, StageStorage,
-    Stages, TileArg, launch::Input, stage::RowChunks,
+    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Semiring, Space,
+    StageStorage, Stages, TileArg, launch::Input, stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -111,7 +111,7 @@ pub fn cmma_kernel<
         let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
         // The accumulator's grid is the partition's, read off the levels below the cube.
-        let acc = c.cmma_accumulator::<EA, EL>(&a, Semiring::SUM_PROD);
+        let acc = c.accumulator::<EA, EL, ER>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
 
         // One stage of K per region, both inputs staged for it.
         let steps = cube.walk();

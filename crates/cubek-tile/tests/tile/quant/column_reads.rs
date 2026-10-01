@@ -41,10 +41,12 @@ fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.block_accumulator::<E, E, E>(
+        let acc = c.accumulator::<E, E, E>(
             &x,
             &values,
-            comptime!(RegisterBlock::new(64)),
+            comptime!(Instruction::Registers {
+                config: RegisterBlock::new(64)
+            }),
             Semiring::SUM_PROD,
         );
         for step in cube {

@@ -14,8 +14,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Levels, Partitioning, RegisterBlock, Scratch, Semiring,
-    Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
+    Accumulate, AccumulateExpand, Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch,
+    Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
     ops::softmax::OnlineSoftmax,
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
@@ -93,7 +93,7 @@ fn plane_attention<E: Float>(
             let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let acc = out_p
-                .cmma_accumulator::<f32, f32>(&bias_p, Semiring::SUM_PROD)
+                .accumulator::<f32, f32, E>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
                 .with_scratch(Scratch::OneTile);
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
@@ -104,7 +104,12 @@ fn plane_attention<E: Float>(
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
-                    let logits = score.cmma_accumulator::<f32, E>(&q_s, Semiring::SUM_PROD);
+                    let logits = score.accumulator::<f32, E, E>(
+                        &q_s,
+                        k_s,
+                        Instruction::Cmma,
+                        Semiring::SUM_PROD,
+                    );
                     for fragment in stage.walk().routed(V, 0).unrolled() {
                         let mut cell = logits.at(&fragment);
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
@@ -169,10 +174,12 @@ fn unit_attention<E: Float>(
                 out.at(&unit),
                 bias.at(&unit),
             );
-            let mut acc = out_u.block_accumulator::<f32, f32, E>(
+            let mut acc = out_u.accumulator::<f32, f32, E>(
                 &bias_u,
                 &v_u,
-                comptime!(RegisterBlock::new(rows * value)),
+                comptime!(Instruction::Registers {
+                    config: RegisterBlock::new(rows * value)
+                }),
                 Semiring::SUM_PROD,
             );
             let mut softmax = OnlineSoftmax::<f32>::along(&bias_u, S);
@@ -183,10 +190,12 @@ fn unit_attention<E: Float>(
                     v_u.at(&step),
                     bias_u.at(&step),
                 );
-                let mut score = bias_s.block_accumulator::<f32, E, E>(
+                let mut score = bias_s.accumulator::<f32, E, E>(
                     &q_s,
                     &k_s,
-                    comptime!(RegisterBlock::new(rows * block_keys)),
+                    comptime!(Instruction::Registers {
+                        config: RegisterBlock::new(rows * block_keys)
+                    }),
                     Semiring::SUM_PROD,
                 );
                 score.mma(&q_s, &k_s);

@@ -69,19 +69,27 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = match comptime!(leaf) {
-        Leaf::Mma => {
-            c.mma_accumulator::<EA, EI>(&a, comptime!(MmaIo::manual()), Semiring::SUM_PROD)
-        }
-        Leaf::MmaLoadMatrix => c.mma_accumulator::<EA, EI>(
+        Leaf::Mma => c.accumulator::<EA, EI, EI>(
             &a,
-            comptime!(MmaIo {
-                lhs_load_method: LoadMethod::LoadMatrix,
-                rhs_load_method: LoadMethod::LoadMatrix,
-                ..MmaIo::manual()
+            &b,
+            comptime!(Instruction::Mma {
+                io: MmaIo::manual()
             }),
             Semiring::SUM_PROD,
         ),
-        Leaf::Cmma => c.cmma_accumulator::<EA, EI>(&a, Semiring::SUM_PROD),
+        Leaf::MmaLoadMatrix => c.accumulator::<EA, EI, EI>(
+            &a,
+            &b,
+            comptime!(Instruction::Mma {
+                io: MmaIo {
+                    lhs_load_method: LoadMethod::LoadMatrix,
+                    rhs_load_method: LoadMethod::LoadMatrix,
+                    ..MmaIo::manual()
+                }
+            }),
+            Semiring::SUM_PROD,
+        ),
+        Leaf::Cmma => c.accumulator::<EA, EI, EI>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD),
     };
     let walk = space.over(&outer);
     if comptime!(staging == Staging::Global) {

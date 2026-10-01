@@ -95,10 +95,12 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let acc = out.block_accumulator::<E, E, E>(
+    let acc = out.accumulator::<E, E, E>(
         &w,
         &x,
-        comptime!(RegisterBlock::new(budget)),
+        comptime!(Instruction::Registers {
+            config: RegisterBlock::new(budget)
+        }),
         Semiring::SUM_PROD,
     );
     for cube in space {

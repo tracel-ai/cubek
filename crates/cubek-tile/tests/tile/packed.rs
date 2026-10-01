@@ -329,7 +329,14 @@ fn packed_gemv<E: Numeric, V: Size>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Semiring::SUM_PROD);
+        let acc = c.accumulator::<E, E, E>(
+            &x,
+            &values,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for step in cube {
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step));
@@ -386,7 +393,14 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Semiring::SUM_PROD);
+        let acc = c.accumulator::<E, E, E>(
+            &x,
+            &values,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for step in cube {
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step));
@@ -417,7 +431,7 @@ fn packed_cmma_rhs<E: Numeric>(
         .landed_for(Instruction::Cmma)
         .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
-    let acc = c.cmma_accumulator::<E, E>(&x, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E, E, E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
     for region in space.over(&level).unrolled() {
@@ -1928,7 +1942,14 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Semiring::SUM_PROD);
+        let acc = c.accumulator::<E, E, E>(
+            &x,
+            &w,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for step in cube {
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step));

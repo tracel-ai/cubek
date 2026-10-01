@@ -281,10 +281,12 @@ fn stream_matmul<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let acc = c_region.block_accumulator::<E, E, E>(
+        let acc = c_region.accumulator::<E, E, E>(
             &a_region,
             &b_region,
-            REGISTER_BLOCK,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
             Semiring::SUM_PROD,
         );
         for cell in region.over(&inner).range(from, steps) {
@@ -324,10 +326,12 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let acc = c_region.block_accumulator::<E, E, E>(
+        let acc = c_region.accumulator::<E, E, E>(
             &a_region,
             &b_region,
-            REGISTER_BLOCK,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
             Semiring::SUM_PROD,
         );
         let cells = region.over(&inner).range(from, steps);
