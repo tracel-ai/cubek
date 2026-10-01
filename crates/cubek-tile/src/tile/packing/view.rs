@@ -278,6 +278,16 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a
 impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
     PackedViewExpand<'a, NQ, F, NF, C>
 {
+    /// Binds `NQ` to the width these words are read at, before a read.
+    ///
+    /// A width is bound by its `size!` site, one marker however many operands the site serves:
+    /// two packed operands of a kernel bound at different widths each rebind it, and a view read
+    /// after the other was built would otherwise unpack at the other's width.
+    fn own_width(&self, scope: &Scope) {
+        let words = self.words.__expand_vector_size_method(scope);
+        scope.register_size::<NQ>(words);
+    }
+
     fn unpack(
         &self,
         scope: &Scope,
@@ -318,6 +328,7 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
         scope: &Scope,
         pos: <C>::ExpandType,
     ) -> NativeExpand<Vector<F, NF>> {
+        self.own_width(scope);
         let words = self.words.clone().__expand_read_method(scope, pos);
         self.unpack(scope, words)
     }
@@ -327,6 +338,7 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
         scope: &Scope,
         pos: <C>::ExpandType,
     ) -> NativeExpand<Vector<F, NF>> {
+        self.own_width(scope);
         let words = self.words.clone().__expand_read_checked_method(scope, pos);
         self.unpack(scope, words)
     }
@@ -337,6 +349,7 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
         pos: <C>::ExpandType,
         mask_value: NativeExpand<Vector<F, NF>>,
     ) -> NativeExpand<Vector<F, NF>> {
+        self.own_width(scope);
         let words = self
             .words
             .clone()
@@ -351,6 +364,7 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
         scope: &Scope,
         pos: <C>::ExpandType,
     ) -> NativeExpand<Vector<F, NF>> {
+        self.own_width(scope);
         let words = self
             .words
             .clone()
