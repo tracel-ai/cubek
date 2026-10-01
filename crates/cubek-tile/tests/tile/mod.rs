@@ -67,6 +67,7 @@ pub(crate) fn implied(client: &Client, partitioning: Partitioning, form: Form<'_
         &concrete,
         Grid::FromLevels,
     )
+    .unwrap()
 }
 
 /// A launch of one cube of one unit over `kernel`, cut by no level, its dynamic axes sized off
@@ -81,4 +82,5 @@ pub(crate) fn uncut(client: &Client, kernel: &Space, concrete: &Space) -> Launch
             cube_dim: CubeDim::new_single(),
         },
     )
+    .unwrap()
 }

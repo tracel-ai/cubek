@@ -158,7 +158,7 @@ fn dispatch<F: SeparableFilterFamily>(
             cube_count,
             cube_dim,
         },
-    );
+    )?;
 
     let vector_size = launch.vector_size(
         CHANNEL,

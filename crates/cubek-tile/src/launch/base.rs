@@ -4,7 +4,7 @@ use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
 
 use crate::{
-    Arg, Axis, Geometry, Partitioning, PartitioningLaunch, Space, SpaceLaunch, Unlabelled,
+    Arg, Axis, Geometry, Partitioning, PartitioningLaunch, Refusal, Space, SpaceLaunch, Unlabelled,
 };
 
 /// How many cubes of how many units the launch runs: stated, or read off the levels.
@@ -28,8 +28,14 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    /// `partitioning` over `concrete`'s real extents, on `grid`; panics if the device can't run it.
-    pub fn new(client: &Client, partitioning: Partitioning, concrete: &Space, grid: Grid) -> Self {
+    /// `partitioning` over `concrete`'s real extents, on `grid`, or the [`Refusal`] saying why the
+    /// device cannot run it.
+    pub fn new(
+        client: &Client,
+        partitioning: Partitioning,
+        concrete: &Space,
+        grid: Grid,
+    ) -> Result<Self, Refusal> {
         let (cube_count, cube_dim) = match grid {
             Grid::Stated {
                 cube_count,
@@ -38,11 +44,12 @@ impl Launcher {
             Grid::FromLevels => {
                 let plane_size = client.properties().hardware.plane_size_max;
                 let plane_units = partitioning.units();
-                assert!(
-                    plane_units == 1 || plane_units == plane_size,
-                    "Launcher: a grid read off the levels needs a units level of one unit or the \
-                     whole plane ({plane_size}), got {plane_units}"
-                );
+                if plane_units != 1 && plane_units != plane_size {
+                    return Err(Refusal::GridNotReadOffLevels {
+                        units: plane_units,
+                        plane: plane_size,
+                    });
+                }
                 // The kernel-form space may state no extents.
                 let over_concrete =
                     Partitioning::new(concrete.clone(), partitioning.levels().to_vec());
@@ -53,31 +60,30 @@ impl Launcher {
             }
         };
         let max_units = client.properties().hardware.max_units_per_cube;
-        assert!(
-            cube_dim.num_elems() <= max_units,
-            "Launcher: a cube of {} units, but the device holds at most {max_units}",
-            cube_dim.num_elems()
-        );
+        if cube_dim.num_elems() > max_units {
+            return Err(Refusal::CubePastDevice {
+                units: cube_dim.num_elems(),
+                most: max_units,
+            });
+        }
         let fillers = partitioning.fillers();
         // Checked on the host: a panic at expansion is unseen and the launch returns zeros.
-        assert!(
-            fillers == 0
-                || client
-                    .properties()
-                    .features
-                    .types
-                    .opaque
-                    .contains(&OpaqueType::Barrier),
-            "Launcher: {fillers} plane(s) are set aside to fill a walk's stages, and this device \
-             carries no barrier type for the two roles to meet on"
-        );
-        Launcher {
+        let barriers = client
+            .properties()
+            .features
+            .types
+            .opaque
+            .contains(&OpaqueType::Barrier);
+        if fillers > 0 && !barriers {
+            return Err(Refusal::FillersWithoutBarriers { fillers });
+        }
+        Ok(Launcher {
             client: client.clone(),
             partitioning,
             concrete: concrete.clone(),
             cube_count,
             cube_dim,
-        }
+        })
     }
 
     pub fn client(&self) -> &Client {

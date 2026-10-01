@@ -210,6 +210,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             Mapping::Workspace { .. } => {
                 let partitioning = Partitioning::new(
@@ -221,6 +222,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             // The cube's slice of K cut again across the plane: each unit contracts its own
             // sixteenth (or whatever the unit count makes it), the plane combines in registers,
@@ -235,6 +237,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
         }
     }
@@ -251,6 +254,7 @@ impl Mapping {
             );
             let concrete = partitioning.space().clone();
             Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                .unwrap_or_else(|refusal| panic!("{refusal}"))
         }
     }
 

@@ -1074,7 +1074,7 @@ fn check_matmul_scheduled(
         cube_count: partitioning.cube_count(),
         cube_dim: CubeDim::new_1d(units),
     };
-    let launcher = Launcher::new(&client, partitioning, &space, grid);
+    let launcher = Launcher::new(&client, partitioning, &space, grid).unwrap();
     let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .tile(&[tile_edge, tile_edge])
         .arange();

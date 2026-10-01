@@ -2,6 +2,7 @@ use core::fmt::Debug;
 use cubecl::server::LaunchError;
 use cubek_matmul::definition::{MatmulAvailabilityError, MatmulSetupError};
 use cubek_std::InvalidConfigError;
+use cubek_tile::launch::Refusal;
 
 #[allow(clippy::large_enum_variant)]
 pub enum ConvSetupError {
@@ -65,6 +66,13 @@ impl Debug for ConvSetupError {
 impl From<MatmulSetupError> for ConvSetupError {
     fn from(value: MatmulSetupError) -> Self {
         Self::Matmul(value)
+    }
+}
+
+/// A launch the tile engine refused is a configuration this routine cannot run.
+impl From<Refusal> for ConvSetupError {
+    fn from(refusal: Refusal) -> Self {
+        Self::InvalidConfig(Box::new(refusal))
     }
 }
 

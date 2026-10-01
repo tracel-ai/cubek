@@ -153,7 +153,7 @@ pub fn launch_ref(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
