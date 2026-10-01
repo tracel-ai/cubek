@@ -809,10 +809,7 @@ fn atomic_split_cmma<E: Numeric>(
                 acc_s.mma(a_s, b_s, Semiring::SUM_PROD);
             });
         });
-        for stage in c_cube.walk() {
-            let mut c_w = c_cube.at(&stage);
-            c_w.copy_cast_from(&acc.at(&stage));
-        }
+        acc.drained_into(&c_cube);
     }
 }
 

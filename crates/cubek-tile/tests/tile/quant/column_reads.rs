@@ -21,12 +21,12 @@ const KI: Axis = Axis(3);
 const BLOCK: usize = 16;
 const PER_WORD: usize = 8;
 
-/// `c = x · (W ⊗ s)`, the weight read `W` words a load and the scales `VS` a load, into a register block that lives across
+/// `c = x · (W ⊗ s)`, the weight read `VW` words a load and the scales `VS` a load, into a register block that lives across
 /// the walk over `K` and drains once.
 #[cube(launch)]
-fn column_gemv<E: Numeric, VX: Size, W: Size, VS: Size>(
+fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
     x: &TileArg<'_, E, VX>,
-    w: &TileArg<'_, u32, W>,
+    w: &TileArg<'_, u32, VW>,
     scale: &TileArg<'_, E, VS>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
@@ -52,19 +52,16 @@ fn column_gemv<E: Numeric, VX: Size, W: Size, VS: Size>(
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 
 /// [`column_gemv`] with the accumulator in memory: the output zeroed once, and every step's
 /// block seeded from it and committed back ([`Tile::mma_with`]).
 #[cube(launch)]
-fn column_gemv_in_memory<E: Numeric, VX: Size, W: Size, VS: Size>(
+fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
     x: &TileArg<'_, E, VX>,
-    w: &TileArg<'_, u32, W>,
+    w: &TileArg<'_, u32, VW>,
     scale: &TileArg<'_, E, VS>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,

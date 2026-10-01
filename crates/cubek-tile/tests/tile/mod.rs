@@ -13,6 +13,7 @@ mod erased;
 mod imperative;
 mod launcher;
 mod leaf;
+mod leaves;
 mod matmul;
 mod online_softmax;
 mod packed;

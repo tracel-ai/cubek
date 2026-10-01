@@ -2166,10 +2166,7 @@ fn conv_mma_kernel<E: Numeric>(
             acc_region.mma(input, weight, Semiring::SUM_PROD);
         });
     });
-    for r0 in out.over(&level).unrolled() {
-        let mut out_w = out.at(&r0);
-        out_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&out);
 }
 
 #[test]

@@ -125,10 +125,7 @@ fn atomic_matmul_units<E: Numeric>(
             let mut acc_unit = acc.at(&unit);
             acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit), Semiring::SUM_PROD);
         }
-        for r0 in c_cube.walk().unrolled() {
-            let mut c_cube_w = c_cube.at(&r0);
-            c_cube_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c_cube);
     }
 }
 

@@ -335,10 +335,7 @@ fn packed_gemv<E: Numeric, V: Size>(
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 
@@ -396,10 +393,7 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 
@@ -433,10 +427,7 @@ fn packed_cmma_rhs<E: Numeric>(
         let mut acc_r = acc.at(&region);
         acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// Four 8-bit values per word.
@@ -1946,10 +1937,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 

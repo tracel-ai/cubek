@@ -121,10 +121,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
             ),
         }
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// [`scaled_matmul`] with two scale levels: block scales, and one factor over the whole tensor.
@@ -211,10 +208,7 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
             ),
         }
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **Two scale levels, applied in order.** `nvfp4`'s shape: a scale per block of the contraction,
@@ -1245,10 +1239,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
             ),
         }
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
@@ -1693,10 +1684,7 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
         // The stage is refilled next region, once every plane has landed from it.
         sync_cube();
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **A packed stage lands on the tensor cores.** `e2m1` values eight to a word, stored `{N, K}`

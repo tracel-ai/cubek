@@ -1363,10 +1363,7 @@ fn resident_fold_kernel<E: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
     }
-    for r0 in out.over(&level).unrolled() {
-        let mut out_w = out.at(&r0);
-        out_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&out);
 }
 
 #[test]

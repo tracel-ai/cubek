@@ -104,12 +104,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
             staging,
         );
     }
-    for r0 in c.over(&outer).unrolled() {
-        for r1 in r0.over(&inner).unrolled() {
-            let mut c_w = c.at(&r1);
-            c_w.copy_cast_from(&acc.at(&r1));
-        }
-    }
+    acc.drained_into(&c);
 }
 
 /// The walk through a shared-memory stage, `staging` saying what is declared before it.

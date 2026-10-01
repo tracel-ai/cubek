@@ -19,9 +19,7 @@ use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 /// The routine's five levels, stated **from the leaf up, in counts**, outermost first once
 /// built: the instruction's shape, the fragments a partition holds, the instruction steps in one
 /// stage, the planes a cube holds, every stage `K` holds, and a cube per box of the output. The
-/// kernel's loops state them one by one, and the two level methods it names beside its loops
-/// ([`planes`](CmmaBlueprint::planes), [`fragments`](CmmaBlueprint::fragments)) read this same
-/// list, so the two cannot drift.
+/// kernel's loops state them one by one.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     let (c, i, p) = (bp.partition, bp.instruction, bp.planes);
     Levels::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
@@ -60,17 +58,6 @@ impl CmmaBlueprint {
             ),
             CubeDim::new_2d(plane_size, (self.planes.m * self.planes.n) as u32),
         )
-    }
-
-    /// The stage split across the planes, one partition each: the level the drain names
-    /// beside its loop, read off the list rather than stated twice.
-    pub fn planes(&self) -> Level {
-        cmma_levels(self, &[])[2].clone()
-    }
-
-    /// The partition's grid of fragments, one instruction each: likewise.
-    pub fn fragments(&self) -> Level {
-        cmma_levels(self, &[])[4].clone()
     }
 }
 
@@ -161,14 +148,9 @@ pub fn cmma_kernel<
                 }
             });
         });
-        // Each fragment to its window of the output, cast down to its type: the planes and
-        // their fragments, skipping the `K` levels between them, which the output does not span.
-        for plane in cube.over(&bp.planes()) {
-            for cell in plane.over(&bp.fragments()).unrolled() {
-                let mut c_cell = c.at(&cell);
-                c_cell.copy_cast_from(&acc.at(&cell));
-            }
-        }
+        // Each fragment to its window of the output, cast down to its type; the `K` levels
+        // between them move no output cell.
+        acc.drained_into(&c);
     }
 }
 

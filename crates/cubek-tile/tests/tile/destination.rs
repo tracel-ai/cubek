@@ -314,10 +314,7 @@ fn contract<E: Numeric, EA: Numeric, O: Destination>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 fn run_contract(sink: bool) -> HostData {

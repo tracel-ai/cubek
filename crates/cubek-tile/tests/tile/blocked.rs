@@ -769,10 +769,7 @@ fn promoted_matmul<E: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 #[test]
@@ -879,10 +876,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
             Semiring::SUM_PROD,
         );
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **The shape a decode gemv runs.** Scales read as a line against a register accumulator.
