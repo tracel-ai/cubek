@@ -207,7 +207,7 @@ mod tests {
             overhang: Overhang::Never,
             write: Write::Replace,
             fill: FillUnits::cube(64),
-            storage: Storage::Contiguous,
+            storage: WindowStorage::Contiguous,
             delivery: Delivery::SyncPerUnit,
         }
     }

@@ -317,7 +317,7 @@ impl<T: Numeric> Memory<T> {
                     overhang: Overhang::Never,
                     write,
                     fill,
-                    storage: Storage::Strided,
+                    storage: WindowStorage::Stored(Storage::Strided),
                     // Read as a source, a stage is copied out by the units that read it.
                     delivery: Delivery::SyncPerUnit,
                 }),

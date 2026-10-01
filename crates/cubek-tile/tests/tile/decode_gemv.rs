@@ -258,7 +258,8 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
         ))
         .packed(field)
         .vectorize(factor)
-        .build();
+        .build()
+        .unwrap();
     let x_projection = if promoted {
         Projection::new(
             &[KB, KI, N],
@@ -280,10 +281,19 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
         .arg(x_tensor.binding())
         .gathered(x_projection)
         .vectorize(if promoted { 1 } else { factor })
-        .build();
+        .build()
+        .unwrap();
     // One scale per `(row, block of K)`: `KI` is carried and addressed by nothing.
-    let s_op = launcher.arg(s_tensor.binding()).axes(&[M, KB]).build();
-    let out_op = launcher.arg(out.clone().binding()).axes(&[M, N]).build();
+    let s_op = launcher
+        .arg(s_tensor.binding())
+        .axes(&[M, KB])
+        .build()
+        .unwrap();
+    let out_op = launcher
+        .arg(out.clone().binding())
+        .axes(&[M, N])
+        .build()
+        .unwrap();
 
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     if promoted {

@@ -950,12 +950,18 @@ impl Conv1d {
                     PhysicalAxisMap::of(CI),
                 ],
             ))
-            .build();
-        let w_arg = launch.arg(w_handle.binding()).axes(&[RH, CI, CO]).build();
+            .build()
+            .unwrap();
+        let w_arg = launch
+            .arg(w_handle.binding())
+            .axes(&[RH, CI, CO])
+            .build()
+            .unwrap();
         let out_arg = launch
             .arg(out_handle.clone().binding())
             .axes(&[OH, CO])
-            .build();
+            .build()
+            .unwrap();
 
         match stage {
             Stage::InPlace => conv_kernel::launch(

@@ -117,19 +117,22 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .gathered(split())
         .packed(field)
         .vectorize(factor)
-        .build();
+        .build()
+        .unwrap();
     // Four scales per read: one read covers four blocks of columns, and each of its units is
     // taken by the run of values that block holds.
     let s_op = launcher
         .arg(s_tensor.binding())
         .axes(&[ROW, CB])
         .vectorize(scale_units)
-        .build();
+        .build()
+        .unwrap();
     let out_op = launcher
         .arg(out.clone().binding())
         .gathered(split())
         .vectorize(factor)
-        .build();
+        .build()
+        .unwrap();
 
     dequantize::launch(
         &client,

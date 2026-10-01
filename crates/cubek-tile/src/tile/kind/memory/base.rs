@@ -191,7 +191,7 @@ pub(crate) struct Access {
     /// The units that share a cooperative fill of this window.
     pub fill: FillUnits,
     /// What the storage tiles are to this window.
-    pub storage: Storage,
+    pub storage: WindowStorage,
     /// Who moves this tile's lines into a stage filled from it. Stated by the operand's spec and
     /// carried down its windows; a stage copied onward is copied by its units.
     pub delivery: Delivery,
@@ -348,7 +348,7 @@ impl Guard {
     }
 }
 
-/// What a storage tile is to the window an operand is read through.
+/// How an operand's buffer is stored: what a launched spec states.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Storage {
     /// Untiled storage: every window lies inside the one storage tile.
@@ -356,6 +356,13 @@ pub enum Storage {
     /// Storage-tiled, and the window may span several tiles.
     /// The level is the one whose tile the storage tile is; `None` if no level's.
     Tiled(Option<usize>),
+}
+
+/// What a storage tile is to the window an operand is read through.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum WindowStorage {
+    /// As the buffer is stored.
+    Stored(Storage),
     /// Storage-tiled and inside one storage tile: one contiguous run from its origin.
     Contiguous,
 }

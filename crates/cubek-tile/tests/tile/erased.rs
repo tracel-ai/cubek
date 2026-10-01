@@ -222,7 +222,8 @@ fn a_launcher_derived_spec_addresses_the_sink() {
         .unbound(&Geometry::new(&[(ROWS, COLS), (COLS, 1)]))
         .axes(&[ROW, COL])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .unwrap();
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
     assert_eq!(derived.geometry.strides(), [COLS, 1]);
 
@@ -622,12 +623,14 @@ fn run_masked(erased: Erased) -> HostData {
         .arg(input.binding())
         .axes(&[ROW, COL])
         .vectorize(2)
-        .build();
+        .build()
+        .unwrap();
     let out = launcher
         .arg(output.clone().binding())
         .axes(&[ROW, COL])
         .vectorize(2)
-        .build();
+        .build()
+        .unwrap();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     match erased {
         Erased::Sink => wide_sink_kernel::launch(

@@ -377,7 +377,12 @@ fn check(case: Case) {
     let a_axes: &'static [Axis] = if lhs_transposed { &[K, M] } else { &[M, K] };
     let b_axes: &'static [Axis] = if transposed { &[N, K] } else { &[K, N] };
     let bind = |binding, axes: &'static [Axis], width| {
-        launcher.arg(binding).axes(axes).vectorize(width).build()
+        launcher
+            .arg(binding)
+            .axes(axes)
+            .vectorize(width)
+            .build()
+            .unwrap()
     };
     staged_k_walk::launch(
         &client,

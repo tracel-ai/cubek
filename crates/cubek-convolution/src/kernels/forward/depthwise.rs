@@ -430,7 +430,7 @@ pub fn launch_depthwise(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's

@@ -66,15 +66,12 @@ impl TileSpec {
         self
     }
 
-    /// This spec checked as `policy` says; panics on [`BoundaryPolicy::Derived`].
+    /// This spec checked as `policy` says.
     pub fn boundary(self, policy: BoundaryPolicy) -> Self {
         let coord_rank = self.projection.coordinate_rank();
         match policy {
             BoundaryPolicy::Unchecked => self.boundaries(&vec![None; coord_rank]),
             BoundaryPolicy::Every(boundary) => self.boundaries(&vec![Some(boundary); coord_rank]),
-            BoundaryPolicy::Derived => {
-                panic!("TileSpec::boundary: a spec stated by hand derives no check; state the mode")
-            }
         }
     }
 
