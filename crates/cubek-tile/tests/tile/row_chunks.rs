@@ -69,26 +69,35 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = match comptime!(leaf) {
-        Leaf::Mma => c.mma_accumulator::<EA, EI>(&a, comptime!(MmaIo::manual()), Monoid::Sum),
-        Leaf::MmaLoadMatrix => c.mma_accumulator::<EA, EI>(
+        Leaf::Mma => c.accumulator::<EA, EI, EI>(
             &a,
-            comptime!(MmaIo {
-                lhs_load_method: LoadMethod::LoadMatrix,
-                rhs_load_method: LoadMethod::LoadMatrix,
-                ..MmaIo::manual()
+            &b,
+            comptime!(Instruction::Mma {
+                io: MmaIo::manual()
             }),
-            Monoid::Sum,
+            Semiring::SUM_PROD,
         ),
-        Leaf::Cmma => c.cmma_accumulator::<EA, EI>(&a, Monoid::Sum),
+        Leaf::MmaLoadMatrix => c.accumulator::<EA, EI, EI>(
+            &a,
+            &b,
+            comptime!(Instruction::Mma {
+                io: MmaIo {
+                    lhs_load_method: LoadMethod::LoadMatrix,
+                    rhs_load_method: LoadMethod::LoadMatrix,
+                    ..MmaIo::manual()
+                }
+            }),
+            Semiring::SUM_PROD,
+        ),
+        Leaf::Cmma => c.accumulator::<EA, EI, EI>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD),
     };
-    acc.zero();
     let walk = space.over(&outer);
     if comptime!(staging == Staging::Global) {
         for region in walk {
             let acc_o = acc.at(&region);
             for fragment in region.over(&inner).unrolled() {
                 let mut acc_f = acc_o.at(&fragment);
-                acc_f.mma(&a.at(&fragment), &b.at(&fragment), Semiring::SUM_PROD);
+                acc_f.mma(&a.at(&fragment), &b.at(&fragment));
             }
         }
     } else {
@@ -160,7 +169,7 @@ fn walk_stages<EI: Numeric, EA: Numeric>(
                 slot.consume(|a_s, b_s| {
                     for fragment in region.over(&inner).unrolled() {
                         let mut acc_f = acc_o.at(&fragment);
-                        acc_f.mma(&a_s.at(&fragment), &b_s.at(&fragment), Semiring::SUM_PROD);
+                        acc_f.mma(&a_s.at(&fragment), &b_s.at(&fragment));
                     }
                 });
             });
@@ -171,7 +180,7 @@ fn walk_stages<EI: Numeric, EA: Numeric>(
                 slot.consume(|a_s, b_s| {
                     for fragment in region.over(&inner).unrolled() {
                         let mut acc_f = acc_o.at(&fragment);
-                        acc_f.mma(&a_s.at(&fragment), &b_s.at(&fragment), Semiring::SUM_PROD);
+                        acc_f.mma(&a_s.at(&fragment), &b_s.at(&fragment));
                     }
                 });
             });

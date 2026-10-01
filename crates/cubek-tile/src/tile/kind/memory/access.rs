@@ -12,7 +12,6 @@ use cubecl::{
 };
 
 use crate::*;
-use cubecl::unexpanded;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
@@ -55,26 +54,19 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-impl<T: Numeric> Memory<T> {
-    /// This store landing on its way to a fragment ([`Tile::with_landing`]).
-    pub(crate) fn with_landing(self) -> Memory<T> {
-        unexpanded!()
-    }
-}
-
-impl<T: Numeric> MemoryExpand<T> {
-    pub(crate) fn __expand_with_landing_method(mut self, _scope: &Scope) -> Self {
-        self.lands = true;
-        self
-    }
-}
-
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// State what the accumulation being lowered starts from.
     pub(crate) fn set_init_from(&mut self, #[comptime] init_from: InitFrom) {
         comptime!({
             self.init_from = init_from;
+        });
+    }
+
+    /// State how a contraction into this window runs.
+    pub(crate) fn set_contraction(&mut self, #[comptime] contraction: Contraction) {
+        comptime!({
+            self.contraction = Some(contraction);
         });
     }
 
@@ -319,11 +311,6 @@ impl<T: Numeric> Memory<T> {
         let offset = self.window_offset();
         let end = self.store.buffer().len();
         self.store.buffer_mut().slice_mut(offset, end)
-    }
-
-    /// Whether this store was opened with a landing ([`Tile::with_landing`]).
-    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
-        comptime!(self.lands)
     }
 
     /// Line offset of the window origin; the window must be one contiguous region.
@@ -784,7 +771,6 @@ impl<T: Numeric> Memory<T> {
             window,
             projection: comptime!(self.projection.clone()),
             source_window: self.source_window.clone(),
-            lands: comptime!(self.lands),
             map,
             offsets: self.offsets.clone(),
             window_start,
@@ -792,6 +778,7 @@ impl<T: Numeric> Memory<T> {
             unit_share,
             split_share,
             init_from: comptime!(self.init_from),
+            contraction: comptime!(self.contraction),
             factor,
             codebook: self.codebook.clone(),
         }

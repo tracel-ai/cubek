@@ -24,6 +24,15 @@ pub(crate) enum PlaneTile<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> PlaneTile<T> {
+    /// The semiring this tile contracts under: a hardware instruction runs the sum of products
+    /// alone, a register block the one it was opened with.
+    pub(crate) fn semiring(&self) -> comptime_type!(Semiring) {
+        match self {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => comptime!(Semiring::SUM_PROD),
+            PlaneTile::Registers(d) => comptime!(d.accumulation.semiring("PlaneTile::mma")),
+        }
+    }
+
     /// An uninitialized accumulator tile over the whole `m × n` MMA tile, in `form`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
@@ -34,7 +43,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
-        #[comptime] monoid: Monoid,
+        #[comptime] accumulation: Accumulation,
     ) -> PlaneTile<T> {
         match comptime!(form) {
             Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(
@@ -48,7 +57,7 @@ impl<T: Numeric> PlaneTile<T> {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             Instruction::Registers { config } => PlaneTile::new_Registers(
-                RegisterData::<T>::alloc(m, n, axes, vector_size, fold, config, monoid),
+                RegisterData::<T>::alloc(m, n, axes, vector_size, fold, config, accumulation),
             ),
         }
     }
@@ -280,6 +289,17 @@ pub struct PlanePartition<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> PlanePartition<T> {
+    /// The instruction this grid contracts through where it holds several fragments; `None` where
+    /// it holds one.
+    pub(crate) fn grid(&self) -> comptime_type!(Option<Instruction>) {
+        let several = comptime!(self.m_tiles * self.n_tiles > 1);
+        match self.frags.index(0usize) {
+            PlaneTile::Cmma(_) => comptime!(several.then_some(Instruction::Cmma)),
+            PlaneTile::Mma(d) => comptime!(several.then_some(Instruction::Mma { io: d.io })),
+            PlaneTile::Registers(_) => comptime!(None),
+        }
+    }
+
     /// Whether this grid's tiles are cmma fragments, the one form that drains through a scratch.
     pub(crate) fn is_cmma(&self) -> comptime_type!(bool) {
         match self.frags.index(0usize) {
@@ -491,7 +511,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] grid: GridShape,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
-        #[comptime] monoid: Monoid,
+        #[comptime] accumulation: Accumulation,
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
     ) -> Tile<T> {
@@ -511,7 +531,7 @@ impl<T: Numeric> PlanePartition<T> {
                     k,
                     vector_size,
                     fold,
-                    monoid,
+                    accumulation,
                 ));
             }
         }
@@ -605,31 +625,26 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// This region of an operand, in the form `instruction` reads it.
-    pub fn operand<Acc: Numeric>(
+    /// This region of an operand, in the form `instruction` reads it: as it is where it already
+    /// holds fragments or the form is a register block, else loaded into fragments contracting
+    /// into `acc`.
+    pub(crate) fn operand<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
         #[comptime] instruction: Instruction,
     ) -> Tile<T> {
-        match comptime!(instruction) {
-            Instruction::Registers { .. } => src.clone(),
-            Instruction::Cmma => PlanePartition::<T>::cmma_fragments(src, acc),
-            Instruction::Mma { io } => PlanePartition::<T>::mma_fragments(src, acc, io),
+        match &src.kind {
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => src.clone(),
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => match comptime!(instruction) {
+                Instruction::Registers { .. } => src.clone(),
+                Instruction::Cmma | Instruction::Mma { .. } => {
+                    PlanePartition::<T>::fragments_in(src, acc, instruction)
+                }
+            },
         }
-    }
-
-    /// This region of an operand loaded into cmma fragments contracting into `acc`.
-    pub fn cmma_fragments<Acc: Numeric>(src: &Tile<T>, acc: &Tile<Acc>) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Cmma))
-    }
-
-    /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding.
-    pub(crate) fn mma_fragments<Acc: Numeric>(
-        src: &Tile<T>,
-        acc: &Tile<Acc>,
-        #[comptime] io: MmaIo,
-    ) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Mma { io }))
     }
 
     fn fragments_in<Acc: Numeric>(
@@ -645,7 +660,8 @@ impl<T: Numeric> PlanePartition<T> {
         ));
         let (grid, m, n) = acc.fragment_grid();
         let scaled = src.scaled();
-        let landed = src.has_landing();
+        let packing = src.packing();
+        let shared = src.is_shared();
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.place.space.clone()),
             comptime!(form),
@@ -656,9 +672,9 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(src.place.depth),
             comptime!(src.place.levels.clone()),
         );
-        if comptime!(scaled || landed) {
-            // A scaled operand, or one opened to reach fragments through a landing, loads from its
-            // plane's landing, as the direct contraction does.
+        if comptime!(scaled || packing != Packing::Plain || !shared) {
+            // A scaled, packed or global operand loads from its plane's landing, as the direct
+            // contraction does: a fragment reads a shared, plain window as it lies.
             let side = comptime!(Side::of(&src.place.space, &acc.place.space));
             let landing = src.landed(side, comptime!(acc.place.space.clone()));
             frags.copy_from(&landing);

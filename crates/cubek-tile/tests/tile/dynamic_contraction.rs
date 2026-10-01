@@ -40,15 +40,20 @@ fn contract<E: Numeric, VA: Size, VB: Size, VC: Size>(
     let a = x.tile(comptime!(space.clone()));
     let b = w.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    let mut acc =
-        c.block_accumulator::<E, E, E>(&a, &b, comptime!(RegisterBlock::new(budget)), Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: RegisterBlock::new(budget)
+        }),
+        Semiring::SUM_PROD,
+    );
     for cube in space {
         for plane in cube {
             for outer in plane {
                 for leaf in outer {
                     let mut acc_leaf = acc.at(&leaf);
-                    acc_leaf.mma(&a.at(&leaf), &b.at(&leaf), Semiring::SUM_PROD);
+                    acc_leaf.mma(&a.at(&leaf), &b.at(&leaf));
                 }
             }
         }

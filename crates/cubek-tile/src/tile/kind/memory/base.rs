@@ -41,16 +41,25 @@ pub(crate) struct Memory<T: Numeric> {
     /// What the accumulation being lowered starts from ([`InitFrom`]).
     #[cube(comptime)]
     pub(crate) init_from: InitFrom,
+    /// How a contraction into this window runs ([`Tile::accumulating`](crate::Tile::accumulating));
+    /// `None` until stated.
+    #[cube(comptime)]
+    pub(crate) contraction: Option<Contraction>,
     /// Where this tile's cells sit in the buffer they were filled from; `Some` only for a gathered
     /// stage.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
-    /// Whether this operand lands on its way to a tensor-core fragment.
-    #[cube(comptime)]
-    pub(crate) lands: bool,
     /// The scales these values carry ([`Tile::mul`](crate::Tile::mul)); empty when none.
     pub(crate) factor: Factor,
     /// The table these values index ([`Tile::lookup`](crate::Tile::lookup)); empty when none.
     pub(crate) codebook: Codebook,
+}
+
+/// How a contraction into a memory window runs: the register block a unit's share is tiled into,
+/// and the semiring it folds under.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct Contraction {
+    pub(crate) block: RegisterBlock,
+    pub(crate) semiring: Semiring,
 }
 
 /// Which memory a [`Memory`] tile's buffer sits in.

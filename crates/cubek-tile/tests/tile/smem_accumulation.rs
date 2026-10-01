@@ -15,7 +15,6 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
-use cubek_tile::kind::PlanePartition;
 use cubek_tile::stage::RowChunks;
 use cubek_tile::*;
 
@@ -45,14 +44,15 @@ fn smem_split_matmul<E: Numeric>(
             let a_plane = a.at(&plane);
             let b_plane = b.at(&plane);
             let sink_plane = sum.sink.at(&plane);
-            let mut partial = sink_plane.block_accumulator::<E, E, E>(
+            let mut partial = sink_plane.accumulator::<E, E, E>(
                 &a_plane,
                 &b_plane,
-                REGISTER_BLOCK,
-                Monoid::Sum,
+                comptime!(Instruction::Registers {
+                    config: REGISTER_BLOCK
+                }),
+                Semiring::SUM_PROD,
             );
-            partial.zero();
-            partial.mma(&a_plane, &b_plane, Semiring::SUM_PROD);
+            partial.mma(&a_plane, &b_plane);
             partial.drained_into(&sink_plane);
         }
         sync_cube();
@@ -209,7 +209,12 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let mut c_cube = c.at(&cube);
-        let opened = c_cube.cmma_accumulator::<E, EI>(&a_cube, Monoid::Sum);
+        let opened = c_cube.accumulator::<E, EI, EI>(
+            &a_cube,
+            &b_cube,
+            Instruction::Cmma,
+            Semiring::SUM_PROD,
+        );
         // The drain opens the scratch the window needs; a copy is handed one.
         let mut acc = if comptime!(copies) {
             opened.with_scratch(Scratch::OneTile)
@@ -229,20 +234,9 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
             1usize,
         );
         stages.pipelined(walk, |slot, stage| {
-            let acc_stage = acc.at(stage);
             slot.consume(|a_stage, b_stage| {
-                let a_fragments =
-                    PlanePartition::<EI>::operand(a_stage, &acc_stage, Instruction::Cmma);
-                let b_fragments =
-                    PlanePartition::<EI>::operand(b_stage, &acc_stage, Instruction::Cmma);
-                for fragment in stage.walk().unrolled() {
-                    let mut acc_fragment = acc_stage.at(&fragment);
-                    acc_fragment.mma(
-                        &a_fragments.at(&fragment),
-                        &b_fragments.at(&fragment),
-                        Semiring::SUM_PROD,
-                    );
-                }
+                let mut acc_stage = acc.at(stage);
+                acc_stage.mma(a_stage, b_stage);
             });
         });
         if comptime!(copies) {

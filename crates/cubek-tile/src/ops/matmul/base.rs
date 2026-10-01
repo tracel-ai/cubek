@@ -4,71 +4,66 @@ use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
 use super::leaf::memory;
+use crate::tile::base::witnessed_space;
 use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b` at a final register-resident tile.
-    pub fn mm<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] semiring: Semiring,
-    ) {
-        self.init_identity(comptime!(semiring.add()));
-        self.mma(lhs, rhs, semiring);
+    /// `c = a · b`, under the semiring the accumulator was opened with, or a memory window stated
+    /// [`accumulating`](Tile::accumulating). A memory window starts the sum fresh rather than
+    /// reading the cell.
+    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        let in_memory = self.is_memory();
+        if comptime!(in_memory) {
+            let semiring = contraction_of(&self.clone()).semiring;
+            let init_from = self.request_init_from(comptime!(InitFrom::Identity));
+            match comptime!(init_from) {
+                InitFrom::Identity => {}
+                InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
+            }
+            self.mma(lhs, rhs);
+            self.request_init_from(comptime!(InitFrom::Cell));
+        } else {
+            self.reset();
+            self.mma(lhs, rhs);
+        }
     }
 
-    /// `c += a · b` at a final register-resident tile, folding onto what `c` holds.
-    pub fn mma<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] semiring: Semiring,
-    ) {
-        mma_leaf(self, lhs, rhs, semiring)
+    /// `c += a · b`, folding onto what the accumulator or memory window holds.
+    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        mma_leaf(self, lhs, rhs)
+    }
+
+    /// This plane-resident accumulator back at its semiring's identity, as it was opened.
+    pub fn reset(&mut self) {
+        // A clone holds the same fragments: reading it reads `self`.
+        let semiring = held_semiring(&self.clone());
+        self.init_identity(comptime!(semiring.add()));
     }
 }
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b` at a final memory tile through the software instruction run under `config`.
-    pub fn mm_with<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] config: RegisterBlock,
+    /// This memory window as a contraction's output: each unit's share tiled into `block`, folded
+    /// under `semiring`. A plane-resident accumulator states both when it is opened.
+    pub fn accumulating(
+        &self,
+        #[comptime] block: RegisterBlock,
         #[comptime] semiring: Semiring,
-    ) {
-        let init_from = self.request_init_from(comptime!(InitFrom::Identity));
-        match comptime!(init_from) {
-            InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
-        }
-        self.mma_with(lhs, rhs, config, semiring);
-        self.request_init_from(comptime!(InitFrom::Cell));
-    }
-
-    /// `c += a · b` at a final memory tile through the software instruction run under `config`.
-    pub fn mma_with<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] config: RegisterBlock,
-        #[comptime] semiring: Semiring,
-    ) {
-        let space = comptime!(self.place.space.clone());
-        match &mut self.kind {
+    ) -> Tile<Acc> {
+        match &self.kind {
             TileKind::Memory(g) => {
-                memory::contract::<Acc, Lhs, Rhs>(g, lhs, rhs, space, config, semiring)
+                let mut g = g.clone();
+                g.set_contraction(comptime!(Contraction { block, semiring }));
+                Tile::new(TileKind::new_Memory(g), comptime!(self.place.clone()))
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => panic!(
-                "Tile::mma_with: the software instruction contracts into a memory accumulator; a \
-                 register accumulator carries its own block (Tile::block_accumulator)"
+                "Tile::accumulating: a memory window states how it is contracted into; a \
+                 plane-resident accumulator states it when opened (Tile::accumulator)"
             ),
         }
     }
@@ -80,30 +75,126 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
-    #[comptime] semiring: Semiring,
+) {
+    // A clone holds the same fragments: writes through it land in `acc`.
+    let grid = acc.clone();
+    let descent = Descent::of_tile::<E, Lhs, Rhs>(&grid, lhs, rhs);
+    match comptime!(descent) {
+        Descent::Here => mma_here::<E, Lhs, Rhs>(acc, lhs, rhs),
+        Descent::Steps => mma_steps::<E, Lhs, Rhs>(&grid, lhs, rhs),
+        Descent::Cells(instruction) => mma_cells::<E, Lhs, Rhs>(&grid, lhs, rhs, instruction),
+    }
+}
+
+/// [`Descent::Steps`]: each region of the level below, walked over the whole contraction's box
+/// (`acc`'s alone lacks the contracted axes).
+#[cube]
+fn mma_steps<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
+    acc: &Tile<E>,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+) {
+    let operands = comptime!(Space::merge(&[
+        &acc.place.space,
+        &lhs.place.space,
+        &rhs.place.space
+    ]));
+    let space = witnessed_space(operands, acc, lhs, rhs);
+    let walk = Region::rooted(
+        &space,
+        comptime!(acc.place.levels.clone()),
+        comptime!(acc.place.depth),
+    )
+    .walk();
+    for region in walk.unrolled() {
+        let mut acc_region = acc.at(&region);
+        mma_leaf::<E, Lhs, Rhs>(&mut acc_region, &lhs.at(&region), &rhs.at(&region));
+    }
+}
+
+/// [`Descent::Cells`]: each operand's fragments loaded once, then every cell of the grid.
+#[cube]
+fn mma_cells<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
+    acc: &Tile<E>,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    #[comptime] instruction: Instruction,
+) {
+    let lhs = PlanePartition::<Lhs>::operand(lhs, acc, instruction);
+    let rhs = PlanePartition::<Rhs>::operand(rhs, acc, instruction);
+    for cell in acc.walk().unrolled() {
+        let mut acc_cell = acc.at(&cell);
+        mma_leaf::<E, Lhs, Rhs>(&mut acc_cell, &lhs.at(&cell), &rhs.at(&cell));
+    }
+}
+
+/// [`Descent::Here`]: `acc += lhs · rhs` into the one fragment or block `acc` holds, or the
+/// memory window it is.
+#[cube]
+fn mma_here<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
+    acc: &mut Tile<E>,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
 ) {
     let space = comptime!(acc.place.space.clone());
     let tile_kind = &mut acc.kind;
     match tile_kind {
-        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space, semiring),
-        // A partition reaching a final tile carries exactly one tile.
+        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         TileKind::PlanePartition(p) => {
-            comptime!(assert!(
-                p.m_tiles == 1 && p.n_tiles == 1,
-                "mma_leaf: a multi-tile partition must be contracted at its partition level"
-            ));
             let mut t = p.at(0usize, 0usize);
-            t.mma(lhs, rhs, space, semiring)
+            t.mma(lhs, rhs, space)
         }
-        TileKind::Memory(_) => panic!(
-            "mma_leaf: a Gmem/Smem accumulator contracts through the software instruction, which \
-             runs under a register block; state it with Tile::mma_with(lhs, rhs, config, semiring)"
-        ),
+        TileKind::Memory(g) => {
+            let contraction = comptime!(g.contraction.unwrap_or_else(unstated_contraction));
+            memory::contract::<E, Lhs, Rhs>(
+                g,
+                lhs,
+                rhs,
+                space,
+                contraction.block,
+                contraction.semiring,
+            )
+        }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) | TileKind::Lines(_) => {
             panic!("mma: a procedural tile and the plane's units are not an accumulator sink")
         }
     }
+}
+
+/// The semiring a plane-resident accumulator was opened under.
+#[cube]
+fn held_semiring<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Semiring) {
+    match &acc.kind {
+        TileKind::PlaneTile(t) => t.semiring(),
+        TileKind::PlanePartition(p) => p.at(0usize, 0usize).semiring(),
+        TileKind::Memory(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_)
+        | TileKind::Lines(_) => {
+            panic!("Tile::reset: only a plane-resident accumulator has an identity to return to")
+        }
+    }
+}
+
+/// How a contraction into a memory window runs, as stated with [`Tile::accumulating`].
+#[cube]
+fn contraction_of<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Contraction) {
+    match &acc.kind {
+        TileKind::Memory(g) => comptime!(g.contraction.unwrap_or_else(unstated_contraction)),
+        TileKind::PlaneTile(_)
+        | TileKind::PlanePartition(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_)
+        | TileKind::Lines(_) => panic!("Tile::mm: only a memory window states its contraction"),
+    }
+}
+
+fn unstated_contraction() -> Contraction {
+    panic!(
+        "Tile::mma: a memory window contracts under the register block and semiring it is stated \
+         with; state them with Tile::accumulating(block, semiring)"
+    )
 }
 
 #[cube]
@@ -114,13 +205,11 @@ impl<E: Numeric> PlaneTile<E> {
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
         #[comptime] out: Space,
-        #[comptime] semiring: Semiring,
     ) {
         match self {
             PlaneTile::Cmma(d) => {
                 let transposed = transposed_rhs(lhs, rhs);
                 strided_2d(lhs, rhs, comptime!(out.clone()), transposed);
-                hardware_semiring(semiring);
                 d.mma(lhs, rhs, out)
             }
             PlaneTile::Mma(d) => {
@@ -128,18 +217,17 @@ impl<E: Numeric> PlaneTile<E> {
                 lhs.refuse_factor("PlaneTile::Mma");
                 rhs.refuse_factor("PlaneTile::Mma");
                 flattened_k(lhs, rhs, out);
-                hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
             PlaneTile::Registers(d) => match &lhs.kind {
                 TileKind::PlaneTile(block) => match block {
-                    PlaneTile::Registers(block) => d.mma_block(block, rhs, semiring),
+                    PlaneTile::Registers(block) => d.mma_block(block, rhs),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
                 },
                 TileKind::PlanePartition(block) => match block.fragment() {
-                    PlaneTile::Registers(block) => d.mma_block(&block, rhs, semiring),
+                    PlaneTile::Registers(block) => d.mma_block(&block, rhs),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
@@ -150,21 +238,11 @@ impl<E: Numeric> PlaneTile<E> {
                 | TileKind::Lines(_) => {
                     let folded = comptime!(d.fold > 1);
                     strided_2d(lhs, rhs, comptime!(out.clone()), folded);
-                    d.mma(lhs, rhs, out, semiring)
+                    d.mma(lhs, rhs, out)
                 }
             },
         }
     }
-}
-
-/// Asserts that the algebra is one a hardware instruction implements (multiply-add).
-#[cube]
-fn hardware_semiring(#[comptime] semiring: Semiring) {
-    comptime!(assert!(
-        semiring == Semiring::SUM_PROD,
-        "mma: a hardware instruction contracts under the sum-product semiring alone, not \
-         {semiring:?}; contract in memory or in a register block to fold under another"
-    ));
 }
 
 /// Asserts that operands are not gathered and read as one matrix each.

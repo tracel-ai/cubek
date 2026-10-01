@@ -709,7 +709,7 @@ impl<T: Numeric> Tile<T> {
         comptime!(assert!(
             !scaled || into_memory,
             "Tile::copy_from: a scaled source decodes into memory only; to load it into \
-             fragments, open it with `landed_for` and contract it"
+             fragments, contract it: the fragment lands it"
         ));
         if comptime!(scaled) {
             self.copy_scaled_from(src);
@@ -813,43 +813,6 @@ impl<T: Numeric> Tile<T> {
                 s.fragment().add_from_scratch(d, space)
             }
             _ => panic!("Tile::add_from_scratch: a spilled plane tile adds into memory"),
-        }
-    }
-
-    /// Whether this operand was opened [`with_landing`](Tile::with_landing).
-    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
-        match &self.kind {
-            TileKind::Memory(g) => g.has_landing(),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_)
-            | TileKind::Lines(_) => comptime!(false),
-        }
-    }
-
-    /// This operand with a landing: a plane-owned shared-memory window fragments are loaded from.
-    pub(crate) fn with_landing(&self) -> Tile<T> {
-        match &self.kind {
-            TileKind::Memory(g) => Tile::new(
-                TileKind::new_Memory(g.clone().with_landing()),
-                comptime!(self.place.clone()),
-            ),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_)
-            | TileKind::Lines(_) => {
-                panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
-            }
-        }
-    }
-
-    /// This operand landed where `instruction` needs it, and untouched where it does not.
-    pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<T> {
-        match comptime!(instruction) {
-            Instruction::Registers { .. } => self,
-            Instruction::Cmma | Instruction::Mma { .. } => self.with_landing(),
         }
     }
 
@@ -1212,7 +1175,7 @@ impl<E: Numeric> TileExpand<E> {
         if let TileKindExpand::Memory(memory) = &self.kind {
             assert!(
                 !memory.factor.scaled(),
-                "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; open them with `landed_for` or contract in memory"
+                "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; contract through a fragment or in memory"
             );
         }
     }

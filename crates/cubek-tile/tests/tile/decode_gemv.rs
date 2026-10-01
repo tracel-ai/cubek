@@ -62,12 +62,12 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             let x_plane = x_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             for unit in plane {
-                let mut out_unit = out_plane.at(&unit);
-                out_unit.mma_with(
+                let mut out_unit = out_plane
+                    .at(&unit)
+                    .accumulating(comptime!(RegisterBlock::new(budget)), Semiring::SUM_PROD);
+                out_unit.mma(
                     &w_plane.at(&unit).mul(&scale_plane.at(&unit)),
                     &x_plane.at(&unit),
-                    comptime!(RegisterBlock::new(budget)),
-                    Semiring::SUM_PROD,
                 );
             }
         }
@@ -95,13 +95,14 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let mut acc = out.block_accumulator::<E, E, E>(
+    let acc = out.accumulator::<E, E, E>(
         &w,
         &x,
-        comptime!(RegisterBlock::new(budget)),
-        Monoid::Sum,
+        comptime!(Instruction::Registers {
+            config: RegisterBlock::new(budget)
+        }),
+        Semiring::SUM_PROD,
     );
-    acc.zero();
     for cube in space {
         let acc_cube = acc.at(&cube);
         let w_cube = w.at(&cube);
@@ -117,7 +118,6 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
                 acc_unit.mma(
                     &w_plane.at(&unit).mul(&scale_plane.at(&unit)),
                     &x_plane.at(&unit),
-                    Semiring::SUM_PROD,
                 );
             }
         }

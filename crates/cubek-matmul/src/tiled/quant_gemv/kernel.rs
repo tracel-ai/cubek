@@ -156,13 +156,8 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
             // its word of scales covers.
             for turn in plane {
                 for unit in turn {
-                    let mut out_unit = out_plane.at(&unit);
-                    out_unit.mma_with(
-                        &w_plane.at(&unit),
-                        &x_plane.at(&unit),
-                        config,
-                        Semiring::SUM_PROD,
-                    );
+                    let mut out_unit = out_plane.at(&unit).accumulating(config, Semiring::SUM_PROD);
+                    out_unit.mma(&w_plane.at(&unit), &x_plane.at(&unit));
                 }
             }
         }

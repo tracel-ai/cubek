@@ -55,13 +55,10 @@ fn staged_matmul_quant_rhs<E: Numeric, VA: Size, VB: Size, VC: Size>(
             let scales_step = scales.at(step);
             slot.consume(|a_s, b_s| {
                 for unit in step {
-                    let mut c_unit = c_step.at(&unit);
-                    c_unit.mma_with(
-                        &a_s.at(&unit),
-                        &b_s.at(&unit).mul(&scales_step.at(&unit)),
-                        REGISTER_BLOCK,
-                        Semiring::SUM_PROD,
-                    );
+                    let mut c_unit = c_step
+                        .at(&unit)
+                        .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                    c_unit.mma(&a_s.at(&unit), &b_s.at(&unit).mul(&scales_step.at(&unit)));
                 }
             });
         });

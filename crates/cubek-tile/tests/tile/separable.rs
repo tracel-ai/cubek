@@ -99,13 +99,10 @@ fn separable_kernel<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out = output
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out.mm(&weights.at(&region), &input.at(&region));
     }
 }
 
@@ -132,10 +129,12 @@ fn separable_kernel_staged<E: Float>(
     let walk = space.over(&level);
     let mut stages = Stages::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
     stages.pipelined(walk, |slot, region| {
-        let mut out = output.at(region);
+        let mut out = output
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         let weights = weights.at(region);
         slot.consume(|input| {
-            out.mm_with(&weights, input, REGISTER_BLOCK, Semiring::SUM_PROD);
+            out.mm(&weights, input);
         });
     });
 }
@@ -380,13 +379,10 @@ fn resample_kernel<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out = output
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out.mm(&weights.at(&region), &input.at(&region));
     }
 }
 
@@ -507,7 +503,8 @@ fn procedural_mask_kernel<E: Float>(
         .tile();
         output
             .at(&region)
-            .mma_with(&weights, &rhs, REGISTER_BLOCK, Semiring::SUM_PROD);
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD)
+            .mma(&weights, &rhs);
     }
 }
 
@@ -573,13 +570,10 @@ fn resample_kernel_masked<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out = output
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out.mm(&weights.at(&region), &input.at(&region));
     }
 }
 
@@ -608,10 +602,12 @@ fn resample_kernel_masked_staged<E: Float>(
     let walk = space.over(&level);
     let mut stages = Stages::smem_single(&walk, &input, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
-        let mut out = output.at(region);
+        let mut out = output
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         let weights = weights.at(region);
         slot.consume(|input| {
-            out.mm_with(&weights, input, REGISTER_BLOCK, Semiring::SUM_PROD);
+            out.mm(&weights, input);
         });
     });
 }
@@ -803,13 +799,10 @@ fn column_spanning_resample_kernel<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out = output
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out.mm(&weights.at(&region), &input.at(&region));
     }
 }
 
@@ -904,13 +897,10 @@ fn column_spanning_resample_kernel_masked<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out = output
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out.mm(&weights.at(&region), &input.at(&region));
     }
 }
 
@@ -1020,13 +1010,10 @@ fn zero_sum_fallback_kernel<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out = output.at(&region);
-        out.mm_with(
-            &weights.at(&region),
-            &input.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out = output
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out.mm(&weights.at(&region), &input.at(&region));
     }
 }
 
@@ -1108,10 +1095,12 @@ fn separable_scaled_kernel<E: Float, V: Size>(
     let decoded = input.mul(&scale);
     let mut stages = Stages::smem_single(&walk, &decoded, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
-        let mut out = output.at(region);
+        let mut out = output
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         let weights = weights.at(region);
         slot.consume(|input| {
-            out.mm_with(&weights, input, REGISTER_BLOCK, Semiring::SUM_PROD);
+            out.mm(&weights, input);
         });
     });
 }

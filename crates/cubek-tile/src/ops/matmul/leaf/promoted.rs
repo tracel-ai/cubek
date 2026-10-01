@@ -17,14 +17,8 @@ impl<T: Numeric> RegisterData<T> {
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
         #[comptime] out: Space,
-        #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            semiring.add() == self.monoid,
-            "RegisterData::mma: this block folds its partials under {:?} and drains them that \
-             way, so it cannot contract under {semiring:?}",
-            self.monoid
-        ));
+        let semiring = comptime!(self.accumulation.semiring("RegisterData::mma"));
         // A load stored across several columns reads as their runs along the contraction.
         let rhs_load = rhs.vector_tile();
         let vw = comptime!(rhs_load.run_length());
@@ -126,14 +120,8 @@ impl<T: Numeric> RegisterData<T> {
         &mut self,
         lhs: &RegisterData<EL>,
         rhs: &Tile<ER>,
-        #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            semiring.add() == self.monoid,
-            "RegisterData::mma_block: this block folds its partials under {:?}, so it cannot \
-             contract under {semiring:?}",
-            self.monoid
-        ));
+        let semiring = comptime!(self.accumulation.semiring("RegisterData::mma_block"));
         comptime!(assert!(
             lhs.fold == 1 && self.fold == 1,
             "RegisterData::mma_block: both blocks hold whole cells, a line of neighbours"

@@ -324,10 +324,10 @@ impl<T: Numeric> Memory<T> {
                 unit_share: comptime!(UnitShare::Repeated),
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
+                contraction: comptime!(None),
                 factor: Factor::none(),
                 codebook: Codebook::none(),
                 source_window: source,
-                lands: false,
             }),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
         }

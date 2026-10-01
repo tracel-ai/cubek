@@ -117,41 +117,18 @@ pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
 /// What an output does with the sum contracted into it: open, scratch and drain an accumulator.
 #[cube]
 pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
-    /// What one plane sums into, in the form `instruction` names.
+    /// What one plane sums `lhs · rhs` into under `semiring`, in the form `instruction` names,
+    /// opened at the semiring's identity.
     fn accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
         &self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
         #[comptime] instruction: Instruction,
-        #[comptime] monoid: Monoid,
+        #[comptime] semiring: Semiring,
     ) -> Tile<EA>;
 
-    /// A cmma-fragment accumulator mirroring this tile's grid; `lhs` sizes `k`.
-    fn cmma_accumulator<EA: Numeric, EL: Numeric>(
-        &self,
-        lhs: &Tile<EL>,
-        #[comptime] monoid: Monoid,
-    ) -> Tile<EA>;
-
-    /// [`cmma_accumulator`](Self::cmma_accumulator) through the manual-mma instruction.
-    fn mma_accumulator<EA: Numeric, EL: Numeric>(
-        &self,
-        lhs: &Tile<EL>,
-        #[comptime] io: MmaIo,
-        #[comptime] monoid: Monoid,
-    ) -> Tile<EA>;
-
-    /// [`cmma_accumulator`](Self::cmma_accumulator) through the software instruction, run under
-    /// `config`.
-    fn block_accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
-        &self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
-        #[comptime] config: RegisterBlock,
-        #[comptime] monoid: Monoid,
-    ) -> Tile<EA>;
-
-    /// [`block_accumulator`](Self::block_accumulator) for a reduction over `input`.
+    /// A register block over this tile's grid for a reduction over `input` under `monoid`,
+    /// opened at its identity.
     fn block_reducer<EA: Numeric, In: Numeric>(
         &self,
         input: &Tile<In>,
@@ -177,86 +154,24 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
         #[comptime] instruction: Instruction,
-        #[comptime] monoid: Monoid,
+        #[comptime] semiring: Semiring,
     ) -> Tile<EA> {
         match comptime!(instruction) {
             Instruction::Registers { config } => {
-                self.block_accumulator::<EA, EL, ER>(lhs, rhs, config, monoid)
+                register_accumulator::<Acc, EA, EL, ER>(self, lhs, rhs, config, semiring)
             }
-            Instruction::Cmma => self.cmma_accumulator::<EA, EL>(lhs, monoid),
-            Instruction::Mma { io } => self.mma_accumulator::<EA, EL>(lhs, io, monoid),
+            Instruction::Cmma | Instruction::Mma { .. } => {
+                let vector_size = self.vector_size();
+                accumulator_in::<Acc, EA, EL>(
+                    self,
+                    lhs,
+                    instruction,
+                    vector_size,
+                    1usize,
+                    comptime!(Accumulation::Contraction(semiring)),
+                )
+            }
         }
-    }
-
-    fn cmma_accumulator<EA: Numeric, EL: Numeric>(
-        &self,
-        lhs: &Tile<EL>,
-        #[comptime] monoid: Monoid,
-    ) -> Tile<EA> {
-        let vector_size = self.vector_size();
-        accumulator_in::<Acc, EA, EL>(
-            self,
-            lhs,
-            comptime!(Instruction::Cmma),
-            vector_size,
-            1usize,
-            monoid,
-        )
-    }
-
-    fn mma_accumulator<EA: Numeric, EL: Numeric>(
-        &self,
-        lhs: &Tile<EL>,
-        #[comptime] io: MmaIo,
-        #[comptime] monoid: Monoid,
-    ) -> Tile<EA> {
-        let vector_size = self.vector_size();
-        accumulator_in::<Acc, EA, EL>(
-            self,
-            lhs,
-            comptime!(Instruction::Mma { io }),
-            vector_size,
-            1usize,
-            monoid,
-        )
-    }
-
-    fn block_accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
-        &self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
-        #[comptime] config: RegisterBlock,
-        #[comptime] monoid: Monoid,
-    ) -> Tile<EA> {
-        let lw = lhs.vector_size();
-        // The block's lines are a run of the rhs's loads: the whole load, or one column's run of
-        // a load stored across several columns.
-        let rhs_load = rhs.vector_tile();
-        let rw = comptime!(rhs_load.run_length());
-        let aw = self.vector_size();
-        let fold = comptime!(memory::contracted_per_step(
-            &lhs.place.space,
-            &rhs.place.space,
-            &self.place.space,
-            lw,
-            rw,
-            aw
-        ));
-        // A block outliving the leaf cannot spread lines, so its lines and the sink's agree or fold.
-        comptime!(assert!(
-            fold > 1 || rw == aw,
-            "Tile::block_accumulator: the block's lines are the rhs's ({rw} wide) and drain into \
-             {aw}-wide cells; a stage served wider than its sink is the memory-backed leaf's \
-             (Tile::mma_with)"
-        ));
-        accumulator_in::<Acc, EA, EL>(
-            self,
-            lhs,
-            comptime!(Instruction::Registers { config }),
-            rw,
-            fold,
-            monoid,
-        )
     }
 
     fn block_reducer<EA: Numeric, In: Numeric>(
@@ -272,7 +187,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
             comptime!(Instruction::Registers { config }),
             vector_size,
             1usize,
-            monoid,
+            comptime!(Accumulation::Reduction(monoid)),
         )
     }
 
@@ -405,7 +320,47 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// The plane-resident grid an accumulator contracts in, in `form`, uninitialized.
+/// A register block `out`'s plane sums `lhs · rhs` into, run under `config`.
+#[cube]
+fn register_accumulator<Acc: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
+    out: &Tile<Acc>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) -> Tile<EA> {
+    let lw = lhs.vector_size();
+    // The block's lines are a run of the rhs's loads: the whole load, or one column's run of
+    // a load stored across several columns.
+    let rhs_load = rhs.vector_tile();
+    let rw = comptime!(rhs_load.run_length());
+    let aw = out.vector_size();
+    let fold = comptime!(memory::contracted_per_step(
+        &lhs.place.space,
+        &rhs.place.space,
+        &out.place.space,
+        lw,
+        rw,
+        aw
+    ));
+    // A block outliving the leaf cannot spread lines, so its lines and the sink's agree or fold.
+    comptime!(assert!(
+        fold > 1 || rw == aw,
+        "Tile::accumulator: the block's lines are the rhs's ({rw} wide) and drain into \
+         {aw}-wide cells; a stage served wider than its sink is the memory-backed leaf's \
+         (Tile::accumulating)"
+    ));
+    accumulator_in::<Acc, EA, EL>(
+        out,
+        lhs,
+        comptime!(Instruction::Registers { config }),
+        rw,
+        fold,
+        comptime!(Accumulation::Contraction(semiring)),
+    )
+}
+
+/// The plane-resident grid an accumulator gathers in, in `form`, at its identity.
 #[cube]
 fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
     out: &Tile<Acc>,
@@ -413,19 +368,27 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
     #[comptime] form: Instruction,
     #[comptime] vector_size: usize,
     #[comptime] fold: usize,
-    #[comptime] monoid: Monoid,
+    #[comptime] accumulation: Accumulation,
 ) -> Tile<EA> {
-    PlanePartition::<EA>::mirror(
+    comptime!(assert!(
+        matches!(form, Instruction::Registers { .. })
+            || accumulation == Accumulation::Contraction(Semiring::SUM_PROD),
+        "Tile::accumulator: a hardware instruction accumulates under the sum of products alone, \
+         not {accumulation:?}; contract in a register block to fold under another"
+    ));
+    let mut acc = PlanePartition::<EA>::mirror(
         comptime!(out.place.space.clone()),
         comptime!(MatrixAxes::accumulator(&out.place.space, &lhs.place.space)),
         comptime!(form),
         comptime!(GridShape::new(&out.place, &lhs.place.space)),
         vector_size,
         fold,
-        monoid,
+        accumulation,
         comptime!(out.place.depth),
         comptime!(out.place.levels.clone()),
-    )
+    );
+    acc.init_identity(comptime!(accumulation.monoid()));
+    acc
 }
 
 /// [`Accumulate::drained_into`]'s descent over `levels[i..]`, applying `pass` at every leaf.

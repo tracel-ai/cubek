@@ -289,9 +289,9 @@ impl<T: Numeric> Memory<T> {
             unit_share: comptime!(UnitShare::Repeated),
             split_share,
             init_from: comptime!(InitFrom::Cell),
+            contraction: comptime!(None),
             factor: Factor::none(),
             codebook: Codebook::none(),
-            lands: false,
         }
     }
 }

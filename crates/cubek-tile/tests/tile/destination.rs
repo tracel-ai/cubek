@@ -311,11 +311,15 @@ fn contract<E: Numeric, EA: Numeric, O: Destination>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = O::tile::<E, Const<1>>(c, comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<EA, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers { config: BLOCK }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
     acc.drained_into(&c);
 }
