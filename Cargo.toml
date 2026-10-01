@@ -14,6 +14,11 @@ readme = "README.md"
 rust-version = "1.92"
 version = "0.3.0-pre.4"
 
+[workspace.lints.clippy]
+# Temporary workaround for linting generated code:
+# https://github.com/rust-lang/rust-clippy/issues/17525
+redundant_field_names = "allow"
+
 [workspace.dependencies]
 ### Internal cubek crates ###
 # Declared here so each consumer Cargo.toml can use `workspace = true` instead of
@@ -38,10 +43,10 @@ cubek-tile = { path = "crates/cubek-tile", version = "=0.3.0-pre.4", default-fea
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "48301b5354d449c57bfcc2544967c1343efe73b7", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "48301b5354d449c57bfcc2544967c1343efe73b7", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "48301b5354d449c57bfcc2544967c1343efe73b7", default-features = false }
-cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "48301b5354d449c57bfcc2544967c1343efe73b7", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "1c72d1004d70af803d8911d2514308097f9302be", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "1c72d1004d70af803d8911d2514308097f9302be", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "1c72d1004d70af803d8911d2514308097f9302be", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "1c72d1004d70af803d8911d2514308097f9302be", default-features = false }
 ### For releases ###
 # cubecl = { version = "=0.11.0-pre.4", default-features = false }
 # cubecl-common = { version = "=0.11.0-pre.4", default-features = false }

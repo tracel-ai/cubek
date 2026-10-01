@@ -425,7 +425,7 @@ fn short_window_matmul(copies: bool) {
     );
     // Bound through the launcher, which reads the overhang off the partitioning and masks the
     // output's writes past its edge.
-    let bind = |binding, axes: &'static [Axis]| launcher.arg(binding).axes(axes).build();
+    let bind = |binding, axes: &'static [Axis]| launcher.arg(binding).axes(axes).build().unwrap();
     fragment_matmul_into_a_short_window::launch(
         &client,
         launcher.cube_count(),

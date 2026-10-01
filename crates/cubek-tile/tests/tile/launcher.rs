@@ -2,7 +2,7 @@
 
 use super::{Form, implied};
 use cubecl::{prelude::*, zspace::Tiling};
-use cubek_tile::launch::BoundaryPolicy;
+use cubek_tile::launch::{BoundaryPolicy, Refusal};
 use cubek_tile::{
     Axis, Geometry, Level, Partitioning, Projection, Space, TileSpec,
     kind::{Boundary, Storage},
@@ -137,7 +137,8 @@ fn arg_derives_check_from_subspace_overhang() {
     let touches_k = launch
         .arg(binding(&client, &[64, 18]))
         .axes(&[M, K])
-        .build();
+        .build()
+        .unwrap();
     assert!(touches_k.spec.is_checked());
     // Only the axis that overhangs carries the mask: M divides, so its coordinate is settled and
     // masking it would cost a comparison on every access that can never fail.
@@ -149,7 +150,8 @@ fn arg_derives_check_from_subspace_overhang() {
     let avoids_k = launch
         .arg(binding(&client, &[64, 64]))
         .axes(&[M, N])
-        .build();
+        .build()
+        .unwrap();
     assert!(!avoids_k.spec.is_checked());
     assert!(avoids_k.spec.boundaries.is_empty());
 
@@ -158,7 +160,8 @@ fn arg_derives_check_from_subspace_overhang() {
         .arg(binding(&client, &[64, 18]))
         .axes(&[M, K])
         .boundary(BoundaryPolicy::Unchecked)
-        .build();
+        .build()
+        .unwrap();
     assert!(!forced.spec.is_checked());
     assert!(forced.spec.boundaries.is_empty());
 }
@@ -183,7 +186,8 @@ fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
         .arg(tiled)
         .axes(&[M, K])
         .boundary(BoundaryPolicy::Every(Boundary::Clamp))
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(tiled.spec.projection.physical_rank(), 4);
     assert_eq!(tiled.spec.projection.coordinate_rank(), 2);
@@ -206,7 +210,7 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
     // The buffer says for itself that both its dims are stored two fragments deep.
     let mut tiled = binding(&client, &[8, 2, 8, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
-    let off_the_tensor = launch.arg(tiled).axes(&[M, K]).build();
+    let off_the_tensor = launch.arg(tiled).axes(&[M, K]).build().unwrap();
 
     assert_eq!(
         off_the_tensor.spec.projection,
@@ -228,7 +232,7 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     // Storage of (8, 4) are the leaf, the third level's tile.
     let mut leaf_tiles = binding(&client, &[8, 2, 8, 4]);
     leaf_tiles.tiling = Tiling::new(&[2, 2]).unwrap();
-    let leaf = launch.arg(leaf_tiles).axes(&[M, K]).build();
+    let leaf = launch.arg(leaf_tiles).axes(&[M, K]).build().unwrap();
     assert_eq!(leaf.spec.storage, Storage::Tiled(Some(2)));
 
     // Storage of (16, K whole) are the cube's tile, the first level's, where that level hands K
@@ -243,12 +247,16 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
         implied(&client, Partitioning::new(space, levels), Form::Static)
     };
-    let cube = fixed.arg(cube_tiles()).axes(&[M, K]).build();
+    let cube = fixed.arg(cube_tiles()).axes(&[M, K]).build().unwrap();
     assert_eq!(cube.spec.storage, Storage::Tiled(Some(0)));
-    let cube = launch.arg(cube_tiles()).axes(&[M, K]).build();
+    let cube = launch.arg(cube_tiles()).axes(&[M, K]).build().unwrap();
     assert_eq!(cube.spec.storage, Storage::Tiled(None));
 
-    let plain = launch.arg(binding(&client, &[64, 8])).axes(&[M, K]).build();
+    let plain = launch
+        .arg(binding(&client, &[64, 8]))
+        .axes(&[M, K])
+        .build()
+        .unwrap();
     assert_eq!(plain.spec.storage, Storage::Strided);
 }
 
@@ -281,7 +289,8 @@ fn arg_binds_a_load_across_the_tiles_a_buffer_stores() {
         .arg(nvfp4_shaped(&client))
         .axes(&[M, K])
         .vectorize(32)
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(
         arg.spec.stored_tiles,
         vec![(K, 8), (K, 2), (M, 2), (K, 4), (M, 4)]
@@ -296,18 +305,22 @@ fn arg_binds_a_load_across_the_tiles_a_buffer_stores() {
 
 /// A load that would cut a stored tile does not bind: four values are half a word.
 #[test]
-#[should_panic(expected = "cannot be served 4 wide")]
 fn arg_refuses_a_load_that_cuts_a_stored_tile() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 64);
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
-    launch
+    let refused = launch
         .arg(nvfp4_shaped(&client))
         .axes(&[M, K])
         .vectorize(4)
-        .build();
+        .build()
+        .err();
+    assert!(
+        matches!(refused, Some(Refusal::WidthNotServed { width: 4, .. })),
+        "{refused:?}"
+    );
 }
 
 /// A tensor whose block is no level's tile is still an operand: (16, 4) is the cube's M with the
@@ -322,7 +335,7 @@ fn arg_reads_a_storage_tile_that_is_no_level_through_its_layout() {
     };
     let mut tiled = binding(&client, &[4, 2, 16, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
-    let arg = launch.arg(tiled).axes(&[M, K]).build();
+    let arg = launch.arg(tiled).axes(&[M, K]).build().unwrap();
     assert_eq!(arg.spec.storage, Storage::Tiled(None));
 }
 
@@ -339,7 +352,12 @@ fn arg_reads_a_tiling_stated_over_batch_dims_too() {
 
     let mut tiled = binding(&client, &[3, 8, 5, 8, 4]);
     tiled.tiling = Tiling::new(&[1, 2, 2]).unwrap();
-    let arg = launch.arg(tiled).axes(&[M, K]).batches(&[B0, B1]).build();
+    let arg = launch
+        .arg(tiled)
+        .axes(&[M, K])
+        .batches(&[B0, B1])
+        .build()
+        .unwrap();
 
     assert_eq!(arg.spec.projection.physical_rank(), 5);
     assert_eq!(arg.spec.projection.coordinate_rank(), 3);
@@ -359,7 +377,8 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .arg(binding(&client, &[3, 64, 16]))
         .axes(&[M, K])
         .batches(&[B0, B1])
-        .build();
+        .build()
+        .unwrap();
     assert!(one_batch.spec.axes().contains(&B1));
     assert!(!one_batch.spec.axes().contains(&B0));
 
@@ -368,7 +387,8 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .arg(binding(&client, &[1, 64, 16]))
         .axes(&[M, K])
         .batches(&[B0, B1])
-        .build();
+        .build()
+        .unwrap();
     assert!(!broadcast.spec.axes().contains(&B0));
     assert!(!broadcast.spec.axes().contains(&B1));
 }
@@ -392,12 +412,14 @@ fn spec_derives_what_a_bound_operand_derives() {
         .arg(binding(&client, geometry.shape()))
         .axes(&[M, K])
         .vectorize(1)
-        .build();
+        .build()
+        .unwrap();
     let derived = launch
         .unbound(&geometry)
         .axes(&[M, K])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .unwrap();
 
     // The spec alone: `vector_size` is the argument echoed back by both, so comparing the two
     // would compare `1` with `1` and pass however far apart the derivations drifted.
@@ -421,7 +443,8 @@ fn spec_tunes_what_a_bound_operand_tunes() {
         .unbound(&geometry)
         .axes(&[M, K])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .unwrap();
     assert!(derived.spec.is_checked());
 
     let tuned = launch
@@ -429,7 +452,8 @@ fn spec_tunes_what_a_bound_operand_tunes() {
         .axes(&[M, K])
         .vectorize(1)
         .boundary(BoundaryPolicy::Unchecked)
-        .build_spec();
+        .build_spec()
+        .unwrap();
     assert!(!tuned.spec.is_checked());
 }
 
@@ -450,7 +474,8 @@ fn spec_returns_the_geometry_it_settled_on() {
         .unbound(&Geometry::new(&[(64, 16), (16, 1)]))
         .axes(&[M, K])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .unwrap();
 
     assert_eq!(derived.geometry.shape(), [64, 16]);
     assert_eq!(derived.geometry.strides(), [16, 1]);
@@ -464,7 +489,6 @@ fn spec_returns_the_geometry_it_settled_on() {
 /// own axes and no batches are stated, so a dim past them has no axis to belong to and the
 /// derivation that *would* drop it never runs; the rank fails at launch, not as a misplaced store.
 #[test]
-#[should_panic(expected = "batch dims but only 0 batch axes given")]
 fn spec_refuses_a_dim_it_cannot_label() {
     let client = cubecl::test_device().client();
     let launch = {
@@ -472,11 +496,16 @@ fn spec_refuses_a_dim_it_cannot_label() {
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
 
-    let _ = launch
+    let refused = launch
         .unbound(&Geometry::new(&[(1, 1024), (64, 16), (16, 1)]))
         .axes(&[M, K])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .err();
+    assert!(
+        matches!(refused, Some(Refusal::UnlabelledBatchDims { axes: 0, .. })),
+        "{refused:?}"
+    );
 }
 
 /// A broadcast batch dim is dropped from the geometry that comes back, which is the case the
@@ -499,7 +528,8 @@ fn spec_settles_a_broadcast_batch_dim_away() {
         .axes(&[M, K])
         .batches(&[B0, B1])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .unwrap();
 
     assert!(!derived.spec.axes().contains(&B1));
     assert_eq!(derived.geometry.shape(), [64, 16]);
@@ -516,7 +546,6 @@ fn spec_settles_a_broadcast_batch_dim_away() {
 /// that does not divide it addresses a fraction of the operand: in bounds, no fault, wrong numbers.
 /// `Launcher::vector_size` derives a dividing width for a bound operand; a stated one has none.
 #[test]
-#[should_panic(expected = "cannot be served 2 wide")]
 fn spec_refuses_a_width_the_geometry_cannot_serve() {
     let client = cubecl::test_device().client();
     let launch = {
@@ -525,11 +554,16 @@ fn spec_refuses_a_width_the_geometry_cannot_serve() {
     };
 
     // Row stride 17: an odd number of scalars, so no whole number of 2-wide lines steps a row.
-    let _ = launch
+    let refused = launch
         .unbound(&Geometry::new(&[(64, 17), (16, 1)]))
         .axes(&[M, K])
         .vectorize(2)
-        .build_spec();
+        .build_spec()
+        .err();
+    assert!(
+        matches!(refused, Some(Refusal::WidthNotServed { width: 2, .. })),
+        "{refused:?}"
+    );
 }
 
 // ---- StridedTileSource::gathered -------------------------------------------
@@ -564,7 +598,8 @@ fn arg_gathered_states_its_own_mapping() {
     let input = launch
         .arg(binding(&client, &[79, 64]))
         .gathered(window(1, 1, 0))
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(input.spec.axes(), &[M, K, N]);
     assert_eq!(input.spec.projection, window(1, 1, 0));
@@ -591,7 +626,8 @@ fn arg_gathered_derives_check_from_overhang() {
     let input = launch
         .arg(binding(&client, &[81, 64]))
         .gathered(window(1, 1, 0))
-        .build();
+        .build()
+        .unwrap();
     // The gathered coordinate takes the mask; N is its own coordinate and divides, so it is
     // settled whatever the gather does.
     assert_eq!(
@@ -604,7 +640,8 @@ fn arg_gathered_derives_check_from_overhang() {
         .arg(binding(&client, &[81, 64]))
         .gathered(window(1, 1, 0))
         .boundary(BoundaryPolicy::Unchecked)
-        .build();
+        .build()
+        .unwrap();
     assert!(forced.spec.boundaries.is_empty());
 }
 
@@ -625,7 +662,8 @@ fn arg_gathered_derives_check_from_underflow() {
     let padded = launch
         .arg(binding(&client, &[64, 64]))
         .gathered(window(1, 1, -1))
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(
         padded.spec.boundaries.as_slice(),
         &[Some(Boundary::Zero), None]
@@ -635,7 +673,8 @@ fn arg_gathered_derives_check_from_underflow() {
     let dynamic = launch
         .arg(binding(&client, &[64, 64]))
         .gathered(window(1, 1, Offset::Dynamic))
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(
         dynamic.spec.boundaries.as_slice(),
         &[Some(Boundary::Zero), None]
@@ -644,15 +683,15 @@ fn arg_gathered_derives_check_from_underflow() {
     let shifted = launch
         .arg(binding(&client, &[96, 64]))
         .gathered(window(1, 1, 1))
-        .build();
+        .build()
+        .unwrap();
     assert!(shifted.spec.boundaries.is_empty());
 }
 
 /// One map per buffer dim: a mapping that addresses fewer dims than the operand has would read
 /// every coarser stride as if it were the operand's own.
 #[test]
-#[should_panic(expected = "addresses 2 dims but the operand has 3")]
-fn arg_gathered_rank_mismatch_panics() {
+fn arg_gathered_rank_mismatch_is_refused() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
@@ -662,16 +701,23 @@ fn arg_gathered_rank_mismatch_panics() {
             Form::DynamicAlong(&[N]),
         )
     };
-    let _ = launch
+    let refused = launch
         .arg(binding(&client, &[4, 79, 64]))
         .gathered(window(1, 1, 0))
-        .build();
+        .build()
+        .err();
+    assert!(
+        matches!(
+            refused,
+            Some(Refusal::GatherRankMismatch { mapped: 2, rank: 3 })
+        ),
+        "{refused:?}"
+    );
 }
 
 /// The gather contract runs on the caller's thread now that the builder knows the served width:
 /// the innermost dim is addressed in lines, so it must be one logical axis at coefficient 1.
 #[test]
-#[should_panic(expected = "innermost physical axis")]
 fn arg_gathered_validates_the_innermost_dim() {
     let client = cubecl::test_device().client();
     let launch = {
@@ -682,7 +728,7 @@ fn arg_gathered_validates_the_innermost_dim() {
             Form::DynamicAlong(&[M]),
         )
     };
-    let _ = launch
+    let refused = launch
         .arg(binding(&client, &[64, 79]))
         .gathered(Projection::new(
             &[M, K, N],
@@ -693,7 +739,12 @@ fn arg_gathered_validates_the_innermost_dim() {
         ))
         .vectorize(4)
         .boundary(BoundaryPolicy::Unchecked)
-        .build();
+        .build()
+        .err();
+    assert!(
+        matches!(refused, Some(Refusal::GatherInnermostNotInLines)),
+        "{refused:?}"
+    );
 }
 
 /// An axis sharing its dim with another has no extent of its own to read back here, but the
@@ -714,7 +765,8 @@ fn arg_gathered_dynamic_axis_is_accepted() {
     let _ = launch
         .arg(binding(&client, &[79, 64]))
         .gathered(window(1, 1, 0))
-        .build();
+        .build()
+        .unwrap();
 }
 
 /// The axis a gather does identity-map still reads its own extent, so it is free to stay runtime
@@ -734,7 +786,8 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
     let input = launch
         .arg(binding(&client, &[79, 64]))
         .gathered(window(1, 1, 0))
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(input.spec.axes(), &[M, K, N]);
     assert!(launch.partitioning().space().is_dynamic(N));
     assert!(!launch.partitioning().space().is_dynamic(M));
@@ -767,7 +820,8 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
                 PhysicalAxisMap::of(N),
             ],
         ))
-        .build();
+        .build()
+        .unwrap();
 }
 
 /// A static rational projection stages uncompacted into shared memory.
@@ -793,7 +847,8 @@ fn arg_gathered_rational_stages() {
                 PhysicalAxisMap::of(N),
             ],
         ))
-        .build();
+        .build()
+        .unwrap();
 }
 
 /// A dynamic divisor stages against its `min`, the smallest divisor and so the widest window any
@@ -820,7 +875,8 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
                 PhysicalAxisMap::of(N),
             ],
         ))
-        .build();
+        .build()
+        .unwrap();
 }
 
 /// The same shape with a divisor its coefficients cancel: `⌊(8m + 4k)/4⌋` steps like `2m + k`, so
@@ -859,7 +915,8 @@ fn arg_gathered_cancelling_divisor_stages() {
     let _ = staged
         .arg(binding(&client, &[512, 64]))
         .gathered(projection)
-        .build();
+        .build()
+        .unwrap();
 }
 
 // ---- Launcher::vector_size -------------------------------------------------
@@ -930,8 +987,7 @@ fn vector_size_falls_back_to_scalar() {
 }
 
 #[test]
-#[should_panic(expected = "not provably in bounds")]
-fn arg_checked_and_vectorized_panics() {
+fn arg_checked_and_vectorized_is_refused() {
     let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
     //
@@ -942,11 +998,16 @@ fn arg_checked_and_vectorized_panics() {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
-    let _ = launch
+    let refused = launch
         .arg(binding(&client, &[64, 18]))
         .axes(&[M, K])
         .vectorize(2)
-        .build();
+        .build()
+        .err();
+    assert!(
+        matches!(refused, Some(Refusal::UncheckableVectorEdge)),
+        "{refused:?}"
+    );
 }
 
 #[test]
@@ -961,7 +1022,8 @@ fn arg_vectorized_with_outer_axis_overhang_succeeds() {
         .arg(binding(&client, &[63, 64]))
         .axes(&[M, N])
         .vectorize(4)
-        .build();
+        .build()
+        .unwrap();
     assert!(arg.spec.is_checked());
     // M takes the mask, N carries the lines and needs none.
     assert_eq!(
@@ -985,7 +1047,8 @@ fn arg_explicit_check_still_narrows_to_the_unsettled_axes() {
         .arg(binding(&client, &[64, 18]))
         .axes(&[M, K])
         .boundary(BoundaryPolicy::Every(Boundary::Zero))
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(
         forced.spec.boundaries.as_slice(),
         &[None, Some(Boundary::Zero)]
@@ -1018,7 +1081,8 @@ fn arg_gathered_clamp_vectorized_exemption() {
         .gathered(window(1, 1, 0))
         .vectorize(4)
         .boundary(BoundaryPolicy::Every(Boundary::Clamp))
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(
         input.spec.boundaries.as_slice(),
@@ -1040,16 +1104,20 @@ fn vector_size_axis_must_label_innermost() {
 }
 
 #[test]
-#[should_panic(expected = "batch axes given")]
-fn arg_more_batch_dims_than_axes_panics() {
+fn arg_more_batch_dims_than_axes_is_refused() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(4, 3, 64, 64, 16);
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
-    let _ = launch
+    let refused = launch
         .arg(binding(&client, &[4, 3, 64, 16]))
         .axes(&[M, K])
         .batches(&[B1])
-        .build();
+        .build()
+        .err();
+    assert!(
+        matches!(refused, Some(Refusal::UnlabelledBatchDims { .. })),
+        "{refused:?}"
+    );
 }

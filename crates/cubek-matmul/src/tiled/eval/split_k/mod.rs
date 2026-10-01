@@ -173,6 +173,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             // `plane_size · cols` columns per cube, then `cols` per unit, whole K each.
             Mapping::NSpread { cols } => {
@@ -185,6 +186,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             // `cols` columns per cube shared by the whole plane, K cut into one slice per unit.
             // The transposed variant is the same *nest*: only the rhs strides differ.
@@ -198,6 +200,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
         }
     }

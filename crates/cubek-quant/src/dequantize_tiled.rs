@@ -87,7 +87,8 @@ pub fn launch_ref(
             cube_count: cube_count.clone(),
             cube_dim,
         },
-    );
+    )
+    .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
     // One scale for the whole tensor: a scale tile over no axis of the values.
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
     dequantize::launch(

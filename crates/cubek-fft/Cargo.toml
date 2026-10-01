@@ -10,6 +10,9 @@ readme.workspace = true
 repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-fft"
 version.workspace = true
 
+[lints]
+workspace = true
+
 [features]
 default = ["std", "cubecl/default"]
 std = ["cubecl/std"]

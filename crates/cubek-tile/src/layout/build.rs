@@ -249,7 +249,7 @@ mod tests {
 
         assert!(!p.addresses(G));
         assert_eq!(p.logical_axes(), &[B, H, T, G, D]);
-        p.validate(4);
+        p.validate(4).unwrap();
     }
 
     #[test]

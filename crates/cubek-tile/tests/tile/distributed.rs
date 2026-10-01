@@ -106,7 +106,7 @@ fn run(m: usize, n: usize, k: usize, distributed: usize, units: u32) -> HostData
         cube_dim: partitioning.cube_dim(units),
     };
     let space = partitioning.space().clone();
-    let launcher = Launcher::new(&client, partitioning, &space, grid);
+    let launcher = Launcher::new(&client, partitioning, &space, grid).unwrap();
 
     distributed_block_matmul::launch(
         &client,

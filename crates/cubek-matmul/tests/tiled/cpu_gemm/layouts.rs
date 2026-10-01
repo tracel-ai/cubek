@@ -129,6 +129,7 @@ impl Operand {
                     &concrete,
                     Grid::FromLevels,
                 )
+                .unwrap()
             },
             batch,
             rows,

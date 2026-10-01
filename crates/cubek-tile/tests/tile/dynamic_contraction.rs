@@ -108,7 +108,8 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
         .arg(x.binding())
         .axes(&[M, K])
         .vectorize(VECTOR)
-        .build();
+        .build()
+        .unwrap();
     let mut weight = w.binding();
     weight.shape = [k, n].into();
     weight.strides = [1, k].into();
@@ -117,12 +118,14 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
         .axes(&[K, N])
         .in_stride_order()
         .vectorize(VECTOR)
-        .build();
+        .build()
+        .unwrap();
     let c = launcher
         .arg(out.clone().binding())
         .axes(&[M, N])
         .vectorize(1)
-        .build();
+        .build()
+        .unwrap();
 
     contract::launch(
         &client,

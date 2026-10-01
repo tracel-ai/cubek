@@ -1996,6 +1996,7 @@ impl TileOrdered {
             )
             .vectorize(32 / Self::FIELD.size_bits())
             .build()
+            .unwrap()
     }
 
     /// The weight as stored. A packed binding counts values, its words being the packing's
@@ -2015,6 +2016,7 @@ impl TileOrdered {
             .gathered(Projection::dims().dim(NB).dim(KB).dim(NI).dim(KI).build())
             .packed(Self::FIELD)
             .build()
+            .unwrap()
     }
 
     /// The scales as stored, served as `f32` a line (a tile's sixteen) a read: whole words, or
@@ -2042,7 +2044,8 @@ impl TileOrdered {
                         .arg(s_t.binding())
                         .gathered(axes)
                         .vectorize(self.tile)
-                        .build(),
+                        .build()
+                        .unwrap(),
                     f32::elem_type_native(),
                 )
             }
@@ -2071,7 +2074,8 @@ impl TileOrdered {
                         .gathered(axes)
                         .packed(Field::of_scale(ScaleDtype::UE4M3))
                         .vectorize(self.tile)
-                        .build(),
+                        .build()
+                        .unwrap(),
                     u32::elem_type_native(),
                 )
             }
@@ -2088,6 +2092,7 @@ impl TileOrdered {
                     .build(),
             )
             .build()
+            .unwrap()
     }
 
     fn check(&self, client: &Client, c: TensorHandle, what: &str) {
