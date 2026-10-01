@@ -329,11 +329,10 @@ fn packed_gemv<E: Numeric, V: Size>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Semiring::SUM_PROD);
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
         acc.drained_into(&c);
     }
@@ -387,11 +386,10 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Semiring::SUM_PROD);
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
         acc.drained_into(&c);
     }
@@ -419,13 +417,12 @@ fn packed_cmma_rhs<E: Numeric>(
         .landed_for(Instruction::Cmma)
         .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(&x, Monoid::Sum);
-    acc.zero();
+    let acc = c.cmma_accumulator::<E, E>(&x, Semiring::SUM_PROD);
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
     for region in space.over(&level).unrolled() {
         let mut acc_r = acc.at(&region);
-        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
+        acc_r.mma(&x.at(&region), &w.at(&region));
     }
     acc.drained_into(&c);
 }
@@ -1931,11 +1928,10 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Semiring::SUM_PROD);
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
         acc.drained_into(&c);
     }

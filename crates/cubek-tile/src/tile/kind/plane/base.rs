@@ -24,6 +24,15 @@ pub(crate) enum PlaneTile<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> PlaneTile<T> {
+    /// The semiring this tile contracts under: a hardware instruction runs the sum of products
+    /// alone, a register block the one it was opened with.
+    pub(crate) fn semiring(&self) -> comptime_type!(Semiring) {
+        match self {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => comptime!(Semiring::SUM_PROD),
+            PlaneTile::Registers(d) => comptime!(d.accumulation.semiring("PlaneTile::mma")),
+        }
+    }
+
     /// An uninitialized accumulator tile over the whole `m × n` MMA tile, in `form`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
@@ -34,7 +43,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
-        #[comptime] monoid: Monoid,
+        #[comptime] accumulation: Accumulation,
     ) -> PlaneTile<T> {
         match comptime!(form) {
             Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(
@@ -48,7 +57,7 @@ impl<T: Numeric> PlaneTile<T> {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             Instruction::Registers { config } => PlaneTile::new_Registers(
-                RegisterData::<T>::alloc(m, n, axes, vector_size, fold, config, monoid),
+                RegisterData::<T>::alloc(m, n, axes, vector_size, fold, config, accumulation),
             ),
         }
     }
@@ -499,7 +508,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] grid: GridShape,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
-        #[comptime] monoid: Monoid,
+        #[comptime] accumulation: Accumulation,
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
     ) -> Tile<T> {
@@ -519,7 +528,7 @@ impl<T: Numeric> PlanePartition<T> {
                     k,
                     vector_size,
                     fold,
-                    monoid,
+                    accumulation,
                 ));
             }
         }

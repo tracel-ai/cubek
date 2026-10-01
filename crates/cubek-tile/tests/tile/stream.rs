@@ -251,7 +251,7 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 #[cube]
 fn contract<E: Numeric>(acc: &Tile<E>, a: &Tile<E>, b: &Tile<E>, region: &Region) {
     let mut acc_cell = acc.at(region);
-    acc_cell.mma(&a.at(region), &b.at(region), Semiring::SUM_PROD);
+    acc_cell.mma(&a.at(region), &b.at(region));
 }
 
 /// The streamed contraction: each cube takes its run of the joint index over the output's tiles
@@ -281,13 +281,12 @@ fn stream_matmul<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E, E>(
+        let acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
             REGISTER_BLOCK,
-            Monoid::Sum,
+            Semiring::SUM_PROD,
         );
-        acc.zero();
         for cell in region.over(&inner).range(from, steps) {
             match comptime!(leaf.clone()) {
                 Some(leaf) => {
@@ -325,20 +324,19 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E, E>(
+        let acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
             REGISTER_BLOCK,
-            Monoid::Sum,
+            Semiring::SUM_PROD,
         );
-        acc.zero();
         let cells = region.over(&inner).range(from, steps);
         let mut stages = Stages::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
         stages.pipelined(cells, |slot, cell| {
             let mut acc_cell = acc.at(cell);
             let a_cell = a_region.at(cell);
             slot.consume(|b_s| {
-                acc_cell.mma(&a_cell, b_s, Semiring::SUM_PROD);
+                acc_cell.mma(&a_cell, b_s);
             });
         });
         acc.drained_into(&c_region);

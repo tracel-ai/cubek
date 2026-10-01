@@ -2161,15 +2161,14 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let mut acc = out.mma_accumulator::<E, E>(&input, io, Monoid::Sum);
-    acc.zero();
+    let acc = out.mma_accumulator::<E, E>(&input, io, Semiring::SUM_PROD);
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
         let mut acc_region = acc.at(region);
         slot.consume(|input, weight| {
-            acc_region.mma(input, weight, Semiring::SUM_PROD);
+            acc_region.mma(input, weight);
         });
     });
     acc.drained_into(&out);

@@ -94,9 +94,13 @@ fn atomic_matmul<E: Numeric>(
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc =
-            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
-        acc.mm(&a_cube, &b_cube, Semiring::SUM_PROD);
+        let mut acc = c_cube.block_accumulator::<E, E, E>(
+            &a_cube,
+            &b_cube,
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+        acc.mma(&a_cube, &b_cube);
         c_cube.copy_cast_from(&acc);
     }
 }
@@ -118,12 +122,15 @@ fn atomic_matmul_units<E: Numeric>(
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let mut acc =
-            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c_cube.block_accumulator::<E, E, E>(
+            &a_cube,
+            &b_cube,
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
         for unit in cube {
             let mut acc_unit = acc.at(&unit);
-            acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit), Semiring::SUM_PROD);
+            acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit));
         }
         acc.drained_into(&c_cube);
     }

@@ -16,10 +16,10 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
 ) {
     // Drain the block the way it was built to fold; the partials fit no other operator.
     comptime!(assert!(
-        acc.monoid == monoid,
+        acc.accumulation.monoid() == monoid,
         "reduce: this accumulator folds under {:?} (stated at `Tile::accumulate`) but is being \
          reduced under {monoid:?}",
-        acc.monoid
+        acc.accumulation.monoid()
     ));
 
     let size!(V) = input.vector_size();

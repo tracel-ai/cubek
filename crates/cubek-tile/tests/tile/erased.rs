@@ -278,12 +278,11 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Semiring::SUM_PROD);
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
     acc.drained_into(&c);
 }
@@ -317,12 +316,11 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         Write::Replace,
     )
     .tile(comptime!(space.levels().to_vec()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Semiring::SUM_PROD);
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
     acc.drained_into(&c);
 }
@@ -355,12 +353,11 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     .tile(comptime!(space.levels().to_vec()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Semiring::SUM_PROD);
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
     acc.drained_into(&c);
 }

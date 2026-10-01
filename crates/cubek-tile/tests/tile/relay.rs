@@ -226,12 +226,11 @@ fn relayed_split_matmul(
     let b = b.tile(comptime!(space.clone()));
     let mut out = out.tile(comptime!(space.clone()));
     let c = relay.tile();
-    let mut acc = c.block_accumulator::<f32, f32, f32>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<f32, f32, f32>(&a, &b, REGISTER_BLOCK, Semiring::SUM_PROD);
     for cube in &space {
         for step in cube.walk() {
             let mut acc_step = acc.at(&step);
-            acc_step.mma(&a.at(&step), &b.at(&step), Semiring::SUM_PROD);
+            acc_step.mma(&a.at(&step), &b.at(&step));
         }
     }
     relay.take();

@@ -9,6 +9,34 @@ use crate::*;
 // element: the CPU backend refuses a scalar array re-viewed as lines.
 define_size!(pub(crate) RA);
 
+/// What a register block accumulates: products of two operands under a semiring, or one
+/// operand's values under a monoid.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Accumulation {
+    Contraction(Semiring),
+    Reduction(Monoid),
+}
+
+impl Accumulation {
+    /// The `⊕` partials merge under, and the identity a block opens at.
+    pub(crate) fn monoid(self) -> Monoid {
+        match self {
+            Accumulation::Contraction(semiring) => semiring.add(),
+            Accumulation::Reduction(monoid) => monoid,
+        }
+    }
+
+    /// The semiring a contraction runs under; a reduction runs none.
+    pub(crate) fn semiring(self, site: &str) -> Semiring {
+        match self {
+            Accumulation::Contraction(semiring) => semiring,
+            Accumulation::Reduction(monoid) => {
+                panic!("{site}: a block opened to reduce under {monoid:?} contracts nothing")
+            }
+        }
+    }
+}
+
 /// An `mr × nr` block of `RA`-wide register accumulators, the software [`PlaneTile`].
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
@@ -33,9 +61,9 @@ pub(crate) struct RegisterData<T: Numeric> {
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
     pub(crate) config: RegisterBlock,
-    /// The `⊕` this block's partials merge under ([`Sum`](Monoid::Sum) for a matmul).
+    /// What this block accumulates, and so the `⊕` its partials merge under.
     #[cube(comptime)]
-    pub(crate) monoid: Monoid,
+    pub(crate) accumulation: Accumulation,
 }
 
 /// Bind the block width `RA` for the rest of the kernel's scope.
@@ -58,7 +86,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
         #[comptime] config: RegisterBlock,
-        #[comptime] monoid: Monoid,
+        #[comptime] accumulation: Accumulation,
     ) -> RegisterData<T> {
         comptime!(assert!(
             fold == 1 || fold == vector_size,
@@ -79,7 +107,7 @@ impl<T: Numeric> RegisterData<T> {
             nr,
             axes,
             config,
-            monoid,
+            accumulation,
         }
     }
 
@@ -163,7 +191,7 @@ impl<T: Numeric> RegisterData<T> {
         let mem_write = comptime!(mem.access.write);
         let unit_share = comptime!(mem.unit_share);
         let fold = comptime!(self.fold);
-        let monoid = comptime!(self.monoid);
+        let monoid = comptime!(self.accumulation.monoid());
         let mut sink = mem.matrix_mut::<A>(0usize, comptime!(self.axes), space);
 
         // Split at comptime: a per-line `match` plus a unit guard breaks the CPU backend.

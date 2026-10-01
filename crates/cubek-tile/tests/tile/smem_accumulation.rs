@@ -49,10 +49,9 @@ fn smem_split_matmul<E: Numeric>(
                 &a_plane,
                 &b_plane,
                 REGISTER_BLOCK,
-                Monoid::Sum,
+                Semiring::SUM_PROD,
             );
-            partial.zero();
-            partial.mma(&a_plane, &b_plane, Semiring::SUM_PROD);
+            partial.mma(&a_plane, &b_plane);
             partial.drained_into(&sink_plane);
         }
         sync_cube();
@@ -209,7 +208,7 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let mut c_cube = c.at(&cube);
-        let opened = c_cube.cmma_accumulator::<E, EI>(&a_cube, Monoid::Sum);
+        let opened = c_cube.cmma_accumulator::<E, EI>(&a_cube, Semiring::SUM_PROD);
         // The drain opens the scratch the window needs; a copy is handed one.
         let mut acc = if comptime!(copies) {
             opened.with_scratch(Scratch::OneTile)
@@ -237,11 +236,7 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
                     PlanePartition::<EI>::operand(b_stage, &acc_stage, Instruction::Cmma);
                 for fragment in stage.walk().unrolled() {
                     let mut acc_fragment = acc_stage.at(&fragment);
-                    acc_fragment.mma(
-                        &a_fragments.at(&fragment),
-                        &b_fragments.at(&fragment),
-                        Semiring::SUM_PROD,
-                    );
+                    acc_fragment.mma(&a_fragments.at(&fragment), &b_fragments.at(&fragment));
                 }
             });
         });

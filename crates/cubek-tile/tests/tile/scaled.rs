@@ -1,4 +1,4 @@
-//! `c.mm(&a.mul(&s), &b, semiring)`: the contraction with one
+//! `c.mm(&a.mul(&s), &b)`: the contraction with one
 //! factor scaled by a **real operand**, on the factor the kernel wrote it on.
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
@@ -104,21 +104,12 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => acc_r.mma(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => acc_r.mma(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => acc_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => acc_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
     acc.drained_into(&c);
@@ -191,21 +182,12 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
         .landed_for(Instruction::Cmma);
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
-    acc.zero();
+    let acc = c.cmma_accumulator::<E, E>(&a, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => acc_r.mma(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => acc_r.mma(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => acc_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => acc_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
     acc.drained_into(&c);
@@ -1222,21 +1204,12 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => acc_r.mma(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => acc_r.mma(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => acc_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => acc_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
     acc.drained_into(&c);
@@ -1670,17 +1643,12 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     let mut stage = b
         .stage(comptime!(level.clone()), StageStorage::Strided)
         .landed_for(Instruction::Cmma);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
-    acc.zero();
+    let acc = c.cmma_accumulator::<E, E>(&a, Semiring::SUM_PROD);
     for region in space.over(&level) {
         stage.copy_from(&b.at(&region));
         sync_cube();
         let mut acc_r = acc.at(&region);
-        acc_r.mma(
-            &a.at(&region),
-            &stage.mul(&scale.at(&region)),
-            Semiring::SUM_PROD,
-        );
+        acc_r.mma(&a.at(&region), &stage.mul(&scale.at(&region)));
         // The stage is refilled next region, once every plane has landed from it.
         sync_cube();
     }
@@ -1843,19 +1811,14 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let mut sum =
-                c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Monoid::Sum);
-            sum.zero();
+            let sum =
+                c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Semiring::SUM_PROD);
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
                     for leaf in step {
                         let mut sum_leaf = sum.at(&leaf);
-                        sum_leaf.mma(
-                            &a_plane.at(&leaf),
-                            &b_plane.at(&leaf).mul(&lines.at(&leaf)),
-                            Semiring::SUM_PROD,
-                        );
+                        sum_leaf.mma(&a_plane.at(&leaf), &b_plane.at(&leaf).mul(&lines.at(&leaf)));
                     }
                 }
             }
@@ -2260,8 +2223,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let mut sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Monoid::Sum);
-            sum.zero();
+            let sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Semiring::SUM_PROD);
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
@@ -2273,7 +2235,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                             let b_f = PlanePartition::<E>::cmma_fragments(&b_step.at(&depth), &sum);
                             for cell in depth.walk().unrolled() {
                                 let mut sum_cell = sum.at(&cell);
-                                sum_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
+                                sum_cell.mma(&a_f.at(&cell), &b_f.at(&cell));
                             }
                         }
                     }

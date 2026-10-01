@@ -95,13 +95,12 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let mut acc = out.block_accumulator::<E, E, E>(
+    let acc = out.block_accumulator::<E, E, E>(
         &w,
         &x,
         comptime!(RegisterBlock::new(budget)),
-        Monoid::Sum,
+        Semiring::SUM_PROD,
     );
-    acc.zero();
     for cube in space {
         let acc_cube = acc.at(&cube);
         let w_cube = w.at(&cube);
@@ -117,7 +116,6 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
                 acc_unit.mma(
                     &w_plane.at(&unit).mul(&scale_plane.at(&unit)),
                     &x_plane.at(&unit),
-                    Semiring::SUM_PROD,
                 );
             }
         }

@@ -763,11 +763,10 @@ fn promoted_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<E, E, E>(&a, &b, BLOCK, Semiring::SUM_PROD);
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
     acc.drained_into(&c);
 }
@@ -866,15 +865,10 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.block_accumulator::<E, E, E>(&a, &b, BLOCK, Semiring::SUM_PROD);
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(
-            &a.at(&region),
-            &b.at(&region).mul(&scale.at(&region)),
-            Semiring::SUM_PROD,
-        );
+        acc_region.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region)));
     }
     acc.drained_into(&c);
 }

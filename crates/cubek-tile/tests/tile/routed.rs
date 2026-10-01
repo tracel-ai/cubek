@@ -319,12 +319,11 @@ fn routed_block_matmul_kernel<E: Numeric>(
             let out_s = out.at(&slab);
             let x_s = x.at(&slab);
             let w_s = w.at(&slab);
-            let mut acc =
-                out_s.block_accumulator::<E, E, E>(&x_s, &w_s, REGISTER_BLOCK, Monoid::Sum);
-            acc.zero();
+            let acc =
+                out_s.block_accumulator::<E, E, E>(&x_s, &w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
             for step in slab.over(&depth) {
                 let mut acc_s = acc.at(&step);
-                acc_s.mma(&x_s.at(&step), &w_s.at(&step), Semiring::SUM_PROD);
+                acc_s.mma(&x_s.at(&step), &w_s.at(&step));
             }
             acc.drained_into(&out_s);
         }

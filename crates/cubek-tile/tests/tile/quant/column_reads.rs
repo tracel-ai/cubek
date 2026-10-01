@@ -41,16 +41,15 @@ fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(
+        let acc = c.block_accumulator::<E, E, E>(
             &x,
             &values,
             comptime!(RegisterBlock::new(64)),
-            Monoid::Sum,
+            Semiring::SUM_PROD,
         );
-        acc.zero();
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
         acc.drained_into(&c);
     }
