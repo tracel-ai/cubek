@@ -2,12 +2,14 @@
 //! a tile that reads the sum back.
 //!
 //! [`SmemAccumulation`](super::smem_accumulation::SmemAccumulation)'s writers add into every cell
-//! at once through atomics, in whatever order they arrive, into a buffer zeroed first. Here the
-//! box is cut into as many chunks as there are writers, and the drain runs in as many rounds: in
-//! round `r`, writer `w` lands its lines of chunk `(w + r) mod writers` alone, replacing them in
-//! round zero and adding into them after, with a plain read and write. Every writer works every
-//! round, on a chunk no other writer touches, a cube barrier between rounds: no atomics, no zeroing,
-//! and each cell takes its partials in a fixed order, so the sum is the same bits from run to run.
+//! at once through atomics, in whatever order they arrive, into a buffer zeroed first. Here each
+//! writer's fragments are dealt into as many chunks as there are writers, by their place in the
+//! fragment grid, and the drain runs in as many rounds: in round `r`, writer `w` lands its
+//! fragments of chunk `(w + r) mod writers` alone, replacing their cells in round zero and adding
+//! into them after, with a plain read and write. Every writer works every round, on cells no other
+//! writer touches, a cube barrier between rounds, and drains each fragment once: no atomics, no
+//! zeroing, and each cell takes its partials in a fixed order, so the sum is the same bits from run
+//! to run.
 
 use core::marker::PhantomData;
 
@@ -86,10 +88,9 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
-    /// The sink `writer` drains into in `round`: it lands the lines of chunk
-    /// `(writer + round) mod writers` alone, replacing them in round zero and adding into them
-    /// after, and drops the rest.
-    pub fn sink(&self, writer: usize, round: usize) -> Tile<A> {
+    /// The sink every writer drains into in `round`: it replaces each cell it is handed in round
+    /// zero and adds into it after.
+    pub fn sink(&self, round: usize) -> Tile<A> {
         let space = comptime!(self.like.place.space.clone());
         let form = comptime!(StageForm::dense(
             &space,
@@ -104,9 +105,7 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
             comptime!(FillUnits::cube(units)),
             Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_cyclic(
                 &self.values,
-                writer,
-                round,
-                self.writers,
+                round == 0,
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
@@ -118,13 +117,14 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
     }
 
     /// Drain `partial`, an accumulator over the whole box, every round of the schedule, the cube
-    /// synchronized after each: each unit lands the cells its plane holds as `writer`, its plane's
-    /// place among the writers. Once every writer of the cube has, the sum is in
-    /// [`source`](SmemCyclicAccumulation::source).
+    /// synchronized after each: each unit lands its plane's fragments of the round's chunk as
+    /// `writer`, its plane's place among the writers. Once every writer of the cube has, the sum is
+    /// in [`source`](SmemCyclicAccumulation::source).
     pub fn drain<P: Numeric>(&self, partial: &Tile<P>, writer: usize) {
         #[unroll]
         for round in 0..self.writers {
-            partial.drained_into(&self.sink(writer, round));
+            let turn = (writer + round) % comptime!(self.writers);
+            partial.drained_chunk_into(&self.sink(round), turn, comptime!(self.writers));
             sync_cube();
         }
     }
@@ -134,7 +134,8 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
     pub fn drain_at<P: Numeric>(&self, partial: &Tile<P>, window: &Region, writer: usize) {
         #[unroll]
         for round in 0..self.writers {
-            partial.drained_into(&self.sink(writer, round).at(window));
+            let turn = (writer + round) % comptime!(self.writers);
+            partial.drained_chunk_into(&self.sink(round).at(window), turn, comptime!(self.writers));
             sync_cube();
         }
     }
@@ -142,29 +143,20 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
 
 /// The erased tensors over a shared buffer of plain values.
 pub(crate) trait SmemCyclicSink<E: Numeric> {
-    /// The sink that lands `writer`'s lines of its chunk of `round` into `values`, one scalar a
-    /// line.
-    fn of_smem_cyclic(
-        _values: &Shared<[E]>,
-        _writer: usize,
-        _round: usize,
-        _writers: usize,
-    ) -> ErasedTensor<E, WriteOnly> {
+    /// The sink that writes into `values` one scalar a line, replacing each cell where `first`
+    /// and adding into it otherwise.
+    fn of_smem_cyclic(_values: &Shared<[E]>, _first: bool) -> ErasedTensor<E, WriteOnly> {
         unexpanded!()
     }
 
     fn __expand_of_smem_cyclic(
         _scope: &Scope,
         values: &<Shared<[E]> as CubeType>::ExpandType,
-        writer: NativeExpand<usize>,
-        round: NativeExpand<usize>,
-        writers: usize,
+        first: NativeExpand<bool>,
     ) -> ErasedTensorExpand<E, WriteOnly> {
         ErasedTensorExpand::new(SmemCyclic::<E> {
             values: ExpandTypeClone::clone_unchecked(values),
-            writer,
-            round,
-            writers,
+            first,
             _e: PhantomData,
         })
     }
@@ -192,14 +184,12 @@ pub(crate) trait SmemPlainLoadSource<T: Numeric> {
 
 impl<T: Numeric> SmemPlainLoadSource<T> for ErasedTensor<T, ReadOnly> {}
 
-/// A backing that lands one writer's lines of one round's chunk into a shared buffer: a read and a
-/// write, not an atomic, so it declares [`WritesLines`] alone. The rounds keep one writer at a
-/// chunk at a time.
+/// A backing that replaces each cell it is handed, or adds into it, in a shared buffer: a read and
+/// a write, not an atomic, so it declares [`WritesLines`] alone. The rounds keep one writer at a
+/// cell at a time.
 struct SmemCyclic<E: Numeric> {
     values: <Shared<[E]> as CubeType>::ExpandType,
-    writer: NativeExpand<usize>,
-    round: NativeExpand<usize>,
-    writers: usize,
+    first: NativeExpand<bool>,
     _e: PhantomData<E>,
 }
 
@@ -223,9 +213,7 @@ impl<E: Numeric> ErasedTensorOperationsExpand<E> for SmemCyclic<E> {
             &mut self.values,
             index,
             value.into(),
-            self.writer.clone(),
-            self.round.clone(),
-            self.writers,
+            self.first.clone(),
         );
     }
 }
@@ -254,30 +242,18 @@ impl<A: Numeric, T: Numeric> ErasedTensorOperationsExpand<T> for SmemPlainLoad<A
 
 impl<A: Numeric, T: Numeric> ReadsLines<T> for SmemPlainLoad<A, T> {}
 
-/// The chunk of `cells` cell `index` lies in, of `writers` equal runs.
-#[cube]
-fn chunk_of(index: usize, cells: usize, #[comptime] writers: usize) -> usize {
-    index * writers / cells
-}
-
-/// Land one line, one scalar wide, where `writer` holds its cell's chunk in `round`: the value on
-/// round zero, the cell plus the value after.
+/// Land one line, one scalar wide: the value where `first`, the cell plus the value otherwise.
 #[cube]
 fn cyclic_cell<E: Numeric>(
     values: &mut Shared<[E]>,
     index: usize,
     value: Vector<E, Const<1>>,
-    writer: usize,
-    round: usize,
-    #[comptime] writers: usize,
+    first: bool,
 ) {
-    let turn = (writer + round) % writers;
-    if chunk_of(index, values.len(), writers) == turn {
-        if round == 0 {
-            values[index] = value.extract(0usize);
-        } else {
-            values[index] += value.extract(0usize);
-        }
+    if first {
+        values[index] = value.extract(0usize);
+    } else {
+        values[index] += value.extract(0usize);
     }
 }
 
