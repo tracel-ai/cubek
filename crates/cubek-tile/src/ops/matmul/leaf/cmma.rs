@@ -110,31 +110,22 @@ impl FragmentRead {
 
 #[cube]
 impl<E: Numeric> Tile<E> {
-    /// This factor read into `frag`; a scaled or landed factor goes through its landing.
+    /// This factor read into `frag`. A fragment loads a shared, plain window as it lies; a scaled
+    /// or packed factor, or a global one whose layout the load cannot check, goes through its
+    /// landing.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
         let scaled = self.scaled();
         let landed = self.has_landing();
         let packing = self.packing();
-        if comptime!(scaled || landed) {
+        let shared = self.is_shared();
+        if comptime!(scaled || landed || packing != Packing::Plain || !shared) {
             let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
             landing.load_into(frag, comptime!(read.out.clone()));
             // The landing is this region's until every unit's load has read it.
             sync_plane();
         } else {
             match &self.kind {
-                TileKind::Memory(m) => {
-                    comptime!(assert!(
-                        m.address == AddressSpace::Shared,
-                        "mma: a fragment loads a window as it lies and a gmem layout is \
-                         unchecked; open the operand with `with_landing()`, or stage it"
-                    ));
-                    comptime!(assert!(
-                        packing == Packing::Plain,
-                        "mma: a packed stage reaches a fragment through a landing; open the \
-                         operand with `with_landing`"
-                    ));
-                    cmma::load(frag, m.window_slice(), m.row_stride())
-                }
+                TileKind::Memory(m) => cmma::load(frag, m.window_slice(), m.row_stride()),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -149,12 +140,6 @@ impl<E: Numeric> Tile<E> {
     /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
     /// that fragments load from.
     pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
-        let lands = self.has_landing();
-        comptime!(assert!(
-            lands,
-            "Tile::landed: a scaled operand reaches a tensor-core fragment through a landing in \
-             shared memory; open the operand with `landed_for`"
-        ));
         let space = comptime!(self.place.space.clone());
         let units = self.units();
         let planes = comptime!(plane_windows(&space, &self.place.levels));

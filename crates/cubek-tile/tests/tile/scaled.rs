@@ -2242,9 +2242,8 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     let a = a
         .tile(comptime!(space.clone()))
         .landed_for(Instruction::Cmma);
-    let b = b
-        .tile_as::<E>(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    // The weight is scaled at every step, which lands it on its own.
+    let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {

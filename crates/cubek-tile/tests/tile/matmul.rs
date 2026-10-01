@@ -797,6 +797,53 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     acc.drained_into(&c);
 }
 
+/// [`cmma_matmul_three_levels_planes_fragments`] contracting each plane's whole partition in one
+/// call: the grid walks its fragment level itself.
+#[cube(launch)]
+fn cmma_matmul_partition_in_one_call<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] stage: Level,
+    #[comptime] plane: Level,
+    #[comptime] fragment: Level,
+    #[comptime] depth: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
+    acc.zero();
+    let walk = space.over(&stage);
+    let mut stages = Stages::smem(
+        &walk,
+        &a,
+        &b,
+        comptime!(StageStorage::Tiled {
+            block: Partitioning::new(
+                Space::merge(&[&a.space(), &b.space()]),
+                vec![stage.clone(), plane.clone(), fragment.clone()]
+            )
+            .leaf()
+            .extents(),
+            chunks: RowChunks::InOrder,
+        }),
+        depth,
+    );
+    stages.pipelined(walk, |slot, region| {
+        let acc_o = acc.at(region);
+        slot.consume(|a_s, b_s| {
+            for region in region.over(&plane) {
+                let mut acc_p = acc_o.at(&region);
+                acc_p.mma(&a_s.at(&region), &b_s.at(&region), Semiring::SUM_PROD);
+            }
+        });
+    });
+    acc.drained_into(&c);
+}
+
 /// A register budget as a level structure: a staged K walk (`depth` in flight), the plane
 /// split, a windowing-only step walk, an N walk loading one B fragment per step beside the A
 /// column loaded once above, and an M-only fragment walk; both fragment walks unroll (they select).
@@ -3722,6 +3769,58 @@ fn cmma_matmul_multi_fragment_partition() {
         .uniform(4242, 10., 100.);
 
     cmma_matmul_three_levels_planes_fragments::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
+        launcher.partitioning().level(2),
+        2,
+        f32::elem_type_native(),
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// A plane's 2×2 partition contracted in one call matches walking its fragments by hand: the grid
+/// walks the level below it, which steps `K` as well as the cells. Tensor-core only.
+#[test]
+fn cmma_matmul_partition_contracts_in_one_call() {
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let (m, n, k) = (32usize, 32usize, 32usize);
+    let (part, i, stage_k) = (16usize, 8usize, 16usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, i), (N, i), (K, i)])
+                .walk(&[(M, part / i), (N, part / i), (K, stage_k / i)])
+                .planes(&[(M, m / part), (N, n / part)])
+                .walk_every(&[M, N, K])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel zeroes the accumulator fragments.
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    cmma_matmul_partition_in_one_call::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),

@@ -280,6 +280,17 @@ pub struct PlanePartition<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> PlanePartition<T> {
+    /// The instruction this grid's fragments contract through; a register block is never a grid.
+    pub(crate) fn instruction(&self) -> comptime_type!(Instruction) {
+        match self.frags.index(0usize) {
+            PlaneTile::Cmma(_) => comptime!(Instruction::Cmma),
+            PlaneTile::Mma(d) => comptime!(Instruction::Mma { io: d.io }),
+            PlaneTile::Registers(_) => {
+                panic!("PlanePartition::instruction: a register block is one fragment, not a grid")
+            }
+        }
+    }
+
     /// Whether this grid's tiles are cmma fragments, the one form that drains through a scratch.
     pub(crate) fn is_cmma(&self) -> comptime_type!(bool) {
         match self.frags.index(0usize) {
@@ -643,6 +654,7 @@ impl<T: Numeric> PlanePartition<T> {
         let (grid, m, n) = acc.fragment_grid();
         let scaled = src.scaled();
         let landed = src.has_landing();
+        let packing = src.packing();
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.place.space.clone()),
             comptime!(form),
@@ -653,9 +665,9 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(src.place.depth),
             comptime!(src.place.levels.clone()),
         );
-        if comptime!(scaled || landed) {
-            // A scaled operand, or one opened to reach fragments through a landing, loads from its
-            // plane's landing, as the direct contraction does.
+        if comptime!(scaled || landed || packing != Packing::Plain) {
+            // A scaled or packed operand, or one opened to reach fragments through a landing,
+            // loads from its plane's landing, as the direct contraction does.
             let side = comptime!(Side::of(&src.place.space, &acc.place.space));
             let landing = src.landed(side, comptime!(acc.place.space.clone()));
             frags.copy_from(&landing);

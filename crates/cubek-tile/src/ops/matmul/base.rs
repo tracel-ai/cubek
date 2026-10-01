@@ -4,6 +4,7 @@ use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
 use super::leaf::memory;
+use crate::tile::base::witnessed_space;
 use crate::*;
 
 #[cube]
@@ -82,16 +83,78 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
     rhs: &Tile<Rhs>,
     #[comptime] semiring: Semiring,
 ) {
+    // A clone holds the same fragments: writes through it land in `acc`.
+    let grid = acc.clone();
+    let fragments = fragments_held(&grid);
+    if comptime!(fragments > 1) {
+        mma_grid::<E, Lhs, Rhs>(&grid, lhs, rhs, semiring);
+    } else {
+        mma_fragment::<E, Lhs, Rhs>(acc, lhs, rhs, semiring);
+    }
+}
+
+/// `acc += lhs · rhs` over a grid of fragments, as a kernel walks it. A level below that walks the
+/// contraction is walked; at the level that only moves the grid's cells, each operand's fragments
+/// are loaded once and contracted cell by cell.
+#[cube]
+fn mma_grid<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
+    acc: &Tile<E>,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    #[comptime] semiring: Semiring,
+) {
+    let walks_contraction = comptime!(walks_contraction(
+        &acc.place,
+        &lhs.place.space,
+        &rhs.place.space
+    ));
+    if walks_contraction {
+        // Walked over the whole contraction's box: `acc`'s alone lacks the contracted axes.
+        let operands = comptime!(Space::merge(&[
+            &acc.place.space,
+            &lhs.place.space,
+            &rhs.place.space
+        ]));
+        let space = witnessed_space(operands, acc, lhs, rhs);
+        let walk = Region::rooted(
+            &space,
+            comptime!(acc.place.levels.clone()),
+            comptime!(acc.place.depth),
+        )
+        .walk();
+        for region in walk.unrolled() {
+            let mut acc_region = acc.at(&region);
+            mma_leaf::<E, Lhs, Rhs>(
+                &mut acc_region,
+                &lhs.at(&region),
+                &rhs.at(&region),
+                semiring,
+            );
+        }
+    } else {
+        let instruction = grid_instruction(acc);
+        let lhs = fragments_of::<Lhs, E>(lhs, acc, instruction);
+        let rhs = fragments_of::<Rhs, E>(rhs, acc, instruction);
+        for cell in acc.walk().unrolled() {
+            let mut acc_cell = acc.at(&cell);
+            mma_leaf::<E, Lhs, Rhs>(&mut acc_cell, &lhs.at(&cell), &rhs.at(&cell), semiring);
+        }
+    }
+}
+
+/// `acc += lhs · rhs` into the one fragment or block `acc` holds.
+#[cube]
+fn mma_fragment<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
+    acc: &mut Tile<E>,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    #[comptime] semiring: Semiring,
+) {
     let space = comptime!(acc.place.space.clone());
     let tile_kind = &mut acc.kind;
     match tile_kind {
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space, semiring),
-        // A partition reaching a final tile carries exactly one tile.
         TileKind::PlanePartition(p) => {
-            comptime!(assert!(
-                p.m_tiles == 1 && p.n_tiles == 1,
-                "mma_leaf: a multi-tile partition must be contracted at its partition level"
-            ));
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs, space, semiring)
         }
@@ -104,6 +167,62 @@ pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
             panic!("mma: a procedural tile and the plane's units are not an accumulator sink")
         }
     }
+}
+
+/// How many fragments `acc` holds: a plane-resident grid's count, one for anything else.
+#[cube]
+fn fragments_held<E: Numeric>(acc: &Tile<E>) -> comptime_type!(usize) {
+    match &acc.kind {
+        TileKind::PlanePartition(p) => comptime!(p.m_tiles * p.n_tiles),
+        TileKind::PlaneTile(_)
+        | TileKind::Memory(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_)
+        | TileKind::Lines(_) => comptime!(1usize),
+    }
+}
+
+/// The instruction a grid of fragments contracts through.
+#[cube]
+fn grid_instruction<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Instruction) {
+    match &acc.kind {
+        TileKind::PlanePartition(p) => p.instruction(),
+        TileKind::PlaneTile(_)
+        | TileKind::Memory(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_)
+        | TileKind::Lines(_) => panic!("mma: only a plane-resident grid holds several fragments"),
+    }
+}
+
+/// `src` as fragments contracting into `acc`: loaded once from memory, or as it is if it already
+/// holds them.
+#[cube]
+fn fragments_of<T: Numeric, E: Numeric>(
+    src: &Tile<T>,
+    acc: &Tile<E>,
+    #[comptime] instruction: Instruction,
+) -> Tile<T> {
+    match &src.kind {
+        TileKind::PlanePartition(_) | TileKind::PlaneTile(_) => src.clone(),
+        TileKind::Memory(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_)
+        | TileKind::Lines(_) => PlanePartition::<T>::operand(src, acc, instruction),
+    }
+}
+
+/// Whether the level below `acc` walks an axis the operands contract, rather than only moving
+/// `acc`'s own cells.
+fn walks_contraction(acc: &Placement, lhs: &Space, rhs: &Space) -> bool {
+    let below = acc.below().first().unwrap_or_else(|| {
+        panic!("mma: a grid of fragments contracts at a level with its cells below it")
+    });
+    let operands = Space::merge(&[lhs, rhs]);
+    below
+        .axes()
+        .iter()
+        .any(|&axis| operands.contains(axis) && !acc.space.contains(axis))
 }
 
 #[cube]
