@@ -98,6 +98,12 @@ fn leading_extents(
     out
 }
 
+/// The last position of `group` whose axis reaches past one in `space`: the axis a row (or a
+/// column) of that group steps.
+fn innermost_past_one(space: &Space, group: core::ops::Range<usize>) -> Option<usize> {
+    group.rev().find(|&p| space.extent_at(p) > 1)
+}
+
 /// The `i`-th matrix of a tile whose window is `bound`, over the axes [`MatrixAxes`] names, each
 /// axis counted in `load`s: a run along the innermost axis for a plain buffer, and for one stored
 /// in tiles, every axis the load spans ([`VectorTile::counts`]).
@@ -115,10 +121,12 @@ pub(crate) fn batch_matrix(
     let counts = comptime!(load.counts(space));
     // A row, or a column, steps the innermost axis of its group, so a load may reach along that
     // axis and no other: the loads of a group are then consecutive rows (or columns), in order.
+    // An axis of one inside a group steps nothing, so the innermost is the last one past one.
+    let row_edge = comptime!(innermost_past_one(space, axes.row_split..axes.col_split));
+    let col_edge = comptime!(innermost_past_one(space, axes.col_split..rank));
     comptime!(assert!(
-        (0..rank).all(|p| counts[p] == space.extent_at(p)
-            || p + 1 == rank
-            || (p + 1 == axes.col_split && axes.col_split > axes.row_split)),
+        (0..rank)
+            .all(|p| counts[p] == space.extent_at(p) || Some(p) == row_edge || Some(p) == col_edge),
         "batch_matrix: a load of {:?} over {space:?} reaches along an axis that is neither the \
          innermost of the matrix's rows nor of its columns",
         load.extents()
