@@ -10,6 +10,10 @@
 //! step. The plane stages its query once and its keys and values a block at a time, in stages of
 //! its own met on `sync_plane`; the score lands in the plane's own window, the softmax folds it
 //! there, and the output's fragments are corrected through the plane's own scratch.
+//!
+//! Planes may also split the keys of the same queries: each folds its share, the planes merge
+//! their softmax states ([`OnlineSoftmax::merge_planes`]), and their partial outputs, each scaled
+//! to the merged state, are summed in shared memory in cyclic rounds before the cube writes them.
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
@@ -209,6 +213,115 @@ fn unit_attention<E: Float>(
     }
 }
 
+/// [`plane_attention`] with the cube's planes splitting the keys of the same queries: each folds
+/// its share of the keys, the planes merge their softmax states, and each plane's partial output,
+/// scaled to the merged max and normalized by the merged sum, is summed in shared memory in cyclic
+/// rounds; the cube writes the sum.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn plane_attention_split_keys<E: Float>(
+    q: &TileArg<'_, E, Const<1>>,
+    k: &TileArg<'_, E, Const<1>>,
+    v: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, f32, Const<1>>,
+    keys: u32,
+    queries: u32,
+    scale: f32,
+    space: Partitioning,
+    #[comptime] causal: bool,
+    #[comptime] block_keys: usize,
+    #[comptime] planes: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
+    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
+    let out = out.tile(comptime!(space.clone()));
+    let bias = Procedural::<f32>::new::<Attended>(
+        comptime!(space.space().subspace(&[Q, S])),
+        Attended {
+            keys,
+            queries,
+            causal,
+        },
+    )
+    .tile_in(&space);
+    // The blocks of keys each plane's share holds.
+    let share_blocks = comptime!(space.space().extent(S) / planes / block_keys);
+    for cube in space {
+        let mut out_cube = out.at(&cube);
+        let merged = out_cube.smem_cyclic_accumulation::<f32>(planes);
+        for plane in cube {
+            let (q_p, k_p, v_p) = (q.at(&plane), k.at(&plane), v.at(&plane));
+            let bias_p = bias.at(&plane);
+            // The blocks of this plane's share that hold an attended key.
+            let origin = plane.origin(S);
+            let reach = select(keys as usize > origin, keys as usize - origin, 0usize);
+            let walk = plane
+                .walk()
+                .range(0, reach.div_ceil(block_keys).min(share_blocks));
+            let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let acc = out_cube
+                .at(&plane)
+                .accumulator::<f32, f32, E>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
+                .with_scratch(Scratch::OneTile);
+            let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
+            q_s.copy_from(&q_p);
+            sync_plane();
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
+            stages.pipelined(walk, |slot, stage| {
+                let bias_s = bias_p.at(stage);
+                slot.consume(|k_s, v_s| {
+                    let logits = score.accumulator::<f32, E, E>(
+                        &q_s,
+                        k_s,
+                        Instruction::Cmma,
+                        Semiring::SUM_PROD,
+                    );
+                    for fragment in stage.walk().routed(V, 0).unrolled() {
+                        let mut cell = logits.at(&fragment);
+                        cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
+                    }
+                    logits.drained_into(&score);
+                    sync_plane();
+                    let correction = softmax.step(&score, &bias_s, scale);
+                    p.copy_cast_from(&score);
+                    sync_plane();
+                    acc.along(V).mul(&correction);
+                    for fragment in stage.walk().routed(D, 0).unrolled() {
+                        let mut cell = acc.at(&fragment);
+                        cell.mma(&p.at(&fragment), &v_s.at(&fragment));
+                    }
+                });
+            });
+            let writer = plane.coord(S);
+            acc.along(V).mul(&softmax.merge_planes(writer, planes));
+            acc.along(V).mul(&softmax.recip_l());
+            merged.drain_at(&acc, &plane, writer);
+        }
+        out_cube.copy_from(&merged.source);
+    }
+}
+
+/// Which axis a cube's planes split: the queries, each plane owning its own rows, or the keys,
+/// the planes merging what each folded of the same rows.
+#[derive(Clone, Copy)]
+enum PlanesAlong {
+    Queries,
+    Keys,
+}
+
+/// The walk over the blocks of keys and the planes above it: every block walked by each plane
+/// owning its own queries, or a share of the `blocks` walked by each plane splitting the keys.
+fn planes_over(steps: Levels, along: PlanesAlong, planes: usize, blocks: usize) -> Levels {
+    match along {
+        PlanesAlong::Queries => steps.walk_every(&[S]).planes(&[(Q, planes)]),
+        PlanesAlong::Keys => steps.walk(&[(S, blocks / planes)]).planes(&[(S, planes)]),
+    }
+}
+
 /// The problem's shape and how the kernel cuts it.
 #[derive(Clone, Copy)]
 struct Case {
@@ -224,6 +337,7 @@ struct Case {
     rows: usize,
     block: usize,
     planes: usize,
+    along: PlanesAlong,
     causal: bool,
 }
 
@@ -255,18 +369,26 @@ fn run<E: Float + CubeElement>(case: Case) {
         rows,
         block,
         planes,
+        along,
         causal,
     } = case;
     let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(Q, queries), (S, keys), (D, head), (V, value)]),
-            Levels::leaf(&[(Q, edge), (S, edge), (D, edge), (V, edge)])
-                .walk(&[(Q, rows), (S, block), (D, head / edge), (V, value / edge)])
-                .walk_every(&[S])
-                .planes(&[(Q, planes)])
-                .cubes(&[Q])
-                .build(),
+            planes_over(
+                Levels::leaf(&[(Q, edge), (S, edge), (D, edge), (V, edge)]).walk(&[
+                    (Q, rows),
+                    (S, block),
+                    (D, head / edge),
+                    (V, value / edge),
+                ]),
+                along,
+                planes,
+                keys / (edge * block),
+            )
+            .cubes(&[Q])
+            .build(),
         ),
         Form::Static,
     );
@@ -278,34 +400,48 @@ fn run<E: Float + CubeElement>(case: Case) {
         .generate_without_host_data();
     let scale = 1. / (head as f32).sqrt();
 
-    plane_attention::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(
-            q_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, D]),
-        ),
-        TileArgLaunch::new(
-            k_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[S, D]),
-        ),
-        TileArgLaunch::new(
-            v_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[S, V]),
-        ),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, V]),
-        ),
-        attended as u32,
-        queries as u32,
-        scale,
-        launcher.partitioning_arg(),
-        causal,
-        edge * block,
-        e_ty,
+    let (q_tensor, k_tensor, v_tensor, out_tensor) = (
+        q_handle.binding().into_tensor_arg(),
+        k_handle.binding().into_tensor_arg(),
+        v_handle.binding().into_tensor_arg(),
+        out_handle.clone().binding().into_tensor_arg(),
     );
+    let (cube_count, cube_dim) = (launcher.cube_count(), launcher.cube_dim());
+    match along {
+        PlanesAlong::Queries => plane_attention::launch(
+            &client,
+            cube_count,
+            cube_dim,
+            TileArgLaunch::new(q_tensor, TileSpec::direct(&[Q, D])),
+            TileArgLaunch::new(k_tensor, TileSpec::direct(&[S, D])),
+            TileArgLaunch::new(v_tensor, TileSpec::direct(&[S, V])),
+            TileArgLaunch::new(out_tensor, TileSpec::direct(&[Q, V])),
+            attended as u32,
+            queries as u32,
+            scale,
+            launcher.partitioning_arg(),
+            causal,
+            edge * block,
+            e_ty,
+        ),
+        PlanesAlong::Keys => plane_attention_split_keys::launch(
+            &client,
+            cube_count,
+            cube_dim,
+            TileArgLaunch::new(q_tensor, TileSpec::direct(&[Q, D])),
+            TileArgLaunch::new(k_tensor, TileSpec::direct(&[S, D])),
+            TileArgLaunch::new(v_tensor, TileSpec::direct(&[S, V])),
+            TileArgLaunch::new(out_tensor, TileSpec::direct(&[Q, V])),
+            attended as u32,
+            queries as u32,
+            scale,
+            launcher.partitioning_arg(),
+            causal,
+            edge * block,
+            planes,
+            e_ty,
+        ),
+    }
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
     check(
         &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, false,
@@ -522,6 +658,7 @@ const PREFILL: Case = Case {
     rows: 2,
     block: 2,
     planes: 2,
+    along: PlanesAlong::Queries,
     causal: false,
 };
 
@@ -552,6 +689,45 @@ fn plane_attention_in_f32() {
     run::<f32>(Case {
         value: 24,
         ..PREFILL
+    });
+}
+
+/// Planes splitting the keys of the same queries: two, then four, each folding a share.
+const SPLIT_KEYS: Case = Case {
+    queries: 16,
+    keys: 128,
+    attended: 128,
+    planes: 2,
+    along: PlanesAlong::Keys,
+    ..PREFILL
+};
+
+#[test]
+fn plane_attention_split_keys_matches_the_reference() {
+    run::<half::f16>(SPLIT_KEYS);
+    run::<half::f16>(Case {
+        planes: 4,
+        ..SPLIT_KEYS
+    });
+}
+
+/// A share past the attended keys folds nothing, and its plane still meets the others: every
+/// slice it holds is masked, so it adds nothing to the merged sum.
+#[test]
+fn plane_attention_split_keys_reads_nothing_past_the_attended_keys() {
+    run::<half::f16>(Case {
+        attended: 40,
+        planes: 4,
+        ..SPLIT_KEYS
+    });
+}
+
+#[test]
+fn plane_attention_split_keys_masks_causally_from_the_bottom_right() {
+    run::<half::f16>(Case {
+        attended: 100,
+        causal: true,
+        ..SPLIT_KEYS
     });
 }
 

@@ -208,13 +208,7 @@ impl<E: Numeric> ErasedTensorOperationsExpand<E> for SmemCyclic<E> {
         index: NativeExpand<usize>,
         value: ExpandValue,
     ) {
-        cyclic_cell::expand::<E>(
-            scope,
-            &mut self.values,
-            index,
-            value.into(),
-            self.first,
-        );
+        cyclic_cell::expand::<E>(scope, &mut self.values, index, value.into(), self.first);
     }
 }
 
