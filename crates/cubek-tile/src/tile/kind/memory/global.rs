@@ -112,7 +112,7 @@ impl<T: Numeric> GlobalOperand<T> {
 
     /// An operand whose values are handed to `sink` instead of stored, under the stated geometry.
     /// Under [`Accumulate`](Write::Accumulate) the buffer must hold zero; under
-    /// [`Relay`](Write::Relay), anything: the first turn replaces it.
+    /// [`Exclusive`](Write::Exclusive), anything: the first turn replaces it.
     pub fn sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,
@@ -283,15 +283,15 @@ impl<T: Numeric> Memory<T> {
                 },
                 write,
                 fill: FillUnits::cube(spec.units),
-                storage: spec.storage,
+                storage: WindowStorage::Stored(spec.storage),
                 delivery: spec.delivery,
             }),
             unit_share: comptime!(UnitShare::Repeated),
             split_share,
             init_from: comptime!(InitFrom::Cell),
+            contraction: comptime!(None),
             factor: Factor::none(),
             codebook: Codebook::none(),
-            lands: false,
         }
     }
 }
@@ -299,7 +299,11 @@ impl<T: Numeric> Memory<T> {
 /// The contract an operand's statement owes, checked on the host.
 fn check_operand(space: &Space, spec: &TileSpec, vector_size: usize) {
     let projection = &spec.projection;
-    projection.validate(vector_size);
+    // At expansion no caller takes a refusal; a spec stated by hand, not bound, arrives here
+    // unchecked.
+    if let Err(refusal) = projection.validate(vector_size) {
+        panic!("{refusal}");
+    }
     projection.validate_composition(|axis| space.extent(axis));
     let coord_rank = projection.coordinate_rank();
     assert!(

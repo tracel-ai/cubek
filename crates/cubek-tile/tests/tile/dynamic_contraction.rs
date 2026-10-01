@@ -40,15 +40,20 @@ fn contract<E: Numeric, VA: Size, VB: Size, VC: Size>(
     let a = x.tile(comptime!(space.clone()));
     let b = w.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    let mut acc =
-        c.block_accumulator::<E, E, E>(&a, &b, comptime!(RegisterBlock::new(budget)), Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: RegisterBlock::new(budget)
+        }),
+        Semiring::SUM_PROD,
+    );
     for cube in space {
         for plane in cube {
             for outer in plane {
                 for leaf in outer {
                     let mut acc_leaf = acc.at(&leaf);
-                    acc_leaf.mma(&a.at(&leaf), &b.at(&leaf), Semiring::SUM_PROD);
+                    acc_leaf.mma(&a.at(&leaf), &b.at(&leaf));
                 }
             }
         }
@@ -108,7 +113,8 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
         .arg(x.binding())
         .axes(&[M, K])
         .vectorize(VECTOR)
-        .build();
+        .build()
+        .unwrap();
     let mut weight = w.binding();
     weight.shape = [k, n].into();
     weight.strides = [1, k].into();
@@ -117,12 +123,14 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
         .axes(&[K, N])
         .in_stride_order()
         .vectorize(VECTOR)
-        .build();
+        .build()
+        .unwrap();
     let c = launcher
         .arg(out.clone().binding())
         .axes(&[M, N])
         .vectorize(1)
-        .build();
+        .build()
+        .unwrap();
 
     contract::launch(
         &client,

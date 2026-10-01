@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Level, Levels, Monoid, Partitioning, Semiring, Space,
-    StageStorage, Stages, TileArg, kind::PlanePartition, launch::Input, stage::RowChunks,
+    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Semiring, Space,
+    StageStorage, Stages, TileArg, launch::Input, stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -19,9 +19,7 @@ use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 /// The routine's five levels, stated **from the leaf up, in counts**, outermost first once
 /// built: the instruction's shape, the fragments a partition holds, the instruction steps in one
 /// stage, the planes a cube holds, every stage `K` holds, and a cube per box of the output. The
-/// kernel's loops state them one by one, and the two level methods it names beside its loops
-/// ([`planes`](CmmaBlueprint::planes), [`fragments`](CmmaBlueprint::fragments)) read this same
-/// list, so the two cannot drift.
+/// kernel's loops state them one by one.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     let (c, i, p) = (bp.partition, bp.instruction, bp.planes);
     Levels::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
@@ -60,17 +58,6 @@ impl CmmaBlueprint {
             ),
             CubeDim::new_2d(plane_size, (self.planes.m * self.planes.n) as u32),
         )
-    }
-
-    /// The stage split across the planes, one partition each: the level the drain names
-    /// beside its loop, read off the list rather than stated twice.
-    pub fn planes(&self) -> Level {
-        cmma_levels(self, &[])[2].clone()
-    }
-
-    /// The partition's grid of fragments, one instruction each: likewise.
-    pub fn fragments(&self) -> Level {
-        cmma_levels(self, &[])[4].clone()
     }
 }
 
@@ -124,8 +111,7 @@ pub fn cmma_kernel<
         let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
         // The accumulator's grid is the partition's, read off the levels below the cube.
-        let mut acc = c.cmma_accumulator::<EA, EL>(&a, Monoid::Sum);
-        acc.zero();
+        let acc = c.accumulator::<EA, EL, ER>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
 
         // One stage of K per region, both inputs staged for it.
         let steps = cube.walk();
@@ -148,27 +134,17 @@ pub fn cmma_kernel<
                     let acc_plane = acc_stage.at(&plane);
                     let a_p = a_s.at(&plane);
                     let b_p = b_s.at(&plane);
-                    // The operands are loaded into fragments one K step at a time.
+                    // One K step at a time: each step loads its operand fragments once.
                     for step in plane.walk().unrolled() {
-                        let acc_step = acc_plane.at(&step);
-                        let a_f = PlanePartition::<EL>::cmma_fragments(&a_p.at(&step), &acc_step);
-                        let b_f = PlanePartition::<ER>::cmma_fragments(&b_p.at(&step), &acc_step);
-                        for cell in step.walk().unrolled() {
-                            let mut acc_cell = acc_step.at(&cell);
-                            acc_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
-                        }
+                        let mut acc_step = acc_plane.at(&step);
+                        acc_step.mma(&a_p.at(&step), &b_p.at(&step));
                     }
                 }
             });
         });
-        // Each fragment to its window of the output, cast down to its type: the planes and
-        // their fragments, skipping the `K` levels between them, which the output does not span.
-        for plane in cube.over(&bp.planes()) {
-            for cell in plane.over(&bp.fragments()).unrolled() {
-                let mut c_cell = c.at(&cell);
-                c_cell.copy_cast_from(&acc.at(&cell));
-            }
-        }
+        // Each fragment to its window of the output, cast down to its type; the `K` levels
+        // between them move no output cell.
+        acc.drained_into(&c);
     }
 }
 

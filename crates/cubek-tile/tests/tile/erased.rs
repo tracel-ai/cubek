@@ -222,7 +222,8 @@ fn a_launcher_derived_spec_addresses_the_sink() {
         .unbound(&Geometry::new(&[(ROWS, COLS), (COLS, 1)]))
         .axes(&[ROW, COL])
         .vectorize(1)
-        .build_spec();
+        .build_spec()
+        .unwrap();
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
     assert_eq!(derived.geometry.strides(), [COLS, 1]);
 
@@ -277,17 +278,18 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<EA, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers { config: BLOCK }),
+        Semiring::SUM_PROD,
+    );
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// The same contraction, draining into a sink.
@@ -319,17 +321,18 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         Write::Replace,
     )
     .tile(comptime!(space.levels().to_vec()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<EA, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers { config: BLOCK }),
+        Semiring::SUM_PROD,
+    );
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// The same contraction again, this time reading its **lhs** through an erased source.
@@ -360,17 +363,18 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     .tile(comptime!(space.levels().to_vec()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<EA, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers { config: BLOCK }),
+        Semiring::SUM_PROD,
+    );
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// Which backing the contraction under test is given.
@@ -631,12 +635,14 @@ fn run_masked(erased: Erased) -> HostData {
         .arg(input.binding())
         .axes(&[ROW, COL])
         .vectorize(2)
-        .build();
+        .build()
+        .unwrap();
     let out = launcher
         .arg(output.clone().binding())
         .axes(&[ROW, COL])
         .vectorize(2)
-        .build();
+        .build()
+        .unwrap();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     match erased {
         Erased::Sink => wide_sink_kernel::launch(

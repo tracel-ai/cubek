@@ -55,13 +55,10 @@ fn staged_matmul_quant_rhs<E: Numeric, VA: Size, VB: Size, VC: Size>(
             let scales_step = scales.at(step);
             slot.consume(|a_s, b_s| {
                 for unit in step {
-                    let mut c_unit = c_step.at(&unit);
-                    c_unit.mma_with(
-                        &a_s.at(&unit),
-                        &b_s.at(&unit).mul(&scales_step.at(&unit)),
-                        REGISTER_BLOCK,
-                        Semiring::SUM_PROD,
-                    );
+                    let mut c_unit = c_step
+                        .at(&unit)
+                        .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                    c_unit.mma(&a_s.at(&unit), &b_s.at(&unit).mul(&scales_step.at(&unit)));
                 }
             });
         });
@@ -206,8 +203,13 @@ impl Benchmark for TileQuantStageBench {
             let partitioning = Partitioning::new(self.space(), self.levels());
             let concrete = partitioning.space().clone();
             Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
+                .map_err(|refusal| refusal.to_string())?
         };
-        let a = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
+        let a = launcher
+            .arg(a.handle().binding())
+            .axes(&[M, K])
+            .build()
+            .map_err(|refusal| refusal.to_string())?;
         let b_projection = Projection::new(&[K, NB, NI], &[PhysicalAxisMap::of(K), self.n_dim()]);
         // The register instruction lines the accumulator at the RHS's served width.
         let c_spec = TileSpec::new(Projection::new(

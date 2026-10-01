@@ -193,7 +193,7 @@ pub fn launch_ref(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
     // A storage-tiled input is moved a whole tile at a time, so its tile is read as one piece,
     // whatever finer pieces it was stored in.
@@ -238,7 +238,7 @@ pub fn launch_ref(
             out,
             &out_batch_axes,
             (m, n, k),
-        ),
+        )?,
     }
 
     Ok(())
@@ -292,21 +292,21 @@ fn launch_strided(
         .batches(out_batch_axes)
         .vectorize(v_a)
         .delivery(delivery)
-        .build();
+        .build()?;
     let b = launch
         .arg(rhs)
         .axes(&[K, N])
         .batches(out_batch_axes)
         .vectorize(v_b)
         .delivery(delivery)
-        .build();
+        .build()?;
     let v_c = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
         .arg(out)
         .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_c)
-        .build();
+        .build()?;
     cmma_kernel::launch(
         client,
         cube_count,
@@ -345,7 +345,7 @@ fn launch_tma(
     out: TensorBinding,
     out_batch_axes: &[Axis],
     (m, n, k): (usize, usize, usize),
-) {
+) -> Result<(), MatmulSetupError> {
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
@@ -409,7 +409,7 @@ fn launch_tma(
         .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
-        .build();
+        .build()?;
     cmma_kernel::launch(
         client,
         cube_count,
@@ -428,4 +428,5 @@ fn launch_tma(
         elems.out,
         elems.acc,
     );
+    Ok(())
 }

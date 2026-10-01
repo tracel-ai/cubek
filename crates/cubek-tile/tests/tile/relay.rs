@@ -102,11 +102,13 @@ fn add_launches(write: Write, layout: StridedLayout, launches: usize) -> HostDat
         let src = launcher
             .arg(input.clone().binding())
             .axes(&[ROW, COL])
-            .build();
+            .build()
+            .unwrap();
         let bound = launcher
             .arg(output.clone().binding())
             .axes(&[ROW, COL])
-            .build();
+            .build()
+            .unwrap();
         store::launch::<Buffered>(
             &client,
             launcher.cube_count(),
@@ -169,11 +171,16 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
         .dtype(narrow)
         .zeros()
         .generate_without_host_data();
-    let src = launcher.arg(input.binding()).axes(&[ROW, COL]).build();
+    let src = launcher
+        .arg(input.binding())
+        .axes(&[ROW, COL])
+        .build()
+        .unwrap();
     let dst = launcher
         .arg(output.clone().binding())
         .axes(&[ROW, COL])
-        .build();
+        .build()
+        .unwrap();
     store_cast::launch(
         &client,
         launcher.cube_count(),
@@ -219,12 +226,18 @@ fn relayed_split_matmul(
     let b = b.tile(comptime!(space.clone()));
     let mut out = out.tile(comptime!(space.clone()));
     let c = relay.tile();
-    let mut acc = c.block_accumulator::<f32, f32, f32>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<f32, f32, f32>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for cube in &space {
         for step in cube.walk() {
             let mut acc_step = acc.at(&step);
-            acc_step.mma(&a.at(&step), &b.at(&step), Semiring::SUM_PROD);
+            acc_step.mma(&a.at(&step), &b.at(&step));
         }
     }
     relay.take();

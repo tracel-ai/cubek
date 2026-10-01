@@ -64,13 +64,8 @@ fn conv_kernel<E: Numeric, V: Size>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out_region = out.at(&region);
-        out_region.mm_with(
-            &input.at(&region),
-            &weight.at(&region),
-            config,
-            Semiring::SUM_PROD,
-        );
+        let mut out_region = out.at(&region).accumulating(config, Semiring::SUM_PROD);
+        out_region.mm(&input.at(&region), &weight.at(&region));
     }
 }
 
@@ -94,9 +89,9 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
-        let mut out_region = out.at(region);
+        let mut out_region = out.at(region).accumulating(config, Semiring::SUM_PROD);
         slot.consume(|input, weight| {
-            out_region.mm_with(input, weight, config, Semiring::SUM_PROD);
+            out_region.mm(input, weight);
         });
     });
 }
@@ -127,10 +122,10 @@ fn conv_kernel_smem_padded<E: Numeric>(
         depth,
     );
     stages.pipelined(walk, |slot, region| {
-        let mut out_region = out.at(region);
+        let mut out_region = out.at(region).accumulating(config, Semiring::SUM_PROD);
         let weight = weight.at(region);
         slot.consume(|input| {
-            out_region.mm_with(input, &weight, config, Semiring::SUM_PROD);
+            out_region.mm(input, &weight);
         });
     });
 }
@@ -156,13 +151,10 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
         let input_outer = input.at(&outer);
         let weight_outer = weight.at(&outer);
         for inner in outer.over(&inner) {
-            let mut out_inner = out_outer.at(&inner);
-            out_inner.mm_with(
-                &input_outer.at(&inner),
-                &weight_outer.at(&inner),
-                config,
-                Semiring::SUM_PROD,
-            );
+            let mut out_inner = out_outer
+                .at(&inner)
+                .accumulating(config, Semiring::SUM_PROD);
+            out_inner.mm(&input_outer.at(&inner), &weight_outer.at(&inner));
         }
     }
 }
@@ -190,13 +182,10 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
             for inner in region.over(&inner) {
-                let mut out_inner = out_outer.at(&inner);
-                out_inner.mm_with(
-                    &input.at(&inner),
-                    &weight.at(&inner),
-                    config,
-                    Semiring::SUM_PROD,
-                );
+                let mut out_inner = out_outer
+                    .at(&inner)
+                    .accumulating(config, Semiring::SUM_PROD);
+                out_inner.mm(&input.at(&inner), &weight.at(&inner));
             }
         });
     });
@@ -950,12 +939,18 @@ impl Conv1d {
                     PhysicalAxisMap::of(CI),
                 ],
             ))
-            .build();
-        let w_arg = launch.arg(w_handle.binding()).axes(&[RH, CI, CO]).build();
+            .build()
+            .unwrap();
+        let w_arg = launch
+            .arg(w_handle.binding())
+            .axes(&[RH, CI, CO])
+            .build()
+            .unwrap();
         let out_arg = launch
             .arg(out_handle.clone().binding())
             .axes(&[OH, CO])
-            .build();
+            .build()
+            .unwrap();
 
         match stage {
             Stage::InPlace => conv_kernel::launch(
@@ -1134,13 +1129,10 @@ fn conv_kernel_dynamic<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out_region = out.at(&region);
-        out_region.mm_with(
-            &input.at(&region),
-            &weight.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out_region = out
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out_region.mm(&input.at(&region), &weight.at(&region));
     }
 }
 
@@ -1277,13 +1269,10 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out_region = out.at(&region);
-        out_region.mm_with(
-            &input.at(&region),
-            &weight.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out_region = out
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out_region.mm(&input.at(&region), &weight.at(&region));
     }
 }
 
@@ -1308,9 +1297,11 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
-        let mut out_region = out.at(region);
+        let mut out_region = out
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         slot.consume(|input, weight| {
-            out_region.mm_with(input, weight, REGISTER_BLOCK, Semiring::SUM_PROD);
+            out_region.mm(input, weight);
         });
     });
 }
@@ -1339,13 +1330,10 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out_region = out.at(&region);
-        out_region.mm_with(
-            &input.at(&region),
-            &weight.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out_region = out
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out_region.mm(&input.at(&region), &weight.at(&region));
     }
 }
 
@@ -1375,9 +1363,11 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
-        let mut out_region = out.at(region);
+        let mut out_region = out
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         slot.consume(|input, weight| {
-            out_region.mm_with(input, weight, REGISTER_BLOCK, Semiring::SUM_PROD);
+            out_region.mm(input, weight);
         });
     });
 }
@@ -2155,21 +2145,22 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let mut acc = out.mma_accumulator::<E, E>(&input, io, Monoid::Sum);
-    acc.zero();
+    let acc = out.accumulator::<E, E, E>(
+        &input,
+        &weight,
+        comptime!(Instruction::Mma { io }),
+        Semiring::SUM_PROD,
+    );
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
         let mut acc_region = acc.at(region);
         slot.consume(|input, weight| {
-            acc_region.mma(input, weight, Semiring::SUM_PROD);
+            acc_region.mma(input, weight);
         });
     });
-    for r0 in out.over(&level).unrolled() {
-        let mut out_w = out.at(&r0);
-        out_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&out);
 }
 
 #[test]
@@ -2593,13 +2584,10 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut out_region = out.at(&region);
-        out_region.mm_with(
-            &input.at(&region),
-            &weight.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out_region = out
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out_region.mm(&input.at(&region), &weight.at(&region));
     }
 }
 
@@ -2628,13 +2616,10 @@ fn conv_kernel_rational_dynamic_staged<E: Numeric>(
     for region in space.over(&level) {
         stage.copy_from(&input.at(&region));
         sync_cube();
-        let mut out_region = out.at(&region);
-        out_region.mm_with(
-            &stage,
-            &weight.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut out_region = out
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        out_region.mm(&stage, &weight.at(&region));
         sync_cube();
     }
 }

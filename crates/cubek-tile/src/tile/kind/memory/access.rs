@@ -12,7 +12,6 @@ use cubecl::{
 };
 
 use crate::*;
-use cubecl::unexpanded;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
@@ -35,6 +34,11 @@ impl<T: Numeric> Tile<T> {
         self.mem("fetched_scalars").fetched_scalars()
     }
 
+    /// Free the shared memory this stage is held in; a stage of a call has none.
+    pub(crate) fn free_stage(&self) {
+        self.mem("free_stage").store.free();
+    }
+
     /// This unit's share of filling this stage from `src`, read into `fetched` but not yet written.
     #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
     pub(crate) fn fetch_from<W: Size>(&self, src: &Tile<T>, fetched: &mut Array<Vector<T, W>>) {
@@ -55,26 +59,19 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-impl<T: Numeric> Memory<T> {
-    /// This store landing on its way to a fragment ([`Tile::with_landing`]).
-    pub(crate) fn with_landing(self) -> Memory<T> {
-        unexpanded!()
-    }
-}
-
-impl<T: Numeric> MemoryExpand<T> {
-    pub(crate) fn __expand_with_landing_method(mut self, _scope: &Scope) -> Self {
-        self.lands = true;
-        self
-    }
-}
-
 #[cube]
 impl<T: Numeric> Memory<T> {
     /// State what the accumulation being lowered starts from.
     pub(crate) fn set_init_from(&mut self, #[comptime] init_from: InitFrom) {
         comptime!({
             self.init_from = init_from;
+        });
+    }
+
+    /// State how a contraction into this window runs.
+    pub(crate) fn set_contraction(&mut self, #[comptime] contraction: Contraction) {
+        comptime!({
+            self.contraction = Some(contraction);
         });
     }
 
@@ -180,12 +177,12 @@ impl<T: Numeric> Memory<T> {
     /// The window as a view over its own coordinates, served at `T` grouped `W` wide.
     fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
-            Storage::Contiguous => {
+            WindowStorage::Contiguous => {
                 let start = self.window_start.cast::<usize>();
                 let all = self.lines::<W>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            Storage::Strided | Storage::Tiled(_) => self
+            WindowStorage::Stored(_) => self
                 .read_view::<W>(self.base())
                 .view(self.window().with_guard(guard)),
         }
@@ -197,12 +194,12 @@ impl<T: Numeric> Memory<T> {
         #[comptime] guard: Guard,
     ) -> View<'_, Vector<I, WP>, CoordsDyn> {
         match comptime!(self.access.storage) {
-            Storage::Contiguous => {
+            WindowStorage::Contiguous => {
                 let start = self.window_start.cast::<usize>();
                 let all = self.lines_storage::<I, WP>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            Storage::Strided | Storage::Tiled(_) => self
+            WindowStorage::Stored(_) => self
                 .lines_storage::<I, WP>()
                 .view(self.base())
                 .view(self.window().with_guard(guard)),
@@ -215,14 +212,14 @@ impl<T: Numeric> Memory<T> {
         #[comptime] guard: Guard,
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
-            Storage::Contiguous => {
+            WindowStorage::Contiguous => {
                 let start = self.window_start.cast::<usize>();
                 let layout = self.contiguous_layout();
                 let all = self.lines_mut::<W>();
                 let len = all.len();
                 all.slice_mut(start, len).view_mut(layout)
             }
-            Storage::Strided | Storage::Tiled(_) => {
+            WindowStorage::Stored(_) => {
                 let base = self.base();
                 let window = self.window().with_guard(guard);
                 self.write_view::<W>(base).view_mut(window)
@@ -321,11 +318,6 @@ impl<T: Numeric> Memory<T> {
         self.store.buffer_mut().slice_mut(offset, end)
     }
 
-    /// Whether this store was opened with a landing ([`Tile::with_landing`]).
-    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
-        comptime!(self.lands)
-    }
-
     /// Line offset of the window origin; the window must be one contiguous region.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
@@ -334,14 +326,14 @@ impl<T: Numeric> Memory<T> {
         ));
         // A base and row stride above a storage tile would silently read another tile's cells.
         match comptime!(self.access.storage) {
-            Storage::Strided => {}
-            Storage::Contiguous => {}
-            Storage::Tiled(Some(level)) => panic!(
+            WindowStorage::Stored(Storage::Strided) => {}
+            WindowStorage::Contiguous => {}
+            WindowStorage::Stored(Storage::Tiled(Some(level))) => panic!(
                 "Memory::window_offset: this window sits above its storage tile (the tile of \
                  level {level}), spanning several, so it is not one contiguous region; descend \
                  through that level first, or read the operand through its layout"
             ),
-            Storage::Tiled(None) => panic!(
+            WindowStorage::Stored(Storage::Tiled(None)) => panic!(
                 "Memory::window_offset: this operand's storage tile is the tile of no level of \
                  the kernel's nest, so no window is known to lie inside one; read it through its \
                  layout, or stage it"
@@ -784,7 +776,6 @@ impl<T: Numeric> Memory<T> {
             window,
             projection: comptime!(self.projection.clone()),
             source_window: self.source_window.clone(),
-            lands: comptime!(self.lands),
             map,
             offsets: self.offsets.clone(),
             window_start,
@@ -792,6 +783,7 @@ impl<T: Numeric> Memory<T> {
             unit_share,
             split_share,
             init_from: comptime!(self.init_from),
+            contraction: comptime!(self.contraction),
             factor,
             codebook: self.codebook.clone(),
         }
@@ -886,12 +878,16 @@ impl<T: Numeric> Memory<T> {
 }
 
 /// The storage tiling one level down: through the storage tile's own level, inside one tile.
-fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -> Storage {
+fn storage_below(
+    storage: WindowStorage,
+    depth: usize,
+    level: &Level,
+    space: &Space,
+) -> WindowStorage {
     match storage {
-        Storage::Strided => Storage::Strided,
-        Storage::Contiguous => Storage::Contiguous,
-        Storage::Tiled(None) => Storage::Tiled(None),
-        Storage::Tiled(Some(tiled_at)) => {
+        WindowStorage::Contiguous
+        | WindowStorage::Stored(Storage::Strided | Storage::Tiled(None)) => storage,
+        WindowStorage::Stored(Storage::Tiled(Some(tiled_at))) => {
             assert!(
                 depth <= tiled_at,
                 "Memory::at: this window is above its storage tile, the tile of level \
@@ -899,7 +895,7 @@ fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -
                  skipped past"
             );
             if depth < tiled_at {
-                return Storage::Tiled(Some(tiled_at));
+                return storage;
             }
             for axis in space.axes() {
                 assert!(
@@ -908,7 +904,7 @@ fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -
                      no storage tile"
                 );
             }
-            Storage::Contiguous
+            WindowStorage::Contiguous
         }
     }
 }

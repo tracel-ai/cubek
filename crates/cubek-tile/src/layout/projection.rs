@@ -4,7 +4,8 @@ use crate::Addressed;
 use cubecl::zspace::{SmallVec, Tiling};
 
 use crate::{
-    Axis, Composition, DimsBuilder, Divisor, Geometry, Offset, PhysicalAxisMap, Scale, Space,
+    Axis, Composition, DimsBuilder, Divisor, Geometry, Offset, PhysicalAxisMap, Refusal, Scale,
+    Space,
 };
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
@@ -358,15 +359,14 @@ impl Projection {
         })
     }
 
-    /// Panics if a gathered projection is invalid when served at `vector_size`.
-    pub fn validate(&self, vector_size: usize) {
+    /// Why a gathered projection cannot be served at `vector_size`, if it cannot.
+    pub(crate) fn validate(&self, vector_size: usize) -> Result<(), Refusal> {
         if self.is_invertible() {
-            return;
+            return Ok(());
         }
-        assert!(
-            !self.physical.is_empty() && !self.axes.is_empty(),
-            "Projection: an operand must span at least one logical and one physical axis"
-        );
+        if self.physical.is_empty() || self.axes.is_empty() {
+            return Err(Refusal::NoCoordinate);
+        }
         // The innermost physical axis is addressed in lines, so it must step by one element.
         if vector_size > 1 {
             let innermost = self.axes[self.axes.len() - 1];
@@ -375,22 +375,18 @@ impl Projection {
                 Composition::Disjoint => last.terms().last().map(|t| t.axis) == Some(innermost),
                 Composition::Overlapping => last.is_identity(innermost),
             };
-            assert!(
-                steps_by_lines,
-                "Projection: the innermost physical axis must step by the operand's last logical \
-                 axis at coefficient 1 (it is addressed in vector lines)"
-            );
+            if !steps_by_lines {
+                return Err(Refusal::GatherInnermostNotInLines);
+            }
         }
         for &axis in self.axes.iter() {
             // A gathered operand must be untiled: each addressed axis maps to one physical axis.
             let count = self.physical.iter().filter(|m| m.addresses(axis)).count();
-            assert!(
-                count <= 1,
-                "Projection: logical axis {axis:?} addresses several physical axes, so it is \
-                 either storage-tiled (a gathered operand must be untiled gmem) or read off two \
-                 places at once"
-            );
+            if count > 1 {
+                return Err(Refusal::GatherAxisAddressedTwice(axis));
+            }
         }
+        Ok(())
     }
 }
 impl Projection {
@@ -607,9 +603,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "addresses several physical axes")]
     fn innermost_axis_rides_no_coarser_physical_axis() {
-        Projection::new(
+        let refused = Projection::new(
             &[A, B],
             &[
                 PhysicalAxisMap::affine(&[(A, 1), (B, 2)]),
@@ -617,16 +612,17 @@ mod tests {
             ],
         )
         .validate(4);
+        assert_eq!(refused, Err(Refusal::GatherAxisAddressedTwice(B)));
     }
 
     #[test]
-    #[should_panic(expected = "innermost physical axis")]
     fn innermost_must_be_identity() {
-        Projection::new(
+        let refused = Projection::new(
             &[A, R],
             &[PhysicalAxisMap::of(A), PhysicalAxisMap::affine(&[(R, 2)])],
         )
         .validate(4);
+        assert_eq!(refused, Err(Refusal::GatherInnermostNotInLines));
     }
 
     #[test]
@@ -635,13 +631,13 @@ mod tests {
             &[A, R],
             &[PhysicalAxisMap::of(A), PhysicalAxisMap::affine(&[(R, 2)])],
         )
-        .validate(1);
+        .validate(1)
+        .unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "addresses several physical axes")]
     fn a_gather_still_rejects_tiled_storage_when_scalar() {
-        Projection::new(
+        let refused = Projection::new(
             &[A, R, B],
             &[
                 PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
@@ -650,12 +646,12 @@ mod tests {
             ],
         )
         .validate(1);
+        assert_eq!(refused, Err(Refusal::GatherAxisAddressedTwice(B)));
     }
 
     #[test]
-    #[should_panic(expected = "addresses several physical axes")]
     fn a_gather_rejects_tiled_storage() {
-        Projection::new(
+        let refused = Projection::new(
             &[A, R, B],
             &[
                 PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
@@ -664,6 +660,7 @@ mod tests {
             ],
         )
         .validate(4);
+        assert_eq!(refused, Err(Refusal::GatherAxisAddressedTwice(B)));
     }
 
     #[test]
@@ -672,7 +669,7 @@ mod tests {
             &[A, R, B],
             &[PhysicalAxisMap::affine(&[(A, 2)]), PhysicalAxisMap::of(B)],
         );
-        p.validate(4);
+        p.validate(4).unwrap();
         assert!(!p.addresses(R));
         assert!(p.addresses(A) && p.addresses(B));
     }
@@ -683,7 +680,7 @@ mod tests {
         assert!(!p.is_direct());
         assert!(p.is_tiled());
         assert!(p.is_invertible());
-        p.validate(4);
+        p.validate(4).unwrap();
     }
 
     #[test]
@@ -696,7 +693,7 @@ mod tests {
             ],
         );
         assert!(!p.is_tiled());
-        p.validate(4);
+        p.validate(4).unwrap();
     }
 
     #[test]
@@ -754,7 +751,7 @@ mod tests {
         assert_eq!(p.digit(4, A), (SmallVec::new(), Some(4)));
         assert_eq!(p.digit(1, B), (SmallVec::from_slice(&[3]), None));
         assert!(p.is_invertible());
-        p.validate(4);
+        p.validate(4).unwrap();
     }
 
     /// `tiling` reads back the piece counts of the dims `tiled` was given.
@@ -894,7 +891,7 @@ mod tests {
             ],
         );
         assert!(!p.is_invertible());
-        p.validate(4);
+        p.validate(4).unwrap();
     }
 
     #[test]

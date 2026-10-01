@@ -66,6 +66,17 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
         Stages::wrap(slots, sources.clone(), depth, comptime!(plan.fillers()))
     }
 
+    /// Free the shared memory every slot holds, for what the kernel declares after it to take:
+    /// once the walk is over, nothing reads a stage again. Every unit of the cube reaches it, and
+    /// a cube barrier comes before any unit touches what is declared in its place, as
+    /// [`Tile::smem_accumulation`] and [`Tile::smem_cyclic_accumulation`] open with.
+    pub fn free(&self) {
+        #[unroll]
+        for slot in 0..comptime!(self.depth) {
+            self.slots.index(slot).data.free();
+        }
+    }
+
     /// Fill slot `slot` from `region`'s window: one step of a [`Fill`](Role::Fill) plane's walk.
     pub fn fill(&mut self, #[comptime] slot: usize, region: &Region) {
         let sources = self.sources.clone();

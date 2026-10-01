@@ -3,9 +3,11 @@
 
 pub(crate) mod base;
 pub(crate) mod config;
+pub(crate) mod descent;
 pub(crate) mod instruction;
 pub(crate) mod leaf;
 
+pub(crate) use descent::Descent;
 pub(crate) use leaf::*;
 
 pub use config::StoreMethod;

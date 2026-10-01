@@ -137,13 +137,10 @@ fn routed_matmul_kernel<E: Numeric>(
 
         // The whole of it: the expert axis takes one step, at the coordinate the table named.
         for slab in tok.over(&expert).routed(EXPERT, e) {
-            let mut o = out.at(&slab);
-            o.mm_with(
-                &x.at(&slab),
-                &w.at(&slab),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            );
+            let mut o = out
+                .at(&slab)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+            o.mm(&x.at(&slab), &w.at(&slab));
         }
     }
 }
@@ -171,9 +168,11 @@ fn routed_staged_matmul_kernel<E: Numeric>(
 
         let mut stages = Stages::smem_single(&experts, &w, StageStorage::Strided, 1usize);
         stages.pipelined(experts, |slot, slab| {
-            let mut o = out.at(slab);
+            let mut o = out
+                .at(slab)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
             slot.consume(|w_s| {
-                o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                o.mm(&x.at(slab), w_s);
             });
         });
     }
@@ -319,17 +318,19 @@ fn routed_block_matmul_kernel<E: Numeric>(
             let out_s = out.at(&slab);
             let x_s = x.at(&slab);
             let w_s = w.at(&slab);
-            let mut acc =
-                out_s.block_accumulator::<E, E, E>(&x_s, &w_s, REGISTER_BLOCK, Monoid::Sum);
-            acc.zero();
+            let acc = out_s.accumulator::<E, E, E>(
+                &x_s,
+                &w_s,
+                comptime!(Instruction::Registers {
+                    config: REGISTER_BLOCK
+                }),
+                Semiring::SUM_PROD,
+            );
             for step in slab.over(&depth) {
                 let mut acc_s = acc.at(&step);
-                acc_s.mma(&x_s.at(&step), &w_s.at(&step), Semiring::SUM_PROD);
+                acc_s.mma(&x_s.at(&step), &w_s.at(&step));
             }
-            for cell in out_s.walk().unrolled() {
-                let mut o = out_s.at(&cell);
-                o.copy_cast_from(&acc.at(&cell));
-            }
+            acc.drained_into(&out_s);
         }
     }
 }

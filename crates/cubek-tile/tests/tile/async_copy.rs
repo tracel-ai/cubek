@@ -62,13 +62,10 @@ fn ring_matmul<E: Numeric>(
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
             for cell in region {
-                let mut c_cell = c_block.at(&cell);
-                c_cell.mma_with(
-                    &a_s.at(&cell),
-                    &b_s.at(&cell),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
+                let mut c_cell = c_block
+                    .at(&cell)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                c_cell.mma(&a_s.at(&cell), &b_s.at(&cell));
             }
         });
     });

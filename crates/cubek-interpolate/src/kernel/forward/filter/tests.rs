@@ -79,7 +79,8 @@ impl Harness {
                 ),
                 &Space::new(&[(ROW, ROWS), (COL, COLS)]),
                 Grid::FromLevels,
-            ),
+            )
+            .unwrap(),
         }
     }
 

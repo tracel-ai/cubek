@@ -35,8 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Launcher, Levels, Monoid, Partitioning, Projection,
-    RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    Accumulate, AccumulateExpand, Axis, Instruction, Launcher, Levels, Monoid, Partitioning,
+    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},
     layout::PhysicalAxisMap,
 };
@@ -68,13 +68,10 @@ fn plain_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for region in space {
-        let mut c_cube = c.at(&region);
-        c_cube.mm_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_cube = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -94,9 +91,15 @@ fn atomic_matmul<E: Numeric>(
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc =
-            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
-        acc.mm(&a_cube, &b_cube, Semiring::SUM_PROD);
+        let mut acc = c_cube.accumulator::<E, E, E>(
+            &a_cube,
+            &b_cube,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
+        acc.mma(&a_cube, &b_cube);
         c_cube.copy_cast_from(&acc);
     }
 }
@@ -118,17 +121,19 @@ fn atomic_matmul_units<E: Numeric>(
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let mut acc =
-            c_cube.block_accumulator::<E, E, E>(&a_cube, &b_cube, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c_cube.accumulator::<E, E, E>(
+            &a_cube,
+            &b_cube,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for unit in cube {
             let mut acc_unit = acc.at(&unit);
-            acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit), Semiring::SUM_PROD);
+            acc_unit.mma(&a_cube.at(&unit), &b_cube.at(&unit));
         }
-        for r0 in c_cube.walk().unrolled() {
-            let mut c_cube_w = c_cube.at(&r0);
-            c_cube_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c_cube);
     }
 }
 
@@ -213,6 +218,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             Mapping::Workspace { .. } => {
                 let partitioning = Partitioning::new(
@@ -224,6 +230,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             // The cube's slice of K cut again across the plane: each unit contracts its own
             // sixteenth (or whatever the unit count makes it), the plane combines in registers,
@@ -238,6 +245,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
         }
     }
@@ -254,6 +262,7 @@ impl Mapping {
             );
             let concrete = partitioning.space().clone();
             Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                .unwrap_or_else(|refusal| panic!("{refusal}"))
         }
     }
 

@@ -1,4 +1,4 @@
-//! `c.mm(&a.mul(&s), &b, semiring)`: the contraction with one
+//! `c.mm(&a.mul(&s), &b)`: the contraction with one
 //! factor scaled by a **real operand**, on the factor the kernel wrote it on.
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
@@ -23,7 +23,6 @@ use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
 use cubek_tile::Instruction;
 use cubek_tile::kind::Field;
-use cubek_tile::kind::PlanePartition;
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::layout::split;
 use cubek_tile::stage::UnitRead;
@@ -69,20 +68,12 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         match comptime!(side) {
-            Scaled::Lhs => c_r.mma_with(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => c_r.mma_with(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => c_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => c_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
 }
@@ -104,27 +95,22 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => acc_r.mma(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => acc_r.mma(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => acc_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => acc_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// [`scaled_matmul`] with two scale levels: block scales, and one factor over the whole tensor.
@@ -149,23 +135,21 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         match comptime!(side) {
-            Scaled::Lhs => c_r.mma_with(
+            Scaled::Lhs => c_r.mma(
                 &a.at(&region)
                     .mul(&blocks.at(&region))
                     .mul(&global.at(&region)),
                 &b.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
             ),
-            Scaled::Rhs => c_r.mma_with(
+            Scaled::Rhs => c_r.mma(
                 &a.at(&region),
                 &b.at(&region)
                     .mul(&blocks.at(&region))
                     .mul(&global.at(&region)),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
             ),
         }
     }
@@ -186,35 +170,19 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
-    let b = b
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => acc_r.mma(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => acc_r.mma(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => acc_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => acc_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **Two scale levels, applied in order.** `nvfp4`'s shape: a scale per block of the contraction,
@@ -1228,27 +1196,22 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
-            Scaled::Lhs => acc_r.mma(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => acc_r.mma(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => acc_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => acc_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
@@ -1381,20 +1344,18 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
+        let mut c_r = c.at(&region).accumulating(
+            comptime!(RegisterBlock::new(64).component_fanout()),
+            Semiring::SUM_PROD,
+        );
         match comptime!(side) {
-            Scaled::Lhs => c_r.mma_with(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                comptime!(RegisterBlock::new(64).component_fanout()),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => c_r.mma_with(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                comptime!(RegisterBlock::new(64).component_fanout()),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => c_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => c_r
+                .accumulating(
+                    comptime!(RegisterBlock::new(64).component_fanout()),
+                    Semiring::SUM_PROD,
+                )
+                .mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
 }
@@ -1670,33 +1631,21 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    let a = a.tile(comptime!(space.clone()));
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut stage = b
-        .stage(comptime!(level.clone()), StageStorage::Strided)
-        .landed_for(Instruction::Cmma);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
-    acc.zero();
+    let mut stage = b.stage(comptime!(level.clone()), StageStorage::Strided);
+    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         stage.copy_from(&b.at(&region));
         sync_cube();
         let mut acc_r = acc.at(&region);
-        acc_r.mma(
-            &a.at(&region),
-            &stage.mul(&scale.at(&region)),
-            Semiring::SUM_PROD,
-        );
+        acc_r.mma(&a.at(&region), &stage.mul(&scale.at(&region)));
         // The stage is refilled next region, once every plane has landed from it.
         sync_cube();
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// **A packed stage lands on the tensor cores.** `e2m1` values eight to a word, stored `{N, K}`
@@ -1834,11 +1783,9 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     // Both factors land where the instruction reads a window as it lies, and neither does where
-    // it reads through a layout; `landed_for` is where that rule lives.
-    let a = a.tile(comptime!(space.clone())).landed_for(instruction);
-    let b = b
-        .tile_as::<E>(comptime!(space.clone()))
-        .landed_for(instruction);
+    // it reads through a layout: the contraction decides.
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
@@ -1855,19 +1802,14 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let mut sum =
-                c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Monoid::Sum);
-            sum.zero();
+            let sum =
+                c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Semiring::SUM_PROD);
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
                     for leaf in step {
                         let mut sum_leaf = sum.at(&leaf);
-                        sum_leaf.mma(
-                            &a_plane.at(&leaf),
-                            &b_plane.at(&leaf).mul(&lines.at(&leaf)),
-                            Semiring::SUM_PROD,
-                        );
+                        sum_leaf.mma(&a_plane.at(&leaf), &b_plane.at(&leaf).mul(&lines.at(&leaf)));
                     }
                 }
             }
@@ -2008,6 +1950,7 @@ impl TileOrdered {
             )
             .vectorize(32 / Self::FIELD.size_bits())
             .build()
+            .unwrap()
     }
 
     /// The weight as stored. A packed binding counts values, its words being the packing's
@@ -2027,6 +1970,7 @@ impl TileOrdered {
             .gathered(Projection::dims().dim(NB).dim(KB).dim(NI).dim(KI).build())
             .packed(Self::FIELD)
             .build()
+            .unwrap()
     }
 
     /// The scales as stored, served as `f32` a line (a tile's sixteen) a read: whole words, or
@@ -2054,7 +1998,8 @@ impl TileOrdered {
                         .arg(s_t.binding())
                         .gathered(axes)
                         .vectorize(self.tile)
-                        .build(),
+                        .build()
+                        .unwrap(),
                     f32::elem_type_native(),
                 )
             }
@@ -2083,7 +2028,8 @@ impl TileOrdered {
                         .gathered(axes)
                         .packed(Field::of_scale(ScaleDtype::UE4M3))
                         .vectorize(self.tile)
-                        .build(),
+                        .build()
+                        .unwrap(),
                     u32::elem_type_native(),
                 )
             }
@@ -2100,6 +2046,7 @@ impl TileOrdered {
                     .build(),
             )
             .build()
+            .unwrap()
     }
 
     fn check(&self, client: &Client, c: TensorHandle, what: &str) {
@@ -2246,12 +2193,9 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] read: UnitRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    let a = a
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
-    let b = b
-        .tile_as::<E>(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    let a = a.tile(comptime!(space.clone()));
+    // The weight is scaled at every step, which lands it on its own.
+    let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
@@ -2268,8 +2212,12 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let mut sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Monoid::Sum);
-            sum.zero();
+            let sum = c_plane.accumulator::<E, E, E>(
+                &a_plane,
+                &b_plane,
+                Instruction::Cmma,
+                Semiring::SUM_PROD,
+            );
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
@@ -2277,12 +2225,8 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                     let b_step = b_plane.at(&step).mul(&lines.at(&step));
                     for block in step.walk().unrolled() {
                         for depth in block.walk().unrolled() {
-                            let a_f = PlanePartition::<E>::cmma_fragments(&a_step.at(&depth), &sum);
-                            let b_f = PlanePartition::<E>::cmma_fragments(&b_step.at(&depth), &sum);
-                            for cell in depth.walk().unrolled() {
-                                let mut sum_cell = sum.at(&cell);
-                                sum_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
-                            }
+                            let mut sum_depth = sum.at(&depth);
+                            sum_depth.mma(&a_step.at(&depth), &b_step.at(&depth));
                         }
                     }
                 }
@@ -2492,9 +2436,11 @@ fn staged_scaled_matmul<E: Numeric, S: Numeric>(
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a.mul(&scale), &b, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
+        let mut c_r = c
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         slot.consume(|a_s, b_s| {
-            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_r.mma(a_s, b_s);
         });
     });
 }

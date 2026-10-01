@@ -74,13 +74,10 @@ fn split_k_matmul_one_level<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for region in space {
-        let mut c_cube = c.at(&region);
-        c_cube.mma_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_cube = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_cube.mma(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -102,13 +99,10 @@ fn split_k_matmul_two_levels<E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         for region in cube {
-            let mut c_unit = c_cube.at(&region);
-            c_unit.mma_with(
-                &a_cube.at(&region),
-                &b_cube.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            );
+            let mut c_unit = c_cube
+                .at(&region)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_unit.mma(&a_cube.at(&region), &b_cube.at(&region));
         }
     }
 }
@@ -173,6 +167,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             // `plane_size · cols` columns per cube, then `cols` per unit, whole K each.
             Mapping::NSpread { cols } => {
@@ -185,6 +180,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
             // `cols` columns per cube shared by the whole plane, K cut into one slice per unit.
             // The transposed variant is the same *nest*: only the rhs strides differ.
@@ -198,6 +194,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+                    .unwrap_or_else(|refusal| panic!("{refusal}"))
             }
         }
     }

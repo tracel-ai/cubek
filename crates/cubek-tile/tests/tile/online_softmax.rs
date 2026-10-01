@@ -1,4 +1,4 @@
-//! An attention folded by [`OnlineSoftmax`] where its holder keeps the score: each unit owning
+//! An attention whose softmax runs through [`OnlineSoftmax`] where its holder keeps the score: each unit owning
 //! its rows in registers, or each plane owning its rows in its own window, from loading to
 //! writing.
 //!
@@ -8,13 +8,18 @@
 //! One partitioning spans both contractions: `score = q · kᵀ` contracts `D` and `out = p · v`
 //! contracts `S`, and each walks its own axes of the fragment level, the other's routed to one
 //! step. The plane stages its query once and its keys and values a block at a time, in stages of
-//! its own met on `sync_plane`; the score lands in the plane's own window, the softmax folds it
-//! there, and the output's fragments are corrected through the plane's own scratch.
+//! its own met on `sync_plane`; the score lands in the plane's own window, the softmax takes it
+//! in there, and the output's fragments are corrected through the plane's own scratch.
+//!
+//! The same kernel serves planes that split the keys of the same queries: the partitioning says
+//! so, each plane walks its share, the softmax normalizer merges the planes' states
+//! ([`OnlineSoftmax::normalizer`]), and the cube's output sums their products before writing
+//! them ([`PlanesOutput`](cubek_tile::kind::PlanesOutput)).
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Levels, Monoid, Partitioning, RegisterBlock, Scratch,
+    Accumulate, AccumulateExpand, Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch,
     Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
     ops::softmax::OnlineSoftmax,
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
@@ -85,17 +90,23 @@ fn plane_attention<E: Float>(
     )
     .tile_in(&space);
     for cube in space {
+        let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
         for plane in cube {
-            let (q_p, k_p, v_p, out_p) = (q.at(&plane), k.at(&plane), v.at(&plane), out.at(&plane));
+            let (q_p, k_p, v_p) = (q.at(&plane), k.at(&plane), v.at(&plane));
             let bias_p = bias.at(&plane);
-            // No block past the attended keys is stepped to.
-            let walk = plane.walk().range(0, (keys as usize).div_ceil(block_keys));
+            // The plane's own keys, all of them or its share, and of those no block past the
+            // attended keys.
+            let origin = plane.origin(S);
+            let reach = select(keys as usize > origin, keys as usize - origin, 0usize);
+            let keys_walk = plane.walk();
+            let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
+            let walk = keys_walk.range(0, blocks);
             let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-            let mut acc = out_p
-                .cmma_accumulator::<f32, f32>(&bias_p, Monoid::Sum)
+            let acc = out
+                .at(&plane)
+                .accumulator::<f32, f32, E>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
                 .with_scratch(Scratch::OneTile);
-            acc.zero();
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
             let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
@@ -105,11 +116,15 @@ fn plane_attention<E: Float>(
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
-                    let mut logits = score.cmma_accumulator::<f32, E>(&q_s, Monoid::Sum);
-                    logits.zero();
+                    let logits = score.accumulator::<f32, E, E>(
+                        &q_s,
+                        k_s,
+                        Instruction::Cmma,
+                        Semiring::SUM_PROD,
+                    );
                     for fragment in stage.walk().routed(V, 0).unrolled() {
                         let mut cell = logits.at(&fragment);
-                        cell.mma(&q_s.at(&fragment), &k_s.at(&fragment), Semiring::SUM_PROD);
+                        cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
                     }
                     logits.drained_into(&score);
                     // The score's cells were stored in the fragments' layout; the softmax reads
@@ -122,13 +137,14 @@ fn plane_attention<E: Float>(
                     acc.along(V).mul(&correction);
                     for fragment in stage.walk().routed(D, 0).unrolled() {
                         let mut cell = acc.at(&fragment);
-                        cell.mma(&p.at(&fragment), &v_s.at(&fragment), Semiring::SUM_PROD);
+                        cell.mma(&p.at(&fragment), &v_s.at(&fragment));
                     }
                 });
             });
-            acc.along(V).mul(&softmax.recip_l());
-            acc.drained_into(&out_p);
+            acc.along(V).mul(&softmax.normalizer(&plane));
+            out_cube.drain(&acc, &plane);
         }
+        out_cube.write();
     }
 }
 
@@ -171,13 +187,14 @@ fn unit_attention<E: Float>(
                 out.at(&unit),
                 bias.at(&unit),
             );
-            let mut acc = out_u.block_accumulator::<f32, f32, E>(
+            let mut acc = out_u.accumulator::<f32, f32, E>(
                 &bias_u,
                 &v_u,
-                comptime!(RegisterBlock::new(rows * value)),
-                Monoid::Sum,
+                comptime!(Instruction::Registers {
+                    config: RegisterBlock::new(rows * value)
+                }),
+                Semiring::SUM_PROD,
             );
-            acc.zero();
             let mut softmax = OnlineSoftmax::<f32>::along(&bias_u, S);
             for step in unit.walk().range(0, (keys as usize).div_ceil(block_keys)) {
                 let (q_s, k_s, v_s, bias_s) = (
@@ -186,21 +203,39 @@ fn unit_attention<E: Float>(
                     v_u.at(&step),
                     bias_u.at(&step),
                 );
-                let mut score = bias_s.block_accumulator::<f32, E, E>(
+                let mut score = bias_s.accumulator::<f32, E, E>(
                     &q_s,
                     &k_s,
-                    comptime!(RegisterBlock::new(rows * block_keys)),
-                    Monoid::Sum,
+                    comptime!(Instruction::Registers {
+                        config: RegisterBlock::new(rows * block_keys)
+                    }),
+                    Semiring::SUM_PROD,
                 );
-                score.zero();
-                score.mma(&q_s, &k_s, Semiring::SUM_PROD);
+                score.mma(&q_s, &k_s);
                 let correction = softmax.step(&score, &bias_s, scale);
                 acc.along(V).mul(&correction);
-                acc.mma(&score, &v_s, Semiring::SUM_PROD);
+                acc.mma(&score, &v_s);
             }
             acc.along(V).mul(&softmax.recip_l());
             acc.drained_into(&out_u);
         }
+    }
+}
+
+/// Which axis a cube's planes split: the queries, each plane owning its own rows, or the keys,
+/// the planes merging what each computed of the same rows.
+#[derive(Clone, Copy)]
+enum PlanesAlong {
+    Queries,
+    Keys,
+}
+
+/// The walk over the blocks of keys and the planes above it: every block walked by each plane
+/// owning its own queries, or a share of the `blocks` walked by each plane splitting the keys.
+fn planes_over(steps: Levels, along: PlanesAlong, planes: usize, blocks: usize) -> Levels {
+    match along {
+        PlanesAlong::Queries => steps.walk_every(&[S]).planes(&[(Q, planes)]),
+        PlanesAlong::Keys => steps.walk(&[(S, blocks / planes)]).planes(&[(S, planes)]),
     }
 }
 
@@ -219,6 +254,7 @@ struct Case {
     rows: usize,
     block: usize,
     planes: usize,
+    along: PlanesAlong,
     causal: bool,
 }
 
@@ -250,18 +286,26 @@ fn run<E: Float + CubeElement>(case: Case) {
         rows,
         block,
         planes,
+        along,
         causal,
     } = case;
     let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(Q, queries), (S, keys), (D, head), (V, value)]),
-            Levels::leaf(&[(Q, edge), (S, edge), (D, edge), (V, edge)])
-                .walk(&[(Q, rows), (S, block), (D, head / edge), (V, value / edge)])
-                .walk_every(&[S])
-                .planes(&[(Q, planes)])
-                .cubes(&[Q])
-                .build(),
+            planes_over(
+                Levels::leaf(&[(Q, edge), (S, edge), (D, edge), (V, edge)]).walk(&[
+                    (Q, rows),
+                    (S, block),
+                    (D, head / edge),
+                    (V, value / edge),
+                ]),
+                along,
+                planes,
+                keys / (edge * block),
+            )
+            .cubes(&[Q])
+            .build(),
         ),
         Form::Static,
     );
@@ -273,26 +317,20 @@ fn run<E: Float + CubeElement>(case: Case) {
         .generate_without_host_data();
     let scale = 1. / (head as f32).sqrt();
 
+    let (q_tensor, k_tensor, v_tensor, out_tensor) = (
+        q_handle.binding().into_tensor_arg(),
+        k_handle.binding().into_tensor_arg(),
+        v_handle.binding().into_tensor_arg(),
+        out_handle.clone().binding().into_tensor_arg(),
+    );
     plane_attention::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(
-            q_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, D]),
-        ),
-        TileArgLaunch::new(
-            k_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[S, D]),
-        ),
-        TileArgLaunch::new(
-            v_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[S, V]),
-        ),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, V]),
-        ),
+        TileArgLaunch::new(q_tensor, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(k_tensor, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(v_tensor, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(out_tensor, TileSpec::direct(&[Q, V])),
         attended as u32,
         queries as u32,
         scale,
@@ -517,6 +555,7 @@ const PREFILL: Case = Case {
     rows: 2,
     block: 2,
     planes: 2,
+    along: PlanesAlong::Queries,
     causal: false,
 };
 
@@ -547,6 +586,45 @@ fn plane_attention_in_f32() {
     run::<f32>(Case {
         value: 24,
         ..PREFILL
+    });
+}
+
+/// Planes splitting the keys of the same queries: two, then four, each walking a share.
+const SPLIT_KEYS: Case = Case {
+    queries: 16,
+    keys: 128,
+    attended: 128,
+    planes: 2,
+    along: PlanesAlong::Keys,
+    ..PREFILL
+};
+
+#[test]
+fn plane_attention_split_keys_matches_the_reference() {
+    run::<half::f16>(SPLIT_KEYS);
+    run::<half::f16>(Case {
+        planes: 4,
+        ..SPLIT_KEYS
+    });
+}
+
+/// A share past the attended keys walks nothing, and its plane still meets the others: every
+/// slice it holds is masked, so it adds nothing to the merged sum.
+#[test]
+fn plane_attention_split_keys_reads_nothing_past_the_attended_keys() {
+    run::<half::f16>(Case {
+        attended: 40,
+        planes: 4,
+        ..SPLIT_KEYS
+    });
+}
+
+#[test]
+fn plane_attention_split_keys_masks_causally_from_the_bottom_right() {
+    run::<half::f16>(Case {
+        attended: 100,
+        causal: true,
+        ..SPLIT_KEYS
     });
 }
 

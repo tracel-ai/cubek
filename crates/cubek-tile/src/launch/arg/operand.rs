@@ -3,8 +3,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Storage, Tile, TileArg, TileSpec,
-    TmaOperand, TmaTileArg, TmaTileArgLaunch,
+    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Tile, TileArg, TmaOperand, TmaTileArg,
+    TmaTileArgLaunch,
 };
 
 /// An operand the kernel reads: a tensor ([`TileArg`]) or a TMA tensor map ([`TmaTileArg`]).
@@ -27,10 +27,7 @@ impl<'a, E: Numeric, V: Size> Input<'a, E, V> {
     /// Serve this operand as a [`Tile`] under the kernel's one `partitioning`.
     pub fn tile(&self, #[comptime] partitioning: Partitioning) -> Tile<E> {
         match self {
-            Input::Tensor(arg) => {
-                comptime!(tensor_spec_is_launched(&arg.spec));
-                arg.tile(partitioning)
-            }
+            Input::Tensor(arg) => arg.tile(partitioning),
             Input::TensorMap(arg) => arg.tile(partitioning),
         }
     }
@@ -41,20 +38,9 @@ impl<'a, E: Numeric, V: Size> Output<'a, E, V> {
     /// Serve this operand as a [`Tile`] under the kernel's one `partitioning`.
     pub fn tile(&self, #[comptime] partitioning: Partitioning) -> Tile<E> {
         match self {
-            Output::Tensor(arg) => {
-                comptime!(tensor_spec_is_launched(&arg.spec));
-                arg.tile(partitioning)
-            }
+            Output::Tensor(arg) => arg.tile(partitioning),
             Output::Atomic(arg) => arg.tile::<V>(partitioning),
         }
-    }
-}
-
-/// Panics on a spec that is already inside a storage tile.
-fn tensor_spec_is_launched(spec: &TileSpec) {
-    match spec.storage {
-        Storage::Strided | Storage::Tiled(_) => {}
-        Storage::Contiguous => panic!("a launched spec is never inside a storage tile"),
     }
 }
 

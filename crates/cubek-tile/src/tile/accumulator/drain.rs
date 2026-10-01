@@ -30,7 +30,7 @@ impl CellRead {
     /// its store, atomic or relayed, is the sum.
     const fn of(unit_share: UnitShare, init_from: InitFrom, write: Write) -> Self {
         match write {
-            Write::Accumulate | Write::Relay => CellRead::Never,
+            Write::Accumulate | Write::Exclusive(_) => CellRead::Never,
             Write::Replace => match init_from {
                 InitFrom::Identity => CellRead::Never,
                 InitFrom::Cell => match unit_share {
@@ -95,7 +95,7 @@ impl Drain {
             (UnitShare::Plane, _) => Drain::PlaneFold,
             (UnitShare::Group { unit_bits }, _) => Drain::GroupFold { unit_bits },
             // Repeated units hold the same cells: a store may land many times, a fold only once.
-            (UnitShare::Repeated, Write::Accumulate | Write::Relay) => Drain::UnitZero,
+            (UnitShare::Repeated, Write::Accumulate | Write::Exclusive(_)) => Drain::UnitZero,
             (UnitShare::Repeated, Write::Replace) | (UnitShare::Whole, _) => Drain::EachUnit,
         }
     }
@@ -209,7 +209,7 @@ mod tests {
     /// once per unit.
     #[test]
     fn a_destination_that_adds_is_written_once_and_never_read() {
-        for write in [Write::Accumulate, Write::Relay] {
+        for write in [Write::Accumulate, Write::Exclusive(Schedule::Sequential)] {
             assert_eq!(Drain::of(UnitShare::Repeated, write), Drain::UnitZero);
             for init_from in [InitFrom::Cell, InitFrom::Identity] {
                 assert_eq!(

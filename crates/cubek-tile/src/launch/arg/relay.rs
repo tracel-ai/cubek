@@ -69,7 +69,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
             V::value(),
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
-            Write::Relay,
+            comptime!(Write::Exclusive(Schedule::Sequential)),
         )
         .tile(comptime!(space.levels().to_vec()));
 

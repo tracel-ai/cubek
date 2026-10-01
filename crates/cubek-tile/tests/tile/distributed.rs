@@ -40,16 +40,17 @@ fn distributed_block_matmul<E: Numeric>(
         for plane in cube {
             for unit in plane {
                 let (a_unit, b_unit, c_unit) = (a.at(&unit), b.at(&unit), c.at(&unit));
-                let mut sum = c_unit.block_accumulator::<E, E, E>(
+                let sum = c_unit.accumulator::<E, E, E>(
                     &a_unit,
                     &b_unit,
-                    comptime!(RegisterBlock::new(BLOCK[0] * BLOCK[1])),
-                    Monoid::Sum,
+                    comptime!(Instruction::Registers {
+                        config: RegisterBlock::new(BLOCK[0] * BLOCK[1])
+                    }),
+                    Semiring::SUM_PROD,
                 );
-                sum.zero();
                 for step in &unit {
                     let mut sum_step = sum.at(&step);
-                    sum_step.mma(&a_unit.at(&step), &b_unit.at(&step), Semiring::SUM_PROD);
+                    sum_step.mma(&a_unit.at(&step), &b_unit.at(&step));
                 }
                 sum.drained_into(&c_unit);
             }
@@ -106,7 +107,7 @@ fn run(m: usize, n: usize, k: usize, distributed: usize, units: u32) -> HostData
         cube_dim: partitioning.cube_dim(units),
     };
     let space = partitioning.space().clone();
-    let launcher = Launcher::new(&client, partitioning, &space, grid);
+    let launcher = Launcher::new(&client, partitioning, &space, grid).unwrap();
 
     distributed_block_matmul::launch(
         &client,

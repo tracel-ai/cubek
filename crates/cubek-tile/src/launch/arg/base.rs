@@ -15,12 +15,10 @@ pub struct Unlabelled;
 /// Typestate marker: the operand's axes are stated.
 pub struct Labelled;
 
-/// Whether an operand's reads are bounds-checked, and how.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// How an operand's reads are bounds-checked, where the caller states it. An operand that states
+/// none is checked with [`Boundary::Zero`] on the axes that can leave the buffer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BoundaryPolicy {
-    /// Checked with [`Boundary::Zero`] on the axes that can leave the buffer.
-    #[default]
-    Derived,
     /// Unchecked; the caller guarantees every read is in bounds.
     Unchecked,
     /// Checked with this boundary on every axis that is not provably in bounds.
@@ -38,7 +36,8 @@ struct ArgData<'a> {
     /// The operand's own affine mapping; `None` derives it from the labelled dims.
     projection: Option<Projection>,
     width: usize,
-    boundary: BoundaryPolicy,
+    /// The stated policy; `None` derives one from the overhangs.
+    boundary: Option<BoundaryPolicy>,
     packing: Packing,
     /// Who moves the operand into a stage ([`delivery`](Arg::delivery)).
     delivery: Delivery,
@@ -72,7 +71,7 @@ impl<'a> Arg<'a, Unlabelled> {
                 batches: &[],
                 projection: None,
                 width: 1,
-                boundary: BoundaryPolicy::Derived,
+                boundary: None,
                 packing: Packing::Plain,
                 delivery: Delivery::SyncPerUnit,
                 in_stride_order: false,
@@ -123,7 +122,7 @@ impl<'a> Arg<'a, Labelled> {
 
     /// How this operand's edges are checked.
     pub fn boundary(mut self, policy: BoundaryPolicy) -> Self {
-        self.data.boundary = policy;
+        self.data.boundary = Some(policy);
         self
     }
 
@@ -142,20 +141,19 @@ impl<'a> Arg<'a, Labelled> {
         self
     }
 
-    /// The operand, bound; panics with the [`Refusal`] if it cannot be.
-    pub fn build(self) -> Bound {
-        let (bound, _) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
-        bound
+    /// The operand, bound, or the [`Refusal`] saying why it cannot be.
+    pub fn build(self) -> Result<Bound, Refusal> {
+        self.realize().map(|(bound, _)| bound)
     }
 
     /// [`build`](Self::build) without the tensor argument, for an operand with no address.
-    pub fn build_spec(self) -> Unbound {
-        let (bound, geometry) = self.realize().unwrap_or_else(|refusal| panic!("{refusal}"));
-        Unbound {
+    pub fn build_spec(self) -> Result<Unbound, Refusal> {
+        let (bound, geometry) = self.realize()?;
+        Ok(Unbound {
             spec: bound.spec,
             vector_size: bound.vector_size,
             geometry,
-        }
+        })
     }
 
     /// The derivation both builds share.
@@ -180,7 +178,7 @@ impl<'a> Arg<'a, Labelled> {
             projection,
             addressed,
         } = labels;
-        projection.validate(width);
+        projection.validate(width)?;
         // A stated width is checked here: `stride / width` would truncate silently.
         // A line runs along the innermost dim's axis; a buffer with no labelled dim has none.
         let labels = projection.dense_labels();
@@ -238,7 +236,7 @@ fn stride_ordered(
 }
 
 /// The coarsest level whose windows the operand's storage tiles address with one stride per axis
-/// ([`Contiguous`](Storage::Contiguous)), every other window walked through the layout; and the
+/// (one contiguous run each), every other window walked through the layout; and the
 /// stored tiles themselves, finest first ([`TileSpec::stored_tiles`]).
 fn storage_of(
     geometry: &Geometry,

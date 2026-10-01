@@ -153,7 +153,7 @@ pub fn launch_ref(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
@@ -179,19 +179,19 @@ pub fn launch_ref(
         .arg(lhs.into_data())
         .axes(&[M, K])
         .batches(&out_batch_axes)
-        .build();
+        .build()?;
     let b = launch
         .arg(rhs)
         .axes(&[K, N])
         .batches(&out_batch_axes)
         .vectorize(v)
-        .build();
+        .build()?;
     let c = launch
         .arg(out)
         .axes(&[M, N])
         .batches(&out_batch_axes)
         .vectorize(v)
-        .build();
+        .build()?;
     cpu_gemm_kernel::launch(
         client,
         launch.cube_count(),

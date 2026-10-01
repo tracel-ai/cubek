@@ -42,7 +42,7 @@ const KI: Axis = Axis(3);
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// The split contraction: a batched matmul whose batch is the split index, writing one partial
-/// per split. One region per cube, contracted whole at the leaf, so `mm_with` owns the init and
+/// per split. One region per cube, contracted whole at the leaf, so `mm` owns the init and
 /// the partials buffer needs no zeroing.
 #[cube(launch)]
 fn split_partials<E: Numeric>(
@@ -57,13 +57,10 @@ fn split_partials<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let partials = partials.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut partials_cube = partials.at(&region);
-        partials_cube.mm_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut partials_cube = partials
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        partials_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -328,11 +325,17 @@ fn atomic_split_matmul<E: Numeric>(
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
     // Drained through the levels it was opened under, which is what puts a unit's block in front
     // of its own columns; every unit writes there, and one writes where they repeat.
@@ -357,12 +360,18 @@ fn atomic_split_matmul_by_unit<E: Numeric>(
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
     // Opened above both walks, so it holds what one unit of one cube sums: its own columns
     // against that cube's slice of the contraction.
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers {
+            config: REGISTER_BLOCK
+        }),
+        Semiring::SUM_PROD,
+    );
     for cube in space.over(&cubes) {
         for unit in cube.over(&plane_units) {
             let mut acc_unit = acc.at(&unit);
-            acc_unit.mma(&a.at(&unit), &b.at(&unit), Semiring::SUM_PROD);
+            acc_unit.mma(&a.at(&unit), &b.at(&unit));
         }
     }
     acc.drained_into(&c);
@@ -663,7 +672,7 @@ fn an_atomic_drain_folds_across_planes() {
 
 /// The output contracted *in place*, with no register accumulator at all.
 ///
-/// The verb is still `mm_with`, and it is still true: across all the cubes the operation is
+/// The verb is still `mm`, and it is still true: across all the cubes the operation is
 /// `c = a·b`. What the split moves is the *init* it owns: a cell belongs to several cubes, so
 /// none may seed it, and the buffer arrives holding the fold's identity: zeroed before the launch.
 ///
@@ -682,13 +691,10 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mm_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_region = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_region.mm(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -791,10 +797,9 @@ fn atomic_split_cmma<E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let c_cube = c.at(&cube);
-        let mut acc = c_cube
-            .cmma_accumulator::<E, E>(&a_cube, Monoid::Sum)
+        let acc = c_cube
+            .accumulator::<E, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD)
             .with_scratch(Scratch::OneTile);
-        acc.zero();
         let walk = cube.walk();
         let mut stages = Stages::smem(
             &walk,
@@ -806,13 +811,10 @@ fn atomic_split_cmma<E: Numeric>(
         stages.pipelined(walk, |slot, stage| {
             let mut acc_s = acc.at(stage);
             slot.consume(|a_s, b_s| {
-                acc_s.mma(a_s, b_s, Semiring::SUM_PROD);
+                acc_s.mma(a_s, b_s);
             });
         });
-        for stage in c_cube.walk() {
-            let mut c_w = c_cube.at(&stage);
-            c_w.copy_cast_from(&acc.at(&stage));
-        }
+        acc.drained_into(&c_cube);
     }
 }
 

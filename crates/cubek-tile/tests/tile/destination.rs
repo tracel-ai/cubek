@@ -212,7 +212,8 @@ fn run_store(sink: bool) -> HostData {
         .arg(input.binding())
         .axes(&[ROW, COL])
         .vectorize(WIDTH)
-        .build();
+        .build()
+        .unwrap();
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -224,7 +225,8 @@ fn run_store(sink: bool) -> HostData {
                 .unbound(&Geometry::new(&[(ROWS, COLS), (COLS, 1)]))
                 .axes(&[ROW, COL])
                 .vectorize(WIDTH)
-                .build_spec();
+                .build_spec()
+                .unwrap();
             let operand = DoubledOperand {
                 values: output.clone().binding().into_tensor_arg(),
                 sink: derived,
@@ -245,7 +247,8 @@ fn run_store(sink: bool) -> HostData {
                 .arg(output.clone().binding())
                 .axes(&[ROW, COL])
                 .vectorize(WIDTH)
-                .build();
+                .build()
+                .unwrap();
             store::launch::<Buffered>(
                 &client,
                 count,
@@ -308,16 +311,17 @@ fn contract<E: Numeric, EA: Numeric, O: Destination>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = O::tile::<E, Const<1>>(c, comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<EA, E, E>(
+        &a,
+        &b,
+        comptime!(Instruction::Registers { config: BLOCK }),
+        Semiring::SUM_PROD,
+    );
     for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
-        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+        acc_region.mma(&a.at(&region), &b.at(&region));
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 fn run_contract(sink: bool) -> HostData {
@@ -352,7 +356,8 @@ fn run_contract(sink: bool) -> HostData {
             let derived = launcher
                 .unbound(&Geometry::new(&[(m, n), (n, 1)]))
                 .axes(&[M, N])
-                .build_spec();
+                .build_spec()
+                .unwrap();
             let operand = DoubledOperand {
                 values: c.handle().binding().into_tensor_arg(),
                 sink: derived,
@@ -371,7 +376,11 @@ fn run_contract(sink: bool) -> HostData {
             )
         }
         false => {
-            let bound = launcher.arg(c.handle().binding()).axes(&[M, N]).build();
+            let bound = launcher
+                .arg(c.handle().binding())
+                .axes(&[M, N])
+                .build()
+                .unwrap();
             contract::launch::<Buffered>(
                 &client,
                 count,

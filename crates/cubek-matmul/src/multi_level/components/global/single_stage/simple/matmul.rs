@@ -194,13 +194,12 @@ where
             rhs_reader.advance_view();
         }
 
-        // Frees input stages for reuse, so the output stage can be allocated into the same
-        // range. The `sync_cube` is required to ensure other planes are done reading from the stages.
+        // Frees the input stages for reuse. The `sync_cube` is required to ensure other planes
+        // are done reading from the stages.
         //
-        // This is currently very unintuitive, because while the stage already exists, it actually
-        // isn't allocated until it's used (by writing to it). We should eventually separate the
-        // write call into a different function and defer creating the writer until after the stages
-        // are freed to make the order of operations more clear.
+        // Shared memory is placed where it is declared, and the output stage is declared with the
+        // writer, before this, so it sits beside the input stages rather than in their bytes.
+        // Creating the writer after the stages are freed would let the output stage take them.
         sync_cube();
         lhs_reader.free_stage();
         rhs_reader.free_stage();

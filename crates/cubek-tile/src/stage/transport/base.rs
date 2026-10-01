@@ -207,7 +207,7 @@ mod tests {
             overhang: Overhang::Never,
             write: Write::Replace,
             fill: FillUnits::cube(64),
-            storage: Storage::Contiguous,
+            storage: WindowStorage::Contiguous,
             delivery: Delivery::SyncPerUnit,
         }
     }
@@ -268,7 +268,7 @@ mod tests {
             ..access()
         };
         let relayed = Access {
-            write: Write::Relay,
+            write: Write::Exclusive(Schedule::Sequential),
             ..access()
         };
         for access in [windowed, masked, folding, relayed] {

@@ -189,35 +189,17 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    // Three levels, or four where a unit holds channel lines past its first: then the plane's
-    // walk is over those lines and the units sit under it.
-    let lines_below_the_units = comptime!(space.levels().len() > 3);
     for cube in space {
         let out = out.at(&cube);
         let weight = weight.at(&cube);
         let input = input.at(&cube);
         for plane in cube {
-            for step in plane {
-                if lines_below_the_units {
-                    for unit in step {
-                        let mut out = out.at(&unit);
-                        out.mm_with(
-                            &weight.at(&unit),
-                            &input.at(&unit),
-                            REGISTER_BLOCK,
-                            Semiring::SUM_PROD,
-                        );
-                    }
-                } else {
-                    let unit = step;
-                    let mut out = out.at(&unit);
-                    out.mm_with(
-                        &weight.at(&unit),
-                        &input.at(&unit),
-                        REGISTER_BLOCK,
-                        Semiring::SUM_PROD,
-                    );
-                }
+            // The plane's units, under its walk over channel lines where a unit holds several.
+            for unit in plane.leaves() {
+                let mut out = out
+                    .at(&unit)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                out.mm(&weight.at(&unit), &input.at(&unit));
             }
         }
     }
@@ -445,7 +427,7 @@ pub fn launch_depthwise(
                 cube_count,
                 cube_dim,
             },
-        )
+        )?
     };
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's

@@ -73,13 +73,10 @@ fn packed_matmul<E: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -104,13 +101,10 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -268,13 +262,10 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &x.at(&region),
-            &w.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&x.at(&region), &w.at(&region));
     }
 }
 
@@ -297,13 +288,10 @@ fn native_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -329,16 +317,19 @@ fn packed_gemv<E: Numeric, V: Size>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c.accumulator::<E, E, E>(
+            &x,
+            &values,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 
@@ -361,13 +352,10 @@ fn packed_matmul_byte_scales<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -390,16 +378,19 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(&x, &values, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c.accumulator::<E, E, E>(
+            &x,
+            &values,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 
@@ -416,27 +407,21 @@ fn packed_cmma_rhs<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    // Both factors land: a fragment loads a window as it lies, and a gmem layout is unchecked.
-    let x = x
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    // Both factors land on their own: a fragment reads a window as it lies, and a gmem layout is
+    // unchecked.
+    let x = x.tile(comptime!(space.clone()));
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma)
         .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.cmma_accumulator::<E, E>(&x, Monoid::Sum);
-    acc.zero();
+    let acc = c.accumulator::<E, E, E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
     for region in space.over(&level).unrolled() {
         let mut acc_r = acc.at(&region);
-        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
+        acc_r.mma(&x.at(&region), &w.at(&region));
     }
-    for r0 in c.over(&level).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
-    }
+    acc.drained_into(&c);
 }
 
 /// Four 8-bit values per word.
@@ -1940,16 +1925,19 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Monoid::Sum);
-        acc.zero();
+        let acc = c.accumulator::<E, E, E>(
+            &x,
+            &w,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
         for step in cube {
             let mut acc_s = acc.at(&step);
-            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+            acc_s.mma(&x.at(&step), &w.at(&step));
         }
-        for r0 in c.walk().unrolled() {
-            let mut c_w = c.at(&r0);
-            c_w.copy_cast_from(&acc.at(&r0));
-        }
+        acc.drained_into(&c);
     }
 }
 

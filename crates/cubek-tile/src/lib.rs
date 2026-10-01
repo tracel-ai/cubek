@@ -11,11 +11,12 @@ pub(crate) mod tile;
 
 /// What a [`Tile`] can be in the kernel.
 pub mod kind {
+    pub use crate::tile::accumulator::planes_output::PlanesOutput;
     pub use crate::tile::accumulator::smem_accumulation::SmemAccumulation;
-    pub use crate::tile::kind::memory::base::{Boundary, Storage, Write};
+    pub use crate::tile::accumulator::smem_cyclic::SmemCyclicAccumulation;
+    pub use crate::tile::kind::memory::base::{Boundary, Schedule, Storage, Write};
     pub use crate::tile::kind::memory::global::GlobalOperand;
     pub use crate::tile::kind::memory::view::masked::{Masked, MaskedMut};
-    pub use crate::tile::kind::plane::base::PlanePartition;
     pub use crate::tile::packing::base::Field;
 }
 
@@ -50,7 +51,7 @@ pub use space::base::Space;
 pub use space::partition::base::Partitioning;
 pub use space::partition::level::Level;
 pub use space::partition::levels::Levels;
-pub use space::region::Region;
+pub use space::region::{Leaves, Region};
 pub use space::walk::base::Walk;
 pub use stage::base::StageStorage;
 pub use stage::pipeline::base::Stages;
