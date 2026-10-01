@@ -64,10 +64,10 @@ fn smem_split_matmul<E: Numeric>(
 /// The same product, the planes meeting in cyclic rounds rather than atomically: each drains its
 /// slice every round, landing one chunk a round, the cube synchronized between rounds.
 #[cube(launch)]
-fn smem_cyclic_split_matmul<E: Numeric>(
+fn smem_cyclic_split_matmul<E: Numeric, VC: Size>(
     a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, VC>,
+    c: &TileArg<'_, E, VC>,
     space: Partitioning,
     #[comptime] planes: usize,
     #[define(E)] _dtype: ElemType,
@@ -107,11 +107,13 @@ fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-/// How the planes of a cube meet.
+/// How the planes of a cube meet: atomically, or in cyclic rounds into an output served
+/// `out_width` scalars a line, which the sum is read back into one scalar at a time. The rhs is
+/// served at the output's width, as a register block contracting into it reads it.
 #[derive(Clone, Copy)]
 enum Meet {
     Atomic,
-    Cyclic,
+    Cyclic { out_width: usize },
 }
 
 /// `a·b` over boxes of `box_m × box_n`, each box's `K` distributed to `planes` planes of its cube,
@@ -174,26 +176,32 @@ fn run(
             launcher.partitioning_arg(),
             dtype,
         ),
-        Meet::Cyclic => smem_cyclic_split_matmul::launch(
-            &client,
-            launcher.cube_count(),
-            launcher.cube_dim(),
-            TileArgLaunch::new(
-                a_handle.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[M, K]),
-            ),
-            TileArgLaunch::new(
-                b_handle.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[K, N]),
-            ),
-            TileArgLaunch::new(
-                out.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[M, N]),
-            ),
-            launcher.partitioning_arg(),
-            planes,
-            dtype,
-        ),
+        Meet::Cyclic { out_width } => {
+            let wide = |handle: &cubecl::std::tensor::TensorHandle, axes: &[Axis]| {
+                launcher
+                    .arg(handle.clone().binding())
+                    .axes(axes)
+                    .vectorize(out_width)
+                    .build()
+                    .unwrap()
+            };
+            let (b, c) = (wide(&b_handle, &[K, N]), wide(&out, &[M, N]));
+            smem_cyclic_split_matmul::launch(
+                &client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                c.vector_size,
+                TileArgLaunch::new(
+                    a_handle.clone().binding().into_tensor_arg(),
+                    TileSpec::direct(&[M, K]),
+                ),
+                b.arg(),
+                c.arg(),
+                launcher.partitioning_arg(),
+                planes,
+                dtype,
+            )
+        }
     }
 
     HostData::from_tensor_handle(&client, out, HostDataType::F32)
@@ -261,7 +269,12 @@ fn each_cube_folds_only_its_own_box() {
 #[test]
 fn planes_meet_in_cyclic_rounds() {
     let (m, n, k) = (4, 4, 32);
-    assert_matches(&run(m, n, k, (4, 4), 4, Meet::Cyclic), m, n, k);
+    assert_matches(
+        &run(m, n, k, (4, 4), 4, Meet::Cyclic { out_width: 1 }),
+        m,
+        n,
+        k,
+    );
 }
 
 /// Several cubes, three planes each, meeting in cyclic rounds: three chunks of a box that does not
@@ -269,7 +282,25 @@ fn planes_meet_in_cyclic_rounds() {
 #[test]
 fn each_cube_meets_its_planes_in_cyclic_rounds() {
     let (m, n, k) = (8, 12, 24);
-    assert_matches(&run(m, n, k, (4, 4), 3, Meet::Cyclic), m, n, k);
+    assert_matches(
+        &run(m, n, k, (4, 4), 3, Meet::Cyclic { out_width: 1 }),
+        m,
+        n,
+        k,
+    );
+}
+
+/// The sum read back one scalar at a time into an output served four scalars a line: each line
+/// gathered from four of the shared buffer's cells.
+#[test]
+fn a_cyclic_sum_lands_in_a_wide_output() {
+    let (m, n, k) = (8, 12, 24);
+    assert_matches(
+        &run(m, n, k, (4, 4), 3, Meet::Cyclic { out_width: 4 }),
+        m,
+        n,
+        k,
+    );
 }
 
 /// The cyclic rounds fix the order every cell takes its partials in, so two launches sum the same
@@ -282,8 +313,11 @@ fn cyclic_rounds_sum_the_same_every_run() {
             .map(|i| data.get_f32(&[i / n, i % n]).to_bits())
             .collect()
     };
-    let first = bits(&run(m, n, k, (4, 4), 4, Meet::Cyclic));
-    assert_eq!(bits(&run(m, n, k, (4, 4), 4, Meet::Cyclic)), first);
+    let first = bits(&run(m, n, k, (4, 4), 4, Meet::Cyclic { out_width: 1 }));
+    assert_eq!(
+        bits(&run(m, n, k, (4, 4), 4, Meet::Cyclic { out_width: 1 })),
+        first
+    );
 }
 
 // -- A fragment written into a window the edge cuts short --------------------------------------
