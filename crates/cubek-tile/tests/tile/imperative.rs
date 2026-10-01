@@ -43,13 +43,10 @@ fn ring_matmul<E: Numeric>(
         slot.consume(|a_s, b_s| {
             // The block's own grid of final tiles, each contracted by the leaf.
             for cell in region {
-                let mut c_cell = c_block.at(&cell);
-                c_cell.mma_with(
-                    &a_s.at(&cell),
-                    &b_s.at(&cell),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
+                let mut c_cell = c_block
+                    .at(&cell)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                c_cell.mma(&a_s.at(&cell), &b_s.at(&cell));
             }
         });
     });
@@ -87,13 +84,10 @@ fn role_split_matmul<E: Numeric>(
                 let c_block = c.at(&region);
                 stages.consume(0usize, |a_s, b_s| {
                     for cell in &region {
-                        let mut c_cell = c_block.at(&cell);
-                        c_cell.mma_with(
-                            &a_s.at(&cell),
-                            &b_s.at(&cell),
-                            REGISTER_BLOCK,
-                            Semiring::SUM_PROD,
-                        );
+                        let mut c_cell = c_block
+                            .at(&cell)
+                            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                        c_cell.mma(&a_s.at(&cell), &b_s.at(&cell));
                     }
                 });
             }

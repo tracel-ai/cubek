@@ -196,13 +196,10 @@ fn depthwise_kernel<E: Numeric, V: Size>(
         for plane in cube {
             // The plane's units, under its walk over channel lines where a unit holds several.
             for unit in plane.leaves() {
-                let mut out = out.at(&unit);
-                out.mm_with(
-                    &weight.at(&unit),
-                    &input.at(&unit),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
+                let mut out = out
+                    .at(&unit)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                out.mm(&weight.at(&unit), &input.at(&unit));
             }
         }
     }

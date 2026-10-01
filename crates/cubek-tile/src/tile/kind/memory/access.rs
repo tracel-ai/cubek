@@ -63,6 +63,13 @@ impl<T: Numeric> Memory<T> {
         });
     }
 
+    /// State how a contraction into this window runs.
+    pub(crate) fn set_contraction(&mut self, #[comptime] contraction: Contraction) {
+        comptime!({
+            self.contraction = Some(contraction);
+        });
+    }
+
     /// Zero this window; a checked window skips cells past the logical bound.
     pub(crate) fn zero(&mut self) {
         self.init(T::from_int(0));
@@ -771,6 +778,7 @@ impl<T: Numeric> Memory<T> {
             unit_share,
             split_share,
             init_from: comptime!(self.init_from),
+            contraction: comptime!(self.contraction),
             factor,
             codebook: self.codebook.clone(),
         }

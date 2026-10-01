@@ -68,20 +68,12 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         match comptime!(side) {
-            Scaled::Lhs => c_r.mma_with(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => c_r.mma_with(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => c_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => c_r.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
 }
@@ -143,23 +135,21 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         match comptime!(side) {
-            Scaled::Lhs => c_r.mma_with(
+            Scaled::Lhs => c_r.mma(
                 &a.at(&region)
                     .mul(&blocks.at(&region))
                     .mul(&global.at(&region)),
                 &b.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
             ),
-            Scaled::Rhs => c_r.mma_with(
+            Scaled::Rhs => c_r.mma(
                 &a.at(&region),
                 &b.at(&region)
                     .mul(&blocks.at(&region))
                     .mul(&global.at(&region)),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
             ),
         }
     }
@@ -1354,20 +1344,18 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
+        let mut c_r = c.at(&region).accumulating(
+            comptime!(RegisterBlock::new(64).component_fanout()),
+            Semiring::SUM_PROD,
+        );
         match comptime!(side) {
-            Scaled::Lhs => c_r.mma_with(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                comptime!(RegisterBlock::new(64).component_fanout()),
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => c_r.mma_with(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                comptime!(RegisterBlock::new(64).component_fanout()),
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => c_r.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => c_r
+                .accumulating(
+                    comptime!(RegisterBlock::new(64).component_fanout()),
+                    Semiring::SUM_PROD,
+                )
+                .mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
 }
@@ -2448,9 +2436,11 @@ fn staged_scaled_matmul<E: Numeric, S: Numeric>(
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a.mul(&scale), &b, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
+        let mut c_r = c
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         slot.consume(|a_s, b_s| {
-            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_r.mma(a_s, b_s);
         });
     });
 }

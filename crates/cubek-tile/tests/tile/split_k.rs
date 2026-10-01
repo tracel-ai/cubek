@@ -42,7 +42,7 @@ const KI: Axis = Axis(3);
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// The split contraction: a batched matmul whose batch is the split index, writing one partial
-/// per split. One region per cube, contracted whole at the leaf, so `mm_with` owns the init and
+/// per split. One region per cube, contracted whole at the leaf, so `mm` owns the init and
 /// the partials buffer needs no zeroing.
 #[cube(launch)]
 fn split_partials<E: Numeric>(
@@ -57,13 +57,10 @@ fn split_partials<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let partials = partials.tile(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut partials_cube = partials.at(&region);
-        partials_cube.mm_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut partials_cube = partials
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        partials_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -675,7 +672,7 @@ fn an_atomic_drain_folds_across_planes() {
 
 /// The output contracted *in place*, with no register accumulator at all.
 ///
-/// The verb is still `mm_with`, and it is still true: across all the cubes the operation is
+/// The verb is still `mm`, and it is still true: across all the cubes the operation is
 /// `c = a·b`. What the split moves is the *init* it owns: a cell belongs to several cubes, so
 /// none may seed it, and the buffer arrives holding the fold's identity: zeroed before the launch.
 ///
@@ -694,13 +691,10 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mm_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_region = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_region.mm(&a.at(&region), &b.at(&region));
     }
 }
 

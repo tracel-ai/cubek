@@ -9,13 +9,27 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b` into a plane-resident accumulator, under the semiring it was opened with.
+    /// `c = a · b`, under the semiring the accumulator was opened with, or a memory window stated
+    /// [`accumulating`](Tile::accumulating). A memory window starts the sum fresh rather than
+    /// reading the cell.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        self.reset();
-        self.mma(lhs, rhs);
+        let in_memory = self.is_memory();
+        if comptime!(in_memory) {
+            let semiring = contraction_of(&self.clone()).semiring;
+            let init_from = self.request_init_from(comptime!(InitFrom::Identity));
+            match comptime!(init_from) {
+                InitFrom::Identity => {}
+                InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
+            }
+            self.mma(lhs, rhs);
+            self.request_init_from(comptime!(InitFrom::Cell));
+        } else {
+            self.reset();
+            self.mma(lhs, rhs);
+        }
     }
 
-    /// `c += a · b` into a plane-resident accumulator, folding onto what it holds.
+    /// `c += a · b`, folding onto what the accumulator or memory window holds.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         mma_leaf(self, lhs, rhs)
     }
@@ -30,43 +44,26 @@ impl<Acc: Numeric> Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b` at a final memory tile through the software instruction run under `config`.
-    pub fn mm_with<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] config: RegisterBlock,
+    /// This memory window as a contraction's output: each unit's share tiled into `block`, folded
+    /// under `semiring`. A plane-resident accumulator states both when it is opened.
+    pub fn accumulating(
+        &self,
+        #[comptime] block: RegisterBlock,
         #[comptime] semiring: Semiring,
-    ) {
-        let init_from = self.request_init_from(comptime!(InitFrom::Identity));
-        match comptime!(init_from) {
-            InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
-        }
-        self.mma_with(lhs, rhs, config, semiring);
-        self.request_init_from(comptime!(InitFrom::Cell));
-    }
-
-    /// `c += a · b` at a final memory tile through the software instruction run under `config`.
-    pub fn mma_with<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] config: RegisterBlock,
-        #[comptime] semiring: Semiring,
-    ) {
-        let space = comptime!(self.place.space.clone());
-        match &mut self.kind {
+    ) -> Tile<Acc> {
+        match &self.kind {
             TileKind::Memory(g) => {
-                memory::contract::<Acc, Lhs, Rhs>(g, lhs, rhs, space, config, semiring)
+                let mut g = g.clone();
+                g.set_contraction(comptime!(Contraction { block, semiring }));
+                Tile::new(TileKind::new_Memory(g), comptime!(self.place.clone()))
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => panic!(
-                "Tile::mma_with: the software instruction contracts into a memory accumulator; a \
-                 register accumulator carries its own block (Tile::accumulator)"
+                "Tile::accumulating: a memory window states how it is contracted into; a \
+                 plane-resident accumulator states it when opened (Tile::accumulator)"
             ),
         }
     }
@@ -147,10 +144,17 @@ fn mma_fragment<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs, space)
         }
-        TileKind::Memory(_) => panic!(
-            "mma_leaf: a Gmem/Smem accumulator contracts through the software instruction, which \
-             runs under a register block; state it with Tile::mma_with(lhs, rhs, config, semiring)"
-        ),
+        TileKind::Memory(g) => {
+            let contraction = comptime!(g.contraction.unwrap_or_else(unstated_contraction));
+            memory::contract::<E, Lhs, Rhs>(
+                g,
+                lhs,
+                rhs,
+                space,
+                contraction.block,
+                contraction.semiring,
+            )
+        }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) | TileKind::Lines(_) => {
             panic!("mma: a procedural tile and the plane's units are not an accumulator sink")
@@ -180,11 +184,30 @@ fn held_semiring<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Semiring) {
         TileKind::Memory(_)
         | TileKind::TmaGmem(_)
         | TileKind::Procedural(_)
-        | TileKind::Lines(_) => panic!(
-            "Tile::mma: only a plane-resident accumulator remembers its semiring; a memory tile \
-             contracts through Tile::mma_with"
-        ),
+        | TileKind::Lines(_) => {
+            panic!("Tile::reset: only a plane-resident accumulator has an identity to return to")
+        }
     }
+}
+
+/// How a contraction into a memory window runs, as stated with [`Tile::accumulating`].
+#[cube]
+fn contraction_of<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Contraction) {
+    match &acc.kind {
+        TileKind::Memory(g) => comptime!(g.contraction.unwrap_or_else(unstated_contraction)),
+        TileKind::PlaneTile(_)
+        | TileKind::PlanePartition(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_)
+        | TileKind::Lines(_) => panic!("Tile::mm: only a memory window states its contraction"),
+    }
+}
+
+fn unstated_contraction() -> Contraction {
+    panic!(
+        "Tile::mma: a memory window contracts under the register block and semiring it is stated \
+         with; state them with Tile::accumulating(block, semiring)"
+    )
 }
 
 /// The instruction a grid of fragments contracts through.

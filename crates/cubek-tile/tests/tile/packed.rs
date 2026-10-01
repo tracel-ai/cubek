@@ -73,13 +73,10 @@ fn packed_matmul<E: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -104,13 +101,10 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -268,13 +262,10 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &x.at(&region),
-            &w.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&x.at(&region), &w.at(&region));
     }
 }
 
@@ -297,13 +288,10 @@ fn native_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 
@@ -364,13 +352,10 @@ fn packed_matmul_byte_scales<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(
-            &w.at(&region),
-            &x.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_r = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_r.mma(&w.at(&region), &x.at(&region));
     }
 }
 

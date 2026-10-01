@@ -348,7 +348,7 @@ fn register_accumulator<Acc: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
         fold > 1 || rw == aw,
         "Tile::accumulator: the block's lines are the rhs's ({rw} wide) and drain into \
          {aw}-wide cells; a stage served wider than its sink is the memory-backed leaf's \
-         (Tile::mma_with)"
+         (Tile::accumulating)"
     ));
     accumulator_in::<Acc, EA, EL>(
         out,

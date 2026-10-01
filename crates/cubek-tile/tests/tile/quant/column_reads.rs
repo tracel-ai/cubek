@@ -58,7 +58,7 @@ fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
 }
 
 /// [`column_gemv`] with the accumulator in memory: the output zeroed once, and every step's
-/// block seeded from it and committed back ([`Tile::mma_with`]).
+/// block seeded from it and committed back ([`Tile::mma`]).
 #[cube(launch)]
 fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
     x: &TileArg<'_, E, VX>,
@@ -82,13 +82,10 @@ fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         for step in cube {
-            let mut c_s = c.at(&step);
-            c_s.mma_with(
-                &x.at(&step),
-                &w.at(&step),
-                comptime!(RegisterBlock::new(64)),
-                Semiring::SUM_PROD,
-            );
+            let mut c_s = c
+                .at(&step)
+                .accumulating(comptime!(RegisterBlock::new(64)), Semiring::SUM_PROD);
+            c_s.mma(&x.at(&step), &w.at(&step));
         }
     }
 }

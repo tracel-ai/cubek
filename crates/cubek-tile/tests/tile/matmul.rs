@@ -198,8 +198,8 @@ fn contract_in_place<E: Numeric>(
         c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
     }
     for region in owned.over(&inner) {
-        let mut c_r = c.at(&region);
-        c_r.mma_with(&a.at(&region), &b.at(&region), config, semiring);
+        let mut c_r = c.at(&region).accumulating(config, semiring);
+        c_r.mma(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -254,9 +254,11 @@ fn contract_staged<E: Numeric>(
     let walk = owned.over(&steps);
     let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
+        let mut c_r = c
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         slot.consume(|a_s, b_s| {
-            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_r.mma(a_s, b_s);
         });
     });
 }
@@ -329,8 +331,8 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
 #[cube]
 fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) {
     if UNIT_POS == CUBE_DIM - 1 {
-        let mut c = c.clone();
-        c.mma_with(a, b, REGISTER_BLOCK, Semiring::SUM_PROD);
+        let mut c = c.clone().accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c.mma(a, b);
     }
 }
 
@@ -352,9 +354,11 @@ fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
+        let mut c_r = c
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         slot.consume(|a_s, b_s| {
-            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_r.mma(a_s, b_s);
         });
     });
 }
@@ -377,10 +381,12 @@ fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
     let walk = space.over(&level);
     let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
+        let mut c_r = c
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         let b_r = b.at(region);
         slot.consume(|a_s| {
-            c_r.mma_with(a_s, &b_r, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_r.mma(a_s, &b_r);
         });
     });
 }
@@ -415,10 +421,12 @@ fn matmul_padded_rhs_stage<E: Numeric>(
         1usize,
     );
     stages.pipelined(walk, |slot, region| {
-        let mut c_r = c.at(region);
+        let mut c_r = c
+            .at(region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         let a_r = a.at(region);
         slot.consume(|b_s| {
-            c_r.mma_with(&a_r, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            c_r.mma(&a_r, b_s);
         });
     });
 }
@@ -458,10 +466,12 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
             1usize,
         );
         stages.pipelined(walk, |slot, region| {
-            let mut c_r = c_o.at(region);
+            let mut c_r = c_o
+                .at(region)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
             let b_r = b_o.at(region);
             slot.consume(|a_s| {
-                c_r.mma_with(a_s, &b_r, REGISTER_BLOCK, Semiring::SUM_PROD);
+                c_r.mma(a_s, &b_r);
             });
         });
     }
@@ -491,13 +501,10 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             for cell in region.over(&inner) {
-                let mut c_r = c_o.at(&cell);
-                c_r.mma_with(
-                    &a_s.at(&cell),
-                    &b_s.at(&cell),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
+                let mut c_r = c_o
+                    .at(&cell)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                c_r.mma(&a_s.at(&cell), &b_s.at(&cell));
             }
         });
     });
@@ -535,9 +542,11 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
             let mut inner_ring =
                 Stages::smem(&cells, a_s, b_s, comptime!(storage.clone()), depth_inner);
             inner_ring.pipelined(cells, |slot, cell| {
-                let mut c_r = c_o.at(cell);
+                let mut c_r = c_o
+                    .at(cell)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
                 slot.consume(|a_i, b_i| {
-                    c_r.mma_with(a_i, b_i, REGISTER_BLOCK, Semiring::SUM_PROD);
+                    c_r.mma(a_i, b_i);
                 });
             });
         });

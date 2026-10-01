@@ -44,13 +44,10 @@ fn reduce_matmul_kernel<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mma_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_region = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_region.mma(&a.at(&region), &b.at(&region));
     }
 }
 

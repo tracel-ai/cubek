@@ -68,13 +68,10 @@ fn plain_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for region in space {
-        let mut c_cube = c.at(&region);
-        c_cube.mm_with(
-            &a.at(&region),
-            &b.at(&region),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_cube = c
+            .at(&region)
+            .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+        c_cube.mm(&a.at(&region), &b.at(&region));
     }
 }
 

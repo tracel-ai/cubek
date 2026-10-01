@@ -137,13 +137,10 @@ fn routed_matmul_kernel<E: Numeric>(
 
         // The whole of it: the expert axis takes one step, at the coordinate the table named.
         for slab in tok.over(&expert).routed(EXPERT, e) {
-            let mut o = out.at(&slab);
-            o.mm_with(
-                &x.at(&slab),
-                &w.at(&slab),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            );
+            let mut o = out
+                .at(&slab)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+            o.mm(&x.at(&slab), &w.at(&slab));
         }
     }
 }
@@ -171,9 +168,11 @@ fn routed_staged_matmul_kernel<E: Numeric>(
 
         let mut stages = Stages::smem_single(&experts, &w, StageStorage::Strided, 1usize);
         stages.pipelined(experts, |slot, slab| {
-            let mut o = out.at(slab);
+            let mut o = out
+                .at(slab)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
             slot.consume(|w_s| {
-                o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+                o.mm(&x.at(slab), w_s);
             });
         });
     }

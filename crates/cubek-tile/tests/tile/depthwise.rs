@@ -60,13 +60,10 @@ fn depthwise_kernel<E: Numeric>(
         let weight = weight.at(&cube);
         for plane in cube {
             for cell in plane {
-                let mut out = out.at(&cell);
-                out.mm_with(
-                    &input.at(&cell),
-                    &weight.at(&cell),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
+                let mut out = out
+                    .at(&cell)
+                    .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+                out.mm(&input.at(&cell), &weight.at(&cell));
             }
         }
     }

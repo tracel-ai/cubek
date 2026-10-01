@@ -130,13 +130,10 @@ fn interpolate_block<E: Float>(
         let weights_plane = weights.at(&plane);
         let input_plane = input.at(&plane);
         for cell in plane {
-            let mut output_cell = output_plane.at(&cell);
-            output_cell.mm_with(
-                &weights_plane.at(&cell),
-                &input_plane.at(&cell),
-                config,
-                Semiring::SUM_PROD,
-            );
+            let mut output_cell = output_plane
+                .at(&cell)
+                .accumulating(config, Semiring::SUM_PROD);
+            output_cell.mm(&weights_plane.at(&cell), &input_plane.at(&cell));
         }
     }
 }

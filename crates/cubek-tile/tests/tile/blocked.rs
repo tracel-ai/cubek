@@ -55,8 +55,8 @@ fn matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mma_with(&a.at(&region), &b.at(&region), BLOCK, Semiring::SUM_PROD);
+        let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
+        c_region.mma(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -78,20 +78,10 @@ fn scaled_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
+        let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
         match comptime!(side) {
-            Scaled::Lhs => c_region.mma_with(
-                &a.at(&region).mul(&scale.at(&region)),
-                &b.at(&region),
-                BLOCK,
-                Semiring::SUM_PROD,
-            ),
-            Scaled::Rhs => c_region.mma_with(
-                &a.at(&region),
-                &b.at(&region).mul(&scale.at(&region)),
-                BLOCK,
-                Semiring::SUM_PROD,
-            ),
+            Scaled::Lhs => c_region.mma(&a.at(&region).mul(&scale.at(&region)), &b.at(&region)),
+            Scaled::Rhs => c_region.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region))),
         }
     }
 }
@@ -542,8 +532,8 @@ fn wide_matmul<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mma_with(&a.at(&region), &b.at(&region), BLOCK, Semiring::SUM_PROD);
+        let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
+        c_region.mma(&a.at(&region), &b.at(&region));
     }
 }
 
@@ -642,13 +632,8 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mma_with(
-            &a.at(&region),
-            &b.at(&region).mul(&scale.at(&region)),
-            BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
+        c_region.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region)));
     }
 }
 
@@ -990,13 +975,8 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut c_region = c.at(&region);
-        c_region.mma_with(
-            &a.at(&region),
-            &b.at(&region).mul(&scale.at(&region)),
-            BLOCK,
-            Semiring::SUM_PROD,
-        );
+        let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
+        c_region.mma(&a.at(&region), &b.at(&region).mul(&scale.at(&region)));
     }
 }
 
