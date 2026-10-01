@@ -79,7 +79,7 @@ impl<T: Numeric> CmmaData<T> {
         comptime!(assert!(
             element == StageElement::Served,
             "CmmaData::load_window: a cmma fragment loads at one element type, so it cannot \
-             unpack a packed source as it reads; land it first (`landed_for`) or decode it into a \
+             unpack a packed source as it reads; contract it, which lands it, or decode it into a \
              stage (`stage.copy_from(&w.mul(&scales))`)"
         ));
         let stride = mem.row_stride_at(row);

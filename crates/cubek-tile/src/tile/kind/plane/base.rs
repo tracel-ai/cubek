@@ -622,31 +622,19 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// This region of an operand, in the form `instruction` reads it.
-    pub fn operand<Acc: Numeric>(
+    /// This region of an operand, in the form `instruction` reads it: a register block reads the
+    /// tile it is handed, a fragment form loads fragments contracting into `acc`.
+    pub(crate) fn operand<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
         #[comptime] instruction: Instruction,
     ) -> Tile<T> {
         match comptime!(instruction) {
             Instruction::Registers { .. } => src.clone(),
-            Instruction::Cmma => PlanePartition::<T>::cmma_fragments(src, acc),
-            Instruction::Mma { io } => PlanePartition::<T>::mma_fragments(src, acc, io),
+            Instruction::Cmma | Instruction::Mma { .. } => {
+                PlanePartition::<T>::fragments_in(src, acc, instruction)
+            }
         }
-    }
-
-    /// This region of an operand loaded into cmma fragments contracting into `acc`.
-    pub fn cmma_fragments<Acc: Numeric>(src: &Tile<T>, acc: &Tile<Acc>) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Cmma))
-    }
-
-    /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding.
-    pub(crate) fn mma_fragments<Acc: Numeric>(
-        src: &Tile<T>,
-        acc: &Tile<Acc>,
-        #[comptime] io: MmaIo,
-    ) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Mma { io }))
     }
 
     fn fragments_in<Acc: Numeric>(
@@ -662,8 +650,8 @@ impl<T: Numeric> PlanePartition<T> {
         ));
         let (grid, m, n) = acc.fragment_grid();
         let scaled = src.scaled();
-        let landed = src.has_landing();
         let packing = src.packing();
+        let shared = src.is_shared();
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.place.space.clone()),
             comptime!(form),
@@ -674,9 +662,9 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(src.place.depth),
             comptime!(src.place.levels.clone()),
         );
-        if comptime!(scaled || landed || packing != Packing::Plain) {
-            // A scaled or packed operand, or one opened to reach fragments through a landing,
-            // loads from its plane's landing, as the direct contraction does.
+        if comptime!(scaled || packing != Packing::Plain || !shared) {
+            // A scaled, packed or global operand loads from its plane's landing, as the direct
+            // contraction does: a fragment reads a shared, plain window as it lies.
             let side = comptime!(Side::of(&src.place.space, &acc.place.space));
             let landing = src.landed(side, comptime!(acc.place.space.clone()));
             frags.copy_from(&landing);

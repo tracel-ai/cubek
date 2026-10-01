@@ -115,10 +115,9 @@ impl<E: Numeric> Tile<E> {
     /// landing.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
         let scaled = self.scaled();
-        let landed = self.has_landing();
         let packing = self.packing();
         let shared = self.is_shared();
-        if comptime!(scaled || landed || packing != Packing::Plain || !shared) {
+        if comptime!(scaled || packing != Packing::Plain || !shared) {
             let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
             landing.load_into(frag, comptime!(read.out.clone()));
             // The landing is this region's until every unit's load has read it.

@@ -291,7 +291,6 @@ impl<T: Numeric> Memory<T> {
             init_from: comptime!(InitFrom::Cell),
             factor: Factor::none(),
             codebook: Codebook::none(),
-            lands: false,
         }
     }
 }

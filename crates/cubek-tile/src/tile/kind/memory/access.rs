@@ -12,7 +12,6 @@ use cubecl::{
 };
 
 use crate::*;
-use cubecl::unexpanded;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
@@ -52,20 +51,6 @@ impl<T: Numeric> Tile<T> {
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem_mut("view_mut");
         g.window_view_mut::<W>(comptime!(Guard::Checked))
-    }
-}
-
-impl<T: Numeric> Memory<T> {
-    /// This store landing on its way to a fragment ([`Tile::with_landing`]).
-    pub(crate) fn with_landing(self) -> Memory<T> {
-        unexpanded!()
-    }
-}
-
-impl<T: Numeric> MemoryExpand<T> {
-    pub(crate) fn __expand_with_landing_method(mut self, _scope: &Scope) -> Self {
-        self.lands = true;
-        self
     }
 }
 
@@ -319,11 +304,6 @@ impl<T: Numeric> Memory<T> {
         let offset = self.window_offset();
         let end = self.store.buffer().len();
         self.store.buffer_mut().slice_mut(offset, end)
-    }
-
-    /// Whether this store was opened with a landing ([`Tile::with_landing`]).
-    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
-        comptime!(self.lands)
     }
 
     /// Line offset of the window origin; the window must be one contiguous region.
@@ -784,7 +764,6 @@ impl<T: Numeric> Memory<T> {
             window,
             projection: comptime!(self.projection.clone()),
             source_window: self.source_window.clone(),
-            lands: comptime!(self.lands),
             map,
             offsets: self.offsets.clone(),
             window_start,

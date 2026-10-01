@@ -15,7 +15,6 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
-use cubek_tile::kind::PlanePartition;
 use cubek_tile::stage::RowChunks;
 use cubek_tile::*;
 
@@ -235,16 +234,9 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
             1usize,
         );
         stages.pipelined(walk, |slot, stage| {
-            let acc_stage = acc.at(stage);
             slot.consume(|a_stage, b_stage| {
-                let a_fragments =
-                    PlanePartition::<EI>::operand(a_stage, &acc_stage, Instruction::Cmma);
-                let b_fragments =
-                    PlanePartition::<EI>::operand(b_stage, &acc_stage, Instruction::Cmma);
-                for fragment in stage.walk().unrolled() {
-                    let mut acc_fragment = acc_stage.at(&fragment);
-                    acc_fragment.mma(&a_fragments.at(&fragment), &b_fragments.at(&fragment));
-                }
+                let mut acc_stage = acc.at(stage);
+                acc_stage.mma(a_stage, b_stage);
             });
         });
         if comptime!(copies) {

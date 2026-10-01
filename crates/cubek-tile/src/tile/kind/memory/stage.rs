@@ -327,7 +327,6 @@ impl<T: Numeric> Memory<T> {
                 factor: Factor::none(),
                 codebook: Codebook::none(),
                 source_window: source,
-                lands: false,
             }),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
         }

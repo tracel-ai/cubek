@@ -9,7 +9,6 @@ use cubek_test_utils::{
     assert_equals_approx, skip_unless_plane_holds,
 };
 
-use cubek_tile::kind::PlanePartition;
 use cubek_tile::launch::Grid;
 use cubek_tile::ops::matmul::MmaIo;
 use cubek_tile::space::CubeOrder;
@@ -913,13 +912,8 @@ fn cmma_matmul_five_levels<E: Numeric>(
                     let a_k = a_p.at(&step);
                     let b_k = b_p.at(&step);
                     for col in step.over(&col).unrolled() {
-                        let acc_n = acc_k.at(&col);
-                        let a_n = PlanePartition::cmma_fragments(&a_k.at(&col), &acc_n);
-                        let b_n = PlanePartition::cmma_fragments(&b_k.at(&col), &acc_n);
-                        for row in col.over(&row).unrolled() {
-                            let mut acc_m = acc_n.at(&row);
-                            acc_m.mma(&a_n.at(&row), &b_n.at(&row));
-                        }
+                        let mut acc_n = acc_k.at(&col);
+                        acc_n.mma(&a_k.at(&col), &b_k.at(&col));
                     }
                 }
             }
@@ -2787,8 +2781,8 @@ fn plane_staged_matmul<E: Numeric>(
     }
 }
 
-/// One body, whatever a plane contracts through: the instruction is an argument, and both
-/// [`Tile::accumulator`] and [`PlanePartition::operand`] take it.
+/// One body, whatever a plane contracts through: the instruction is an argument, stated once to
+/// [`Tile::accumulator`].
 ///
 /// The kernel a derivation writes when it elects a form from what the device offers. It matches
 /// on nothing: the register form reads its operands out of the tiles it was handed and the
@@ -2814,9 +2808,7 @@ fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
             let acc = c_p.accumulator::<EA, E, E>(&a_p, &b_p, instruction, Semiring::SUM_PROD);
             for step in plane {
                 let mut acc_s = acc.at(&step);
-                let a_f = PlanePartition::<E>::operand(&a_p.at(&step), &acc_s, instruction);
-                let b_f = PlanePartition::<E>::operand(&b_p.at(&step), &acc_s, instruction);
-                acc_s.mma(&a_f, &b_f);
+                acc_s.mma(&a_p.at(&step), &b_p.at(&step));
             }
             acc.drained_into(&c_p);
         }

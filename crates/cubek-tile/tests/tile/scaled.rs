@@ -23,7 +23,6 @@ use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
 use cubek_tile::Instruction;
 use cubek_tile::kind::Field;
-use cubek_tile::kind::PlanePartition;
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::layout::split;
 use cubek_tile::stage::UnitRead;
@@ -181,12 +180,8 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
-    let b = b
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
@@ -1648,15 +1643,11 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    let a = a.tile(comptime!(space.clone()));
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut stage = b
-        .stage(comptime!(level.clone()), StageStorage::Strided)
-        .landed_for(Instruction::Cmma);
+    let mut stage = b.stage(comptime!(level.clone()), StageStorage::Strided);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         stage.copy_from(&b.at(&region));
@@ -1804,11 +1795,9 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     // Both factors land where the instruction reads a window as it lies, and neither does where
-    // it reads through a layout; `landed_for` is where that rule lives.
-    let a = a.tile(comptime!(space.clone())).landed_for(instruction);
-    let b = b
-        .tile_as::<E>(comptime!(space.clone()))
-        .landed_for(instruction);
+    // it reads through a layout: the contraction decides.
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
@@ -2216,9 +2205,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] read: UnitRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    let a = a
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    let a = a.tile(comptime!(space.clone()));
     // The weight is scaled at every step, which lands it on its own.
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
@@ -2250,12 +2237,8 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                     let b_step = b_plane.at(&step).mul(&lines.at(&step));
                     for block in step.walk().unrolled() {
                         for depth in block.walk().unrolled() {
-                            let a_f = PlanePartition::<E>::cmma_fragments(&a_step.at(&depth), &sum);
-                            let b_f = PlanePartition::<E>::cmma_fragments(&b_step.at(&depth), &sum);
-                            for cell in depth.walk().unrolled() {
-                                let mut sum_cell = sum.at(&cell);
-                                sum_cell.mma(&a_f.at(&cell), &b_f.at(&cell));
-                            }
+                            let mut sum_depth = sum.at(&depth);
+                            sum_depth.mma(&a_step.at(&depth), &b_step.at(&depth));
                         }
                     }
                 }

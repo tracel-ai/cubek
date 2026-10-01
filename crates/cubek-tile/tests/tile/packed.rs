@@ -422,13 +422,11 @@ fn packed_cmma_rhs<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    // Both factors land: a fragment loads a window as it lies, and a gmem layout is unchecked.
-    let x = x
-        .tile(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma);
+    // Both factors land on their own: a fragment reads a window as it lies, and a gmem layout is
+    // unchecked.
+    let x = x.tile(comptime!(space.clone()));
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .landed_for(Instruction::Cmma)
         .mul(&scale.tile_as::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     let acc = c.accumulator::<E, E, E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);

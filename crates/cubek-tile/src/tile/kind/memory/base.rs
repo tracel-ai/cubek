@@ -44,9 +44,6 @@ pub(crate) struct Memory<T: Numeric> {
     /// Where this tile's cells sit in the buffer they were filled from; `Some` only for a gathered
     /// stage.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
-    /// Whether this operand lands on its way to a tensor-core fragment.
-    #[cube(comptime)]
-    pub(crate) lands: bool,
     /// The scales these values carry ([`Tile::mul`](crate::Tile::mul)); empty when none.
     pub(crate) factor: Factor,
     /// The table these values index ([`Tile::lookup`](crate::Tile::lookup)); empty when none.
