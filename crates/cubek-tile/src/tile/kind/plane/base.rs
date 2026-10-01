@@ -379,7 +379,10 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// `self[r, :] *= corr[r]`, each tile bounced through the scratch.
-    /// Syncs the whole cube: every unit must call it.
+    ///
+    /// The scratch is the plane's own slot (`with_scratch` indexes it by `PLANE_POS`), so
+    /// the bounce syncs the plane rather than the cube: every unit of the plane must call it,
+    /// and the other planes need not.
     pub(crate) fn rescale_rows(&self, corr: &Array<T>) {
         let mut scratch = #[comptime]
         match &self.scratch {
@@ -409,7 +412,7 @@ impl<T: Numeric> PlanePartition<T> {
                 if moved {
                     tile.store_scratch(&scratch);
                 }
-                sync_cube();
+                sync_plane();
                 if moved {
                     let mut cell = plane_unit;
                     while cell < cells {
@@ -417,11 +420,11 @@ impl<T: Numeric> PlanePartition<T> {
                         cell += units;
                     }
                 }
-                sync_cube();
+                sync_plane();
                 if moved {
                     tile.load_scratch(&scratch);
                 }
-                sync_cube();
+                sync_plane();
             }
         }
     }
