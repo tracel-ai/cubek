@@ -213,7 +213,7 @@ impl<E: Numeric> ErasedTensorOperationsExpand<E> for SmemCyclic<E> {
             &mut self.values,
             index,
             value.into(),
-            self.first.clone(),
+            self.first,
         );
     }
 }

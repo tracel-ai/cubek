@@ -578,6 +578,7 @@ fn drain_below<Acc: Numeric, Out: Numeric>(
 /// grid's coordinates summed along the way into `place`, the chunk a fragment falls in being
 /// `place` modulo `chunks`.
 #[cube]
+#[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
 fn drain_chunk_below<Acc: Numeric, Out: Numeric>(
     acc: &Tile<Acc>,
     dest: &Tile<Out>,
