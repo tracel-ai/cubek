@@ -155,6 +155,15 @@ impl<T: Numeric> Store<T> {
         }
     }
 
+    /// Free the shared memory a buffer backing is held in, for what is declared after it to take;
+    /// a call holds none.
+    pub(crate) fn free(&self) {
+        match &self.backing {
+            Backing::Buffer(buffer) => free_shared(buffer),
+            Backing::WriteCall(_) | Backing::ReadCall(_) => {}
+        }
+    }
+
     /// Whether the values have an address: a buffer, rather than a call.
     pub(crate) fn has_address(&self) -> comptime_type!(bool) {
         match &self.backing {
@@ -432,4 +441,19 @@ mod tests {
             Write::Replace.admits(SplitShare::Whole, monoid, "test");
         }
     }
+}
+
+/// Free the shared memory `buffer` is a window of: its list, which the shared-memory allocation
+/// traces back to its declaration.
+// `Box<[T]>` is cubecl's owned-slice handle, not a Rust box.
+#[allow(clippy::borrowed_box)]
+#[cube]
+fn free_shared<T: Numeric>(buffer: &Box<[T]>) {
+    intrinsic!(|scope| {
+        let list = buffer.__extract_list(scope);
+        scope.register(&cubecl::ir::dialect::general::FreeOp::new(
+            scope.ctx_mut(),
+            list,
+        ));
+    })
 }

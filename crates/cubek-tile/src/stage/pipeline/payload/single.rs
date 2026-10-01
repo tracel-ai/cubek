@@ -29,6 +29,10 @@ impl<T: Numeric> Payload<Tile<T>> for Tile<T> {
         }
     }
 
+    fn free(&self) {
+        self.free_stage();
+    }
+
     fn bring(
         &mut self,
         src: &Tile<T>,

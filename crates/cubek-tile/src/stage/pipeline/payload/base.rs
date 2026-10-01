@@ -38,6 +38,9 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
         #[comptime] refills: Vec<Refill>,
     ) -> Me;
 
+    /// Free the shared memory this payload's stages hold, for what is declared after it to take.
+    fn free(&self);
+
     /// Bring `src`'s window at `region` into this payload, for each operand whose refill is `only`.
     fn bring(
         &mut self,

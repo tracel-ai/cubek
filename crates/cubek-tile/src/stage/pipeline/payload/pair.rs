@@ -50,6 +50,11 @@ impl<Lhs: Numeric, Rhs: Numeric> Payload<OperandPair<Lhs, Rhs>> for OperandPair<
         OperandPair::<Lhs, Rhs> { lhs, rhs }
     }
 
+    fn free(&self) {
+        self.lhs.free_stage();
+        self.rhs.free_stage();
+    }
+
     fn bring(
         &mut self,
         src: &OperandPair<Lhs, Rhs>,
