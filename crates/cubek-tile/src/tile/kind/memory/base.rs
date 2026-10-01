@@ -307,7 +307,10 @@ impl Write {
             | (SplitShare::PartialAcrossCubes, Write::Exclusive(Schedule::Sequential))
             | (SplitShare::PartialAcrossPlanes, Write::Exclusive(Schedule::Cyclic)) => {}
             (SplitShare::PartialAcrossCubes, Write::Exclusive(Schedule::Cyclic)) => panic!(
-                "{site}: this accumulator's cells are split across cubes and its destination                  takes its writers in cyclic rounds, which a cube barrier orders: it orders the                  planes of one cube, never cubes. Take the cubes' turns through a `Relay`, or                  combine them atomically."
+                "{site}: this accumulator's cells are split across cubes and its destination \
+                 takes its writers in cyclic rounds, which a cube barrier orders: it orders the \
+                 planes of one cube, never cubes. Take the cubes' turns through a `Relay`, or \
+                 combine them atomically."
             ),
             (SplitShare::PartialAcrossPlanes, Write::Exclusive(Schedule::Sequential)) => panic!(
                 "{site}: this accumulator's cells are split across the planes of one cube and its \

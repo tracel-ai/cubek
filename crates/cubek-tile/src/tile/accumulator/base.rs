@@ -428,10 +428,24 @@ impl<Acc: Numeric> Tile<Acc> {
                     sync_cube();
                 }
             },
-            // One tile: it is the one chunk of its grid.
-            TileKind::PlaneTile(_) => {
-                if turn == 0 {
-                    drain_leaf::<Acc, Out>(self, dest, comptime!(DrainPass::Copy))
+            // One tile: it is the one chunk of its grid. A fragment bouncing into its destination
+            // meets the cube at its barriers whatever the turn, so it bounces through the
+            // predicated pass; anything else stores with no barrier at all.
+            TileKind::PlaneTile(t) => {
+                let cmma = match t {
+                    PlaneTile::Cmma(_) => comptime!(true),
+                    PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
+                };
+                let bounces = dest.fragments_bounce();
+                if comptime!(cmma && bounces) {
+                    drain_chunk_leaf::<Acc, Out>(
+                        self,
+                        dest,
+                        comptime!(DrainPass::Bounce),
+                        turn == 0,
+                    );
+                } else {
+                    drain_chunk_leaf::<Acc, Out>(self, dest, comptime!(DrainPass::Copy), turn == 0);
                 }
             }
             TileKind::Memory(_)

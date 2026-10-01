@@ -285,6 +285,9 @@ impl<
             }
         }
 
+        // Every plane has read its query out of the staging before what is declared in its
+        // bytes is written.
+        sync_cube();
         unsafe { staged.free() };
     }
 }
