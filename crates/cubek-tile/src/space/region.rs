@@ -1,6 +1,6 @@
 //! Where a loop is: the path of levels a kernel's loops took from a root space to a box.
 
-use super::{ComputeScope, Level, Partitioning, Space};
+use super::{ComputeScope, Coverage, Level, Partitioning, Space};
 use crate::{Axis, Coords, Integer, IntegerExpand, MatrixAxes, Walk};
 use cubecl::{prelude::*, unexpanded};
 
@@ -78,6 +78,32 @@ impl Path {
     /// The planes one cube of the root's partitioning holds ([`Partitioning::planes_per_cube`]).
     pub(crate) fn planes_per_cube(&self) -> usize {
         self.root.planes_per_cube() as usize
+    }
+
+    /// The axes the root's partitioning distributes across a cube's planes that `along` admits,
+    /// each with its count of planes, outermost first: the planes holding the same box of a tile
+    /// that lacks those axes, or splitting the same slices of one that runs along them.
+    pub(crate) fn planes_along(&self, along: impl Fn(Axis) -> bool) -> Vec<(Axis, usize)> {
+        let mut handed = self.root.space().clone();
+        let mut planes = Vec::new();
+        for level in self.root.levels() {
+            for axis in level.axes() {
+                if level.coverage() == Coverage::Distribute(ComputeScope::Plane)
+                    && level.distributes(axis)
+                    && along(axis)
+                {
+                    let count = level.instances_along(&handed, axis).unwrap_or_else(|| {
+                        panic!(
+                            "{axis:?} is split across the cube's planes at a count only the launch \
+                             knows, so the planes holding the same box cannot be counted"
+                        )
+                    });
+                    planes.push((axis, count));
+                }
+            }
+            handed = level.child(&handed);
+        }
+        planes
     }
 
     /// Whether this path reaches the partitioning's innermost level, with no level below it.

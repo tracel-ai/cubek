@@ -11,6 +11,7 @@ pub(crate) mod tile;
 
 /// What a [`Tile`] can be in the kernel.
 pub mod kind {
+    pub use crate::tile::accumulator::planes_output::PlanesOutput;
     pub use crate::tile::accumulator::smem_accumulation::SmemAccumulation;
     pub use crate::tile::accumulator::smem_cyclic::SmemCyclicAccumulation;
     pub use crate::tile::kind::memory::base::{Boundary, Schedule, Storage, Write};
