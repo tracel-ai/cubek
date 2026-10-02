@@ -132,6 +132,14 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
 
 /// One step `c += outer(A[:, k], B[k, :])` off the `k_line`-th line, each line under its scale.
 /// `fixed` is the comptime component to extract; `None` takes `unit` at runtime.
+///
+/// Where a load holds `columns` runs of `contracted_per_step` values along the contraction, each
+/// load is read once and split into its columns' runs, and each run's products with a row's line
+/// go into that row's cell. A cell as wide as the run keeps one partial a lane, which the commit
+/// sums. A one-wide cell, a block that lives across the walk, takes the run's sum each step, so
+/// it holds one value however long a run is; under the sum of products the run's scale then
+/// multiplies that sum, one product a cell rather than one a value, since a run lies inside one
+/// scale.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size>(
@@ -153,20 +161,64 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size
     #[comptime] semiring: Semiring,
 ) {
     if comptime!(contracted_per_step > 1) {
-        // A load holds `columns` columns' runs, in order: read it once, split it, scale each run
-        // (in `E`, so an integer operand doesn't round the scale or wrap).
+        let cell = V::value();
+        comptime!(assert!(
+            cell == contracted_per_step || cell == 1,
+            "mm: a cell holds a run's {contracted_per_step} partials or their sum, not {cell} values"
+        ));
+        let summed = comptime!(cell == 1);
+        let scale_sum = comptime!(summed && semiring == Semiring::SUM_PROD);
+        let mut a = Array::<Vector<E, L>>::new(mr);
+        #[unroll(unroll)]
+        for i in 0..mr {
+            let pos = (i as u32, k_line);
+            a[i] = lhs_scales.apply::<E, L>(Vector::<E, L>::cast_from(lhs.read(pos)), pos);
+        }
         #[unroll(unroll)]
         for g in 0..comptime!(nr / columns) {
             let held = rhs.read((g as u32, k_line));
             #[unroll]
             for j in 0..columns {
-                let pos = ((g * columns + j) as u32, k_line);
-                let run = values_at::<E, ER, RL, V>(
+                let n = g * columns + j;
+                let pos = (n as u32, k_line);
+                // In `E`, so an integer operand doesn't round the scale or wrap.
+                let values = values_at::<E, ER, RL, L>(
                     held,
                     comptime!(j * contracted_per_step),
                     comptime!(Packing::Plain),
                 );
-                b[g * columns + j] = rhs_scales.apply::<E, V>(run, pos);
+                let values = if comptime!(scale_sum) {
+                    values
+                } else {
+                    rhs_scales.apply::<E, L>(values, pos)
+                };
+                #[unroll(unroll)]
+                for i in 0..mr {
+                    let at = i * nr + n;
+                    if comptime!(summed) {
+                        let mut sum = Vector::<E, V>::cast_from(Monoid::identity::<E>(comptime!(
+                            semiring.add()
+                        )));
+                        #[unroll]
+                        for v in 0..contracted_per_step {
+                            sum = semiring.step::<Vector<E, V>>(
+                                Vector::<E, V>::cast_from(a[i].extract(v)),
+                                Vector::<E, V>::cast_from(values.extract(v)),
+                                sum,
+                            );
+                        }
+                        if comptime!(scale_sum) {
+                            sum = rhs_scales.apply::<E, V>(sum, pos);
+                        }
+                        c[at] = comptime!(semiring.add()).combine::<Vector<E, V>>(c[at], sum);
+                    } else {
+                        c[at] = semiring.step::<Vector<E, V>>(
+                            Vector::<E, V>::cast_from(a[i]),
+                            Vector::<E, V>::cast_from(values),
+                            c[at],
+                        );
+                    }
+                }
             }
         }
     } else {
@@ -175,22 +227,20 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size
             let pos = (k as u32, n as u32);
             b[n] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(rhs.read(pos)), pos);
         }
-    }
-    #[unroll(unroll)]
-    for i in 0..mr {
-        let pos = (i as u32, k_line);
-        let line = lhs_scales.apply::<E, L>(Vector::<E, L>::cast_from(lhs.read(pos)), pos);
-        let a = if comptime!(contracted_per_step > 1) {
-            Vector::<E, V>::cast_from(line)
-        } else if comptime!(fixed.is_some()) {
-            Vector::<E, V>::cast_from(line.extract(comptime!(fixed.unwrap())))
-        } else {
-            Vector::<E, V>::cast_from(line.extract_dynamic(unit))
-        };
         #[unroll(unroll)]
-        for n in 0..nr {
-            // A single fma; `+= a * b` would lower to a mul and a dependent add.
-            c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
+        for i in 0..mr {
+            let pos = (i as u32, k_line);
+            let line = lhs_scales.apply::<E, L>(Vector::<E, L>::cast_from(lhs.read(pos)), pos);
+            let a = if comptime!(fixed.is_some()) {
+                Vector::<E, V>::cast_from(line.extract(comptime!(fixed.unwrap())))
+            } else {
+                Vector::<E, V>::cast_from(line.extract_dynamic(unit))
+            };
+            #[unroll(unroll)]
+            for n in 0..nr {
+                // A single fma; `+= a * b` would lower to a mul and a dependent add.
+                c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
+            }
         }
     }
 }

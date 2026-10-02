@@ -24,11 +24,13 @@ impl<T: Numeric> RegisterData<T> {
         let vw = comptime!(rhs_load.run_length());
         let lw = lhs.vector_size();
         let fold = comptime!(self.fold);
-        // A packed rhs is served at its packing factor, so this checks the block was opened by it.
+        // A packed rhs is served at its packing factor, so this checks the block was opened by it:
+        // its lines are the rhs's, or one-wide cells that take the sum of each of the rhs's runs.
         comptime!(assert!(
-            vw == self.vector_size,
-            "RegisterData::mma: the block's lines are {} wide but the rhs serves {vw}; a packed \
-             rhs serves its packing factor, so open the block against the rhs it contracts",
+            (fold == 1 && vw == self.vector_size) || (fold == vw && self.vector_size == 1),
+            "RegisterData::mma: the block's lines are {} wide summing {fold} values a step, but the \
+             rhs serves runs of {vw}; a packed rhs serves its packing factor, so open the block \
+             against the rhs it contracts",
             self.vector_size
         ));
         let lined_along_k = comptime!(
@@ -71,7 +73,8 @@ impl<T: Numeric> RegisterData<T> {
         let size!(RL) = comptime!(rhs_load.values());
 
         let config = comptime!(self.config);
-        let unroll = comptime!(mr * nr * vw <= config.budget);
+        // The scalars the block holds: a line a cell, one value where a cell sums a run.
+        let unroll = comptime!(mr * nr * self.vector_size <= config.budget);
         let component_fanout = comptime!(config.component_fanout);
 
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);

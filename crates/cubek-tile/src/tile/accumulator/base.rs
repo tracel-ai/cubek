@@ -438,8 +438,8 @@ fn register_accumulator<Acc: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] semiring: Semiring,
 ) -> Tile<EA> {
     let lw = lhs.vector_size();
-    // The block's lines are a run of the rhs's loads: the whole load, or one column's run of
-    // a load stored across several columns.
+    // The block's lines are the rhs's loads, or, where the rhs runs along the contraction, one
+    // column's run of a load summed into a cell.
     let rhs_load = rhs.vector_tile();
     let rw = comptime!(rhs_load.run_length());
     let aw = out.vector_size();
@@ -458,11 +458,13 @@ fn register_accumulator<Acc: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
          {aw}-wide cells; a stage served wider than its sink is the memory-backed leaf's \
          (Tile::accumulating)"
     ));
+    // A block contracting runs along the contraction sums each into its cell, one value wide.
+    let width = comptime!(if fold > 1 { 1 } else { rw });
     accumulator_in::<Acc, EA, EL>(
         out,
         lhs,
         comptime!(Instruction::Registers { config }),
-        rw,
+        width,
         fold,
         comptime!(Accumulation::Contraction(semiring)),
     )
