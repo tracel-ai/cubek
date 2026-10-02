@@ -206,8 +206,9 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] io: MmaIo,
     #[comptime] edges: (usize, usize),
 ) {
-    // `ldmatrix` reads 16-byte rows of 16-bit served cells from shared memory; any other window
-    // takes the manual load.
+    // `ldmatrix` reads 16-byte rows of 16-bit served cells from shared memory, on a device that
+    // offers it for the element; any other window, or device, takes the manual load.
+    let offered = loads_matrix::<T>();
     let gathered = src.gathered();
     let shared = src.is_shared();
     let element = src.stage_element();
@@ -218,7 +219,8 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     let elem_size = T::size().comptime();
     let row_cells = comptime!(LDMATRIX_ROW_BYTES / elem_size);
     let ldmatrix_serves = comptime!(
-        shared
+        offered
+            && shared
             && !gathered
             && holds_served_values
             && elem_size == 2
@@ -239,6 +241,21 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
             load_ldmatrix::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
         }
     }
+}
+
+/// Whether the device offers `ldmatrix` for `T`, read off its properties at expansion.
+// `T` is read by the expansion, which is where a type has its element.
+#[allow(clippy::extra_unused_type_parameters)]
+#[cube]
+fn loads_matrix<T: Numeric>() -> comptime_type!(bool) {
+    intrinsic!(|scope| {
+        let element = T::elem_type(scope);
+        scope
+            .state()
+            .device_properties
+            .as_ref()
+            .is_some_and(|properties| properties.features.matmul.ldmatrix.contains(&element))
+    })
 }
 
 /// Manual load: each unit reads its own cells of `src` through the matrix view.

@@ -6,7 +6,11 @@ use cubecl::{
     ir::{DeviceProperties, ElemType},
 };
 
-/// Device-driven choice of load/store methods for a manual-mma tile.
+/// Which transports a manual-mma tile may load and store through. `LoadMatrix` lets an operand
+/// load through `ldmatrix` wherever the device offers it for the element and the stage serves it,
+/// which the tile decides as it expands; `Manual` keeps every unit loading its own cells.
+/// [`Default`] is what a caller with no reason to choose takes: `ldmatrix` for both operands where
+/// it serves.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIo {
     pub lhs_load_method: LoadMethod,
@@ -27,6 +31,18 @@ pub enum StoreMethod {
     StoreMatrix,
 }
 
+/// Both operands through `ldmatrix` where the device and the stage let them, the accumulator and
+/// the store each unit's own: `stmatrix` does not reach a tile's memory window.
+impl Default for MmaIo {
+    fn default() -> Self {
+        Self {
+            lhs_load_method: LoadMethod::LoadMatrix,
+            rhs_load_method: LoadMethod::LoadMatrix,
+            ..Self::manual()
+        }
+    }
+}
+
 impl MmaIo {
     /// Select each role's transport from the device's `ldmatrix`/`stmatrix` support.
     pub fn new(
@@ -43,7 +59,7 @@ impl MmaIo {
         }
     }
 
-    /// A config forcing the manual path for every role.
+    /// A config forcing the manual path for every role: what a test of that path asks for.
     pub fn manual() -> Self {
         Self {
             lhs_load_method: LoadMethod::Manual,
@@ -53,6 +69,7 @@ impl MmaIo {
         }
     }
 
+    /// The transport `ident` may load through.
     pub fn load_method(&self, ident: MatrixIdent) -> LoadMethod {
         match ident {
             MatrixIdent::A => self.lhs_load_method,
