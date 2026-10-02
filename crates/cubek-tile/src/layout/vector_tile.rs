@@ -97,6 +97,11 @@ impl VectorTile {
         self.extents.first().map_or(1, |&(_, run)| run)
     }
 
+    /// The box one load covers, an axis to each extent.
+    pub fn space(&self) -> Space {
+        Space::new(&self.extents)
+    }
+
     /// How many values the load brings.
     pub fn values(&self) -> usize {
         self.extents.iter().map(|&(_, extent)| extent).product()
