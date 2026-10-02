@@ -47,7 +47,7 @@ pub(crate) struct RegisterData<T: Numeric> {
     #[cube(comptime)]
     pub(crate) vector_size: usize,
     /// Contracted values one step of the rhs brings for one cell: `1` for an rhs lined along the
-    /// block's columns, else the run a load holds of a column, which each step folds into its
+    /// block's columns, else the run a load holds of a column, which each step sums into its
     /// cell, so the block is one value wide.
     #[cube(comptime)]
     pub(crate) fold: usize,
@@ -92,7 +92,7 @@ impl<T: Numeric> RegisterData<T> {
     ) -> RegisterData<T> {
         comptime!(assert!(
             fold == 1 || vector_size == 1,
-            "RegisterData::alloc: a block contracting {fold} values of a cell a step folds them into \
+            "RegisterData::alloc: a block contracting {fold} values of a cell a step sums them into \
              the cell, so it is one value wide, not {vector_size}"
         ));
         comptime!(assert!(
