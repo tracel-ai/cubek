@@ -92,7 +92,12 @@ fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
 
 /// Where the value at `coords` (along `axes`) sits in a buffer of `geometry`, its dims named
 /// `labels`, outermost first: each coordinate spread over the dims its axis names, finest last.
-fn offset(geometry: &Geometry, labels: &[Axis], axes: &[Axis], coords: &[usize]) -> usize {
+pub(super) fn offset(
+    geometry: &Geometry,
+    labels: &[Axis],
+    axes: &[Axis],
+    coords: &[usize],
+) -> usize {
     let mut rest = coords.to_vec();
     let mut offset = 0;
     for d in (0..labels.len()).rev() {
