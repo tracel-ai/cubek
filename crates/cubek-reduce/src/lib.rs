@@ -145,9 +145,13 @@ pub fn reduce_with_indices(
     let k = match operation {
         ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => k,
         ReduceOperationConfig::Max
+        | ReduceOperationConfig::MaxNan
         | ReduceOperationConfig::ArgMax
+        | ReduceOperationConfig::ArgMaxNan
         | ReduceOperationConfig::Min
-        | ReduceOperationConfig::ArgMin => 1,
+        | ReduceOperationConfig::MinNan
+        | ReduceOperationConfig::ArgMin
+        | ReduceOperationConfig::ArgMinNan => 1,
         other => {
             return Err(ReduceError::IndicesUnsupported {
                 operation: operation_name(&other),
@@ -186,10 +190,15 @@ fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
         ReduceOperationConfig::Prod => "Prod",
         ReduceOperationConfig::Mean => "Mean",
         ReduceOperationConfig::MaxAbs => "MaxAbs",
+        ReduceOperationConfig::MaxAbsNan => "MaxAbsNan",
         ReduceOperationConfig::ArgMax => "ArgMax",
+        ReduceOperationConfig::ArgMaxNan => "ArgMaxNan",
         ReduceOperationConfig::ArgMin => "ArgMin",
+        ReduceOperationConfig::ArgMinNan => "ArgMinNan",
         ReduceOperationConfig::Max => "Max",
+        ReduceOperationConfig::MaxNan => "MaxNan",
         ReduceOperationConfig::Min => "Min",
+        ReduceOperationConfig::MinNan => "MinNan",
         ReduceOperationConfig::ArgTopK(_) => "ArgTopK",
         ReduceOperationConfig::TopK(_) => "TopK",
         ReduceOperationConfig::Any => "Any",

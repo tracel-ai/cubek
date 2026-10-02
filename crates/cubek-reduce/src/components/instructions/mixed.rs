@@ -31,24 +31,102 @@ pub enum ReduceOperation {
     All(All),
 }
 
+/// Reduction operation and, for extrema, its NaN contract.
+///
+/// Unsuffixed extrema use backend-dependent NaN behavior. The `*Nan` variants
+/// propagate NaNs and indexed variants select the lowest NaN coordinate.
 #[derive_cube_comptime]
 #[derive(Serialize, Deserialize)]
 pub enum ReduceOperationConfig {
     Sum,
     Prod,
     Mean,
+    /// Maximum absolute value with backend-dependent NaN behavior.
     MaxAbs,
+    /// Maximum index with backend-dependent NaN behavior.
     ArgMax,
+    /// Minimum index with backend-dependent NaN behavior.
     ArgMin,
+    /// Maximum value with backend-dependent NaN behavior.
     Max,
+    /// Minimum value with backend-dependent NaN behavior.
     Min,
     ArgTopK(usize),
     TopK(usize),
     Any,
     All,
+    /// Maximum absolute value with NaN propagation.
+    MaxAbsNan,
+    /// Maximum index with NaN propagation and lowest NaN coordinate.
+    ArgMaxNan,
+    /// Minimum index with NaN propagation and lowest NaN coordinate.
+    ArgMinNan,
+    /// Maximum value with NaN propagation.
+    MaxNan,
+    /// Minimum value with NaN propagation.
+    MinNan,
+}
+
+/// Configuration for an extrema instruction. Policy selection is compile-time.
+#[derive_cube_comptime]
+pub struct ExtremaConfig {
+    /// Which outputs to produce.
+    pub output: ReduceOutputMode,
+    /// Whether NaNs take precedence over ordinary values.
+    pub propagate_nan: bool,
 }
 
 impl ReduceOperationConfig {
+    /// Select NaN propagation for extrema, leaving other operations unchanged.
+    pub fn with_nan_propagation(self, propagate_nan: bool) -> Self {
+        match self {
+            Self::MaxAbs | Self::MaxAbsNan => {
+                if propagate_nan {
+                    Self::MaxAbsNan
+                } else {
+                    Self::MaxAbs
+                }
+            }
+            Self::ArgMax | Self::ArgMaxNan => {
+                if propagate_nan {
+                    Self::ArgMaxNan
+                } else {
+                    Self::ArgMax
+                }
+            }
+            Self::ArgMin | Self::ArgMinNan => {
+                if propagate_nan {
+                    Self::ArgMinNan
+                } else {
+                    Self::ArgMin
+                }
+            }
+            Self::Max | Self::MaxNan => {
+                if propagate_nan {
+                    Self::MaxNan
+                } else {
+                    Self::Max
+                }
+            }
+            Self::Min | Self::MinNan => {
+                if propagate_nan {
+                    Self::MinNan
+                } else {
+                    Self::Min
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Whether this configuration enforces extrema NaN propagation.
+    pub fn propagates_nan(self) -> bool {
+        matches!(
+            self,
+            Self::MaxAbsNan | Self::ArgMaxNan | Self::ArgMinNan | Self::MaxNan | Self::MinNan
+        )
+    }
+
     /// Shared-memory bytes one accumulator slot uses (total usage is this times the
     /// slot count). `acc_elem_size` is the accumulation element size (`P::EA`),
     /// `vector_size` the input vectorization. Mirrors each instruction's
@@ -68,11 +146,17 @@ impl ReduceOperationConfig {
             | ReduceOperationConfig::Prod
             | ReduceOperationConfig::Mean
             | ReduceOperationConfig::MaxAbs
+            | ReduceOperationConfig::MaxAbsNan
             | ReduceOperationConfig::Max
+            | ReduceOperationConfig::MaxNan
             | ReduceOperationConfig::Min
+            | ReduceOperationConfig::MinNan
             | ReduceOperationConfig::Any
             | ReduceOperationConfig::All => (1, 0),
-            ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMin => (1, 1),
+            ReduceOperationConfig::ArgMax
+            | ReduceOperationConfig::ArgMaxNan
+            | ReduceOperationConfig::ArgMin
+            | ReduceOperationConfig::ArgMinNan => (1, 1),
             ReduceOperationConfig::ArgTopK(k) => (*k, *k),
             ReduceOperationConfig::TopK(k) => (*k, 0),
         };
@@ -87,9 +171,12 @@ impl ReduceOperationConfig {
             | ReduceOperationConfig::Mean => {}
             // No benefit to mixed precision accumulation.
             ReduceOperationConfig::MaxAbs
+            | ReduceOperationConfig::MaxAbsNan
             | ReduceOperationConfig::Max
+            | ReduceOperationConfig::MaxNan
             | ReduceOperationConfig::TopK(_)
-            | ReduceOperationConfig::Min => {
+            | ReduceOperationConfig::Min
+            | ReduceOperationConfig::MinNan => {
                 return ReduceDtypes {
                     input,
                     output: input,
@@ -102,7 +189,9 @@ impl ReduceOperationConfig {
             // accumulator stays narrow (= input): indices live in a separate
             // u32 accumulator, and logical flags only ever hold 0/1.
             ReduceOperationConfig::ArgMax
+            | ReduceOperationConfig::ArgMaxNan
             | ReduceOperationConfig::ArgMin
+            | ReduceOperationConfig::ArgMinNan
             | ReduceOperationConfig::ArgTopK(_)
             | ReduceOperationConfig::Any
             | ReduceOperationConfig::All => {
@@ -283,23 +372,39 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperationConfig::Sum => ReduceOperation::new_Sum(Sum {}),
             ReduceOperationConfig::Prod => ReduceOperation::new_Prod(Prod {}),
             ReduceOperationConfig::Mean => ReduceOperation::new_Mean(Mean { sum: Sum {} }),
-            ReduceOperationConfig::MaxAbs => ReduceOperation::new_MaxAbs(MaxAbs {}),
-            ReduceOperationConfig::ArgMax => ReduceOperation::new_Max(Max {
-                output: ReduceOutputMode::Indices,
-            }),
-            ReduceOperationConfig::ArgMin => ReduceOperation::new_Min(Min {
-                output: ReduceOutputMode::Indices,
-            }),
+            ReduceOperationConfig::MaxAbs | ReduceOperationConfig::MaxAbsNan => {
+                ReduceOperation::new_MaxAbs(MaxAbs {
+                    propagate_nan: comptime!(config.propagates_nan()),
+                })
+            }
+            ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMaxNan => {
+                ReduceOperation::new_Max(Max {
+                    output: ReduceOutputMode::Indices,
+                    propagate_nan: comptime!(config.propagates_nan()),
+                })
+            }
+            ReduceOperationConfig::ArgMin | ReduceOperationConfig::ArgMinNan => {
+                ReduceOperation::new_Min(Min {
+                    output: ReduceOutputMode::Indices,
+                    propagate_nan: comptime!(config.propagates_nan()),
+                })
+            }
             ReduceOperationConfig::ArgTopK(k) => ReduceOperation::new_TopK(TopK {
                 k,
                 output: ReduceOutputMode::Indices,
             }),
-            ReduceOperationConfig::Max => ReduceOperation::new_Max(Max {
-                output: ReduceOutputMode::Values,
-            }),
-            ReduceOperationConfig::Min => ReduceOperation::new_Min(Min {
-                output: ReduceOutputMode::Values,
-            }),
+            ReduceOperationConfig::Max | ReduceOperationConfig::MaxNan => {
+                ReduceOperation::new_Max(Max {
+                    output: ReduceOutputMode::Values,
+                    propagate_nan: comptime!(config.propagates_nan()),
+                })
+            }
+            ReduceOperationConfig::Min | ReduceOperationConfig::MinNan => {
+                ReduceOperation::new_Min(Min {
+                    output: ReduceOutputMode::Values,
+                    propagate_nan: comptime!(config.propagates_nan()),
+                })
+            }
             ReduceOperationConfig::TopK(k) => ReduceOperation::new_TopK(TopK {
                 k,
                 output: ReduceOutputMode::Values,

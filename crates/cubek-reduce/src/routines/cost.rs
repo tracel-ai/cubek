@@ -84,15 +84,21 @@ impl ReduceCost {
             | ReduceOperationConfig::Prod
             | ReduceOperationConfig::Mean => 1,
             // A comparison and the select that keeps the winner.
-            ReduceOperationConfig::Max | ReduceOperationConfig::Min => 2,
+            ReduceOperationConfig::Max
+            | ReduceOperationConfig::MaxNan
+            | ReduceOperationConfig::Min
+            | ReduceOperationConfig::MinNan => 2,
             // The same, over `abs` of the element.
-            ReduceOperationConfig::MaxAbs => 3,
+            ReduceOperationConfig::MaxAbs | ReduceOperationConfig::MaxAbsNan => 3,
             // The element is first normalized to a flag, itself a comparison and a
             // select, before the same comparison and select fold it in.
             ReduceOperationConfig::Any | ReduceOperationConfig::All => 4,
             // Comparing values, breaking the tie on the coordinates, then selecting
             // the winning flag, value and coordinate.
-            ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMin => 6,
+            ReduceOperationConfig::ArgMax
+            | ReduceOperationConfig::ArgMaxNan
+            | ReduceOperationConfig::ArgMin
+            | ReduceOperationConfig::ArgMinNan => 6,
             // A sorted insertion walks all k slots, each a comparison and the two
             // selects that shift the displaced value along.
             ReduceOperationConfig::TopK(k) => 3 * k,

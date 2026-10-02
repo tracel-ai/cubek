@@ -286,7 +286,10 @@ pub(crate) fn launch_reduce_with_indices(
             },
             ReduceOperationConfig::ArgTopK(k),
         ),
-        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => launch_fused::<Max>(
+        ReduceOperationConfig::Max
+        | ReduceOperationConfig::ArgMax
+        | ReduceOperationConfig::MaxNan
+        | ReduceOperationConfig::ArgMaxNan => launch_fused::<Max>(
             client,
             input,
             values,
@@ -294,10 +297,16 @@ pub(crate) fn launch_reduce_with_indices(
             reduce_axis,
             strategy,
             dtypes,
-            ReduceOutputMode::Indices,
-            ReduceOperationConfig::ArgMax,
+            super::super::components::instructions::ExtremaConfig {
+                output: ReduceOutputMode::Indices,
+                propagate_nan: operation.propagates_nan(),
+            },
+            ReduceOperationConfig::ArgMax.with_nan_propagation(operation.propagates_nan()),
         ),
-        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => launch_fused::<Min>(
+        ReduceOperationConfig::Min
+        | ReduceOperationConfig::ArgMin
+        | ReduceOperationConfig::MinNan
+        | ReduceOperationConfig::ArgMinNan => launch_fused::<Min>(
             client,
             input,
             values,
@@ -305,8 +314,11 @@ pub(crate) fn launch_reduce_with_indices(
             reduce_axis,
             strategy,
             dtypes,
-            ReduceOutputMode::Indices,
-            ReduceOperationConfig::ArgMin,
+            super::super::components::instructions::ExtremaConfig {
+                output: ReduceOutputMode::Indices,
+                propagate_nan: operation.propagates_nan(),
+            },
+            ReduceOperationConfig::ArgMin.with_nan_propagation(operation.propagates_nan()),
         ),
         _ => unreachable!("reduce_with_indices rejects operations without indices"),
     }
