@@ -428,7 +428,7 @@ mod tests {
             let scope = scope();
             let a = input::<f32>(&scope);
             let b = input::<f32>(&scope);
-            select_max::expand::<f32, Const<1>>(&scope, a.clone(), b.clone(), propagate);
+            select_max::expand::<f32, Const<1>>(&scope, a, b, propagate);
             select_min::expand::<f32, Const<1>>(&scope, a, b, propagate);
             let ir = format!("{scope}");
             assert_eq!(ir.contains("cmp.f_max_nan"), propagate, "{ir}");
@@ -456,14 +456,7 @@ mod tests {
                 } else {
                     select_argmin::expand::<f32, Const<1>>
                 };
-                max(
-                    &scope,
-                    a.clone(),
-                    a_index.clone(),
-                    b.clone(),
-                    b_index.clone(),
-                    propagate,
-                );
+                max(&scope, a, a_index, b, b_index, propagate);
                 min(&scope, a, a_index, b, b_index, propagate);
                 let ir = format!("{scope}");
                 assert_eq!(ir.contains("math.is_nan"), propagate, "{ir}");
@@ -480,20 +473,13 @@ mod tests {
                 if indexed {
                     let index = input::<u32>(&scope);
                     plane_argmax_with_nan_policy::expand::<f32, Const<1>>(
-                        &scope,
-                        value.clone(),
-                        index.clone(),
-                        propagate,
+                        &scope, value, index, propagate,
                     );
                     plane_argmin_with_nan_policy::expand::<f32, Const<1>>(
                         &scope, value, index, propagate,
                     );
                 } else {
-                    plane_max_with_nan_policy::expand::<f32, Const<1>>(
-                        &scope,
-                        value.clone(),
-                        propagate,
-                    );
+                    plane_max_with_nan_policy::expand::<f32, Const<1>>(&scope, value, propagate);
                     plane_min_with_nan_policy::expand::<f32, Const<1>>(&scope, value, propagate);
                 }
                 let ir = format!("{scope}");
