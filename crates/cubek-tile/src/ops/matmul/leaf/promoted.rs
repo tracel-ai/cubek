@@ -24,11 +24,13 @@ impl<T: Numeric> RegisterData<T> {
         let vw = comptime!(rhs_load.run_length());
         let lw = lhs.vector_size();
         let fold = comptime!(self.fold);
-        // A packed rhs is served at its packing factor, so this checks the block was opened by it.
+        // A packed rhs is served at its packing factor, so this checks the block was opened by it:
+        // its lines are the rhs's, or it folds the rhs's runs into one-wide cells.
         comptime!(assert!(
-            vw == self.vector_size,
-            "RegisterData::mma: the block's lines are {} wide but the rhs serves {vw}; a packed \
-             rhs serves its packing factor, so open the block against the rhs it contracts",
+            (fold == 1 && vw == self.vector_size) || (fold == vw && self.vector_size == 1),
+            "RegisterData::mma: the block's lines are {} wide folding {fold} values a step, but the \
+             rhs serves runs of {vw}; a packed rhs serves its packing factor, so open the block \
+             against the rhs it contracts",
             self.vector_size
         ));
         let lined_along_k = comptime!(
@@ -71,7 +73,8 @@ impl<T: Numeric> RegisterData<T> {
         let size!(RL) = comptime!(rhs_load.values());
 
         let config = comptime!(self.config);
-        let unroll = comptime!(mr * nr * vw <= config.budget);
+        // The scalars the block holds: a line a cell, one value where it folds.
+        let unroll = comptime!(mr * nr * self.vector_size <= config.budget);
         let component_fanout = comptime!(config.component_fanout);
 
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
@@ -91,22 +94,40 @@ impl<T: Numeric> RegisterData<T> {
             comptime!(acc_axes),
         );
 
-        registers::contract::<T, EL, L, ER, RA, RL>(
-            &lhs_mat,
-            &lhs_scales,
-            &rhs_mat,
-            &rhs_scales,
-            &mut self.data,
-            lw,
-            fold,
-            comptime!(rhs_load.values() / vw),
-            mr,
-            nr,
-            kc,
-            unroll,
-            component_fanout,
-            semiring,
-        );
+        let columns = comptime!(rhs_load.values() / vw);
+        if comptime!(fold > 1) {
+            registers::contract_folded::<T, EL, L, ER, RL>(
+                &lhs_mat,
+                &lhs_scales,
+                &rhs_mat,
+                &rhs_scales,
+                &mut self.data,
+                fold,
+                columns,
+                mr,
+                nr,
+                kc,
+                unroll,
+                semiring,
+            );
+        } else {
+            registers::contract::<T, EL, L, ER, RA, RL>(
+                &lhs_mat,
+                &lhs_scales,
+                &rhs_mat,
+                &rhs_scales,
+                &mut self.data,
+                lw,
+                fold,
+                columns,
+                mr,
+                nr,
+                kc,
+                unroll,
+                component_fanout,
+                semiring,
+            );
+        }
     }
 }
 
