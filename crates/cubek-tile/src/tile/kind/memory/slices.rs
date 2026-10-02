@@ -119,4 +119,29 @@ impl<E: Float> Memory<E> {
             at += PLANE_DIM as usize;
         }
     }
+
+    /// The `count` cells of this window in order, every unit of the plane reading them all: a
+    /// window holding one value a slice of something else, as the rows of a softmax.
+    pub(crate) fn cells(&self, #[comptime] count: usize) -> Array<E> {
+        let size!(W) = 1usize;
+        let view = self.flat::<W>();
+        let mut cells = Array::<E>::new(count);
+        #[unroll]
+        for i in 0..count {
+            cells[i] = view.read(i).extract(0usize);
+        }
+        cells
+    }
+
+    /// Write `values` over the `count` cells of this window, from the plane's first unit.
+    pub(crate) fn set_cells(&mut self, values: &Array<E>, #[comptime] count: usize) {
+        let size!(W) = 1usize;
+        let mut view = self.flat_mut::<W>();
+        if UNIT_POS_PLANE == 0 {
+            #[unroll]
+            for i in 0..count {
+                view.write(i, Vector::cast_from(values[i]));
+            }
+        }
+    }
 }

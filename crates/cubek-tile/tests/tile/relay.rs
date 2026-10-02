@@ -247,7 +247,7 @@ fn relayed_split_matmul(
 
 /// Whether this device hands one cube's writes to another within a dispatch and loads and stores
 /// `u32` atomically, the two things the relay needs; reported rather than silently passed.
-fn relays(client: &cubecl::client::Client) -> bool {
+pub(super) fn relays(client: &cubecl::client::Client) -> bool {
     let hands_off = client.properties().features.device_memory_scope;
     let counts = client
         .properties()

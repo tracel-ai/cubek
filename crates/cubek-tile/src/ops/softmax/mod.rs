@@ -12,5 +12,5 @@ pub(crate) mod state;
 
 pub(crate) use state::*;
 
-pub use online::{OnlineSoftmax, OnlineSoftmaxExpand};
+pub use online::{OnlineSoftmax, OnlineSoftmaxExpand, RelayedFactors, RelayedFactorsExpand};
 pub use state::{LOGIT_MASKED, MaskProbe, RowShare, RowState, masked_recip};
