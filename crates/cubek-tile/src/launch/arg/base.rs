@@ -203,7 +203,7 @@ impl<'a> Arg<'a, Labelled> {
             projection,
             boundaries: boundaries.modes,
             units: launch.cube_dim().num_elems() as usize,
-            packing: data.packing,
+            packing: data.packing.read_on(launch.client()),
             storage,
             stored_tiles,
             delivery: Delivery::SyncPerUnit,

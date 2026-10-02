@@ -580,11 +580,33 @@ fn four_bit_fields_unpack_on_read() {
 /// a signed nibble `7`). Nothing states a scheme: the packing names the field, which decodes.
 #[test]
 fn fp4_codes_unpack_on_read() {
-    let (field, rows, cols) = (QuantValue::E2M1, 4, 32);
+    let client = cubecl::test_device().client();
+    check_fp4_codes_unpack(&client, Field::from(QuantValue::E2M1));
+}
+
+/// The same codes through the device's own `e2m1x2` conversion, where it has one: what an
+/// operand bound at launch reads `e2m1` as ([`Field::read_on`]).
+#[test]
+fn fp4_codes_unpack_through_the_devices_conversion() {
+    let client = cubecl::test_device().client();
+    let field = Field::from(QuantValue::E2M1).read_on(&client);
+    if field != Field::ConvertedE2M1 {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device does not convert e2m1x2".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    check_fp4_codes_unpack(&client, field);
+}
+
+/// Every `e2m1` code, packed eight to a word, unpacked through `field` and checked against the
+/// format's own decode.
+fn check_fp4_codes_unpack(client: &Client, field: Field) {
+    let (rows, cols) = (4, 32);
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -618,7 +640,7 @@ fn fp4_codes_unpack_on_read() {
 
     let space = Space::new(&[(M, rows), (N, cols)]);
     packed_copy::launch(
-        &client,
+        client,
         CubeCount::new_single(),
         CubeDim::new_single(),
         factor,
@@ -630,11 +652,11 @@ fn fp4_codes_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        uncut(&client, &space, &space).partitioning_arg(),
+        uncut(client, &space, &space).partitioning_arg(),
         dtype,
     );
 
-    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    let got = HostData::from_tensor_handle(client, output, HostDataType::F32);
     for m in 0..rows {
         for n in 0..cols {
             let want = e2m1::from_bits(codes[m * cols + n] as u8).to_f32();

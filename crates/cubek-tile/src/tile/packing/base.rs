@@ -1,7 +1,11 @@
 //! How an operand's values sit in memory.
 
+use cubecl::client::Client;
+use cubecl::e2m1x2;
+use cubecl::ir::features::TypeUsage;
 use cubecl::ir::types::Fp8Format;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::quant::scheme::ScaleDtype;
 
@@ -27,6 +31,10 @@ pub enum Field {
     Index {
         bits: usize,
     },
+    /// An `e2m1` code on a device that converts `e2m1x2` itself: a word is read as four of them
+    /// and cast, the decode left to the compiler. What [`read_on`](Field::read_on) makes of
+    /// `Quant(E2M1)` there.
+    ConvertedE2M1,
 }
 
 impl From<QuantValue> for Field {
@@ -56,6 +64,7 @@ impl Field {
             Field::Fp8(_) => 8,
             Field::Float(kind) => Field::float_bits(kind),
             Field::Index { bits } => bits,
+            Field::ConvertedE2M1 => QuantValue::E2M1.size_bits(),
         }
     }
 
@@ -66,6 +75,17 @@ impl Field {
 }
 
 impl Field {
+    /// This field as the device `client` reads it: an `e2m1` code converted by the device where it
+    /// converts `e2m1x2`, every other field as it is. A device's own conversion is the one its
+    /// compiler lowers best, so where it exists a software decode is only ever slower.
+    pub fn read_on(self, client: &Client) -> Field {
+        let converts = e2m1x2::supported_uses(client).contains(TypeUsage::Conversion);
+        match self {
+            Field::Quant(QuantValue::E2M1) if converts => Field::ConvertedE2M1,
+            other => other,
+        }
+    }
+
     /// The field a float of `kind` occupies.
     pub fn of_float(kind: FloatKind) -> Field {
         match kind {
@@ -113,6 +133,7 @@ impl Field {
             Field::Fp8(format) => FieldDecode::Byte(format),
             Field::Float(kind) => FieldDecode::Bits(kind),
             Field::Index { .. } => FieldDecode::Unsigned,
+            Field::ConvertedE2M1 => FieldDecode::Converted,
         }
     }
 }
@@ -126,10 +147,24 @@ pub(crate) enum FieldDecode {
     Unsigned,
     /// A 4-bit float code, read back by reinterpreting the byte two of them share.
     Reinterpreted,
+    /// A 4-bit float code the device converts: a word cast as four `e2m1x2`.
+    Converted,
     /// An 8-bit float code, read back through the format's own decoder.
     Byte(Fp8Format),
     /// A whole float, read back by reinterpreting the bits of its slot.
     Bits(FloatKind),
+}
+
+impl Packing {
+    /// This packing as the device `client` reads it ([`Field::read_on`]).
+    pub(crate) fn read_on(self, client: &Client) -> Packing {
+        match self {
+            Packing::Packed { field } => Packing::Packed {
+                field: field.read_on(client),
+            },
+            Packing::Plain => Packing::Plain,
+        }
+    }
 }
 
 impl Packing {
@@ -241,5 +276,7 @@ mod tests {
             Field::from(QuantValue::E2M1).decode(),
             FieldDecode::Reinterpreted
         );
+        assert_eq!(Field::ConvertedE2M1.decode(), FieldDecode::Converted);
+        assert_eq!(Field::ConvertedE2M1.per_word(), 8);
     }
 }
