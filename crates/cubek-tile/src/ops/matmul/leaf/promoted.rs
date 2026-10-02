@@ -94,40 +94,22 @@ impl<T: Numeric> RegisterData<T> {
             comptime!(acc_axes),
         );
 
-        let columns = comptime!(rhs_load.values() / vw);
-        if comptime!(fold > 1) {
-            registers::contract_folded::<T, EL, L, ER, RL>(
-                &lhs_mat,
-                &lhs_scales,
-                &rhs_mat,
-                &rhs_scales,
-                &mut self.data,
-                fold,
-                columns,
-                mr,
-                nr,
-                kc,
-                unroll,
-                semiring,
-            );
-        } else {
-            registers::contract::<T, EL, L, ER, RA, RL>(
-                &lhs_mat,
-                &lhs_scales,
-                &rhs_mat,
-                &rhs_scales,
-                &mut self.data,
-                lw,
-                fold,
-                columns,
-                mr,
-                nr,
-                kc,
-                unroll,
-                component_fanout,
-                semiring,
-            );
-        }
+        registers::contract::<T, EL, L, ER, RA, RL>(
+            &lhs_mat,
+            &lhs_scales,
+            &rhs_mat,
+            &rhs_scales,
+            &mut self.data,
+            lw,
+            fold,
+            comptime!(rhs_load.values() / vw),
+            mr,
+            nr,
+            kc,
+            unroll,
+            component_fanout,
+            semiring,
+        );
     }
 }
 
