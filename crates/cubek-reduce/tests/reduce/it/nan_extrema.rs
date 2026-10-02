@@ -33,12 +33,12 @@ fn run_extrema(case: TestCase, data: Vec<f32>) {
 
 fn run_nan_extrema(case: TestCase) {
     let data = nan_extrema_data(&case.shape, case.axis.unwrap());
-    run_extrema(case, data);
+    run_extrema(case.with_nan_propagation(), data);
 }
 
 fn run_mixed_nan_extrema(case: TestCase) {
     let data = mixed_nan_extrema_data(&case.shape, case.axis.unwrap());
-    run_extrema(case, data);
+    run_extrema(case.with_nan_propagation(), data);
 }
 
 fn run_signed_zero_extrema(case: TestCase) {
@@ -376,7 +376,8 @@ fn max_abs_short_axis_nan() {
         }
     }
     for case in cases {
-        case.with_data(vec![1.0, f32::NAN, -3.0, 1.0, -4.0, 3.0])
+        case.with_nan_propagation()
+            .with_data(vec![1.0, f32::NAN, -3.0, 1.0, -4.0, 3.0])
             .test_max_abs();
     }
 }

@@ -61,6 +61,14 @@ fn two_launch_configs(
         ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => {
             (ReduceOperationConfig::Max, ReduceOperationConfig::ArgMax)
         }
+        ReduceOperationConfig::MaxNan | ReduceOperationConfig::ArgMaxNan => (
+            ReduceOperationConfig::MaxNan,
+            ReduceOperationConfig::ArgMaxNan,
+        ),
+        ReduceOperationConfig::MinNan | ReduceOperationConfig::ArgMinNan => (
+            ReduceOperationConfig::MinNan,
+            ReduceOperationConfig::ArgMinNan,
+        ),
         ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => {
             (ReduceOperationConfig::Min, ReduceOperationConfig::ArgMin)
         }

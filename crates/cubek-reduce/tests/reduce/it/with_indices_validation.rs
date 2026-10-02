@@ -110,7 +110,12 @@ fn accepts_matching_outputs() {
 
 #[test]
 fn accepts_min_and_max() {
-    for operation in [ReduceOperationConfig::Min, ReduceOperationConfig::Max] {
+    for operation in [
+        ReduceOperationConfig::Min,
+        ReduceOperationConfig::Max,
+        ReduceOperationConfig::MinNan,
+        ReduceOperationConfig::MaxNan,
+    ] {
         let result = try_launch_config(operation, 1, [4, 1], vec![1, 1]);
         assert!(
             result.is_ok(),

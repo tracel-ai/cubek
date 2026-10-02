@@ -1,3 +1,6 @@
+/// Runtime defaults for CubeK and its consumers.
+pub mod config;
+
 pub mod cube_count;
 pub mod launch;
 pub mod layout;

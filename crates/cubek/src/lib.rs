@@ -25,6 +25,10 @@ pub use cubek_pool as pool;
 #[cfg(feature = "stdlib")]
 pub use cubek_std as std;
 
+/// Runtime defaults for CubeK and its consumers.
+#[cfg(feature = "stdlib")]
+pub use cubek_std::config;
+
 #[cfg(feature = "tile")]
 pub use cubek_tile as tile;
 
