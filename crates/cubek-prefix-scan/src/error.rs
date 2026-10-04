@@ -1,0 +1,28 @@
+use thiserror::Error;
+
+#[derive(Error, Debug, Clone)]
+pub enum PrefixScanError {
+    #[error("Unsupported rank {rank}, expected 1")]
+    UnsupportedRank { rank: usize },
+
+    #[error("Input / output shape mismatch: input {input:?} output {output:?}")]
+    InputOutputShapeMismatch {
+        input: Vec<usize>,
+        output: Vec<usize>,
+    },
+
+    #[error("Input size would lead to a number of cubes which overflows u32::MAX")]
+    CubeCountOverflowsU32,
+
+    #[error("Input size must be a multiple of the vector size")]
+    InputSizeNotMultipleOfVectorSize,
+
+    #[error("Vector size must be a power of two")]
+    VectorSizeNotPoT,
+
+    #[error("Units per cube must be a power of two")]
+    UnitsPerCubeNotPoT,
+
+    #[error("Missing support for device_memory_scope")]
+    MissingDeviceMemoryScope,
+}
