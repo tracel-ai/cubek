@@ -1,5 +1,7 @@
 //! Where a stage keeps each line of a block row ([`RowArrangement`]).
 
+use cubecl::prelude::TensorMapSwizzle;
+
 use crate::*;
 
 /// Bytes one physical line of a buffer holds.
@@ -47,6 +49,23 @@ impl RowArrangement {
         match self {
             Self::InOrder | Self::Padded { .. } => true,
             Self::Swizzled(_) => false,
+        }
+    }
+
+    /// The swizzle a TMA descriptor lands a box's rows with, so they sit as this stage keeps them:
+    /// none for rows in order, the engine's own for a swizzled row of one span
+    /// ([`ChunkSwizzle::tma`]).
+    ///
+    /// # Errors
+    ///
+    /// Padded rows, which a box lands dense, and a swizzled row longer than the engine swizzles.
+    pub(crate) fn tma_swizzle(&self) -> Result<TensorMapSwizzle, &'static str> {
+        match self {
+            Self::InOrder => Ok(TensorMapSwizzle::None),
+            Self::Swizzled(swizzle) => swizzle
+                .tma()
+                .ok_or("a swizzled row longer than 128 bytes, which no descriptor swizzle spans"),
+            Self::Padded { .. } => Err("padded rows, which a descriptor lands dense"),
         }
     }
 

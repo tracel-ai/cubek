@@ -51,6 +51,17 @@ pub enum Refusal {
         edge: usize,
         most: usize,
     },
+    /// A TMA box lands its rows whole, one after the other, and the stage's blocks split the rows
+    /// along `axis`, the innermost, or stack `rows` of them where the swizzle repeats every
+    /// `period`.
+    BoxSplitsStageBlocks {
+        axis: Axis,
+        rows: usize,
+        period: usize,
+    },
+    /// A TMA box lands its rows dense, at most swizzled within one span, and the stage keeps them
+    /// as `why` says.
+    RowsNoDescriptorLands { why: &'static str },
 }
 
 impl Display for Refusal {
@@ -128,6 +139,16 @@ impl Display for Refusal {
                  device carries no barrier type for the two roles to meet on"
             ),
             Refusal::BoxPastDescriptor { axis, edge, most } => box_past(f, *axis, *edge, *most),
+            Refusal::BoxSplitsStageBlocks { axis, rows, period } => write!(
+                f,
+                "TMA: a box lands its rows whole and in order, and the stage's blocks split \
+                 {axis:?} or stack {rows} rows apiece where the swizzle repeats every {period}"
+            ),
+            Refusal::RowsNoDescriptorLands { why } => write!(
+                f,
+                "TMA: a box lands its rows dense, at most swizzled within a span, and the stage \
+                 holds {why}"
+            ),
         }
     }
 }

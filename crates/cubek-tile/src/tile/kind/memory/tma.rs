@@ -48,11 +48,15 @@ impl<T: Numeric> TmaData<T> {
     /// Issue the `tensor_map_load` into `dst` on `barrier` without arriving or waiting.
     /// Only the electing unit may call it, since it alone declares the transaction count.
     pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {
-        // A TMA box lands its rows dense and in order, unlike a swizzled stage.
-        comptime!(dst.layout.rows.assert_in_order(
-            "TmaData::stage_into",
-            "a TMA box lands its rows dense and in order"
-        ));
+        // A box lands its rows dense, swizzled by the descriptor where the stage keeps them
+        // swizzled; the launch built the descriptor off the same answer
+        // (`StageStorage::tma_swizzle`).
+        comptime!(
+            dst.layout
+                .rows
+                .tma_swizzle()
+                .unwrap_or_else(|why| panic!("TmaData::stage_into: a TMA box cannot land {why}"))
+        );
         self.view.tensor_map_load(
             barrier,
             dst.store.buffer_mut().downcast_mut(),
