@@ -5,10 +5,10 @@ use cubecl::e2m1x2;
 use cubecl::ir::features::TypeUsage;
 use cubecl::ir::types::Fp8Format;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::post_processing::fp4::E2M1_F16_LIFT;
 use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::quant::scheme::ScaleDtype;
-use cubecl::post_processing::fp4::E2M1_F16_LIFT;
 
 /// How an operand's values sit in memory.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -41,7 +41,9 @@ pub enum Field {
     /// [`E2M1_F16_LIFT`] short of its value for a reader whose factor carries the lift
     /// ([`Tile::placed`](crate::Tile::placed)). What [`read_on`](Field::read_on) makes of
     /// `Quant(E2M1)` there, lifted.
-    PlacedE2M1 { lifted: bool },
+    PlacedE2M1 {
+        lifted: bool,
+    },
 }
 
 impl From<QuantValue> for Field {
@@ -83,8 +85,8 @@ impl Field {
 
 impl Field {
     /// This field as the device `client` reads it: an `e2m1` code decoded from its bits where the
-    /// device emulates converting `e2m1x2` anyway, so a reader can fold the decode's lift into its
-    /// factor; converted by the device where it converts `e2m1x2` itself; every other field as it
+    /// device emulates converting `e2m1x2` anyway, so a reader's factor can carry the decode's
+    /// lift; converted by the device where it converts `e2m1x2` itself; every other field as it
     /// is. A device's own conversion is the one its compiler lowers best, so where it exists a
     /// software decode is only ever slower.
     pub fn read_on(self, client: &Client) -> Field {
