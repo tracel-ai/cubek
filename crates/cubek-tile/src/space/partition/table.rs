@@ -11,17 +11,6 @@ const LEVEL: &str = "  ";
 const TIMES: &str = " × ";
 const GAP: &str = "    ";
 
-/// How many tiles a level takes along one axis, as printed.
-fn count(level: &Level, space: &Space, axis: Axis) -> String {
-    match level.count(axis) {
-        None => "·".to_string(),
-        Some(_) => match level.tiles_const(space, axis) {
-            Some(tiles) => tiles.to_string(),
-            None => "?".to_string(),
-        },
-    }
-}
-
 /// A [`Partitioning`] with a name for each of its axes; unnamed axes print their index.
 pub struct LevelTable<'a> {
     partitioning: &'a Partitioning,
@@ -63,55 +52,53 @@ impl<'a> LevelTable<'a> {
     }
 }
 
-/// The glyph a level's coverage prints as.
-fn glyph(coverage: Coverage) -> char {
-    match coverage {
-        Coverage::Distribute(ComputeScope::Cube) => '▣',
-        Coverage::Distribute(ComputeScope::Plane) => '▤',
-        Coverage::Distribute(ComputeScope::Unit) => '▪',
-        Coverage::Walk => '↻',
+impl Display for LevelTable<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let axes: Vec<Axis> = self.partitioning.space().axes().collect();
+        let header: Vec<String> = axes.iter().map(|&axis| self.label(axis)).collect();
+        let rows = self.rows();
+
+        let counts = Block::new("count", &header, rows.iter().map(|row| &row.counts));
+        let tiles = Block::new("tile", &header, rows.iter().map(|row| &row.tile));
+        let coverage_wide = rows
+            .iter()
+            .map(|row| row.coverage.chars().count())
+            .max()
+            .unwrap_or(0)
+            + GAP.chars().count();
+        let indent = format!("{MARGIN} {LEVEL}{:coverage_wide$}", "");
+
+        writeln!(
+            f,
+            "{indent}{}{}{GAP}{}{}",
+            counts.indent(),
+            counts.line(&header),
+            tiles.indent(),
+            tiles.line(&header)
+        )?;
+        writeln!(f)?;
+        for row in &rows {
+            writeln!(
+                f,
+                "{MARGIN}{}{LEVEL}{:coverage_wide$}{}{}{GAP}{}{}",
+                row.glyph,
+                row.coverage,
+                counts.indent(),
+                counts.line(&row.counts),
+                tiles.indent(),
+                tiles.line(&row.tile)
+            )?;
+        }
+        writeln!(f)?;
+        write!(f, "{indent}{}{GAP}{}", counts.rule(), tiles.rule())
     }
 }
 
-/// What a level covers, in words.
-fn coverage(level: &Level, space: &Space) -> String {
-    let counts: Vec<Option<usize>> = level
-        .axes()
-        .iter()
-        .map(|&axis| level.tiles_const(space, axis))
-        .collect();
-    let total = counts
-        .iter()
-        .try_fold(1usize, |acc, count| count.map(|n| acc * n));
-    let many = match total {
-        Some(n) => n.to_string(),
-        None => "?".to_string(),
-    };
-    let interleaved = level
-        .axes()
-        .iter()
-        .any(|&axis| level.spread(axis) == Some(Spread::Interleaved));
-    let mut note = match level.coverage() {
-        Coverage::Distribute(ComputeScope::Cube) => match level.shared_by() {
-            Some(cubes) => format!("{cubes} cubes sharing {many} boxes"),
-            None => format!("{many} cubes"),
-        },
-        Coverage::Distribute(ComputeScope::Plane) => match level.shared_by() {
-            Some(planes) => format!("{planes} planes sharing {many} boxes"),
-            None => format!("{many} planes a cube"),
-        },
-        Coverage::Distribute(ComputeScope::Unit) => format!("{many} units"),
-        Coverage::Walk => format!("{many} steps"),
-    };
-    if interleaved {
-        note += " interleaved";
+/// Prints the table with no axis named; see [`Partitioning::table`].
+impl Display for Partitioning {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.table(&[]).fmt(f)
     }
-    match level.fillers() {
-        0 => {}
-        1 => note += ", 1 filling plane",
-        n => note += &format!(", {n} filling planes"),
-    }
-    note
 }
 
 /// One line of the table.
@@ -125,10 +112,13 @@ struct Row {
 impl Row {
     fn of(level: &Level, space: &Space, axes: &[Axis]) -> Row {
         Row {
-            glyph: glyph(level.coverage()),
-            coverage: coverage(level, space),
-            counts: axes.iter().map(|&axis| count(level, space, axis)).collect(),
-            tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
+            glyph: Row::glyph(level.coverage()),
+            coverage: Row::coverage(level, space),
+            counts: axes
+                .iter()
+                .map(|&axis| Row::count(level, space, axis))
+                .collect(),
+            tile: axes.iter().map(|&axis| Row::extent(space, axis)).collect(),
         }
     }
 
@@ -138,113 +128,146 @@ impl Row {
             glyph: LEAF,
             coverage: String::new(),
             counts: axes.iter().map(|_| "·".to_string()).collect(),
-            tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
+            tile: axes.iter().map(|&axis| Row::extent(space, axis)).collect(),
         }
     }
-}
 
-/// `axis`'s extent, or the mark a dynamic one prints as.
-fn extent(space: &Space, axis: Axis) -> String {
-    match space.is_dynamic(axis) {
-        true => "?".to_string(),
-        false => space.extent(axis).to_string(),
+    /// The glyph a level's coverage prints as.
+    fn glyph(coverage: Coverage) -> char {
+        match coverage {
+            Coverage::Distribute(ComputeScope::Cube) => '▣',
+            Coverage::Distribute(ComputeScope::Plane) => '▤',
+            Coverage::Distribute(ComputeScope::Unit) => '▪',
+            Coverage::Walk => '↻',
+        }
     }
-}
 
-/// The widest cell of each column, the header's own label included.
-fn widths(header: &[String], cells: impl Iterator<Item = Vec<String>>) -> Vec<usize> {
-    cells.fold(
-        header.iter().map(|label| label.chars().count()).collect(),
-        |widest: Vec<usize>, row| {
-            widest
-                .iter()
-                .zip(&row)
-                .map(|(&widest, cell)| widest.max(cell.chars().count()))
-                .collect()
-        },
-    )
-}
-
-/// One block of a line: every cell right-aligned in its column, `×` between.
-fn block(cells: &[String], widths: &[usize]) -> String {
-    cells
-        .iter()
-        .zip(widths)
-        .map(|(cell, &width)| format!("{cell:>width$}"))
-        .collect::<Vec<_>>()
-        .join(TIMES)
-}
-
-/// The rule naming a block.
-fn rule(name: &str, width: usize) -> String {
-    format!("└─ {name} {}┘", "─".repeat(width - ruled(name) + 1))
-}
-
-/// The narrowest a block can print and still carry its rule.
-fn ruled(name: &str) -> usize {
-    name.chars().count() + 6
-}
-
-impl Display for LevelTable<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let axes: Vec<Axis> = self.partitioning.space().axes().collect();
-        let header: Vec<String> = axes.iter().map(|&axis| self.label(axis)).collect();
-        let rows = self.rows();
-
-        let counts = widths(&header, rows.iter().map(|row| row.counts.clone()));
-        let tiles = widths(&header, rows.iter().map(|row| row.tile.clone()));
-        let (counts_wide, counts_pad) = padded(&counts, "count");
-        let (tiles_wide, tiles_pad) = padded(&tiles, "tile");
-        let coverage_wide = rows
+    /// What a level covers, in words.
+    fn coverage(level: &Level, space: &Space) -> String {
+        let counts: Vec<Option<usize>> = level
+            .axes()
             .iter()
-            .map(|row| row.coverage.chars().count())
-            .max()
-            .unwrap_or(0)
-            + GAP.chars().count();
-        let indent = format!("{MARGIN} {LEVEL}{:coverage_wide$}", "");
-
-        writeln!(
-            f,
-            "{indent}{counts_pad}{}{GAP}{tiles_pad}{}",
-            block(&header, &counts),
-            block(&header, &tiles)
-        )?;
-        writeln!(f)?;
-        for row in &rows {
-            writeln!(
-                f,
-                "{MARGIN}{}{LEVEL}{:coverage_wide$}{counts_pad}{}{GAP}{tiles_pad}{}",
-                row.glyph,
-                row.coverage,
-                block(&row.counts, &counts),
-                block(&row.tile, &tiles)
-            )?;
+            .map(|&axis| level.tiles_const(space, axis))
+            .collect();
+        let total = counts
+            .iter()
+            .try_fold(1usize, |acc, count| count.map(|n| acc * n));
+        let many = match total {
+            Some(n) => n.to_string(),
+            None => "?".to_string(),
+        };
+        let interleaved = level
+            .axes()
+            .iter()
+            .any(|&axis| level.spread(axis) == Some(Spread::Interleaved));
+        let mut note = match level.coverage() {
+            Coverage::Distribute(ComputeScope::Cube) => match level.shared_by() {
+                Some(cubes) => format!("{cubes} cubes sharing {many} boxes"),
+                None => format!("{many} cubes"),
+            },
+            Coverage::Distribute(ComputeScope::Plane) => match level.shared_by() {
+                Some(planes) => format!("{planes} planes sharing {many} boxes"),
+                None => format!("{many} planes a cube"),
+            },
+            Coverage::Distribute(ComputeScope::Unit) => format!("{many} units"),
+            Coverage::Walk => format!("{many} steps"),
+        };
+        if interleaved {
+            note += " interleaved";
         }
-        writeln!(f)?;
-        write!(
-            f,
-            "{indent}{}{GAP}{}",
-            rule("count", counts_wide),
-            rule("tile", tiles_wide)
+        match level.fillers() {
+            0 => {}
+            1 => note += ", 1 filling plane",
+            n => note += &format!(", {n} filling planes"),
+        }
+        note
+    }
+
+    /// How many tiles a level takes along one axis, as printed.
+    fn count(level: &Level, space: &Space, axis: Axis) -> String {
+        match level.count(axis) {
+            None => "·".to_string(),
+            Some(_) => match level.tiles_const(space, axis) {
+                Some(tiles) => tiles.to_string(),
+                None => "?".to_string(),
+            },
+        }
+    }
+
+    /// `axis`'s extent, or the mark a dynamic one prints as.
+    fn extent(space: &Space, axis: Axis) -> String {
+        match space.is_dynamic(axis) {
+            true => "?".to_string(),
+            false => space.extent(axis).to_string(),
+        }
+    }
+}
+
+/// One named block of columns, the counts or the tiles: every cell right-aligned in its column,
+/// `×` between, a rule naming the block beneath.
+struct Block<'n> {
+    name: &'n str,
+    /// The widest cell of each column, the header's own label included.
+    widths: Vec<usize>,
+}
+
+impl<'n> Block<'n> {
+    fn new<'c>(
+        name: &'n str,
+        header: &[String],
+        cells: impl Iterator<Item = &'c Vec<String>>,
+    ) -> Self {
+        let widths = cells.fold(
+            header.iter().map(|label| label.chars().count()).collect(),
+            |widest: Vec<usize>, row| {
+                widest
+                    .iter()
+                    .zip(row)
+                    .map(|(&widest, cell)| widest.max(cell.chars().count()))
+                    .collect()
+            },
+        );
+        Block { name, widths }
+    }
+
+    /// One line's cells of this block.
+    fn line(&self, cells: &[String]) -> String {
+        cells
+            .iter()
+            .zip(&self.widths)
+            .map(|(cell, &width)| format!("{cell:>width$}"))
+            .collect::<Vec<_>>()
+            .join(TIMES)
+    }
+
+    /// The rule naming this block.
+    fn rule(&self) -> String {
+        format!(
+            "└─ {} {}┘",
+            self.name,
+            "─".repeat(self.wide() - self.ruled() + 1)
         )
     }
-}
 
-/// How wide a block of these columns prints, and the indent to get there.
-fn padded(widths: &[usize], name: &str) -> (usize, String) {
-    let wide = spanned(widths).max(ruled(name));
-    (wide, " ".repeat(wide - spanned(widths)))
-}
+    /// The indent before a line's cells, so they end where the rule does.
+    fn indent(&self) -> String {
+        " ".repeat(self.wide() - self.spanned())
+    }
 
-/// How wide a block of these columns prints, separators included.
-fn spanned(widths: &[usize]) -> usize {
-    widths.iter().sum::<usize>() + TIMES.chars().count() * (widths.len().saturating_sub(1))
-}
+    /// How wide this block prints: its cells, or its rule where that is wider.
+    fn wide(&self) -> usize {
+        self.spanned().max(self.ruled())
+    }
 
-/// Prints the table with no axis named; see [`Partitioning::table`].
-impl Display for Partitioning {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.table(&[]).fmt(f)
+    /// How wide this block's cells print, separators included.
+    fn spanned(&self) -> usize {
+        self.widths.iter().sum::<usize>()
+            + TIMES.chars().count() * (self.widths.len().saturating_sub(1))
+    }
+
+    /// The narrowest this block can print and still carry its rule.
+    fn ruled(&self) -> usize {
+        self.name.chars().count() + 6
     }
 }
 
