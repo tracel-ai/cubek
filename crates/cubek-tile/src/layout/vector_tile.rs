@@ -207,36 +207,62 @@ impl VectorTile {
             }
             return parts;
         }
-        let unlabelled = rank - labels.len();
-        // The `j`-th finest stated tile of an axis is its `j`-th dim from the end of the buffer.
         let mut taken = 1;
-        let mut from_end: Vec<(Axis, usize)> = Vec::new();
-        for &(axis, count) in stored {
-            let nth = match from_end.iter_mut().find(|(a, _)| *a == axis) {
-                Some((_, seen)) => {
-                    *seen += 1;
-                    *seen
-                }
-                None => {
-                    from_end.push((axis, 1));
-                    1
-                }
-            };
+        for (&(_, count), dim) in stored.iter().zip(Self::stated_dims(stored, labels, rank)) {
             if count == 1 {
                 continue;
             }
             if taken == self.values() {
                 break;
             }
-            let dim = (0..labels.len())
-                .rev()
-                .filter(|&d| labels[d] == axis)
-                .nth(nth - 1)
-                .expect("a stated tile is a dim of the buffer");
-            parts[unlabelled + dim] = count;
+            parts[dim] = count;
             taken *= count;
         }
         parts
+    }
+
+    /// The extent of each of a buffer's `rank` dims that is a stated tile, over a buffer stored
+    /// in `stored` tiles whose trailing dims `labels` name; `None` for a dim the buffer's own
+    /// shape sets. A stated tile's extent is fixed where the kernel is written, so a read over it
+    /// divides by a constant rather than by a dim read off the buffer.
+    pub(crate) fn stated_extents(
+        stored: &[(Axis, usize)],
+        labels: &[Axis],
+        rank: usize,
+    ) -> Vec<Option<usize>> {
+        let mut extents = vec![None; rank];
+        for (&(_, count), dim) in stored.iter().zip(Self::stated_dims(stored, labels, rank)) {
+            extents[dim] = Some(count);
+        }
+        extents
+    }
+
+    /// The dim of a buffer of `rank` dims, whose trailing dims `labels` name, each of `stored`'s
+    /// tiles is: the `j`-th finest stated tile of an axis is its `j`-th dim from the end.
+    fn stated_dims(stored: &[(Axis, usize)], labels: &[Axis], rank: usize) -> Vec<usize> {
+        let unlabelled = rank - labels.len();
+        let mut from_end: Vec<(Axis, usize)> = Vec::new();
+        stored
+            .iter()
+            .map(|&(axis, _)| {
+                let nth = match from_end.iter_mut().find(|(a, _)| *a == axis) {
+                    Some((_, seen)) => {
+                        *seen += 1;
+                        *seen
+                    }
+                    None => {
+                        from_end.push((axis, 1));
+                        1
+                    }
+                };
+                let dim = (0..labels.len())
+                    .rev()
+                    .filter(|&d| labels[d] == axis)
+                    .nth(nth - 1)
+                    .expect("a stated tile is a dim of the buffer");
+                unlabelled + dim
+            })
+            .collect()
     }
 }
 
@@ -435,5 +461,20 @@ mod tests {
             load.parts(&stored, &labels, 8),
             vec![1, 1, 1, 1, 1, 2, 2, 8]
         );
+    }
+
+    /// Every stated tile's dim reads at the tile's count, and only the grid dims are left to the
+    /// buffer's shape: a read over the tiles then divides by constants. A batch dim ahead is
+    /// the buffer's too.
+    #[test]
+    fn the_stated_tiles_have_their_stated_extents() {
+        const M: Axis = Axis(2);
+        let stored = [(K, 8), (K, 2), (M, 2), (K, 4), (M, 4)];
+        let labels = [M, K, M, K, M, K, K];
+        let tiled = [Some(4), Some(4), Some(2), Some(2), Some(8)];
+        let expected: Vec<_> = [None, None].into_iter().chain(tiled).collect();
+        assert_eq!(VectorTile::stated_extents(&stored, &labels, 7), expected);
+        let batched: Vec<_> = [None].into_iter().chain(expected).collect();
+        assert_eq!(VectorTile::stated_extents(&stored, &labels, 8), batched);
     }
 }
