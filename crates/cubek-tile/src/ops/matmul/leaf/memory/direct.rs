@@ -93,6 +93,9 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
     let component_fanout = comptime!(config.component_fanout);
 
+    // Every value this nest reads is read under its factor, so an `e2m1` operand is read placed,
+    // its lift carried by the factor.
+    let (lhs, rhs) = (lhs.placed(), rhs.placed());
     for mat in 0..matrices {
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
         let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, mat);

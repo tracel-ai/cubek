@@ -1017,6 +1017,14 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
+    /// These values read placed: an `e2m1` field the device emulates decoded without its lift,
+    /// which the factor this tile is read under carries instead ([`reader`](Tile::reader)), one
+    /// multiply a reader rather than one a value. What a leaf that applies the factor to every
+    /// value it reads takes; any other tile as it is.
+    pub(crate) fn placed(&self) -> Tile<E> {
+        unexpanded!()
+    }
+
     /// These values as indices into `table`, decoded only by [`copy_from`](Tile::copy_from).
     pub fn lookup<S: Numeric>(&self, _table: &Tile<S>) -> Tile<E> {
         unexpanded!()
@@ -1095,10 +1103,22 @@ impl<E: Numeric> TileExpand<E> {
                  value a line, or omit {innermost:?} from the scales"
             );
         }
+        // A tile read placed carries its values' lift in its factor: one multiply of the coarse
+        // levels, met once, and every value read under the factor even where it has no scale.
+        let lift = self.__expand_packing_method(scope).lift();
+        let coarse = match lift == 1.0 {
+            true => factor.coarse(scope),
+            false => {
+                let lift: NativeExpand<f32> =
+                    cubecl::ir::ExpandValue::constant((lift as u64).into(), f32::elem_type(scope))
+                        .into();
+                MulExpand::__expand_mul_method(factor.coarse(scope), scope, lift)
+            }
+        };
         FactorReaderExpand {
-            coarse: factor.coarse(scope),
+            coarse,
             inner: factor.innermost(),
-            scaled: factor.scaled(),
+            scaled: factor.scaled() || lift != 1.0,
             values,
             axes,
             vector_size,
@@ -1115,6 +1135,14 @@ impl<E: Numeric> TileExpand<E> {
             ComptimeOptionExpand::Some(level) => self.__expand_mul_method(scope, level),
             ComptimeOptionExpand::None => self.clone(),
         }
+    }
+
+    pub(crate) fn __expand_placed_method(&self, _scope: &Scope) -> TileExpand<E> {
+        let mut out = self.clone();
+        if let TileKindExpand::Memory(memory) = &mut out.kind {
+            memory.store.packing = memory.store.packing.placed();
+        }
+        out
     }
 
     pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {

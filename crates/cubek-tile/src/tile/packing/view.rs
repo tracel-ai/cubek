@@ -9,6 +9,7 @@ use cubecl::ir::types::Fp8Format;
 use cubecl::post_processing::minifloat::{fp8_bits_to_f32, ue8m0_bits_to_f32};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
+use cubecl::post_processing::fp4::{e2m1_words_to_f16, e2m1_words_to_f16_placed};
 use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
 
 use crate::{Field, FieldDecode, Packing};
@@ -29,6 +30,7 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
         FieldDecode::Unsigned => unpack_index_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
         FieldDecode::Converted => unpack_converted_fp4_line::<F, NQ, NF>(words),
+        FieldDecode::Placed { lifted } => unpack_placed_fp4_line::<F, NQ, NF>(words, lifted),
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
         FieldDecode::Bits(kind) => unpack_float_line::<F, NQ, NF>(words, kind),
     }
@@ -184,6 +186,36 @@ fn unpack_converted_fp4_line<F: Numeric, NQ: Size, NF: Size>(
         #[unroll]
         for j in 0..fields {
             out.insert(w * fields + j, values.extract(j));
+        }
+    }
+    out
+}
+
+/// The `e2m1` fields of a device that emulates their conversion, decoded from the bits of each
+/// word as `f16` pairs: lifted to their values, or placed, each
+/// [`E2M1_F16_LIFT`](cubecl::post_processing::fp4::E2M1_F16_LIFT) short of its value, for a reader
+/// whose factor carries the lift. A word whose line takes fewer of its fields keeps the first.
+#[cube]
+fn unpack_placed_fp4_line<F: Numeric, NQ: Size, NF: Size>(
+    words: Vector<u32, NQ>,
+    #[comptime] lifted: bool,
+) -> Vector<F, NF> {
+    let nq = NQ::value();
+    let nf = NF::value();
+    let fields = comptime!(fields_per_word(nq, nf, QuantValue::E2M1.size_bits()));
+
+    let mut out = Vector::<F, NF>::empty();
+    #[unroll]
+    for w in 0..words.vector_size() {
+        let word = Vector::<u32, Const<1>>::new(words.extract(w));
+        let values = if comptime!(lifted) {
+            e2m1_words_to_f16::<Const<1>, Const<8>>(word)
+        } else {
+            e2m1_words_to_f16_placed::<Const<1>, Const<8>>(word)
+        };
+        #[unroll]
+        for j in 0..fields {
+            out.insert(w * fields + j, F::cast_from(values.extract(j)));
         }
     }
     out
