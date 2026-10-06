@@ -1033,6 +1033,17 @@ impl<E: Numeric> Tile<E> {
     pub(crate) fn scaled(&self) -> comptime_type!(bool) {
         unexpanded!()
     }
+
+    /// How many levels of scales these values carry ([`mul`](Tile::mul)), innermost first.
+    pub(crate) fn factor_levels(&self) -> comptime_type!(usize) {
+        unexpanded!()
+    }
+
+    /// The innermost level of the scales these values carry, alone: what a block-scaled
+    /// instruction reads a scale of per block.
+    pub(crate) fn innermost_factor(&self) -> Factor {
+        unexpanded!()
+    }
 }
 
 impl<E: Numeric> TileExpand<E> {
@@ -1124,6 +1135,20 @@ impl<E: Numeric> TileExpand<E> {
         match &self.kind {
             TileKindExpand::Memory(memory) => memory.factor.scaled() || memory.codebook.present(),
             _ => false,
+        }
+    }
+
+    pub(crate) fn __expand_factor_levels_method(&self, _scope: &Scope) -> usize {
+        match &self.kind {
+            TileKindExpand::Memory(memory) => memory.factor.levels.len(),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn __expand_innermost_factor_method(&self, _scope: &Scope) -> FactorExpand {
+        match &self.kind {
+            TileKindExpand::Memory(memory) => memory.factor.innermost(),
+            _ => FactorExpand::default(),
         }
     }
 

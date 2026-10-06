@@ -1,5 +1,6 @@
 mod async_copy;
 mod attention;
+mod block_scaled;
 mod blocked;
 mod coarse;
 mod conv;
