@@ -1,10 +1,9 @@
-//! `c.mm(a, b)` and `c.mma(a, b)` at a final tile: the leaf dispatch ([`mma_leaf`]).
+//! `c.mm(a, b)` and `c.mma(a, b)` at a final tile, each descending to its leaf through
+//! [`Descent::contract`].
 
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
-use super::leaf::memory;
-use crate::tile::base::witnessed_space;
 use crate::*;
 
 #[cube]
@@ -43,7 +42,7 @@ impl<Acc: Numeric> Tile<Acc> {
 
     /// `c += a · b`, folding onto what the accumulator or memory window holds.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        mma_leaf(self, lhs, rhs)
+        Descent::contract(self, lhs, rhs)
     }
 
     /// This plane-resident accumulator back at its semiring's identity, as it was opened.
@@ -89,99 +88,6 @@ impl<Acc: Numeric> Tile<Acc> {
                 "Tile::accumulating: a memory window states how it is contracted into; a \
                  plane-resident accumulator states it when opened (Tile::accumulator)"
             ),
-        }
-    }
-}
-
-/// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form.
-#[cube]
-pub(crate) fn mma_leaf<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-    acc: &mut Tile<E>,
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-) {
-    // A clone holds the same fragments: writes through it land in `acc`.
-    let grid = acc.clone();
-    let descent = Descent::of_tile::<E, Lhs, Rhs>(&grid, lhs, rhs);
-    match comptime!(descent) {
-        Descent::Here => mma_here::<E, Lhs, Rhs>(acc, lhs, rhs),
-        Descent::Steps => mma_steps::<E, Lhs, Rhs>(&grid, lhs, rhs),
-        Descent::Cells(instruction) => mma_cells::<E, Lhs, Rhs>(&grid, lhs, rhs, instruction),
-    }
-}
-
-/// [`Descent::Steps`]: each region of the level below, walked over the whole contraction's box
-/// (`acc`'s alone lacks the contracted axes).
-#[cube]
-fn mma_steps<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-    acc: &Tile<E>,
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-) {
-    let operands = comptime!(Space::merge(&[
-        &acc.place.space,
-        &lhs.place.space,
-        &rhs.place.space
-    ]));
-    let space = witnessed_space(operands, acc, lhs, rhs);
-    let walk = Region::rooted(
-        &space,
-        comptime!(acc.place.levels.clone()),
-        comptime!(acc.place.depth),
-    )
-    .walk();
-    for region in walk.unrolled() {
-        let mut acc_region = acc.at(&region);
-        mma_leaf::<E, Lhs, Rhs>(&mut acc_region, &lhs.at(&region), &rhs.at(&region));
-    }
-}
-
-/// [`Descent::Cells`]: each operand's fragments loaded once, then every cell of the grid.
-#[cube]
-fn mma_cells<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-    acc: &Tile<E>,
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    #[comptime] instruction: Instruction,
-) {
-    let lhs = PlanePartition::<Lhs>::operand(lhs, acc, instruction);
-    let rhs = PlanePartition::<Rhs>::operand(rhs, acc, instruction);
-    for cell in acc.walk().unrolled() {
-        let mut acc_cell = acc.at(&cell);
-        mma_leaf::<E, Lhs, Rhs>(&mut acc_cell, &lhs.at(&cell), &rhs.at(&cell));
-    }
-}
-
-/// [`Descent::Here`]: `acc += lhs · rhs` into the one fragment or block `acc` holds, or the
-/// memory window it is.
-#[cube]
-fn mma_here<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-    acc: &mut Tile<E>,
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-) {
-    let space = comptime!(acc.place.space.clone());
-    let tile_kind = &mut acc.kind;
-    match tile_kind {
-        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
-        TileKind::PlanePartition(p) => {
-            let mut t = p.at(0usize, 0usize);
-            t.mma(lhs, rhs, space)
-        }
-        TileKind::Memory(g) => {
-            let contraction = g.stated_contraction();
-            memory::contract::<E, Lhs, Rhs>(
-                g,
-                lhs,
-                rhs,
-                space,
-                contraction.block,
-                contraction.semiring,
-            )
-        }
-        TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
-        TileKind::Procedural(_) | TileKind::Lines(_) => {
-            panic!("mma: a procedural tile and the plane's units are not an accumulator sink")
         }
     }
 }
@@ -260,7 +166,7 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
         "mma: a cmma or plane-register fragment reads one `k` edge off a directly addressed \
          operand; a gather, or a contraction these axes give no edge for, needs the manual-mma \
          leaf, or an unpromoted Gmem/Smem accumulator, whose software instruction is the \
-         `memory::memory` arm of `mma_leaf`"
+         `memory` arm of `Descent::contract`"
     ));
 }
 
