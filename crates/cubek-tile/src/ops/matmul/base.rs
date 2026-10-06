@@ -15,7 +15,19 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let in_memory = self.is_memory();
         if comptime!(in_memory) {
-            let semiring = contraction_of(&self.clone()).semiring;
+            // A clone holds the same window: reading it reads `self`.
+            let acc = self.clone();
+            let contraction = match &acc.kind {
+                TileKind::Memory(g) => g.stated_contraction(),
+                TileKind::PlaneTile(_)
+                | TileKind::PlanePartition(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!("Tile::mm: only a memory window states its contraction")
+                }
+            };
+            let semiring = contraction.semiring;
             let init_from = self.request_init_from(comptime!(InitFrom::Identity));
             match comptime!(init_from) {
                 InitFrom::Identity => {}
@@ -37,7 +49,19 @@ impl<Acc: Numeric> Tile<Acc> {
     /// This plane-resident accumulator back at its semiring's identity, as it was opened.
     pub fn reset(&mut self) {
         // A clone holds the same fragments: reading it reads `self`.
-        let semiring = held_semiring(&self.clone());
+        let acc = self.clone();
+        let semiring = match &acc.kind {
+            TileKind::PlaneTile(t) => t.semiring(),
+            TileKind::PlanePartition(p) => p.at(0usize, 0usize).semiring(),
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!(
+                    "Tile::reset: only a plane-resident accumulator has an identity to return to"
+                )
+            }
+        };
         self.init_identity(comptime!(semiring.add()));
     }
 }
@@ -145,7 +169,7 @@ fn mma_here<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
             t.mma(lhs, rhs, space)
         }
         TileKind::Memory(g) => {
-            let contraction = comptime!(g.contraction.unwrap_or_else(unstated_contraction));
+            let contraction = g.stated_contraction();
             memory::contract::<E, Lhs, Rhs>(
                 g,
                 lhs,
@@ -160,41 +184,6 @@ fn mma_here<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
             panic!("mma: a procedural tile and the plane's units are not an accumulator sink")
         }
     }
-}
-
-/// The semiring a plane-resident accumulator was opened under.
-#[cube]
-fn held_semiring<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Semiring) {
-    match &acc.kind {
-        TileKind::PlaneTile(t) => t.semiring(),
-        TileKind::PlanePartition(p) => p.at(0usize, 0usize).semiring(),
-        TileKind::Memory(_)
-        | TileKind::TmaGmem(_)
-        | TileKind::Procedural(_)
-        | TileKind::Lines(_) => {
-            panic!("Tile::reset: only a plane-resident accumulator has an identity to return to")
-        }
-    }
-}
-
-/// How a contraction into a memory window runs, as stated with [`Tile::accumulating`].
-#[cube]
-fn contraction_of<E: Numeric>(acc: &Tile<E>) -> comptime_type!(Contraction) {
-    match &acc.kind {
-        TileKind::Memory(g) => comptime!(g.contraction.unwrap_or_else(unstated_contraction)),
-        TileKind::PlaneTile(_)
-        | TileKind::PlanePartition(_)
-        | TileKind::TmaGmem(_)
-        | TileKind::Procedural(_)
-        | TileKind::Lines(_) => panic!("Tile::mm: only a memory window states its contraction"),
-    }
-}
-
-fn unstated_contraction() -> Contraction {
-    panic!(
-        "Tile::mma: a memory window contracts under the register block and semiring it is stated \
-         with; state them with Tile::accumulating(block, semiring)"
-    )
 }
 
 #[cube]

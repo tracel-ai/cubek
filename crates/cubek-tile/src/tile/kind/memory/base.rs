@@ -118,6 +118,15 @@ impl<T: Numeric> Memory<T> {
             .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"))
         )
     }
+
+    /// How a contraction into this window runs, as stated with
+    /// [`Tile::accumulating`](crate::Tile::accumulating). Refuses a window never stated.
+    pub(crate) fn stated_contraction(&self) -> comptime_type!(Contraction) {
+        comptime!(self.contraction.unwrap_or_else(|| panic!(
+            "Tile::mma: a memory window contracts under the register block and semiring it is \
+             stated with; state them with Tile::accumulating(block, semiring)"
+        )))
+    }
 }
 
 #[cube]
