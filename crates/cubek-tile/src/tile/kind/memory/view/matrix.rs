@@ -223,54 +223,6 @@ impl Layout for TileMatrix {
     }
 }
 
-/// [`TileMatrix::batch`] over the operand's mapping.
-#[cube]
-pub(crate) fn projected_batch_matrix(
-    bound: &Coords<u32>,
-    #[comptime] space: Space,
-    #[comptime] projection: Projection,
-    map: RuntimeMap,
-    #[comptime] load: VectorTile,
-    #[comptime] axes: MatrixAxes,
-    i: usize,
-) -> ProjectedMatrix {
-    // A partition's windows tile, so the window still sizes every logical axis.
-    let gathered = comptime!(projection.composition() == Composition::Overlapping);
-    ProjectedMatrix::new(
-        TileMatrix::batch(
-            bound,
-            comptime!(&space),
-            gathered,
-            comptime!(&load),
-            axes,
-            i,
-        ),
-        ProjectionInKernel::new(
-            Coords::constant(comptime!(load.counts(&space))),
-            map,
-            comptime!(space.clone()),
-            projection,
-            comptime!(load.values()),
-        ),
-    )
-}
-
-/// [`TileMatrix::whole`] over the operand's mapping.
-#[cube]
-pub(crate) fn projected_whole_matrix(
-    #[comptime] space: Space,
-    #[comptime] projection: Projection,
-    map: RuntimeMap,
-    #[comptime] vector_size: usize,
-    #[comptime] rows: usize,
-    #[comptime] cols: usize,
-) -> ProjectedMatrix {
-    ProjectedMatrix::new(
-        TileMatrix::whole(comptime!(&space), vector_size, rows, cols),
-        axis_projection(comptime!(space), comptime!(projection), map, vector_size),
-    )
-}
-
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// The `i`-th batch matrix over `axes`, unpacked if packed.

@@ -516,14 +516,25 @@ impl<T: Numeric> Memory<T> {
     ) -> ProjectedMatrix {
         let bound = self.extent();
         let load = self.vector_tile(&space);
-        projected_batch_matrix(
-            &bound,
-            space,
-            comptime!(self.projection.clone()),
-            self.map.clone(),
-            load,
-            axes,
-            i,
+        let projection = comptime!(self.projection.clone());
+        // A partition's windows tile, so the window still sizes every logical axis.
+        let gathered = comptime!(projection.composition() == Composition::Overlapping);
+        ProjectedMatrix::new(
+            TileMatrix::batch(
+                &bound,
+                comptime!(&space),
+                gathered,
+                comptime!(&load),
+                axes,
+                i,
+            ),
+            ProjectionInKernel::new(
+                Coords::constant(comptime!(load.counts(&space))),
+                self.map.clone(),
+                comptime!(space.clone()),
+                projection,
+                comptime!(load.values()),
+            ),
         )
     }
 
@@ -534,13 +545,15 @@ impl<T: Numeric> Memory<T> {
         #[comptime] rows: usize,
         #[comptime] cols: usize,
     ) -> ProjectedMatrix {
-        projected_whole_matrix(
-            space,
-            comptime!(self.projection.clone()),
-            self.map.clone(),
-            comptime!(self.store.vector_size),
-            rows,
-            cols,
+        let vector_size = comptime!(self.store.vector_size);
+        ProjectedMatrix::new(
+            TileMatrix::whole(comptime!(&space), vector_size, rows, cols),
+            axis_projection(
+                comptime!(space),
+                comptime!(self.projection.clone()),
+                self.map.clone(),
+                vector_size,
+            ),
         )
     }
 
