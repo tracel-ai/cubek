@@ -222,12 +222,14 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
         let addressed = mem.store.addressed();
         match self {
-            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access, addressed)) {
-                FragmentDrain::Intrinsic => {
-                    d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+            PlaneTile::Cmma(d) => {
+                match comptime!(FragmentDrain::of(&mem.access, addressed, true)) {
+                    FragmentDrain::Intrinsic => {
+                        d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+                    }
+                    FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
                 }
-                FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
-            },
+            }
             PlaneTile::Mma(d) => d.store_window(mem, space),
             // Same-type store; the block drains through `store_cast_window`.
             PlaneTile::Registers(d) => d.store_cast_window(mem, space),
@@ -253,12 +255,16 @@ impl<T: Numeric> PlaneTile<T> {
     ) {
         let addressed = mem.store.addressed();
         match self {
-            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access, addressed)) {
-                FragmentDrain::Intrinsic => {
-                    d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+            PlaneTile::Cmma(d) => {
+                let (m, n) = comptime!(d.shape);
+                let in_place = casts_in_place::<T, Out>(m, n);
+                match comptime!(FragmentDrain::of(&mem.access, addressed, in_place)) {
+                    FragmentDrain::Intrinsic => {
+                        d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+                    }
+                    FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
                 }
-                FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
-            },
+            }
             PlaneTile::Mma(d) => d.store_cast_window(mem, space),
             PlaneTile::Registers(d) => d.store_cast_window(mem, space),
         }
