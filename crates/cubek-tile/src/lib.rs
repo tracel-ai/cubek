@@ -14,6 +14,7 @@ pub mod kind {
     pub use crate::tile::accumulator::planes_output::PlanesOutput;
     pub use crate::tile::accumulator::smem_accumulation::SmemAccumulation;
     pub use crate::tile::accumulator::smem_cyclic::SmemCyclicAccumulation;
+    pub use crate::tile::accumulator::smem_slots::SmemSlotsAccumulation;
     pub use crate::tile::kind::memory::base::{Boundary, Schedule, Storage, Write};
     pub use crate::tile::kind::memory::global::GlobalOperand;
     pub use crate::tile::kind::memory::view::masked::{Masked, MaskedMut};
