@@ -517,13 +517,11 @@ impl<T: Numeric> Memory<T> {
         let bound = self.extent();
         let load = self.vector_tile(&space);
         let projection = comptime!(self.projection.clone());
-        // A partition's windows tile, so the window still sizes every logical axis.
-        let gathered = comptime!(projection.composition() == Composition::Overlapping);
         ProjectedMatrix::new(
             TileMatrix::batch(
                 &bound,
                 comptime!(&space),
-                gathered,
+                comptime!(projection.composition()),
                 comptime!(&load),
                 axes,
                 i,

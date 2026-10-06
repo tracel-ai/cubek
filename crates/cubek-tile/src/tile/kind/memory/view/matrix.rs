@@ -52,7 +52,7 @@ impl TileMatrix {
     pub(crate) fn batch(
         bound: &Coords<u32>,
         #[comptime] space: &Space,
-        #[comptime] gathered: bool,
+        #[comptime] composition: Composition,
         #[comptime] load: &VectorTile,
         #[comptime] axes: MatrixAxes,
         i: usize,
@@ -82,8 +82,12 @@ impl TileMatrix {
                 .product::<usize>()
         );
         let cols = comptime!(counts[axes.col_split..rank].iter().product::<usize>());
-        let extents =
-            Self::leading_extents(bound, comptime!(space), gathered, comptime!(axes.row_split));
+        let extents = Self::leading_extents(
+            bound,
+            comptime!(space),
+            composition,
+            comptime!(axes.row_split),
+        );
 
         Self::new(
             extents.unravel(i.cast::<u32>()),
@@ -168,14 +172,15 @@ impl TileMatrix {
     fn leading_extents(
         bound: &Coords<u32>,
         #[comptime] space: &Space,
-        #[comptime] gathered: bool,
+        #[comptime] composition: Composition,
         #[comptime] upto: usize,
     ) -> Coords<u32> {
         let mut out = Coords::<u32>::new();
 
         #[unroll]
         for p in 0..upto {
-            if comptime!(gathered) {
+            // A partition's windows tile, so the window still sizes every logical axis.
+            if comptime!(composition == Composition::Overlapping) {
                 out.push(comptime!(space.extent_at(p) as u32));
             } else {
                 out.push(bound.at(p));
