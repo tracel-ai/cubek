@@ -195,6 +195,20 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
+    /// Multiply every cell of this (accumulator) fragment by `factor`: its registers are the
+    /// unit's own cells, so the scale needs no bounce.
+    pub(crate) fn scale(&mut self, factor: T) {
+        match &mut self.fragment {
+            MmaFragment::Acc(f) => scale_registers(f, factor),
+            MmaFragment::Lhs(_)
+            | MmaFragment::Rhs(_)
+            | MmaFragment::LhsBlockScaled(..)
+            | MmaFragment::RhsBlockScaled(..) => {
+                panic!("MmaData::scale: an operand fragment is contracted, not scaled")
+            }
+        }
+    }
+
     /// Fill this fragment from `src`'s window by the role's transport.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         let m = comptime!(self.m);
@@ -288,6 +302,17 @@ fn register_block_scaled_sizes(
         }
         scope.register_size::<NSB>(scales);
     });
+}
+
+/// Multiply every register slot by `factor`.
+#[cube]
+fn scale_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, factor: E) {
+    let num_vectors = fragment.len();
+    let factor = Vector::<E, N>::cast_from(factor);
+    #[unroll]
+    for i in 0..num_vectors {
+        fragment[i] = fragment[i] * factor;
+    }
 }
 
 /// Fill every register slot with `value`.

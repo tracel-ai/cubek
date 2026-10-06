@@ -13,7 +13,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Projection,
     Semiring, Space, StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    launch::scale_tile, layout::PhysicalAxisMap, ops::matmul::MmaIo,
 };
 
 use super::{Form, implied};
@@ -33,6 +33,8 @@ fn block_scaled_matmul<E: Numeric>(
     a_scales: &TileArg<'_, f32, Const<1>>,
     b: &TileArg<'_, u32, Const<1>>,
     b_scales: &TileArg<'_, f32, Const<1>>,
+    a_global: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
+    b_global: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
@@ -43,7 +45,7 @@ fn block_scaled_matmul<E: Numeric>(
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let b_scales = b_scales.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(
+    let mut acc = c.accumulator::<E, E, E>(
         &a,
         &b,
         comptime!(Instruction::Mma {
@@ -61,13 +63,17 @@ fn block_scaled_matmul<E: Numeric>(
             acc_r.mma(&a_s.mul(&a_scales_r), &b_s.mul(&b_scales_r));
         });
     });
+    // The per-tensor factors above the block scales, which the instruction holds no level for.
+    acc.scale(&scale_tile::<E>(a_global, comptime!(space.clone())));
+    acc.scale(&scale_tile::<E>(b_global, comptime!(space.clone())));
     acc.drained_into(&c);
 }
 
 /// A `16 × 8` product of `k` deep, `a` row-major and `b` held `[n, k]`, against the host sum of
-/// the decoded values under their scales. Skips where the device offers no block-scaled `e2m1`
-/// instruction, whose path is the subject here.
-fn check_block_scaled(k: usize) {
+/// the decoded values under their scales, and under each operand's per-tensor factor where
+/// `globals` states them. Skips where the device offers no block-scaled `e2m1` instruction, whose
+/// path is the subject here.
+fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
     let client = cubecl::test_device().client();
     if !offers_nvfp4(&client) {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -131,6 +137,17 @@ fn check_block_scaled(k: usize) {
     let tensor = |handle, rows: usize, cols: usize| unsafe {
         TensorArg::from_raw_parts(handle, [cols, 1].into(), [rows, cols].into())
     };
+    // One `f32` over the whole operand, read as the word it is stored in.
+    let global = |value: f32| {
+        let word = client.create_from_slice(f32::as_bytes(&[value]));
+        let spec = TileSpec::new(Projection::new(&[M, N, K], &[PhysicalAxisMap::broadcast()]))
+            .packed(Field::Float(FloatKind::F32));
+        ComptimeOptionArgs::Some(TileArgLaunch::new(tensor(word, 1, 1), spec))
+    };
+    let (a_global, b_global) = match globals {
+        Some((a, b)) => (global(a), global(b)),
+        None => (ComptimeOptionArgs::None, ComptimeOptionArgs::None),
+    };
     block_scaled_matmul::launch(
         &client,
         launcher.cube_count(),
@@ -139,6 +156,8 @@ fn check_block_scaled(k: usize) {
         TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), scales(M)),
         TileArgLaunch::new(tensor(b_words, n, k), values(N)),
         TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), scales(N)),
+        a_global,
+        b_global,
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
@@ -149,6 +168,7 @@ fn check_block_scaled(k: usize) {
     );
 
     let decoded = |code: u8| e2m1::from_bits(code).to_f32();
+    let (a_global, b_global) = globals.unwrap_or((1.0, 1.0));
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     for i in 0..m {
         for j in 0..n {
@@ -159,7 +179,9 @@ fn check_block_scaled(k: usize) {
                         * decoded(b_codes[j * k + l])
                         * b_scale_values[j * (k / BLOCK) + l / BLOCK]
                 })
-                .sum();
+                .sum::<f32>()
+                * a_global
+                * b_global;
             let have = got.get_f32(&[i, j]);
             assert!(
                 (have - want).abs() <= 1e-3 * want.abs().max(1.0),
@@ -190,11 +212,18 @@ fn offers_nvfp4(client: &Client) -> bool {
 /// One instruction's depth: a single stage, a single step.
 #[test]
 fn one_block_scaled_step_matches_the_reference() {
-    check_block_scaled(64);
+    check_block_scaled(64, None);
 }
 
 /// Several stages of `K`, each a step of the instruction, summed into one accumulator.
 #[test]
 fn a_walk_of_block_scaled_steps_matches_the_reference() {
-    check_block_scaled(256);
+    check_block_scaled(256, None);
+}
+
+/// NVFP4's second level: a factor over each whole operand, which the instruction holds no level
+/// for, multiplied into the sum before it drains.
+#[test]
+fn per_tensor_factors_scale_the_block_scaled_sum() {
+    check_block_scaled(128, Some((0.375, 1.0 / 448.0)));
 }

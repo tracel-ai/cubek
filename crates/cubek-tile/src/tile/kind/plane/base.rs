@@ -191,10 +191,11 @@ impl<T: Numeric> PlaneTile<T> {
 
     pub(crate) fn scale(&mut self, factor: T) {
         match self {
-            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
-                "PlaneTile::scale: a hardware mma fragment is not read cell by cell, so a scale \
-                 over one folds at the store instead"
+            PlaneTile::Cmma(_) => panic!(
+                "PlaneTile::scale: a cmma fragment is not read cell by cell, so a scale over one \
+                 folds at the store instead"
             ),
+            PlaneTile::Mma(d) => d.scale(factor),
             PlaneTile::Registers(d) => d.scale(factor),
         }
     }
