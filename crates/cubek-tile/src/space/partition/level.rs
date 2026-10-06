@@ -145,10 +145,15 @@ impl Level {
         for &(axis, tile, count, _) in cuts {
             assert!(tile > 0, "Level: {axis:?} has a tile of nothing");
             match (coverage, count) {
-                (Coverage::Distribute(ComputeScope::Cube), Count::AllAcross(_)) => {}
+                (
+                    Coverage::Distribute(ComputeScope::Cube)
+                    | Coverage::Distribute(ComputeScope::Plane),
+                    Count::AllAcross(_),
+                ) => {}
                 (_, Count::AllAcross(_)) => {
                     panic!(
-                        "Level: {axis:?} is distributed across workers in runs, which only cubes take"
+                        "Level: {axis:?} is distributed across workers in runs, which only cubes \
+                         and planes take"
                     )
                 }
                 (
