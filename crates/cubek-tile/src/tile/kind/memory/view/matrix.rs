@@ -45,6 +45,158 @@ impl TileMatrix {
             tile_shape: (rows as u32, cols as u32).runtime(),
         }
     }
+
+    /// The `i`-th matrix of a tile whose window is `bound`, over the axes [`MatrixAxes`] names, each
+    /// axis counted in `load`s: a run along the innermost axis for a plain buffer, and for one stored
+    /// in tiles, every axis the load spans ([`VectorTile::counts`]).
+    pub(crate) fn batch(
+        bound: &Coords<u32>,
+        #[comptime] space: &Space,
+        #[comptime] composition: Composition,
+        #[comptime] load: &VectorTile,
+        #[comptime] axes: MatrixAxes,
+        i: usize,
+    ) -> Self {
+        let rank = comptime!(space.rank());
+        // Rounded up like the buffer's own load count, so a checked read covers a partial last load.
+        let counts = comptime!(load.counts(space));
+        // A row, or a column, steps the innermost axis of its group, so a load may reach along that
+        // axis and no other: the loads of a group are then consecutive rows (or columns), in order.
+        // An axis of one inside a group steps nothing, so the innermost is the last one past one.
+        let row_edge = comptime!(TileMatrix::innermost_past_one(
+            space,
+            axes.row_split..axes.col_split
+        ));
+        let col_edge = comptime!(TileMatrix::innermost_past_one(space, axes.col_split..rank));
+        comptime!(assert!(
+            (0..rank).all(|p| counts[p] == space.extent_at(p)
+                || Some(p) == row_edge
+                || Some(p) == col_edge),
+            "TileMatrix::batch: a load of {:?} over {space:?} reaches along an axis that is neither the \
+             innermost of the matrix's rows nor of its columns",
+            load.extents()
+        ));
+        let rows = comptime!(
+            counts[axes.row_split..axes.col_split]
+                .iter()
+                .product::<usize>()
+        );
+        let cols = comptime!(counts[axes.col_split..rank].iter().product::<usize>());
+        let extents = Self::leading_extents(
+            bound,
+            comptime!(space),
+            composition,
+            comptime!(axes.row_split),
+        );
+
+        Self::new(
+            extents.unravel(i.cast::<u32>()),
+            Coords::constant(comptime!(counts[axes.row_split..axes.col_split].to_vec())),
+            Coords::constant(comptime!(counts[axes.col_split..rank].to_vec())),
+            rows,
+            cols,
+        )
+    }
+
+    /// The logical coordinate, in scalars, of the first value of line `(row, col)` of matrix `i`.
+    pub(crate) fn value_coords(
+        row: u32,
+        col: u32,
+        i: usize,
+        #[comptime] space: &Space,
+        #[comptime] axes: MatrixAxes,
+        #[comptime] vector_size: usize,
+    ) -> Coords<u32> {
+        let rank = comptime!(space.rank());
+        let mut coords = Coords::<u32>::new();
+        let batches = Coords::constant(comptime!(
+            (0..axes.row_split)
+                .map(|p| space.extent_at(p))
+                .collect::<Vec<_>>()
+        ))
+        .unravel(i.cast::<u32>());
+        #[unroll]
+        for p in 0..batches.len() {
+            coords.push(batches.at(p));
+        }
+        let rows = Coords::constant(comptime!(
+            (axes.row_split..axes.col_split)
+                .map(|p| space.extent_at(p))
+                .collect::<Vec<_>>()
+        ))
+        .unravel(row);
+        #[unroll]
+        for p in 0..rows.len() {
+            coords.push(rows.at(p));
+        }
+        // The innermost column digit is a line index.
+        let cols = Coords::constant(comptime!(line_extents(
+            space,
+            vector_size,
+            axes.col_split,
+            rank
+        )))
+        .unravel(col);
+        let n = cols.len();
+        #[unroll]
+        for p in 0..n {
+            if comptime!(p == n - 1) {
+                coords.push(cols.at(p).times(comptime!(vector_size as u32)));
+            } else {
+                coords.push(cols.at(p));
+            }
+        }
+        coords
+    }
+
+    /// The tile's whole logical box as one `rows x cols` matrix; `cols` is in scalars.
+    pub(crate) fn whole(
+        #[comptime] space: &Space,
+        #[comptime] vector_size: usize,
+        #[comptime] rows: usize,
+        #[comptime] cols: usize,
+    ) -> Self {
+        let rank = comptime!(space.rank());
+        let split = comptime!(MatrixAxes::whole(space, rows, cols, vector_size).col_split);
+
+        Self::new(
+            Coords::<u32>::new(),
+            Coords::constant(comptime!(line_extents(space, vector_size, 0, split))),
+            Coords::constant(comptime!(line_extents(space, vector_size, split, rank))),
+            rows,
+            comptime!(cols / vector_size),
+        )
+    }
+
+    /// The leading (batch) extents a matrix index unravels over, in the space's axis order.
+    fn leading_extents(
+        bound: &Coords<u32>,
+        #[comptime] space: &Space,
+        #[comptime] composition: Composition,
+        #[comptime] upto: usize,
+    ) -> Coords<u32> {
+        let mut out = Coords::<u32>::new();
+
+        #[unroll]
+        for p in 0..upto {
+            // A partition's windows tile, so the window still sizes every logical axis.
+            if comptime!(composition == Composition::Overlapping) {
+                out.push(comptime!(space.extent_at(p) as u32));
+            } else {
+                out.push(bound.at(p));
+            }
+        }
+
+        out
+    }
+}
+
+impl TileMatrix {
+    /// The last position of `group` whose axis reaches past one in `space`: the axis a row (or a
+    /// column) of that group steps.
+    fn innermost_past_one(space: &Space, group: core::ops::Range<usize>) -> Option<usize> {
+        group.rev().find(|&p| space.extent_at(p) > 1)
+    }
 }
 
 #[cube]
@@ -74,198 +226,6 @@ impl Layout for TileMatrix {
         let (rows, cols) = self.tile_shape;
         row < rows && col < cols
     }
-}
-
-/// The leading (batch) extents a matrix index unravels over, in the space's axis order.
-#[cube]
-fn leading_extents(
-    bound: &Coords<u32>,
-    #[comptime] space: &Space,
-    #[comptime] gathered: bool,
-    #[comptime] upto: usize,
-) -> Coords<u32> {
-    let mut out = Coords::<u32>::new();
-
-    #[unroll]
-    for p in 0..upto {
-        if comptime!(gathered) {
-            out.push(comptime!(space.extent_at(p) as u32));
-        } else {
-            out.push(bound.at(p));
-        }
-    }
-
-    out
-}
-
-/// The last position of `group` whose axis reaches past one in `space`: the axis a row (or a
-/// column) of that group steps.
-fn innermost_past_one(space: &Space, group: core::ops::Range<usize>) -> Option<usize> {
-    group.rev().find(|&p| space.extent_at(p) > 1)
-}
-
-/// The `i`-th matrix of a tile whose window is `bound`, over the axes [`MatrixAxes`] names, each
-/// axis counted in `load`s: a run along the innermost axis for a plain buffer, and for one stored
-/// in tiles, every axis the load spans ([`VectorTile::counts`]).
-#[cube]
-pub(crate) fn batch_matrix(
-    bound: &Coords<u32>,
-    #[comptime] space: &Space,
-    #[comptime] gathered: bool,
-    #[comptime] load: &VectorTile,
-    #[comptime] axes: MatrixAxes,
-    i: usize,
-) -> TileMatrix {
-    let rank = comptime!(space.rank());
-    // Rounded up like the buffer's own load count, so a checked read covers a partial last load.
-    let counts = comptime!(load.counts(space));
-    // A row, or a column, steps the innermost axis of its group, so a load may reach along that
-    // axis and no other: the loads of a group are then consecutive rows (or columns), in order.
-    // An axis of one inside a group steps nothing, so the innermost is the last one past one.
-    let row_edge = comptime!(innermost_past_one(space, axes.row_split..axes.col_split));
-    let col_edge = comptime!(innermost_past_one(space, axes.col_split..rank));
-    comptime!(assert!(
-        (0..rank)
-            .all(|p| counts[p] == space.extent_at(p) || Some(p) == row_edge || Some(p) == col_edge),
-        "batch_matrix: a load of {:?} over {space:?} reaches along an axis that is neither the \
-         innermost of the matrix's rows nor of its columns",
-        load.extents()
-    ));
-    let rows = comptime!(
-        counts[axes.row_split..axes.col_split]
-            .iter()
-            .product::<usize>()
-    );
-    let cols = comptime!(counts[axes.col_split..rank].iter().product::<usize>());
-    let extents = leading_extents(bound, comptime!(space), gathered, comptime!(axes.row_split));
-
-    TileMatrix::new(
-        extents.unravel(i.cast::<u32>()),
-        Coords::constant(comptime!(counts[axes.row_split..axes.col_split].to_vec())),
-        Coords::constant(comptime!(counts[axes.col_split..rank].to_vec())),
-        rows,
-        cols,
-    )
-}
-
-/// The logical coordinate, in scalars, of the first value of line `(row, col)` of matrix `i`.
-#[cube]
-pub(crate) fn matrix_coords(
-    row: u32,
-    col: u32,
-    i: usize,
-    #[comptime] space: &Space,
-    #[comptime] axes: MatrixAxes,
-    #[comptime] vector_size: usize,
-) -> Coords<u32> {
-    let rank = comptime!(space.rank());
-    let mut coords = Coords::<u32>::new();
-    let batches = Coords::constant(comptime!(
-        (0..axes.row_split)
-            .map(|p| space.extent_at(p))
-            .collect::<Vec<_>>()
-    ))
-    .unravel(i.cast::<u32>());
-    #[unroll]
-    for p in 0..batches.len() {
-        coords.push(batches.at(p));
-    }
-    let rows = Coords::constant(comptime!(
-        (axes.row_split..axes.col_split)
-            .map(|p| space.extent_at(p))
-            .collect::<Vec<_>>()
-    ))
-    .unravel(row);
-    #[unroll]
-    for p in 0..rows.len() {
-        coords.push(rows.at(p));
-    }
-    // The innermost column digit is a line index.
-    let cols = Coords::constant(comptime!(line_extents(
-        space,
-        vector_size,
-        axes.col_split,
-        rank
-    )))
-    .unravel(col);
-    let n = cols.len();
-    #[unroll]
-    for p in 0..n {
-        if comptime!(p == n - 1) {
-            coords.push(cols.at(p).times(comptime!(vector_size as u32)));
-        } else {
-            coords.push(cols.at(p));
-        }
-    }
-    coords
-}
-
-/// The tile's whole logical box as one `rows x cols` matrix; `cols` is in scalars.
-#[cube]
-pub(crate) fn whole_matrix(
-    #[comptime] space: &Space,
-    #[comptime] vector_size: usize,
-    #[comptime] rows: usize,
-    #[comptime] cols: usize,
-) -> TileMatrix {
-    let rank = comptime!(space.rank());
-    let split = comptime!(MatrixAxes::whole(space, rows, cols, vector_size).col_split);
-
-    TileMatrix::new(
-        Coords::<u32>::new(),
-        Coords::constant(comptime!(line_extents(space, vector_size, 0, split))),
-        Coords::constant(comptime!(line_extents(space, vector_size, split, rank))),
-        rows,
-        comptime!(cols / vector_size),
-    )
-}
-
-/// [`batch_matrix`] over the operand's mapping.
-#[cube]
-pub(crate) fn projected_batch_matrix(
-    bound: &Coords<u32>,
-    #[comptime] space: Space,
-    #[comptime] projection: Projection,
-    map: RuntimeMap,
-    #[comptime] load: VectorTile,
-    #[comptime] axes: MatrixAxes,
-    i: usize,
-) -> ProjectedMatrix {
-    // A partition's windows tile, so the window still sizes every logical axis.
-    let gathered = comptime!(projection.composition() == Composition::Overlapping);
-    ProjectedMatrix::new(
-        batch_matrix(
-            bound,
-            comptime!(&space),
-            gathered,
-            comptime!(&load),
-            axes,
-            i,
-        ),
-        ProjectionInKernel::new(
-            Coords::constant(comptime!(load.counts(&space))),
-            map,
-            comptime!(space.clone()),
-            projection,
-            comptime!(load.values()),
-        ),
-    )
-}
-
-/// [`whole_matrix`] over the operand's mapping.
-#[cube]
-pub(crate) fn projected_whole_matrix(
-    #[comptime] space: Space,
-    #[comptime] projection: Projection,
-    map: RuntimeMap,
-    #[comptime] vector_size: usize,
-    #[comptime] rows: usize,
-    #[comptime] cols: usize,
-) -> ProjectedMatrix {
-    ProjectedMatrix::new(
-        whole_matrix(comptime!(&space), vector_size, rows, cols),
-        axis_projection(comptime!(space), comptime!(projection), map, vector_size),
-    )
 }
 
 #[cube]

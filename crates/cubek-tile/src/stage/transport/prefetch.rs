@@ -3,8 +3,8 @@
 
 use cubecl::prelude::*;
 
-use super::cooperative::fill_extent;
 use super::padded::read_stage_line;
+use super::straight::fill_extent;
 use crate::*;
 
 /// Most scalars of both operands' stages one unit may hold in registers beside an accumulator.
@@ -153,7 +153,7 @@ impl<T: Numeric> Memory<T> {
 /// The line task `t` of this unit moves.
 #[cube]
 fn task_line(#[comptime] t: usize, #[comptime] lines: UnitLines) -> usize {
-    fill_worker(comptime!(lines.fill)) + comptime!(t * lines.fill.count)
+    FillUnits::worker(comptime!(lines.fill)) + comptime!(t * lines.fill.count)
 }
 
 /// Whether line `i` is inside the stage; a constant where task `t` cannot run past it.

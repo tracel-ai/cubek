@@ -49,7 +49,7 @@ pub struct Levels {
     sizes: Vec<(Axis, usize)>,
     /// Axes an `every` level closed.
     closed: Vec<Axis>,
-    /// Innermost first; [`levels`](Self::levels) reverses.
+    /// Innermost first; [`build`](Self::build) reverses.
     stated: Vec<StatedLevel>,
 }
 
@@ -95,6 +95,15 @@ impl Levels {
     /// This many of the level below, one per plane of the cube.
     pub fn planes(self, counts: &[(Axis, usize)]) -> Self {
         self.state(Coverage::Distribute(ComputeScope::Plane), counts)
+    }
+
+    /// Every tile of the level below along `axis`, dealt to `planes` planes of the cube in runs:
+    /// the planes need not divide the tiles, and a plane past the last whole run takes the rest.
+    /// What splits a walk between the planes where its steps have no factor the planes fit.
+    pub fn planes_across(self, axis: Axis, planes: usize) -> Self {
+        let mut levels = self.every(Coverage::Distribute(ComputeScope::Plane), &[axis]);
+        levels.last("planes_across").across = Some((axis, planes));
+        levels
     }
 
     /// One cube for every box these axes hold; the entries ride the grid's `X`, `Y`, `Z` in order.
@@ -359,6 +368,22 @@ mod tests {
             (tiles(4, N), counts(4, N)),
             (Some(8), Some(Count::Stated(4)))
         );
+    }
+
+    /// The planes take a walk's steps in runs at a count that need not divide them: the plane
+    /// level states the count of planes, not a tile of planes times a step.
+    #[test]
+    fn the_planes_take_every_step_across_in_runs() {
+        let levels = Levels::leaf(&[(N, 8), (K, 16)])
+            .planes_across(K, 4)
+            .cubes(&[N])
+            .build();
+        assert_eq!(
+            levels[1].coverage(),
+            Coverage::Distribute(ComputeScope::Plane)
+        );
+        assert_eq!(levels[1].count(K), Some(Count::AllAcross(4)));
+        assert_eq!(levels[1].tile(K), Some(16));
     }
 
     /// A closed axis returns to the cube level to be split across cubes.

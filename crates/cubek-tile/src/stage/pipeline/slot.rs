@@ -2,6 +2,7 @@
 
 use cubecl::prelude::*;
 
+use super::payload::base::{Payload, PayloadExpand};
 use crate::*;
 
 pub(crate) const FIRST_SLOT: usize = 0;
@@ -98,6 +99,21 @@ impl<T: CubeType> Slot<T> {
             Meeting::Cube => sync_cube(),
             Meeting::Plane => sync_plane(),
             Meeting::Barrier { .. } => {}
+        }
+    }
+}
+
+#[cube]
+impl<P: Payload<P> + CubeType<ExpandType: Clone>> Slot<P> {
+    /// Bring `src`'s window at `region` into this slot, for every operand whose refill is `only`.
+    pub(crate) fn refill(&mut self, src: &P, region: &Region, #[comptime] only: Refill) {
+        let refills = comptime!(self.refills.clone());
+        let writes = comptime!(refills.contains(&only));
+        if comptime!(writes || only == Refill::EveryRegion) {
+            self.acquire_write();
+            self.data
+                .bring(src, &self.pipeline, region, comptime!(refills), only);
+            self.release_write();
         }
     }
 }

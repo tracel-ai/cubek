@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use super::cooperative::fill_extent;
+use super::straight::fill_extent;
 use crate::*;
 
 /// One side of a fill, as far as choosing a transport goes.
@@ -16,6 +16,8 @@ pub(crate) struct StoreForm {
     pub(crate) width: usize,
     /// Whether the coordinates gather.
     pub(crate) gathered: bool,
+    /// Whether the gather lands two cells on one, so a write through it aliases.
+    pub(crate) overlaps: bool,
     /// Whether a read past the logical bound masks to zero.
     pub(crate) masks: bool,
     /// Whether the store has an address (a buffer, not an erased call).
@@ -141,6 +143,7 @@ impl<T: Numeric> Memory<T> {
                 packing: self.store.packing,
                 width: self.store.vector_size,
                 gathered: !self.projection.is_direct(),
+                overlaps: self.projection.composition() == Composition::Overlapping,
                 masks: self.access.overhang.masks(),
                 addressed,
                 delivery: self.access.delivery,
@@ -149,6 +152,7 @@ impl<T: Numeric> Memory<T> {
                 packing: src.store.packing,
                 width: src.store.vector_size,
                 gathered: !src.projection.is_direct(),
+                overlaps: src.projection.composition() == Composition::Overlapping,
                 masks: src.access.overhang.masks(),
                 addressed: src_addressed,
                 delivery: src.access.delivery,
@@ -170,10 +174,13 @@ impl<T: Numeric> Memory<T> {
 impl Scan {
     /// What the scan reads per line, decided by the source's form.
     fn new(dst: StoreForm, src: StoreForm, space: &Space) -> Self {
+        // The scan walks both windows cell by cell in their logical order and reaches each
+        // buffer through its own map: a destination whose gather partitions its buffer takes
+        // every cell once, and only one that lands two cells on one would alias a write.
         assert!(
-            !src.gathered && !dst.gathered,
+            !src.gathered && !dst.overlaps,
             "TransportKind: a gathered tile fills only a whole, unmasked, unpacked \
-             destination (a stage)"
+             destination (a stage), and a scan writes no destination whose gather overlaps"
         );
         assert!(
             dst.width == src.width,
@@ -217,6 +224,7 @@ mod tests {
             packing: Packing::Plain,
             width,
             gathered: false,
+            overlaps: false,
             masks: false,
             addressed: true,
             delivery: Delivery::SyncPerUnit,
@@ -353,6 +361,40 @@ mod tests {
             ..plain(4)
         };
         kind(plain(4), bulk, &access());
+    }
+
+    /// A destination whose gather partitions its buffer, as a block-split output's does, is
+    /// scanned cell by cell through its map: every cell lands once.
+    #[test]
+    fn a_partitioning_destination_scans() {
+        let windowed = Access {
+            whole: false,
+            ..access()
+        };
+        let partitioned = StoreForm {
+            gathered: true,
+            ..plain(4)
+        };
+        assert_eq!(
+            kind(partitioned, plain(4), &windowed),
+            TransportKind::Scanned(Scan::Element)
+        );
+    }
+
+    /// A destination whose gather lands two cells on one would take a value twice.
+    #[test]
+    #[should_panic(expected = "no destination whose gather overlaps")]
+    fn an_overlapping_destination_refuses_a_scan() {
+        let windowed = Access {
+            whole: false,
+            ..access()
+        };
+        let overlapping = StoreForm {
+            gathered: true,
+            overlaps: true,
+            ..plain(4)
+        };
+        kind(overlapping, plain(4), &windowed);
     }
 
     #[test]

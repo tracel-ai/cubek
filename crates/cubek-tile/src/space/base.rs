@@ -3,6 +3,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
+use crate::algebra::gcd;
 use crate::{Axis, Extent, Level, Shape};
 
 /// Every axis with its extent, in canonical order, plus the runtime sizes of dynamic axes.
@@ -254,6 +255,47 @@ impl Space {
         Space::from_shape(Shape::new(&entries))
     }
 
+    /// The smallest space every one of `parts` tiles evenly: on each axis the least common
+    /// multiple of the parts' extents, axes in first-appearance order. The box a step covers so
+    /// that each operand's load fills it whole: NVFP4 values loaded `{k 16, n 2}`, their scales
+    /// `{k 16, n 16}` and an `f16` activation `{k 8}` cover `{k 16, n 16}`.
+    ///
+    /// # Panics
+    ///
+    /// On a dynamic extent, which has no multiple.
+    pub fn covering(parts: &[&Space]) -> Space {
+        let mut extents: Vec<(Axis, usize)> = Vec::new();
+        for part in parts {
+            for (axis, extent) in part.extents() {
+                match extents.iter_mut().find(|(a, _)| *a == axis) {
+                    Some((_, held)) => *held = *held / gcd(*held, extent) * extent,
+                    None => extents.push((axis, extent)),
+                }
+            }
+        }
+        Space::new(&extents)
+    }
+
+    /// How many `tile`s this space holds, laid side by side along every axis `tile` names; an axis
+    /// it does not name it spans whole, one tile serving every position along it. An `f16`
+    /// activation loaded `{k 8}` fills a step `{k 16, n 16}` in two loads.
+    ///
+    /// # Panics
+    ///
+    /// Where `tile` names an axis this space lacks, or does not divide its extent there.
+    pub fn tiles(&self, tile: &Space) -> usize {
+        tile.axes()
+            .map(|axis| {
+                let (whole, part) = (self.extent(axis), tile.extent(axis));
+                assert!(
+                    whole.is_multiple_of(part),
+                    "Space::tiles: {part} along {axis:?} does not tile {whole}"
+                );
+                whole / part
+            })
+            .product()
+    }
+
     /// The axes in this space but not in `output`: those contracted.
     pub fn difference(&self, output: &Space) -> SmallVec<[Axis; Space::MAX_RANK]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
@@ -349,6 +391,37 @@ mod contraction_tests {
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
     const R: Axis = Axis(3);
+
+    /// NVFP4's step: values loaded two words down `k` by two columns, a load of sixteen scales
+    /// each covering sixteen of `k`, and an `f16` activation eight at a time cover sixteen by
+    /// sixteen, which takes eight loads of values, one of scales and two of activation.
+    #[test]
+    fn a_step_covers_every_load_and_counts_each() {
+        let values = Space::new(&[(K, 16), (N, 2)]);
+        let scales = Space::new(&[(K, 16), (N, 16)]);
+        let activation = Space::new(&[(K, 8)]);
+        let step = Space::covering(&[&activation, &scales, &values]);
+        assert_eq!(step, Space::new(&[(K, 16), (N, 16)]));
+        assert_eq!(
+            [&activation, &scales, &values].map(|load| step.tiles(load)),
+            [2, 1, 8]
+        );
+    }
+
+    /// MXFP4's scales cover thirty-two of `k`, so its step is twice as deep and takes twice the
+    /// activation and value loads.
+    #[test]
+    fn a_wider_scale_deepens_the_step() {
+        let values = Space::new(&[(K, 16), (N, 2)]);
+        let scales = Space::new(&[(K, 32), (N, 16)]);
+        let activation = Space::new(&[(K, 8)]);
+        let step = Space::covering(&[&activation, &scales, &values]);
+        assert_eq!(step, Space::new(&[(K, 32), (N, 16)]));
+        assert_eq!(
+            [&activation, &scales, &values].map(|load| step.tiles(load)),
+            [4, 1, 16]
+        );
+    }
 
     /// A matmul's `k` is its one contracted axis.
     #[test]

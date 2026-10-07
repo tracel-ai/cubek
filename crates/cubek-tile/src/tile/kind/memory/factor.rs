@@ -287,7 +287,7 @@ impl FactorReader {
     ) -> Vector<E, V> {
         if comptime!(self.scaled) {
             let (row, col) = pos;
-            let coords = matrix_coords(
+            let coords = TileMatrix::value_coords(
                 row,
                 col,
                 self.matrix,

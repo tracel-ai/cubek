@@ -6,6 +6,7 @@ use cubecl::{
     prelude::*,
 };
 
+use crate::tile::slices::AxisSlicesKind;
 use crate::*;
 
 /// One plane-level tile, by encoding ([`Instruction`]).
@@ -785,58 +786,37 @@ impl<T: Numeric> PlanePartition<T> {
     }
 }
 
-/// The `rows × cols` grid of fragments the walked `levels` cut `space` into.
-pub(crate) fn partition_shape(space: &Space, levels: &[Level]) -> (usize, usize) {
-    let mut shape = (1usize, 1usize);
-    let mut space = space.clone();
-    for level in levels {
-        let grid = MatrixGrid::new(level, &space);
-        shape = (shape.0 * grid.rows, shape.1 * grid.cols);
-        space = level.child(&space);
-    }
-    shape
-}
-
-/// The `rows × cols` grid of fragments a walked level cuts a partition into.
-pub(crate) struct MatrixGrid {
-    rows: usize,
-    cols: usize,
-}
-
-impl MatrixGrid {
-    /// The grid `level` cuts `space` into; a distributed level cuts nothing.
-    pub(crate) fn new(level: &Level, space: &Space) -> Self {
-        if level.coverage() != Coverage::Walk {
-            return MatrixGrid { rows: 1, cols: 1 };
-        }
-        let edges = MatrixAxes::edges(space);
-        for (p, axis) in space.axes().enumerate() {
-            let tiles = level
-                .tiles_const(space, axis)
-                .expect("plane partition level: tile counts must be comptime");
-            assert!(
-                p == edges.row_split || p == edges.col_split || tiles == 1,
-                "plane partition level: leading (batch) axes must hand out one tile"
-            );
-        }
-        MatrixGrid {
-            rows: level
-                .tiles_const(space, space.axis_at(edges.row_split))
-                .unwrap(),
-            cols: level
-                .tiles_const(space, space.axis_at(edges.col_split))
-                .unwrap(),
+#[cube]
+impl<E: Float> PlanePartition<E> {
+    /// This grid's slices along its columns: a unit's register block where the grid is one, the
+    /// fragments otherwise.
+    pub(crate) fn slices(&self) -> AxisSlicesKind<E> {
+        match self.at(0usize, 0usize) {
+            PlaneTile::Registers(block) => {
+                comptime!(assert!(
+                    self.m_tiles * self.n_tiles == 1,
+                    "Tile::along: a unit's slices are one register block"
+                ));
+                AxisSlicesKind::new_Registers(block)
+            }
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => AxisSlicesKind::new_Fragments(self.clone()),
         }
     }
+}
 
-    /// Whether the level cuts the partition into more than one fragment.
-    pub(crate) fn cuts(&self) -> bool {
-        (self.rows, self.cols) != (1, 1)
+#[cube]
+impl<E: Float> PlaneTile<E> {
+    /// This tile's slices along its columns: a register block's, or one fragment's.
+    pub(crate) fn slices(&self) -> AxisSlicesKind<E> {
+        match self {
+            PlaneTile::Registers(block) => AxisSlicesKind::new_Registers(block.clone()),
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => AxisSlicesKind::new_Fragment(self.clone()),
+        }
     }
 }
 
 /// The never-walked level cutting an operand's window into the partition's fragments.
-pub(crate) fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
+fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
     let edges = MatrixAxes::edges(window);
     let (p0, p1) = (edges.row_split, edges.col_split);
     let axes: Vec<Axis> = window.axes().collect();

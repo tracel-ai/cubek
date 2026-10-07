@@ -29,7 +29,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Scalars of this stage one unit holds in registers across a contraction.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
         self.mem("fetched_scalars").fetched_scalars()
     }
@@ -40,7 +40,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This unit's share of filling this stage from `src`, read into `fetched` but not yet written.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn fetch_from<W: Size>(&self, src: &Tile<T>, fetched: &mut Array<Vector<T, W>>) {
         let space = comptime!(self.place.space.clone());
         self.mem("fetch_from")
@@ -48,7 +48,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Write what [`fetch_from`](Tile::fetch_from) read into this stage.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         self.mem_mut("store_fetched").store_fetched(fetched);
     }
@@ -118,12 +118,12 @@ impl<T: Numeric> Memory<T> {
         self.layout.clone()
     }
 
-    pub(crate) fn window(&self) -> Window {
+    fn window(&self) -> Window {
         self.window.clone()
     }
 
     /// The window extent, for shape-only readers that must not regroup the buffer.
-    pub(crate) fn extent(&self) -> Coords<u32> {
+    fn extent(&self) -> Coords<u32> {
         self.window.extent.clone()
     }
 
@@ -256,7 +256,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`lines`](Memory::lines) re-typed to the storage element `I` (`u32` words when packed).
-    pub(crate) fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
+    fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
         let storage = unsafe { self.store.buffer().downcast_unchecked::<I>() };
         storage.as_vectorized().with_vector_size::<W>()
     }
@@ -265,44 +265,6 @@ impl<T: Numeric> Memory<T> {
     pub(crate) fn lines_storage_mut<I: Numeric, W: Size>(&mut self) -> &mut [Vector<I, W>] {
         let storage = unsafe { self.store.buffer_mut().downcast_mut_unchecked::<I>() };
         storage.as_vectorized_mut().with_vector_size_mut::<W>()
-    }
-
-    /// The window as one dense run of lines: index `i` addresses line `origin + i`.
-    /// The caller guarantees the window is physically contiguous and row-major.
-    pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
-        self.assert_dense();
-        let all = self.lines::<W>();
-        let start = self.window_start.cast::<usize>();
-        all.slice(start, all.len())
-    }
-
-    /// The mutable twin of [`dense_lines`](Memory::dense_lines).
-    pub(crate) fn dense_lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.assert_dense();
-        let start = self.window_start.cast::<usize>();
-        let all = self.lines_mut::<W>();
-        let end = all.len();
-        all.slice_mut(start, end)
-    }
-
-    /// The comptime half of [`dense_lines`](Memory::dense_lines)'s contract.
-    fn assert_dense(&self) {
-        comptime!(assert!(
-            !self.access.overhang.masks(),
-            "Memory::dense_lines: a dense window cannot mask an overhang"
-        ));
-        comptime!(assert!(
-            !self.layout.projection.is_tiled(),
-            "Memory::dense_lines: a storage-tiled window is not dense"
-        ));
-        comptime!(assert!(
-            self.projection.is_direct(),
-            "Memory::dense_lines: a gathered window is not dense (sibling windows overlap)"
-        ));
-        comptime!(assert!(
-            self.store.packing == Packing::Plain,
-            "Memory::dense_lines: a packed store is served through its packed views"
-        ));
     }
 
     /// The buffer from the window origin on, rows stepping by [`row_stride`](Memory::row_stride).
@@ -516,14 +478,16 @@ impl<T: Numeric> Memory<T> {
     ) -> ProjectedMatrix {
         let bound = self.extent();
         let load = self.vector_tile(&space);
-        projected_batch_matrix(
-            &bound,
-            space,
-            comptime!(self.projection.clone()),
-            self.map.clone(),
-            load,
-            axes,
-            i,
+        ProjectedMatrix::new(
+            TileMatrix::batch(
+                &bound,
+                comptime!(&space),
+                comptime!(self.projection.composition()),
+                comptime!(&load),
+                axes,
+                i,
+            ),
+            self.axis_projection(comptime!(space.clone())),
         )
     }
 
@@ -534,13 +498,15 @@ impl<T: Numeric> Memory<T> {
         #[comptime] rows: usize,
         #[comptime] cols: usize,
     ) -> ProjectedMatrix {
-        projected_whole_matrix(
-            space,
-            comptime!(self.projection.clone()),
-            self.map.clone(),
-            comptime!(self.store.vector_size),
-            rows,
-            cols,
+        let vector_size = comptime!(self.store.vector_size);
+        ProjectedMatrix::new(
+            TileMatrix::whole(comptime!(&space), vector_size, rows, cols),
+            axis_projection(
+                comptime!(space),
+                comptime!(self.projection.clone()),
+                self.map.clone(),
+                vector_size,
+            ),
         )
     }
 
@@ -766,12 +732,7 @@ impl<T: Numeric> Memory<T> {
     ) -> Memory<T> {
         Memory::<T> {
             address: comptime!(self.address),
-            store: Store::<T> {
-                backing: self.store.backing.clone(),
-                vector_size: comptime!(self.store.vector_size),
-                packing: comptime!(self.store.packing),
-                stored_tiles: comptime!(self.store.stored_tiles.clone()),
-            },
+            store: self.store.clone(),
             layout: self.layout.clone(),
             window,
             projection: comptime!(self.projection.clone()),

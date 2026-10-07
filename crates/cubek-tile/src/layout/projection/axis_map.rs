@@ -2,7 +2,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Space};
+use crate::{Axis, Space, algebra::gcd};
 
 /// How far one unit of a logical axis moves along one physical axis.
 /// A `Dynamic` coefficient declares `max`, the largest value the launch may pass.
@@ -356,11 +356,6 @@ impl PhysicalAxisMap {
     pub(crate) fn is_identity(&self, axis: Axis) -> bool {
         self.identity_axis() == Some(axis)
     }
-}
-
-/// Greatest common divisor.
-pub(crate) fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 { a } else { gcd(b, a % b) }
 }
 
 #[cfg(test)]

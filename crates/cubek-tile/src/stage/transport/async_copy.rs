@@ -22,7 +22,7 @@ use crate::*;
 /// The widths of one copy the engine takes, in bytes: `cp.async` moves 4, 8 or 16.
 const COPY_BYTES: [usize; 3] = [4, 8, 16];
 
-/// [`fill_lines`](super::cooperative::fill_lines) with every line handed to the copy engine: the
+/// [`fill_lines`](super::straight::fill_lines) with every line handed to the copy engine: the
 /// same lines per unit on the same schedule, numbered in the source's order ([`BufferLayout::row_major_coords`]).
 ///
 /// A schedule of its own rather than an arm of `fill_lines`: the copy reads and writes lines of
@@ -52,7 +52,7 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
         #[unroll]
         for t in 0..tasks {
-            let i = fill_worker(fill) + comptime!(t * units);
+            let i = FillUnits::worker(fill) + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
                     copy_line_async::<I2, W>(d, s, layout, i);
@@ -62,8 +62,8 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
             }
         }
     } else {
-        let stride = fill_workers(fill);
-        let mut i = fill_worker(fill);
+        let stride = FillUnits::workers(fill);
+        let mut i = FillUnits::worker(fill);
         while i < total {
             copy_line_async::<I2, W>(d, s, layout, i);
             i += stride;

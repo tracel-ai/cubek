@@ -6,6 +6,7 @@ use cubecl::e2m1x2;
 use cubecl::ir::FloatKind;
 use cubecl::ir::VectorSize;
 use cubecl::ir::types::Fp8Format;
+use cubecl::post_processing::fp4::{e2m1_words_to_f16, e2m1_words_to_f16_placed};
 use cubecl::post_processing::minifloat::{fp8_bits_to_f32, ue8m0_bits_to_f32};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
@@ -28,7 +29,12 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
         FieldDecode::SignExtended => unpack_int_line::<F, NQ, NF>(words, field),
         FieldDecode::Unsigned => unpack_index_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
-        FieldDecode::Converted => unpack_converted_fp4_line::<F, NQ, NF>(words),
+        FieldDecode::Converted => {
+            unpack_e2m1_line::<F, NQ, NF>(words, comptime!(FieldDecode::Converted))
+        }
+        FieldDecode::Placed { lifted } => {
+            unpack_e2m1_line::<F, NQ, NF>(words, comptime!(FieldDecode::Placed { lifted }))
+        }
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
         FieldDecode::Bits(kind) => unpack_float_line::<F, NQ, NF>(words, kind),
     }
@@ -165,11 +171,16 @@ fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Ve
     out
 }
 
-/// The `e2m1` fields of a device that converts `e2m1x2`: each word cast as four of them, eight
-/// values, the compiler choosing how. A word whose line takes fewer of its fields keeps the first.
+/// The `e2m1` fields, eight a word, `decode` saying how a word becomes them: cast as four
+/// `e2m1x2` on a device that converts them, the compiler choosing how; or, on a device that
+/// emulates the conversion, decoded from the word's bits as `f16` pairs, lifted to their values or
+/// placed, each [`E2M1_F16_LIFT`](cubecl::post_processing::fp4::E2M1_F16_LIFT) short of its value,
+/// for a reader whose factor carries the lift. A word whose line takes fewer of its fields keeps
+/// the first.
 #[cube]
-fn unpack_converted_fp4_line<F: Numeric, NQ: Size, NF: Size>(
+fn unpack_e2m1_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
+    #[comptime] decode: FieldDecode,
 ) -> Vector<F, NF> {
     let nq = NQ::value();
     let nf = NF::value();
@@ -178,9 +189,16 @@ fn unpack_converted_fp4_line<F: Numeric, NQ: Size, NF: Size>(
     let mut out = Vector::<F, NF>::empty();
     #[unroll]
     for w in 0..words.vector_size() {
-        let values = Vector::<F, Const<8>>::cast_from(Vector::<e2m1x2, Const<4>>::reinterpret(
-            words.extract(w),
-        ));
+        let word = Vector::<u32, Const<1>>::new(words.extract(w));
+        let values = if comptime!(decode == FieldDecode::Placed { lifted: true }) {
+            Vector::<F, Const<8>>::cast_from(e2m1_words_to_f16::<Const<1>, Const<8>>(word))
+        } else if comptime!(decode == FieldDecode::Placed { lifted: false }) {
+            Vector::<F, Const<8>>::cast_from(e2m1_words_to_f16_placed::<Const<1>, Const<8>>(word))
+        } else {
+            Vector::<F, Const<8>>::cast_from(Vector::<e2m1x2, Const<4>>::reinterpret(
+                words.extract(w),
+            ))
+        };
         #[unroll]
         for j in 0..fields {
             out.insert(w * fields + j, values.extract(j));

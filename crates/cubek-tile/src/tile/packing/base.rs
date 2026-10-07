@@ -5,6 +5,7 @@ use cubecl::e2m1x2;
 use cubecl::ir::features::TypeUsage;
 use cubecl::ir::types::Fp8Format;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::post_processing::fp4::E2M1_F16_LIFT;
 use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::quant::scheme::ScaleDtype;
@@ -35,6 +36,14 @@ pub enum Field {
     /// and cast, the decode left to the compiler. What [`read_on`](Field::read_on) makes of
     /// `Quant(E2M1)` there.
     ConvertedE2M1,
+    /// An `e2m1` code on a device that emulates `e2m1x2`'s conversion: a word is decoded as `f16`
+    /// pairs from its bits, lifted to its values, or, where `lifted` is false, each placed
+    /// [`E2M1_F16_LIFT`] short of its value for a reader whose factor carries the lift (a tile
+    /// read placed). What [`read_on`](Field::read_on) makes of
+    /// `Quant(E2M1)` there, lifted.
+    PlacedE2M1 {
+        lifted: bool,
+    },
 }
 
 impl From<QuantValue> for Field {
@@ -64,7 +73,7 @@ impl Field {
             Field::Fp8(_) => 8,
             Field::Float(kind) => Field::float_bits(kind),
             Field::Index { bits } => bits,
-            Field::ConvertedE2M1 => QuantValue::E2M1.size_bits(),
+            Field::ConvertedE2M1 | Field::PlacedE2M1 { .. } => QuantValue::E2M1.size_bits(),
         }
     }
 
@@ -75,14 +84,37 @@ impl Field {
 }
 
 impl Field {
-    /// This field as the device `client` reads it: an `e2m1` code converted by the device where it
-    /// converts `e2m1x2`, every other field as it is. A device's own conversion is the one its
-    /// compiler lowers best, so where it exists a software decode is only ever slower.
+    /// This field as the device `client` reads it: an `e2m1` code decoded from its bits where the
+    /// device emulates converting `e2m1x2` anyway, so a reader's factor can carry the decode's
+    /// lift; converted by the device where it converts `e2m1x2` itself; every other field as it
+    /// is. A device's own conversion is the one its compiler lowers best, so where it exists a
+    /// software decode is only ever slower.
     pub fn read_on(self, client: &Client) -> Field {
+        let e2m1 = ElemType::Float(FloatKind::E2M1x2);
+        let emulated = client.features().conversion_is_emulated(e2m1);
         let converts = e2m1x2::supported_uses(client).contains(TypeUsage::Conversion);
         match self {
+            Field::Quant(QuantValue::E2M1) if emulated => Field::PlacedE2M1 { lifted: true },
             Field::Quant(QuantValue::E2M1) if converts => Field::ConvertedE2M1,
             other => other,
+        }
+    }
+
+    /// This field read placed ([`Tile::placed`](crate::Tile::placed)): an `e2m1` code decoded
+    /// from its bits, its lift left to the reader's factor; every other field as it is.
+    pub(crate) fn placed(self) -> Field {
+        match self {
+            Field::PlacedE2M1 { .. } => Field::PlacedE2M1 { lifted: false },
+            other => other,
+        }
+    }
+
+    /// What a value read this way is short of: [`E2M1_F16_LIFT`] for an `e2m1` code placed, one
+    /// for every value read as itself.
+    pub(crate) fn lift(self) -> f32 {
+        match self {
+            Field::PlacedE2M1 { lifted: false } => E2M1_F16_LIFT,
+            _ => 1.0,
         }
     }
 
@@ -134,6 +166,7 @@ impl Field {
             Field::Float(kind) => FieldDecode::Bits(kind),
             Field::Index { .. } => FieldDecode::Unsigned,
             Field::ConvertedE2M1 => FieldDecode::Converted,
+            Field::PlacedE2M1 { lifted } => FieldDecode::Placed { lifted },
         }
     }
 }
@@ -149,6 +182,9 @@ pub(crate) enum FieldDecode {
     Reinterpreted,
     /// A 4-bit float code the device converts: a word cast as four `e2m1x2`.
     Converted,
+    /// A 4-bit float code decoded from its bits as `f16` pairs, lifted to its value or placed
+    /// [`E2M1_F16_LIFT`] short of it.
+    Placed { lifted: bool },
     /// An 8-bit float code, read back through the format's own decoder.
     Byte(Fp8Format),
     /// A whole float, read back by reinterpreting the bits of its slot.
@@ -156,6 +192,24 @@ pub(crate) enum FieldDecode {
 }
 
 impl Packing {
+    /// This packing read placed ([`Field::placed`]).
+    pub(crate) fn placed(self) -> Packing {
+        match self {
+            Packing::Packed { field } => Packing::Packed {
+                field: field.placed(),
+            },
+            Packing::Plain => Packing::Plain,
+        }
+    }
+
+    /// What its values are short of ([`Field::lift`]).
+    pub(crate) fn lift(self) -> f32 {
+        match self {
+            Packing::Packed { field } => field.lift(),
+            Packing::Plain => 1.0,
+        }
+    }
+
     /// This packing as the device `client` reads it ([`Field::read_on`]).
     pub(crate) fn read_on(self, client: &Client) -> Packing {
         match self {
@@ -169,7 +223,7 @@ impl Packing {
 
 impl Packing {
     /// Values per stored element: one, unless a `u32` holds several fields.
-    pub(crate) fn factor(&self) -> usize {
+    fn factor(&self) -> usize {
         match self {
             Packing::Plain => 1,
             Packing::Packed { field } => field.per_word(),

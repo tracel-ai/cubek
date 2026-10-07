@@ -25,7 +25,7 @@ pub(super) const LDMATRIX_ROW_BYTES: usize = 16;
 /// vectors run along `k` needs none.
 ///
 /// A row is a whole number of the window's lines, and the window lies in shared memory, which a
-/// stage's 16-byte alignment ([`Memory::smem_aligned`]) keeps every row's address aligned in: the
+/// stage's 16-byte alignment ([`Memory::smem_owned`]) keeps every row's address aligned in: the
 /// manual-mma fragment load reads any other window a cell at a time.
 #[cube]
 pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(

@@ -24,7 +24,7 @@ pub(crate) struct ChunkSwizzle {
 
 impl ChunkSwizzle {
     /// Bytes one pass over every bank covers: 32 banks of four bytes.
-    pub(crate) const BANK_PERIOD_BYTES: usize = 128;
+    const BANK_PERIOD_BYTES: usize = 128;
 
     /// Rows after which the keys repeat, whatever the row's length: a row of a bank period or
     /// less cycles through `BANK_PERIOD_BYTES / CHUNK_BYTES` keys a key per period, one longer

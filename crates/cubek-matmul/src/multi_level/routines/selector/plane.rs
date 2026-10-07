@@ -117,7 +117,10 @@ pub fn infer_blueprint_plane(
         if problem.m as u32 <= tile_size.m() * 4 || problem.n as u32 <= tile_size.n() * 4 {
             tile_factor = 8;
         }
-        max_plane_per_cube / (tile_factor * precision_factor)
+        // The compensation narrows the cube, never below one plane: a cube of one plane runs,
+        // and declining here would make the routine's availability hinge on where the problem
+        // falls inside its autotune bucket (on Metal at f32, 37 rows ran and 32 declined).
+        (max_plane_per_cube / (tile_factor * precision_factor)).max(1)
     });
 
     if row_count == 0 {

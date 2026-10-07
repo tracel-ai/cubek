@@ -37,7 +37,7 @@ pub struct Procedural<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Procedural<T> {
-    #[allow(dead_code)] // Reached through its expand, from [`Tile::procedural`].
+    #[allow(dead_code)] // Reached through its expand, from `new` and `separable`.
     pub(crate) fn erased(#[comptime] space: Space, recipe: ErasedRecipe<T>) -> Self {
         let mut origin = Coords::<u32>::new();
         let mut bound = Coords::<u32>::new();

@@ -5,8 +5,11 @@
 //! without blowing up compile time.
 
 use cubek_matmul::multi_level::Strategy as MultiLevel;
+use cubek_test_utils::{TestOutcome, ValidationResult};
 
-use crate::harness::{client, f16_elems, square, test_matmul_strategy};
+use crate::harness::{
+    client, f16_elems, f32_elems, rect, run_with_strides, square, test_matmul_strategy,
+};
 
 #[test]
 fn simple_cyclic_cmma() {
@@ -14,6 +17,23 @@ fn simple_cyclic_cmma() {
         client(),
         square(256, f16_elems()),
         MultiLevel::SimpleCyclicCmma(Default::default()).into(),
+    );
+}
+
+/// A small f32 problem runs rather than declining. On Metal (8×8 instructions, 256 units a cube)
+/// the register compensation once divided the cube down to zero planes at 32 rows while 37 rows
+/// ran, and autotune buckets the two together. Asserted as executed: the default test policy
+/// would accept the decline.
+#[test]
+fn simple_cyclic_cmma_runs_a_small_f32_problem() {
+    let outcome = run_with_strides(
+        client(),
+        rect(32, 32, 64, f32_elems()),
+        MultiLevel::SimpleCyclicCmma(Default::default()).into(),
+    );
+    assert!(
+        matches!(outcome, TestOutcome::Validated(ValidationResult::Pass)),
+        "expected the matmul to execute and validate, got {outcome:?}"
     );
 }
 

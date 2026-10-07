@@ -14,11 +14,6 @@ pub struct TeamUnit {
 
 #[cube]
 impl TeamUnit {
-    /// This unit in a team of `units`, at `index`.
-    pub fn new(index: usize, units: usize) -> TeamUnit {
-        TeamUnit { index, units }
-    }
-
     /// A team laid along the cube's x dim: one team per row of the cube.
     pub fn along_x() -> TeamUnit {
         TeamUnit {

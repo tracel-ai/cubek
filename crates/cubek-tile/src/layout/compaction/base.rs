@@ -2,7 +2,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use super::dim::gcd;
+use crate::algebra::gcd;
 use crate::{Axis, PhysicalAxisMap, Projection, Scale, Space};
 
 /// The compacted stage of a [`Projection`]: per physical axis, its cell count and source step,

@@ -123,9 +123,9 @@ impl MatrixAxes {
 /// No grouping of a space's axes multiplies out to `rows x cols`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct NoMatrix {
-    pub rows: usize,
-    pub cols: usize,
-    pub extents: Vec<usize>,
+    rows: usize,
+    cols: usize,
+    extents: Vec<usize>,
 }
 
 impl NoMatrix {

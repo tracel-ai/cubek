@@ -13,13 +13,13 @@ use super::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
 use crate::*;
 
 // Per-role fragment register widths, bound at allocation to `def.vector_size(role)`.
-define_size!(pub NL);
-define_size!(pub NR);
-define_size!(pub NA);
+define_size!(pub(crate) NL);
+define_size!(pub(crate) NR);
+define_size!(pub(crate) NA);
 // A block-scaled fragment's widths: its values' per role, and its scales'.
-define_size!(pub NLB);
-define_size!(pub NRB);
-define_size!(pub NSB);
+define_size!(pub(crate) NLB);
+define_size!(pub(crate) NRB);
+define_size!(pub(crate) NSB);
 
 /// Values one `e2m1` block scale covers along the contraction under the instruction this
 /// encoding runs: NVFP4's block, a `ue4m3` scale every sixteen values.
@@ -675,7 +675,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
         } else {
             (row, col)
         };
-        let at = matrix_coords(window_row, window_col, 0usize, &space, axes, 1usize);
+        let at = TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
         let word = words.read(load.index(&at, &space));
         values[i] = Vector::<e2m1x2, NV>::reinterpret(word.extract(0usize));
     }
@@ -691,7 +691,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
             "MmaData::load_block_scaled: a word holds four block scales, and this step reads {}",
             k / E2M1_SCALE_BLOCK
         ));
-        let at = matrix_coords(served, 0u32.runtime(), 0usize, &space, axes, 1usize);
+        let at = TileMatrix::value_coords(served, 0u32.runtime(), 0usize, &space, axes, 1usize);
         let word = factor.word_at(&at, comptime!(space.clone()));
         scales[0] = Vector::<e4m3, NS>::reinterpret(word);
     } else {
@@ -701,7 +701,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
             // The window's rows are the served axis whichever its layout: an `A`'s rows, a
             // `B`'s columns lying col-major.
             let along_k = comptime!((b * E2M1_SCALE_BLOCK) as u32);
-            let at = matrix_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
+            let at = TileMatrix::value_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
             let scale = factor.at_coords(&at, comptime!(space.clone()));
             register.insert(b, e4m3::cast_from(scale));
         }

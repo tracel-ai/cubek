@@ -84,7 +84,7 @@ impl<T: Numeric> GlobalOperand<T> {
     }
 
     /// The shared body: `E` is the binding element, `T` the served scalar.
-    pub(crate) fn of_tensor<E: CubePrimitive>(
+    fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
@@ -179,7 +179,7 @@ impl<T: Numeric> GlobalOperand<T> {
 impl<T: Numeric> Memory<T> {
     /// The memory tile a launched operand becomes, its top window boxed over the physical axes.
     // The unrolled loop over the buffer's dims indexes a compile-time list by the dim.
-    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    #[allow(clippy::needless_range_loop)]
     pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
         let backing = operand.backing;
         let geometry = operand.geometry;
@@ -229,12 +229,23 @@ impl<T: Numeric> Memory<T> {
             .unwrap_or_else(|why| panic!("GlobalOperand: {vector_size} values a load: {why}"))
         );
         let parts = comptime!(load.parts(&spec.stored_tiles, &projection.dense_labels(), rank));
+        // A stated tile's extent is the statement's, not read off the buffer: the reads over it
+        // divide by a constant.
+        let stated = comptime!(VectorTile::stated_extents(
+            &spec.stored_tiles,
+            &projection.dense_labels(),
+            rank
+        ));
         let mut physical_shape = Coords::<u32>::new();
         let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
             let part = comptime!(parts[i] as u32);
-            physical_shape.push(geometry.shape.at(i) / part);
+            if comptime!(stated[i].is_some()) {
+                physical_shape.push(comptime!(stated[i].unwrap() as u32 / part));
+            } else {
+                physical_shape.push(geometry.shape.at(i) / part);
+            }
             physical_strides.push(geometry.strides.at(i) * part / comptime!(vector_size as u32));
         }
         let gmem_projection = comptime!(projection.positional());

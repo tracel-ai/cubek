@@ -40,7 +40,7 @@ impl Projection {
     }
 
     /// The same operand with each axis's storage fragments merged back into one coordinate.
-    pub fn untiled(&self) -> Projection {
+    pub(crate) fn untiled(&self) -> Projection {
         let carried = self.carried_groups();
         let physical: Vec<PhysicalAxisMap> = carried
             .iter()
@@ -196,18 +196,6 @@ impl Projection {
         }
     }
 
-    /// One value over the whole operand: the same axes, none addressed.
-    pub fn whole(&self) -> Projection {
-        Projection {
-            physical: self
-                .physical
-                .iter()
-                .map(|_| PhysicalAxisMap::broadcast())
-                .collect(),
-            axes: self.axes.clone(),
-        }
-    }
-
     /// `axes` in the tile's logical order, `physical` one per physical axis in buffer order.
     pub fn new(axes: &[Axis], physical: &[PhysicalAxisMap]) -> Self {
         Projection {
@@ -262,7 +250,7 @@ impl Projection {
     }
 
     /// Every physical axis's map, in the projection's own order.
-    pub(crate) fn axis_maps(&self) -> impl Iterator<Item = &PhysicalAxisMap> {
+    fn axis_maps(&self) -> impl Iterator<Item = &PhysicalAxisMap> {
         self.physical.iter()
     }
 
@@ -300,7 +288,7 @@ impl Projection {
 
     /// How many elements of physical axis `pa` a region covers: `1 + Σ (extent - 1) * scale`.
     /// Rational and dynamic axes report the widest span their bounds admit.
-    pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
+    pub(crate) fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
         let map = &self.physical[pa];
         let field: usize = map
             .terms()
@@ -388,8 +376,7 @@ impl Projection {
         }
         Ok(())
     }
-}
-impl Projection {
+
     /// Start writing a projection one buffer dim at a time, in buffer order ([`DimsBuilder`]).
     pub fn dims() -> DimsBuilder {
         DimsBuilder::new()
@@ -1125,7 +1112,7 @@ mod geometry_tests {
     fn a_window_is_exempt_from_the_aliasing_check() {
         let p = Projection::dims()
             .dim(B)
-            .dim(crate::layout::build::stencil(&[(M, 2), (K, 1)]).pad(1))
+            .dim(crate::layout::projection::dims_builder::stencil(&[(M, 2), (K, 1)]).pad(1))
             .dim(C)
             .build();
         let g = geometry(&[(8, 64 * 32), (64, 32), (32, 1)]);

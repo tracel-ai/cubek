@@ -1,4 +1,4 @@
-//! Addressing the bytes: [`BufferLayout`], [`Window`] and [`SourceWindow`].
+//! Addressing the bytes: [`Window`] and [`SourceWindow`].
 
 use cubecl::zspace::SmallVec;
 use cubecl::{
@@ -79,6 +79,20 @@ impl Window {
             true.runtime()
         }
     }
+
+    /// This window under `guard`: [`Guard::Proved`] drops clamping and [`Boundary`] modes.
+    pub(crate) fn with_guard(self, #[comptime] guard: Guard) -> Window {
+        Window {
+            origin: self.origin,
+            extent: self.extent,
+            bound: self.bound,
+            signed: comptime!(guard.checks() && self.signed),
+            boundaries: comptime!(match guard {
+                Guard::Checked => self.boundaries.clone(),
+                Guard::Proved => SmallVec::new(),
+            }),
+        }
+    }
 }
 
 /// Where a gathered stage sits inside the buffer it was filled from; invariant under
@@ -140,23 +154,6 @@ impl SourceWindow {
             }
         } else {
             true.runtime()
-        }
-    }
-}
-
-#[cube]
-impl Window {
-    /// This window under `guard`: [`Guard::Proved`] drops clamping and [`Boundary`] modes.
-    pub(crate) fn with_guard(self, #[comptime] guard: Guard) -> Window {
-        Window {
-            origin: self.origin,
-            extent: self.extent,
-            bound: self.bound,
-            signed: comptime!(guard.checks() && self.signed),
-            boundaries: comptime!(match guard {
-                Guard::Checked => self.boundaries.clone(),
-                Guard::Proved => SmallVec::new(),
-            }),
         }
     }
 }

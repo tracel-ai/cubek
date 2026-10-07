@@ -118,6 +118,15 @@ impl<T: Numeric> Memory<T> {
             .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"))
         )
     }
+
+    /// How a contraction into this window runs, as stated with
+    /// [`Tile::accumulating`](crate::Tile::accumulating). Refuses a window never stated.
+    pub(crate) fn stated_contraction(&self) -> comptime_type!(Contraction) {
+        comptime!(self.contraction.unwrap_or_else(|| panic!(
+            "Tile::mma: a memory window contracts under the register block and semiring it is \
+             stated with; state them with Tile::accumulating(block, semiring)"
+        )))
+    }
 }
 
 #[cube]
@@ -236,31 +245,35 @@ impl FillUnits {
     }
 }
 
-/// This unit's position among the units `fill` names, which a cooperative fill takes its lines
-/// at: its position in the cube, or in its plane.
-///
-/// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
-/// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
 #[cube]
-pub(crate) fn fill_worker(#[comptime] fill: FillUnits) -> usize {
-    match comptime!(fill.scope) {
-        ComputeScope::Cube => UNIT_POS as usize,
-        ComputeScope::Plane => UNIT_POS_X as usize,
-        ComputeScope::Unit => comptime!(panic!(
-            "fill_worker: a cooperative fill is shared by a cube or a plane, never one unit"
-        )),
+impl FillUnits {
+    /// This unit's position among the units `fill` names, which a cooperative fill takes its
+    /// lines at: its position in the cube, or in its plane.
+    ///
+    /// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
+    /// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
+    pub(crate) fn worker(#[comptime] fill: FillUnits) -> usize {
+        match comptime!(fill.scope) {
+            ComputeScope::Cube => UNIT_POS as usize,
+            ComputeScope::Plane => UNIT_POS_X as usize,
+            ComputeScope::Unit => comptime!(panic!(
+                "FillUnits::worker: a cooperative fill is shared by a cube or a plane, never \
+                 one unit"
+            )),
+        }
     }
-}
 
-/// How many units `fill` names at runtime: the cube's, or one plane's ([`fill_worker`]).
-#[cube]
-pub(crate) fn fill_workers(#[comptime] fill: FillUnits) -> usize {
-    match comptime!(fill.scope) {
-        ComputeScope::Cube => CUBE_DIM as usize,
-        ComputeScope::Plane => CUBE_DIM_X as usize,
-        ComputeScope::Unit => comptime!(panic!(
-            "fill_workers: a cooperative fill is shared by a cube or a plane, never one unit"
-        )),
+    /// How many units `fill` names at runtime: the cube's, or one plane's
+    /// ([`worker`](FillUnits::worker)).
+    pub(crate) fn workers(#[comptime] fill: FillUnits) -> usize {
+        match comptime!(fill.scope) {
+            ComputeScope::Cube => CUBE_DIM as usize,
+            ComputeScope::Plane => CUBE_DIM_X as usize,
+            ComputeScope::Unit => comptime!(panic!(
+                "FillUnits::workers: a cooperative fill is shared by a cube or a plane, never \
+                 one unit"
+            )),
+        }
     }
 }
 
@@ -288,7 +301,8 @@ pub enum Schedule {
     Sequential,
     /// Every writer every round, each on its own chunk of the box: in round `r`, writer `w` takes
     /// chunk `(w + r) mod writers`, a cube barrier between rounds. The planes of one cube meeting
-    /// in shared memory ([`SmemCyclicAccumulation`]), where a barrier orders them.
+    /// in shared memory ([`SmemCyclicAccumulation`](crate::kind::SmemCyclicAccumulation)), where a
+    /// barrier orders them.
     Cyclic,
 }
 

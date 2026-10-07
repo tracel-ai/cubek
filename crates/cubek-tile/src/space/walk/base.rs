@@ -235,6 +235,13 @@ impl Walk {
         self.positions.at(p)
     }
 
+    /// This instance's place among the workers the level deals `axis` to, `0` for a walked axis:
+    /// which plane of those taking `axis` in runs, where the tiles a worker walks no longer name
+    /// it.
+    pub fn position(&self, #[comptime] axis: Axis) -> usize {
+        self.positions.at(comptime!(self.space.position(axis)))
+    }
+
     /// The `i`-th region of the walk.
     pub fn region(&self, i: usize) -> Region {
         let idx = self.base.plus(i);

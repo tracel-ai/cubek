@@ -15,7 +15,7 @@ pub(crate) struct TmaData<T: Numeric> {
     view: ViewMut<'static, T, CoordsDyn>,
     pos: CoordsDyn,
     pub(crate) bound: CoordsDyn,
-    /// The launch's cube size, `0` when unknown ([`Access::units`](crate::Access)).
+    /// The launch's cube size, `0` when unknown ([`FillUnits::count`](crate::FillUnits)).
     #[cube(comptime)]
     pub(crate) units: usize,
 }
@@ -41,10 +41,7 @@ impl<T: Numeric> TmaData<T> {
             units,
         }
     }
-}
 
-#[cube]
-impl<T: Numeric> TmaData<T> {
     /// Issue the `tensor_map_load` into `dst` on `barrier` without arriving or waiting.
     /// Only the electing unit may call it, since it alone declares the transaction count.
     pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {
