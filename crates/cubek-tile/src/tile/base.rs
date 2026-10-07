@@ -574,6 +574,20 @@ impl<T: Numeric> Tile<T> {
         matrix.read((origin, origin)).extract(0usize)
     }
 
+    /// Multiply every partial this accumulator holds by `factor`.
+    pub fn scale_by(&mut self, factor: T) {
+        match &mut self.kind {
+            TileKind::PlaneTile(t) => t.scale(factor),
+            TileKind::PlanePartition(p) => p.scale(factor),
+            TileKind::Memory(_) => panic!(
+                "Tile::scale_by: a memory tile is scaled by the cube, not by one unit (Tile::mul)"
+            ),
+            TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => {
+                panic!("Tile::scale_by: not writable")
+            }
+        }
+    }
+
     /// Multiply every partial this accumulator holds by `factor`'s one value, if bound.
     pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
         #[comptime]

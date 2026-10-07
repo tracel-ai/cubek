@@ -25,9 +25,9 @@ impl<A: Numeric> MmaData<A> {
                         (
                             MmaFragment::LhsBlockScaled(af, a_scales),
                             MmaFragment::RhsBlockScaled(bf, b_scales),
-                        ) => mma_execute_block_scaled::<A>(
-                            af, *a_scales, bf, *b_scales, acc, m, n, k,
-                        ),
+                        ) => {
+                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
+                        }
                         _ => panic!(
                             "MmaData::mma: operands must carry the Lhs/Rhs roles, both \
                              block-scaled or neither"
@@ -69,9 +69,9 @@ impl<A: Numeric> MmaData<A> {
                         (
                             MmaFragment::LhsBlockScaled(af, a_scales),
                             MmaFragment::RhsBlockScaled(bf, b_scales),
-                        ) => mma_execute_block_scaled::<A>(
-                            af, *a_scales, bf, *b_scales, acc, m, n, k,
-                        ),
+                        ) => {
+                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
+                        }
                         _ => panic!("MmaData::mma: transient operand fragments in the wrong roles"),
                     }
                 }

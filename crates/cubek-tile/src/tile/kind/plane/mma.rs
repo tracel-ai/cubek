@@ -55,10 +55,11 @@ pub(crate) enum MmaFragment<T: Numeric> {
     Rhs(Array<Vector<T, NR>>),
     Acc(Array<Vector<T, NA>>),
     /// A block-scaled `A`: its `e2m1` values as the instruction takes them, two a byte, and the
-    /// `e4m3` scales of the row this unit's scale register serves.
-    LhsBlockScaled(Array<Vector<e2m1x2, NLB>>, Vector<e4m3, NSB>),
+    /// `e4m3` scales of the row this unit's scale register serves, the one register an array of
+    /// one holds, so a handle to the fragment loads the registers the fragment holds.
+    LhsBlockScaled(Array<Vector<e2m1x2, NLB>>, Array<Vector<e4m3, NSB>>),
     /// A block-scaled `B`, as [`LhsBlockScaled`](Self::LhsBlockScaled) is an `A`.
-    RhsBlockScaled(Array<Vector<e2m1x2, NRB>>, Vector<e4m3, NSB>),
+    RhsBlockScaled(Array<Vector<e2m1x2, NRB>>, Array<Vector<e4m3, NSB>>),
 }
 
 #[cube]
@@ -163,11 +164,11 @@ impl<T: Numeric> MmaData<T> {
         let fragment = match comptime!(ident) {
             MatrixIdent::A => MmaFragment::new_LhsBlockScaled(
                 Array::new(def.vectors_per_lane(MatrixIdent::A)),
-                Vector::empty(),
+                Array::new(1usize),
             ),
             MatrixIdent::B => MmaFragment::new_RhsBlockScaled(
                 Array::new(def.vectors_per_lane(MatrixIdent::B)),
-                Vector::empty(),
+                Array::new(1usize),
             ),
             MatrixIdent::Accumulator => {
                 panic!("MmaData::block_scaled: an accumulator carries no scales")
@@ -628,7 +629,7 @@ fn offers_block_scaled(
 fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     src: &Tile<T>,
     values: &mut Array<Vector<e2m1x2, NV>>,
-    scales: &mut Vector<e4m3, NS>,
+    scales: &mut Array<Vector<e4m3, NS>>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] shape: (usize, usize, usize),
@@ -679,6 +680,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     // `k` one a block.
     let served = def.scales_index(unit, ident);
     let factor = src.innermost_factor();
+    let mut register = Vector::<e4m3, NS>::empty();
     #[unroll]
     for b in 0..comptime!(k / E2M1_SCALE_BLOCK) {
         // The window's rows are the served axis whichever its layout: an `A`'s rows, a `B`'s
@@ -686,8 +688,9 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
         let along_k = comptime!((b * E2M1_SCALE_BLOCK) as u32);
         let at = matrix_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
         let scale = factor.at_coords(&at, comptime!(space.clone()));
-        scales.insert(b, e4m3::cast_from(scale));
+        register.insert(b, e4m3::cast_from(scale));
     }
+    scales[0] = register;
 }
 
 /// `acc += lhs · rhs` over two block-scaled operand fragments via
@@ -695,16 +698,16 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
 #[cube]
 pub(crate) fn mma_execute_block_scaled<A: Numeric>(
     lhs: &Array<Vector<e2m1x2, NLB>>,
-    lhs_scales: Vector<e4m3, NSB>,
+    lhs_scales: &Array<Vector<e4m3, NSB>>,
     rhs: &Array<Vector<e2m1x2, NRB>>,
-    rhs_scales: Vector<e4m3, NSB>,
+    rhs_scales: &Array<Vector<e4m3, NSB>>,
     acc: &mut Array<Vector<A, NA>>,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
 ) {
     let def = block_scaled_definition::<A>(m, n, k);
-    let out = def.execute_scaled(lhs, rhs, &*acc, lhs_scales, rhs_scales);
+    let out = def.execute_scaled(lhs, rhs, &*acc, lhs_scales[0], rhs_scales[0]);
     let num = def.vectors_per_lane(MatrixIdent::Accumulator);
     #[unroll]
     for i in 0..num {

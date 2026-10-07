@@ -708,8 +708,17 @@ impl<T: Numeric> PlanePartition<T> {
         );
         if comptime!(block_scaled) {
             // The instruction reads the stored values and their scales as they lie: nothing
-            // decodes on the way.
-            frags.copy_from(src);
+            // decodes on the way, so each fragment loads its own window of the source.
+            match &frags.kind {
+                TileKind::PlanePartition(partition) => partition.fill_from(src),
+                TileKind::Memory(_)
+                | TileKind::PlaneTile(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!("PlanePartition::fragments: operand fragments are a partition")
+                }
+            }
         } else if comptime!(scaled || packing != Packing::Plain || !shared) {
             // A scaled, packed or global operand loads from its plane's landing, as the direct
             // contraction does: a fragment reads a shared, plain window as it lies.
