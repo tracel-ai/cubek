@@ -29,7 +29,7 @@ use cubek_tile::stage::{Prefetch, UnitRead};
 use cubek_tile::*;
 use half::f16;
 
-use super::matmul::require_cmma_8x8x8_f32;
+use super::matmul::{require_cmma_8x8x8, require_cmma_8x8x8_f32};
 use super::{Form, implied};
 use cubek_tile::launch::Bound;
 
@@ -1953,12 +1953,13 @@ impl TileOrdered {
             .unwrap()
     }
 
-    /// The activation stated as its rows by its blocks by the position inside one, a dim an axis:
-    /// the same bytes as [`a_op`](Self::a_op), bound directly, which a stage can hold.
-    fn a_op_blocked(&self, client: &Client, launcher: &Launcher) -> Bound {
+    /// The activation in `elem`, stated as its rows by its blocks by the position inside one, a
+    /// dim an axis: the same values as [`a_op`](Self::a_op), bound directly, which a stage can
+    /// hold.
+    fn a_op_blocked(&self, client: &Client, launcher: &Launcher, elem: ElemType) -> Bound {
         let (a_t, _) =
             TestInput::builder(client.clone(), shape![self.rows, self.k_tiles, self.tile])
-                .dtype(f32::elem_type_native())
+                .dtype(elem)
                 .custom(self.a.clone())
                 .generate_with_f32_host_data();
         launcher
@@ -2401,15 +2402,15 @@ fn check_stepped(scales: TileScales) {
 }
 
 /// [`stepped_scaled_matmul`] with each cube staging the activation and the weight's words a
-/// block at a time, its planes landing their window of the staged words scaled.
+/// block at a time, its planes landing their window of the staged words scaled, summing in `A`.
 #[cube(launch)]
-fn staged_stepped_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
+fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>(
     a: &TileArg<'_, E, Const<8>>,
     b: &TileArg<'_, u32, Const<2>>,
     scale: &TileArg<'_, SS, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, A, Const<1>>,
     space: Partitioning,
-    #[define(E, S, SS)] _dtypes: [ElemType; 3],
+    #[define(E, A, S, SS)] _dtypes: [ElemType; 4],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile_as::<E>(comptime!(space.clone()));
@@ -2419,7 +2420,7 @@ fn staged_stepped_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
         let (a_cube, b_cube) = (a.at(&cube), b.at(&cube));
         let (scale_cube, c_cube) = (scale.at(&cube), c.at(&cube));
         let sum =
-            c_cube.accumulator::<E, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD);
+            c_cube.accumulator::<A, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD);
         let run = cube.walk();
         let mut stages = Stages::smem(&run, &a_cube, &b_cube, StageStorage::Strided, 1usize);
         stages.walk(run, Prefetch::InSlots, |slot, stage| {
@@ -2440,16 +2441,17 @@ fn staged_stepped_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
 }
 
 /// **A tile-ordered weight staged as its words lands a step at a time.** Each cube stages the
-/// activation and the weight's words a block deep; each of its planes lands its window of the
-/// staged words, scaled, once a block, and runs the block's two instructions out of the landing.
-fn check_staged_stepped(scales: TileScales) {
+/// activation, in `elem`, and the weight's words a block deep; each of its planes lands its
+/// window of the staged words, scaled, once a block, and runs the block's two instructions out of
+/// the landing, summing in `f32`.
+fn check_staged_stepped(scales: TileScales, elem: ElemType) {
     let (rows, n_tiles, k_tiles, fragment) = (16, 2, 4, 8);
     let w = TileOrdered::new(rows, n_tiles, k_tiles);
     let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) {
+    let dtype = f32::elem_type_native();
+    if !require_cmma_8x8x8(&client, elem, dtype) {
         return;
     }
-    let dtype = f32::elem_type_native();
     let c = TestInput::builder(client.clone(), shape![rows, w.cols()])
         .dtype(dtype)
         .zeros()
@@ -2471,24 +2473,32 @@ fn check_staged_stepped(scales: TileScales) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        w.a_op_blocked(&client, &launcher).arg(),
+        w.a_op_blocked(&client, &launcher, elem).arg(),
         w.b_op(&client, &launcher, Some(w.tile)).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
-        [dtype, dtype, stored],
+        [elem, dtype, dtype, stored],
     );
-    w.check(&client, c, &format!("staged stepped {scales:?}"));
+    w.check(&client, c, &format!("staged stepped {scales:?} {elem:?}"));
 }
 
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time() {
-    check_staged_stepped(TileScales::F32);
+    check_staged_stepped(TileScales::F32, f32::elem_type_native());
 }
 
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_under_byte_scales() {
-    check_staged_stepped(TileScales::Ue4m3);
+    check_staged_stepped(TileScales::Ue4m3, f32::elem_type_native());
+}
+
+/// The same in halves: a half lands an `e2m1` code a lift short of its value, and the lift times
+/// a block scale is past a half's range, so the landing applies the factor wider than the half it
+/// writes.
+#[test]
+fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_in_halves() {
+    check_staged_stepped(TileScales::Ue4m3, f16::elem_type_native());
 }
 
 #[test]
