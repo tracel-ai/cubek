@@ -388,8 +388,7 @@ impl Projection {
         }
         Ok(())
     }
-}
-impl Projection {
+
     /// Start writing a projection one buffer dim at a time, in buffer order ([`DimsBuilder`]).
     pub fn dims() -> DimsBuilder {
         DimsBuilder::new()
@@ -1125,7 +1124,7 @@ mod geometry_tests {
     fn a_window_is_exempt_from_the_aliasing_check() {
         let p = Projection::dims()
             .dim(B)
-            .dim(crate::layout::build::stencil(&[(M, 2), (K, 1)]).pad(1))
+            .dim(crate::layout::dims_builder::stencil(&[(M, 2), (K, 1)]).pad(1))
             .dim(C)
             .build();
         let g = geometry(&[(8, 64 * 32), (64, 32), (32, 1)]);
