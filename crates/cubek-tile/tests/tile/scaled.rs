@@ -2440,12 +2440,29 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>
     }
 }
 
+/// The planes a cube splits its box between, along its rows and its columns.
+#[derive(Clone, Copy, Debug)]
+struct PlaneGrid {
+    rows: usize,
+    columns: usize,
+}
+
+impl PlaneGrid {
+    const ONE: Self = Self {
+        rows: 1,
+        columns: 1,
+    };
+}
+
 /// **A tile-ordered weight staged as its words lands a step at a time.** Each cube stages the
 /// activation, in `elem`, and the weight's words a block deep; each of its planes lands its
 /// window of the staged words, scaled, once a block, and runs the block's two instructions out of
-/// the landing, summing in `f32`.
-fn check_staged_stepped(scales: TileScales, elem: ElemType) {
-    let (rows, n_tiles, k_tiles, fragment) = (16, 2, 4, 8);
+/// the landing, summing in `f32`. The cube's planes split its rows and its columns as `planes`
+/// says: planes on the same columns land the same window of the weight, each in a landing of its
+/// own, and planes on the same rows read the same window of the activation.
+fn check_staged_stepped(scales: TileScales, elem: ElemType, planes: PlaneGrid) {
+    let (plane_rows, n_tiles, k_tiles, fragment) = (16, 2, 4, 8);
+    let rows = plane_rows * planes.rows;
     let w = TileOrdered::new(rows, n_tiles, k_tiles);
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
@@ -2460,9 +2477,12 @@ fn check_staged_stepped(scales: TileScales, elem: ElemType) {
     // Leaf up: the instruction; the grid of fragments a plane holds; the block's two instruction
     // depths; the planes; the blocks a cube stages, one a stage; the cubes.
     let levels = Levels::leaf(&[(M, fragment), (NI, fragment), (KI, fragment)])
-        .walk(&[(M, rows / fragment), (NI, w.tile / fragment)])
+        .walk(&[
+            (M, plane_rows / fragment),
+            (NI, w.tile / fragment / planes.columns),
+        ])
         .walk(&[(KI, w.tile / fragment)])
-        .planes(&[(NI, 1)])
+        .planes(&[(M, planes.rows), (NI, planes.columns)])
         .walk_every(&[KB])
         .cubes(&[NB])
         .build();
@@ -2485,12 +2505,12 @@ fn check_staged_stepped(scales: TileScales, elem: ElemType) {
 
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time() {
-    check_staged_stepped(TileScales::F32, f32::elem_type_native());
+    check_staged_stepped(TileScales::F32, f32::elem_type_native(), PlaneGrid::ONE);
 }
 
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_under_byte_scales() {
-    check_staged_stepped(TileScales::Ue4m3, f32::elem_type_native());
+    check_staged_stepped(TileScales::Ue4m3, f32::elem_type_native(), PlaneGrid::ONE);
 }
 
 /// The same in halves: a half lands an `e2m1` code a lift short of its value, and the lift times
@@ -2498,7 +2518,35 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_under_byte_s
 /// writes.
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_in_halves() {
-    check_staged_stepped(TileScales::Ue4m3, f16::elem_type_native());
+    check_staged_stepped(TileScales::Ue4m3, f16::elem_type_native(), PlaneGrid::ONE);
+}
+
+/// The same with two planes splitting the rows: both land the same window of the weight, each
+/// in a landing of its own.
+#[test]
+fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_for_every_plane_sharing_it() {
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f16::elem_type_native(),
+        PlaneGrid {
+            rows: 2,
+            columns: 1,
+        },
+    );
+}
+
+/// The same with two planes splitting the columns: each lands its own window of the weight under
+/// its own columns' scales.
+#[test]
+fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_a_window_a_plane() {
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f16::elem_type_native(),
+        PlaneGrid {
+            rows: 1,
+            columns: 2,
+        },
+    );
 }
 
 #[test]
