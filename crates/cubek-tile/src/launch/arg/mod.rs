@@ -5,6 +5,7 @@ pub(crate) mod analysis;
 pub(crate) mod base;
 pub(crate) mod delivery;
 pub(crate) mod destination;
+pub(crate) mod last_arrival;
 pub(crate) mod operand;
 pub(crate) mod relay;
 pub(crate) mod scale;
