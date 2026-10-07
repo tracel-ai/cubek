@@ -14,6 +14,7 @@ pub(crate) mod runtime_map;
 pub(crate) mod storage_partitioning;
 pub(crate) mod swizzle;
 pub(crate) mod vector_tile;
+pub(crate) mod witness;
 
 pub(crate) use buffer_layout::*;
 pub(crate) use compaction_step::*;
@@ -23,6 +24,7 @@ pub(crate) use row_arrangement::{LineBytes, RowArrangement};
 pub(crate) use runtime_map::*;
 pub(crate) use swizzle::ChunkSwizzle;
 pub(crate) use swizzle::swizzled_line;
+pub(crate) use witness::Witness;
 
 pub use compaction::Compaction;
 pub use dims_builder::{DimsBuilder, split};
