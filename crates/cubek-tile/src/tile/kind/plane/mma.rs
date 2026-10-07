@@ -625,6 +625,9 @@ fn offers_block_scaled(
 /// [`E2M1_SCALE_BLOCK`] values of the instruction's `k`. `layout` is the window's: an `A` read
 /// along its rows, a `B` along its columns where it lies col-major, the stored words running along
 /// `k` either way.
+///
+/// Scales stored as words of four, as an NVFP4 checkpoint packs them, are one load each, straight
+/// into the register; scales stored one to a value are read and narrowed one at a time.
 #[cube]
 fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     src: &Tile<T>,
@@ -680,17 +683,30 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     // `k` one a block.
     let served = def.scales_index(unit, ident);
     let factor = src.innermost_factor();
-    let mut register = Vector::<e4m3, NS>::empty();
-    #[unroll]
-    for b in 0..comptime!(k / E2M1_SCALE_BLOCK) {
-        // The window's rows are the served axis whichever its layout: an `A`'s rows, a `B`'s
-        // columns lying col-major.
-        let along_k = comptime!((b * E2M1_SCALE_BLOCK) as u32);
-        let at = matrix_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
-        let scale = factor.at_coords(&at, comptime!(space.clone()));
-        register.insert(b, e4m3::cast_from(scale));
+    let words = factor.holds_words();
+    if comptime!(words) {
+        // The step's four scales as the operand stores them: one word, the register itself.
+        comptime!(assert!(
+            k / E2M1_SCALE_BLOCK == 4,
+            "MmaData::load_block_scaled: a word holds four block scales, and this step reads {}",
+            k / E2M1_SCALE_BLOCK
+        ));
+        let at = matrix_coords(served, 0u32.runtime(), 0usize, &space, axes, 1usize);
+        let word = factor.word_at(&at, comptime!(space.clone()));
+        scales[0] = Vector::<e4m3, NS>::reinterpret(word);
+    } else {
+        let mut register = Vector::<e4m3, NS>::empty();
+        #[unroll]
+        for b in 0..comptime!(k / E2M1_SCALE_BLOCK) {
+            // The window's rows are the served axis whichever its layout: an `A`'s rows, a
+            // `B`'s columns lying col-major.
+            let along_k = comptime!((b * E2M1_SCALE_BLOCK) as u32);
+            let at = matrix_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
+            let scale = factor.at_coords(&at, comptime!(space.clone()));
+            register.insert(b, e4m3::cast_from(scale));
+        }
+        scales[0] = register;
     }
-    scales[0] = register;
 }
 
 /// `acc += lhs · rhs` over two block-scaled operand fragments via

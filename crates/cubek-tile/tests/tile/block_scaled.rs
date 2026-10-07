@@ -193,7 +193,7 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
 
 /// Whether `client`'s device offers the block-scaled `16 × 8 × 64` instruction over `e2m1`
 /// operands under `e4m3` scales.
-fn offers_nvfp4(client: &Client) -> bool {
+pub(crate) fn offers_nvfp4(client: &Client) -> bool {
     let fp4 = ElemType::Float(FloatKind::E2M1x2);
     client
         .properties()
