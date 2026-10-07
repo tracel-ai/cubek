@@ -16,12 +16,12 @@ use crate::*;
 /// parts are added in the order of their runs, so the total is the same bits whichever run arrives
 /// last.
 ///
-/// The slots are one operand of two boxes a run ([`Partitioning::arrival_slots`]): the first holds
-/// the part of the box the run starts in, the second the part of the box it ends in. A run's other
-/// boxes are its own whole, so no part needs a third. The counters are one `u32` a box
-/// ([`Partitioning::arrival_counters`]), holding zero, and left holding zero. A count publishes the
-/// run's part at device scope first, so it runs only where the runtime hands one cube's writes to
-/// another within a dispatch (`device_memory_scope`).
+/// The slots are one operand over the output's axes, in its order, of two boxes a run
+/// ([`Partitioning::arrival_slots`]): the first holds the part of the box the run starts in, the
+/// second the part of the box it ends in. A run's other boxes are its own whole, so no part needs a
+/// third. The counters are one `u32` a box ([`Partitioning::arrival_counters`]), holding zero, and
+/// left holding zero. A count publishes the run's part at device scope first, so it runs only where
+/// the runtime hands one cube's writes to another within a dispatch (`device_memory_scope`).
 #[derive(CubeType)]
 pub struct LastArrival<'a, E: Numeric> {
     /// The slots, as the boxes of [`Partitioning::arrival_slots`]'s space.
@@ -97,6 +97,15 @@ impl<'a, E: Numeric> LastArrival<'a, E> {
     /// into it where this run holds the box whole, parked and merged by the last run to arrive
     /// otherwise. Every unit of the cube reaches it.
     pub fn hand_on<O: Numeric>(&self, sum: &Tile<E>, out: &mut Tile<O>) {
+        let slot = self.own.projection();
+        let output = out.projection();
+        comptime!(assert!(
+            slot.logical_axes() == output.logical_axes(),
+            "LastArrival::hand_on: the slots span {:?} and the output {:?}; a sum opened on a slot \
+             drains into the output axis for axis, so the slots span the output's axes in its order",
+            slot.logical_axes(),
+            output.logical_axes()
+        ));
         if self.holders == 1 {
             sum.drained_into(&out.at(&self.region));
         } else {
