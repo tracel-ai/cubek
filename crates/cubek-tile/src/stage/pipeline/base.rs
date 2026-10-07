@@ -9,6 +9,7 @@ use cubecl::unexpanded;
 use super::payload::base::{Payload, PayloadExpand, StageSpec};
 use super::payload::pair::OperandPair;
 use super::plan::StagePlan;
+use super::schedule::Prefetch;
 use crate::*;
 
 /// What a plane does with the stages' slots.
@@ -216,7 +217,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
         let lhs = staged.data.lhs.fetched_scalars();
         let rhs = staged.data.rhs.fetched_scalars();
         comptime!(assert!(
-            lhs + rhs <= MOST_FETCHED_SCALARS,
+            Prefetch::fits(lhs + rhs),
             "Stages: a fill fetched into registers holds {lhs} + {rhs} scalars a unit, past the \
              {MOST_FETCHED_SCALARS} a unit keeps beside its contraction"
         ));

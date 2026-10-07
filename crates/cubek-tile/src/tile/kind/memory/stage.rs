@@ -66,30 +66,20 @@ impl<T: Numeric> Memory<T> {
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
     ) -> Tile<T> {
-        Memory::smem_aligned(space, vector_size, storage, units, comptime!(0usize))
-    }
-
-    /// [`smem`](Memory::smem) with a minimum byte alignment on the buffer, never below one
-    /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it.
-    pub(crate) fn smem_aligned(
-        #[comptime] space: Space,
-        #[comptime] vector_size: usize,
-        #[comptime] storage: StageStorage,
-        #[comptime] units: usize,
-        #[comptime] alignment: usize,
-    ) -> Tile<T> {
         Memory::smem_owned(
             space,
             vector_size,
             storage,
             units,
-            alignment,
+            comptime!(0usize),
             comptime!(StageOwner::Cube),
         )
     }
 
-    /// [`smem_aligned`](Memory::smem_aligned) for the stage `owner` holds: the cube's one, or the
-    /// calling plane's own copy. `units` is the launch's cube size, `0` when unknown.
+    /// [`smem`](Memory::smem) for the stage `owner` holds: the cube's one, or the calling plane's
+    /// own copy, with a minimum byte alignment on the buffer, never below one
+    /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it. `units` is the
+    /// launch's cube size, `0` when unknown.
     pub(crate) fn smem_owned(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,

@@ -117,16 +117,8 @@ impl<T: Numeric> Tile<T> {
 
     /// The launch's cube size this operand was bound with, `0` when unknown.
     pub(crate) fn units(&self) -> comptime_type!(usize) {
-        match &self.kind {
-            TileKind::Memory(d) => comptime!(d.access.fill.count),
-            TileKind::TmaGmem(t) => comptime!(t.units),
-            TileKind::Procedural(_)
-            | TileKind::Lines(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_) => {
-                comptime!(0)
-            }
-        }
+        let fill = self.fill_units();
+        comptime!(fill.count)
     }
 
     /// The units that share a cooperative fill of this tile ([`FillUnits`]): one plane's for a

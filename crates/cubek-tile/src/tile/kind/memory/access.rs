@@ -478,23 +478,16 @@ impl<T: Numeric> Memory<T> {
     ) -> ProjectedMatrix {
         let bound = self.extent();
         let load = self.vector_tile(&space);
-        let projection = comptime!(self.projection.clone());
         ProjectedMatrix::new(
             TileMatrix::batch(
                 &bound,
                 comptime!(&space),
-                comptime!(projection.composition()),
+                comptime!(self.projection.composition()),
                 comptime!(&load),
                 axes,
                 i,
             ),
-            ProjectionInKernel::new(
-                Coords::constant(comptime!(load.counts(&space))),
-                self.map.clone(),
-                comptime!(space.clone()),
-                projection,
-                comptime!(load.values()),
-            ),
+            self.axis_projection(comptime!(space.clone())),
         )
     }
 
@@ -739,12 +732,7 @@ impl<T: Numeric> Memory<T> {
     ) -> Memory<T> {
         Memory::<T> {
             address: comptime!(self.address),
-            store: Store::<T> {
-                backing: self.store.backing.clone(),
-                vector_size: comptime!(self.store.vector_size),
-                packing: comptime!(self.store.packing),
-                stored_tiles: comptime!(self.store.stored_tiles.clone()),
-            },
+            store: self.store.clone(),
             layout: self.layout.clone(),
             window,
             projection: comptime!(self.projection.clone()),
