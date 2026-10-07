@@ -1953,9 +1953,10 @@ impl TileOrdered {
             .unwrap()
     }
 
-    /// The weight as stored. A packed binding counts values, its words being the packing's
-    /// business: the shape and the strides are the tiles' in values.
-    fn b_op(&self, client: &Client, launcher: &Launcher) -> Bound {
+    /// The weight as stored, read `read` values a load where stated, a word otherwise. A packed
+    /// binding counts values, its words being the packing's business: the shape and the strides
+    /// are the tiles' in values.
+    fn b_op(&self, client: &Client, launcher: &Launcher, read: Option<usize>) -> Bound {
         let shape = vec![self.n_tiles, self.k_tiles, self.tile, self.tile];
         let b_t = TensorHandle::new_contiguous(
             shape.clone(),
@@ -1965,12 +1966,16 @@ impl TileOrdered {
         let mut binding = b_t.binding();
         binding.shape = shape.clone().into();
         binding.strides = contiguous_strides(&shape).into();
-        launcher
+        let b = launcher
             .arg(binding)
             .gathered(Projection::dims().dim(NB).dim(KB).dim(NI).dim(KI).build())
-            .packed(Self::FIELD)
-            .build()
-            .unwrap()
+            .packed(Self::FIELD);
+        match read {
+            Some(values) => b.vectorize(values),
+            None => b,
+        }
+        .build()
+        .unwrap()
     }
 
     /// The scales as stored, served as `f32` a line (a tile's sixteen) a read: whole words, or
@@ -2132,7 +2137,7 @@ fn check_chunked(arm: Arm, scales: TileScales, read: UnitRead) {
         launcher.cube_count(),
         launcher.cube_dim(),
         w.a_op(&client, &launcher).arg(),
-        w.b_op(&client, &launcher).arg(),
+        w.b_op(&client, &launcher, None).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
@@ -2273,7 +2278,7 @@ fn check_partitioned(scales: TileScales, read: UnitRead) {
         launcher.cube_count(),
         launcher.cube_dim(),
         w.a_op(&client, &launcher).arg(),
-        w.b_op(&client, &launcher).arg(),
+        w.b_op(&client, &launcher, None).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
@@ -2296,6 +2301,97 @@ fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition_with_byte_s
     for read in [UnitRead::Shuffle, UnitRead::PlaneShared] {
         check_partitioned(TileScales::Ue4m3, read);
     }
+}
+
+/// `c = a · (b ⊗ s)` over a weight stored in tile order, a plane's step one block of the
+/// contraction deep: two instructions under one scale, the step's weight scaled as one window.
+#[cube(launch)]
+fn stepped_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
+    a: &TileArg<'_, E, Const<8>>,
+    b: &TileArg<'_, u32, Const<2>>,
+    scale: &TileArg<'_, SS, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[define(E, S, SS)] _dtypes: [ElemType; 3],
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile_as::<E>(comptime!(space.clone()));
+    let scale = scale.tile_as::<S>(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        let (a_cube, b_cube) = (a.at(&cube), b.at(&cube));
+        let (scale_cube, c_cube) = (scale.at(&cube), c.at(&cube));
+        for plane in cube {
+            let (a_plane, b_plane) = (a_cube.at(&plane), b_cube.at(&plane));
+            let (scale_plane, c_plane) = (scale_cube.at(&plane), c_cube.at(&plane));
+            let sum = c_plane.accumulator::<E, E, E>(
+                &a_plane,
+                &b_plane,
+                Instruction::Cmma,
+                Semiring::SUM_PROD,
+            );
+            for step in plane {
+                let mut sum_step = sum.at(&step);
+                sum_step.mma(
+                    &a_plane.at(&step),
+                    &b_plane.at(&step).mul(&scale_plane.at(&step)),
+                );
+            }
+            sum.drained_into(&c_plane);
+        }
+    }
+}
+
+/// **A tile-ordered weight read two words a load lands on the tensor cores a block at a time.**
+/// One load is a column's whole block, twice an instruction's depth: the step lands its window
+/// once, a whole load at a time, and its two instructions read the landing.
+fn check_stepped(scales: TileScales) {
+    let (rows, n_tiles, k_tiles, fragment) = (16, 2, 4, 8);
+    let w = TileOrdered::new(rows, n_tiles, k_tiles);
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let c = TestInput::builder(client.clone(), shape![rows, w.cols()])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // Leaf up: the instruction; the grid of fragments a plane holds; the block's two instruction
+    // depths; the blocks, a step each; the planes; the cubes.
+    let levels = Levels::leaf(&[(M, fragment), (NI, fragment), (KI, fragment)])
+        .walk(&[(M, rows / fragment), (NI, w.tile / fragment)])
+        .walk(&[(KI, w.tile / fragment)])
+        .walk_every(&[KB])
+        .planes(&[(NI, 1)])
+        .cubes(&[NB])
+        .build();
+    let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
+    let (s_op, stored) = w.s_op(&client, &launcher, scales);
+
+    stepped_scaled_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        w.a_op(&client, &launcher).arg(),
+        w.b_op(&client, &launcher, Some(w.tile)).arg(),
+        s_op.arg(),
+        w.c_op(&launcher, &c).arg(),
+        launcher.partitioning_arg(),
+        [dtype, dtype, stored],
+    );
+    w.check(&client, c, &format!("stepped {scales:?}"));
+}
+
+#[test]
+fn a_tile_ordered_weight_read_a_block_a_load_lands_a_step_at_a_time() {
+    check_stepped(TileScales::F32);
+}
+
+#[test]
+fn a_tile_ordered_weight_read_a_block_a_load_lands_a_step_at_a_time_under_byte_scales() {
+    check_stepped(TileScales::Ue4m3);
 }
 
 /// `out = a ⊗ s`, the decode stated where the kernel copies: straight into `out`, or into a
