@@ -110,10 +110,14 @@ impl<'a, E: Numeric> Relay<'a, E> {
 
     /// Wait for this cube's turn at its box, and acquire what the turns before it wrote. Every
     /// unit of the cube reaches it.
+    ///
+    /// The counter is read with `fetch_add(0)`. On Metal, an atomic load spinning on the counter
+    /// can keep returning the value it first read long after the previous turn's store has
+    /// landed, and the cube then never leaves the loop.
     pub fn take(&self) {
         if UNIT_POS == 0 {
             loop {
-                if self.turns[self.counter].load() == self.turn as u32 {
+                if self.turns[self.counter].fetch_add(0u32) == self.turn as u32 {
                     break;
                 }
             }
