@@ -4,9 +4,9 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use super::analysis::{Boundaries, Labels, Refusal};
+use super::{boundaries::Boundaries, boundary_policy::BoundaryPolicy, labels::Labels};
 use crate::{
-    Axis, Boundary, Delivery, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Storage,
+    Axis, Delivery, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Refusal, Storage,
     StoragePartitioning, TileArgLaunch, TileSpec, VectorTile,
 };
 
@@ -14,16 +14,6 @@ use crate::{
 pub struct Unlabelled;
 /// Typestate marker: the operand's axes are stated.
 pub struct Labelled;
-
-/// How an operand's reads are bounds-checked, where the caller states it. An operand that states
-/// none is checked with [`Boundary::Zero`] on the axes that can leave the buffer.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BoundaryPolicy {
-    /// Unchecked; the caller guarantees every read is in bounds.
-    Unchecked,
-    /// Checked with this boundary on every axis that is not provably in bounds.
-    Every(Boundary),
-}
 
 /// What the builder accumulates.
 struct ArgData<'a> {
@@ -221,6 +211,42 @@ impl<'a> Arg<'a, Labelled> {
     }
 }
 
+/// A bound operand: its tensor argument, comptime [`TileSpec`] and served width.
+pub struct Bound {
+    tensor: Option<TensorArg>,
+    /// Served width (values per line); a packed binding is narrower by the packing factor.
+    pub vector_size: usize,
+    pub spec: TileSpec,
+}
+
+impl Bound {
+    /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
+    pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V> {
+        let Bound { spec, .. } = &self;
+        let spec = spec.clone();
+        TileArgLaunch::new(self.tensor(), spec)
+    }
+
+    /// The tensor argument itself; panics for an operand built over geometry alone.
+    pub fn tensor(self) -> TensorArg {
+        self.tensor
+            .expect("Bound: this operand was built over geometry alone and has no tensor to bind")
+    }
+
+    /// The width the binding is typed at, narrower than `vector_size` when packed.
+    pub fn bound_width(&self) -> usize {
+        self.spec.packing.physical(self.vector_size)
+    }
+}
+
+/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind.
+pub struct Unbound {
+    pub spec: TileSpec,
+    /// Served width (values per line).
+    pub vector_size: usize,
+    pub geometry: Geometry,
+}
+
 /// The labelled dims in stride order where asked; refused for a stated layout.
 fn stride_ordered(
     geometry: Geometry,
@@ -284,40 +310,4 @@ fn settled_tensor(mut binding: TensorBinding, geometry: &Geometry) -> TensorArg 
     binding.strides = geometry.strides().into();
     binding.tiling = geometry.tiling();
     binding.into_tensor_arg()
-}
-
-/// A bound operand: its tensor argument, comptime [`TileSpec`] and served width.
-pub struct Bound {
-    tensor: Option<TensorArg>,
-    /// Served width (values per line); a packed binding is narrower by the packing factor.
-    pub vector_size: usize,
-    pub spec: TileSpec,
-}
-
-impl Bound {
-    /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
-    pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V> {
-        let Bound { spec, .. } = &self;
-        let spec = spec.clone();
-        TileArgLaunch::new(self.tensor(), spec)
-    }
-
-    /// The tensor argument itself; panics for an operand built over geometry alone.
-    pub fn tensor(self) -> TensorArg {
-        self.tensor
-            .expect("Bound: this operand was built over geometry alone and has no tensor to bind")
-    }
-
-    /// The width the binding is typed at, narrower than `vector_size` when packed.
-    pub fn bound_width(&self) -> usize {
-        self.spec.packing.physical(self.vector_size)
-    }
-}
-
-/// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind.
-pub struct Unbound {
-    pub spec: TileSpec,
-    /// Served width (values per line).
-    pub vector_size: usize,
-    pub geometry: Geometry,
 }
