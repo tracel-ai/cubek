@@ -246,6 +246,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
 const MM: Axis = Axis(2);
 const NN: Axis = Axis(3);
 const KK: Axis = Axis(4);
+const BB: Axis = Axis(5);
 
 /// The leaf's register block, held fixed across every kernel here.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
@@ -686,25 +687,49 @@ fn merged_stream_matmul(
     }
 }
 
-/// The inputs of the integer cases: small integers, so every sum is exact in `f16`.
-fn integers((m, n, k): (usize, usize, usize)) -> (Vec<f32>, Vec<f32>) {
-    let a = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
-    let b = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
-    (a, b)
+/// `out[batch] = a[batch] · b` for every batch, `b` shared by all of them.
+#[derive(Clone, Copy, Debug)]
+struct Product {
+    batches: usize,
+    m: usize,
+    n: usize,
+    k: usize,
+}
+
+impl Product {
+    /// One batch of `m × n × k`.
+    fn single(m: usize, n: usize, k: usize) -> Self {
+        Product {
+            batches: 1,
+            m,
+            n,
+            k,
+        }
+    }
+
+    /// The inputs of the integer cases: small integers, so every sum is exact in `f16`.
+    fn integers(&self) -> (Vec<f32>, Vec<f32>) {
+        let a = (0..self.batches * self.m * self.k)
+            .map(|i| (i % 7) as f32 - 3.0)
+            .collect();
+        let b = (0..self.k * self.n).map(|i| (i % 5) as f32 - 2.0).collect();
+        (a, b)
+    }
 }
 
 /// `a · b` with every tile's blocks shared between `cubes` cubes and merged by the last arrival,
 /// launched `launches` times over the same slots, counters and output: the output after each
 /// launch, and the counters read back.
 fn run_merged_stream(
-    (m, n, k): (usize, usize, usize),
+    product: Product,
     (a, b): (Vec<f32>, Vec<f32>),
     cubes: usize,
     launches: usize,
 ) -> (Vec<HostData>, Vec<u32>) {
+    let Product { batches, m, n, k } = product;
     let client = cubecl::test_device().client();
     let (f32_ty, f16_ty) = (f32::elem_type_native(), half::f16::elem_type_native());
-    let a = TestInput::builder(client.clone(), shape![m, k])
+    let a = TestInput::builder(client.clone(), shape![batches, m, k])
         .dtype(f32_ty)
         .custom(a)
         .generate_without_host_data();
@@ -712,25 +737,28 @@ fn run_merged_stream(
         .dtype(f32_ty)
         .custom(b)
         .generate_without_host_data();
-    let out = TestInput::builder(client.clone(), shape![m, n])
+    let out = TestInput::builder(client.clone(), shape![batches, m, n])
         .dtype(f16_ty)
         .zeros()
         .generate_without_host_data();
 
+    // The cube level hands out one batch a box, so a run's steps cross from one batch's tiles into
+    // the next's.
     let launcher = implied(
         &client,
         Partitioning::new(
-            Space::new(&[(MM, m), (NN, n), (KK, k)]),
+            Space::new(&[(BB, batches), (MM, m), (NN, n), (KK, k)]),
             Levels::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)])
                 .walk(&[(MM, 1), (NN, 1), (KK, k / BLOCK_K)])
                 .cubes(&[MM, NN, KK])
                 .shared_by(cubes)
+                .batches(&[BB])
                 .build(),
         ),
         Form::Static,
     );
     // The slots arrive holding anything: a part replaces what its slot held.
-    let slots = launcher.partitioning().arrival_slots(&[MM, NN]);
+    let slots = launcher.partitioning().arrival_slots(&[BB, MM, NN]);
     let held = vec![1.0e6; slots.num_elements()];
     let slots = TestInput::builder(client.clone(), slots)
         .dtype(f32_ty)
@@ -750,10 +778,10 @@ fn run_merged_stream(
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            arg(&a, &[MM, KK]),
+            arg(&a, &[BB, MM, KK]),
             arg(&b, &[KK, NN]),
-            arg(&slots, &[MM, NN]),
-            TileArgLaunch::new(out.clone().binding().into_tensor_arg(), spec(&[MM, NN])),
+            arg(&slots, &[BB, MM, NN]),
+            TileArgLaunch::new(out.clone().binding().into_tensor_arg(), spec(&[BB, MM, NN])),
             unsafe { BufferArg::from_raw_parts(arrivals.clone(), counters) },
             launcher.partitioning_arg(),
             launcher.partitioning().level(1),
@@ -786,12 +814,22 @@ fn merges_on_arrival(client: &Client) -> bool {
     hands_off && counts
 }
 
-fn assert_merged(got: &HostData, (m, n, k): (usize, usize, usize), what: &str) {
-    let want = reference(m, n, k);
-    for i in 0..m {
-        for j in 0..n {
-            // Small integers, each within f16's exact range.
-            assert_eq!(got.get_f32(&[i, j]), want[i * n + j], "{what}: ({i}, {j})");
+fn assert_merged(got: &HostData, product: Product, what: &str) {
+    let Product { batches, m, n, k } = product;
+    let (a, b) = product.integers();
+    for batch in 0..batches {
+        for i in 0..m {
+            for j in 0..n {
+                let want: f32 = (0..k)
+                    .map(|p| a[(batch * m + i) * k + p] * b[p * n + j])
+                    .sum();
+                // Small integers, each within f16's exact range.
+                assert_eq!(
+                    got.get_f32(&[batch, i, j]),
+                    want,
+                    "{what}: ({batch}, {i}, {j})"
+                );
+            }
         }
     }
 }
@@ -806,10 +844,10 @@ fn the_last_arrival_merges_every_tile_of_a_shared_contraction() {
         return;
     }
     // Twelve tiles of five blocks: sixty blocks in all.
-    let dims = (12usize, 16usize, 20usize);
+    let product = Product::single(12, 16, 20);
     for cubes in [1usize, 2, 5, 7, 11, 12, 13, 25, 59, 60, 61, 97] {
-        let (got, arrivals) = run_merged_stream(dims, integers(dims), cubes, 1);
-        assert_merged(&got[0], dims, &format!("{cubes} cubes"));
+        let (got, arrivals) = run_merged_stream(product, product.integers(), cubes, 1);
+        assert_merged(&got[0], product, &format!("{cubes} cubes"));
         assert!(
             arrivals.iter().all(|&a| a == 0),
             "{cubes} cubes: {arrivals:?}"
@@ -825,10 +863,34 @@ fn the_last_arrival_merges_tiles_that_overhang_the_output() {
     if !merges_on_arrival(&client) {
         return;
     }
-    let dims = (10usize, 14usize, 20usize);
+    let product = Product::single(10, 14, 20);
     for cubes in [3usize, 8, 23] {
-        let (got, arrivals) = run_merged_stream(dims, integers(dims), cubes, 1);
-        assert_merged(&got[0], dims, &format!("{cubes} cubes"));
+        let (got, arrivals) = run_merged_stream(product, product.integers(), cubes, 1);
+        assert_merged(&got[0], product, &format!("{cubes} cubes"));
+        assert!(
+            arrivals.iter().all(|&a| a == 0),
+            "{cubes} cubes: {arrivals:?}"
+        );
+    }
+}
+
+/// Three batches of a product, each its own tiles: runs cross from one batch's tiles into the
+/// next's, and a slot is one box whichever batch its tile is in.
+#[test]
+fn the_last_arrival_merges_the_tiles_of_every_batch() {
+    let client = cubecl::test_device().client();
+    if !merges_on_arrival(&client) {
+        return;
+    }
+    let product = Product {
+        batches: 3,
+        m: 8,
+        n: 12,
+        k: 20,
+    };
+    for cubes in [4usize, 7, 18, 31] {
+        let (got, arrivals) = run_merged_stream(product, product.integers(), cubes, 1);
+        assert_merged(&got[0], product, &format!("{cubes} cubes"));
         assert!(
             arrivals.iter().all(|&a| a == 0),
             "{cubes} cubes: {arrivals:?}"
@@ -843,9 +905,9 @@ fn the_last_arrival_merges_again_on_the_counters_it_left() {
     if !merges_on_arrival(&client) {
         return;
     }
-    let dims = (12usize, 16usize, 20usize);
-    let (got, arrivals) = run_merged_stream(dims, integers(dims), 7, 3);
-    assert_merged(&got[2], dims, "a third launch");
+    let product = Product::single(12, 16, 20);
+    let (got, arrivals) = run_merged_stream(product, product.integers(), 7, 3);
+    assert_merged(&got[2], product, "a third launch");
     assert!(arrivals.iter().all(|&a| a == 0), "{arrivals:?}");
 }
 
@@ -857,14 +919,14 @@ fn the_last_arrival_sums_the_same_bits_every_launch() {
     if !merges_on_arrival(&client) {
         return;
     }
-    let dims = (12usize, 16usize, 20usize);
-    let (m, n, k) = dims;
+    let product = Product::single(12, 16, 20);
+    let Product { m, n, k, .. } = product;
     let a = (0..m * k).map(|i| (i as f32 * 0.37).sin() * 3.1).collect();
     let b = (0..k * n).map(|i| (i as f32 * 0.71).cos() / 1.7).collect();
-    let (got, _) = run_merged_stream(dims, (a, b), 29, 8);
+    let (got, _) = run_merged_stream(product, (a, b), 29, 8);
     let bits = |out: &HostData| -> Vec<u32> {
         (0..m * n)
-            .map(|i| out.get_f32(&[i / n, i % n]).to_bits())
+            .map(|i| out.get_f32(&[0, i / n, i % n]).to_bits())
             .collect()
     };
     let first = bits(&got[0]);
