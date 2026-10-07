@@ -117,7 +117,7 @@ impl ProjectionInKernel {
     }
 
     /// [`anchor`](Self::anchor) for one physical axis.
-    pub(crate) fn project_axis(
+    fn project_axis(
         &self,
         pos: &CoordsDyn,
         #[comptime] pa: usize,

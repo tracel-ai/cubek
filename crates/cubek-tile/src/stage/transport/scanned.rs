@@ -21,7 +21,7 @@ impl<T: Numeric> Memory<T> {
 
     /// Cooperative cyclic flat scan across the units that share this fill ([`FillUnits`]); a
     /// packed source unpacks.
-    pub(crate) fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
+    fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
         let fill = comptime!(self.access.fill);
         let s = src.flat_unpacked::<WP, W>();
         let mut d = self.flat_mut::<W>();

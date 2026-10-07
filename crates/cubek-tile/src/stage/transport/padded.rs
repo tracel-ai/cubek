@@ -31,7 +31,7 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 /// Assemble one padded destination line from adjacent scalar source cells.
 /// With `Padding::units` `None`, the source must be bounds-checked so padding reads zero.
 #[cube]
-pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
+fn widen_line<T: Numeric, W: Size, SW: Size>(
     s: &Masked<'_, Vector<T, SW>, CoordsDyn>,
     pos: &CoordsDyn,
     #[comptime] padding: Padding,
@@ -78,7 +78,7 @@ pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
 
 /// Replace the destination line coordinate with its scalar source-cell coordinate.
 #[cube]
-pub(crate) fn source_component(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
+fn source_component(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
     let mut out = CoordsDyn::new();
     #[unroll]
     for p in 0..rank {

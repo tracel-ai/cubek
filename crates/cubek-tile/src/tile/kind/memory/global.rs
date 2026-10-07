@@ -84,7 +84,7 @@ impl<T: Numeric> GlobalOperand<T> {
     }
 
     /// The shared body: `E` is the binding element, `T` the served scalar.
-    pub(crate) fn of_tensor<E: CubePrimitive>(
+    fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,

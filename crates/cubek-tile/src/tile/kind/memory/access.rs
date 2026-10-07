@@ -118,12 +118,12 @@ impl<T: Numeric> Memory<T> {
         self.layout.clone()
     }
 
-    pub(crate) fn window(&self) -> Window {
+    fn window(&self) -> Window {
         self.window.clone()
     }
 
     /// The window extent, for shape-only readers that must not regroup the buffer.
-    pub(crate) fn extent(&self) -> Coords<u32> {
+    fn extent(&self) -> Coords<u32> {
         self.window.extent.clone()
     }
 
@@ -256,7 +256,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`lines`](Memory::lines) re-typed to the storage element `I` (`u32` words when packed).
-    pub(crate) fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
+    fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
         let storage = unsafe { self.store.buffer().downcast_unchecked::<I>() };
         storage.as_vectorized().with_vector_size::<W>()
     }

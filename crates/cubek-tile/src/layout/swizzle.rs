@@ -22,7 +22,7 @@ pub(crate) struct ChunkSwizzle {
 
 impl ChunkSwizzle {
     /// Bytes one pass over every bank covers: 32 banks of four bytes.
-    pub(crate) const BANK_PERIOD_BYTES: usize = 128;
+    const BANK_PERIOD_BYTES: usize = 128;
 
     /// The swizzle of a stage with line `extents` (last two: block rows, row lines), `None` where
     /// there is nothing to permute.

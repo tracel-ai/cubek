@@ -20,7 +20,7 @@ pub enum UnitShare {
 
 impl UnitShare {
     /// What `level` makes the plane's units to the cells of an operand spanning `spanned`.
-    pub fn new(level: &Level, spanned: &Space) -> UnitShare {
+    pub(crate) fn new(level: &Level, spanned: &Space) -> UnitShare {
         if level.coverage() != Coverage::Distribute(ComputeScope::Unit) {
             return UnitShare::Repeated;
         }
@@ -60,7 +60,7 @@ impl UnitShare {
     }
 
     /// This share under `parent`'s.
-    pub fn under(self, parent: UnitShare) -> UnitShare {
+    pub(crate) fn under(self, parent: UnitShare) -> UnitShare {
         match (parent, self) {
             (UnitShare::Repeated, share) | (share, UnitShare::Repeated) => share,
             (UnitShare::Whole, share) | (share, UnitShare::Whole) => share,
@@ -74,12 +74,12 @@ impl UnitShare {
     }
 
     /// Whether a cell's partials sit on several units, so a drain has to reduce.
-    pub fn reduces(self) -> bool {
+    pub(crate) fn reduces(self) -> bool {
         matches!(self, UnitShare::Plane | UnitShare::Group { .. })
     }
 
     /// The units over which `axis` of a units level is distributed, as a share.
-    pub fn of_units(plane_units: usize, plane: usize) -> UnitShare {
+    pub(crate) fn of_units(plane_units: usize, plane: usize) -> UnitShare {
         match plane_units {
             1 => UnitShare::Repeated,
             n if n == plane => UnitShare::Plane,

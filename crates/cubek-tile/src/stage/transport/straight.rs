@@ -141,7 +141,7 @@ pub(crate) fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Op
 
 /// Cooperatively write destination stage lines cyclically across the units `fill` names.
 #[cube]
-pub(crate) fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
+fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
     s: &Masked<'_, Vector<I2, SW>, CoordsDyn>,
     layout: &BufferLayout,

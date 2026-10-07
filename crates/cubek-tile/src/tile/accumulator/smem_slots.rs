@@ -85,7 +85,7 @@ impl<T: Numeric> Tile<T> {
 #[cube]
 impl<A: Numeric, T: Numeric> SmemSlotsAccumulation<A, T> {
     /// The sink `writer` drains into: its own slot, each cell it is handed replaced.
-    pub fn sink(&self, writer: usize) -> Tile<A> {
+    fn sink(&self, writer: usize) -> Tile<A> {
         let space = comptime!(self.like.place.space.clone());
         let width = self.like.vector_size();
         let size!(W) = width;

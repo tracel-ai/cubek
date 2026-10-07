@@ -1064,7 +1064,7 @@ impl<E: Numeric> TileExpand<E> {
         out: Space,
         acc_axes: MatrixAxes,
     ) -> FactorReaderExpand {
-        refuse_codebook(self, "a leaf's read");
+        self.refuse_codebook("a leaf's read");
         let values = self.place.space.clone();
         // A line is the run of a load along the innermost axis; a load stored across several
         // columns is read as their runs, each placed at its own column.
@@ -1180,11 +1180,22 @@ impl<E: Numeric> TileExpand<E> {
     }
 
     pub(crate) fn __expand_refuse_factor_method(&self, _scope: &Scope, site: &str) {
-        refuse_codebook(self, site);
+        self.refuse_codebook(site);
         if let TileKindExpand::Memory(memory) = &self.kind {
             assert!(
                 !memory.factor.scaled(),
                 "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; contract through a fragment or in memory"
+            );
+        }
+    }
+
+    /// Refuses values that index a table ([`Tile::lookup`]) at `site`.
+    fn refuse_codebook(&self, site: &str) {
+        if let TileKindExpand::Memory(memory) = &self.kind {
+            assert!(
+                !memory.codebook.present(),
+                "{site}: these values are indices into a table (`Tile::lookup`), which only a copy \
+                 decodes; copy them into a stage first (`stage.copy_from(&w.lookup(&table))`)"
             );
         }
     }
@@ -1305,16 +1316,5 @@ impl<E: Float> Tile<E> {
 
     fn refuse_cells() -> ! {
         panic!("Tile::cells: a plane's window of memory holds the cells every unit of it reads")
-    }
-}
-
-/// Refuses values that index a table ([`Tile::lookup`]) at `site`.
-pub(crate) fn refuse_codebook<E: Numeric>(tile: &TileExpand<E>, site: &str) {
-    if let TileKindExpand::Memory(memory) = &tile.kind {
-        assert!(
-            !memory.codebook.present(),
-            "{site}: these values are indices into a table (`Tile::lookup`), which only a copy \
-             decodes; copy them into a stage first (`stage.copy_from(&w.lookup(&table))`)"
-        );
     }
 }

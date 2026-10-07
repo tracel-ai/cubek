@@ -9,9 +9,9 @@ use super::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
 use crate::*;
 
 // Per-role fragment register widths, bound at allocation to `def.vector_size(role)`.
-define_size!(pub NL);
-define_size!(pub NR);
-define_size!(pub NA);
+define_size!(pub(crate) NL);
+define_size!(pub(crate) NR);
+define_size!(pub(crate) NA);
 
 /// One manual-mma fragment: a role's registers plus the shape and transport it dispatches on.
 /// `Clone` duplicates the handle, not the registers.
