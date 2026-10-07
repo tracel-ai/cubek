@@ -38,8 +38,8 @@ pub enum Field {
     ConvertedE2M1,
     /// An `e2m1` code on a device that emulates `e2m1x2`'s conversion: a word is decoded as `f16`
     /// pairs from its bits, lifted to its values, or, where `lifted` is false, each placed
-    /// [`E2M1_F16_LIFT`] short of its value for a reader whose factor carries the lift
-    /// ([`Tile::placed`](crate::Tile::placed)). What [`read_on`](Field::read_on) makes of
+    /// [`E2M1_F16_LIFT`] short of its value for a reader whose factor carries the lift (a tile
+    /// read placed). What [`read_on`](Field::read_on) makes of
     /// `Quant(E2M1)` there, lifted.
     PlacedE2M1 {
         lifted: bool,

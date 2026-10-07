@@ -242,7 +242,7 @@ impl<E: Numeric, W: Size> ErasedTensorOperationsExpand<E> for SmemSlot<E, W> {
         SmemSlotsAccumulation::<E, E>::__expand_store_line::<W>(
             scope,
             &mut self.values,
-            self.start.clone(),
+            self.start,
             index,
             value.into(),
         );
