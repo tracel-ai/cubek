@@ -29,8 +29,8 @@ impl<T: Numeric> Memory<T> {
         let fill = comptime!(self.access.fill);
         let mut dst = self.flat_mut::<Const<1>>();
         let total = dst.shape();
-        let stride = fill_workers(fill);
-        let mut i = fill_worker(fill);
+        let stride = FillUnits::workers(fill);
+        let mut i = FillUnits::worker(fill);
         while i < total {
             let pos = shape.unravel(i.cast::<u32>());
             // TODO: masked cells use Procedural's zero fallback, not the reduction's identity.

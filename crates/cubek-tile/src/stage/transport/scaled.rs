@@ -51,8 +51,8 @@ impl<T: Numeric> Tile<T> {
         comptime!(check_decoding_copy(&space, &dst, &load, vw, varies));
         let fill = self.fill_units();
         let mut out = self.nd_mut::<VW>();
-        let first = fill_worker(fill) as u32;
-        let stride = fill_workers(fill) as u32;
+        let first = FillUnits::worker(fill) as u32;
+        let stride = FillUnits::workers(fill) as u32;
         for line in range_stepped(first, load.count(&space), stride) {
             let start = load.start(line, &space);
             let held = stored.read(load.index(&start, &space));

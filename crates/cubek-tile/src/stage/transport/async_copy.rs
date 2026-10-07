@@ -52,7 +52,7 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
         #[unroll]
         for t in 0..tasks {
-            let i = fill_worker(fill) + comptime!(t * units);
+            let i = FillUnits::worker(fill) + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
                     copy_line_async::<I2, W>(d, s, layout, i);
@@ -62,8 +62,8 @@ pub(crate) fn fill_lines_async<I2: Numeric, W: Size>(
             }
         }
     } else {
-        let stride = fill_workers(fill);
-        let mut i = fill_worker(fill);
+        let stride = FillUnits::workers(fill);
+        let mut i = FillUnits::worker(fill);
         while i < total {
             copy_line_async::<I2, W>(d, s, layout, i);
             i += stride;
