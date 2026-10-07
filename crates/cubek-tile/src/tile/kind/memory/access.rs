@@ -29,7 +29,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Scalars of this stage one unit holds in registers across a contraction.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn fetched_scalars(&self) -> comptime_type!(usize) {
         self.mem("fetched_scalars").fetched_scalars()
     }
@@ -40,7 +40,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This unit's share of filling this stage from `src`, read into `fetched` but not yet written.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn fetch_from<W: Size>(&self, src: &Tile<T>, fetched: &mut Array<Vector<T, W>>) {
         let space = comptime!(self.place.space.clone());
         self.mem("fetch_from")
@@ -48,7 +48,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Write what [`fetch_from`](Tile::fetch_from) read into this stage.
-    #[allow(dead_code)] // Reached through its expand, from `pipelined_through_registers`.
+    #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         self.mem_mut("store_fetched").store_fetched(fetched);
     }

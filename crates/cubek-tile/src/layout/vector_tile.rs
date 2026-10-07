@@ -357,8 +357,7 @@ mod tests {
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 
-    /// A plain buffer loads a run along its innermost axis, whatever the width: the one rule every
-    /// operand followed before a load could span axes.
+    /// A plain buffer loads a run along its innermost axis, whatever the width.
     #[test]
     fn a_plain_buffer_loads_along_its_innermost_axis() {
         assert_eq!(VectorTile::new(&[], N, 4).unwrap().extents(), &[(N, 4)]);

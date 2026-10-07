@@ -1,4 +1,4 @@
-//! Addressing the bytes: [`BufferLayout`], [`Window`] and [`SourceWindow`].
+//! Addressing the bytes: [`Window`] and [`SourceWindow`].
 
 use cubecl::zspace::SmallVec;
 use cubecl::{

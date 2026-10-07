@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(dims, Geometry::new(&[(8, 0), (6144, 4096), (4096, 1)]));
     }
 
-    /// On untiled buffers, `serves` agrees with the line rule it replaced.
+    /// On untiled buffers, `serves` agrees with the one-axis line rule ([`line_rule_serves`]).
     #[test]
     fn a_line_is_served_where_the_line_rule_served_it() {
         let geometries: Vec<(Geometry, Vec<Axis>)> = vec![
@@ -314,7 +314,7 @@ mod tests {
             for width in [1, 2, 3, 4, 8, 16, 32] {
                 assert_eq!(
                     geometry.serves(&[(line, width)], labels).is_ok(),
-                    served_before(geometry, width),
+                    line_rule_serves(geometry, width),
                     "{geometry:?} at {width}"
                 );
             }
@@ -334,8 +334,9 @@ mod tests {
         assert!(geometry.serves(&[(N, 8)], &labels).is_err());
     }
 
-    /// The line rule before storage partitionings.
-    fn served_before(geometry: &Geometry, width: usize) -> bool {
+    /// The one-axis line rule: a line of `width` is served where the innermost dim is contiguous
+    /// and its extent and every outer stride are multiples of `width`.
+    fn line_rule_serves(geometry: &Geometry, width: usize) -> bool {
         if width == 1 {
             return true;
         }

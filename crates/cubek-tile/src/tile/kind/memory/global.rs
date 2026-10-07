@@ -179,7 +179,7 @@ impl<T: Numeric> GlobalOperand<T> {
 impl<T: Numeric> Memory<T> {
     /// The memory tile a launched operand becomes, its top window boxed over the physical axes.
     // The unrolled loop over the buffer's dims indexes a compile-time list by the dim.
-    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    #[allow(clippy::needless_range_loop)]
     pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
         let backing = operand.backing;
         let geometry = operand.geometry;

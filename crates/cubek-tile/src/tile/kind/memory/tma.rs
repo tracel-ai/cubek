@@ -15,7 +15,7 @@ pub(crate) struct TmaData<T: Numeric> {
     view: ViewMut<'static, T, CoordsDyn>,
     pos: CoordsDyn,
     pub(crate) bound: CoordsDyn,
-    /// The launch's cube size, `0` when unknown ([`Access::units`](crate::Access)).
+    /// The launch's cube size, `0` when unknown ([`FillUnits::count`](crate::FillUnits)).
     #[cube(comptime)]
     pub(crate) units: usize,
 }

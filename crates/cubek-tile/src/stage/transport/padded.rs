@@ -29,7 +29,7 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 }
 
 /// Assemble one padded destination line from adjacent scalar source cells.
-/// With `Padding::units` `None`, the source must be bounds-checked so padding reads zero.
+/// With `Padding::extent` `None`, the source must be bounds-checked so padding reads zero.
 #[cube]
 fn widen_line<T: Numeric, W: Size, SW: Size>(
     s: &Masked<'_, Vector<T, SW>, CoordsDyn>,

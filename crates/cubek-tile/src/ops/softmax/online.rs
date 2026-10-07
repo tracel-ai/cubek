@@ -81,8 +81,9 @@ impl<E: Float> OnlineSoftmax<E> {
     /// What this plane's sum against the values is multiplied by once its last block is taken in:
     /// each slice's `1 / l`, or, where the cube's planes split this axis, each holding part of the
     /// same slices, the correction to the merged max times `1 / L` of the merged sum, so the
-    /// planes' products only remain to be added ([`PlanesOutput`]). `plane` is this plane's
-    /// region of the cube; the partitioning it was cut by says how many planes share its slices.
+    /// planes' products only remain to be added ([`PlanesOutput`](crate::kind::PlanesOutput)).
+    /// `plane` is this plane's region of the cube; the partitioning it was cut by says how many
+    /// planes share its slices.
     ///
     /// Where planes split the axis it is a meeting of the cube: every unit of every plane calls it,
     /// each holding its plane's state as a plane's window or fragments keep it, and it meets the

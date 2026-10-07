@@ -49,7 +49,7 @@ pub struct Levels {
     sizes: Vec<(Axis, usize)>,
     /// Axes an `every` level closed.
     closed: Vec<Axis>,
-    /// Innermost first; [`levels`](Self::levels) reverses.
+    /// Innermost first; [`build`](Self::build) reverses.
     stated: Vec<StatedLevel>,
 }
 

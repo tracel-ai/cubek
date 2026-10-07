@@ -301,7 +301,8 @@ pub enum Schedule {
     Sequential,
     /// Every writer every round, each on its own chunk of the box: in round `r`, writer `w` takes
     /// chunk `(w + r) mod writers`, a cube barrier between rounds. The planes of one cube meeting
-    /// in shared memory ([`SmemCyclicAccumulation`]), where a barrier orders them.
+    /// in shared memory ([`SmemCyclicAccumulation`](crate::kind::SmemCyclicAccumulation)), where a
+    /// barrier orders them.
     Cyclic,
 }
 
