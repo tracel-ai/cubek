@@ -41,10 +41,7 @@ impl<T: Numeric> TmaData<T> {
             units,
         }
     }
-}
 
-#[cube]
-impl<T: Numeric> TmaData<T> {
     /// Issue the `tensor_map_load` into `dst` on `barrier` without arriving or waiting.
     /// Only the electing unit may call it, since it alone declares the transaction count.
     pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {

@@ -1282,6 +1282,51 @@ impl<S: Numeric> Tile<S> {
     }
 }
 
+#[cube]
+impl<E: Float> Tile<E> {
+    /// This tile's cells in order, one value a slice of something else, as the rows of a softmax:
+    /// a window of memory a plane holds, `count` cells, every unit of the plane reading them all.
+    pub(crate) fn cells(&self, #[comptime] count: usize) -> Array<E> {
+        comptime!(assert!(
+            self.place.holder() == ComputeScope::Plane && self.place.space.cells() == count,
+            "Tile::cells: a plane's window of {count} cells, not {:?} held by {:?}",
+            self.place.space,
+            self.place.holder()
+        ));
+        match &self.kind {
+            TileKind::Memory(window) => window.cells(count),
+            TileKind::PlanePartition(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => Tile::<E>::refuse_cells(),
+        }
+    }
+
+    /// Write `values` over this tile's `count` cells ([`cells`](Tile::cells)), from the plane's
+    /// first unit.
+    pub(crate) fn set_cells(&mut self, values: &Array<E>, #[comptime] count: usize) {
+        comptime!(assert!(
+            self.place.holder() == ComputeScope::Plane && self.place.space.cells() == count,
+            "Tile::cells: a plane's window of {count} cells, not {:?} held by {:?}",
+            self.place.space,
+            self.place.holder()
+        ));
+        match &mut self.kind {
+            TileKind::Memory(window) => window.set_cells(values, count),
+            TileKind::PlanePartition(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => Tile::<E>::refuse_cells(),
+        }
+    }
+
+    fn refuse_cells() -> ! {
+        panic!("Tile::cells: a plane's window of memory holds the cells every unit of it reads")
+    }
+}
+
 /// Refuses values that index a table ([`Tile::lookup`]) at `site`.
 pub(crate) fn refuse_codebook<E: Numeric>(tile: &TileExpand<E>, site: &str) {
     if let TileKindExpand::Memory(memory) = &tile.kind {
