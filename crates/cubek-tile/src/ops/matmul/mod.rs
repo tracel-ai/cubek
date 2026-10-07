@@ -2,13 +2,13 @@
 //! the `row × col` matrix, leading axes as a batch, and contracts `K`.
 
 pub(crate) mod base;
-pub(crate) mod config;
 pub(crate) mod descent;
 pub(crate) mod instruction;
 pub(crate) mod leaf;
+pub(crate) mod mma_io;
+pub(crate) mod register_block;
 
 pub(crate) use descent::Descent;
 pub(crate) use leaf::*;
 
-pub use config::StoreMethod;
-pub use config::{LoadMethod, MmaIo};
+pub use mma_io::{LoadMethod, MmaIo, StoreMethod};
