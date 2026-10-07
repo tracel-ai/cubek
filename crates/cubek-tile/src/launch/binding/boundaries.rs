@@ -2,7 +2,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use super::boundary_policy::BoundaryPolicy;
+use crate::BoundaryPolicy;
 use crate::{Axis, Boundary, Projection, Refusal, Space};
 
 /// Where the bounds-check lands: on the coordinate axes that can leave the buffer, only those.

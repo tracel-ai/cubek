@@ -4,7 +4,8 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use super::{boundaries::Boundaries, boundary_policy::BoundaryPolicy, labels::Labels};
+use super::{boundaries::Boundaries, labels::Labels};
+use crate::BoundaryPolicy;
 use crate::{
     Axis, Delivery, Field, Geometry, Launcher, LineMisfit, Packing, Projection, Refusal, Storage,
     StoragePartitioning, TileArgLaunch, TileSpec, VectorTile,
