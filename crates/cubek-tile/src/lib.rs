@@ -2,6 +2,7 @@
 //! whose loops hand out [`Region`]s; the [`Launcher`] reads the grid off the same levels.
 
 pub(crate) mod algebra;
+mod comptime_only;
 pub mod launch;
 pub mod layout;
 pub mod ops;
@@ -33,6 +34,8 @@ pub mod procedural {
     pub use crate::tile::kind::procedural::separable::Factors;
     pub use crate::tile::kind::procedural::sum::{Sum, sum_of};
 }
+
+pub(crate) use comptime_only::comptime_only;
 
 // Flat crate namespace for `use crate::*`.
 #[allow(unused_imports)]

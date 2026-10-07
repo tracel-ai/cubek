@@ -3,7 +3,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::layout::gcd;
+use crate::algebra::gcd;
 use crate::{Axis, Extent, Level, Shape};
 
 /// Every axis with its extent, in canonical order, plus the runtime sizes of dynamic axes.

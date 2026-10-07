@@ -10,7 +10,8 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::{
     Axis, Coords, Extent, Space, TileMisfit,
-    algebra::{Integer, IntegerExpand, comptime_only},
+    algebra::{Integer, IntegerExpand},
+    comptime_only,
 };
 
 /// The values one vector load brings, as a tile: its extents, finest first, one per axis.

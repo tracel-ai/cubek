@@ -2,7 +2,8 @@
 
 use cubecl::prelude::*;
 
-use super::monoid::{Carrier, Monoid, comptime_only};
+use super::monoid::{Carrier, Monoid};
+use crate::comptime_only;
 
 /// A product monoid and the accumulation monoid its products fold into.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

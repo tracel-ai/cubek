@@ -13,7 +13,6 @@ pub(crate) mod walk;
 
 pub(crate) use axis::*;
 pub(crate) use base::*;
-pub(crate) use coords::*;
 pub(crate) use extent::*;
 pub(crate) use matrix::*;
 pub(crate) use partition::*;
