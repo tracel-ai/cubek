@@ -312,7 +312,7 @@ fn scale_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, fact
     let factor = Vector::<E, N>::cast_from(factor);
     #[unroll]
     for i in 0..num_vectors {
-        fragment[i] = fragment[i] * factor;
+        fragment[i] *= factor;
     }
 }
 
