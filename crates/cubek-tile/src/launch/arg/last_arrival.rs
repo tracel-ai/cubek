@@ -149,31 +149,27 @@ impl Partitioning {
     }
 
     /// The space the slots of a [`LastArrival`] for an output over `axes` are boxes of, cut by
-    /// these levels: this space with every axis of `axes` one cube box long, the first stacking
-    /// two boxes a run. The other axes keep their extents, so the cube level cuts them as it cuts
-    /// the output's, which spans each in one box.
+    /// these levels: one cube box, with the first of `axes` two boxes a run long. Every axis the
+    /// cube level cuts, a batch one included, is one box long, so the slot boxes are counted along
+    /// that first axis alone.
     fn arrival_slots_space(&self, axes: &[Axis]) -> Partitioning {
         let level = &self.levels()[0];
         let runs = level.shared_by().expect(
             "LastArrival: the cube level distributes no grid as one index; say `shared_by`",
         );
+        let stacked = axes[0];
         let cube_box = level.child(self.space());
-        let extents: Vec<(Axis, Extent)> = self
-            .space()
+        let Extent::Static(edge) = cube_box.extent_raw(stacked) else {
+            panic!(
+                "LastArrival: the cube box's {stacked:?} extent is known only at launch; the slots \
+                 stack cube boxes along it, so the cube level cuts it by a stated tile"
+            )
+        };
+        let extents: Vec<(Axis, Extent)> = cube_box
             .axes()
-            .map(|axis| match axes.iter().position(|&a| a == axis) {
-                None => (axis, self.space().extent_raw(axis)),
-                Some(at) => {
-                    let Extent::Static(edge) = cube_box.extent_raw(axis) else {
-                        panic!(
-                            "LastArrival: the cube box's {axis:?} extent is known only at launch; \
-                             a slot is one cube box, so the cube level cuts the output's axes by a \
-                             stated tile"
-                        )
-                    };
-                    let stacked = if at == 0 { 2 * runs } else { 1 };
-                    (axis, Extent::Static(stacked * edge))
-                }
+            .map(|axis| match axis == stacked {
+                true => (axis, Extent::Static(2 * runs * edge)),
+                false => (axis, cube_box.extent_raw(axis)),
             })
             .collect();
         Partitioning::new(Space::from_extents(&extents), self.levels().to_vec())
