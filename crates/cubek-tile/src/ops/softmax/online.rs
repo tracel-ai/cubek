@@ -32,6 +32,18 @@ pub struct RelayedFactors<E: Float> {
     pub carried: Array<E>,
 }
 
+/// Every slice's running max and sum as they stand, undivided ([`OnlineSoftmax::state`]): what
+/// a holder writes beside its unnormalized sum against the values where another merges its slices
+/// with other holders' parts of them.
+#[derive(CubeType)]
+pub struct OnlineSoftmaxState<E: Float> {
+    /// Each slice's running max, `E::min_value()` for a slice whose every cell so far is masked.
+    pub max: Array<E>,
+    /// Each slice's running sum of `exp(score − max)`, zero for a slice whose every cell so far is
+    /// masked.
+    pub sum: Array<E>,
+}
+
 #[cube]
 impl<E: Float> OnlineSoftmax<E> {
     /// The state of every slice along `axis` of a score over the same box as `score`, before
@@ -214,6 +226,19 @@ impl<E: Float> OnlineSoftmax<E> {
             carried[i] *= normalize;
         }
         RelayedFactors::<E> { sum: own, carried }
+    }
+
+    /// Every slice's running max and sum as they stand, copied out: nothing is divided and the
+    /// state walks on unchanged.
+    pub fn state(&self) -> OnlineSoftmaxState<E> {
+        let mut max = Array::<E>::new(self.slices);
+        let mut sum = Array::<E>::new(self.slices);
+        #[unroll]
+        for i in 0..self.slices {
+            max[i] = self.m[i];
+            sum[i] = self.l[i];
+        }
+        OnlineSoftmaxState::<E> { max, sum }
     }
 
     /// Each slice's `1 / l`, what its sum of probabilities times values is normalized by; zero
