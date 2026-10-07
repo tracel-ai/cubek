@@ -196,18 +196,6 @@ impl Projection {
         }
     }
 
-    /// One value over the whole operand: the same axes, none addressed.
-    pub fn whole(&self) -> Projection {
-        Projection {
-            physical: self
-                .physical
-                .iter()
-                .map(|_| PhysicalAxisMap::broadcast())
-                .collect(),
-            axes: self.axes.clone(),
-        }
-    }
-
     /// `axes` in the tile's logical order, `physical` one per physical axis in buffer order.
     pub fn new(axes: &[Axis], physical: &[PhysicalAxisMap]) -> Self {
         Projection {

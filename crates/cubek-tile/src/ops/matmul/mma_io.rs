@@ -76,10 +76,6 @@ impl MmaIo {
             MatrixIdent::Accumulator => self.acc_load_method,
         }
     }
-
-    pub fn store_method(&self) -> StoreMethod {
-        self.store_method
-    }
 }
 
 fn load_method(device_props: &DeviceProperties, dtype: ElemType) -> LoadMethod {

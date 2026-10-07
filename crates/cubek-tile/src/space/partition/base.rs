@@ -33,11 +33,6 @@ impl PartitioningExpand {
     pub fn levels(&self) -> &[Level] {
         &self.levels
     }
-
-    /// How many levels there are.
-    pub fn depth(&self) -> usize {
-        self.levels.len()
-    }
 }
 
 impl Partitioning {
@@ -49,11 +44,6 @@ impl Partitioning {
     /// Level `i`, outermost first.
     pub fn level(&self, i: usize) -> Level {
         self.levels[i].clone()
-    }
-
-    /// How many levels there are.
-    pub fn depth(&self) -> usize {
-        self.levels.len()
     }
 }
 

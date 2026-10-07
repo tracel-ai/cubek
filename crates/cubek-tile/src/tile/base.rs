@@ -624,17 +624,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The window as one dense run of `Vector<T, W>` lines; see `Memory::dense_lines` for the
-    /// contiguity contract.
-    pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
-        self.mem("dense").dense_lines::<W>()
-    }
-
-    /// The mutable twin of [`dense`](Tile::dense).
-    pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.mem_mut("dense_mut").dense_lines_mut::<W>()
-    }
-
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile<T> {
         Memory::<T>::stage(

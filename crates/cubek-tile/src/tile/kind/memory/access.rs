@@ -267,44 +267,6 @@ impl<T: Numeric> Memory<T> {
         storage.as_vectorized_mut().with_vector_size_mut::<W>()
     }
 
-    /// The window as one dense run of lines: index `i` addresses line `origin + i`.
-    /// The caller guarantees the window is physically contiguous and row-major.
-    pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
-        self.assert_dense();
-        let all = self.lines::<W>();
-        let start = self.window_start.cast::<usize>();
-        all.slice(start, all.len())
-    }
-
-    /// The mutable twin of [`dense_lines`](Memory::dense_lines).
-    pub(crate) fn dense_lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.assert_dense();
-        let start = self.window_start.cast::<usize>();
-        let all = self.lines_mut::<W>();
-        let end = all.len();
-        all.slice_mut(start, end)
-    }
-
-    /// The comptime half of [`dense_lines`](Memory::dense_lines)'s contract.
-    fn assert_dense(&self) {
-        comptime!(assert!(
-            !self.access.overhang.masks(),
-            "Memory::dense_lines: a dense window cannot mask an overhang"
-        ));
-        comptime!(assert!(
-            !self.layout.projection.is_tiled(),
-            "Memory::dense_lines: a storage-tiled window is not dense"
-        ));
-        comptime!(assert!(
-            self.projection.is_direct(),
-            "Memory::dense_lines: a gathered window is not dense (sibling windows overlap)"
-        ));
-        comptime!(assert!(
-            self.store.packing == Packing::Plain,
-            "Memory::dense_lines: a packed store is served through its packed views"
-        ));
-    }
-
     /// The buffer from the window origin on, rows stepping by [`row_stride`](Memory::row_stride).
     pub(crate) fn window_slice(&self) -> &[T] {
         let offset = self.window_offset();
