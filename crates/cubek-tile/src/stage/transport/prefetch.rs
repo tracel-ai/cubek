@@ -3,8 +3,8 @@
 
 use cubecl::prelude::*;
 
-use super::cooperative::fill_extent;
 use super::padded::read_stage_line;
+use super::straight::fill_extent;
 use crate::*;
 
 /// Most scalars of both operands' stages one unit may hold in registers beside an accumulator.

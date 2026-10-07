@@ -4,6 +4,15 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
+/// What a padded fill needs beyond the two boxes: source cells per line and the padding extent.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Padding {
+    pub(crate) width: usize,
+    pub(crate) extent: Option<usize>,
+    /// The physical rank both boxes share.
+    pub(crate) rank: usize,
+}
+
 /// Read one destination line at `pos`, whole or assembled from scalar cells ([`widen_line`]).
 #[cube]
 pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(

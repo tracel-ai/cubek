@@ -3,7 +3,7 @@
 use cubecl::prelude::*;
 
 use super::base::Scan;
-use super::cooperative::fill_extent;
+use super::straight::fill_extent;
 use crate::*;
 
 #[cube]

@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use super::cooperative::fill_extent;
+use super::straight::fill_extent;
 use crate::*;
 
 /// One side of a fill, as far as choosing a transport goes.

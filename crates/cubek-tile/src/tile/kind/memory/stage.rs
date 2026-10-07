@@ -576,50 +576,6 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
     (shape, strides)
 }
 
-/// What a padded fill needs beyond the two boxes: source cells per line and the padding extent.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Padding {
-    pub(crate) width: usize,
-    pub(crate) extent: Option<usize>,
-    /// The physical rank both boxes share.
-    pub(crate) rank: usize,
-}
-
-impl StageStorage {
-    /// The storage-tiling nesting a stage over `space` gets, coarse to fine; empty is row-major.
-    pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
-        match self {
-            StageStorage::Lines { .. } => {
-                panic!("StageStorage::Lines: the plane's units are not shared memory")
-            }
-            StageStorage::Tiled { block, .. } => {
-                let nested = Space::new(
-                    &space
-                        .axes()
-                        .map(|axis| {
-                            let edge = block
-                                .iter()
-                                .find(|&&(a, _)| a == axis)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "StageStorage::Tiled: the block states no edge for {axis:?}"
-                                    )
-                                })
-                                .1;
-                            (axis, edge)
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                if &nested == space {
-                    return Vec::new();
-                }
-                vec![nested]
-            }
-            StageStorage::Strided => Vec::new(),
-        }
-    }
-}
-
 /// Lines one plane's copy of a stage of `cells` lines, each `line_bytes` long, spans in a buffer
 /// of one copy per plane: rounded up so the next copy starts on `alignment` bytes (`0` = the
 /// element's own, which every line already keeps).

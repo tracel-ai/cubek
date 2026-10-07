@@ -22,7 +22,7 @@ use crate::*;
 /// The widths of one copy the engine takes, in bytes: `cp.async` moves 4, 8 or 16.
 const COPY_BYTES: [usize; 3] = [4, 8, 16];
 
-/// [`fill_lines`](super::cooperative::fill_lines) with every line handed to the copy engine: the
+/// [`fill_lines`](super::straight::fill_lines) with every line handed to the copy engine: the
 /// same lines per unit on the same schedule, numbered in the source's order ([`BufferLayout::row_major_coords`]).
 ///
 /// A schedule of its own rather than an arm of `fill_lines`: the copy reads and writes lines of

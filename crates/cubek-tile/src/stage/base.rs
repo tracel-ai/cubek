@@ -1,6 +1,6 @@
 //! Where a stage lives and how it lays its cells out ([`StageStorage`]).
 
-use crate::Axis;
+use crate::{Axis, Space};
 
 /// Where a stage lives and how it lays its cells out, stated at
 /// [`Stages::smem`](crate::Stages::smem).
@@ -42,4 +42,39 @@ pub enum UnitRead {
     /// Through a plane-owned shared-memory window written once per load. Serialized as `Window`.
     #[serde(rename = "Window")]
     PlaneShared,
+}
+
+impl StageStorage {
+    /// The storage-tiling nesting a stage over `space` gets, coarse to fine; empty is row-major.
+    pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
+        match self {
+            StageStorage::Lines { .. } => {
+                panic!("StageStorage::Lines: the plane's units are not shared memory")
+            }
+            StageStorage::Tiled { block, .. } => {
+                let nested = Space::new(
+                    &space
+                        .axes()
+                        .map(|axis| {
+                            let edge = block
+                                .iter()
+                                .find(|&&(a, _)| a == axis)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "StageStorage::Tiled: the block states no edge for {axis:?}"
+                                    )
+                                })
+                                .1;
+                            (axis, edge)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                if &nested == space {
+                    return Vec::new();
+                }
+                vec![nested]
+            }
+            StageStorage::Strided => Vec::new(),
+        }
+    }
 }
