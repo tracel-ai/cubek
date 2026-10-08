@@ -5,7 +5,7 @@
 //! together, and may start in one tile and end in another; no box of a four by two grid holds three
 //! regions.
 //!
-//! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
+//! [`Walk::portion`] is that range, and the [`Portion`] it returns the walk over it. The axes of the
 //! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat index
 //! carries every coordinate; an instance's run is `base` and `steps` into it, both runtime values.
 //!
