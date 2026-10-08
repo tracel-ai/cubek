@@ -13,6 +13,7 @@
 mod test_case;
 
 mod argtopk_shared_memory;
+mod empty_output;
 mod logical;
 mod nan_extrema;
 mod plane_reduction;
