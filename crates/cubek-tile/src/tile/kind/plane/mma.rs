@@ -701,7 +701,8 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
             // The window's rows are the served axis whichever its layout: an `A`'s rows, a
             // `B`'s columns lying col-major.
             let along_k = comptime!((b * E2M1_SCALE_BLOCK) as u32);
-            let at = TileMatrix::value_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
+            let at =
+                TileMatrix::value_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
             let scale = factor.at_coords(&at, comptime!(space.clone()));
             register.insert(b, e4m3::cast_from(scale));
         }

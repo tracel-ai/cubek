@@ -7,8 +7,8 @@
 //! checks it through [`MmaDefinition::position_of_nth`] rather than assuming it.
 //!
 //! Each cube is four planes of sixteen query rows of one head; keys and values are staged in
-//! shared memory a block of [`KEYS`] at a time and read by `ldmatrix`, the values transposed on
-//! the way. The correctness check runs against a host reference; the throughput is a
+//! shared memory a block of [`KEYS`] at a time, two stages deep so the next block lands by async
+//! copy while this one computes, and read by `ldmatrix`, the values transposed on the way. The correctness check runs against a host reference; the throughput is a
 //! measurement, ignored by default:
 //!
 //! ```sh
@@ -20,6 +20,7 @@ use std::time::Instant;
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout, MmaDefinition},
+    prelude::barrier::{Barrier, copy_async},
     prelude::*,
 };
 use half::f16;
@@ -116,12 +117,14 @@ fn register_attention(
         sum[r] = 0.0f32;
     }
 
+    // Two stages: the next block's keys and values land by async copy while this one computes.
+    let stage_lines = comptime!(KEYS * ROW_LINES);
     let mut key_stage =
-        Shared::<[Vector<f16, Const<8>>]>::new_aligned_slice(comptime!(KEYS * ROW_LINES), 16usize);
+        Shared::<[Vector<f16, Const<8>>]>::new_aligned_slice(comptime!(2 * stage_lines), 16usize);
     let mut value_stage =
-        Shared::<[Vector<f16, Const<8>>]>::new_aligned_slice(comptime!(KEYS * ROW_LINES), 16usize);
-    let units = comptime!((PLANES * 32) as u32);
-    let unit = UNIT_POS;
+        Shared::<[Vector<f16, Const<8>>]>::new_aligned_slice(comptime!(2 * stage_lines), 16usize);
+    let landed_even = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
+    let landed_odd = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
     let kv_base = kv_head * keys * comptime!((DIM / LINE) as u32);
     let row_in_matrix = lane % 8;
     let nth_matrix = lane / 8 % comptime!(b_regs as u32);
@@ -130,19 +133,35 @@ fn register_attention(
         def.position_of_nth(0, nth_matrix * comptime!(b_size as u32), MatrixIdent::B);
 
     let blocks = keys / comptime!(KEYS as u32);
+    let block_lines = comptime!((KEYS * DIM / LINE) as u32);
+    fill_stage(k, v, &mut key_stage, &mut value_stage, kv_base, 0);
+    landed_even.commit_copy_async();
     for block in 0..blocks {
+        let stage = block % 2;
+        let stage_base = stage * comptime!(stage_lines as u32);
+        // The other stage was read by the previous block: every plane is past it before it refills.
         sync_cube();
-        let block_base = kv_base + block * comptime!((KEYS * DIM / LINE) as u32);
-        #[unroll]
-        for i in 0..comptime!(KEYS * DIM / LINE / (PLANES * 32)) {
-            let line = comptime!(i as u32) * units + unit;
-            let row = line / comptime!((DIM / LINE) as u32);
-            let col = line % comptime!((DIM / LINE) as u32);
-            let staged = (row * comptime!(ROW_LINES as u32) + col) as usize;
-            key_stage[staged] = k[(block_base + line) as usize];
-            value_stage[staged] = v[(block_base + line) as usize];
+        if block + 1 < blocks {
+            let next_base = kv_base + (block + 1) * block_lines;
+            fill_stage(
+                k,
+                v,
+                &mut key_stage,
+                &mut value_stage,
+                next_base,
+                (1 - stage) * comptime!(stage_lines as u32),
+            );
+            if stage == 0 {
+                landed_odd.commit_copy_async();
+            } else {
+                landed_even.commit_copy_async();
+            }
         }
-        sync_cube();
+        if stage == 0 {
+            landed_even.arrive_and_wait();
+        } else {
+            landed_odd.arrive_and_wait();
+        }
 
         // score = q · kᵀ, the keys the columns.
         #[unroll]
@@ -166,8 +185,9 @@ fn register_attention(
                 // `kᵀ`'s `(dim, key)` lies at the stage's `(key, dim)`.
                 let key = comptime!(tile as u32 * 8) + b_col + row_in_matrix;
                 let dim = comptime!(step as u32 * 16) + b_row;
-                let at =
-                    (key * comptime!(ROW_LINES as u32) + dim / comptime!(LINE as u32)) as usize;
+                let at = (stage_base
+                    + key * comptime!(ROW_LINES as u32)
+                    + dim / comptime!(LINE as u32)) as usize;
                 let b = def.load_matrix::<Vector<f16, Const<8>>, NB>(
                     &key_stage[at..at + 1],
                     MatrixIdent::B,
@@ -236,8 +256,9 @@ fn register_attention(
                 // `v`'s `(key, dim)` lies where it is staged.
                 let key = comptime!(step as u32 * 16) + b_row + row_in_matrix;
                 let dim = comptime!(tile as u32 * 8) + b_col;
-                let at =
-                    (key * comptime!(ROW_LINES as u32) + dim / comptime!(LINE as u32)) as usize;
+                let at = (stage_base
+                    + key * comptime!(ROW_LINES as u32)
+                    + dim / comptime!(LINE as u32)) as usize;
                 let b = def.load_matrix::<Vector<f16, Const<8>>, NB>(
                     &value_stage[at..at + 1],
                     MatrixIdent::B,
@@ -275,6 +296,39 @@ fn register_attention(
                 out[at as usize] = f16::cast_from(cells.extract(e));
             }
         }
+    }
+}
+
+/// Issue the async copies of one block of keys and values, `[KEYS, DIM]` from `block_base` (in
+/// lines), into the stage at `stage_base`, its rows padded to [`ROW_LINES`]: each unit copies
+/// whole lines, consecutive units consecutive lines.
+#[cube]
+fn fill_stage(
+    k: &Tensor<Vector<f16, Const<8>>>,
+    v: &Tensor<Vector<f16, Const<8>>>,
+    key_stage: &mut [Vector<f16, Const<8>>],
+    value_stage: &mut [Vector<f16, Const<8>>],
+    block_base: u32,
+    stage_base: u32,
+) {
+    let units = comptime!((PLANES * 32) as u32);
+    #[unroll]
+    for i in 0..comptime!(KEYS * DIM / LINE / (PLANES * 32)) {
+        let line = comptime!(i as u32) * units + UNIT_POS;
+        let row = line / comptime!((DIM / LINE) as u32);
+        let col = line % comptime!((DIM / LINE) as u32);
+        let staged = (stage_base + row * comptime!(ROW_LINES as u32) + col) as usize;
+        let source = (block_base + line) as usize;
+        copy_async(
+            &k[source..source + 1],
+            &mut key_stage[staged..staged + 1],
+            comptime!(LINE as u32),
+        );
+        copy_async(
+            &v[source..source + 1],
+            &mut value_stage[staged..staged + 1],
+            comptime!(LINE as u32),
+        );
     }
 }
 
