@@ -1222,12 +1222,16 @@ impl<E: Numeric> TileExpand<E> {
         }
     }
 
-    pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
-        let looks_up = match &self.kind {
+    /// Whether these values index a table ([`Tile::lookup`]).
+    fn looks_up(&self) -> bool {
+        match &self.kind {
             TileKindExpand::Memory(memory) => memory.codebook.present(),
             _ => false,
-        };
-        looks_up || self.factor().is_some_and(FactorExpand::scaled)
+        }
+    }
+
+    pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
+        self.looks_up() || self.factor().is_some_and(FactorExpand::scaled)
     }
 
     pub(crate) fn __expand_factor_levels_method(&self, _scope: &Scope) -> usize {
@@ -1245,11 +1249,7 @@ impl<E: Numeric> TileExpand<E> {
     }
 
     pub(crate) fn __expand_scales_beside_method(&self, _scope: &Scope) -> bool {
-        let looks_up = match &self.kind {
-            TileKindExpand::Memory(memory) => memory.codebook.present(),
-            _ => false,
-        };
-        !looks_up && self.factor().is_some_and(FactorExpand::staged_beside)
+        !self.looks_up() && self.factor().is_some_and(FactorExpand::staged_beside)
     }
 
     pub(crate) fn __expand_with_scales_staged_method(
@@ -1259,17 +1259,14 @@ impl<E: Numeric> TileExpand<E> {
         spec: StageSpec,
     ) -> TileExpand<E> {
         let mut stage = self.clone();
-        let Some(source) = operand
-            .factor()
-            .filter(|_| operand.__expand_scales_beside_method(scope))
-        else {
-            return stage;
-        };
-        let staged = source.staged(scope, &spec);
-        let TileKindExpand::Memory(memory) = &mut stage.kind else {
-            panic!("Tile::with_scales_staged: scales are staged beside a stage in memory")
-        };
-        memory.factor = staged;
+        if let Some(source) = operand.factor()
+            && operand.__expand_scales_beside_method(scope)
+        {
+            let TileKindExpand::Memory(memory) = &mut stage.kind else {
+                panic!("Tile::with_scales_staged: scales are staged beside a stage in memory")
+            };
+            memory.factor = source.staged(scope, &spec);
+        }
         stage
     }
 

@@ -25,6 +25,9 @@ define_size!(pub(crate) NSB);
 /// `e2m1` values one stored word holds, and so one register of the block-scaled instruction.
 const E2M1_PER_WORD: usize = 8;
 
+/// Words one `ldmatrix` row holds.
+const LDMATRIX_ROW_WORDS: usize = LDMATRIX_ROW_BYTES / size_of::<u32>();
+
 /// Values one `e2m1` block scale covers along the contraction under the instruction this
 /// encoding runs: NVFP4's block, a `ue4m3` scale every sixteen values.
 pub(crate) const E2M1_SCALE_BLOCK: usize = 16;
@@ -685,7 +688,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     let line_words = comptime!(load.values() / E2M1_PER_WORD);
     comptime!(assert!(
         load.values().is_multiple_of(E2M1_PER_WORD)
-            && (LDMATRIX_ROW_BYTES / 4).is_multiple_of(line_words),
+            && LDMATRIX_ROW_WORDS.is_multiple_of(line_words),
         "MmaData::load_block_scaled: a register of the instruction is one stored word, eight \
          `e2m1` values, read out of lines of whole words up to sixteen bytes; this window is read \
          {} values a load",
@@ -703,7 +706,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     });
     match method {
         LoadMethod::LoadMatrix => {
-            load_block_scaled_ldmatrix(src, &words, values, &def, ident, transposed);
+            load_block_scaled_ldmatrix(src, &words, values, &def, ident, transposed, line_words);
         }
         LoadMethod::Manual => {
             // An `e2m1x2` holds two values.
@@ -778,6 +781,7 @@ fn load_block_scaled_ldmatrix<T: Numeric, WP: Size, NV: Size>(
     def: &MmaDefinition<e2m1x2, e2m1x2, f32>,
     #[comptime] ident: MatrixIdent,
     #[comptime] transposed: bool,
+    #[comptime] line_words: usize,
 ) {
     let space = comptime!(src.place.space.clone());
     let axes = comptime!(MatrixAxes::edges(&space));
@@ -798,14 +802,12 @@ fn load_block_scaled_ldmatrix<T: Numeric, WP: Size, NV: Size>(
         (row + row_in_matrix, col)
     };
     let at = TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
-    // One row of a matrix: sixteen bytes, four words along the window's innermost axis, in
-    // the window's lines.
-    let line_words = comptime!(load.values() / E2M1_PER_WORD);
+    // One row of a matrix: sixteen bytes along the window's innermost axis, in its lines.
     let mut run = CoordsDyn::new();
     #[unroll]
     for p in 0..rank {
         let extent = comptime!(match p == rank - 1 {
-            true => (LDMATRIX_ROW_BYTES / 4 / line_words) as u32,
+            true => (LDMATRIX_ROW_WORDS / line_words) as u32,
             false => 1u32,
         });
         run.push(extent.runtime());

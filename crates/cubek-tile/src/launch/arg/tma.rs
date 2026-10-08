@@ -55,9 +55,9 @@ pub struct TmaOperand {
 impl<E: Numeric> TmaTileArgLaunch<E> {
     /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set.
     pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
-        let (layout, spec) = Self::dyn_layout(axes, shape, 1);
+        let layout = Self::dyn_layout(axes, shape, 1);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, spec)
+        Self::new(view, TileSpec::direct(axes))
     }
 
     /// [`tensor_map`](Self::tensor_map) over a packed operand: the descriptor moves the words its
@@ -69,14 +69,14 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         shape: TmaBox,
         field: Field,
     ) -> Self {
-        let (layout, spec) = Self::dyn_layout(axes, shape, field.per_word() as u32);
+        let layout = Self::dyn_layout(axes, shape, field.per_word() as u32);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, spec.packed(field))
+        Self::new(view, TileSpec::direct(axes).packed(field))
     }
 
     /// The layout of a descriptor over `axes` moving cells of `per_cell` values along its
-    /// innermost dimension, and the operand's spec.
-    fn dyn_layout(axes: &[Axis], shape: TmaBox, per_cell: u32) -> (TmaDynLayoutLaunch, TileSpec) {
+    /// innermost dimension.
+    fn dyn_layout(axes: &[Axis], shape: TmaBox, per_cell: u32) -> TmaDynLayoutLaunch {
         let batched = match (axes.len(), shape.batch) {
             (2, None) => false,
             (3, Some(_)) => true,
@@ -86,8 +86,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
             ),
         };
         let dims = (shape.batch.unwrap_or(1), shape.rows, shape.cols);
-        let layout = TmaDynLayoutLaunch::new(dims, batched, shape.transposed, per_cell);
-        (layout, TileSpec::direct(axes))
+        TmaDynLayoutLaunch::new(dims, batched, shape.transposed, per_cell)
     }
 
     /// A storage-tiled operand's tensor map over two `axes`; `dims` is its logical `(rows, cols)`.
