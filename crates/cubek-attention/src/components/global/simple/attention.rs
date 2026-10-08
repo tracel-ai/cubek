@@ -199,7 +199,6 @@ impl<
         num_heads: u32,
         stage_q_offset: u32,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
-        _seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
@@ -216,12 +215,10 @@ impl<
                     config.mask_gmem_config,
                 );
 
-                // The tile reads mask rows with this stride: it has to be the
-                // tensor's own row stride, not `seq_kv`. A padding mask comes
-                // as a `[b, 1, 1, seq_kv]` tensor broadcast to `[b, h, seq_q,
-                // seq_kv]` with a stride of 0 on `seq_q`; striding it by
-                // `seq_kv` read every row past the first from other batches'
-                // rows — or past the end of the buffer.
+                // The tile reads mask rows with the tensor's own row stride,
+                // which a broadcast mask sets apart from `seq_kv`: a padding
+                // mask is a `[b, 1, 1, seq_kv]` tensor broadcast to `[b, h,
+                // seq_q, seq_kv]`, with a stride of 0 on `seq_q`.
                 let stride_row = mask.stride(2) as u32;
                 MaskReader::new_materialized(
                     stage_q_offset,
