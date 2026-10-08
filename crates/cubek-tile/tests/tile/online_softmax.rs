@@ -21,7 +21,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch,
     Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
-    ops::softmax::OnlineSoftmax,
+    ops::{matmul::MmaIo, softmax::OnlineSoftmax},
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 
@@ -143,6 +143,89 @@ fn plane_attention<E: Float>(
                 });
             });
             acc.along(V).mul(&softmax.normalizer(&plane));
+            out_cube.drain(&acc, &plane);
+        }
+        out_cube.write();
+    }
+}
+
+/// [`plane_attention`] with the score held in manual-mma registers from the score's contraction to
+/// the value's: the softmax reads the accumulator where its units hold it, and the probabilities
+/// are the value's left factor in the same registers ([`Tile::as_lhs`]). The leaf is one
+/// instruction `m × n` along the queries and keys, so the value contracts the keys `n` deep.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn register_plane_attention<E: Float>(
+    q: &TileArg<'_, E, Const<1>>,
+    k: &TileArg<'_, E, Const<1>>,
+    v: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, f32, Const<1>>,
+    keys: u32,
+    queries: u32,
+    scale: f32,
+    space: Partitioning,
+    #[comptime] causal: bool,
+    #[comptime] block_keys: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let instruction = comptime!(Instruction::Mma {
+        io: MmaIo::default()
+    });
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
+    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
+    let out = out.tile(comptime!(space.clone()));
+    let bias = Procedural::<f32>::new::<Attended>(
+        comptime!(space.space().subspace(&[Q, S])),
+        Attended {
+            keys,
+            queries,
+            causal,
+        },
+    )
+    .tile_in(&space);
+    for cube in space {
+        let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
+        for plane in cube {
+            let (q_p, k_p, v_p) = (q.at(&plane), k.at(&plane), v.at(&plane));
+            let bias_p = bias.at(&plane);
+            let origin = plane.origin(S);
+            let reach = select(keys as usize > origin, keys as usize - origin, 0usize);
+            let keys_walk = plane.walk();
+            let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
+            let walk = keys_walk.range(0, blocks);
+            let acc = out.at(&plane).accumulator::<f32, f32, E>(
+                &bias_p,
+                &v_p,
+                instruction,
+                Semiring::SUM_PROD,
+            );
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
+            q_s.copy_from(&q_p);
+            sync_plane();
+            let logits =
+                Tile::<f32>::stage_accumulator(&walk, comptime!(vec![Q, S]), &q_s, instruction);
+            let mut softmax = OnlineSoftmax::<f32>::along(&logits, S);
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
+            stages.pipelined(walk, |slot, stage| {
+                let bias_s = bias_p.at(stage);
+                slot.consume(|k_s, v_s| {
+                    let mut logits = logits.clone();
+                    logits.reset();
+                    for fragment in stage.walk().routed(V, 0).unrolled() {
+                        let mut cell = logits.at(&fragment);
+                        cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
+                    }
+                    let correction = softmax.step(&logits, &bias_s, scale);
+                    let p = logits.as_lhs::<E>();
+                    acc.along(V).mul(&correction);
+                    for fragment in stage.walk().routed(D, 0).unrolled() {
+                        let mut cell = acc.at(&fragment);
+                        cell.mma(&p.at(&fragment), &v_s.at(&fragment));
+                    }
+                });
+            });
+            acc.along(V).mul(&softmax.recip_l());
             out_cube.drain(&acc, &plane);
         }
         out_cube.write();
@@ -448,6 +531,102 @@ fn run<E: Float + CubeElement>(case: Case) {
         launcher.partitioning_arg(),
         causal,
         edge * block,
+        e_ty,
+    );
+    let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    check(
+        &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, false,
+    );
+}
+
+/// A case through [`register_plane_attention`]: the leaf one `16 × 8` instruction along the
+/// queries and keys, `16` deep along the head and `8` wide along the values, so the score
+/// contracts `m16n8k16` and the value `m16n8k8`.
+fn run_registers<E: Float + CubeElement>(case: Case) {
+    let client: Client = cubecl::test_device().client();
+    let e_ty = E::elem_type_native();
+    let f32_ty = f32::elem_type_native();
+    let offered = |k: u32| {
+        client.properties().features.matmul.mma.iter().any(|cfg| {
+            cfg.a_type == e_ty
+                && cfg.b_type == e_ty
+                && cfg.cd_type == f32_ty
+                && [cfg.m, cfg.n, cfg.k] == [16, 8, k]
+        })
+    };
+    if !(offered(16) && offered(8)) {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "no m16n8k16 and m16n8k8 {e_ty:?} instructions summing in f32"
+        )))
+        .enforce();
+        return;
+    }
+    let Case {
+        queries,
+        keys,
+        attended,
+        head,
+        value,
+        rows,
+        block,
+        planes,
+        causal,
+        ..
+    } = case;
+    let (m, n, depth) = (16, 8, 16);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(Q, queries), (S, keys), (D, head), (V, value)]),
+            planes_over(
+                Levels::leaf(&[(Q, m), (S, n), (D, depth), (V, n)]).walk(&[
+                    (Q, rows),
+                    (S, block),
+                    (D, head / depth),
+                    (V, value / n),
+                ]),
+                PlanesAlong::Queries,
+                planes,
+                keys / (n * block),
+            )
+            .cubes(&[Q])
+            .build(),
+        ),
+        Form::Static,
+    );
+    let (q_data, k_data, v_data, q_handle, k_handle, v_handle) =
+        inputs::<E>(&client, queries, keys, attended, head, value, false);
+    let out_handle = TestInput::builder(client.clone(), Shape::new([queries, value]))
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+    let scale = 1. / (head as f32).sqrt();
+    register_plane_attention::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            q_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[Q, D]),
+        ),
+        TileArgLaunch::new(
+            k_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[S, D]),
+        ),
+        TileArgLaunch::new(
+            v_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[S, V]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[Q, V]),
+        ),
+        attended as u32,
+        queries as u32,
+        scale,
+        launcher.partitioning_arg(),
+        causal,
+        n * block,
         e_ty,
     );
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -787,6 +966,44 @@ fn plane_attention_in_f32() {
     run::<f32>(Case {
         value: 24,
         ..PREFILL
+    });
+}
+
+/// A plane's rows of a prefill held in manual-mma registers: two fragments along the queries, a
+/// stage of four along the keys.
+const REGISTER_PREFILL: Case = Case {
+    queries: 64,
+    keys: 128,
+    attended: 128,
+    head: 32,
+    value: 32,
+    edge: 0,
+    rows: 2,
+    block: 4,
+    planes: 2,
+    along: PlanesAlong::Queries,
+    causal: false,
+};
+
+#[test]
+fn register_plane_attention_matches_the_reference() {
+    run_registers::<half::f16>(REGISTER_PREFILL);
+}
+
+#[test]
+fn register_plane_attention_reads_nothing_past_the_attended_keys() {
+    run_registers::<half::f16>(Case {
+        attended: 90,
+        ..REGISTER_PREFILL
+    });
+}
+
+#[test]
+fn register_plane_attention_masks_causally_from_the_bottom_right() {
+    run_registers::<half::f16>(Case {
+        attended: 100,
+        causal: true,
+        ..REGISTER_PREFILL
     });
 }
 

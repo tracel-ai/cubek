@@ -89,7 +89,6 @@ impl<E: Float> OnlineSoftmax<E> {
     /// cube three times through shared memory. The planes' values are read in plane order, so the
     /// merged sum is the same bits from run to run. A slice every plane masked stays at zero.
     pub fn normalizer(&mut self, plane: &Region) -> Array<E> {
-        self.refuse_merging("OnlineSoftmax::normalizer");
         let axis = self.axis;
         let planes = comptime!(
             plane
@@ -118,6 +117,7 @@ impl<E: Float> OnlineSoftmax<E> {
     /// slice's `exp(max before − max after)`. The first unit of each plane writes, and the cube
     /// meets before each read and before the values read are overwritten.
     fn merge_planes(&mut self, plane: usize, #[comptime] planes: usize) -> Array<E> {
+        self.refuse_merging("OnlineSoftmax::normalizer");
         let slices = self.slices;
         let mut shared = Shared::<[E]>::new_slice(comptime!(planes * slices));
         let writes = UNIT_POS_PLANE == 0;
