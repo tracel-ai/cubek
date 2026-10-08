@@ -215,8 +215,7 @@ fn register_attention(
                     row_max = max(row_max, cells.extract(e));
                 }
             }
-            row_max = max(row_max, plane_shuffle_xor(row_max, 1));
-            row_max = max(row_max, plane_shuffle_xor(row_max, 2));
+            row_max = row_max_across(&def, row_max, comptime!(r * c_size));
             let new_max = max(running_max[r], row_max * scale);
             let correction = (running_max[r] - new_max).exp();
             running_max[r] = new_max;
@@ -279,8 +278,7 @@ fn register_attention(
     #[unroll]
     for r in 0..c_regs {
         let mut total = sum[r];
-        total += plane_shuffle_xor(total, 1);
-        total += plane_shuffle_xor(total, 2);
+        total = row_sum_across(&def, total, comptime!(r * c_size));
         let recip = 1.0f32 / total;
         #[unroll]
         for tile in 0..out_tiles {
@@ -297,6 +295,47 @@ fn register_attention(
             }
         }
     }
+}
+
+/// `value`'s max over the units holding the same accumulator row as cell `nth` of this unit: a
+/// butterfly across the plane over the lane bits that [`MmaDefinition::position_of_nth`] says
+/// leave the row in place. Holds for any layout whose row is a function of some of the lane's
+/// bits, which [`two_accumulator_tiles_are_one_a_fragment`] checks.
+#[cube]
+fn row_max_across(def: &MmaDefinition<f16, f16, f32>, value: f32, #[comptime] nth: usize) -> f32 {
+    // Whether a lane bit moves the row is read at lane 0, where both positions are constants the
+    // compiler folds: a bit that moves it costs nothing, its shuffle unused.
+    let (row, _) = def.position_of_nth(0u32, nth as u32, MatrixIdent::Accumulator);
+    let mut acc = value;
+    #[unroll]
+    for bit in 0..5u32 {
+        let mask = comptime!(1u32 << bit);
+        let (other_row, _) = def.position_of_nth(mask, nth as u32, MatrixIdent::Accumulator);
+        if other_row == row {
+            let other = plane_shuffle_xor(acc, mask);
+            acc = max(acc, other);
+        }
+    }
+    acc
+}
+
+/// `value`'s sum over the units holding the same accumulator row, as [`row_max_across`].
+#[cube]
+fn row_sum_across(def: &MmaDefinition<f16, f16, f32>, value: f32, #[comptime] nth: usize) -> f32 {
+    // Whether a lane bit moves the row is read at lane 0, where both positions are constants the
+    // compiler folds: a bit that moves it costs nothing, its shuffle unused.
+    let (row, _) = def.position_of_nth(0u32, nth as u32, MatrixIdent::Accumulator);
+    let mut acc = value;
+    #[unroll]
+    for bit in 0..5u32 {
+        let mask = comptime!(1u32 << bit);
+        let (other_row, _) = def.position_of_nth(mask, nth as u32, MatrixIdent::Accumulator);
+        if other_row == row {
+            let other = plane_shuffle_xor(acc, mask);
+            acc = acc + other;
+        }
+    }
+    acc
 }
 
 /// Issue the async copies of one block of keys and values, `[KEYS, DIM]` from `block_base` (in
@@ -356,9 +395,11 @@ fn fragment_positions(a: &mut Tensor<u32>, acc: &mut Tensor<u32>) {
     }
 }
 
-/// The register reuse the leaf rests on: cell `e` of an `m16k16` `A` fragment sits where cell
+/// The two layout facts the leaf rests on. Cell `e` of an `m16k16` `A` fragment sits where cell
 /// `e % half` of the accumulator of `n8` tile `e / half` does, `half` being the accumulator's
-/// cells per unit. Where it fails, the probabilities would be contracted with the wrong keys.
+/// cells per unit: where it fails, the probabilities are contracted with the wrong keys. And a
+/// row's units differ in lane bits that differ alike on every lane: where it fails, a row
+/// reduction combines another row's cells.
 #[test]
 fn two_accumulator_tiles_are_one_a_fragment() {
     let client = cubecl::test_device().client();
@@ -388,11 +429,18 @@ fn two_accumulator_tiles_are_one_a_fragment() {
                 "lane {lane}, A cell {e}"
             );
         }
-        // The quad shares rows: the lanes `lane ^ 1` and `lane ^ 2` hold the same rows.
+        // Whether a lane bit moves a cell's row is the same on every lane as on lane 0: the row
+        // reduction reads it there.
         for e in 0..c_elems {
             let row = |l: usize| acc[(l * c_elems + e) * 2];
-            assert_eq!(row(lane), row(lane ^ 1));
-            assert_eq!(row(lane), row(lane ^ 2));
+            for bit in 0..5 {
+                let mask = 1 << bit;
+                assert_eq!(
+                    row(lane) == row(lane ^ mask),
+                    row(0) == row(mask),
+                    "lane {lane}, cell {e}, lane bit {bit}"
+                );
+            }
         }
     }
 }

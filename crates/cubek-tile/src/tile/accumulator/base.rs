@@ -252,6 +252,31 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// This plane-resident accumulator as the left factor of the next contraction, the one over
+    /// its columns, its cells cast to `E` where its units hold them: what an attention contracts
+    /// its probabilities with the values through, without a round trip through shared memory.
+    ///
+    /// Only a manual-mma accumulator is read in place, whose layout is the `A` fragment's of an
+    /// instruction as deep as the accumulator is wide; any other drains into its plane's window
+    /// and is staged from there.
+    pub fn as_lhs<E: Numeric>(&self) -> Tile<E> {
+        let place = comptime!(self.place.clone());
+        match &self.kind {
+            TileKind::PlanePartition(partition) => {
+                Tile::new(TileKind::new_PlanePartition(partition.as_lhs::<E>()), place)
+            }
+            TileKind::PlaneTile(tile) => {
+                Tile::new(TileKind::new_PlaneTile(tile.as_lhs::<E>()), place)
+            }
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!("Tile::as_lhs: only a plane-resident accumulator is a contraction's output")
+            }
+        }
+    }
+
     /// Whether this accumulator's fragments cast to `Out` are fragments the device holds
     /// ([`casts_in_place`]): what decides whether a cmma grid draining into an `Out` destination
     /// stores whole or bounces.

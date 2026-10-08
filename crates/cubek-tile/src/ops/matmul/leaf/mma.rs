@@ -15,6 +15,31 @@ impl<A: Numeric> MmaData<A> {
         let k = comptime!(self.k);
         let io = comptime!(self.io);
 
+        // A left factor already in registers, as an accumulator read as the next contraction's:
+        // only the right one loads, and the two fragments contract as any two do.
+        let held_lhs = lhs.is_plane_resident();
+        let memory_rhs = rhs.is_memory();
+        if comptime!(held_lhs && memory_rhs) {
+            let (_, rhs_layout) = comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
+            let mut rb = MmaData::<R>::operand(MatrixIdent::B, m, n, k, rhs_layout, io, false);
+            rb.load_window(rhs);
+            let held = Tile::new(
+                TileKind::new_PlaneTile(PlaneTile::new_Mma(rb)),
+                comptime!(rhs.place.clone()),
+            );
+            self.mma(lhs, &held);
+        } else {
+            self.mma_loaded(lhs, rhs);
+        }
+    }
+
+    /// [`mma`](Self::mma) over two fragments, or two memory windows loaded into transient ones.
+    fn mma_loaded<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
+        let m = comptime!(self.m);
+        let n = comptime!(self.n);
+        let k = comptime!(self.k);
+        let io = comptime!(self.io);
+
         match &mut self.fragment {
             MmaFragment::Acc(acc) => match (&lhs.kind, &rhs.kind) {
                 (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
