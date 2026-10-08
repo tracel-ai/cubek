@@ -1,6 +1,7 @@
 //! Where a stage lives and how it lays its cells out ([`StageStorage`]).
 
-use crate::{Axis, Space};
+use crate::{Axis, ChunkSwizzle, LineBytes, Refusal, Space, StageForm};
+use cubecl::prelude::TensorMapSwizzle;
 
 /// Where a stage lives and how it lays its cells out, stated at
 /// [`Stages::smem`](crate::Stages::smem).
@@ -45,6 +46,56 @@ pub enum UnitRead {
 }
 
 impl StageStorage {
+    /// The swizzle a TMA descriptor moving the whole of a stage over `space` in one box lands its
+    /// rows with, so they lie as this storage keeps them: the stage's lines `vector_size` values of
+    /// `elem_bytes` bytes. What the launch builds the descriptor with, and what the stage fill
+    /// holds the stage to.
+    ///
+    /// # Errors
+    ///
+    /// Blocks splitting a row, which a box lands whole; blocks stacking a number of rows the
+    /// swizzle's [`ROWS_PER_PERIOD`](ChunkSwizzle::ROWS_PER_PERIOD) does not divide, whose rows a
+    /// box keys off their place in the stage rather than in the block; rows the engine does not
+    /// land ([`RowArrangement::tma_swizzle`]).
+    pub fn tma_swizzle(
+        &self,
+        space: &Space,
+        vector_size: usize,
+        elem_bytes: usize,
+    ) -> Result<TensorMapSwizzle, Refusal> {
+        let form = StageForm::dense(
+            space,
+            vector_size,
+            self.clone(),
+            LineBytes(vector_size * elem_bytes),
+        );
+        let swizzle = form
+            .rows
+            .tma_swizzle()
+            .map_err(|why| Refusal::RowsNoDescriptorLands { why })?;
+        let rank = space.rank();
+        let row = space.axis_at(rank - 1);
+        let period = match swizzle {
+            TensorMapSwizzle::None => 1,
+            _ => ChunkSwizzle::ROWS_PER_PERIOD,
+        };
+        for block in self.nesting(space) {
+            let rows = match rank {
+                1 => 1,
+                _ => block.extent_at(rank - 2),
+            };
+            if block.extent_at(rank - 1) < space.extent_at(rank - 1) || !rows.is_multiple_of(period)
+            {
+                return Err(Refusal::BoxSplitsStageBlocks {
+                    axis: row,
+                    rows,
+                    period,
+                });
+            }
+        }
+        Ok(swizzle)
+    }
+
     /// The storage-tiling nesting a stage over `space` gets, coarse to fine; empty is row-major.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {

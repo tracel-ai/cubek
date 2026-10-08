@@ -63,8 +63,8 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// An uninitialized operand tile in role `ident`, loaded in `layout`.
-    /// `k` is the operand's own contraction depth, not the instruction's.
+    /// An uninitialized operand tile in role `ident`, loaded in `layout`, block-scaled where
+    /// `block_scaled` says so. `k` is the operand's own contraction depth, not the instruction's.
     pub(crate) fn operand(
         #[comptime] form: Instruction,
         #[comptime] ident: MatrixIdent,
@@ -72,16 +72,19 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
+        #[comptime] block_scaled: bool,
     ) -> PlaneTile<T> {
         match comptime!(form) {
             Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k, layout)),
-            Instruction::Mma { io } => match comptime!(ident) {
-                MatrixIdent::A => PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, layout, io)),
-                MatrixIdent::B => PlaneTile::new_Mma(MmaData::<T>::rhs(m, n, k, layout, io)),
-                MatrixIdent::Accumulator => {
-                    panic!("PlaneTile::operand: an accumulator is not an operand")
-                }
-            },
+            Instruction::Mma { io } => PlaneTile::new_Mma(MmaData::<T>::operand(
+                ident,
+                m,
+                n,
+                k,
+                layout,
+                io,
+                block_scaled,
+            )),
             Instruction::Registers { .. } => {
                 panic!("PlaneTile::operand: the software form stages no operand plane tile")
             }
@@ -189,10 +192,11 @@ impl<T: Numeric> PlaneTile<T> {
 
     pub(crate) fn scale(&mut self, factor: T) {
         match self {
-            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
-                "PlaneTile::scale: a hardware mma fragment is not read cell by cell, so a scale \
-                 over one folds at the store instead"
+            PlaneTile::Cmma(_) => panic!(
+                "PlaneTile::scale: a cmma fragment is not read cell by cell, so a scale over one \
+                 folds at the store instead"
             ),
+            PlaneTile::Mma(d) => d.scale(factor),
             PlaneTile::Registers(d) => d.scale(factor),
         }
     }
@@ -223,12 +227,14 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
         let addressed = mem.store.addressed();
         match self {
-            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access, addressed)) {
-                FragmentDrain::Intrinsic => {
-                    d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+            PlaneTile::Cmma(d) => {
+                match comptime!(FragmentDrain::of(&mem.access, addressed, true)) {
+                    FragmentDrain::Intrinsic => {
+                        d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+                    }
+                    FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
                 }
-                FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
-            },
+            }
             PlaneTile::Mma(d) => d.store_window(mem, space),
             // Same-type store; the block drains through `store_cast_window`.
             PlaneTile::Registers(d) => d.store_cast_window(mem, space),
@@ -254,12 +260,16 @@ impl<T: Numeric> PlaneTile<T> {
     ) {
         let addressed = mem.store.addressed();
         match self {
-            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access, addressed)) {
-                FragmentDrain::Intrinsic => {
-                    d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+            PlaneTile::Cmma(d) => {
+                let (m, n) = comptime!(d.shape);
+                let in_place = casts_in_place::<T, Out>(m, n);
+                match comptime!(FragmentDrain::of(&mem.access, addressed, in_place)) {
+                    FragmentDrain::Intrinsic => {
+                        d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+                    }
+                    FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
                 }
-                FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
-            },
+            }
             PlaneTile::Mma(d) => d.store_cast_window(mem, space),
             PlaneTile::Registers(d) => d.store_cast_window(mem, space),
         }
@@ -551,8 +561,9 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// Uninitialized operand fragments for one region under `out`'s contraction.
-    /// `m`/`n` are the accumulator fragment's.
+    /// Uninitialized operand fragments for one region under `out`'s contraction, block-scaled
+    /// where `block_scaled` says the region contracts through the device's block-scaled
+    /// instruction ([`block_scales_here`]). `m`/`n` are the accumulator fragment's.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn store(
         #[comptime] window: Space,
@@ -563,6 +574,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] n: usize,
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
+        #[comptime] block_scaled: bool,
     ) -> Tile<T> {
         let edges = comptime!(MatrixAxes::edges(&window));
         let a0 = comptime!(window.axis_at(edges.row_split));
@@ -609,7 +621,15 @@ impl<T: Numeric> PlanePartition<T> {
         for _i in 0..t0 {
             #[unroll]
             for _j in 0..t1 {
-                frags.push(PlaneTile::<T>::operand(form, ident, m, n, k, layout));
+                frags.push(PlaneTile::<T>::operand(
+                    form,
+                    ident,
+                    m,
+                    n,
+                    k,
+                    layout,
+                    block_scaled,
+                ));
             }
         }
         Tile::<T> {
@@ -663,6 +683,19 @@ impl<T: Numeric> PlanePartition<T> {
         let scaled = src.scaled();
         let packing = src.packing();
         let shared = src.is_shared();
+        // The operand's own depth: the extent of the axes the accumulator lacks.
+        let k = comptime!(
+            src.place
+                .space
+                .axes()
+                .filter(|&axis| !acc.place.space.contains(axis))
+                .map(|axis| src.place.space.extent(axis))
+                .product::<usize>()
+        );
+        let block_scaled = match comptime!(form) {
+            Instruction::Mma { .. } => block_scales_here(src, m, n, k),
+            Instruction::Cmma | Instruction::Registers { .. } => comptime!(false),
+        };
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.place.space.clone()),
             comptime!(form),
@@ -672,8 +705,22 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(n),
             comptime!(src.place.depth),
             comptime!(src.place.levels.clone()),
+            block_scaled,
         );
-        if comptime!(scaled || packing != Packing::Plain || !shared) {
+        if comptime!(block_scaled) {
+            // The instruction reads the stored values and their scales as they lie: nothing
+            // decodes on the way, so each fragment loads its own window of the source.
+            match &frags.kind {
+                TileKind::PlanePartition(partition) => partition.fill_from(src),
+                TileKind::Memory(_)
+                | TileKind::PlaneTile(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!("PlanePartition::fragments: operand fragments are a partition")
+                }
+            }
+        } else if comptime!(scaled || packing != Packing::Plain || !shared) {
             // A scaled, packed or global operand loads from its plane's landing, as the direct
             // contraction does: a fragment reads a shared, plain window as it lies.
             let side = comptime!(Side::of(&src.place.space, &acc.place.space));

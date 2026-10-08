@@ -220,6 +220,33 @@ impl<T: Numeric> CmmaData<T> {
     }
 }
 
+/// Whether a fragment of `T` cast to `Out` is a fragment the device holds at `(m, n)`: the same
+/// element, or one an accumulator is offered in at that shape. `wmma` offers none in `bf16`, so a
+/// fragment cast there is a kernel that fails to compile, and a `bf16` sink takes the cells through
+/// the scratch instead, each cast on its write. A device whose properties are not known at
+/// expansion is taken at its word.
+// `T` and `Out` are read by the expansion, which is where a type has its element.
+#[allow(clippy::extra_unused_type_parameters)]
+#[cube]
+pub(crate) fn casts_in_place<T: Numeric, Out: Numeric>(
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+) -> comptime_type!(bool) {
+    intrinsic!(|scope| {
+        let (from, to) = (T::elem_type(scope), Out::elem_type(scope));
+        from == to
+            || scope
+                .state()
+                .device_properties
+                .as_ref()
+                .is_none_or(|properties| {
+                    properties.features.matmul.cmma.iter().any(|offered| {
+                        offered.cd_type == to && offered.m as usize == m && offered.n as usize == n
+                    })
+                })
+    })
+}
+
 /// How a cmma fragment reaches its destination.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum FragmentDrain {
@@ -231,9 +258,10 @@ pub(crate) enum FragmentDrain {
 
 impl FragmentDrain {
     /// How a fragment drains into a destination written as `access` says, `addressed` when its
-    /// values sit at an address the intrinsic can store to.
-    pub(crate) const fn of(access: &Access, addressed: bool) -> Self {
-        match (access.write, access.overhang, addressed) {
+    /// values sit at an address the intrinsic can store to, `in_place` when the fragment cast to
+    /// the destination's element is one the device holds ([`casts_in_place`]).
+    pub(crate) const fn of(access: &Access, addressed: bool, in_place: bool) -> Self {
+        match (access.write, access.overhang, addressed && in_place) {
             (Write::Replace, Overhang::Never | Overhang::Fits, true) => FragmentDrain::Intrinsic,
             (Write::Replace, _, _) | (Write::Accumulate | Write::Exclusive(_), _, _) => {
                 FragmentDrain::Bounce
@@ -260,23 +288,33 @@ mod fragment_drain_tests {
     #[test]
     fn a_replacing_window_inside_its_buffer_stores_through_the_intrinsic() {
         for overhang in [Overhang::Never, Overhang::Fits] {
-            let drain = FragmentDrain::of(&access(Write::Replace, overhang), true);
+            let drain = FragmentDrain::of(&access(Write::Replace, overhang), true, true);
             assert_eq!(drain, FragmentDrain::Intrinsic);
         }
     }
 
     #[test]
     fn an_overhanging_or_folding_window_bounces() {
-        let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked), true);
+        let masked = FragmentDrain::of(&access(Write::Replace, Overhang::Masked), true, true);
         assert_eq!(masked, FragmentDrain::Bounce);
         for overhang in [Overhang::Never, Overhang::Fits, Overhang::Masked] {
             for write in [Write::Accumulate, Write::Exclusive(Schedule::Sequential)] {
                 assert_eq!(
-                    FragmentDrain::of(&access(write, overhang), true),
+                    FragmentDrain::of(&access(write, overhang), true, true),
                     FragmentDrain::Bounce,
                     "{write:?} {overhang:?}"
                 );
             }
+        }
+    }
+
+    /// A fragment cast to an element the device holds no fragment of cannot be stored whole, so
+    /// even a replacing window wholly inside its buffer bounces, its cells cast on their write.
+    #[test]
+    fn a_fragment_with_no_cast_in_place_bounces() {
+        for overhang in [Overhang::Never, Overhang::Fits] {
+            let drain = FragmentDrain::of(&access(Write::Replace, overhang), true, false);
+            assert_eq!(drain, FragmentDrain::Bounce);
         }
     }
 
@@ -285,7 +323,7 @@ mod fragment_drain_tests {
     #[test]
     fn a_window_with_no_address_bounces() {
         for overhang in [Overhang::Never, Overhang::Fits] {
-            let drain = FragmentDrain::of(&access(Write::Replace, overhang), false);
+            let drain = FragmentDrain::of(&access(Write::Replace, overhang), false, true);
             assert_eq!(drain, FragmentDrain::Bounce);
         }
     }

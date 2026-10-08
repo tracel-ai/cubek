@@ -21,6 +21,11 @@ pub(crate) struct FactorLevel {
     pub(crate) projection: Projection,
     /// Whether reaching this scale is a plane shuffle, which the whole plane takes part in.
     pub(crate) by_shuffle: bool,
+    /// Whether the scale tile holds words rather than scales: each `u32` the `e4m3` scales of
+    /// the four blocks one block-scaled instruction step covers, the first block's in the low
+    /// byte, as an NVFP4 checkpoint packs them. Only that instruction reads such a level
+    /// ([`FactorExpand::__expand_word_at_method`]); widened to a scale it means nothing.
+    pub(crate) words: bool,
 }
 
 /// A scale tile as the values read it.
@@ -35,6 +40,15 @@ pub(crate) trait FactorRead {
 
     /// This scale tile windowed to `step`, as the values it rides are.
     fn at_step(&self, scope: &Scope, step: &StepExpand) -> Arc<dyn FactorRead>;
+
+    /// The word at the value at `coords` of a tile spanning `values`, as it is stored: only a
+    /// level that [holds words](FactorLevel::words) is read this way.
+    fn word_for(
+        &self,
+        scope: &Scope,
+        coords: &CoordsExpand<u32>,
+        values: &Space,
+    ) -> NativeExpand<u32>;
 }
 
 impl<S: Numeric> FactorRead for TileExpand<S> {
@@ -52,6 +66,18 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
 
     fn at_step(&self, scope: &Scope, step: &StepExpand) -> Arc<dyn FactorRead> {
         Arc::new(self.clone().__expand_at_step_method(scope, step))
+    }
+
+    fn word_for(
+        &self,
+        scope: &Scope,
+        coords: &CoordsExpand<u32>,
+        values: &Space,
+    ) -> NativeExpand<u32> {
+        let word = self
+            .clone()
+            .__expand_scale_for_method(scope, coords, values.clone());
+        u32::__expand_cast_from(scope, word)
     }
 }
 
@@ -85,6 +111,16 @@ impl Factor {
         unexpanded!()
     }
 
+    /// Whether the innermost level [holds words](FactorLevel::words) of block scales.
+    pub(crate) fn holds_words(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// The innermost level's word at the value at `coords`, read as it is stored.
+    pub(crate) fn word_at(&self, _coords: &Coords<u32>, _values: Space) -> u32 {
+        unexpanded!()
+    }
+
     pub(crate) fn __expand_none(_scope: &Scope) -> FactorExpand {
         FactorExpand::default()
     }
@@ -98,6 +134,7 @@ impl FactorExpand {
                 space: scale.place.space.clone(),
                 projection: scale.clone().__expand_projection_method(scope),
                 by_shuffle: scale.clone().__expand_by_shuffle_method(scope),
+                words: S::elem_type(scope) == u32::elem_type(scope),
                 read: Arc::new(scale.clone()),
             }],
         }
@@ -154,6 +191,7 @@ impl FactorExpand {
                     space: level.space.clone(),
                     projection: level.projection.clone(),
                     by_shuffle: level.by_shuffle,
+                    words: level.words,
                 })
                 .collect(),
         }
@@ -167,6 +205,11 @@ impl FactorExpand {
     ) -> NativeExpand<f32> {
         let mut product: Option<NativeExpand<f32>> = None;
         for level in &self.levels {
+            assert!(
+                !level.words,
+                "Factor: these scales are words of four e4m3 block scales, which only the \
+                 block-scaled instruction reads; widened one at a time they mean nothing"
+            );
             let one = level.read.scale_for(scope, coords, &values);
             product = Some(match product {
                 None => one,
@@ -174,6 +217,23 @@ impl FactorExpand {
             });
         }
         product.unwrap_or_else(|| ExpandValue::constant(1u64.into(), f32::elem_type(scope)).into())
+    }
+
+    pub(crate) fn __expand_holds_words_method(&self, _scope: &Scope) -> bool {
+        self.inner().is_some_and(|level| level.words)
+    }
+
+    pub(crate) fn __expand_word_at_method(
+        &self,
+        scope: &Scope,
+        coords: &CoordsExpand<u32>,
+        values: Space,
+    ) -> NativeExpand<u32> {
+        let level = self
+            .inner()
+            .filter(|level| level.words)
+            .expect("Factor::word_at: the innermost level holds no words of block scales");
+        level.read.word_for(scope, coords, &values)
     }
 }
 

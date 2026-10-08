@@ -89,12 +89,15 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Whether a cmma fragment draining into this tile goes through a scratch
-    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address.
-    pub(crate) fn fragments_bounce(&self) -> comptime_type!(bool) {
+    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address, or one
+    /// whose element the fragment cannot be cast to in place (`in_place`, [`casts_in_place`]).
+    pub(crate) fn fragments_bounce(&self, #[comptime] in_place: bool) -> comptime_type!(bool) {
         match &self.kind {
             TileKind::Memory(m) => {
                 let addressed = m.store.addressed();
-                comptime!(FragmentDrain::of(&m.access, addressed) == FragmentDrain::Bounce)
+                comptime!(
+                    FragmentDrain::of(&m.access, addressed, in_place) == FragmentDrain::Bounce
+                )
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -563,6 +566,20 @@ impl<T: Numeric> Tile<T> {
         matrix.read((origin, origin)).extract(0usize)
     }
 
+    /// Multiply every partial this accumulator holds by `factor`.
+    pub fn scale_by(&mut self, factor: T) {
+        match &mut self.kind {
+            TileKind::PlaneTile(t) => t.scale(factor),
+            TileKind::PlanePartition(p) => p.scale(factor),
+            TileKind::Memory(_) => panic!(
+                "Tile::scale_by: a memory tile is scaled by the cube, not by one unit (Tile::mul)"
+            ),
+            TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => {
+                panic!("Tile::scale_by: not writable")
+            }
+        }
+    }
+
     /// Multiply every partial this accumulator holds by `factor`'s one value, if bound.
     pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
         #[comptime]
@@ -1019,6 +1036,17 @@ impl<E: Numeric> Tile<E> {
     pub(crate) fn scaled(&self) -> comptime_type!(bool) {
         unexpanded!()
     }
+
+    /// How many levels of scales these values carry ([`mul`](Tile::mul)), innermost first.
+    pub(crate) fn factor_levels(&self) -> comptime_type!(usize) {
+        unexpanded!()
+    }
+
+    /// The innermost level of the scales these values carry, alone: what a block-scaled
+    /// instruction reads a scale of per block.
+    pub(crate) fn innermost_factor(&self) -> Factor {
+        unexpanded!()
+    }
 }
 
 impl<E: Numeric> TileExpand<E> {
@@ -1130,6 +1158,20 @@ impl<E: Numeric> TileExpand<E> {
         match &self.kind {
             TileKindExpand::Memory(memory) => memory.factor.scaled() || memory.codebook.present(),
             _ => false,
+        }
+    }
+
+    pub(crate) fn __expand_factor_levels_method(&self, _scope: &Scope) -> usize {
+        match &self.kind {
+            TileKindExpand::Memory(memory) => memory.factor.levels.len(),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn __expand_innermost_factor_method(&self, _scope: &Scope) -> FactorExpand {
+        match &self.kind {
+            TileKindExpand::Memory(memory) => memory.factor.innermost(),
+            _ => FactorExpand::default(),
         }
     }
 
