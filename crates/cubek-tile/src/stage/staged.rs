@@ -110,6 +110,15 @@ impl<T: Numeric> Memory<T> {
                         );
                         width
                     }
+                    // A decoding fill writes the stage value by value, so its lines need only
+                    // divide the source's loads: as wide as every region below the stage cuts
+                    // whole along its innermost axis, or a step would start mid-line.
+                    None if decodes => {
+                        let innermost = space.axis_at(space.rank() - 1);
+                        space
+                            .leaf(operand.place.below_level(&level))
+                            .whole_run(innermost, source_width)
+                    }
                     None => source_width,
                 });
                 // A TMA-filled stage's buffer must be TMA-aligned; TMA operands are always direct.
