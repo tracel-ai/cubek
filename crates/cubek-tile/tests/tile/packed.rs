@@ -584,20 +584,30 @@ fn fp4_codes_unpack_on_read() {
     check_fp4_codes_unpack(&client, Field::from(QuantValue::E2M1));
 }
 
-/// The same codes through the device's own `e2m1x2` conversion, where it has one: what an
-/// operand bound at launch reads `e2m1` as ([`Field::read_on`]).
+/// The same codes as an operand bound at launch reads them on this device ([`Field::read_on`]):
+/// through its own `e2m1x2` conversion where it has one, placed from their bits where it would
+/// emulate one.
 #[test]
-fn fp4_codes_unpack_through_the_devices_conversion() {
+fn fp4_codes_unpack_as_the_device_reads_them() {
     let client = cubecl::test_device().client();
     let field = Field::from(QuantValue::E2M1).read_on(&client);
-    if field != Field::ConvertedE2M1 {
+    if field == Field::from(QuantValue::E2M1) {
         TestOutcome::Validated(ValidationResult::Skipped(
-            "the device does not convert e2m1x2".to_string(),
+            "the device reads e2m1 as the plain field, which fp4_codes_unpack_on_read checks"
+                .to_string(),
         ))
         .enforce();
         return;
     }
     check_fp4_codes_unpack(&client, field);
+}
+
+/// The same codes placed from their bits as `f16` and lifted, on every device: the decode a
+/// device that emulates `e2m1x2` reads, held to every code whichever device runs the suite.
+#[test]
+fn fp4_codes_unpack_placed() {
+    let client = cubecl::test_device().client();
+    check_fp4_codes_unpack(&client, Field::PlacedE2M1 { lifted: true });
 }
 
 /// Every `e2m1` code, packed eight to a word, unpacked through `field` and checked against the
