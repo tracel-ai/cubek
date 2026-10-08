@@ -156,6 +156,8 @@ fn unit_attention<E: Float>(
     k: &TileArg<'_, E, Const<1>>,
     v: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, f32, Const<1>>,
+    max: &mut Tensor<f32>,
+    sum: &mut Tensor<f32>,
     keys: u32,
     queries: u32,
     scale: f32,
@@ -163,6 +165,7 @@ fn unit_attention<E: Float>(
     #[comptime] causal: bool,
     #[comptime] block_keys: usize,
     #[comptime] rows: usize,
+    #[comptime] ending: UnitEnding,
     #[define(E)] _dtype: ElemType,
 ) {
     let q = q.tile(comptime!(space.clone()));
@@ -217,7 +220,20 @@ fn unit_attention<E: Float>(
                 acc.along(V).mul(&correction);
                 acc.mma(&score, &v_s);
             }
-            acc.along(V).mul(&softmax.recip_l());
+            match comptime!(ending) {
+                UnitEnding::Normalized => acc.along(V).mul(&softmax.recip_l()),
+                UnitEnding::Undivided => {
+                    let state = softmax.state();
+                    let first = unit.origin(Q);
+                    #[unroll]
+                    for r in 0..rows {
+                        if first + r < queries as usize {
+                            max[first + r] = state.max[r];
+                            sum[first + r] = state.sum[r];
+                        }
+                    }
+                }
+            }
             acc.drained_into(&out_u);
         }
     }
@@ -606,8 +622,57 @@ fn inputs<E: Float + CubeElement>(
     (q_data, k_data, v_data, q_handle, k_handle, v_handle)
 }
 
-/// `out` against the attention computed on the host in `f64`: a query sees the attended keys,
-/// and under `causal` none past its own position aligned at the bottom right.
+/// Row `i` of the attention computed on the host in `f64`: the max of its scaled logits, the
+/// sum of their `exp(logit − max)`, and its output, normalized. A query sees the attended keys,
+/// and under `causal` none past its own position aligned at the bottom right; a row that sees
+/// none has a zero sum and a zero output.
+#[allow(clippy::too_many_arguments)]
+fn reference_row(
+    i: usize,
+    q_data: &HostData,
+    k_data: &HostData,
+    v_data: &HostData,
+    queries: usize,
+    keys: usize,
+    attended: usize,
+    head: usize,
+    value: usize,
+    causal: bool,
+    transposed_keys: bool,
+) -> (f64, f64, Vec<f64>) {
+    let scale = 1. / (head as f64).sqrt();
+    let key = |j: usize, d: usize| match transposed_keys {
+        true => k_data.get_f32(&[d, j]),
+        false => k_data.get_f32(&[j, d]),
+    };
+    let seen = |j: usize| j < attended && (!causal || j + queries <= i + attended);
+    let logits: Vec<(usize, f64)> = (0..keys)
+        .filter(|&j| seen(j))
+        .map(|j| {
+            let dot: f64 = (0..head)
+                .map(|d| q_data.get_f32(&[i, d]) as f64 * key(j, d) as f64)
+                .sum();
+            (j, dot * scale)
+        })
+        .collect();
+    let max = logits.iter().fold(f64::NEG_INFINITY, |m, &(_, s)| m.max(s));
+    let sum: f64 = logits.iter().map(|&(_, s)| (s - max).exp()).sum();
+    let out = (0..value)
+        .map(|c| match logits.is_empty() {
+            true => 0.,
+            false => {
+                logits
+                    .iter()
+                    .map(|&(j, s)| (s - max).exp() * v_data.get_f32(&[j, c]) as f64)
+                    .sum::<f64>()
+                    / sum
+            }
+        })
+        .collect();
+    (max, sum, out)
+}
+
+/// `out` against the attention computed on the host ([`reference_row`]).
 #[allow(clippy::too_many_arguments)]
 fn check(
     out: &HostData,
@@ -622,35 +687,21 @@ fn check(
     causal: bool,
     transposed_keys: bool,
 ) {
-    let scale = 1. / (head as f64).sqrt();
-    let key = |j: usize, d: usize| match transposed_keys {
-        true => k_data.get_f32(&[d, j]),
-        false => k_data.get_f32(&[j, d]),
-    };
     for i in 0..queries {
-        let seen = |j: usize| j < attended && (!causal || j + queries <= i + attended);
-        let logits: Vec<(usize, f64)> = (0..keys)
-            .filter(|&j| seen(j))
-            .map(|j| {
-                let dot: f64 = (0..head)
-                    .map(|d| q_data.get_f32(&[i, d]) as f64 * key(j, d) as f64)
-                    .sum();
-                (j, dot * scale)
-            })
-            .collect();
-        let max = logits.iter().fold(f64::NEG_INFINITY, |m, &(_, s)| m.max(s));
-        let sum: f64 = logits.iter().map(|&(_, s)| (s - max).exp()).sum();
-        for c in 0..value {
-            let expected = match logits.is_empty() {
-                true => 0.,
-                false => {
-                    logits
-                        .iter()
-                        .map(|&(j, s)| (s - max).exp() * v_data.get_f32(&[j, c]) as f64)
-                        .sum::<f64>()
-                        / sum
-                }
-            };
+        let (_, _, row) = reference_row(
+            i,
+            q_data,
+            k_data,
+            v_data,
+            queries,
+            keys,
+            attended,
+            head,
+            value,
+            causal,
+            transposed_keys,
+        );
+        for (c, &expected) in row.iter().enumerate() {
             let actual = out.get_f32(&[i, c]) as f64;
             // f16 operands and probabilities: a few ulps of each through two contractions.
             let tolerance = 2e-2 * (1. + expected.abs());
@@ -662,7 +713,62 @@ fn check(
     }
 }
 
-/// A unit-owned case: `rows` queries a unit, `units` units a cube, `block` keys a step.
+/// An undivided ending against the host's rows ([`reference_row`]), the keys stored
+/// transposed: each row's `max` and `sum` as the state held them, and its `out` the normalized
+/// output times that sum. A row that saw no key holds a zero sum and a zero output.
+#[allow(clippy::too_many_arguments)]
+fn check_undivided(
+    out: &HostData,
+    max: &HostData,
+    sum: &HostData,
+    q_data: &HostData,
+    k_data: &HostData,
+    v_data: &HostData,
+    queries: usize,
+    keys: usize,
+    attended: usize,
+    head: usize,
+    value: usize,
+    causal: bool,
+) {
+    // f32 operands summed in f32: a few ulps through one contraction and the exponentials.
+    let close =
+        |actual: f64, expected: f64| (actual - expected).abs() <= 1e-4 * (1. + expected.abs());
+    for i in 0..queries {
+        let (row_max, row_sum, row) = reference_row(
+            i, q_data, k_data, v_data, queries, keys, attended, head, value, causal, true,
+        );
+        let (held_max, held_sum) = (max.get_f32(&[i]) as f64, sum.get_f32(&[i]) as f64);
+        assert!(
+            close(held_sum, row_sum),
+            "sum[{i}] = {held_sum}, expected {row_sum}"
+        );
+        if row_sum > 0. {
+            assert!(
+                close(held_max, row_max),
+                "max[{i}] = {held_max}, expected {row_max}"
+            );
+        }
+        for (c, &normalized) in row.iter().enumerate() {
+            let (actual, expected) = (out.get_f32(&[i, c]) as f64, normalized * row_sum);
+            assert!(
+                close(actual, expected),
+                "out[{i}, {c}] = {actual}, expected {expected}"
+            );
+        }
+    }
+}
+
+/// How a unit leaves its rows: normalized, or undivided beside the softmax state it read, which
+/// the host divides by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum UnitEnding {
+    Normalized,
+    Undivided,
+}
+
+/// A unit-owned case: `rows` queries a unit, `units` units a cube, `block` keys a step, and how
+/// each unit ends.
 #[derive(Clone, Copy)]
 struct UnitCase {
     queries: usize,
@@ -674,6 +780,7 @@ struct UnitCase {
     units: usize,
     block: usize,
     causal: bool,
+    ending: UnitEnding,
 }
 
 fn run_units<E: Float + CubeElement>(case: UnitCase) {
@@ -690,6 +797,7 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         units,
         block,
         causal,
+        ending,
     } = case;
     let launcher = implied(
         &client,
@@ -709,6 +817,13 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         .dtype(f32_ty)
         .zeros()
         .generate_without_host_data();
+    let state = || {
+        TestInput::builder(client.clone(), Shape::new([queries]))
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data()
+    };
+    let (max_handle, sum_handle) = (state(), state());
     let scale = 1. / (head as f32).sqrt();
     unit_attention::launch(
         &client,
@@ -731,6 +846,8 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[Q, V]),
         ),
+        max_handle.clone().binding().into_tensor_arg(),
+        sum_handle.clone().binding().into_tensor_arg(),
         attended as u32,
         queries as u32,
         scale,
@@ -738,12 +855,23 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         causal,
         block,
         rows,
+        ending,
         e_ty,
     );
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    check(
-        &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, true,
-    );
+    match ending {
+        UnitEnding::Normalized => check(
+            &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, true,
+        ),
+        UnitEnding::Undivided => {
+            let max = HostData::from_tensor_handle(&client, max_handle, HostDataType::F32);
+            let sum = HostData::from_tensor_handle(&client, sum_handle, HostDataType::F32);
+            check_undivided(
+                &out, &max, &sum, &q_data, &k_data, &v_data, queries, keys, attended, head, value,
+                causal,
+            );
+        }
+    }
 }
 
 const PREFILL: Case = Case {
@@ -872,6 +1000,7 @@ const UNIT: UnitCase = UnitCase {
     units: 4,
     block: 4,
     causal: false,
+    ending: UnitEnding::Normalized,
 };
 
 #[test]
@@ -899,4 +1028,16 @@ fn unit_attention_masks_causally_from_the_bottom_right() {
 #[test]
 fn unit_attention_in_f16() {
     run_units::<half::f16>(UNIT);
+}
+
+/// The state read off as it stands, its sum left undivided: past the attended keys and
+/// causally, so a masked cell weighs nothing in either.
+#[test]
+fn unit_attention_hands_its_undivided_state() {
+    run_units::<f32>(UnitCase {
+        attended: 30,
+        causal: true,
+        ending: UnitEnding::Undivided,
+        ..UNIT
+    });
 }

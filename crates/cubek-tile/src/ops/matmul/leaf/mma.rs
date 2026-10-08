@@ -1,7 +1,7 @@
 //! The manual-mma leaf: `acc += lhs · rhs` via
 //! [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition).
 
-use cubecl::cmma::MatrixLayout;
+use cubecl::cmma::{MatrixIdent, MatrixLayout};
 use cubecl::prelude::*;
 
 use crate::*;
@@ -22,7 +22,16 @@ impl<A: Numeric> MmaData<A> {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
                             mma_execute::<L, R, A>(af, bf, acc, m, n, k)
                         }
-                        _ => panic!("MmaData::mma: operands must carry the Lhs/Rhs roles"),
+                        (
+                            MmaFragment::LhsBlockScaled(af, a_scales),
+                            MmaFragment::RhsBlockScaled(bf, b_scales),
+                        ) => {
+                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
+                        }
+                        _ => panic!(
+                            "MmaData::mma: operands must carry the Lhs/Rhs roles, both \
+                             block-scaled or neither"
+                        ),
                     },
                     _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
@@ -30,20 +39,46 @@ impl<A: Numeric> MmaData<A> {
                     // Read each window in its stored order (`{n, k}` reads transposed).
                     let (lhs_layout, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let mut la = MmaData::<L>::lhs(m, n, k, lhs_layout, io);
+                    let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
+                    let mut la = MmaData::<L>::operand(
+                        MatrixIdent::A,
+                        m,
+                        n,
+                        k,
+                        lhs_layout,
+                        io,
+                        block_scaled,
+                    );
                     la.load_window(lhs);
-                    let mut rb = MmaData::<R>::rhs(m, n, k, rhs_layout, io);
+                    let mut rb = MmaData::<R>::operand(
+                        MatrixIdent::B,
+                        m,
+                        n,
+                        k,
+                        rhs_layout,
+                        io,
+                        block_scaled,
+                    );
                     rb.load_window(rhs);
                     match (&la.fragment, &rb.fragment) {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
                             mma_execute::<L, R, A>(af, bf, acc, m, n, k)
+                        }
+                        (
+                            MmaFragment::LhsBlockScaled(af, a_scales),
+                            MmaFragment::RhsBlockScaled(bf, b_scales),
+                        ) => {
+                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
                         }
                         _ => panic!("MmaData::mma: transient operand fragments in the wrong roles"),
                     }
                 }
                 _ => panic!("MmaData::mma: operands must be fragments or memory windows"),
             },
-            MmaFragment::Lhs(_) | MmaFragment::Rhs(_) => {
+            MmaFragment::Lhs(_)
+            | MmaFragment::Rhs(_)
+            | MmaFragment::LhsBlockScaled(..)
+            | MmaFragment::RhsBlockScaled(..) => {
                 panic!("MmaData::mma: the accumulator must carry the Acc role")
             }
         }

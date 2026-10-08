@@ -1,5 +1,7 @@
 mod async_copy;
 mod attention;
+mod block_scaled;
+mod block_scaled_peak;
 mod blocked;
 mod coarse;
 mod conv;

@@ -239,7 +239,8 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
         // A destination the fragments cannot store to directly needs a scratch: where none was
         // opened, the drain opens the smallest.
         let unopened = self.scratch_unopened();
-        let bounces = dest.fragments_bounce();
+        let in_place = self.casts_in_place_to::<Out>();
+        let bounces = dest.fragments_bounce(in_place);
         if comptime!(unopened && bounces) {
             let opened = self.clone().with_scratch(Scratch::OneTile);
             opened.drained_into(dest);
@@ -251,6 +252,22 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// Whether this accumulator's fragments cast to `Out` are fragments the device holds
+    /// ([`casts_in_place`]): what decides whether a cmma grid draining into an `Out` destination
+    /// stores whole or bounces.
+    fn casts_in_place_to<Out: Numeric>(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::PlanePartition(_) | TileKind::PlaneTile(_) => {
+                let (_, m, n) = self.fragment_grid();
+                casts_in_place::<Acc, Out>(m, n)
+            }
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(true),
+        }
+    }
+
     /// Whether this is a grid of cmma fragments opened with no scratch.
     fn scratch_unopened(&self) -> comptime_type!(bool) {
         match &self.kind {
@@ -278,7 +295,8 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] chunks: usize,
     ) {
         let unopened = self.scratch_unopened();
-        let bounces = dest.fragments_bounce();
+        let in_place = self.casts_in_place_to::<Out>();
+        let bounces = dest.fragments_bounce(in_place);
         if comptime!(unopened && bounces) {
             let opened = self.clone().with_scratch(Scratch::OneTile);
             opened.drained_chunk_into(dest, turn, chunks);
@@ -351,7 +369,8 @@ impl<Acc: Numeric> Tile<Acc> {
                     PlaneTile::Cmma(_) => comptime!(true),
                     PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
                 };
-                let bounces = dest.fragments_bounce();
+                let in_place = self.casts_in_place_to::<Out>();
+                let bounces = dest.fragments_bounce(in_place);
                 if comptime!(cmma && bounces) {
                     drain_chunk_leaf::<Acc, Out>(
                         self,

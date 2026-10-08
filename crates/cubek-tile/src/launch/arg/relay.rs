@@ -60,20 +60,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         let holders = Relay::<'t, E>::holders(partitioning, split);
 
         let carry = self.tile(comptime!(space.clone()));
-        let first = turn == 0usize;
-        let geometry = RuntimeGeometry::of_tensor::<Vector<E, V>>(
-            self.tensor,
-            comptime!(self.spec.projection.physical_rank()),
-        );
-        let sink = GlobalOperand::<E>::sink(
-            relay_sink::<E, V>(self.tensor, first),
-            geometry,
-            V::value(),
-            comptime!(space.space().clone()),
-            comptime!(self.spec.clone()),
-            comptime!(Write::Exclusive(Schedule::Sequential)),
-        )
-        .tile(comptime!(space.levels().to_vec()));
+        let sink = folding_tile::<E, V>(self, partitioning, turn == 0usize);
 
         Relay::<'t, E> {
             carry,
@@ -123,10 +110,14 @@ impl<'a, E: Numeric> Relay<'a, E> {
 
     /// Wait for this cube's turn at its box, and acquire what the turns before it wrote. Every
     /// unit of the cube reaches it.
+    ///
+    /// The counter is read with `fetch_add(0)`. On Metal, an atomic load spinning on the counter
+    /// can keep returning the value it first read long after the previous turn's store has
+    /// landed, and the cube then never leaves the loop.
     pub fn take(&self) {
         if UNIT_POS == 0 {
             loop {
-                if self.turns[self.counter].load() == self.turn as u32 {
+                if self.turns[self.counter].fetch_add(0u32) == self.turn as u32 {
                     break;
                 }
             }
@@ -253,6 +244,32 @@ impl Partitioning {
     pub fn relay_counters(&self) -> usize {
         self.instances(Coverage::Distribute(ComputeScope::Cube)) as usize
     }
+}
+
+/// `arg` under `partitioning` as a tile whose writes replace each line where `first` and add into
+/// it otherwise: a relay's carry, which its first turn replaces and every later one adds into, and
+/// a [`LastArrival`](crate::launch::LastArrival)'s slot, which the last run to arrive adds the
+/// others' parts into.
+#[cube]
+pub(crate) fn folding_tile<E: Numeric, V: Size>(
+    arg: &TileArg<'_, E, V>,
+    partitioning: &Partitioning,
+    first: bool,
+) -> Tile<E> {
+    let space = comptime!(partitioning.clone());
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, V>>(
+        arg.tensor,
+        comptime!(arg.spec.projection.physical_rank()),
+    );
+    GlobalOperand::<E>::sink(
+        relay_sink::<E, V>(arg.tensor, first),
+        geometry,
+        V::value(),
+        comptime!(space.space().clone()),
+        comptime!(arg.spec.clone()),
+        comptime!(Write::Exclusive(Schedule::Sequential)),
+    )
+    .tile(comptime!(space.levels().to_vec()))
 }
 
 /// The erased tensor over the carry that replaces each line written on the `first` turn and adds

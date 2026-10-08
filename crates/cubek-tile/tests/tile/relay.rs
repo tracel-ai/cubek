@@ -245,17 +245,17 @@ fn relayed_split_matmul(
     relay.pass(&mut out);
 }
 
-/// Whether this device hands one cube's writes to another within a dispatch and loads and stores
-/// `u32` atomically, the two things the relay needs; reported rather than silently passed.
+/// Whether this device hands one cube's writes to another within a dispatch and stores and adds
+/// `u32`s atomically, the two things the relay needs; reported rather than silently passed.
 pub(super) fn relays(client: &cubecl::client::Client) -> bool {
     let hands_off = client.properties().features.device_memory_scope;
-    let counts = client
+    let usage = client
         .properties()
-        .atomic_type_usage(Type::atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)))
-        .contains(AtomicUsage::LoadStore);
+        .atomic_type_usage(Type::atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)));
+    let counts = usage.contains(AtomicUsage::LoadStore) && usage.contains(AtomicUsage::Add);
     if !(hands_off && counts) {
         TestOutcome::Validated(ValidationResult::Skipped(
-            "device has no device-scope storage sync or no u32 atomic load and store".to_string(),
+            "device has no device-scope storage sync or no u32 atomic store and add".to_string(),
         ))
         .enforce();
     }

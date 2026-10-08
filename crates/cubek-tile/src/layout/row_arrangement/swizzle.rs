@@ -18,11 +18,18 @@ pub(crate) struct ChunkSwizzle {
     rows_per_key: usize,
     /// How many keys the rows cycle through, a power of two.
     keys: usize,
+    /// Chunks one block row holds.
+    row_chunks: usize,
 }
 
 impl ChunkSwizzle {
     /// Bytes one pass over every bank covers: 32 banks of four bytes.
     const BANK_PERIOD_BYTES: usize = 128;
+
+    /// Rows after which the keys repeat, whatever the row's length: a row of a bank period or
+    /// less cycles through `BANK_PERIOD_BYTES / CHUNK_BYTES` keys a key per period, one longer
+    /// a key a row.
+    pub(crate) const ROWS_PER_PERIOD: usize = Self::BANK_PERIOD_BYTES / RowChunks::CHUNK_BYTES;
 
     /// The swizzle of a stage with line `extents` (last two: block rows, row lines), `None` where
     /// there is nothing to permute.
@@ -62,7 +69,23 @@ impl ChunkSwizzle {
             lines_per_chunk,
             rows_per_key: (period_chunks / chunks).max(1),
             keys,
+            row_chunks: chunks,
         })
+    }
+
+    /// The swizzle a TMA descriptor applies to land a box's rows where this one keeps them, where
+    /// one does: a row of one 32, 64 or 128-byte span. The engine XORs a row's chunk with the
+    /// address bits above the bank period, which for such a row are the row's own bits this
+    /// swizzle keys on, provided the stage starts on a span of the bank period's rows
+    /// (the TMA stage alignment). A longer row has no descriptor
+    /// swizzle: the engine's spans stop at 128 bytes.
+    pub(crate) fn tma(&self) -> Option<TensorMapSwizzle> {
+        match self.row_chunks * RowChunks::CHUNK_BYTES {
+            32 => Some(TensorMapSwizzle::B32),
+            64 => Some(TensorMapSwizzle::B64),
+            128 => Some(TensorMapSwizzle::B128),
+            _ => None,
+        }
     }
 
     /// The physical axis holding a block's rows, whose digit keys the swizzle.
@@ -146,6 +169,52 @@ mod tests {
             }
             lines.sort();
             assert_eq!(lines, (0..16).collect::<Vec<_>>());
+        }
+    }
+
+    /// Where the TMA engine lands chunk `chunk` of row `row` under its swizzle of a
+    /// `row_bytes`-byte row: CUTLASS's `Swizzle<B, 4, 3>`, the 16-byte chunk bits XORed with the
+    /// bits above the 128-byte bank period.
+    fn tma_chunk(row_bytes: usize, row: usize, chunk: usize) -> usize {
+        let bits = (row_bytes / RowChunks::CHUNK_BYTES).trailing_zeros();
+        let address = row * row_bytes + chunk * RowChunks::CHUNK_BYTES;
+        chunk ^ ((address >> 7) & ((1 << bits) - 1))
+    }
+
+    /// A row of one 32, 64 or 128-byte span is swizzled as the TMA engine lands it, so a
+    /// descriptor fills the stage a fragment reads swizzled; a longer row has no descriptor
+    /// swizzle.
+    #[test]
+    fn a_row_of_one_tma_span_is_swizzled_as_the_engine_lands_it() {
+        for (row_lines, line_bytes, mode) in [
+            (16, 2, Some(TensorMapSwizzle::B32)),
+            (2, 16, Some(TensorMapSwizzle::B32)),
+            (32, 2, Some(TensorMapSwizzle::B64)),
+            (64, 2, Some(TensorMapSwizzle::B128)),
+            (8, 16, Some(TensorMapSwizzle::B128)),
+            (128, 2, None),
+        ] {
+            let swizzle = ChunkSwizzle::new(&[64, row_lines], LineBytes(line_bytes)).unwrap();
+            assert_eq!(
+                swizzle.tma(),
+                mode,
+                "{row_lines} lines of {line_bytes} bytes"
+            );
+            if mode.is_none() {
+                continue;
+            }
+            let row_bytes = row_lines * line_bytes;
+            let lines_per_chunk = RowChunks::CHUNK_BYTES / line_bytes;
+            for row in 0..64 {
+                for chunk in 0..row_bytes / RowChunks::CHUNK_BYTES {
+                    let line = swizzle.line_of(chunk * lines_per_chunk, row);
+                    assert_eq!(
+                        line / lines_per_chunk,
+                        tma_chunk(row_bytes, row, chunk),
+                        "row {row}, chunk {chunk} of a {row_bytes}-byte row"
+                    );
+                }
+            }
         }
     }
 

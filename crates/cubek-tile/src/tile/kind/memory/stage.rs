@@ -5,8 +5,10 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// The byte alignment a TMA-filled stage's shared buffer must have.
-pub(crate) const TMA_STAGE_ALIGNMENT: usize = 128;
+/// The byte alignment a TMA-filled stage's shared buffer must have: the span a 128-byte swizzle
+/// repeats over, which the engine keys off the address, so a stage's first row takes the first
+/// key as the fragment reading it does.
+pub(crate) const TMA_STAGE_ALIGNMENT: usize = 1024;
 
 /// Who a shared-memory stage belongs to: the whole cube, or each of its planes. It decides how
 /// many copies of the stage one cube holds, and which units fill each.
@@ -673,6 +675,66 @@ mod tests {
             panic!("rows of four 16-byte lines are swizzled")
         };
         assert_eq!((swizzle.row_axis(), swizzle.line_axis()), (2, 3));
+    }
+
+    /// One box lands a stage whose blocks stack whole rows, swizzled as the stage keeps them by
+    /// the engine's span for the row's bytes; blocks splitting a row, or padded rows, it cannot.
+    #[test]
+    fn a_box_lands_a_stage_of_whole_rows_swizzled_by_their_span() {
+        let tiled = |k_block, chunks| StageStorage::Tiled {
+            block: vec![(M, 16), (K, k_block)],
+            chunks,
+        };
+        let stage = |k| Space::new(&[(M, 64), (K, k)]);
+        let f16 = 2;
+        for (k, mode) in [
+            (16, TensorMapSwizzle::B32),
+            (32, TensorMapSwizzle::B64),
+            (64, TensorMapSwizzle::B128),
+        ] {
+            assert_eq!(
+                tiled(k, RowChunks::Swizzled).tma_swizzle(&stage(k), 1, f16),
+                Ok(mode)
+            );
+        }
+        assert_eq!(
+            tiled(32, RowChunks::InOrder).tma_swizzle(&stage(32), 1, f16),
+            Ok(TensorMapSwizzle::None)
+        );
+        assert_eq!(
+            StageStorage::Strided.tma_swizzle(&stage(32), 8, f16),
+            Ok(TensorMapSwizzle::None)
+        );
+        assert!(matches!(
+            tiled(16, RowChunks::Swizzled).tma_swizzle(&stage(32), 1, f16),
+            Err(Refusal::BoxSplitsStageBlocks { axis: K, .. })
+        ));
+        assert!(matches!(
+            tiled(32, RowChunks::Padded).tma_swizzle(&stage(32), 1, f16),
+            Err(Refusal::RowsNoDescriptorLands { .. })
+        ));
+        assert!(matches!(
+            tiled(128, RowChunks::Swizzled).tma_swizzle(&stage(128), 1, f16),
+            Err(Refusal::RowsNoDescriptorLands { .. })
+        ));
+    }
+
+    /// A swizzled box keys its rows off their place in the stage, so a block of rows the swizzle
+    /// does not repeat over lands its later blocks under the wrong keys.
+    #[test]
+    fn a_swizzled_box_refuses_blocks_off_the_swizzles_period() {
+        let storage = StageStorage::Tiled {
+            block: vec![(M, 4), (K, 32)],
+            chunks: RowChunks::Swizzled,
+        };
+        assert_eq!(
+            storage.tma_swizzle(&Space::new(&[(M, 64), (K, 32)]), 1, 2),
+            Err(Refusal::BoxSplitsStageBlocks {
+                axis: K,
+                rows: 4,
+                period: 8
+            })
+        );
     }
 
     /// A padded block pitches its rows one chunk further apart.
