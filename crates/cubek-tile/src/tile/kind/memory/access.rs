@@ -37,6 +37,7 @@ impl<T: Numeric> Tile<T> {
     /// Free the shared memory this stage is held in; a stage of a call has none.
     pub(crate) fn free_stage(&self) {
         self.mem("free_stage").store.free();
+        self.free_scales();
     }
 
     /// This unit's share of filling this stage from `src`, read into `fetched` but not yet written.

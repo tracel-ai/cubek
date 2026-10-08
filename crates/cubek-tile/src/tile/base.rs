@@ -4,7 +4,7 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn, unexpanded};
 
 use cubecl::zspace::SmallVec;
 
-use crate::stage::pipeline::payload::base::{StageSpec, stage_one};
+use crate::stage::pipeline::payload::base::{StageOperand, StageSpec, stage_one};
 use crate::*;
 
 /// One operand's data: a runtime backing store and the comptime [`Space`] it projects.
@@ -702,14 +702,23 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Move `src` into `self`, the kind pairing picking the instruction.
+    ///
+    /// A source whose scales a stage keeps beside it copies its values as they are stored, into a
+    /// stage that keeps them too; the stage's fill brings the scales.
     pub fn copy_from(&mut self, src: &Tile<T>) {
-        let (scaled, into_memory) = (src.scaled(), self.is_memory());
+        let (decodes, into_memory) = (src.decodes(), self.is_memory());
         comptime!(assert!(
-            !scaled || into_memory,
+            !decodes || into_memory,
             "Tile::copy_from: a scaled source decodes into memory only; to load it into \
              fragments, contract it: the fragment lands it"
         ));
-        if comptime!(scaled) {
+        let (beside, kept) = (src.scales_beside(), self.scales_beside());
+        comptime!(assert!(
+            !beside || kept,
+            "Tile::copy_from: this source's scales are kept beside its values, which only a stage \
+             that keeps them too takes as they are stored"
+        ));
+        if comptime!(decodes) {
             self.copy_scaled_from(src);
         } else {
             self.copy_unscaled_from(src);
@@ -1047,6 +1056,44 @@ impl<E: Numeric> Tile<E> {
     pub(crate) fn innermost_factor(&self) -> Factor {
         unexpanded!()
     }
+
+    /// Whether filling a stage from these values decodes them: they carry scales or a table, and
+    /// not scales a stage keeps beside them.
+    ///
+    /// A stage keeps beside the values the words of block scales they carry: only the
+    /// block-scaled instruction reads those, so the values are staged as they are stored and the
+    /// scales staged with them.
+    pub(crate) fn decodes(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// Whether these values carry scales a stage keeps beside them ([`decodes`](Tile::decodes)).
+    pub(crate) fn scales_beside(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// This stage of `operand` with `operand`'s scales staged beside it as `spec` shapes it,
+    /// where a stage keeps them beside it ([`decodes`](Tile::decodes)); itself otherwise.
+    pub(crate) fn with_scales_staged(&self, _operand: &Tile<E>, _spec: StageSpec) -> Tile<E> {
+        unexpanded!()
+    }
+
+    /// Fill the scales this stage keeps beside its values from `src`'s, under `meeting`; nothing
+    /// where it keeps none.
+    pub(crate) fn fill_scales_from(&self, _src: &Tile<E>, _meeting: &Meeting) {
+        unexpanded!()
+    }
+
+    /// Free the shared memory of the scales this stage keeps beside its values.
+    pub(crate) fn free_scales(&self) {
+        unexpanded!()
+    }
+
+    /// The scales a stage of these values keeps beside them, as a slot plans them; none where
+    /// it keeps none.
+    pub(crate) fn scale_operands(&self) -> comptime_type!(Vec<StageOperand>) {
+        unexpanded!()
+    }
 }
 
 impl<E: Numeric> TileExpand<E> {
@@ -1172,6 +1219,71 @@ impl<E: Numeric> TileExpand<E> {
         match &self.kind {
             TileKindExpand::Memory(memory) => memory.factor.innermost(),
             _ => FactorExpand::default(),
+        }
+    }
+
+    pub(crate) fn __expand_decodes_method(&self, scope: &Scope) -> bool {
+        self.__expand_scaled_method(scope) && !self.__expand_scales_beside_method(scope)
+    }
+
+    pub(crate) fn __expand_scales_beside_method(&self, _scope: &Scope) -> bool {
+        match &self.kind {
+            TileKindExpand::Memory(memory) => {
+                memory.factor.staged_beside() && !memory.codebook.present()
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn __expand_with_scales_staged_method(
+        &self,
+        scope: &Scope,
+        operand: &TileExpand<E>,
+        spec: StageSpec,
+    ) -> TileExpand<E> {
+        let mut stage = self.clone();
+        if !operand.__expand_scales_beside_method(scope) {
+            return stage;
+        }
+        let (TileKindExpand::Memory(source), TileKindExpand::Memory(staged)) =
+            (&operand.kind, &mut stage.kind)
+        else {
+            panic!(
+                "Tile::with_scales_staged: scales are staged beside a memory stage of memory values"
+            )
+        };
+        staged.factor = source.factor.staged(scope, &spec);
+        stage
+    }
+
+    pub(crate) fn __expand_fill_scales_from_method(
+        &self,
+        scope: &Scope,
+        src: &TileExpand<E>,
+        meeting: &MeetingExpand,
+    ) {
+        if let (TileKindExpand::Memory(stage), TileKindExpand::Memory(source)) =
+            (&self.kind, &src.kind)
+            && stage.factor.staged_beside()
+        {
+            stage.factor.fill_from(scope, &source.factor, meeting);
+        }
+    }
+
+    pub(crate) fn __expand_scale_operands_method(&self, scope: &Scope) -> Vec<StageOperand> {
+        match &self.kind {
+            TileKindExpand::Memory(memory) if self.__expand_scales_beside_method(scope) => {
+                memory.factor.stage_operands(scope)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn __expand_free_scales_method(&self, scope: &Scope) {
+        if let TileKindExpand::Memory(stage) = &self.kind
+            && stage.factor.staged_beside()
+        {
+            stage.factor.free_stage(scope);
         }
     }
 

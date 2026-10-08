@@ -1,6 +1,7 @@
 //! A factor these values carry ([`Tile::mul`](crate::Tile::mul)): scale tiles windowed with the
 //! values and multiplied in where a kernel copies or contracts them. Levels are innermost first.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use cubecl::frontend::{AsMutExpand, AsRefExpand, CubeDebug, ExpandTypeClone, IntoExpand, IntoMut};
@@ -9,6 +10,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubecl::unexpanded;
 
+use crate::stage::pipeline::payload::base::{StageOperand, StageSpec, stage_one};
 use crate::*;
 
 /// One level of a factor: the erased scale tile and its comptime facts.
@@ -49,6 +51,23 @@ pub(crate) trait FactorRead {
         coords: &CoordsExpand<u32>,
         values: &Space,
     ) -> NativeExpand<u32>;
+
+    /// A stage of this scale tile as `spec` shapes the values' stage, laid out plain whatever
+    /// the values' storage: the scales' own words, which no instruction fragment-loads.
+    fn staged(&self, scope: &Scope, spec: &StageSpec) -> Arc<dyn FactorRead>;
+
+    /// Fill this stage from `src`, the scale tile it stages windowed as the values are, under
+    /// `meeting`, beside the values' own fill.
+    fn fill_from(&self, scope: &Scope, src: &dyn FactorRead, meeting: &MeetingExpand);
+
+    /// Free this stage's shared memory, with the values'.
+    fn free_stage(&self, scope: &Scope);
+
+    /// Who moves this scale tile's bytes into a stage of it.
+    fn delivery(&self, scope: &Scope) -> Delivery;
+
+    /// The tile behind this read, for a stage to fill from one of its own kind.
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl<S: Numeric> FactorRead for TileExpand<S> {
@@ -78,6 +97,35 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
             .clone()
             .__expand_scale_for_method(scope, coords, values.clone());
         u32::__expand_cast_from(scope, word)
+    }
+
+    fn staged(&self, scope: &Scope, spec: &StageSpec) -> Arc<dyn FactorRead> {
+        let spec = StageSpec {
+            storage: StageStorage::Strided,
+            width: None,
+            ..spec.clone()
+        };
+        Arc::new(stage_one::expand::<S>(scope, self, spec))
+    }
+
+    fn fill_from(&self, scope: &Scope, src: &dyn FactorRead, meeting: &MeetingExpand) {
+        let src = src
+            .as_any()
+            .downcast_ref::<TileExpand<S>>()
+            .expect("Factor: a stage of scales fills from scales of its own element");
+        meeting.__expand_fill_method::<S>(scope, &mut self.clone(), src);
+    }
+
+    fn free_stage(&self, scope: &Scope) {
+        self.clone().__expand_free_stage_method(scope);
+    }
+
+    fn delivery(&self, scope: &Scope) -> Delivery {
+        self.clone().__expand_delivery_method(scope)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -221,6 +269,58 @@ impl FactorExpand {
 
     pub(crate) fn __expand_holds_words_method(&self, _scope: &Scope) -> bool {
         self.inner().is_some_and(|level| level.words)
+    }
+
+    /// Whether these scales are staged beside the values they scale rather than decoded into
+    /// them: words of block scales, which only the block-scaled instruction reads, so values
+    /// under them are staged as they are stored. Only one level is: the instruction holds one.
+    pub(crate) fn staged_beside(&self) -> bool {
+        let words = self.inner().is_some_and(|level| level.words);
+        assert!(
+            !words || self.levels.len() == 1,
+            "Factor: values under words of block scales carry no other level, since the \
+             block-scaled instruction that reads them holds one; apply a coarser factor to the sum"
+        );
+        words
+    }
+
+    /// This factor's stage as `spec` shapes the values': each level's scales staged beside them.
+    pub(crate) fn staged(&self, scope: &Scope, spec: &StageSpec) -> FactorExpand {
+        FactorExpand {
+            levels: self
+                .levels
+                .iter()
+                .map(|level| FactorLevel {
+                    read: level.read.staged(scope, spec),
+                    ..level.clone()
+                })
+                .collect(),
+        }
+    }
+
+    /// Fill this factor's stage from `src`, the factor it stages windowed as the values are.
+    pub(crate) fn fill_from(&self, scope: &Scope, src: &FactorExpand, meeting: &MeetingExpand) {
+        for (stage, level) in self.levels.iter().zip(&src.levels) {
+            stage.read.fill_from(scope, level.read.as_ref(), meeting);
+        }
+    }
+
+    /// Each level's scales as a slot plans them, beside the values they scale.
+    pub(crate) fn stage_operands(&self, scope: &Scope) -> Vec<StageOperand> {
+        self.levels
+            .iter()
+            .map(|level| StageOperand {
+                delivery: level.read.delivery(scope),
+                space: level.space.clone(),
+            })
+            .collect()
+    }
+
+    /// Free the shared memory this factor's stage holds.
+    pub(crate) fn free_stage(&self, scope: &Scope) {
+        for level in &self.levels {
+            level.read.free_stage(scope);
+        }
     }
 
     pub(crate) fn __expand_word_at_method(

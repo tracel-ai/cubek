@@ -19,16 +19,26 @@ impl<Lhs: Numeric, Rhs: Numeric> Payload<OperandPair<Lhs, Rhs>> for OperandPair<
     fn operands(&self) -> comptime_type!(Vec<StageOperand>) {
         let lhs = self.lhs.delivery();
         let rhs = self.rhs.delivery();
-        comptime!(vec![
-            StageOperand {
-                delivery: lhs,
-                space: self.lhs.place.space.clone(),
-            },
-            StageOperand {
-                delivery: rhs,
-                space: self.rhs.place.space.clone(),
-            },
-        ])
+        // The scales a stage keeps beside its values come after both operands, so each operand
+        // keeps its place in the slot's refills.
+        let lhs_scales = self.lhs.scale_operands();
+        let rhs_scales = self.rhs.scale_operands();
+        comptime!(
+            [
+                StageOperand {
+                    delivery: lhs,
+                    space: self.lhs.place.space.clone(),
+                },
+                StageOperand {
+                    delivery: rhs,
+                    space: self.rhs.place.space.clone(),
+                },
+            ]
+            .into_iter()
+            .chain(lhs_scales)
+            .chain(rhs_scales)
+            .collect()
+        )
     }
 
     fn staged(

@@ -10,10 +10,16 @@ use super::base::{Payload, PayloadExpand, StageOperand, StageSpec, stage_one};
 impl<T: Numeric> Payload<Tile<T>> for Tile<T> {
     fn operands(&self) -> comptime_type!(Vec<StageOperand>) {
         let delivery = self.delivery();
-        comptime!(vec![StageOperand {
-            delivery,
-            space: self.place.space.clone(),
-        }])
+        let scales = self.scale_operands();
+        comptime!(
+            [StageOperand {
+                delivery,
+                space: self.place.space.clone(),
+            }]
+            .into_iter()
+            .chain(scales)
+            .collect()
+        )
     }
 
     fn staged(

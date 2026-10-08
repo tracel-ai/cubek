@@ -104,8 +104,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
     /// current contraction.
     ///
     /// Requires depth 1 or 2, every unit copying straight from a plain operand, and loads within
-    /// [`Prefetch::fits`]; otherwise refused at expansion. Fixed operands fall back to
-    /// [`pipelined`](Stages::pipelined).
+    /// [`Prefetch::fits`]; otherwise refused at expansion. Fixed operands, and operands whose
+    /// stages keep their scales beside them, fall back to [`pipelined`](Stages::pipelined).
     pub fn prefetched<F>(&mut self, _walk: Walk, _compute: F)
     where
         F: FnMut(&mut Slot<OperandPair<Lhs, Rhs>>, &Region),
@@ -119,7 +119,11 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
     where
         F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
     {
-        if self.has_fixed(scope) {
+        // Registers hold the values alone, so scales a stage keeps beside them are brought by the
+        // slots.
+        let scales_beside = self.sources.lhs.__expand_scales_beside_method(scope)
+            || self.sources.rhs.__expand_scales_beside_method(scope);
+        if self.has_fixed(scope) || scales_beside {
             return self.__expand_pipelined_method(scope, walk, compute);
         }
         self.__expand_assert_copied_by_every_unit_method(scope);
