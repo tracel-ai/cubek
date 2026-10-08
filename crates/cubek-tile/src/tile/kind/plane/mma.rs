@@ -22,6 +22,9 @@ define_size!(pub(crate) NLB);
 define_size!(pub(crate) NRB);
 define_size!(pub(crate) NSB);
 
+/// `e2m1` values one stored word holds, and so one register of the block-scaled instruction.
+const E2M1_PER_WORD: usize = 8;
+
 /// Values one `e2m1` block scale covers along the contraction under the instruction this
 /// encoding runs: NVFP4's block, a `ue4m3` scale every sixteen values.
 pub(crate) const E2M1_SCALE_BLOCK: usize = 16;
@@ -676,14 +679,20 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
         "MmaData::load_block_scaled: the instruction reads both operands along `k`, so a \
          block-scaled window holds its words along `k`: an `A` row-major and a `B` col-major"
     ));
+    // A register of the instruction is one stored word, eight values; the window may be read a
+    // whole line of words at a time, up to the sixteen bytes one unit reads at once.
     let load = src.vector_tile();
+    let line_words = comptime!(load.values() / E2M1_PER_WORD);
     comptime!(assert!(
-        load.values() == 8,
+        load.values().is_multiple_of(E2M1_PER_WORD)
+            && (LDMATRIX_ROW_BYTES / 4).is_multiple_of(line_words),
         "MmaData::load_block_scaled: a register of the instruction is one stored word, eight \
-         `e2m1` values; this window is read {} values a load",
+         `e2m1` values, read out of lines of whole words up to sixteen bytes; this window is read \
+         {} values a load",
         load.values()
     ));
-    let words = src.nd_words::<Const<1>>(comptime!(Guard::Checked));
+    let size!(WP) = line_words;
+    let words = src.nd_words::<WP>(comptime!(Guard::Checked));
     let unit = UNIT_POS_PLANE;
     let offered = loads_words_as_matrix();
     let shared = src.is_shared();
@@ -711,8 +720,12 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
                 };
                 let at =
                     TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
-                let word = words.read(load.index(&at, &space));
-                values[i] = Vector::<e2m1x2, NV>::reinterpret(word.extract(0usize));
+                // The window's columns run along `k` whichever its layout.
+                let line = words.read(load.index(&at, &space));
+                let word =
+                    window_col / comptime!(E2M1_PER_WORD as u32) % comptime!(line_words as u32);
+                values[i] =
+                    Vector::<e2m1x2, NV>::reinterpret(line.extract_dynamic(word.cast::<usize>()));
             }
         }
     }
@@ -758,9 +771,9 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
 /// The address is the window's own arrangement of the row ([`Masked::line_slice`]), so a swizzled
 /// stage is read where its fill wrote it.
 #[cube]
-fn load_block_scaled_ldmatrix<T: Numeric, NV: Size>(
+fn load_block_scaled_ldmatrix<T: Numeric, WP: Size, NV: Size>(
     src: &Tile<T>,
-    words: &Masked<'_, Vector<u32, Const<1>>, CoordsDyn>,
+    words: &Masked<'_, Vector<u32, WP>, CoordsDyn>,
     values: &mut Array<Vector<e2m1x2, NV>>,
     def: &MmaDefinition<e2m1x2, e2m1x2, f32>,
     #[comptime] ident: MatrixIdent,
@@ -785,19 +798,20 @@ fn load_block_scaled_ldmatrix<T: Numeric, NV: Size>(
         (row + row_in_matrix, col)
     };
     let at = TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
-    // One row of a matrix: sixteen bytes, four words along the window's innermost axis.
+    // One row of a matrix: sixteen bytes, four words along the window's innermost axis, in
+    // the window's lines.
+    let line_words = comptime!(load.values() / E2M1_PER_WORD);
     let mut run = CoordsDyn::new();
     #[unroll]
     for p in 0..rank {
         let extent = comptime!(match p == rank - 1 {
-            true => (LDMATRIX_ROW_BYTES / 4) as u32,
+            true => (LDMATRIX_ROW_BYTES / 4 / line_words) as u32,
             false => 1u32,
         });
         run.push(extent.runtime());
     }
     let row_slice = words.line_slice(load.index(&at, &space), run);
-    let regs =
-        def.load_matrix::<Vector<u32, Const<1>>, Const<1>>(row_slice, ident, registers, false);
+    let regs = def.load_matrix::<Vector<u32, WP>, Const<1>>(row_slice, ident, registers, false);
     #[unroll]
     for i in 0..registers {
         values[i] = Vector::<e2m1x2, NV>::reinterpret(regs[i].extract(0usize));
