@@ -41,15 +41,18 @@ pub(crate) fn min_identity<E: Numeric>() -> E {
 pub(crate) fn select_max<E: Numeric, N: Size>(
     current: Vector<E, N>,
     candidate: Vector<E, N>,
+    #[comptime] propagate_nan: bool,
 ) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();
-    if comptime!(elem_type.is_float()) {
+    if comptime!(elem_type.is_float() && propagate_nan) {
         intrinsic!(|scope| {
             let current = current.read_value(scope);
             let candidate = candidate.read_value(scope);
             let op = cubecl::ir::dialect::cmp::FMaxNanOp::new(scope.ctx_mut(), current, candidate);
             scope.register_with_result(&op).into()
         })
+    } else if comptime!(elem_type.is_float()) {
+        max(current, candidate)
     } else {
         select_many(current.greater_than(&candidate), current, candidate)
     }
@@ -59,15 +62,18 @@ pub(crate) fn select_max<E: Numeric, N: Size>(
 pub(crate) fn select_min<E: Numeric, N: Size>(
     current: Vector<E, N>,
     candidate: Vector<E, N>,
+    #[comptime] propagate_nan: bool,
 ) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();
-    if comptime!(elem_type.is_float()) {
+    if comptime!(elem_type.is_float() && propagate_nan) {
         intrinsic!(|scope| {
             let current = current.read_value(scope);
             let candidate = candidate.read_value(scope);
             let op = cubecl::ir::dialect::cmp::FMinNanOp::new(scope.ctx_mut(), current, candidate);
             scope.register_with_result(&op).into()
         })
+    } else if comptime!(elem_type.is_float()) {
+        min(current, candidate)
     } else {
         select_many(current.less_than(&candidate), current, candidate)
     }
@@ -79,9 +85,21 @@ pub(crate) fn select_argmax<E: Numeric, N: Size>(
     current_coord: Vector<u32, N>,
     candidate: Vector<E, N>,
     candidate_coord: Vector<u32, N>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let elem_type = elem_type_of::<E>();
-    let keep_current = if comptime!(elem_type.is_float()) {
+    let keep_current = if comptime!(elem_type.is_float() && !propagate_nan) {
+        let current_valid = current_coord.not_equal(&Vector::new(u32::MAX));
+        let candidate_invalid = candidate_coord.equal(&Vector::new(u32::MAX));
+        let tied = current
+            .equal(&candidate)
+            .vec_and(current_coord.less_than(&candidate_coord));
+        current_valid.vec_and(
+            candidate_invalid
+                .or(current.greater_than(&candidate))
+                .or(tied),
+        )
+    } else if comptime!(elem_type.is_float()) {
         let current_is_nan = numeric_is_nan(current);
         let candidate_is_nan = numeric_is_nan(candidate);
         let tied = current
@@ -113,9 +131,17 @@ pub(crate) fn select_argmin<E: Numeric, N: Size>(
     current_coord: Vector<u32, N>,
     candidate: Vector<E, N>,
     candidate_coord: Vector<u32, N>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let elem_type = elem_type_of::<E>();
-    let keep_current = if comptime!(elem_type.is_float()) {
+    let keep_current = if comptime!(elem_type.is_float() && !propagate_nan) {
+        let current_valid = current_coord.not_equal(&Vector::new(u32::MAX));
+        let candidate_invalid = candidate_coord.equal(&Vector::new(u32::MAX));
+        let tied = current
+            .equal(&candidate)
+            .vec_and(current_coord.less_than(&candidate_coord));
+        current_valid.vec_and(candidate_invalid.or(current.less_than(&candidate)).or(tied))
+    } else if comptime!(elem_type.is_float()) {
         let current_is_nan = numeric_is_nan(current);
         let candidate_is_nan = numeric_is_nan(candidate);
         let tied = current
@@ -155,29 +181,44 @@ pub(crate) fn advance_argmax<E: Numeric, N: Size>(
     current_coord: Vector<u32, N>,
     candidate: Vector<E, N>,
     candidate_coord: Vector<u32, N>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let elem_type = elem_type_of::<E>();
-
-    let keep_current = if comptime!(elem_type.is_float()) {
-        numeric_is_nan(current).or(current.greater_than(&candidate))
+    if comptime!(elem_type.is_float() && !propagate_nan) {
+        let current_valid = current_coord.not_equal(&Vector::new(u32::MAX));
+        let candidate_invalid = candidate_coord.equal(&Vector::new(u32::MAX));
+        let tied = current.equal(&candidate);
+        let keep_current = current_valid.vec_and(
+            candidate_invalid
+                .or(current.greater_than(&candidate))
+                .or(tied),
+        );
+        (
+            select_many(keep_current, current, candidate),
+            select_many(keep_current, current_coord, candidate_coord),
+        )
     } else {
-        current.greater_than(&candidate)
-    };
+        let keep_current = if comptime!(elem_type.is_float()) {
+            numeric_is_nan(current).or(current.greater_than(&candidate))
+        } else {
+            current.greater_than(&candidate)
+        };
 
-    // The accumulator starts at the identity with a coordinate above every real
-    // one, and the input can hold that identity, so an untouched slot yields even
-    // on a tie.
-    let untouched = current_coord.equal(&Vector::new(u32::MAX));
-    let keep_coord = select_many(
-        untouched,
-        Vector::new(false),
-        keep_current.or(current.equal(&candidate)),
-    );
+        // The accumulator starts at the identity with a coordinate above every real
+        // one, and the input can hold that identity, so an untouched slot yields even
+        // on a tie.
+        let untouched = current_coord.equal(&Vector::new(u32::MAX));
+        let keep_coord = select_many(
+            untouched,
+            Vector::new(false),
+            keep_current.or(current.equal(&candidate)),
+        );
 
-    (
-        select_many(keep_current, current, candidate),
-        select_many(keep_coord, current_coord, candidate_coord),
-    )
+        (
+            select_many(keep_current, current, candidate),
+            select_many(keep_coord, current_coord, candidate_coord),
+        )
+    }
 }
 
 /// [`advance_argmax`] for the smallest value.
@@ -187,32 +228,47 @@ pub(crate) fn advance_argmin<E: Numeric, N: Size>(
     current_coord: Vector<u32, N>,
     candidate: Vector<E, N>,
     candidate_coord: Vector<u32, N>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let elem_type = elem_type_of::<E>();
-
-    let keep_current = if comptime!(elem_type.is_float()) {
-        numeric_is_nan(current).or(current.less_than(&candidate))
+    if comptime!(elem_type.is_float() && !propagate_nan) {
+        let current_valid = current_coord.not_equal(&Vector::new(u32::MAX));
+        let candidate_invalid = candidate_coord.equal(&Vector::new(u32::MAX));
+        let tied = current.equal(&candidate);
+        let keep_current =
+            current_valid.vec_and(candidate_invalid.or(current.less_than(&candidate)).or(tied));
+        (
+            select_many(keep_current, current, candidate),
+            select_many(keep_current, current_coord, candidate_coord),
+        )
     } else {
-        current.less_than(&candidate)
-    };
+        let keep_current = if comptime!(elem_type.is_float()) {
+            numeric_is_nan(current).or(current.less_than(&candidate))
+        } else {
+            current.less_than(&candidate)
+        };
 
-    let untouched = current_coord.equal(&Vector::new(u32::MAX));
-    let keep_coord = select_many(
-        untouched,
-        Vector::new(false),
-        keep_current.or(current.equal(&candidate)),
-    );
+        let untouched = current_coord.equal(&Vector::new(u32::MAX));
+        let keep_coord = select_many(
+            untouched,
+            Vector::new(false),
+            keep_current.or(current.equal(&candidate)),
+        );
 
-    (
-        select_many(keep_current, current, candidate),
-        select_many(keep_coord, current_coord, candidate_coord),
-    )
+        (
+            select_many(keep_current, current, candidate),
+            select_many(keep_coord, current_coord, candidate_coord),
+        )
+    }
 }
 
 #[cube]
-pub(crate) fn plane_max_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<E, N> {
+pub(crate) fn plane_max_with_nan_policy<E: Numeric, N: Size>(
+    item: Vector<E, N>,
+    #[comptime] propagate_nan: bool,
+) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();
-    if comptime!(elem_type.is_float()) {
+    if comptime!(elem_type.is_float() && propagate_nan) {
         replace_plane_extreme_with_nan(plane_max(item), item)
     } else {
         plane_max(item)
@@ -220,9 +276,12 @@ pub(crate) fn plane_max_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>)
 }
 
 #[cube]
-pub(crate) fn plane_min_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<E, N> {
+pub(crate) fn plane_min_with_nan_policy<E: Numeric, N: Size>(
+    item: Vector<E, N>,
+    #[comptime] propagate_nan: bool,
+) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();
-    if comptime!(elem_type.is_float()) {
+    if comptime!(elem_type.is_float() && propagate_nan) {
         replace_plane_extreme_with_nan(plane_min(item), item)
     } else {
         plane_min(item)
@@ -230,14 +289,17 @@ pub(crate) fn plane_min_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>)
 }
 
 #[cube]
-pub(crate) fn plane_argmax_propagating_nan<E: Numeric, N: Size>(
+pub(crate) fn plane_argmax_with_nan_policy<E: Numeric, N: Size>(
     item: Vector<E, N>,
     coordinate: Vector<u32, N>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let ordered_extreme = plane_max(item);
     let elem_type = elem_type_of::<E>();
-    if comptime!(elem_type.is_float()) {
+    if comptime!(elem_type.is_float() && propagate_nan) {
         replace_plane_arg_extreme_with_nan(ordered_extreme, item, coordinate)
+    } else if comptime!(elem_type.is_float()) {
+        native_plane_arg_extreme(ordered_extreme, item, coordinate)
     } else {
         let ordered_coordinate = lowest_coordinate_matching(ordered_extreme, item, coordinate);
         (ordered_extreme, ordered_coordinate)
@@ -245,14 +307,17 @@ pub(crate) fn plane_argmax_propagating_nan<E: Numeric, N: Size>(
 }
 
 #[cube]
-pub(crate) fn plane_argmin_propagating_nan<E: Numeric, N: Size>(
+pub(crate) fn plane_argmin_with_nan_policy<E: Numeric, N: Size>(
     item: Vector<E, N>,
     coordinate: Vector<u32, N>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let ordered_extreme = plane_min(item);
     let elem_type = elem_type_of::<E>();
-    if comptime!(elem_type.is_float()) {
+    if comptime!(elem_type.is_float() && propagate_nan) {
         replace_plane_arg_extreme_with_nan(ordered_extreme, item, coordinate)
+    } else if comptime!(elem_type.is_float()) {
+        native_plane_arg_extreme(ordered_extreme, item, coordinate)
     } else {
         let ordered_coordinate = lowest_coordinate_matching(ordered_extreme, item, coordinate);
         (ordered_extreme, ordered_coordinate)
@@ -310,4 +375,118 @@ fn shuffle_vector<E: Numeric, N: Size>(
         shuffled.insert(k, plane_shuffle(item.extract(k), source_units.extract(k)));
     }
     shuffled
+}
+
+// A native plane extremum may not match any input (notably for all-NaN
+// components). Fall back to a valid coordinate and fetch its actual value.
+// Invalid/padded components retain their sentinel until merged with real data.
+#[cube]
+fn native_plane_arg_extreme<E: Numeric, N: Size>(
+    ordered_extreme: Vector<E, N>,
+    item: Vector<E, N>,
+    coordinate: Vector<u32, N>,
+) -> (Vector<E, N>, Vector<u32, N>) {
+    let matching = lowest_coordinate_matching(ordered_extreme, item, coordinate);
+    let no_coordinate = Vector::new(u32::MAX);
+    let selected_coordinate = select_many(
+        matching.equal(&no_coordinate),
+        plane_min(coordinate),
+        matching,
+    );
+    let source = plane_min(select_many(
+        coordinate.equal(&selected_coordinate),
+        Vector::new(UNIT_POS_X),
+        Vector::new(u32::MAX),
+    ));
+    (shuffle_vector(item, source), selected_coordinate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{
+        AddressType,
+        settings::{Dim3, ExecutionMode, KernelSettings},
+    };
+
+    fn scope() -> Scope {
+        Scope::root(KernelSettings::new(
+            Dim3::new_1d(64),
+            ExecutionMode::Unchecked,
+            AddressType::U32,
+        ))
+    }
+
+    fn input<E: Numeric>(scope: &Scope) -> NativeExpand<Vector<E, Const<1>>> {
+        let ty = E::elem_type_native().to_type(scope.ctx());
+        scope.create_local_mut(ty, None).into()
+    }
+
+    #[test]
+    fn value_extrema_specialize_nan_primitives() {
+        for propagate in [false, true] {
+            let scope = scope();
+            let a = input::<f32>(&scope);
+            let b = input::<f32>(&scope);
+            select_max::expand::<f32, Const<1>>(&scope, a, b, propagate);
+            select_min::expand::<f32, Const<1>>(&scope, a, b, propagate);
+            let ir = format!("{scope}");
+            assert_eq!(ir.contains("cmp.f_max_nan"), propagate, "{ir}");
+            assert_eq!(ir.contains("cmp.f_min_nan"), propagate, "{ir}");
+            assert!(!ir.contains("math.is_nan"), "{ir}");
+        }
+    }
+
+    #[test]
+    fn indexed_extrema_specialize_nan_checks() {
+        for propagate in [false, true] {
+            for advance in [false, true] {
+                let scope = scope();
+                let a = input::<f32>(&scope);
+                let b = input::<f32>(&scope);
+                let a_index = input::<u32>(&scope);
+                let b_index = input::<u32>(&scope);
+                let max = if advance {
+                    advance_argmax::expand::<f32, Const<1>>
+                } else {
+                    select_argmax::expand::<f32, Const<1>>
+                };
+                let min = if advance {
+                    advance_argmin::expand::<f32, Const<1>>
+                } else {
+                    select_argmin::expand::<f32, Const<1>>
+                };
+                max(&scope, a, a_index, b, b_index, propagate);
+                min(&scope, a, a_index, b, b_index, propagate);
+                let ir = format!("{scope}");
+                assert_eq!(ir.contains("math.is_nan"), propagate, "{ir}");
+            }
+        }
+    }
+
+    #[test]
+    fn subgroup_extrema_specialize_nan_recovery() {
+        for propagate in [false, true] {
+            for indexed in [false, true] {
+                let scope = scope();
+                let value = input::<f32>(&scope);
+                if indexed {
+                    let index = input::<u32>(&scope);
+                    plane_argmax_with_nan_policy::expand::<f32, Const<1>>(
+                        &scope, value, index, propagate,
+                    );
+                    plane_argmin_with_nan_policy::expand::<f32, Const<1>>(
+                        &scope, value, index, propagate,
+                    );
+                } else {
+                    plane_max_with_nan_policy::expand::<f32, Const<1>>(&scope, value, propagate);
+                    plane_min_with_nan_policy::expand::<f32, Const<1>>(&scope, value, propagate);
+                }
+                let ir = format!("{scope}");
+                assert_eq!(ir.contains("math.is_nan"), propagate, "{ir}");
+                // Native indexed paths still gather the selected input value so
+                // that the pair remains valid when no value matches the extremum.
+            }
+        }
+    }
 }
