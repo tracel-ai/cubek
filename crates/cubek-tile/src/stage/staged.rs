@@ -4,13 +4,23 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-/// Which element a stage holds: the values the operand serves, or its stored form.
+/// What a stage of an operand holds, and so how its fill lands it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum StageElement {
-    /// Served values, decoded as they land.
+    /// The values the operand serves, which are what it stores: copied as they lie.
     Served,
-    /// The stored form (words for a packed operand).
+    /// The values the operand serves, decoded by the fill: from scales, a codebook, or packed
+    /// fields as wide as their word, which take the same shared memory staged either way.
+    Decoded,
+    /// The stored form, words of several packed fields: copied as they lie.
     Stored,
+}
+
+impl StageElement {
+    /// Whether the stage holds the values the operand serves, rather than its words.
+    pub(crate) fn holds_values(self) -> bool {
+        self != Self::Stored
+    }
 }
 
 #[cube]
@@ -81,16 +91,10 @@ impl<T: Numeric> Memory<T> {
         #[comptime] width: Option<usize>,
         #[comptime] owner: StageOwner,
     ) -> Tile<T> {
-        // Scaled or looked-up sources, and packed fields staged as values, are decoded by the
-        // fill, so the stage holds served values.
-        let decodes = operand.decodes_into_stage();
-        let stored = operand.stage_element();
-        match comptime!(if decodes {
-            StageElement::Served
-        } else {
-            stored
-        }) {
-            StageElement::Served => {
+        let element = operand.stage_element();
+        let decodes = comptime!(element == StageElement::Decoded);
+        match comptime!(element) {
+            StageElement::Served | StageElement::Decoded => {
                 let space = comptime!(level.child(&operand.place.space));
                 let projection = operand.projection();
                 let units = operand.units();

@@ -212,7 +212,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     let gathered = src.gathered();
     let shared = src.is_shared();
     let element = src.stage_element();
-    let holds_served_values = comptime!(element == StageElement::Served);
+    let holds_served_values = comptime!(element.holds_values());
     let served = src.vector_size();
     // An element's size read at expansion, where the launch has registered it: inside
     // `comptime!` the call would size the generic placeholder instead.
