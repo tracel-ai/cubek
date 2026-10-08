@@ -154,9 +154,27 @@ impl<T: Numeric> Memory<T> {
         match &operand.kind {
             TileKind::Memory(g) => match comptime!(g.store.packing) {
                 Packing::Plain => Memory::smem(space, vector_size, storage, units),
-                packing => Memory::smem_packed(space, vector_size, storage, units, packing),
+                packing => Memory::smem_packed(
+                    space,
+                    vector_size,
+                    storage,
+                    units,
+                    packing,
+                    comptime!(0usize),
+                ),
             },
-            TileKind::TmaGmem(_) => Memory::smem(space, vector_size, storage, units),
+            // A box lands where the descriptor's swizzle span starts.
+            TileKind::TmaGmem(t) => match comptime!(t.packing) {
+                Packing::Plain => Memory::smem(space, vector_size, storage, units),
+                packing => Memory::smem_packed(
+                    space,
+                    vector_size,
+                    storage,
+                    units,
+                    packing,
+                    comptime!(TMA_STAGE_ALIGNMENT),
+                ),
+            },
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Memory::smem_stored: a fragment is not a stage source")
             }

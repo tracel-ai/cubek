@@ -26,6 +26,7 @@ impl<E: Numeric> TmaTileArg<E> {
             self.view.clone(),
             comptime!(own.rank()),
             comptime!(self.spec.units),
+            comptime!(self.spec.packing),
         );
         Tile::new(
             TileKind::new_TmaGmem(data),
@@ -54,6 +55,28 @@ pub struct TmaOperand {
 impl<E: Numeric> TmaTileArgLaunch<E> {
     /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set.
     pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
+        let (layout, spec) = Self::dyn_layout(axes, shape, 1);
+        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
+        Self::new(view, spec)
+    }
+
+    /// [`tensor_map`](Self::tensor_map) over a packed operand: the descriptor moves the words its
+    /// values are stored in, `field.per_word()` values a cell along its innermost dimension, which
+    /// the layout divides the values' coordinate along it by. `shape` counts values.
+    pub fn tensor_map_packed(
+        tensor_map: TensorMapArg<Tiled>,
+        axes: &[Axis],
+        shape: TmaBox,
+        field: Field,
+    ) -> Self {
+        let (layout, spec) = Self::dyn_layout(axes, shape, field.per_word() as u32);
+        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
+        Self::new(view, spec.packed(field))
+    }
+
+    /// The layout of a descriptor over `axes` moving cells of `per_cell` values along its
+    /// innermost dimension, and the operand's spec.
+    fn dyn_layout(axes: &[Axis], shape: TmaBox, per_cell: u32) -> (TmaDynLayoutLaunch, TileSpec) {
         let batched = match (axes.len(), shape.batch) {
             (2, None) => false,
             (3, Some(_)) => true,
@@ -63,9 +86,8 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
             ),
         };
         let dims = (shape.batch.unwrap_or(1), shape.rows, shape.cols);
-        let layout = TmaDynLayoutLaunch::new(dims, batched, shape.transposed);
-        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes))
+        let layout = TmaDynLayoutLaunch::new(dims, batched, shape.transposed, per_cell);
+        (layout, TileSpec::direct(axes))
     }
 
     /// A storage-tiled operand's tensor map over two `axes`; `dims` is its logical `(rows, cols)`.
@@ -139,6 +161,10 @@ pub(crate) struct TmaDynLayout {
     batched: bool,
     #[cube(comptime)]
     transposed: bool,
+    /// Values one cell of the descriptor's innermost dimension holds: one, or a packed field's
+    /// values to a word.
+    #[cube(comptime)]
+    per_cell: u32,
 }
 
 #[cube]
@@ -156,13 +182,15 @@ impl Layout for TmaDynLayout {
             src.push(0u32);
         }
         let (r, c) = comptime!(if self.batched { (1, 2) } else { (0, 1) });
-        // TMA discards the last stride, so a col-major descriptor is transposed; swap back.
+        // TMA discards the last stride, so a col-major descriptor is transposed; swap back. The
+        // innermost dimension counts cells, each `per_cell` values.
+        let per_cell = comptime!(self.per_cell);
         if comptime!(self.transposed) {
             src.push(pos[c]);
-            src.push(pos[r]);
+            src.push(pos[r] / per_cell);
         } else {
             src.push(pos[r]);
-            src.push(pos[c]);
+            src.push(pos[c] / per_cell);
         }
         src
     }

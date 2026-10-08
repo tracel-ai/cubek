@@ -146,10 +146,9 @@ impl<T: Numeric> Tile<T> {
                 comptime!(load.along_one_axis("a reader asking Tile::vector_size").1)
             }
             TileKind::Lines(c) => c.line(),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
+            // One cell the descriptor moves a line: a word of a packed field's values.
+            TileKind::TmaGmem(t) => comptime!(t.packing.served(1)),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::Procedural(_) => {
                 comptime!(1usize)
             }
         }
@@ -201,8 +200,11 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn stage_element(&self) -> comptime_type!(StageElement) {
         match &self.kind {
             TileKind::Memory(d) => d.stage_element(),
-            TileKind::TmaGmem(_)
-            | TileKind::PlaneTile(_)
+            TileKind::TmaGmem(t) => comptime!(match t.packing {
+                Packing::Plain => StageElement::Served,
+                Packing::Packed { .. } => StageElement::Stored,
+            }),
+            TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => {
@@ -216,10 +218,8 @@ impl<T: Numeric> Tile<T> {
         match &self.kind {
             TileKind::Memory(d) => d.packing(),
             TileKind::Lines(c) => c.packing(),
-            TileKind::TmaGmem(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::Procedural(_) => {
+            TileKind::TmaGmem(t) => comptime!(t.packing),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::Procedural(_) => {
                 comptime!(Packing::Plain)
             }
         }
@@ -1116,14 +1116,22 @@ impl<E: Numeric> TileExpand<E> {
             TileKindExpand::Memory(memory) => {
                 memory.factor = memory.factor.and(FactorExpand::of(scope, scale));
             }
+            TileKindExpand::TmaGmem(tma) => {
+                let factor = tma.factor.and(FactorExpand::of(scope, scale));
+                assert!(
+                    factor.staged_beside(),
+                    "Tile::mul: a tma source lands its values as they lie, so it rides only scales \
+                     a stage keeps beside them: words of block scales"
+                );
+                tma.factor = factor;
+            }
             TileKindExpand::PlaneTile(_)
             | TileKindExpand::PlanePartition(_)
-            | TileKindExpand::TmaGmem(_)
             | TileKindExpand::Procedural(_)
             | TileKindExpand::Lines(_) => {
                 panic!(
                     "Tile::mul: a factor rides values read from memory; a fragment is scaled \
-                     once it holds them and a tma source is not read here at all"
+                     once it holds them"
                 )
             }
         }
@@ -1201,25 +1209,35 @@ impl<E: Numeric> TileExpand<E> {
         out
     }
 
-    pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
+    /// The scales these values carry: a memory window's, or a tma source's, which a stage keeps
+    /// beside the words it lands.
+    fn factor(&self) -> Option<&FactorExpand> {
         match &self.kind {
-            TileKindExpand::Memory(memory) => memory.factor.scaled() || memory.codebook.present(),
-            _ => false,
+            TileKindExpand::Memory(memory) => Some(&memory.factor),
+            TileKindExpand::TmaGmem(tma) => Some(&tma.factor),
+            TileKindExpand::PlaneTile(_)
+            | TileKindExpand::PlanePartition(_)
+            | TileKindExpand::Procedural(_)
+            | TileKindExpand::Lines(_) => None,
         }
+    }
+
+    pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
+        let looks_up = match &self.kind {
+            TileKindExpand::Memory(memory) => memory.codebook.present(),
+            _ => false,
+        };
+        looks_up || self.factor().is_some_and(FactorExpand::scaled)
     }
 
     pub(crate) fn __expand_factor_levels_method(&self, _scope: &Scope) -> usize {
-        match &self.kind {
-            TileKindExpand::Memory(memory) => memory.factor.levels.len(),
-            _ => 0,
-        }
+        self.factor().map_or(0, |factor| factor.levels.len())
     }
 
     pub(crate) fn __expand_innermost_factor_method(&self, _scope: &Scope) -> FactorExpand {
-        match &self.kind {
-            TileKindExpand::Memory(memory) => memory.factor.innermost(),
-            _ => FactorExpand::default(),
-        }
+        self.factor()
+            .map(FactorExpand::innermost)
+            .unwrap_or_default()
     }
 
     pub(crate) fn __expand_decodes_method(&self, scope: &Scope) -> bool {
@@ -1227,12 +1245,11 @@ impl<E: Numeric> TileExpand<E> {
     }
 
     pub(crate) fn __expand_scales_beside_method(&self, _scope: &Scope) -> bool {
-        match &self.kind {
-            TileKindExpand::Memory(memory) => {
-                memory.factor.staged_beside() && !memory.codebook.present()
-            }
+        let looks_up = match &self.kind {
+            TileKindExpand::Memory(memory) => memory.codebook.present(),
             _ => false,
-        }
+        };
+        !looks_up && self.factor().is_some_and(FactorExpand::staged_beside)
     }
 
     pub(crate) fn __expand_with_scales_staged_method(
@@ -1242,17 +1259,17 @@ impl<E: Numeric> TileExpand<E> {
         spec: StageSpec,
     ) -> TileExpand<E> {
         let mut stage = self.clone();
-        if !operand.__expand_scales_beside_method(scope) {
-            return stage;
-        }
-        let (TileKindExpand::Memory(source), TileKindExpand::Memory(staged)) =
-            (&operand.kind, &mut stage.kind)
+        let Some(source) = operand
+            .factor()
+            .filter(|_| operand.__expand_scales_beside_method(scope))
         else {
-            panic!(
-                "Tile::with_scales_staged: scales are staged beside a memory stage of memory values"
-            )
+            return stage;
         };
-        staged.factor = source.factor.staged(scope, &spec);
+        let staged = source.staged(scope, &spec);
+        let TileKindExpand::Memory(memory) = &mut stage.kind else {
+            panic!("Tile::with_scales_staged: scales are staged beside a stage in memory")
+        };
+        memory.factor = staged;
         stage
     }
 
@@ -1262,18 +1279,17 @@ impl<E: Numeric> TileExpand<E> {
         src: &TileExpand<E>,
         meeting: &MeetingExpand,
     ) {
-        if let (TileKindExpand::Memory(stage), TileKindExpand::Memory(source)) =
-            (&self.kind, &src.kind)
+        if let (TileKindExpand::Memory(stage), Some(source)) = (&self.kind, src.factor())
             && stage.factor.staged_beside()
         {
-            stage.factor.fill_from(scope, &source.factor, meeting);
+            stage.factor.fill_from(scope, source, meeting);
         }
     }
 
     pub(crate) fn __expand_scale_operands_method(&self, scope: &Scope) -> Vec<StageOperand> {
-        match &self.kind {
-            TileKindExpand::Memory(memory) if self.__expand_scales_beside_method(scope) => {
-                memory.factor.stage_operands(scope)
+        match self.factor() {
+            Some(factor) if self.__expand_scales_beside_method(scope) => {
+                factor.stage_operands(scope)
             }
             _ => Vec::new(),
         }

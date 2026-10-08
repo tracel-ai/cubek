@@ -48,8 +48,8 @@ pub enum UnitRead {
 impl StageStorage {
     /// The swizzle a TMA descriptor moving the whole of a stage over `space` in one box lands its
     /// rows with, so they lie as this storage keeps them: the stage's lines `vector_size` values of
-    /// `elem_bytes` bytes. What the launch builds the descriptor with, and what the stage fill
-    /// holds the stage to.
+    /// `elem_bits` bits, which a line holds whole bytes of (a packed operand's line is its words).
+    /// What the launch builds the descriptor with, and what the stage fill holds the stage to.
     ///
     /// # Errors
     ///
@@ -61,13 +61,18 @@ impl StageStorage {
         &self,
         space: &Space,
         vector_size: usize,
-        elem_bytes: usize,
+        elem_bits: usize,
     ) -> Result<TensorMapSwizzle, Refusal> {
+        assert!(
+            (vector_size * elem_bits).is_multiple_of(8),
+            "StageStorage::tma_swizzle: a line of {vector_size} {elem_bits}-bit values is not whole \
+             bytes"
+        );
         let form = StageForm::dense(
             space,
             vector_size,
             self.clone(),
-            LineBytes(vector_size * elem_bytes),
+            LineBytes(vector_size * elem_bits / 8),
         );
         let swizzle = form
             .rows
