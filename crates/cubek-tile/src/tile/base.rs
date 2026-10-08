@@ -1373,19 +1373,6 @@ impl<E: Numeric> TileExpand<E> {
 
 #[cube]
 impl<S: Numeric> Tile<S> {
-    /// Whether a read of this tile is a plane shuffle, so readers must keep units converged.
-    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
-    pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
-        match &self.kind {
-            TileKind::Lines(_) => comptime!(true),
-            TileKind::Memory(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
-        }
-    }
-
     /// The one scale at `coords`, one entry per axis of this tile's space.
     #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {

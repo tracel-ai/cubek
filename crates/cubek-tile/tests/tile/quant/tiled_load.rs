@@ -7,8 +7,10 @@ use cubecl::{bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::T
 use cubecl_common::e2m1;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
-    layout::{StorageLevels, VectorTile},
+    Axis, Launcher, Level, Levels, Partitioning, Projection, Space, StageStorage, TileArg,
+    TileArgLaunch, TileSpec,
+    launch::Grid,
+    layout::{StorageLevels, StoragePartitioning, VectorTile},
 };
 
 use crate::tile::uncut;
@@ -33,28 +35,72 @@ fn tiled_scaled_copy<O: Numeric, V: Size, W: Size>(
     output.copy_from(&values.mul(&scales));
 }
 
+/// `stage = values` as the words they are, then `output = unpack(stage) ⊗ scales`: the weight
+/// staged packed over `level`'s region, decoded out of the stage.
+#[cube(launch)]
+fn tiled_packed_stage<O: Numeric, V: Size, W: Size>(
+    values: &TileArg<'_, u32, W>,
+    scales: &TileArg<'_, f32, Const<1>>,
+    output: &TileArg<'_, O, V>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[define(O)] _dtype: ElemType,
+) {
+    let values = values.tile_as::<O>(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
+    let mut stage = values.stage(level, StageStorage::Strided);
+    stage.copy_from(&values);
+    sync_cube();
+    output.copy_from(&stage.mul(&scales));
+}
+
+/// Where the weight is decoded from.
+#[derive(Clone, Copy, Debug)]
+enum Read {
+    /// Straight from its stored tiles.
+    Stored,
+    /// From a stage its words were copied into as they lie.
+    PackedStage,
+}
+
 /// A `[n, kb, ki]` NVFP4 weight stored a word of 8 along `KI`, then 2 words along `KI` by 2
 /// columns, the next such tile along `KB`: every load of four words is 16 values of one block by
 /// 2 columns, each column under its own scale. Copied out four values a line along `KI`, every
 /// value is its code times its column's block scale.
 #[test]
 fn a_rectangle_load_decodes_each_value_under_its_own_scale() {
-    let (cols, blocks, block) = (4, 2, 16);
-    let client = cubecl::test_device().client();
-
     let storage = StorageLevels::new(&[(KI, 8)])
         .tile(&[(KI, 2), (N, 2)])
         .grid(&[KB, N, KI]);
+    assert_eq!(
+        VectorTile::new(storage.tiles(), KI, 32).unwrap().extents(),
+        &[(KI, 16), (N, 2)]
+    );
+    check_tiled(storage, 4, 4, Read::Stored);
+}
+
+/// NVFP4 in tile order as a gemm reads it, a column's block a load in tiles of sixteen columns,
+/// staged as its words and decoded out of the stage: the stage holds every word where the
+/// stored tiles put it.
+#[test]
+fn a_tile_order_weight_staged_as_its_words_decodes_out_of_the_stage() {
+    let storage = StorageLevels::new(&[(KI, 8)])
+        .tile(&[(KI, 2), (N, 16)])
+        .grid(&[KI, KB, N]);
+    check_tiled(storage, 32, 2, Read::PackedStage);
+}
+
+/// `cols` columns of two blocks of sixteen stored as `storage` states, read `words_per_load` words a load
+/// and decoded as `read` says, against the host.
+fn check_tiled(storage: StoragePartitioning, cols: usize, words_per_load: usize, read: Read) {
+    let (blocks, block) = (2, 16);
+    let client = cubecl::test_device().client();
     let axes = [N, KB, KI];
     let geometry = storage
         .physical(&[(N, cols), (KB, blocks), (KI, block)])
         .unwrap();
     let labels = geometry.labels(&axes);
-    assert_eq!(
-        VectorTile::new(storage.tiles(), KI, 32).unwrap().extents(),
-        &[(KI, 16), (N, 2)]
-    );
-
     // Every code, cycled, laid down where the storage puts its value.
     let code = |n: usize, kb: usize, ki: usize| ((n * blocks + kb) * block + ki) % 16;
     let offset = |coords: [usize; 3]| {
@@ -99,24 +145,62 @@ fn a_rectangle_load_decodes_each_value_under_its_own_scale() {
     let mut w_spec = TileSpec::new(Projection::tiled(&axes, &labels)).packed(QuantValue::E2M1);
     w_spec.stored_tiles = storage.tiles().to_vec();
     let space = Space::new(&[(N, cols), (KB, blocks), (KI, block)]);
-    tiled_scaled_copy::launch(
-        &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
-        4,
-        4,
-        TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
-        TileArgLaunch::new(
-            s_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[N, KB]),
+    let (count, dim) = (CubeCount::new_single(), CubeDim::new_single());
+    // Each kernel types its arguments by its own generics, so each arm binds its own.
+    match read {
+        Read::Stored => tiled_scaled_copy::launch(
+            &client,
+            count,
+            dim,
+            4,
+            words_per_load,
+            TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
+            TileArgLaunch::new(
+                s_tensor.binding().into_tensor_arg(),
+                TileSpec::direct(&[N, KB]),
+            ),
+            TileArgLaunch::new(
+                out.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&axes),
+            ),
+            uncut(&client, &space, &space).partitioning_arg(),
+            dtype,
         ),
-        TileArgLaunch::new(
-            out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&axes),
-        ),
-        uncut(&client, &space, &space).partitioning_arg(),
-        dtype,
-    );
+        Read::PackedStage => {
+            // One cube over the whole box: the region the stage holds.
+            let partitioning = Partitioning::new(
+                space.clone(),
+                Levels::leaf(&[(N, cols), (KB, blocks), (KI, block)])
+                    .cubes(&[N])
+                    .build(),
+            );
+            let level = partitioning.level(0);
+            let single = Grid::Stated {
+                cube_count: CubeCount::new_single(),
+                cube_dim: CubeDim::new_single(),
+            };
+            let launcher = Launcher::new(&client, partitioning, &space, single).unwrap();
+            tiled_packed_stage::launch(
+                &client,
+                count,
+                dim,
+                4,
+                words_per_load,
+                TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
+                TileArgLaunch::new(
+                    s_tensor.binding().into_tensor_arg(),
+                    TileSpec::direct(&[N, KB]),
+                ),
+                TileArgLaunch::new(
+                    out.clone().binding().into_tensor_arg(),
+                    TileSpec::direct(&axes),
+                ),
+                launcher.partitioning_arg(),
+                level,
+                dtype,
+            )
+        }
+    }
 
     let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
     for n in 0..cols {
@@ -126,7 +210,7 @@ fn a_rectangle_load_decodes_each_value_under_its_own_scale() {
                 let have = got.get_f32(&[n, kb, ki]);
                 assert!(
                     (have - want).abs() < 1e-6,
-                    "at (n {n}, kb {kb}, ki {ki}): got {have}, want {want}"
+                    "{read:?} at (n {n}, kb {kb}, ki {ki}): got {have}, want {want}"
                 );
             }
         }
