@@ -59,17 +59,18 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
 pub(crate) fn stage_one<T: Numeric>(operand: &Tile<T>, #[comptime] spec: StageSpec) -> Tile<T> {
     let stage = Memory::stage(
         operand,
-        comptime!(spec.level),
-        comptime!(spec.storage),
+        comptime!(spec.level.clone()),
+        comptime!(spec.storage.clone()),
         comptime!(spec.width),
         comptime!(spec.owner),
     );
-    Tile::new(
+    let stage = Tile::new(
         stage.kind,
         comptime!(Placement::new(
             stage.place.space.clone(),
             spec.depth,
             operand.place.levels.clone()
         )),
-    )
+    );
+    stage.with_scales_staged(operand, comptime!(spec))
 }

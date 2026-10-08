@@ -9,6 +9,10 @@ use cubecl::{
 use crate::*;
 
 /// A TMA tensor-map source: the launch-built view, the current box origin and the logical bound.
+///
+/// A packed source is moved as the words it is stored in, so the stage it lands in holds them
+/// ([`packing`](Self::packing)); the scales it rides under are ones a stage keeps beside the words
+/// ([`factor`](Self::factor)), since the engine lands bytes as they lie and decodes nothing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct TmaData<T: Numeric> {
@@ -18,6 +22,11 @@ pub(crate) struct TmaData<T: Numeric> {
     /// The launch's cube size, `0` when unknown ([`FillUnits::count`](crate::FillUnits)).
     #[cube(comptime)]
     pub(crate) units: usize,
+    /// How the values sit in the cells the descriptor moves.
+    #[cube(comptime)]
+    pub(crate) packing: Packing,
+    /// The scales these values carry ([`Tile::mul`](crate::Tile::mul)), windowed with the box.
+    pub(crate) factor: Factor,
 }
 
 #[cube]
@@ -27,6 +36,7 @@ impl<T: Numeric> TmaData<T> {
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] rank: usize,
         #[comptime] units: usize,
+        #[comptime] packing: Packing,
     ) -> TmaData<T> {
         let bound = view.shape();
         let mut pos = CoordsDyn::new();
@@ -39,6 +49,8 @@ impl<T: Numeric> TmaData<T> {
             pos,
             bound,
             units,
+            packing,
+            factor: Factor::none(),
         }
     }
 
@@ -98,6 +110,8 @@ impl<T: Numeric> TmaData<T> {
             pos,
             bound: self.bound.clone(),
             units: self.units,
+            packing: self.packing,
+            factor: self.factor.at(step),
         }
     }
 }

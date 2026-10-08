@@ -174,11 +174,12 @@ impl Meeting {
     pub(crate) fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind.
         let space = comptime!(dst.place.space.clone());
-        let decodes = src.scaled();
+        let decodes = src.decodes();
         if comptime!(decodes) {
             dst.copy_from(src);
         } else {
             self.fill_as_it_lies(dst, src, space);
+            dst.fill_scales_from(src, self);
         }
     }
 

@@ -7,6 +7,7 @@ use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
     quant::scheme::QuantValue,
+    std::tensor::layout::CoordsDyn,
 };
 
 use super::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
@@ -20,6 +21,12 @@ define_size!(pub(crate) NA);
 define_size!(pub(crate) NLB);
 define_size!(pub(crate) NRB);
 define_size!(pub(crate) NSB);
+
+/// `e2m1` values one stored word holds, and so one register of the block-scaled instruction.
+const E2M1_PER_WORD: usize = 8;
+
+/// Words one `ldmatrix` row holds.
+const LDMATRIX_ROW_WORDS: usize = LDMATRIX_ROW_BYTES / size_of::<u32>();
 
 /// Values one `e2m1` block scale covers along the contraction under the instruction this
 /// encoding runs: NVFP4's block, a `ue4m3` scale every sixteen values.
@@ -225,10 +232,10 @@ impl<T: Numeric> MmaData<T> {
                 load_fragment(src, f, &def, MatrixIdent::Accumulator, layout, io, (m, n))
             }
             MmaFragment::LhsBlockScaled(values, scales) => {
-                load_block_scaled(src, values, scales, MatrixIdent::A, layout, (m, n, k))
+                load_block_scaled(src, values, scales, MatrixIdent::A, layout, io, (m, n, k))
             }
             MmaFragment::RhsBlockScaled(values, scales) => {
-                load_block_scaled(src, values, scales, MatrixIdent::B, layout, (m, n, k))
+                load_block_scaled(src, values, scales, MatrixIdent::B, layout, io, (m, n, k))
             }
         }
     }
@@ -641,6 +648,10 @@ fn offers_block_scaled(
 /// along its rows, a `B` along its columns where it lies col-major, the stored words running along
 /// `k` either way.
 ///
+/// The words come in one `ldmatrix` for the whole fragment where `io` lets the role load through
+/// it and a stage in shared memory holds them ([`load_block_scaled_ldmatrix`]); a word at a time
+/// otherwise.
+///
 /// Scales stored as words of four, as an NVFP4 checkpoint packs them, are one load each, straight
 /// into the register; scales stored one to a value are read and narrowed one at a time.
 #[cube]
@@ -650,6 +661,7 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     scales: &mut Array<Vector<e4m3, NS>>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
+    #[comptime] io: MmaIo,
     #[comptime] shape: (usize, usize, usize),
 ) {
     let (m, n, k) = comptime!(shape);
@@ -670,29 +682,55 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
         "MmaData::load_block_scaled: the instruction reads both operands along `k`, so a \
          block-scaled window holds its words along `k`: an `A` row-major and a `B` col-major"
     ));
+    // A register of the instruction is one stored word, eight values; the window may be read a
+    // whole line of words at a time, up to the sixteen bytes one unit reads at once.
     let load = src.vector_tile();
+    let line_words = comptime!(load.values() / E2M1_PER_WORD);
     comptime!(assert!(
-        load.values() == 8,
+        load.values().is_multiple_of(E2M1_PER_WORD)
+            && LDMATRIX_ROW_WORDS.is_multiple_of(line_words),
         "MmaData::load_block_scaled: a register of the instruction is one stored word, eight \
-         `e2m1` values; this window is read {} values a load",
+         `e2m1` values, read out of lines of whole words up to sixteen bytes; this window is read \
+         {} values a load",
         load.values()
     ));
-    let words = src.nd_words::<Const<1>>(comptime!(Guard::Checked));
+    let size!(WP) = line_words;
+    let words = src.nd_words::<WP>(comptime!(Guard::Checked));
     let unit = UNIT_POS_PLANE;
-    // An `e2m1x2` holds two values.
-    let per_register = def.vector_size(ident);
-    let registers = def.vectors_per_lane(ident);
-    #[unroll]
-    for i in 0..registers {
-        let (row, col) = def.position_of_nth(unit, comptime!((i * per_register * 2) as u32), ident);
-        let (window_row, window_col) = if comptime!(transposed) {
-            (col, row)
-        } else {
-            (row, col)
-        };
-        let at = TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
-        let word = words.read(load.index(&at, &space));
-        values[i] = Vector::<e2m1x2, NV>::reinterpret(word.extract(0usize));
+    let offered = loads_words_as_matrix();
+    let shared = src.is_shared();
+    let gathered = src.gathered();
+    let method = comptime!(match offered && shared && !gathered {
+        true => io.load_method(ident),
+        false => LoadMethod::Manual,
+    });
+    match method {
+        LoadMethod::LoadMatrix => {
+            load_block_scaled_ldmatrix(src, &words, values, &def, ident, transposed, line_words);
+        }
+        LoadMethod::Manual => {
+            // An `e2m1x2` holds two values.
+            let per_register = def.vector_size(ident);
+            let registers = def.vectors_per_lane(ident);
+            #[unroll]
+            for i in 0..registers {
+                let (row, col) =
+                    def.position_of_nth(unit, comptime!((i * per_register * 2) as u32), ident);
+                let (window_row, window_col) = if comptime!(transposed) {
+                    (col, row)
+                } else {
+                    (row, col)
+                };
+                let at =
+                    TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
+                // The window's columns run along `k` whichever its layout.
+                let line = words.read(load.index(&at, &space));
+                let word =
+                    window_col / comptime!(E2M1_PER_WORD as u32) % comptime!(line_words as u32);
+                values[i] =
+                    Vector::<e2m1x2, NV>::reinterpret(line.extract_dynamic(word.cast::<usize>()));
+            }
+        }
     }
     // The row of `A` or the column of `B` this unit's scale register serves, its scales along
     // `k` one a block.
@@ -723,6 +761,82 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
         }
         scales[0] = register;
     }
+}
+
+/// The words of a block-scaled fragment in one `ldmatrix`: the instruction's registers lie as a
+/// 16-bit instruction's do, a register one 8×8 matrix of 16-bit cells, eight rows of four words
+/// along `k`, so unit `l` addresses row `l % 8` of matrix `l / 8` and the instruction hands each
+/// unit its register's word. The matrices lie where the registers do
+/// ([`MmaDefinition::position_of_nth`] of unit 0), so the rows a unit addresses are the rows the
+/// word-at-a-time load reads, sixteen bytes at a time, and no matrix is transposed: both
+/// operands' windows hold their words along `k`, as the registers run.
+///
+/// The address is the window's own arrangement of the row ([`Masked::line_slice`]), so a swizzled
+/// stage is read where its fill wrote it.
+#[cube]
+fn load_block_scaled_ldmatrix<T: Numeric, WP: Size, NV: Size>(
+    src: &Tile<T>,
+    words: &Masked<'_, Vector<u32, WP>, CoordsDyn>,
+    values: &mut Array<Vector<e2m1x2, NV>>,
+    def: &MmaDefinition<e2m1x2, e2m1x2, f32>,
+    #[comptime] ident: MatrixIdent,
+    #[comptime] transposed: bool,
+    #[comptime] line_words: usize,
+) {
+    let space = comptime!(src.place.space.clone());
+    let axes = comptime!(MatrixAxes::edges(&space));
+    let load = src.vector_tile();
+    let rank = comptime!(space.rank());
+    // An `e2m1x2` holds two values; a register is one word.
+    let per_register = def.vector_size(ident);
+    let registers = def.vectors_per_lane(ident);
+    let unit = UNIT_POS_PLANE;
+    let row_in_matrix = unit % 8;
+    let nth_matrix = unit / 8 % comptime!(registers as u32);
+    let (row, col) =
+        def.position_of_nth(0, nth_matrix * comptime!((per_register * 2) as u32), ident);
+    // The window's rows are the served axis whichever its layout, its words along `k`.
+    let (window_row, window_col) = if comptime!(transposed) {
+        (col + row_in_matrix, row)
+    } else {
+        (row + row_in_matrix, col)
+    };
+    let at = TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
+    // One row of a matrix: sixteen bytes along the window's innermost axis, in its lines.
+    let mut run = CoordsDyn::new();
+    #[unroll]
+    for p in 0..rank {
+        let extent = comptime!(match p == rank - 1 {
+            true => (LDMATRIX_ROW_WORDS / line_words) as u32,
+            false => 1u32,
+        });
+        run.push(extent.runtime());
+    }
+    let row_slice = words.line_slice(load.index(&at, &space), run);
+    let regs = def.load_matrix::<Vector<u32, WP>, Const<1>>(row_slice, ident, registers, false);
+    #[unroll]
+    for i in 0..registers {
+        values[i] = Vector::<e2m1x2, NV>::reinterpret(regs[i].extract(0usize));
+    }
+}
+
+/// Whether the device offers `ldmatrix`, which moves 16-bit cells: words of `e2m1` values move as
+/// pairs of them. Read off its properties at expansion.
+#[cube]
+fn loads_words_as_matrix() -> comptime_type!(bool) {
+    intrinsic!(|scope| {
+        scope
+            .state()
+            .device_properties
+            .as_ref()
+            .is_some_and(|properties| {
+                properties
+                    .features
+                    .matmul
+                    .ldmatrix
+                    .contains(&ElemType::Float(FloatKind::F16))
+            })
+    })
 }
 
 /// `acc += lhs · rhs` over two block-scaled operand fragments via

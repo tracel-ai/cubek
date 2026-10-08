@@ -5,11 +5,6 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// The byte alignment a TMA-filled stage's shared buffer must have: the span a 128-byte swizzle
-/// repeats over, which the engine keys off the address, so a stage's first row takes the first
-/// key as the fragment reading it does.
-pub(crate) const TMA_STAGE_ALIGNMENT: usize = 1024;
-
 /// Who a shared-memory stage belongs to: the whole cube, or each of its planes. It decides how
 /// many copies of the stage one cube holds, and which units fill each.
 ///
@@ -210,13 +205,18 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`smem`](Memory::smem) over the words a [`packed`](Packing::Packed) operand is stored in.
+    ///
+    /// The buffer starts on `alignment` bytes, never below one [`RowChunks::CHUNK_BYTES`] chunk: an
+    /// `ldmatrix` row address needs it, and a TMA box the descriptor's swizzle span.
     pub(crate) fn smem_packed(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
         #[comptime] packing: Packing,
+        #[comptime] alignment: usize,
     ) -> Tile<T> {
+        let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let word_bytes = u32::size().comptime();
         let form = comptime!(StageForm::dense(
             &space,
@@ -225,7 +225,8 @@ impl<T: Numeric> Memory<T> {
             LineBytes(packing.physical(vector_size) * word_bytes)
         ));
         let size!(WP) = comptime!(packing.physical(vector_size));
-        let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
+        let smem =
+            Shared::<[Vector<u32, WP>]>::new_aligned_slice(comptime!(form.cells()), alignment);
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         Memory::smem_over(
             space,
@@ -686,35 +687,35 @@ mod tests {
             chunks,
         };
         let stage = |k| Space::new(&[(M, 64), (K, k)]);
-        let f16 = 2;
+        let f16_bits = 16;
         for (k, mode) in [
             (16, TensorMapSwizzle::B32),
             (32, TensorMapSwizzle::B64),
             (64, TensorMapSwizzle::B128),
         ] {
             assert_eq!(
-                tiled(k, RowChunks::Swizzled).tma_swizzle(&stage(k), 1, f16),
+                tiled(k, RowChunks::Swizzled).tma_swizzle(&stage(k), 1, f16_bits),
                 Ok(mode)
             );
         }
         assert_eq!(
-            tiled(32, RowChunks::InOrder).tma_swizzle(&stage(32), 1, f16),
+            tiled(32, RowChunks::InOrder).tma_swizzle(&stage(32), 1, f16_bits),
             Ok(TensorMapSwizzle::None)
         );
         assert_eq!(
-            StageStorage::Strided.tma_swizzle(&stage(32), 8, f16),
+            StageStorage::Strided.tma_swizzle(&stage(32), 8, f16_bits),
             Ok(TensorMapSwizzle::None)
         );
         assert!(matches!(
-            tiled(16, RowChunks::Swizzled).tma_swizzle(&stage(32), 1, f16),
+            tiled(16, RowChunks::Swizzled).tma_swizzle(&stage(32), 1, f16_bits),
             Err(Refusal::BoxSplitsStageBlocks { axis: K, .. })
         ));
         assert!(matches!(
-            tiled(32, RowChunks::Padded).tma_swizzle(&stage(32), 1, f16),
+            tiled(32, RowChunks::Padded).tma_swizzle(&stage(32), 1, f16_bits),
             Err(Refusal::RowsNoDescriptorLands { .. })
         ));
         assert!(matches!(
-            tiled(128, RowChunks::Swizzled).tma_swizzle(&stage(128), 1, f16),
+            tiled(128, RowChunks::Swizzled).tma_swizzle(&stage(128), 1, f16_bits),
             Err(Refusal::RowsNoDescriptorLands { .. })
         ));
     }
@@ -728,7 +729,7 @@ mod tests {
             chunks: RowChunks::Swizzled,
         };
         assert_eq!(
-            storage.tma_swizzle(&Space::new(&[(M, 64), (K, 32)]), 1, 2),
+            storage.tma_swizzle(&Space::new(&[(M, 64), (K, 32)]), 1, 16),
             Err(Refusal::BoxSplitsStageBlocks {
                 axis: K,
                 rows: 4,

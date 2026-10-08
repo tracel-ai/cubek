@@ -81,8 +81,9 @@ impl<T: Numeric> Memory<T> {
         #[comptime] width: Option<usize>,
         #[comptime] owner: StageOwner,
     ) -> Tile<T> {
-        // Scaled or looked-up sources are decoded by the fill, so the stage holds served values.
-        let decodes = operand.scaled();
+        // Scaled or looked-up sources are decoded by the fill, so the stage holds served values,
+        // unless the stage keeps the scales beside them.
+        let decodes = operand.decodes();
         let stored = operand.stage_element();
         match comptime!(if decodes {
             StageElement::Served
@@ -114,7 +115,7 @@ impl<T: Numeric> Memory<T> {
                 // A TMA-filled stage's buffer must be TMA-aligned; TMA operands are always direct.
                 let delivery = operand.delivery();
                 let alignment = comptime!(match delivery.is_tma() {
-                    true => TMA_STAGE_ALIGNMENT,
+                    true => Delivery::TMA_STAGE_ALIGNMENT,
                     false => 0usize,
                 });
                 // A decoded stage is dense over the values' axes whatever the source's map.
@@ -150,12 +151,10 @@ impl<T: Numeric> Memory<T> {
         let space = comptime!(level.child(&operand.place.space));
         let vector_size = operand.vector_size();
         let units = operand.units();
-        match &operand.kind {
-            TileKind::Memory(g) => match comptime!(g.store.packing) {
-                Packing::Plain => Memory::smem(space, vector_size, storage, units),
-                packing => Memory::smem_packed(space, vector_size, storage, units, packing),
-            },
-            TileKind::TmaGmem(_) => Memory::smem(space, vector_size, storage, units),
+        // A box lands where the descriptor's swizzle span starts.
+        let (packing, alignment) = match &operand.kind {
+            TileKind::Memory(g) => comptime!((g.store.packing, 0usize)),
+            TileKind::TmaGmem(t) => comptime!((t.packing, Delivery::TMA_STAGE_ALIGNMENT)),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Memory::smem_stored: a fragment is not a stage source")
             }
@@ -164,6 +163,10 @@ impl<T: Numeric> Memory<T> {
                     "Memory::smem_stored: a procedural tile and the plane's units are not a stage source"
                 )
             }
+        };
+        match comptime!(packing) {
+            Packing::Plain => Memory::smem(space, vector_size, storage, units),
+            packing => Memory::smem_packed(space, vector_size, storage, units, packing, alignment),
         }
     }
 }
