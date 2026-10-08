@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use super::leaf::memory;
+use super::leaf::{Side, memory};
 use crate::tile::base::witnessed_space;
 use crate::*;
 
@@ -13,8 +13,8 @@ pub(crate) enum Descent {
     /// `acc` holds one fragment or block, or is a memory window: its instruction runs here.
     Here,
     /// `acc` is a grid of fragments and the level below steps the contraction: each of its regions
-    /// contracts in turn.
-    Steps,
+    /// contracts in turn, through the grid's instruction.
+    Steps(Instruction),
     /// `acc` is a grid of fragments and the level below only moves its cells: each operand's
     /// fragments load once in the instruction's form, then every cell contracts.
     Cells(Instruction),
@@ -36,7 +36,7 @@ impl Descent {
             .iter()
             .any(|&axis| operands.contains(axis) && !acc.space.contains(axis));
         match steps_contraction {
-            true => Descent::Steps,
+            true => Descent::Steps(instruction),
             false => Descent::Cells(instruction),
         }
     }
@@ -79,24 +79,32 @@ impl Descent {
         let descent = Self::of_tile::<E, Lhs, Rhs>(&grid, lhs, rhs);
         match comptime!(descent) {
             Descent::Here => Self::here::<E, Lhs, Rhs>(acc, lhs, rhs),
-            Descent::Steps => Self::steps::<E, Lhs, Rhs>(&grid, lhs, rhs),
+            Descent::Steps(instruction) => Self::steps::<E, Lhs, Rhs>(&grid, lhs, rhs, instruction),
             Descent::Cells(instruction) => Self::cells::<E, Lhs, Rhs>(&grid, lhs, rhs, instruction),
         }
     }
 
     /// [`Descent::Steps`]: each region of the level below, walked over the whole contraction's box
     /// (`acc`'s alone lacks the contracted axes).
+    ///
+    /// A factor the tensor cores read through a landing, scaled or packed, lands once for every
+    /// step, a whole load at a time: a step of the instruction may be narrower than one of its
+    /// loads, and its scales are read once for the box rather than once a step.
     fn steps<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
         acc: &Tile<E>,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
+        #[comptime] instruction: Instruction,
     ) {
+        let out = comptime!(acc.place.space.clone());
+        let lhs = lhs.landed_for(comptime!(Side::Lhs), comptime!(out.clone()), instruction);
+        let rhs = rhs.landed_for(comptime!(Side::Rhs), out, instruction);
         let operands = comptime!(Space::merge(&[
             &acc.place.space,
             &lhs.place.space,
             &rhs.place.space
         ]));
-        let space = witnessed_space(operands, acc, lhs, rhs);
+        let space = witnessed_space(operands, acc, &lhs, &rhs);
         let walk = Region::rooted(
             &space,
             comptime!(acc.place.levels.clone()),
@@ -204,6 +212,9 @@ mod tests {
         let below = Levels::leaf(&[(M, 8), (N, 8), (K, 8)])
             .walk(&[(M, 2), (N, 2), (K, 2)])
             .level();
-        assert_eq!(descent(Some(Instruction::Cmma), below), Descent::Steps);
+        assert_eq!(
+            descent(Some(Instruction::Cmma), below),
+            Descent::Steps(Instruction::Cmma)
+        );
     }
 }

@@ -19,8 +19,6 @@ pub(crate) struct FactorLevel {
     pub(crate) space: Space,
     /// How the scales address their buffer.
     pub(crate) projection: Projection,
-    /// Whether reaching this scale is a plane shuffle, which the whole plane takes part in.
-    pub(crate) by_shuffle: bool,
     /// Whether the scale tile holds words rather than scales: each `u32` the `e4m3` scales of
     /// the four blocks one block-scaled instruction step covers, the first block's in the low
     /// byte, as an NVFP4 checkpoint packs them. Only that instruction reads such a level
@@ -133,7 +131,6 @@ impl FactorExpand {
             levels: vec![FactorLevel {
                 space: scale.place.space.clone(),
                 projection: scale.clone().__expand_projection_method(scope),
-                by_shuffle: scale.clone().__expand_by_shuffle_method(scope),
                 words: S::elem_type(scope) == u32::elem_type(scope),
                 read: Arc::new(scale.clone()),
             }],
@@ -155,11 +152,6 @@ impl FactorExpand {
     /// Whether these values carry any scales at all.
     pub(crate) fn scaled(&self) -> bool {
         !self.levels.is_empty()
-    }
-
-    /// Whether any level is reached by a plane shuffle, which the whole plane takes part in.
-    pub(crate) fn by_shuffle(&self) -> bool {
-        self.levels.iter().any(|level| level.by_shuffle)
     }
 
     /// This factor's innermost level alone.
@@ -190,7 +182,6 @@ impl FactorExpand {
                     read: level.read.at_step(scope, step),
                     space: level.space.clone(),
                     projection: level.projection.clone(),
-                    by_shuffle: level.by_shuffle,
                     words: level.words,
                 })
                 .collect(),
@@ -270,13 +261,6 @@ pub(crate) struct FactorReader {
     pub(crate) matrix: usize,
 }
 
-impl FactorReader {
-    /// Whether a scale read is a plane shuffle; a reader keeps its units converged around one.
-    pub(crate) fn by_shuffle(&self) -> bool {
-        unexpanded!()
-    }
-}
-
 #[cube]
 impl FactorReader {
     /// `value`, the line at `pos` of the values' matrix, under the scale covering it.
@@ -309,7 +293,12 @@ impl FactorReader {
     ) -> Vector<E, V> {
         if comptime!(self.scaled) {
             let scale = self.inner.at_coords(coords, comptime!(self.values.clone()));
-            value * Vector::<E, V>::cast_from(scale * self.coarse)
+            // Multiplied in `f32`, rounded to `E` once: a placed `e2m1` value is a lift short, which
+            // the factor carries, and the lift times a scale is past a half's range where its
+            // product with the value is not.
+            let scaled = Vector::<f32, V>::cast_from(value)
+                * Vector::<f32, V>::cast_from(scale * self.coarse);
+            Vector::<E, V>::cast_from(scaled)
         } else {
             value
         }
@@ -320,12 +309,6 @@ impl FactorExpand {
     pub(crate) fn __expand_varies_along_method(&self, _scope: &Scope, axis: Axis) -> bool {
         self.inner()
             .is_some_and(|level| level.projection.addresses(axis))
-    }
-}
-
-impl FactorReaderExpand {
-    pub(crate) fn __expand_by_shuffle_method(&self, _scope: &Scope) -> bool {
-        self.inner.by_shuffle()
     }
 }
 

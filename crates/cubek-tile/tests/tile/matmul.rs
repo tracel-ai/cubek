@@ -25,18 +25,24 @@ use super::{Form, implied, uncut};
 /// advertise, so *some* config is not enough; returns `false` (after enforcing a skip) if absent.
 pub(crate) fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
+    require_cmma_8x8x8(client, f32_ty, f32_ty)
+}
+
+/// Whether the device runs an 8x8x8 cmma fragment over `operands`, summing in `sum`; a skip where
+/// it does not.
+pub(crate) fn require_cmma_8x8x8(client: &Client, operands: ElemType, sum: ElemType) -> bool {
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
-        cfg.a_type == f32_ty
-            && cfg.b_type == f32_ty
-            && cfg.cd_type == f32_ty
+        cfg.a_type == operands
+            && cfg.b_type == operands
+            && cfg.cd_type == sum
             && cfg.m == 8
             && cfg.n == 8
             && cfg.k == 8
     });
     if !supported {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "device has no 8x8x8 f32 cmma (tensor-core) fragment support".to_string(),
-        ))
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device has no 8x8x8 cmma (tensor-core) fragment over {operands:?} summing in {sum:?}"
+        )))
         .enforce();
     }
     supported

@@ -136,6 +136,23 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
+    /// This factor as `instruction` reads it over its whole window: in its plane's landing where
+    /// the tensor cores read it through one, scaled or packed, and as it is otherwise.
+    pub(crate) fn landed_for(
+        &self,
+        #[comptime] side: Side,
+        #[comptime] out: Space,
+        #[comptime] instruction: Instruction,
+    ) -> Tile<E> {
+        let scaled = self.scaled();
+        let packing = self.packing();
+        if comptime!(instruction == Instruction::Cmma && (scaled || packing != Packing::Plain)) {
+            self.landed(side, out)
+        } else {
+            self.clone()
+        }
+    }
+
     /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
     /// that fragments load from.
     pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
@@ -145,9 +162,13 @@ impl<E: Numeric> Tile<E> {
         let (stage, mut window) = Memory::<E>::landing(comptime!(space.clone()), units, planes);
         let landing = Tile::new(stage.kind, comptime!(self.place.clone()));
 
-        let vw = self.vector_size();
-        let size!(VW) = vw;
-        let view = self.nd_packed::<VW>(comptime!(Guard::Checked));
+        // A load is read whole, a tile of several axes included, and landed a run of its finest
+        // axis at a time, each run under the scale at its own coordinates.
+        let load = self.vector_tile();
+        let (sw, (finest, run)) = comptime!((load.values(), load.extents()[0]));
+        let size!(SW) = sw;
+        let size!(RUN) = run;
+        let view = self.nd_packed::<SW>(comptime!(Guard::Checked));
         let acc_axes = comptime!(accumulator_axes(side, &out, &space));
         let scales = self.reader(
             comptime!(MatrixAxes::trailing(&space)),
@@ -156,38 +177,40 @@ impl<E: Numeric> Tile<E> {
             comptime!(out.clone()),
             acc_axes,
         );
-        let load = self.vector_tile();
         let lines = load.count(&space);
+        let rank = comptime!(space.rank());
         let strides = comptime!(dense_strides(&space));
-        let by_shuffle = scales.by_shuffle();
-        if comptime!(by_shuffle) {
-            // The whole plane must join every shuffle; units past the lines reread the last one and
-            // write nothing.
-            #[allow(clippy::manual_div_ceil)]
-            let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
-            for turn in 0..turns {
-                let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
-                let line = min(mine, lines - 1);
-                let coords = load.start(line, &space);
-                let landed =
-                    scales.apply_at::<E, VW>(view.read(load.index(&coords, &space)), &coords);
-                if mine < lines {
-                    let base = offset_of(&coords, comptime!(strides.clone()));
-                    #[unroll]
-                    for j in 0..vw {
-                        window[base + j] = landed.extract(j);
-                    }
-                }
-            }
-        } else {
-            for line in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
-                let coords = load.start(line, &space);
-                let landed =
-                    scales.apply_at::<E, VW>(view.read(load.index(&coords, &space)), &coords);
-                let base = offset_of(&coords, comptime!(strides.clone()));
+        let run_stride = comptime!(strides[space.position(finest)]);
+        // Every unit joins every turn, so a scale read by shuffle has the whole plane; units past
+        // the lines reread the last one and write nothing.
+        #[allow(clippy::manual_div_ceil)]
+        let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
+        for turn in 0..turns {
+            let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
+            let start = load.start(min(mine, lines - 1), &space);
+            let held = view.read(load.index(&start, &space));
+            #[unroll]
+            for r in 0..comptime!(sw / run) {
+                let offset = comptime!(r * run);
+                let mut at = Coords::<u32>::new();
                 #[unroll]
-                for j in 0..vw {
-                    window[base + j] = landed.extract(j);
+                for p in 0..rank {
+                    at.push(
+                        start.at(p) + comptime!(load.offset_along(offset, space.axis_at(p)) as u32),
+                    );
+                }
+                let mut values = Vector::<E, RUN>::empty();
+                #[unroll]
+                for v in 0..run {
+                    values.insert(v, held.extract(offset + v));
+                }
+                let landed = scales.apply_at::<E, RUN>(values, &at);
+                if mine < lines {
+                    let base = offset_of(&at, comptime!(strides.clone()));
+                    #[unroll]
+                    for v in 0..run {
+                        window[base + v * run_stride] = landed.extract(v);
+                    }
                 }
             }
         }

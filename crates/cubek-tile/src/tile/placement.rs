@@ -54,10 +54,4 @@ impl Placement {
             self.levels.clone(),
         )
     }
-
-    /// The same box at `depth` in its nest.
-    pub(crate) fn at_depth(mut self, depth: usize) -> Placement {
-        self.depth = depth;
-        self
-    }
 }
