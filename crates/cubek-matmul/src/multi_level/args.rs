@@ -549,3 +549,133 @@ impl<Config: RuntimeConfig> MatmulArgs for TensorMapArgs<Config> {
         state.2.clone()
     }
 }
+
+#[derive(Clone)]
+/// Type implementing [MatmulArgs] where the inputs and the output are tensor maps, so that the
+/// output is written by TMA stores.
+pub struct TensorMapStoreArgs<Config: RuntimeConfig = ()> {
+    _config: PhantomData<Config>,
+}
+
+#[derive(CubeType, CubeLaunch, Clone)]
+#[expand(derive(Clone))]
+/// Output representation for [TensorMapStoreArgs]: a tensor map whose box is one tile.
+pub struct TensorMapOutput<EG: CubePrimitive> {
+    view: ViewMut<'static, EG, BatchedCoords>,
+}
+
+impl<EG: CubePrimitive, A: BatchMatmulRoutine<()>> ConcreteOutputFactory<A>
+    for TensorMapOutput<EG>
+{
+    fn create(
+        out: TensorBinding,
+        blueprint: &A::Blueprint,
+        problem: &MatmulProblem,
+        _vector_sizes: &MatmulVectorSizes,
+        dtypes: &MatmulElems,
+    ) -> Self::RuntimeArg {
+        let tile_size = blueprint.tiling_scheme().tile_size;
+        let rank = out.shape.len();
+        let dims = (
+            problem.out_batches.iter().product::<usize>(),
+            out.shape[rank - 2] as u32,
+            out.shape[rank - 1] as u32,
+        );
+        let (out, transposed) = tma_operand(
+            out,
+            dims.0,
+            MatrixLayout::RowMajor,
+            (tile_size.m as usize, tile_size.n as usize),
+            dtypes.acc_global,
+            TensorMapSwizzle::None,
+        );
+        let layout = SimpleTmaGlobalLayoutLaunch::new(transposed, dims);
+        TensorMapOutputLaunch::new(ViewArg::new_tensor_map_tiled::<SimpleTmaGlobalLayout>(
+            out, layout,
+        ))
+    }
+}
+
+#[cube]
+impl<Config: RuntimeConfig> MatmulArgs for TensorMapStoreArgs<Config> {
+    type Input<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> =
+        TensorMapInputs<Lhs, Rhs, EO>;
+    type Output<EO: CubePrimitive> = TensorMapOutput<EO>;
+    type Config = Config;
+    type State<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive> =
+        (TensorMapInputs<Lhs, Rhs, EO>, TensorMapOutput<EO>, Config);
+
+    fn init_state<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        input: &Self::Input<Lhs, Rhs, EO>,
+        output: &mut Self::Output<EO>,
+        config: Self::Config,
+        #[comptime] _lhs_layout_config: GlobalLayoutConfig,
+        #[comptime] _rhs_layout_config: GlobalLayoutConfig,
+        #[comptime] _out_layout_config: GlobalLayoutConfig,
+    ) -> Self::State<Lhs, Rhs, EO> {
+        (input.clone(), output.clone(), config)
+    }
+
+    fn view_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> View<'_, Lhs, BatchedCoords> {
+        state.0.lhs
+    }
+
+    fn batch_lhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        _state: &Self::State<Lhs, Rhs, EO>,
+        batch: usize,
+    ) -> usize {
+        batch
+    }
+
+    fn view_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> View<'_, Rhs, BatchedCoords> {
+        state.0.rhs
+    }
+
+    fn batch_rhs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        _state: &Self::State<Lhs, Rhs, EO>,
+        batch: usize,
+    ) -> usize {
+        batch
+    }
+
+    fn view_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> ComptimeOption<View<'_, EO, BatchedCoords>> {
+        state.0.acc.map(|view| view) // Lifetime coercion hack
+    }
+
+    fn batch_acc<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        state: &Self::State<Lhs, Rhs, EO>,
+        batch: usize,
+    ) -> usize {
+        #[comptime]
+        match &state.0.acc_batch {
+            ComptimeOption::Some(layout) => layout.to_source_pos(batch),
+            ComptimeOption::None => batch,
+        }
+    }
+
+    fn view_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> ViewMut<'_, EO, BatchedCoords> {
+        state.1.view
+    }
+
+    fn batch_out<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        _state: &Self::State<Lhs, Rhs, EO>,
+        batch: usize,
+    ) -> usize {
+        // The output is never broadcast: its batches are the problem's.
+        batch
+    }
+
+    fn runtime_config<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive>(
+        state: &Self::State<Lhs, Rhs, EO>,
+    ) -> Self::Config {
+        state.2.clone()
+    }
+}
