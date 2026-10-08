@@ -26,7 +26,8 @@ use crate::*;
 /// they add, as an online softmax's are, reads and rescales what the turns before it left
 /// ([`carried`](Relay::carried)) in its turn, then drains as any other. The relay publishes a turn's lines at device scope before passing the
 /// box on and acquires them after taking it, so it runs only where the runtime hands one cube's
-/// writes to another within a dispatch (`device_memory_scope`). A waiting cube holds its place on
+/// writes to another within a dispatch (`device_memory_scope`), and reads its turn with a `u32`
+/// atomic add, which every GPU runtime offers. A waiting cube holds its place on
 /// the device: the relay rests on a box's earlier runs having started by the time a later one
 /// waits, which a grid whose runs are neighbours gives.
 #[derive(CubeType)]
@@ -113,7 +114,8 @@ impl<'a, E: Numeric> Relay<'a, E> {
     ///
     /// The counter is read with `fetch_add(0)`. On Metal, an atomic load spinning on the counter
     /// can keep returning the value it first read long after the previous turn's store has
-    /// landed, and the cube then never leaves the loop.
+    /// landed, and the cube then never leaves the loop. A plain `load` serves once the Metal
+    /// backend's atomic load reads the counter coherently on every spin.
     pub fn take(&self) {
         if UNIT_POS == 0 {
             loop {
