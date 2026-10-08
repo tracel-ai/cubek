@@ -39,9 +39,7 @@ impl<A: Numeric> MmaData<A> {
                     // Read each window in its stored order (`{n, k}` reads transposed).
                     let (lhs_layout, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let lhs_scaled = block_scales_here(lhs, m, n, k);
-                    let rhs_scaled = block_scales_here(rhs, m, n, k);
-                    let block_scaled = comptime!(lhs_scaled && rhs_scaled);
+                    let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
                     let mut la = MmaData::<L>::operand(
                         MatrixIdent::A,
                         m,

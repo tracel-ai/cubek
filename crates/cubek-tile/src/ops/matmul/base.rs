@@ -111,9 +111,7 @@ impl<E: Numeric> PlaneTile<E> {
                 // The manual-mma instruction reads registers, where a scaled factor cannot land,
                 // unless the device's block-scaled instruction takes the scales beside the values.
                 let (m, n, k) = comptime!((d.m, d.n, d.k));
-                let lhs_scaled = block_scales_here(lhs, m, n, k);
-                let rhs_scaled = block_scales_here(rhs, m, n, k);
-                let block_scaled = comptime!(lhs_scaled && rhs_scaled);
+                let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
                 if comptime!(!block_scaled) {
                     lhs.refuse_factor("PlaneTile::Mma");
                     rhs.refuse_factor("PlaneTile::Mma");

@@ -591,6 +591,21 @@ pub(crate) fn block_scales_here<T: Numeric>(
     comptime!(e2m1 && shared && one_level == 1 && blocks && offered)
 }
 
+/// Whether both `lhs` and `rhs` contract through the device's block-scaled instruction of
+/// `m × n × k` ([`block_scales_here`]): the instruction takes both or neither.
+#[cube]
+pub(crate) fn contracts_block_scaled<L: Numeric, R: Numeric>(
+    lhs: &Tile<L>,
+    rhs: &Tile<R>,
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] k: usize,
+) -> comptime_type!(bool) {
+    let lhs_scaled = block_scales_here(lhs, m, n, k);
+    let rhs_scaled = block_scales_here(rhs, m, n, k);
+    comptime!(lhs_scaled && rhs_scaled)
+}
+
 /// Whether the device offers the block-scaled instruction of `m × n × k` over `e2m1` operands
 /// under `e4m3` scales, read off its properties at expansion.
 #[cube]
@@ -683,8 +698,8 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
     // `k` one a block.
     let served = def.scales_index(unit, ident);
     let factor = src.innermost_factor();
-    let words = factor.holds_words();
-    if comptime!(words) {
+    let packed_scales = factor.holds_words();
+    if comptime!(packed_scales) {
         // The step's four scales as the operand stores them: one word, the register itself.
         comptime!(assert!(
             k / E2M1_SCALE_BLOCK == 4,
@@ -701,7 +716,8 @@ fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
             // The window's rows are the served axis whichever its layout: an `A`'s rows, a
             // `B`'s columns lying col-major.
             let along_k = comptime!((b * E2M1_SCALE_BLOCK) as u32);
-            let at = TileMatrix::value_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
+            let at =
+                TileMatrix::value_coords(served, along_k.runtime(), 0usize, &space, axes, 1usize);
             let scale = factor.at_coords(&at, comptime!(space.clone()));
             register.insert(b, e4m3::cast_from(scale));
         }
