@@ -216,6 +216,16 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether a stage of this operand holds values its fill decodes rather than copies: values
+    /// that carry scales, or packed fields staged as the values they serve
+    /// ([`Memory::stage_element`]).
+    pub(crate) fn decodes_into_stage(&self) -> comptime_type!(bool) {
+        let scaled = self.scaled();
+        let packing = self.packing();
+        let element = self.stage_element();
+        comptime!(scaled || (packing != Packing::Plain && element == StageElement::Served))
+    }
+
     /// How this tile's values sit in memory; see [`Memory::packing`].
     pub(crate) fn packing(&self) -> comptime_type!(Packing) {
         match &self.kind {

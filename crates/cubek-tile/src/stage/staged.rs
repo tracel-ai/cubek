@@ -81,8 +81,9 @@ impl<T: Numeric> Memory<T> {
         #[comptime] width: Option<usize>,
         #[comptime] owner: StageOwner,
     ) -> Tile<T> {
-        // Scaled or looked-up sources are decoded by the fill, so the stage holds served values.
-        let decodes = operand.scaled();
+        // Scaled or looked-up sources, and packed fields staged as values, are decoded by the
+        // fill, so the stage holds served values.
+        let decodes = operand.decodes_into_stage();
         let stored = operand.stage_element();
         match comptime!(if decodes {
             StageElement::Served
