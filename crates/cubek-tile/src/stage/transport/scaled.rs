@@ -73,7 +73,12 @@ impl<T: Numeric> Tile<T> {
                 }
                 let values = values_at::<T, I, WP, VW>(held, offset, packing);
                 let scale = mem.factor.at_coords(&at, comptime!(space.clone()));
-                let decoded = mem.codebook.entries(values) * Vector::<T, VW>::cast_from(scale);
+                // Multiplied in `f32`, rounded to `T` once: a placed `e2m1` value is a lift short,
+                // which the scale carries, and the lift times a scale is past a half's range where
+                // its product with the value is not.
+                let scaled = Vector::<f32, VW>::cast_from(mem.codebook.entries(values))
+                    * Vector::<f32, VW>::cast_from(scale);
+                let decoded = Vector::<T, VW>::cast_from(scaled);
                 out.write(lands.index(&to, &dst), decoded);
             }
         }
