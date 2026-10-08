@@ -2401,8 +2401,136 @@ fn check_stepped(scales: TileScales) {
     w.check(&client, c, &format!("stepped {scales:?}"));
 }
 
-/// [`stepped_scaled_matmul`] with each cube staging the activation and the weight's words a
-/// block at a time, its planes landing their window of the staged words scaled, summing in `A`.
+/// How a decoded copy reaches its output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum CopiedThrough {
+    /// Straight from the weight.
+    Directly,
+    /// Straight from the weight, a block of `K` at a time.
+    ABlockAtATime,
+    /// Through a stage the copy fills a block of `K` at a time, each stage copied out as it lies.
+    AStage,
+}
+
+/// A tile-ordered weight copied decoded: its words under their scales, into a dense output over
+/// the weight's own axes, one cube a tile column, reaching it as `through` says.
+#[cube(launch)]
+fn decoded_tile_order_copy<E: Numeric, S: Numeric, SS: Numeric>(
+    b: &TileArg<'_, u32, Const<2>>,
+    scale: &TileArg<'_, SS, Const<1>>,
+    out: &TileArg<'_, E, Const<16>>,
+    space: Partitioning,
+    #[comptime] through: CopiedThrough,
+    #[define(E, S, SS)] _dtypes: [ElemType; 3],
+) {
+    let b = b.tile_as::<E>(comptime!(space.clone()));
+    let scale = scale.tile_as::<S>(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for cube in space {
+        let decoded = b.at(&cube).mul(&scale.at(&cube));
+        let mut out_cube = out.at(&cube);
+        match comptime!(through) {
+            CopiedThrough::Directly => out_cube.copy_from(&decoded),
+            CopiedThrough::ABlockAtATime => {
+                for block in cube.walk() {
+                    let mut out_block = out_cube.at(&block);
+                    out_block.copy_from(&decoded.at(&block));
+                }
+            }
+            CopiedThrough::AStage => {
+                let run = cube.walk();
+                let mut stages = Stages::smem_single(&run, &decoded, StageStorage::Strided, 1usize);
+                stages.pipelined(run, |slot, stage| {
+                    let mut out_stage = out_cube.at(stage);
+                    slot.consume(|b_stage| {
+                        out_stage.copy_from(b_stage);
+                    });
+                });
+            }
+        }
+    }
+}
+
+/// **A tile-ordered weight copies decoded.** Every value lands as its `e2m1` code times its
+/// column's scale, at its own coordinates: what a stage filled from the scaled weight holds.
+#[test]
+fn a_tile_ordered_weight_copies_decoded() {
+    check_decoded_tile_order_copy(CopiedThrough::Directly);
+}
+
+#[test]
+fn a_tile_ordered_weight_copies_decoded_a_block_at_a_time() {
+    check_decoded_tile_order_copy(CopiedThrough::ABlockAtATime);
+}
+
+/// The same through a stage filled a block at a time: the stage holds what the copy decoded.
+#[test]
+fn a_tile_ordered_weight_copies_decoded_through_a_stage() {
+    check_decoded_tile_order_copy(CopiedThrough::AStage);
+}
+
+fn check_decoded_tile_order_copy(through: CopiedThrough) {
+    let w = TileOrdered::new(1, 2, 4);
+    let client = cubecl::test_device().client();
+    let dtype = f32::elem_type_native();
+    let space = Space::new(&[(NB, w.n_tiles), (KB, w.k_tiles), (NI, w.tile), (KI, w.tile)]);
+    let levels = Levels::leaf(&[(KB, 1), (NI, w.tile), (KI, w.tile)])
+        .walk_every(&[KB])
+        .cubes(&[NB])
+        .build();
+    let launcher = implied(&client, Partitioning::new(space, levels), Form::Static);
+    let shape = shape![w.n_tiles, w.k_tiles, w.tile, w.tile];
+    let out = TestInput::builder(client.clone(), shape)
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    let (s_op, stored) = w.s_op(&client, &launcher, TileScales::Ue4m3);
+    decoded_tile_order_copy::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        w.b_op(&client, &launcher, Some(w.tile)).arg(),
+        s_op.arg(),
+        launcher
+            .arg(out.clone().binding())
+            .axes(&[NB, KB, NI, KI])
+            .vectorize(w.tile)
+            .build()
+            .unwrap()
+            .arg(),
+        launcher.partitioning_arg(),
+        through,
+        [dtype, dtype, stored],
+    );
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    for nb in 0..w.n_tiles {
+        for kb in 0..w.k_tiles {
+            for ni in 0..w.tile {
+                for ki in 0..w.tile {
+                    let want = e2m1::from_bits(w.code(nb, kb, ni, ki) as u8).to_f32()
+                        * w.scale_at(nb, kb, ni);
+                    let have = got.get_f32(&[nb, kb, ni, ki]);
+                    assert_eq!(
+                        have, want,
+                        "{through:?} decoded at ({nb}, {kb}, {ni}, {ki})"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Where a staged weight's words are unpacked under their scales.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Unpacked {
+    /// Each plane lands its window of the staged words, scaled.
+    ByEachPlane,
+    /// The copy filling the stage decodes the words, and the planes read the decoded stage.
+    ByTheFill,
+}
+
+/// [`stepped_scaled_matmul`] with each cube staging the activation and the weight a block at a
+/// time, the weight unpacked where `unpacked` says, summing in `A`.
 #[cube(launch)]
 fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>(
     a: &TileArg<'_, E, Const<8>>,
@@ -2410,6 +2538,7 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>
     scale: &TileArg<'_, SS, Const<1>>,
     c: &TileArg<'_, A, Const<1>>,
     space: Partitioning,
+    #[comptime] unpacked: Unpacked,
     #[define(E, A, S, SS)] _dtypes: [ElemType; 4],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -2422,17 +2551,22 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>
         let sum =
             c_cube.accumulator::<A, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD);
         let run = cube.walk();
-        let mut stages = Stages::smem(&run, &a_cube, &b_cube, StageStorage::Strided, 1usize);
+        let staged = match comptime!(unpacked) {
+            Unpacked::ByEachPlane => b_cube.clone(),
+            Unpacked::ByTheFill => b_cube.mul(&scale_cube),
+        };
+        let mut stages = Stages::smem(&run, &a_cube, &staged, StageStorage::Strided, 1usize);
         stages.walk(run, Prefetch::InSlots, |slot, stage| {
             let sum_stage = sum.at(stage);
             let scale_stage = scale_cube.at(stage);
             slot.consume(|a_stage, b_stage| {
                 for plane in stage {
                     let mut sum_plane = sum_stage.at(&plane);
-                    sum_plane.mma(
-                        &a_stage.at(&plane),
-                        &b_stage.at(&plane).mul(&scale_stage.at(&plane)),
-                    );
+                    let b_plane = match comptime!(unpacked) {
+                        Unpacked::ByEachPlane => b_stage.at(&plane).mul(&scale_stage.at(&plane)),
+                        Unpacked::ByTheFill => b_stage.at(&plane),
+                    };
+                    sum_plane.mma(&a_stage.at(&plane), &b_plane);
                 }
             });
         });
@@ -2460,7 +2594,7 @@ impl PlaneGrid {
 /// the landing, summing in `f32`. The cube's planes split its rows and its columns as `planes`
 /// says: planes on the same columns land the same window of the weight, each in a landing of its
 /// own, and planes on the same rows read the same window of the activation.
-fn check_staged_stepped(scales: TileScales, elem: ElemType, planes: PlaneGrid) {
+fn check_staged_stepped(scales: TileScales, elem: ElemType, planes: PlaneGrid, unpacked: Unpacked) {
     let (plane_rows, n_tiles, k_tiles, fragment) = (16, 2, 4, 8);
     let rows = plane_rows * planes.rows;
     let w = TileOrdered::new(rows, n_tiles, k_tiles);
@@ -2498,19 +2632,34 @@ fn check_staged_stepped(scales: TileScales, elem: ElemType, planes: PlaneGrid) {
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
+        unpacked,
         [elem, dtype, dtype, stored],
     );
-    w.check(&client, c, &format!("staged stepped {scales:?} {elem:?}"));
+    w.check(
+        &client,
+        c,
+        &format!("staged stepped {scales:?} {elem:?} {unpacked:?}"),
+    );
 }
 
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time() {
-    check_staged_stepped(TileScales::F32, f32::elem_type_native(), PlaneGrid::ONE);
+    check_staged_stepped(
+        TileScales::F32,
+        f32::elem_type_native(),
+        PlaneGrid::ONE,
+        Unpacked::ByEachPlane,
+    );
 }
 
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_under_byte_scales() {
-    check_staged_stepped(TileScales::Ue4m3, f32::elem_type_native(), PlaneGrid::ONE);
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f32::elem_type_native(),
+        PlaneGrid::ONE,
+        Unpacked::ByEachPlane,
+    );
 }
 
 /// The same in halves: a half lands an `e2m1` code a lift short of its value, and the lift times
@@ -2518,7 +2667,12 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_under_byte_s
 /// writes.
 #[test]
 fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_in_halves() {
-    check_staged_stepped(TileScales::Ue4m3, f16::elem_type_native(), PlaneGrid::ONE);
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f16::elem_type_native(),
+        PlaneGrid::ONE,
+        Unpacked::ByEachPlane,
+    );
 }
 
 /// The same with two planes splitting the rows: both land the same window of the weight, each
@@ -2532,6 +2686,7 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_for_every_pl
             rows: 2,
             columns: 1,
         },
+        Unpacked::ByEachPlane,
     );
 }
 
@@ -2546,6 +2701,33 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_a_window_a_p
             rows: 1,
             columns: 2,
         },
+        Unpacked::ByEachPlane,
+    );
+}
+
+/// The same weight decoded by the copy filling each stage instead: the stage holds the weight's
+/// values under their scales, and the planes contract the decoded stage as they would a float one.
+#[test]
+fn a_tile_ordered_weight_decoded_by_the_stage_fill_contracts_as_its_values() {
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f16::elem_type_native(),
+        PlaneGrid::ONE,
+        Unpacked::ByTheFill,
+    );
+}
+
+/// The same with two planes splitting the rows, both reading the one stage the cube decoded.
+#[test]
+fn a_tile_ordered_weight_decoded_by_the_stage_fill_serves_every_plane_sharing_it() {
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f16::elem_type_native(),
+        PlaneGrid {
+            rows: 2,
+            columns: 1,
+        },
+        Unpacked::ByTheFill,
     );
 }
 
