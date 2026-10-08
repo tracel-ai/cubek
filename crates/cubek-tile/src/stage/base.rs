@@ -54,9 +54,9 @@ impl StageStorage {
     /// # Errors
     ///
     /// Blocks splitting a row, which a box lands whole; blocks stacking a number of rows the
-    /// swizzle's [`ROWS_PER_PERIOD`](ChunkSwizzle::ROWS_PER_PERIOD) does not divide, whose rows a
-    /// box keys off their place in the stage rather than in the block; rows the engine does not
-    /// land ([`RowArrangement::tma_swizzle`]).
+    /// swizzle's period of rows does not divide, whose rows a box keys off their place in the
+    /// stage rather than in the block; padded rows, which a box lands dense, and swizzled rows
+    /// longer than a descriptor swizzle spans.
     pub fn tma_swizzle(
         &self,
         space: &Space,
