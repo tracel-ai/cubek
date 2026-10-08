@@ -257,7 +257,11 @@ impl<Acc: Numeric> Tile<Acc> {
     /// stores whole or bounces.
     fn casts_in_place_to<Out: Numeric>(&self) -> comptime_type!(bool) {
         match &self.kind {
-            TileKind::PlanePartition(_) | TileKind::PlaneTile(_) => {
+            // The fragment's own edges: the placement's space spans every plane's grid.
+            TileKind::PlanePartition(p) => {
+                casts_in_place::<Acc, Out>(comptime!(p.rows), comptime!(p.cols))
+            }
+            TileKind::PlaneTile(_) => {
                 let (_, m, n) = self.fragment_grid();
                 casts_in_place::<Acc, Out>(m, n)
             }
