@@ -5,10 +5,9 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// The byte alignment a TMA-filled stage's shared buffer must have: the span a 128-byte swizzle
-/// repeats over, which the engine keys off the address, so a stage's first row takes the first
-/// key as the fragment reading it does.
-pub(crate) const TMA_STAGE_ALIGNMENT: usize = 1024;
+/// The byte alignment a TMA-filled stage's shared buffer must have
+/// ([`Delivery::TMA_STAGE_ALIGNMENT`]).
+pub(crate) const TMA_STAGE_ALIGNMENT: usize = Delivery::TMA_STAGE_ALIGNMENT;
 
 /// Who a shared-memory stage belongs to: the whole cube, or each of its planes. It decides how
 /// many copies of the stage one cube holds, and which units fill each.
