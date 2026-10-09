@@ -9,7 +9,9 @@ use cubecl::{
 use crate::tile::slices::AxisSlicesKind;
 use crate::*;
 
-/// One plane-level tile, by encoding ([`Instruction`]).
+/// One plane-level tile, by encoding ([`Instruction`]). A warpgroup MMA's is a plane group's
+/// rather than one plane's: the group's planes hold it between them, as one plane's units hold a
+/// fragment.
 #[expect(
     dead_code,
     reason = "built through the expand type's generated constructors"
@@ -64,7 +66,7 @@ impl<T: Numeric> PlaneTile<T> {
             Instruction::Registers { config } => PlaneTile::new_Registers(
                 RegisterData::<T>::alloc(m, n, axes, vector_size, fold, config, accumulation),
             ),
-            Instruction::Wgmma => PlaneTile::new_Wgmma(WgmmaData::<T>::new(m, n)),
+            Instruction::Wgmma => PlaneTile::new_Wgmma(WgmmaData::<T>::new(m, n, axes)),
         }
     }
 
@@ -153,6 +155,20 @@ impl<T: Numeric> PlaneTile<T> {
             PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::add_from_scratch: only a cmma tile bounces through a scratch")
             }
+        }
+    }
+
+    /// Commit the warpgroup MMAs this tile issued since its last commit, and return their
+    /// completion. Only a warpgroup accumulator contracts asynchronously.
+    pub(crate) fn commit(&self) -> Pending<()> {
+        match self {
+            PlaneTile::Wgmma(d) => {
+                let mut d = d.clone();
+                d.commit()
+            }
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Registers(_) => panic!(
+                "Tile::commit: only a plane group's warpgroup accumulator contracts asynchronously"
+            ),
         }
     }
 
@@ -299,7 +315,8 @@ impl<T: Numeric> PlaneTile<T> {
     }
 }
 
-/// The `m_tiles × n_tiles` grid of plane tiles one plane owns, row-major.
+/// The `m_tiles × n_tiles` grid of plane tiles one plane owns, row-major: or one plane group, for
+/// a warpgroup MMA, whose grid is its one accumulator.
 /// `Clone` duplicates the handles, not the tiles.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]

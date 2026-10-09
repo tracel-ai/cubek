@@ -161,6 +161,9 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                 register_accumulator::<Acc, EA, EL, ER>(self, lhs, rhs, config, semiring)
             }
             Instruction::Cmma | Instruction::Mma { .. } | Instruction::Wgmma => {
+                if comptime!(instruction == Instruction::Wgmma) {
+                    comptime!(assert_groups_own_their_box(&self.place));
+                }
                 let vector_size = self.vector_size();
                 accumulator_in::<Acc, EA, EL>(
                     self,
@@ -445,6 +448,25 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::Lines(_) => {
                 panic!("Tile::drained_into: a plane-resident accumulator drains; nothing else does")
             }
+        }
+    }
+}
+
+/// Panics where a plane group level splits an axis the output at `place` lacks: each group would
+/// hold a partial of the same cells, and nothing merges plane groups' partials yet.
+fn assert_groups_own_their_box(place: &Placement) {
+    for level in &place.levels {
+        let Coverage::Distribute(ComputeScope::PlaneGroup { .. }) = level.coverage() else {
+            continue;
+        };
+        for axis in level.axes() {
+            let split = !matches!(level.count(axis), Some(Count::Stated(1)));
+            assert!(
+                !(level.distributes(axis) && split && !place.space.contains(axis)),
+                "Tile::accumulator: plane groups split {axis:?}, which the output lacks, so each \
+                 would hold a partial of the same cells, and nothing merges plane groups' \
+                 partials yet; deal each group a box of its own"
+            );
         }
     }
 }

@@ -90,6 +90,23 @@ impl ComputeScope {
             }
         }
     }
+
+    /// This unit's position among the units of its instance of `compute_scope`: in the cube,
+    /// in its plane group, or in its plane. A plane is the launch's `x`
+    /// ([`Partitioning::cube_dim`](crate::Partitioning::cube_dim)), so a unit's position in it is
+    /// `UNIT_POS_X`, and a group's planes are consecutive `y`s.
+    pub fn unit(#[comptime] compute_scope: ComputeScope) -> usize {
+        match comptime!(compute_scope) {
+            ComputeScope::Cube => UNIT_POS as usize,
+            ComputeScope::PlaneGroup { planes } => {
+                (UNIT_POS_Y as usize % planes) * CUBE_DIM_X as usize + UNIT_POS_X as usize
+            }
+            ComputeScope::Plane => UNIT_POS_X as usize,
+            ComputeScope::Unit => comptime!(panic!(
+                "ComputeScope::unit: a unit is the only unit of its own scope"
+            )),
+        }
+    }
 }
 
 /// How a level covers its tiles.
@@ -200,14 +217,13 @@ impl Level {
             match (coverage, count) {
                 (
                     Coverage::Distribute(ComputeScope::Cube)
-                    | Coverage::Distribute(ComputeScope::Plane)
-                    | Coverage::Distribute(ComputeScope::PlaneGroup { .. }),
+                    | Coverage::Distribute(ComputeScope::Plane),
                     Count::AllAcross(_),
                 ) => {}
                 (_, Count::AllAcross(_)) => {
                     panic!(
-                        "Level: {axis:?} is distributed across workers in runs, which only cubes, \
-                         plane groups and planes take"
+                        "Level: {axis:?} is distributed across workers in runs, which only cubes \
+                         and planes take"
                     )
                 }
                 (
@@ -292,8 +308,11 @@ impl Level {
     pub(crate) fn sharing(mut self, n: usize) -> Level {
         match self.coverage {
             Coverage::Distribute(ComputeScope::Cube)
-            | Coverage::Distribute(ComputeScope::Plane)
-            | Coverage::Distribute(ComputeScope::PlaneGroup { .. }) => {}
+            | Coverage::Distribute(ComputeScope::Plane) => {}
+            Coverage::Distribute(ComputeScope::PlaneGroup { .. }) => panic!(
+                "Level::sharing: a plane group's partials of one box are not merged yet; deal \
+                 each group a box of its own"
+            ),
             Coverage::Distribute(ComputeScope::Unit) => panic!(
                 "Level::sharing: the plane's units combine in registers, which needs them in \
                  lockstep, and units holding different shares never are"

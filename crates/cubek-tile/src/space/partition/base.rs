@@ -268,13 +268,13 @@ impl Partitioning {
     /// Planes one cube holds: the levels' plane cuts, each plane group's planes, plus any that
     /// only fill.
     pub fn planes_per_cube(&self) -> u32 {
-        let groups = self.levels.iter().find_map(|level| match level.coverage() {
-            Coverage::Distribute(scope @ ComputeScope::PlaneGroup { planes }) => {
-                Some(self.instances(Coverage::Distribute(scope)) * planes as u32)
-            }
-            _ => None,
+        // `Levels` deals plane groups by one level, beside no plane level.
+        let grouped = self.levels.iter().find_map(|level| {
+            let scope = level.coverage().scope()?;
+            let planes = scope.planes().filter(|_| scope != ComputeScope::Plane)?;
+            Some(self.instances(level.coverage()) * planes as u32)
         });
-        self.instances(Coverage::Distribute(ComputeScope::Plane)) * groups.unwrap_or(1)
+        grouped.unwrap_or_else(|| self.instances(Coverage::Distribute(ComputeScope::Plane)))
             + self.fillers()
     }
 

@@ -71,22 +71,13 @@ impl<Acc: Numeric> Tile<Acc> {
     /// completion: once it resolves, they are done reading what they read, the stages a walk
     /// holds for them among it. Only a warpgroup accumulator contracts asynchronously.
     pub fn commit(&self) -> Pending<()> {
-        let tile = match &self.kind {
-            TileKind::PlanePartition(p) => p.fragment(),
-            TileKind::PlaneTile(t) => t.clone(),
+        match &self.kind {
+            TileKind::PlanePartition(p) => p.fragment().commit(),
+            TileKind::PlaneTile(t) => t.commit(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => panic!(
-                "Tile::commit: only a plane group's warpgroup accumulator contracts asynchronously"
-            ),
-        };
-        match tile {
-            PlaneTile::Wgmma(d) => {
-                let mut d = d;
-                d.commit()
-            }
-            PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Registers(_) => panic!(
                 "Tile::commit: only a plane group's warpgroup accumulator contracts asynchronously"
             ),
         }
@@ -150,8 +141,7 @@ impl<E: Numeric> PlaneTile<E> {
             PlaneTile::Wgmma(d) => {
                 lhs.refuse_factor("PlaneTile::Wgmma");
                 rhs.refuse_factor("PlaneTile::Wgmma");
-                flattened_k(lhs, rhs, out);
-                d.mma(lhs, rhs)
+                d.mma(lhs, rhs, out)
             }
             PlaneTile::Registers(d) => match &lhs.kind {
                 TileKind::PlaneTile(block) => match block {

@@ -177,10 +177,9 @@ impl SplitShare {
         };
         match (split, level.coverage()) {
             (false, _) => SplitShare::Whole,
-            (
-                true,
-                Coverage::Distribute(ComputeScope::Plane | ComputeScope::PlaneGroup { .. }),
-            ) => SplitShare::PartialAcrossPlanes,
+            (true, Coverage::Distribute(ComputeScope::Plane | ComputeScope::PlaneGroup { .. })) => {
+                SplitShare::PartialAcrossPlanes
+            }
             (true, _) => SplitShare::PartialAcrossCubes,
         }
     }

@@ -4,9 +4,7 @@
 
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
-use cubecl::wgmma::{
-    Accumulator, Major, MatrixDescriptor, Swizzle, WARPGROUP_M, WARPGROUP_UNITS, WgmmaTileLayout,
-};
+use cubecl::wgmma::{Accumulator, Major, MatrixDescriptor, Swizzle, WARPGROUP_M, WgmmaTileLayout};
 
 use crate::ops::matmul::leaf::window_layouts;
 use crate::*;
@@ -19,12 +17,20 @@ pub(crate) struct WgmmaData<T: Numeric> {
     pub(crate) acc: Pending<Accumulator<T>>,
     #[cube(comptime)]
     pub n: usize,
+    /// The axes the tile's rows and columns lie along, which its cells drain through.
+    #[cube(comptime)]
+    pub axes: MatrixAxes,
 }
 
 #[cube]
 impl<T: Numeric> WgmmaData<T> {
-    /// A zeroed `m × n` accumulator, `m` the warpgroup's 64 rows.
-    pub(crate) fn new(#[comptime] m: usize, #[comptime] n: usize) -> WgmmaData<T> {
+    /// A zeroed `m × n` accumulator, `m` the warpgroup's 64 rows, its rows and columns along
+    /// `axes`.
+    pub(crate) fn new(
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] axes: MatrixAxes,
+    ) -> WgmmaData<T> {
         comptime!(assert!(
             m == WARPGROUP_M,
             "WgmmaData: a warpgroup MMA computes {WARPGROUP_M} rows, and this tile has {m}; give \
@@ -33,17 +39,30 @@ impl<T: Numeric> WgmmaData<T> {
         WgmmaData::<T> {
             acc: Accumulator::<T>::new(n).start(),
             n,
+            axes,
         }
     }
 
-    /// Zero the accumulator: a fresh one, handed to the MMAs to come.
+    /// Zero the accumulator, once every MMA issued into it is done, for the MMAs to come.
     pub(crate) fn zero(&mut self) {
-        self.acc = Accumulator::<T>::new(comptime!(self.n)).start();
+        self.acc.reset();
     }
 
-    /// Issue `self += lhs · rhs` over the whole of the windows' `k`, one MMA a step. Both windows
-    /// lie in shared memory, K-major, their rows one swizzle span long.
-    pub(crate) fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
+    /// Issue `self += lhs · rhs`, `out` the tile's window, over the whole of the windows' `k`, one
+    /// MMA a step. Both windows lie in shared memory, K-major along their one contracted axis,
+    /// their rows one swizzle span long.
+    pub(crate) fn mma<L: Numeric, R: Numeric>(
+        &mut self,
+        lhs: &Tile<L>,
+        rhs: &Tile<R>,
+        #[comptime] out: Space,
+    ) {
+        comptime!(assert_operands_fit(
+            &lhs.place.space,
+            &rhs.place.space,
+            &out,
+            self.n
+        ));
         let (lhs_layout, rhs_layout) =
             comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
         comptime!(assert!(
@@ -87,11 +106,8 @@ impl<T: Numeric> WgmmaData<T> {
             mem.store.vector_size
         ));
         let acc = self.acc.clone().wait();
-        // The groups start at plane 0, so a unit's place in its group is its place in the cube
-        // modulo the group.
-        let unit = UNIT_POS % comptime!(WARPGROUP_UNITS as u32);
-        let axes = comptime!(MatrixAxes::trailing(&space));
-        let mut sink = mem.matrix_mut::<Const<1>>(0usize, axes, space);
+        let unit = ComputeScope::unit(ComputeScope::WARPGROUP) as u32;
+        let mut sink = mem.matrix_mut::<Const<1>>(0usize, comptime!(self.axes), space);
         #[unroll]
         for nth in 0..acc.len() {
             let at = acc.position_of_nth(unit, nth as u32);
@@ -100,6 +116,36 @@ impl<T: Numeric> WgmmaData<T> {
             sink.write(at, value);
         }
     }
+}
+
+/// Panics unless `lhs` and `rhs` are the windows one warpgroup MMA tile of `n` columns reads into
+/// `out`: one contracted axis, the trailing one of both, which a descriptor steps along; the
+/// lhs's other axes the warpgroup's rows, the rhs's its `n` columns. A window of the tile's own
+/// rows starts a whole number of them into its stage, a multiple of the eight rows a swizzle
+/// pattern repeats over, where the stage keeps its first line unswizzled: what the descriptor's
+/// base address reads.
+fn assert_operands_fit(lhs: &Space, rhs: &Space, out: &Space, n: usize) {
+    let contracted: Vec<_> = lhs.axes().filter(|&axis| !out.contains(axis)).collect();
+    let k = lhs.axis_at(lhs.rank() - 1);
+    assert!(
+        contracted == [k] && rhs.axis_at(rhs.rank() - 1) == k,
+        "WgmmaData::mma: a warpgroup MMA contracts one axis, the trailing one of both operands; \
+         these contract {contracted:?}, the lhs {lhs:?} and the rhs {rhs:?}"
+    );
+    let rows = |space: &Space| {
+        space
+            .axes()
+            .filter(|&axis| axis != k)
+            .map(|axis| space.extent(axis))
+            .product::<usize>()
+    };
+    assert!(
+        rows(lhs) == WARPGROUP_M && rows(rhs) == n,
+        "WgmmaData::mma: a warpgroup MMA reads {WARPGROUP_M} rows of the lhs and {n} of the rhs, \
+         and these windows hold {} and {}",
+        rows(lhs),
+        rows(rhs)
+    );
 }
 
 /// The extent of `space`'s trailing axis, the contiguous one.
