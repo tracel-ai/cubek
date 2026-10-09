@@ -24,3 +24,7 @@ pub use kernels::forward::{
 };
 
 pub use kernels::forward::{DirectTensors, launch_direct};
+
+pub use kernels::backward_weight::depthwise::{
+    DepthwiseWeightBackwardTensors, launch_depthwise_weight_backward,
+};
