@@ -1,5 +1,7 @@
 //! One [`Level`]: which axes a loop steps, in tiles of what size, how many, and who takes them.
 
+use cubecl::prelude::*;
+
 use super::CubeOrder;
 use crate::{Axis, AxisMap, Extent, Space};
 
@@ -52,6 +54,23 @@ pub enum ComputeScope {
     Cube,
 }
 
+#[cube]
+impl ComputeScope {
+    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of
+    /// the plane.
+    pub fn position(#[comptime] compute_scope: ComputeScope) -> usize {
+        match comptime!(compute_scope) {
+            ComputeScope::Plane => UNIT_POS_Y as usize,
+            ComputeScope::Unit => UNIT_POS_X as usize,
+            ComputeScope::Cube => {
+                panic!(
+                    "ComputeScope::position: a cube has one position per grid dimension; say which"
+                )
+            }
+        }
+    }
+}
+
 /// How a level covers its tiles.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum Coverage {
@@ -87,6 +106,19 @@ pub(crate) enum CubeAxis {
     X,
     Y,
     Z,
+}
+
+#[cube]
+impl CubeAxis {
+    /// This cube's position on grid dimension `dim`.
+    pub(crate) fn position(#[comptime] dim: CubeAxis) -> usize {
+        let cube_pos = match comptime!(dim) {
+            CubeAxis::X => CUBE_POS_X,
+            CubeAxis::Y => CUBE_POS_Y,
+            CubeAxis::Z => CUBE_POS_Z,
+        };
+        cube_pos as usize
+    }
 }
 
 impl Count {

@@ -2,6 +2,7 @@
 //! whose loops hand out [`Region`]s; the [`Launcher`] reads the grid off the same levels.
 
 pub(crate) mod algebra;
+mod comptime_only;
 pub mod launch;
 pub mod layout;
 pub mod ops;
@@ -34,6 +35,8 @@ pub mod procedural {
     pub use crate::tile::kind::procedural::sum::{Sum, sum_of};
 }
 
+pub(crate) use comptime_only::comptime_only;
+
 // Flat crate namespace for `use crate::*`.
 #[allow(unused_imports)]
 pub(crate) use {algebra::*, launch::*, layout::*, ops::*, space::*, stage::*, tile::*};
@@ -43,10 +46,10 @@ pub use algebra::semiring::Semiring;
 pub use launch::arg::tensor::{TileArg, TileArgLaunch};
 pub use launch::base::Launcher;
 pub use launch::spec::TileSpec;
-pub use layout::geometry::Geometry;
 pub use layout::projection::Projection;
-pub use ops::matmul::config::RegisterBlock;
+pub use layout::storage::Geometry;
 pub use ops::matmul::instruction::Instruction;
+pub use ops::matmul::register_block::RegisterBlock;
 pub use space::axis::Axis;
 pub use space::base::Space;
 pub use space::partition::base::Partitioning;

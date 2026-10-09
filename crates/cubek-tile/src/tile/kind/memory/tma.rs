@@ -9,15 +9,24 @@ use cubecl::{
 use crate::*;
 
 /// A TMA tensor-map source: the launch-built view, the current box origin and the logical bound.
+///
+/// A packed source is moved as the words it is stored in, so the stage it lands in holds them
+/// ([`packing`](Self::packing)); the scales it rides under are ones a stage keeps beside the words
+/// ([`factor`](Self::factor)), since the engine lands bytes as they lie and decodes nothing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct TmaData<T: Numeric> {
     view: ViewMut<'static, T, CoordsDyn>,
     pos: CoordsDyn,
     pub(crate) bound: CoordsDyn,
-    /// The launch's cube size, `0` when unknown ([`Access::units`](crate::Access)).
+    /// The launch's cube size, `0` when unknown ([`FillUnits::count`](crate::FillUnits)).
     #[cube(comptime)]
     pub(crate) units: usize,
+    /// How the values sit in the cells the descriptor moves.
+    #[cube(comptime)]
+    pub(crate) packing: Packing,
+    /// The scales these values carry ([`Tile::mul`](crate::Tile::mul)), windowed with the box.
+    pub(crate) factor: Factor,
 }
 
 #[cube]
@@ -27,6 +36,7 @@ impl<T: Numeric> TmaData<T> {
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] rank: usize,
         #[comptime] units: usize,
+        #[comptime] packing: Packing,
     ) -> TmaData<T> {
         let bound = view.shape();
         let mut pos = CoordsDyn::new();
@@ -39,20 +49,23 @@ impl<T: Numeric> TmaData<T> {
             pos,
             bound,
             units,
+            packing,
+            factor: Factor::none(),
         }
     }
-}
 
-#[cube]
-impl<T: Numeric> TmaData<T> {
     /// Issue the `tensor_map_load` into `dst` on `barrier` without arriving or waiting.
     /// Only the electing unit may call it, since it alone declares the transaction count.
     pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {
-        // A TMA box lands its rows dense and in order, unlike a swizzled stage.
-        comptime!(dst.layout.rows.assert_in_order(
-            "TmaData::stage_into",
-            "a TMA box lands its rows dense and in order"
-        ));
+        // A box lands its rows dense, swizzled by the descriptor where the stage keeps them
+        // swizzled; the launch built the descriptor off the same answer
+        // (`StageStorage::tma_swizzle`).
+        comptime!(
+            dst.layout
+                .rows
+                .tma_swizzle()
+                .unwrap_or_else(|why| panic!("TmaData::stage_into: a TMA box cannot land {why}"))
+        );
         self.view.tensor_map_load(
             barrier,
             dst.store.buffer_mut().downcast_mut(),
@@ -97,6 +110,8 @@ impl<T: Numeric> TmaData<T> {
             pos,
             bound: self.bound.clone(),
             units: self.units,
+            packing: self.packing,
+            factor: self.factor.at(step),
         }
     }
 }

@@ -223,7 +223,7 @@ impl Packing {
 
 impl Packing {
     /// Values per stored element: one, unless a `u32` holds several fields.
-    pub(crate) fn factor(&self) -> usize {
+    fn factor(&self) -> usize {
         match self {
             Packing::Plain => 1,
             Packing::Packed { field } => field.per_word(),

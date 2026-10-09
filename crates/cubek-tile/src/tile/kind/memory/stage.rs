@@ -5,9 +5,6 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// The byte alignment a TMA-filled stage's shared buffer must have.
-pub(crate) const TMA_STAGE_ALIGNMENT: usize = 128;
-
 /// Who a shared-memory stage belongs to: the whole cube, or each of its planes. It decides how
 /// many copies of the stage one cube holds, and which units fill each.
 ///
@@ -66,30 +63,20 @@ impl<T: Numeric> Memory<T> {
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
     ) -> Tile<T> {
-        Memory::smem_aligned(space, vector_size, storage, units, comptime!(0usize))
-    }
-
-    /// [`smem`](Memory::smem) with a minimum byte alignment on the buffer, never below one
-    /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it.
-    pub(crate) fn smem_aligned(
-        #[comptime] space: Space,
-        #[comptime] vector_size: usize,
-        #[comptime] storage: StageStorage,
-        #[comptime] units: usize,
-        #[comptime] alignment: usize,
-    ) -> Tile<T> {
         Memory::smem_owned(
             space,
             vector_size,
             storage,
             units,
-            alignment,
+            comptime!(0usize),
             comptime!(StageOwner::Cube),
         )
     }
 
-    /// [`smem_aligned`](Memory::smem_aligned) for the stage `owner` holds: the cube's one, or the
-    /// calling plane's own copy. `units` is the launch's cube size, `0` when unknown.
+    /// [`smem`](Memory::smem) for the stage `owner` holds: the cube's one, or the calling plane's
+    /// own copy, with a minimum byte alignment on the buffer, never below one
+    /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it. `units` is the
+    /// launch's cube size, `0` when unknown.
     pub(crate) fn smem_owned(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
@@ -218,13 +205,18 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`smem`](Memory::smem) over the words a [`packed`](Packing::Packed) operand is stored in.
+    ///
+    /// The buffer starts on `alignment` bytes, never below one [`RowChunks::CHUNK_BYTES`] chunk: an
+    /// `ldmatrix` row address needs it, and a TMA box the descriptor's swizzle span.
     pub(crate) fn smem_packed(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
         #[comptime] packing: Packing,
+        #[comptime] alignment: usize,
     ) -> Tile<T> {
+        let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let word_bytes = u32::size().comptime();
         let form = comptime!(StageForm::dense(
             &space,
@@ -233,7 +225,8 @@ impl<T: Numeric> Memory<T> {
             LineBytes(packing.physical(vector_size) * word_bytes)
         ));
         let size!(WP) = comptime!(packing.physical(vector_size));
-        let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
+        let smem =
+            Shared::<[Vector<u32, WP>]>::new_aligned_slice(comptime!(form.cells()), alignment);
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         Memory::smem_over(
             space,
@@ -395,16 +388,19 @@ impl<T: Numeric> Memory<T> {
     }
 }
 
-/// The whole-buffer window of a stage: zero origin, its own physical extents.
+/// The whole-buffer window of a stage: zero origin, its extents along the axes its buffer is
+/// addressed by ([`window_extents`](StageForm::window_extents)).
 #[cube]
+#[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
 fn full_window(#[comptime] form: StageForm) -> (Coords<i32>, Coords<u32>) {
     let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
+    let extents = comptime!(form.window_extents());
 
     #[unroll]
-    for p in 0..comptime!(form.extents.len()) {
+    for p in 0..comptime!(extents.len()) {
         origin.push(0);
-        extent.push(comptime!(form.extents[p] as u32).runtime());
+        extent.push(comptime!(extents[p] as u32).runtime());
     }
 
     (origin, extent)
@@ -499,6 +495,21 @@ impl StageForm {
         }
     }
 
+    /// The extent in lines along each axis the buffer is addressed by, a window's axes: what the
+    /// physical extents carrying that axis hold between them, so a buffer tiled into
+    /// `[grid…, block…]` is still windowed one coordinate an axis.
+    fn window_extents(&self) -> Vec<usize> {
+        (0..self.positional.coordinate_rank())
+            .map(|c| {
+                self.positional
+                    .carriers(Axis(c as u8))
+                    .iter()
+                    .map(|&p| self.extents[p])
+                    .product()
+            })
+            .collect()
+    }
+
     /// The buffer's rank: how many physical axes its layout addresses.
     pub(crate) fn physical_rank(&self) -> usize {
         self.projection.physical_rank()
@@ -574,50 +585,6 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
     }
 
     (shape, strides)
-}
-
-/// What a padded fill needs beyond the two boxes: source cells per line and the padding extent.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Padding {
-    pub(crate) width: usize,
-    pub(crate) extent: Option<usize>,
-    /// The physical rank both boxes share.
-    pub(crate) rank: usize,
-}
-
-impl StageStorage {
-    /// The storage-tiling nesting a stage over `space` gets, coarse to fine; empty is row-major.
-    pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
-        match self {
-            StageStorage::Lines { .. } => {
-                panic!("StageStorage::Lines: the plane's units are not shared memory")
-            }
-            StageStorage::Tiled { block, .. } => {
-                let nested = Space::new(
-                    &space
-                        .axes()
-                        .map(|axis| {
-                            let edge = block
-                                .iter()
-                                .find(|&&(a, _)| a == axis)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "StageStorage::Tiled: the block states no edge for {axis:?}"
-                                    )
-                                })
-                                .1;
-                            (axis, edge)
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                if &nested == space {
-                    return Vec::new();
-                }
-                vec![nested]
-            }
-            StageStorage::Strided => Vec::new(),
-        }
-    }
 }
 
 /// Lines one plane's copy of a stage of `cells` lines, each `line_bytes` long, spans in a buffer
@@ -727,6 +694,66 @@ mod tests {
             panic!("rows of four 16-byte lines are swizzled")
         };
         assert_eq!((swizzle.row_axis(), swizzle.line_axis()), (2, 3));
+    }
+
+    /// One box lands a stage whose blocks stack whole rows, swizzled as the stage keeps them by
+    /// the engine's span for the row's bytes; blocks splitting a row, or padded rows, it cannot.
+    #[test]
+    fn a_box_lands_a_stage_of_whole_rows_swizzled_by_their_span() {
+        let tiled = |k_block, chunks| StageStorage::Tiled {
+            block: vec![(M, 16), (K, k_block)],
+            chunks,
+        };
+        let stage = |k| Space::new(&[(M, 64), (K, k)]);
+        let f16_bits = 16;
+        for (k, mode) in [
+            (16, TensorMapSwizzle::B32),
+            (32, TensorMapSwizzle::B64),
+            (64, TensorMapSwizzle::B128),
+        ] {
+            assert_eq!(
+                tiled(k, RowChunks::Swizzled).tma_swizzle(&stage(k), 1, f16_bits),
+                Ok(mode)
+            );
+        }
+        assert_eq!(
+            tiled(32, RowChunks::InOrder).tma_swizzle(&stage(32), 1, f16_bits),
+            Ok(TensorMapSwizzle::None)
+        );
+        assert_eq!(
+            StageStorage::Strided.tma_swizzle(&stage(32), 8, f16_bits),
+            Ok(TensorMapSwizzle::None)
+        );
+        assert!(matches!(
+            tiled(16, RowChunks::Swizzled).tma_swizzle(&stage(32), 1, f16_bits),
+            Err(Refusal::BoxSplitsStageBlocks { axis: K, .. })
+        ));
+        assert!(matches!(
+            tiled(32, RowChunks::Padded).tma_swizzle(&stage(32), 1, f16_bits),
+            Err(Refusal::RowsNoDescriptorLands { .. })
+        ));
+        assert!(matches!(
+            tiled(128, RowChunks::Swizzled).tma_swizzle(&stage(128), 1, f16_bits),
+            Err(Refusal::RowsNoDescriptorLands { .. })
+        ));
+    }
+
+    /// A swizzled box keys its rows off their place in the stage, so a block of rows the swizzle
+    /// does not repeat over lands its later blocks under the wrong keys.
+    #[test]
+    fn a_swizzled_box_refuses_blocks_off_the_swizzles_period() {
+        let storage = StageStorage::Tiled {
+            block: vec![(M, 4), (K, 32)],
+            chunks: RowChunks::Swizzled,
+        };
+        assert_eq!(
+            storage.tma_swizzle(&Space::new(&[(M, 64), (K, 32)]), 1, 16),
+            Err(Refusal::BoxSplitsStageBlocks {
+                axis: K,
+                rows: 4,
+                period: 8
+            })
+        );
     }
 
     /// A padded block pitches its rows one chunk further apart.

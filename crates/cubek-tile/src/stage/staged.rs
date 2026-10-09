@@ -39,8 +39,8 @@ impl<T: Numeric> Memory<T> {
         let fill = comptime!(self.access.fill);
         let mut dst = self.flat_mut::<Const<1>>();
         let total = dst.shape();
-        let stride = fill_workers(fill);
-        let mut i = fill_worker(fill);
+        let stride = FillUnits::workers(fill);
+        let mut i = FillUnits::worker(fill);
         while i < total {
             let pos = shape.unravel(i.cast::<u32>());
             // TODO: masked cells use Procedural's zero fallback, not the reduction's identity.
@@ -114,12 +114,21 @@ impl<T: Numeric> Memory<T> {
                         );
                         width
                     }
+                    // A decoding fill writes the stage value by value, so its lines need only
+                    // divide the source's loads: as wide as every region below the stage cuts
+                    // whole along its innermost axis, or a step would start mid-line.
+                    None if decodes => {
+                        let innermost = space.axis_at(space.rank() - 1);
+                        space
+                            .leaf(operand.place.below_level(&level))
+                            .whole_run(innermost, source_width)
+                    }
                     None => source_width,
                 });
                 // A TMA-filled stage's buffer must be TMA-aligned; TMA operands are always direct.
                 let delivery = operand.delivery();
                 let alignment = comptime!(match delivery.is_tma() {
-                    true => TMA_STAGE_ALIGNMENT,
+                    true => Delivery::TMA_STAGE_ALIGNMENT,
                     false => 0usize,
                 });
                 // A decoded stage is dense over the values' axes whatever the source's map.
@@ -155,12 +164,10 @@ impl<T: Numeric> Memory<T> {
         let space = comptime!(level.child(&operand.place.space));
         let vector_size = operand.vector_size();
         let units = operand.units();
-        match &operand.kind {
-            TileKind::Memory(g) => match comptime!(g.store.packing) {
-                Packing::Plain => Memory::smem(space, vector_size, storage, units),
-                packing => Memory::smem_packed(space, vector_size, storage, units, packing),
-            },
-            TileKind::TmaGmem(_) => Memory::smem(space, vector_size, storage, units),
+        // A box lands where the descriptor's swizzle span starts.
+        let (packing, alignment) = match &operand.kind {
+            TileKind::Memory(g) => comptime!((g.store.packing, 0usize)),
+            TileKind::TmaGmem(t) => comptime!((t.packing, Delivery::TMA_STAGE_ALIGNMENT)),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Memory::smem_stored: a fragment is not a stage source")
             }
@@ -169,6 +176,10 @@ impl<T: Numeric> Memory<T> {
                     "Memory::smem_stored: a procedural tile and the plane's units are not a stage source"
                 )
             }
+        };
+        match comptime!(packing) {
+            Packing::Plain => Memory::smem(space, vector_size, storage, units),
+            packing => Memory::smem_packed(space, vector_size, storage, units, packing, alignment),
         }
     }
 }

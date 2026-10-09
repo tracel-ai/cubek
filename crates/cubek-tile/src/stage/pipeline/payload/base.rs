@@ -52,15 +52,25 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
     );
 }
 
-/// One operand's stage, placed at the depth the walk's regions sit below.
+/// One operand's stage, placed in the operand's nest at the depth the walk's regions sit below.
+/// The nest's levels come with it: a plane's window of the stage is the plane's, and a landing
+/// out of it takes a window for every plane the levels lay out.
 #[cube]
 pub(crate) fn stage_one<T: Numeric>(operand: &Tile<T>, #[comptime] spec: StageSpec) -> Tile<T> {
     let stage = Memory::stage(
         operand,
-        comptime!(spec.level),
-        comptime!(spec.storage),
+        comptime!(spec.level.clone()),
+        comptime!(spec.storage.clone()),
         comptime!(spec.width),
         comptime!(spec.owner),
     );
-    Tile::new(stage.kind, comptime!(stage.place.at_depth(spec.depth)))
+    let stage = Tile::new(
+        stage.kind,
+        comptime!(Placement::new(
+            stage.place.space.clone(),
+            spec.depth,
+            operand.place.levels.clone()
+        )),
+    );
+    stage.with_scales_staged(operand, comptime!(spec))
 }

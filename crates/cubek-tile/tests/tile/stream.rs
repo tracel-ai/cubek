@@ -5,7 +5,7 @@
 //! together, and may start in one tile and end in another; no box of a four by two grid holds three
 //! regions.
 //!
-//! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
+//! [`Walk::portion`] is that range, and the [`Portion`] it returns the walk over it. The axes of the
 //! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat index
 //! carries every coordinate; an instance's run is `base` and `steps` into it, both runtime values.
 //!
@@ -15,6 +15,7 @@
 
 use super::{Form, implied};
 use cubecl::{
+    client::Client,
     features::AtomicUsage,
     ir::{ElemType, FloatKind, Type},
     prelude::*,
@@ -22,8 +23,10 @@ use cubecl::{
     zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+use cubek_tile::kind::Boundary;
 use cubek_tile::launch::AccumulateArg;
 use cubek_tile::launch::AccumulateArgLaunch;
+use cubek_tile::launch::BoundaryPolicy;
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -243,6 +246,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
 const MM: Axis = Axis(2);
 const NN: Axis = Axis(3);
 const KK: Axis = Axis(4);
+const BB: Axis = Axis(5);
 
 /// The leaf's register block, held fixed across every kernel here.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
@@ -637,5 +641,299 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
                 );
             }
         }
+    }
+}
+
+// -- Merged by the last arrival ---------------------------------------------------------------------
+//
+// The same line, with no float atomic and no cube waiting on another: a cube holding a tile whole drains
+// it into the output, and of the cubes holding parts of one, each parks its part in a slot and the
+// last to count itself in adds them in the order of their runs and casts the total into the output.
+
+/// The streamed contraction merged by [`LastArrival`](cubek_tile::launch::LastArrival): each cube
+/// contracts its part of every tile its run touches into a register accumulator opened on its slot,
+/// then hands it on, cast to the output's element `O`.
+#[cube(launch)]
+fn merged_stream_matmul<O: Float>(
+    a: &TileArg<'_, f32, Const<1>>,
+    b: &TileArg<'_, f32, Const<1>>,
+    slots: &TileArg<'_, f32, Const<1>>,
+    out: &TileArg<'_, O, Const<1>>,
+    arrivals: &[Atomic<u32>],
+    space: Partitioning,
+    #[comptime] steps: Level,
+    #[define(O)] _out_dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut out = out.tile(comptime!(space.clone()));
+    let portion = space.walk().portion(comptime!(steps.clone()));
+    for i in 0..portion.touched() {
+        let region = portion.region(i);
+        let (from, count) = portion.steps(i);
+        let merge = slots.last_arrival(&space, &portion, i, arrivals);
+        let (a_region, b_region) = (a.at(&region), b.at(&region));
+        let acc = merge.tile().accumulator::<f32, f32, f32>(
+            &a_region,
+            &b_region,
+            comptime!(Instruction::Registers {
+                config: REGISTER_BLOCK
+            }),
+            Semiring::SUM_PROD,
+        );
+        for cell in region.over(&steps).range(from, count) {
+            contract::<f32>(&acc, &a_region, &b_region, &cell);
+        }
+        merge.hand_on(&acc, &mut out);
+    }
+}
+
+/// `out[batch] = a[batch] · b` for every batch, `b` shared by all of them.
+#[derive(Clone, Copy, Debug)]
+struct Product {
+    batches: usize,
+    m: usize,
+    n: usize,
+    k: usize,
+}
+
+impl Product {
+    /// One batch of `m × n × k`.
+    fn single(m: usize, n: usize, k: usize) -> Self {
+        Product {
+            batches: 1,
+            m,
+            n,
+            k,
+        }
+    }
+
+    /// The inputs of the integer cases: small integers, so every sum is exact in `f16`.
+    fn integers(&self) -> (Vec<f32>, Vec<f32>) {
+        let a = (0..self.batches * self.m * self.k)
+            .map(|i| (i % 7) as f32 - 3.0)
+            .collect();
+        let b = (0..self.k * self.n).map(|i| (i % 5) as f32 - 2.0).collect();
+        (a, b)
+    }
+}
+
+/// `a · b` with every tile's blocks shared between `cubes` cubes and merged by the last arrival,
+/// launched `launches` times over the same slots, counters and output, an output of `O`: the
+/// output after each launch, and the counters read back.
+fn run_merged_stream<O: Float + CubeElement>(
+    product: Product,
+    (a, b): (Vec<f32>, Vec<f32>),
+    cubes: usize,
+    launches: usize,
+) -> (Vec<HostData>, Vec<u32>) {
+    let Product { batches, m, n, k } = product;
+    let client = cubecl::test_device().client();
+    let (f32_ty, out_ty) = (f32::elem_type_native(), O::elem_type_native());
+    let a = TestInput::builder(client.clone(), shape![batches, m, k])
+        .dtype(f32_ty)
+        .custom(a)
+        .generate_without_host_data();
+    let b = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(f32_ty)
+        .custom(b)
+        .generate_without_host_data();
+    let out = TestInput::builder(client.clone(), shape![batches, m, n])
+        .dtype(out_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    // The cube level hands out one batch a box, so a run's steps cross from one batch's tiles into
+    // the next's.
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(BB, batches), (MM, m), (NN, n), (KK, k)]),
+            Levels::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)])
+                .walk(&[(MM, 1), (NN, 1), (KK, k / BLOCK_K)])
+                .cubes(&[MM, NN, KK])
+                .shared_by(cubes)
+                .batches(&[BB])
+                .build(),
+        ),
+        Form::Static,
+    );
+    // The slots arrive holding anything: a part replaces what its slot held.
+    let slots = launcher.partitioning().arrival_slots(&[BB, MM, NN]);
+    let held = vec![1.0e6; slots.num_elements()];
+    let slots = TestInput::builder(client.clone(), slots)
+        .dtype(f32_ty)
+        .custom(held)
+        .generate_without_host_data();
+    let counters = launcher.partitioning().arrival_counters();
+    let arrivals = client.create_from_slice(u32::as_bytes(&vec![0u32; counters]));
+    // Checked on every axis: a tile past the output's edge reads zero there and writes nothing.
+    let spec =
+        |axes: &[Axis]| TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero));
+    let arg = |handle: &TensorHandle, axes: &[Axis]| {
+        TileArgLaunch::new(handle.clone().binding().into_tensor_arg(), spec(axes))
+    };
+    let mut outputs = Vec::with_capacity(launches);
+    for _ in 0..launches {
+        merged_stream_matmul::launch(
+            &client,
+            launcher.cube_count(),
+            launcher.cube_dim(),
+            arg(&a, &[BB, MM, KK]),
+            arg(&b, &[KK, NN]),
+            arg(&slots, &[BB, MM, NN]),
+            TileArgLaunch::new(out.clone().binding().into_tensor_arg(), spec(&[BB, MM, NN])),
+            unsafe { BufferArg::from_raw_parts(arrivals.clone(), counters) },
+            launcher.partitioning_arg(),
+            launcher.partitioning().level(1),
+            out_ty,
+        );
+        outputs.push(HostData::from_tensor_handle(
+            &client,
+            out.clone(),
+            HostDataType::F32,
+        ));
+    }
+    let arrivals = u32::from_bytes(&client.read_one_unchecked(arrivals)).to_vec();
+    (outputs, arrivals)
+}
+
+/// Whether this device hands one cube's writes to another within a dispatch and adds `u32`s
+/// atomically, the two things a merge by the last arrival needs; reported rather than silently
+/// passed.
+fn merges_on_arrival(client: &Client) -> bool {
+    let hands_off = client.properties().features.device_memory_scope;
+    let counts = client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)))
+        .contains(AtomicUsage::Add);
+    if !(hands_off && counts) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no device-scope storage sync or no u32 atomic add".to_string(),
+        ))
+        .enforce();
+    }
+    hands_off && counts
+}
+
+fn assert_merged(got: &HostData, product: Product, what: &str) {
+    let Product { batches, m, n, k } = product;
+    let (a, b) = product.integers();
+    for batch in 0..batches {
+        for i in 0..m {
+            for j in 0..n {
+                let want: f32 = (0..k)
+                    .map(|p| a[(batch * m + i) * k + p] * b[p * n + j])
+                    .sum();
+                // Small integers, each within f16's exact range.
+                assert_eq!(
+                    got.get_f32(&[batch, i, j]),
+                    want,
+                    "{what}: ({batch}, {i}, {j})"
+                );
+            }
+        }
+    }
+}
+
+/// Every count of cubes sums to the whole contraction: runs ending on a tile's edge, runs
+/// straddling one, a run a tile, and more cubes than tiles, so that many share each tile and the
+/// last cubes hold nothing. Each tile's counter is left at zero.
+#[test]
+fn the_last_arrival_merges_every_tile_of_a_shared_contraction() {
+    let client = cubecl::test_device().client();
+    if !merges_on_arrival(&client) {
+        return;
+    }
+    // Twelve tiles of five blocks: sixty blocks in all.
+    let product = Product::single(12, 16, 20);
+    for cubes in [1usize, 2, 5, 7, 11, 12, 13, 25, 59, 60, 61, 97] {
+        let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), cubes, 1);
+        assert_merged(&got[0], product, &format!("{cubes} cubes"));
+        assert!(
+            arrivals.iter().all(|&a| a == 0),
+            "{cubes} cubes: {arrivals:?}"
+        );
+    }
+}
+
+/// Tiles past the output's edge: a part parks its whole box, and only what lies inside the output
+/// lands there.
+#[test]
+fn the_last_arrival_merges_tiles_that_overhang_the_output() {
+    let client = cubecl::test_device().client();
+    if !merges_on_arrival(&client) {
+        return;
+    }
+    let product = Product::single(10, 14, 20);
+    for cubes in [3usize, 8, 23] {
+        let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), cubes, 1);
+        assert_merged(&got[0], product, &format!("{cubes} cubes"));
+        assert!(
+            arrivals.iter().all(|&a| a == 0),
+            "{cubes} cubes: {arrivals:?}"
+        );
+    }
+}
+
+/// Three batches of a product, each its own tiles: runs cross from one batch's tiles into the
+/// next's, and a slot is one box whichever batch its tile is in.
+#[test]
+fn the_last_arrival_merges_the_tiles_of_every_batch() {
+    let client = cubecl::test_device().client();
+    if !merges_on_arrival(&client) {
+        return;
+    }
+    let product = Product {
+        batches: 3,
+        m: 8,
+        n: 12,
+        k: 20,
+    };
+    for cubes in [4usize, 7, 18, 31] {
+        let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), cubes, 1);
+        assert_merged(&got[0], product, &format!("{cubes} cubes"));
+        assert!(
+            arrivals.iter().all(|&a| a == 0),
+            "{cubes} cubes: {arrivals:?}"
+        );
+    }
+}
+
+/// The counters a merge leaves at zero take the next launch as they took the first.
+#[test]
+fn the_last_arrival_merges_again_on_the_counters_it_left() {
+    let client = cubecl::test_device().client();
+    if !merges_on_arrival(&client) {
+        return;
+    }
+    let product = Product::single(12, 16, 20);
+    let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), 7, 3);
+    assert_merged(&got[2], product, "a third launch");
+    assert!(arrivals.iter().all(|&a| a == 0), "{arrivals:?}");
+}
+
+/// Sums whose rounding depends on the order of their parts come out the same bits every launch,
+/// whichever cube arrives last: the parts are added in the order of their runs. The output is
+/// `f32`, the sum's own element, since a cast to `f16` would round away the bits an order flips.
+#[test]
+fn the_last_arrival_sums_the_same_bits_every_launch() {
+    let client = cubecl::test_device().client();
+    if !merges_on_arrival(&client) {
+        return;
+    }
+    let product = Product::single(12, 16, 20);
+    let Product { m, n, k, .. } = product;
+    let a = (0..m * k).map(|i| (i as f32 * 0.37).sin() * 3.1).collect();
+    let b = (0..k * n).map(|i| (i as f32 * 0.71).cos() / 1.7).collect();
+    let (got, _) = run_merged_stream::<f32>(product, (a, b), 29, 8);
+    let bits = |out: &HostData| -> Vec<u32> {
+        (0..m * n)
+            .map(|i| out.get_f32(&[0, i / n, i % n]).to_bits())
+            .collect()
+    };
+    let first = bits(&got[0]);
+    for (launch, out) in got.iter().enumerate().skip(1) {
+        assert_eq!(bits(out), first, "launch {launch} differs from the first");
     }
 }

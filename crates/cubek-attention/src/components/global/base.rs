@@ -89,7 +89,6 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
         num_heads: u32,
         stage_q_offset: u32,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
-        seq_kv_shape: u32,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader;
 

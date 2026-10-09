@@ -93,7 +93,7 @@ impl<T: Numeric> Tile<T> {
 impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
     /// The sink every writer drains into in `round`: it replaces each cell it is handed in round
     /// zero and adds into it after.
-    pub fn sink(&self, round: usize) -> Tile<A> {
+    fn sink(&self, round: usize) -> Tile<A> {
         let space = comptime!(self.like.place.space.clone());
         let width = self.like.vector_size();
         let size!(W) = width;

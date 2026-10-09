@@ -179,6 +179,7 @@ impl Meeting {
             dst.copy_from(src);
         } else {
             self.fill_as_it_lies(dst, src, space);
+            dst.fill_scales_from(src, self);
         }
     }
 

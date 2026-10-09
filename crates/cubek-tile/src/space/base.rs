@@ -3,7 +3,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::layout::gcd;
+use crate::algebra::gcd;
 use crate::{Axis, Extent, Level, Shape};
 
 /// Every axis with its extent, in canonical order, plus the runtime sizes of dynamic axes.
@@ -358,6 +358,16 @@ impl Space {
             .filter(|&other| other != axis)
             .map(|other| self.extent(other))
             .product()
+    }
+
+    /// The widest run along `axis` that divides both `widest` and this space's extent there: the
+    /// widest line a buffer read in boxes of this space can hold without a box starting mid-line.
+    pub(crate) fn whole_run(&self, axis: Axis, widest: usize) -> usize {
+        let (mut run, mut rest) = (widest, self.extent(axis));
+        while rest != 0 {
+            (run, rest) = (rest, run % rest);
+        }
+        run
     }
 }
 

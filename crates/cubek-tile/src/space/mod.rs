@@ -6,21 +6,21 @@ pub(crate) mod coords;
 pub(crate) mod extent;
 pub(crate) mod matrix;
 pub(crate) mod partition;
+pub(crate) mod path;
 pub(crate) mod region;
-pub(crate) mod runtime;
 pub(crate) mod share;
+pub(crate) mod step;
 pub(crate) mod walk;
 
 pub(crate) use axis::*;
 pub(crate) use base::*;
-pub(crate) use coords::*;
 pub(crate) use extent::*;
 pub(crate) use matrix::*;
 pub(crate) use partition::*;
-pub(crate) use region::Step;
+pub(crate) use path::Path;
 pub(crate) use region::*;
-pub(crate) use runtime::Witness;
 pub(crate) use share::*;
+pub(crate) use step::*;
 pub(crate) use walk::*;
 
 pub use coords::Coords;

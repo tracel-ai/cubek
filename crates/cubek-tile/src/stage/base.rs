@@ -1,6 +1,7 @@
 //! Where a stage lives and how it lays its cells out ([`StageStorage`]).
 
-use crate::Axis;
+use crate::{Axis, ChunkSwizzle, LineBytes, Refusal, Space, StageForm};
+use cubecl::prelude::TensorMapSwizzle;
 
 /// Where a stage lives and how it lays its cells out, stated at
 /// [`Stages::smem`](crate::Stages::smem).
@@ -42,4 +43,94 @@ pub enum UnitRead {
     /// Through a plane-owned shared-memory window written once per load. Serialized as `Window`.
     #[serde(rename = "Window")]
     PlaneShared,
+}
+
+impl StageStorage {
+    /// The swizzle a TMA descriptor moving the whole of a stage over `space` in one box lands its
+    /// rows with, so they lie as this storage keeps them: the stage's lines `vector_size` values of
+    /// `elem_bits` bits, which a line holds whole bytes of (a packed operand's line is its words).
+    /// What the launch builds the descriptor with, and what the stage fill holds the stage to.
+    ///
+    /// # Errors
+    ///
+    /// Blocks splitting a row, which a box lands whole; blocks stacking a number of rows the
+    /// swizzle's period of rows does not divide, whose rows a box keys off their place in the
+    /// stage rather than in the block; padded rows, which a box lands dense, and swizzled rows
+    /// longer than a descriptor swizzle spans.
+    pub fn tma_swizzle(
+        &self,
+        space: &Space,
+        vector_size: usize,
+        elem_bits: usize,
+    ) -> Result<TensorMapSwizzle, Refusal> {
+        assert!(
+            (vector_size * elem_bits).is_multiple_of(8),
+            "StageStorage::tma_swizzle: a line of {vector_size} {elem_bits}-bit values is not whole \
+             bytes"
+        );
+        let form = StageForm::dense(
+            space,
+            vector_size,
+            self.clone(),
+            LineBytes(vector_size * elem_bits / 8),
+        );
+        let swizzle = form
+            .rows
+            .tma_swizzle()
+            .map_err(|why| Refusal::RowsNoDescriptorLands { why })?;
+        let rank = space.rank();
+        let row = space.axis_at(rank - 1);
+        let period = match swizzle {
+            TensorMapSwizzle::None => 1,
+            _ => ChunkSwizzle::ROWS_PER_PERIOD,
+        };
+        for block in self.nesting(space) {
+            let rows = match rank {
+                1 => 1,
+                _ => block.extent_at(rank - 2),
+            };
+            if block.extent_at(rank - 1) < space.extent_at(rank - 1) || !rows.is_multiple_of(period)
+            {
+                return Err(Refusal::BoxSplitsStageBlocks {
+                    axis: row,
+                    rows,
+                    period,
+                });
+            }
+        }
+        Ok(swizzle)
+    }
+
+    /// The storage-tiling nesting a stage over `space` gets, coarse to fine; empty is row-major.
+    pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
+        match self {
+            StageStorage::Lines { .. } => {
+                panic!("StageStorage::Lines: the plane's units are not shared memory")
+            }
+            StageStorage::Tiled { block, .. } => {
+                let nested = Space::new(
+                    &space
+                        .axes()
+                        .map(|axis| {
+                            let edge = block
+                                .iter()
+                                .find(|&&(a, _)| a == axis)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "StageStorage::Tiled: the block states no edge for {axis:?}"
+                                    )
+                                })
+                                .1;
+                            (axis, edge)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                if &nested == space {
+                    return Vec::new();
+                }
+                vec![nested]
+            }
+            StageStorage::Strided => Vec::new(),
+        }
+    }
 }

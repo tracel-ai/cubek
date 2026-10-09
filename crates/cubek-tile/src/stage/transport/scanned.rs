@@ -3,7 +3,7 @@
 use cubecl::prelude::*;
 
 use super::base::Scan;
-use super::cooperative::fill_extent;
+use super::straight::fill_extent;
 use crate::*;
 
 #[cube]
@@ -21,15 +21,15 @@ impl<T: Numeric> Memory<T> {
 
     /// Cooperative cyclic flat scan across the units that share this fill ([`FillUnits`]); a
     /// packed source unpacks.
-    pub(crate) fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
+    fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
         let fill = comptime!(self.access.fill);
         let s = src.flat_unpacked::<WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
         // One line per unit, striding by the units that fill: the distribution must stay
         // disjoint, or a destination that adds (`Accumulate`, `Relay`) takes a value more than once.
-        let stride = fill_workers(fill);
-        let mut i = fill_worker(fill);
+        let stride = FillUnits::workers(fill);
+        let mut i = FillUnits::worker(fill);
         while i < total {
             // `src` zeroes reads past its bound; the staged buffer writes the full padded cell.
             d.write(i, s.read(i));
@@ -66,8 +66,8 @@ impl<T: Numeric> Memory<T> {
         let total = d.shape();
         // The units that share this window, as the uncast scan strides: a window of one plane's
         // is moved by that plane alone, and a destination that adds takes each line once.
-        let stride = fill_workers(fill);
-        let mut i = fill_worker(fill);
+        let stride = FillUnits::workers(fill);
+        let mut i = FillUnits::worker(fill);
         while i < total {
             d.write(i, Vector::<T, W>::cast_from(s.read(i)));
             i += stride;

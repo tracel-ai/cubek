@@ -1,6 +1,7 @@
 //! A factor these values carry ([`Tile::mul`](crate::Tile::mul)): scale tiles windowed with the
 //! values and multiplied in where a kernel copies or contracts them. Levels are innermost first.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use cubecl::frontend::{AsMutExpand, AsRefExpand, CubeDebug, ExpandTypeClone, IntoExpand, IntoMut};
@@ -9,6 +10,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 use cubecl::unexpanded;
 
+use crate::stage::pipeline::payload::base::{StageOperand, StageSpec, stage_one};
 use crate::*;
 
 /// One level of a factor: the erased scale tile and its comptime facts.
@@ -19,8 +21,11 @@ pub(crate) struct FactorLevel {
     pub(crate) space: Space,
     /// How the scales address their buffer.
     pub(crate) projection: Projection,
-    /// Whether reaching this scale is a plane shuffle, which the whole plane takes part in.
-    pub(crate) by_shuffle: bool,
+    /// Whether the scale tile holds words rather than scales: each `u32` the `e4m3` scales of
+    /// the four blocks one block-scaled instruction step covers, the first block's in the low
+    /// byte, as an NVFP4 checkpoint packs them. Only that instruction reads such a level
+    /// ([`FactorExpand::__expand_word_at_method`]); widened to a scale it means nothing.
+    pub(crate) words: bool,
 }
 
 /// A scale tile as the values read it.
@@ -35,6 +40,32 @@ pub(crate) trait FactorRead {
 
     /// This scale tile windowed to `step`, as the values it rides are.
     fn at_step(&self, scope: &Scope, step: &StepExpand) -> Arc<dyn FactorRead>;
+
+    /// The word at the value at `coords` of a tile spanning `values`, as it is stored: only a
+    /// level that [holds words](FactorLevel::words) is read this way.
+    fn word_for(
+        &self,
+        scope: &Scope,
+        coords: &CoordsExpand<u32>,
+        values: &Space,
+    ) -> NativeExpand<u32>;
+
+    /// A stage of this scale tile as `spec` shapes the values' stage, laid out plain whatever
+    /// the values' storage: the scales' own words, which no instruction fragment-loads.
+    fn staged(&self, scope: &Scope, spec: &StageSpec) -> Arc<dyn FactorRead>;
+
+    /// Fill this stage from `src`, the scale tile it stages windowed as the values are, under
+    /// `meeting`, beside the values' own fill.
+    fn fill_from(&self, scope: &Scope, src: &dyn FactorRead, meeting: &MeetingExpand);
+
+    /// Free this stage's shared memory, with the values'.
+    fn free_stage(&self, scope: &Scope);
+
+    /// Who moves this scale tile's bytes into a stage of it.
+    fn delivery(&self, scope: &Scope) -> Delivery;
+
+    /// The tile behind this read, for a stage to fill from one of its own kind.
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl<S: Numeric> FactorRead for TileExpand<S> {
@@ -52,6 +83,47 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
 
     fn at_step(&self, scope: &Scope, step: &StepExpand) -> Arc<dyn FactorRead> {
         Arc::new(self.clone().__expand_at_step_method(scope, step))
+    }
+
+    fn word_for(
+        &self,
+        scope: &Scope,
+        coords: &CoordsExpand<u32>,
+        values: &Space,
+    ) -> NativeExpand<u32> {
+        let word = self
+            .clone()
+            .__expand_scale_for_method(scope, coords, values.clone());
+        u32::__expand_cast_from(scope, word)
+    }
+
+    fn staged(&self, scope: &Scope, spec: &StageSpec) -> Arc<dyn FactorRead> {
+        let spec = StageSpec {
+            storage: StageStorage::Strided,
+            width: None,
+            ..spec.clone()
+        };
+        Arc::new(stage_one::expand::<S>(scope, self, spec))
+    }
+
+    fn fill_from(&self, scope: &Scope, src: &dyn FactorRead, meeting: &MeetingExpand) {
+        let src = src
+            .as_any()
+            .downcast_ref::<TileExpand<S>>()
+            .expect("Factor: a stage of scales fills from scales of its own element");
+        meeting.__expand_fill_method::<S>(scope, &mut self.clone(), src);
+    }
+
+    fn free_stage(&self, scope: &Scope) {
+        self.clone().__expand_free_stage_method(scope);
+    }
+
+    fn delivery(&self, scope: &Scope) -> Delivery {
+        self.clone().__expand_delivery_method(scope)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -85,6 +157,16 @@ impl Factor {
         unexpanded!()
     }
 
+    /// Whether the innermost level [holds words](FactorLevel::words) of block scales.
+    pub(crate) fn holds_words(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// The innermost level's word at the value at `coords`, read as it is stored.
+    pub(crate) fn word_at(&self, _coords: &Coords<u32>, _values: Space) -> u32 {
+        unexpanded!()
+    }
+
     pub(crate) fn __expand_none(_scope: &Scope) -> FactorExpand {
         FactorExpand::default()
     }
@@ -97,7 +179,7 @@ impl FactorExpand {
             levels: vec![FactorLevel {
                 space: scale.place.space.clone(),
                 projection: scale.clone().__expand_projection_method(scope),
-                by_shuffle: scale.clone().__expand_by_shuffle_method(scope),
+                words: S::elem_type(scope) == u32::elem_type(scope),
                 read: Arc::new(scale.clone()),
             }],
         }
@@ -118,11 +200,6 @@ impl FactorExpand {
     /// Whether these values carry any scales at all.
     pub(crate) fn scaled(&self) -> bool {
         !self.levels.is_empty()
-    }
-
-    /// Whether any level is reached by a plane shuffle, which the whole plane takes part in.
-    pub(crate) fn by_shuffle(&self) -> bool {
-        self.levels.iter().any(|level| level.by_shuffle)
     }
 
     /// This factor's innermost level alone.
@@ -153,7 +230,7 @@ impl FactorExpand {
                     read: level.read.at_step(scope, step),
                     space: level.space.clone(),
                     projection: level.projection.clone(),
-                    by_shuffle: level.by_shuffle,
+                    words: level.words,
                 })
                 .collect(),
         }
@@ -167,6 +244,11 @@ impl FactorExpand {
     ) -> NativeExpand<f32> {
         let mut product: Option<NativeExpand<f32>> = None;
         for level in &self.levels {
+            assert!(
+                !level.words,
+                "Factor: these scales are words of four e4m3 block scales, which only the \
+                 block-scaled instruction reads; widened one at a time they mean nothing"
+            );
             let one = level.read.scale_for(scope, coords, &values);
             product = Some(match product {
                 None => one,
@@ -174,6 +256,75 @@ impl FactorExpand {
             });
         }
         product.unwrap_or_else(|| ExpandValue::constant(1u64.into(), f32::elem_type(scope)).into())
+    }
+
+    pub(crate) fn __expand_holds_words_method(&self, _scope: &Scope) -> bool {
+        self.inner().is_some_and(|level| level.words)
+    }
+
+    /// Whether these scales are staged beside the values they scale rather than decoded into
+    /// them: words of block scales, which only the block-scaled instruction reads, so values
+    /// under them are staged as they are stored. Only one level is: the instruction holds one.
+    pub(crate) fn staged_beside(&self) -> bool {
+        let words = self.inner().is_some_and(|level| level.words);
+        assert!(
+            !words || self.levels.len() == 1,
+            "Factor: values under words of block scales carry no other level, since the \
+             block-scaled instruction that reads them holds one; apply a coarser factor to the sum"
+        );
+        words
+    }
+
+    /// This factor's stage as `spec` shapes the values': each level's scales staged beside them.
+    pub(crate) fn staged(&self, scope: &Scope, spec: &StageSpec) -> FactorExpand {
+        FactorExpand {
+            levels: self
+                .levels
+                .iter()
+                .map(|level| FactorLevel {
+                    read: level.read.staged(scope, spec),
+                    ..level.clone()
+                })
+                .collect(),
+        }
+    }
+
+    /// Fill this factor's stage from `src`, the factor it stages windowed as the values are.
+    pub(crate) fn fill_from(&self, scope: &Scope, src: &FactorExpand, meeting: &MeetingExpand) {
+        for (stage, level) in self.levels.iter().zip(&src.levels) {
+            stage.read.fill_from(scope, level.read.as_ref(), meeting);
+        }
+    }
+
+    /// Each level's scales as a slot plans them, beside the values they scale.
+    pub(crate) fn stage_operands(&self, scope: &Scope) -> Vec<StageOperand> {
+        self.levels
+            .iter()
+            .map(|level| StageOperand {
+                delivery: level.read.delivery(scope),
+                space: level.space.clone(),
+            })
+            .collect()
+    }
+
+    /// Free the shared memory this factor's stage holds.
+    pub(crate) fn free_stage(&self, scope: &Scope) {
+        for level in &self.levels {
+            level.read.free_stage(scope);
+        }
+    }
+
+    pub(crate) fn __expand_word_at_method(
+        &self,
+        scope: &Scope,
+        coords: &CoordsExpand<u32>,
+        values: Space,
+    ) -> NativeExpand<u32> {
+        let level = self
+            .inner()
+            .filter(|level| level.words)
+            .expect("Factor::word_at: the innermost level holds no words of block scales");
+        level.read.word_for(scope, coords, &values)
     }
 }
 
@@ -210,13 +361,6 @@ pub(crate) struct FactorReader {
     pub(crate) matrix: usize,
 }
 
-impl FactorReader {
-    /// Whether a scale read is a plane shuffle; a reader keeps its units converged around one.
-    pub(crate) fn by_shuffle(&self) -> bool {
-        unexpanded!()
-    }
-}
-
 #[cube]
 impl FactorReader {
     /// `value`, the line at `pos` of the values' matrix, under the scale covering it.
@@ -249,7 +393,12 @@ impl FactorReader {
     ) -> Vector<E, V> {
         if comptime!(self.scaled) {
             let scale = self.inner.at_coords(coords, comptime!(self.values.clone()));
-            value * Vector::<E, V>::cast_from(scale * self.coarse)
+            // Multiplied in `f32`, rounded to `E` once: a placed `e2m1` value is a lift short, which
+            // the factor carries, and the lift times a scale is past a half's range where its
+            // product with the value is not.
+            let scaled = Vector::<f32, V>::cast_from(value)
+                * Vector::<f32, V>::cast_from(scale * self.coarse);
+            Vector::<E, V>::cast_from(scaled)
         } else {
             value
         }
@@ -260,12 +409,6 @@ impl FactorExpand {
     pub(crate) fn __expand_varies_along_method(&self, _scope: &Scope, axis: Axis) -> bool {
         self.inner()
             .is_some_and(|level| level.projection.addresses(axis))
-    }
-}
-
-impl FactorReaderExpand {
-    pub(crate) fn __expand_by_shuffle_method(&self, _scope: &Scope) -> bool {
-        self.inner.by_shuffle()
     }
 }
 

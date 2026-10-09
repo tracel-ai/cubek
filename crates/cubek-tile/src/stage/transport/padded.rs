@@ -4,6 +4,15 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
+/// What a padded fill needs beyond the two boxes: source cells per line and the padding extent.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Padding {
+    pub(crate) width: usize,
+    pub(crate) extent: Option<usize>,
+    /// The physical rank both boxes share.
+    pub(crate) rank: usize,
+}
+
 /// Read one destination line at `pos`, whole or assembled from scalar cells ([`widen_line`]).
 #[cube]
 pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
@@ -20,9 +29,9 @@ pub(crate) fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 }
 
 /// Assemble one padded destination line from adjacent scalar source cells.
-/// With `Padding::units` `None`, the source must be bounds-checked so padding reads zero.
+/// With `Padding::extent` `None`, the source must be bounds-checked so padding reads zero.
 #[cube]
-pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
+fn widen_line<T: Numeric, W: Size, SW: Size>(
     s: &Masked<'_, Vector<T, SW>, CoordsDyn>,
     pos: &CoordsDyn,
     #[comptime] padding: Padding,
@@ -69,7 +78,7 @@ pub(crate) fn widen_line<T: Numeric, W: Size, SW: Size>(
 
 /// Replace the destination line coordinate with its scalar source-cell coordinate.
 #[cube]
-pub(crate) fn source_component(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
+fn source_component(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
     let mut out = CoordsDyn::new();
     #[unroll]
     for p in 0..rank {
