@@ -912,14 +912,9 @@ impl<E: Float> PlanePartition<E> {
         for mi in 0..self.m_tiles {
             #[unroll]
             for ni in 0..self.n_tiles {
-                let fragment = self.at(mi, ni).readable();
-                match comptime!(monoid) {
-                    Monoid::Max => fragment.raise_row_maxima(slots, comptime!(mi * held)),
-                    Monoid::Sum => fragment.add_row_sums(slots, comptime!(mi * held)),
-                    Monoid::Prod | Monoid::Min => {
-                        panic!("PlanePartition::reduce_rows: a softmax reduces by max and sum")
-                    }
-                }
+                self.at(mi, ni)
+                    .readable()
+                    .fold_rows(slots, comptime!(mi * held), monoid);
             }
             self.at(mi, 0usize)
                 .readable()

@@ -139,7 +139,7 @@ impl<E: Float> AxisSlices<E> {
                 for i in 0..rows {
                     maxima[i] = seed[i];
                 }
-                fragment.raise_row_maxima(&mut maxima, 0usize);
+                fragment.fold_rows(&mut maxima, 0usize, Monoid::Max);
                 fragment.across_rows(&mut maxima, 0usize, Monoid::Max);
                 maxima
             }
@@ -175,7 +175,7 @@ impl<E: Float> AxisSlices<E> {
                 for i in 0..rows {
                     sums[i] = E::from_int(0);
                 }
-                fragment.add_row_sums(&mut sums, 0usize);
+                fragment.fold_rows(&mut sums, 0usize, Monoid::Sum);
                 fragment.across_rows(&mut sums, 0usize, Monoid::Sum);
                 sums
             }

@@ -314,38 +314,26 @@ impl<E: Numeric> MmaData<E> {
         }
     }
 
-    /// `maxima[first + i]` raised to the max of this unit's cells on its row `i`: the unit's own
-    /// part, which [`across_rows`](Self::across_rows) completes.
-    pub(crate) fn raise_row_maxima(&self, maxima: &mut Array<E>, #[comptime] first: usize) {
+    /// `slots[first + i]` combined under `monoid` with this unit's cells on its row `i`: the
+    /// unit's own part of each row, which [`across_rows`](Self::across_rows) completes.
+    pub(crate) fn fold_rows(
+        &self,
+        slots: &mut Array<E>,
+        #[comptime] first: usize,
+        #[comptime] monoid: Monoid,
+    ) {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         let vector_size = def.vector_size(MatrixIdent::Accumulator);
         let acc = self.acc_registers();
         #[unroll]
         for i in 0..acc.len() {
             let vector = acc[i];
-            let mut slot = maxima[first + i];
+            let mut slot = slots[first + i];
             #[unroll]
             for e in 0..vector_size {
-                slot = max(slot, vector.extract(e));
+                slot = monoid.combine::<E>(slot, vector.extract(e));
             }
-            maxima[first + i] = slot;
-        }
-    }
-
-    /// `sums[first + i]` plus this unit's cells on its row `i`, the unit's own part.
-    pub(crate) fn add_row_sums(&self, sums: &mut Array<E>, #[comptime] first: usize) {
-        let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
-        let vector_size = def.vector_size(MatrixIdent::Accumulator);
-        let acc = self.acc_registers();
-        #[unroll]
-        for i in 0..acc.len() {
-            let vector = acc[i];
-            let mut slot = sums[first + i];
-            #[unroll]
-            for e in 0..vector_size {
-                slot += vector.extract(e);
-            }
-            sums[first + i] = slot;
+            slots[first + i] = slot;
         }
     }
 
