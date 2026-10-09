@@ -244,6 +244,7 @@ impl<E: Float> OnlineSoftmax<E> {
     /// Every slice's running max and sum as they stand, copied out: nothing is divided and the
     /// state walks on unchanged.
     pub fn state(&self) -> OnlineSoftmaxState<E> {
+        self.refuse_merging("OnlineSoftmax::state");
         let mut max = Array::<E>::new(self.slices);
         let mut sum = Array::<E>::new(self.slices);
         #[unroll]
@@ -294,7 +295,8 @@ impl<E: Float> OnlineSoftmax<E> {
         comptime!(assert!(
             self.slots == SliceSlots::Every,
             "{op}: this state was taken in from a manual-mma grid, each unit keeping the rows it \
-             holds cells of; planes that split the keys merge a window's or a cmma grid's state"
+             holds cells of; a state merged with another holder's is taken in from a window or a \
+             cmma grid"
         ));
     }
 }
