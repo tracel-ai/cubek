@@ -54,7 +54,7 @@ pub(crate) fn interpolate_nearest_backward_launch(
     Ok(())
 }
 
-fn shape_divmod(binding: &TensorBinding) -> SequenceArg<FastDivmod<usize>> {
+pub(super) fn shape_divmod(binding: &TensorBinding) -> SequenceArg<FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
     for dim in binding.shape.iter() {
         out_seq.push(*dim);
@@ -62,7 +62,7 @@ fn shape_divmod(binding: &TensorBinding) -> SequenceArg<FastDivmod<usize>> {
     out_seq
 }
 
-fn linear_layout(binding: &TensorBinding, vector_size: usize) -> LinearLayoutLaunch {
+pub(super) fn linear_layout(binding: &TensorBinding, vector_size: usize) -> LinearLayoutLaunch {
     LinearLayoutLaunch::from_shape_strides(
         binding.shape.clone(),
         binding.strides.clone(),
