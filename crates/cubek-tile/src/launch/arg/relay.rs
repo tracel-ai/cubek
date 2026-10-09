@@ -60,7 +60,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         let turn = walk.position_at(split);
         let holders = Relay::<'t, E>::holders(partitioning, split);
 
-        let carry = self.tile(comptime!(space.clone()));
+        let carry = self.tile(partitioning);
         let sink = folding_tile::<E, V>(self, partitioning, turn == 0usize);
 
         Relay::<'t, E> {

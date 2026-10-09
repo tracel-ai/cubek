@@ -38,8 +38,8 @@ fn copy_logical<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let mut dst = dst.tile(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let mut dst = dst.tile(&space);
     let r = src.view::<Const<1>>();
     let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();

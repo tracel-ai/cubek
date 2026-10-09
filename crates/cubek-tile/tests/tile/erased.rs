@@ -52,7 +52,7 @@ fn buffer_kernel<E: Float>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let mut dst = out.tile(comptime!(space.clone()));
+    let mut dst = out.tile(&space);
     let src =
         Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
     dst.copy_from(&src);
@@ -275,9 +275,9 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<EA, E, E>(
         &a,
         &b,
@@ -307,8 +307,8 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
@@ -361,8 +361,8 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         comptime!(a.spec.clone()),
     )
     .tile(comptime!(space.levels().to_vec()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<EA, E, E>(
         &a,
         &b,
@@ -555,8 +555,8 @@ fn wide_buffer_kernel<E: Float>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = out.tile(comptime!(space.clone()));
+    let src = input.tile(&space);
+    let mut dst = out.tile(&space);
     dst.copy_from(&src);
 }
 
@@ -568,7 +568,7 @@ fn wide_sink_kernel<E: Float>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(space.clone()));
+    let src = input.tile(&space);
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.tensor);
     let mut dst = GlobalOperand::<E>::sink(
@@ -602,7 +602,7 @@ fn wide_source_kernel<E: Float>(
         comptime!(input.spec.clone()),
     )
     .tile(comptime!(space.levels().to_vec()));
-    let mut dst = out.tile(comptime!(space.clone()));
+    let mut dst = out.tile(&space);
     dst.copy_from(&src);
 }
 

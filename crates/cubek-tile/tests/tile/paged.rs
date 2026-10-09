@@ -48,8 +48,8 @@ fn paged_sum_kernel<E: Numeric>(
     #[comptime] physical: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let kv = kv.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let kv = kv.tile(&space);
+    let out = out.tile(&space);
 
     for sequence in space.over(&seq) {
         let b = sequence.coord(B);

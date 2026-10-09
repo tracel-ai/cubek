@@ -82,9 +82,9 @@ pub fn cpu_gemm_kernel<
     #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
 
     for cube in space {
         for plane in cube {

@@ -136,9 +136,10 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// This accumulator opened with a per-plane shared-memory scratch for bouncing drains.
-    /// [`drained_into`](Self::drained_into) opens the smallest one itself where it needs one;
-    /// stating it chooses how much of the grid it holds, or serves a drain region by region.
+    /// This accumulator opened with a per-plane shared-memory scratch for bouncing drains, or
+    /// as it is for [`Scratch::None`]. [`drained_into`](Self::drained_into) opens the smallest
+    /// one itself where it needs one; stating it chooses how much of the grid it holds, or serves
+    /// a drain region by region.
     fn with_scratch(self, #[comptime] scratch: Scratch) -> Self;
 
     /// Drain this accumulator into `dest`, cast to its element. `self` and `dest` must be
@@ -192,46 +193,49 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
     }
 
     fn with_scratch(self, #[comptime] scratch: Scratch) -> Tile<Acc> {
-        match &self.kind {
-            TileKind::PlanePartition(p) => {
-                let (m, n) = p.at(0usize, 0usize).shape();
-                let cells = comptime!(m * n);
-                let tiles = comptime!(p.m_tiles * p.n_tiles);
-                let slots = comptime!(scratch.slots(tiles));
-                // Indexed by hardware plane position, not level position: the launch decides the cube's shape.
-                let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
-                let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
-                let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
-                // Each fragment carries its own slot, so drain order doesn't matter.
-                let mut frags = Sequence::<PlaneTile<Acc>>::new();
-                #[unroll]
-                for i in 0..tiles {
-                    let start = plane + comptime!(cells * scratch.slot_of(i, tiles));
-                    let slot = shared.clone().map(|s| &s[start..start + cells]);
-                    frags.push(p.frags.index(i).clone().with_scratch(slot));
+        match comptime!(scratch) {
+            Scratch::None => self,
+            _ => match &self.kind {
+                TileKind::PlanePartition(p) => {
+                    let (m, n) = p.at(0usize, 0usize).shape();
+                    let cells = comptime!(m * n);
+                    let tiles = comptime!(p.m_tiles * p.n_tiles);
+                    let slots = comptime!(scratch.slots(tiles));
+                    // Indexed by hardware plane position, not level position: the launch decides the cube's shape.
+                    let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
+                    let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
+                    let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
+                    // Each fragment carries its own slot, so drain order doesn't matter.
+                    let mut frags = Sequence::<PlaneTile<Acc>>::new();
+                    #[unroll]
+                    for i in 0..tiles {
+                        let start = plane + comptime!(cells * scratch.slot_of(i, tiles));
+                        let slot = shared.clone().map(|s| &s[start..start + cells]);
+                        frags.push(p.frags.index(i).clone().with_scratch(slot));
+                    }
+                    Tile::new(
+                        TileKind::new_PlanePartition(PlanePartition::<Acc> {
+                            frags,
+                            m_tiles: comptime!(p.m_tiles),
+                            n_tiles: comptime!(p.n_tiles),
+                            rows: comptime!(p.rows),
+                            cols: comptime!(p.cols),
+                            scratch: ComptimeOption::new_Some(
+                                shared.clone().map(|s| &s[plane..plane + cells]),
+                            ),
+                            held: comptime!(scratch),
+                        }),
+                        comptime!(self.place.clone()),
+                    )
                 }
-                Tile::new(
-                    TileKind::new_PlanePartition(PlanePartition::<Acc> {
-                        frags,
-                        m_tiles: comptime!(p.m_tiles),
-                        n_tiles: comptime!(p.n_tiles),
-                        rows: comptime!(p.rows),
-                        cols: comptime!(p.cols),
-                        scratch: ComptimeOption::new_Some(
-                            shared.clone().map(|s| &s[plane..plane + cells]),
-                        ),
-                        held: comptime!(scratch),
-                    }),
-                    comptime!(self.place.clone()),
-                )
-            }
-            TileKind::Memory(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_)
-            | TileKind::Lines(_) => {
-                panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
-            }
+                TileKind::Memory(_)
+                | TileKind::PlaneTile(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
+                }
+            },
         }
     }
 
