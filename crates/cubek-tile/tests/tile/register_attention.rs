@@ -373,7 +373,7 @@ fn row_sum_across(def: &MmaDefinition<f16, f16, f32>, value: f32, #[comptime] nt
         let (other_row, _) = def.position_of_nth(mask, nth as u32, MatrixIdent::Accumulator);
         if other_row == row {
             let other = plane_shuffle_xor(acc, mask);
-            acc = acc + other;
+            acc += other;
         }
     }
     acc
@@ -775,9 +775,9 @@ fn offers_mma(client: &Client) -> bool {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     client.features().matmul.mma.contains(&MmaConfig {
-        a_type: ElemType::Float(FloatKind::F16).into(),
-        b_type: ElemType::Float(FloatKind::F16).into(),
-        cd_type: ElemType::Float(FloatKind::F32).into(),
+        a_type: ElemType::Float(FloatKind::F16),
+        b_type: ElemType::Float(FloatKind::F16),
+        cd_type: ElemType::Float(FloatKind::F32),
         m: 16,
         n: 8,
         k: 16,
