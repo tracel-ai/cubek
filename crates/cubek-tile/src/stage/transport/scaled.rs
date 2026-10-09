@@ -107,7 +107,11 @@ impl<T: Numeric> Tile<T> {
     ) {
         let load = self.vector_tile();
         let (sw, vw) = comptime!((load.values(), lands.values()));
-        let packing = self.packing();
+        // Read placed: an `e2m1` value decoded without its lift, which the scale carries, one
+        // multiply a line rather than one a value.
+        let stored_as = self.packing();
+        let packing = comptime!(stored_as.placed());
+        let lift = comptime!(packing.lift());
         let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let mem = self.mem("Tile::copy_from");
@@ -129,7 +133,7 @@ impl<T: Numeric> Tile<T> {
                 }
             }
             let values = values_at::<T, I, WP, VW>(held, offset, packing);
-            let scale = mem.factor.at_coords(&at, comptime!(space.clone()));
+            let scale = mem.factor.at_coords(&at, comptime!(space.clone())) * lift;
             // Multiplied in `f32`, rounded to `T` once: a placed `e2m1` value is a lift short,
             // which the scale carries, and the lift times a scale is past a half's range where
             // its product with the value is not.
