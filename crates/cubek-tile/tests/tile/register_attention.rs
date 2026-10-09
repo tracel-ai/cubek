@@ -57,6 +57,7 @@ fn register_attention(
     keys: u32,
     scale: f32,
     #[comptime] group: u32,
+    #[comptime] value_depth: usize,
 ) {
     let def = MmaDefinition::<f16, f16, f32>::new(ROWS, 8usize, 16usize);
     let size!(NA) = def.vector_size(MatrixIdent::A);
@@ -237,37 +238,77 @@ fn register_attention(
             }
         }
 
-        // out += p · v: two score tiles side by side are one `A` fragment of a 16-key step.
-        #[unroll]
-        for step in 0..comptime!(KEYS / 16) {
-            let mut a = Array::<Vector<f16, NA>>::new(a_regs);
+        if comptime!(value_depth == 16) {
+            // out += p · v: two score tiles side by side are one `A` fragment of a 16-key step.
             #[unroll]
-            for r in 0..a_regs {
-                a[r] = Vector::cast_from(score[comptime!(step * 2 * c_regs + r)]);
-            }
-            #[unroll]
-            for tile in 0..out_tiles {
-                let mut c = Array::<Vector<f32, NC>>::new(c_regs);
+            for step in 0..comptime!(KEYS / 16) {
+                let mut a = Array::<Vector<f16, NA>>::new(a_regs);
                 #[unroll]
-                for r in 0..c_regs {
-                    c[r] = acc[comptime!(tile * c_regs + r)];
+                for r in 0..a_regs {
+                    a[r] = Vector::cast_from(score[comptime!(step * 2 * c_regs + r)]);
                 }
-                // `v`'s `(key, dim)` lies where it is staged.
-                let key = comptime!(step as u32 * 16) + b_row + row_in_matrix;
-                let dim = comptime!(tile as u32 * 8) + b_col;
-                let at = (stage_base
-                    + key * comptime!(ROW_LINES as u32)
-                    + dim / comptime!(LINE as u32)) as usize;
-                let b = def.load_matrix::<Vector<f16, Const<8>>, NB>(
-                    &value_stage[at..at + 1],
-                    MatrixIdent::B,
-                    b_regs,
-                    value_transposed,
-                );
-                c = def.execute(&a, &b, &c);
                 #[unroll]
-                for r in 0..c_regs {
-                    acc[comptime!(tile * c_regs + r)] = c[r];
+                for tile in 0..out_tiles {
+                    let mut c = Array::<Vector<f32, NC>>::new(c_regs);
+                    #[unroll]
+                    for r in 0..c_regs {
+                        c[r] = acc[comptime!(tile * c_regs + r)];
+                    }
+                    // `v`'s `(key, dim)` lies where it is staged.
+                    let key = comptime!(step as u32 * 16) + b_row + row_in_matrix;
+                    let dim = comptime!(tile as u32 * 8) + b_col;
+                    let at = (stage_base
+                        + key * comptime!(ROW_LINES as u32)
+                        + dim / comptime!(LINE as u32)) as usize;
+                    let b = def.load_matrix::<Vector<f16, Const<8>>, NB>(
+                        &value_stage[at..at + 1],
+                        MatrixIdent::B,
+                        b_regs,
+                        value_transposed,
+                    );
+                    c = def.execute(&a, &b, &c);
+                    #[unroll]
+                    for r in 0..c_regs {
+                        acc[comptime!(tile * c_regs + r)] = c[r];
+                    }
+                }
+            }
+        } else {
+            // out += p · v at half depth: one score tile is one `A` fragment of an 8-key step.
+            let half = MmaDefinition::<f16, f16, f32>::new(ROWS, 8usize, 8usize);
+            let half_b_regs = half.vectors_per_lane(MatrixIdent::B);
+            let half_a_regs = half.vectors_per_lane(MatrixIdent::A);
+            let (half_row, half_col) = half.position_of_nth(0, 0u32, MatrixIdent::B);
+            #[unroll]
+            for step in 0..score_tiles {
+                let mut a = Array::<Vector<f16, NA>>::new(half_a_regs);
+                #[unroll]
+                for r in 0..half_a_regs {
+                    a[r] = Vector::cast_from(score[comptime!(step * c_regs + r)]);
+                }
+                #[unroll]
+                for tile in 0..out_tiles {
+                    let mut c = Array::<Vector<f32, NC>>::new(c_regs);
+                    #[unroll]
+                    for r in 0..c_regs {
+                        c[r] = acc[comptime!(tile * c_regs + r)];
+                    }
+                    let key = comptime!(step as u32 * 8) + half_row + row_in_matrix;
+                    let dim = comptime!(tile as u32 * 8) + half_col;
+                    let at = (stage_base
+                        + key * comptime!(ROW_LINES as u32)
+                        + dim / comptime!(LINE as u32)) as usize;
+                    let b = half.load_matrix::<Vector<f16, Const<8>>, NB>(
+                        &value_stage[at..at + 1],
+                        MatrixIdent::B,
+                        half_b_regs,
+                        value_transposed,
+                    );
+                    c = half.execute(&a, &b, &c);
+                    #[unroll]
+                    for r in 0..c_regs {
+                        acc[comptime!(tile * c_regs + r)] = c[r];
+                    }
                 }
             }
         }
@@ -460,19 +501,21 @@ fn register_attention_matches_the_reference() {
         keys: 4 * KEYS,
     };
     let inputs = problem.inputs(&client);
-    let got = problem.launch(&client, &inputs);
-    let got = f16::from_bytes(&client.read_one_unchecked(got)).to_vec();
     let want = problem.reference(&inputs);
-    let mut worst = 0f32;
-    for (i, (have, want)) in got.iter().zip(&want).enumerate() {
-        let err = (have.to_f32() - want).abs();
-        worst = worst.max(err);
-        assert!(
-            err <= 2e-3 + 1e-2 * want.abs(),
-            "cell {i}: got {have}, want {want}"
-        );
+    for value_depth in [16, 8] {
+        let got = problem.launch(&client, &inputs, value_depth);
+        let got = f16::from_bytes(&client.read_one_unchecked(got)).to_vec();
+        let mut worst = 0f32;
+        for (i, (have, want)) in got.iter().zip(&want).enumerate() {
+            let err = (have.to_f32() - want).abs();
+            worst = worst.max(err);
+            assert!(
+                err <= 2e-3 + 1e-2 * want.abs(),
+                "value depth {value_depth}, cell {i}: got {have}, want {want}"
+            );
+        }
+        eprintln!("register attention, value depth {value_depth}: worst error {worst:e}");
     }
-    eprintln!("register attention: worst error {worst:e}");
 }
 
 /// The leaf's rate at the prefill shape of a Qwen3-4B layer: 512 queries against 2048 keys,
@@ -493,30 +536,33 @@ fn register_attention_throughput() {
     };
     let inputs = problem.inputs(&client);
     let flops = 4.0 * (problem.heads * problem.queries * problem.keys * DIM) as f64;
-    for _ in 0..5 {
-        problem.launch(&client, &inputs);
+    for value_depth in [16, 8] {
+        for _ in 0..5 {
+            problem.launch(&client, &inputs, value_depth);
+        }
+        cubecl::future::block_on(client.sync()).unwrap();
+        let launches = 20;
+        let best = (0..5)
+            .map(|_| {
+                let start = Instant::now();
+                for _ in 0..launches {
+                    problem.launch(&client, &inputs, value_depth);
+                }
+                cubecl::future::block_on(client.sync()).unwrap();
+                start.elapsed().as_secs_f64() / launches as f64
+            })
+            .fold(f64::MAX, f64::min);
+        eprintln!(
+            "REGISTER ATTENTION {}q x {}k, {}:{} heads, d={DIM}, value k={value_depth}: \
+             {:8.1} us  {:6.1} TFLOP/s",
+            problem.queries,
+            problem.keys,
+            problem.heads,
+            problem.kv_heads,
+            best * 1e6,
+            flops / best / 1e12
+        );
     }
-    cubecl::future::block_on(client.sync()).unwrap();
-    let launches = 20;
-    let best = (0..5)
-        .map(|_| {
-            let start = Instant::now();
-            for _ in 0..launches {
-                problem.launch(&client, &inputs);
-            }
-            cubecl::future::block_on(client.sync()).unwrap();
-            start.elapsed().as_secs_f64() / launches as f64
-        })
-        .fold(f64::MAX, f64::min);
-    eprintln!(
-        "REGISTER ATTENTION {}q x {}k, {}:{} heads, d={DIM}: {:8.1} us  {:6.1} TFLOP/s",
-        problem.queries,
-        problem.keys,
-        problem.heads,
-        problem.kv_heads,
-        best * 1e6,
-        flops / best / 1e12
-    );
 }
 
 /// `repeats` rounds of eight independent `m16n8k16` products per plane on registers alone: the
@@ -653,7 +699,13 @@ impl Problem {
         }
     }
 
-    fn launch(&self, client: &Client, inputs: &Inputs) -> cubecl::server::Handle {
+    /// Launch the leaf, the value contracting the keys `value_depth` (16 or 8) a step.
+    fn launch(
+        &self,
+        client: &Client,
+        inputs: &Inputs,
+        value_depth: usize,
+    ) -> cubecl::server::Handle {
         let [q, k, v] = inputs.device.clone();
         let out = client.empty(self.heads * self.queries * DIM * 2);
         let rows = self.heads * self.queries * DIM;
@@ -674,6 +726,7 @@ impl Problem {
             self.keys as u32,
             self.scale(),
             (self.heads / self.kv_heads) as u32,
+            value_depth,
         );
         out
     }
