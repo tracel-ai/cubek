@@ -25,7 +25,7 @@ use cubek_tile::Instruction;
 use cubek_tile::kind::Field;
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::layout::split;
-use cubek_tile::stage::{Prefetch, UnitRead};
+use cubek_tile::stage::{Prefetch, RowChunks, UnitRead};
 use cubek_tile::*;
 use half::f16;
 
@@ -2530,7 +2530,7 @@ enum Unpacked {
 }
 
 /// [`stepped_scaled_matmul`] with each cube staging the activation and the weight a block at a
-/// time, the weight unpacked where `unpacked` says, summing in `A`.
+/// time, held as `storage` says, the weight unpacked where `unpacked` says, summing in `A`.
 #[cube(launch)]
 fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>(
     a: &TileArg<'_, E, Const<8>>,
@@ -2539,6 +2539,7 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>
     c: &TileArg<'_, A, Const<1>>,
     space: Partitioning,
     #[comptime] unpacked: Unpacked,
+    #[comptime] storage: StageStorage,
     #[define(E, A, S, SS)] _dtypes: [ElemType; 4],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -2555,7 +2556,7 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>
             Unpacked::ByEachPlane => b_cube.clone(),
             Unpacked::ByTheFill => b_cube.mul(&scale_cube),
         };
-        let mut stages = Stages::smem(&run, &a_cube, &staged, StageStorage::Strided, 1usize);
+        let mut stages = Stages::smem(&run, &a_cube, &staged, comptime!(storage.clone()), 1usize);
         stages.walk(run, Prefetch::InSlots, |slot, stage| {
             let sum_stage = sum.at(stage);
             let scale_stage = scale_cube.at(stage);
@@ -2588,13 +2589,47 @@ impl PlaneGrid {
     };
 }
 
+/// How a cube's stages hold their cells.
+#[derive(Clone, Copy, Debug)]
+enum StagesHeld {
+    /// Row-major.
+    Strided,
+    /// In blocks of one instruction, each row padded by a chunk, as a stage `cmma` reads.
+    InPaddedBlocks,
+}
+
+impl StagesHeld {
+    /// The storage, its blocks `fragment` wide along every axis the instruction spans.
+    fn storage(self, fragment: usize) -> StageStorage {
+        match self {
+            Self::Strided => StageStorage::Strided,
+            Self::InPaddedBlocks => StageStorage::Tiled {
+                block: vec![
+                    (M, fragment),
+                    (NB, 1),
+                    (NI, fragment),
+                    (KB, 1),
+                    (KI, fragment),
+                ],
+                chunks: RowChunks::Padded,
+            },
+        }
+    }
+}
+
 /// **A tile-ordered weight staged as its words lands a step at a time.** Each cube stages the
 /// activation, in `elem`, and the weight's words a block deep; each of its planes lands its
 /// window of the staged words, scaled, once a block, and runs the block's two instructions out of
 /// the landing, summing in `f32`. The cube's planes split its rows and its columns as `planes`
 /// says: planes on the same columns land the same window of the weight, each in a landing of its
 /// own, and planes on the same rows read the same window of the activation.
-fn check_staged_stepped(scales: TileScales, elem: ElemType, planes: PlaneGrid, unpacked: Unpacked) {
+fn check_staged_stepped(
+    scales: TileScales,
+    elem: ElemType,
+    planes: PlaneGrid,
+    unpacked: Unpacked,
+    stages: StagesHeld,
+) {
     let (plane_rows, n_tiles, k_tiles, fragment) = (16, 2, 4, 8);
     let rows = plane_rows * planes.rows;
     let w = TileOrdered::new(rows, n_tiles, k_tiles);
@@ -2633,12 +2668,13 @@ fn check_staged_stepped(scales: TileScales, elem: ElemType, planes: PlaneGrid, u
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
         unpacked,
+        stages.storage(fragment),
         [elem, dtype, dtype, stored],
     );
     w.check(
         &client,
         c,
-        &format!("staged stepped {scales:?} {elem:?} {unpacked:?}"),
+        &format!("staged stepped {scales:?} {elem:?} {unpacked:?} {stages:?}"),
     );
 }
 
@@ -2649,6 +2685,7 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time() {
         f32::elem_type_native(),
         PlaneGrid::ONE,
         Unpacked::ByEachPlane,
+        StagesHeld::Strided,
     );
 }
 
@@ -2659,6 +2696,7 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_under_byte_s
         f32::elem_type_native(),
         PlaneGrid::ONE,
         Unpacked::ByEachPlane,
+        StagesHeld::Strided,
     );
 }
 
@@ -2672,6 +2710,7 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_in_halves() 
         f16::elem_type_native(),
         PlaneGrid::ONE,
         Unpacked::ByEachPlane,
+        StagesHeld::Strided,
     );
 }
 
@@ -2687,6 +2726,7 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_for_every_pl
             columns: 1,
         },
         Unpacked::ByEachPlane,
+        StagesHeld::Strided,
     );
 }
 
@@ -2702,6 +2742,7 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_a_window_a_p
             columns: 2,
         },
         Unpacked::ByEachPlane,
+        StagesHeld::Strided,
     );
 }
 
@@ -2714,6 +2755,7 @@ fn a_tile_ordered_weight_decoded_by_the_stage_fill_contracts_as_its_values() {
         f16::elem_type_native(),
         PlaneGrid::ONE,
         Unpacked::ByTheFill,
+        StagesHeld::Strided,
     );
 }
 
@@ -2728,6 +2770,23 @@ fn a_tile_ordered_weight_decoded_by_the_stage_fill_serves_every_plane_sharing_it
             columns: 1,
         },
         Unpacked::ByTheFill,
+        StagesHeld::Strided,
+    );
+}
+
+/// The same into stages held in padded blocks: the copy decodes each value into the place the
+/// stage's layout gives it, whatever that layout is.
+#[test]
+fn a_tile_ordered_weight_decoded_by_the_stage_fill_lands_in_padded_blocks() {
+    check_staged_stepped(
+        TileScales::Ue4m3,
+        f16::elem_type_native(),
+        PlaneGrid {
+            rows: 2,
+            columns: 2,
+        },
+        Unpacked::ByTheFill,
+        StagesHeld::InPaddedBlocks,
     );
 }
 
