@@ -8,8 +8,9 @@
 //!
 //! Each cube is four planes of sixteen query rows of one head; keys and values are staged in
 //! shared memory a block of [`KEYS`] at a time, two stages deep so the next block lands by async
-//! copy while this one computes, and read by `ldmatrix`, the values transposed on the way. The correctness check runs against a host reference; the throughput is a
-//! measurement, ignored by default:
+//! copy while this one computes, and read by `ldmatrix`, the values transposed on the way. The
+//! correctness check runs against a host reference; the throughput is a measurement, ignored by
+//! default:
 //!
 //! ```sh
 //! cargo test -p cubek-tile --release --features cubecl/cuda,cubecl/cuda-cpp --test lib \
@@ -23,6 +24,7 @@ use cubecl::{
     prelude::barrier::{Barrier, copy_async},
     prelude::*,
 };
+use cubek_tile::Monoid;
 use half::f16;
 
 /// The head dim, which is also the value dim.
@@ -216,7 +218,7 @@ fn register_attention(
                     row_max = max(row_max, cells.extract(e));
                 }
             }
-            row_max = row_max_across(&def, row_max, comptime!(r * c_size));
+            row_max = row_across(&def, row_max, comptime!(r * c_size), Monoid::Max);
             let new_max = max(running_max[r], row_max * scale);
             let correction = (running_max[r] - new_max).exp();
             running_max[r] = new_max;
@@ -319,7 +321,7 @@ fn register_attention(
     #[unroll]
     for r in 0..c_regs {
         let mut total = sum[r];
-        total = row_sum_across(&def, total, comptime!(r * c_size));
+        total = row_across(&def, total, comptime!(r * c_size), Monoid::Sum);
         let recip = 1.0f32 / total;
         #[unroll]
         for tile in 0..out_tiles {
@@ -338,12 +340,18 @@ fn register_attention(
     }
 }
 
-/// `value`'s max over the units holding the same accumulator row as cell `nth` of this unit: a
-/// butterfly across the plane over the lane bits that [`MmaDefinition::position_of_nth`] says
-/// leave the row in place. Holds for any layout whose row is a function of some of the lane's
-/// bits, which [`two_accumulator_tiles_are_one_a_fragment`] checks.
+/// `value` combined under `monoid` over the units holding the same accumulator row as cell `nth`
+/// of this unit: a butterfly across the plane over the lane bits that
+/// [`MmaDefinition::position_of_nth`] says leave the row in place. Holds for any layout whose row
+/// is a function of some of the lane's bits, which [`two_accumulator_tiles_are_one_a_fragment`]
+/// checks.
 #[cube]
-fn row_max_across(def: &MmaDefinition<f16, f16, f32>, value: f32, #[comptime] nth: usize) -> f32 {
+fn row_across(
+    def: &MmaDefinition<f16, f16, f32>,
+    value: f32,
+    #[comptime] nth: usize,
+    #[comptime] monoid: Monoid,
+) -> f32 {
     // Whether a lane bit moves the row is read at lane 0, where both positions are constants the
     // compiler folds: a bit that moves it costs nothing, its shuffle unused.
     let (row, _) = def.position_of_nth(0u32, nth as u32, MatrixIdent::Accumulator);
@@ -353,27 +361,7 @@ fn row_max_across(def: &MmaDefinition<f16, f16, f32>, value: f32, #[comptime] nt
         let mask = comptime!(1u32 << bit);
         let (other_row, _) = def.position_of_nth(mask, nth as u32, MatrixIdent::Accumulator);
         if other_row == row {
-            let other = plane_shuffle_xor(acc, mask);
-            acc = max(acc, other);
-        }
-    }
-    acc
-}
-
-/// `value`'s sum over the units holding the same accumulator row, as [`row_max_across`].
-#[cube]
-fn row_sum_across(def: &MmaDefinition<f16, f16, f32>, value: f32, #[comptime] nth: usize) -> f32 {
-    // Whether a lane bit moves the row is read at lane 0, where both positions are constants the
-    // compiler folds: a bit that moves it costs nothing, its shuffle unused.
-    let (row, _) = def.position_of_nth(0u32, nth as u32, MatrixIdent::Accumulator);
-    let mut acc = value;
-    #[unroll]
-    for bit in 0..5u32 {
-        let mask = comptime!(1u32 << bit);
-        let (other_row, _) = def.position_of_nth(mask, nth as u32, MatrixIdent::Accumulator);
-        if other_row == row {
-            let other = plane_shuffle_xor(acc, mask);
-            acc += other;
+            acc = monoid.combine::<f32>(acc, plane_shuffle_xor(acc, mask));
         }
     }
     acc
@@ -505,16 +493,13 @@ fn register_attention_matches_the_reference() {
     for value_depth in [16, 8] {
         let got = problem.launch(&client, &inputs, value_depth);
         let got = f16::from_bytes(&client.read_one_unchecked(got)).to_vec();
-        let mut worst = 0f32;
         for (i, (have, want)) in got.iter().zip(&want).enumerate() {
             let err = (have.to_f32() - want).abs();
-            worst = worst.max(err);
             assert!(
                 err <= 2e-3 + 1e-2 * want.abs(),
                 "value depth {value_depth}, cell {i}: got {have}, want {want}"
             );
         }
-        eprintln!("register attention, value depth {value_depth}: worst error {worst:e}");
     }
 }
 
