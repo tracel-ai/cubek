@@ -43,8 +43,8 @@ fn store<E: Float, V: Size, O: Destination>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = O::tile::<E, V>(out, comptime!(space.clone()));
+    let src = input.tile(&space);
+    let mut dst = O::tile::<E, V>(out, &space);
     dst.copy_from(&src);
 }
 
@@ -56,8 +56,8 @@ fn store_cast<E: Float, F: Float>(
     space: Partitioning,
     #[define(E, F)] _dtypes: [ElemType; 2],
 ) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = out.tile(comptime!(space.clone()));
+    let src = input.tile(&space);
+    let mut dst = out.tile(&space);
     dst.copy_cast_from(&src);
 }
 
@@ -222,9 +222,9 @@ fn relayed_split_matmul(
     if !relay.has_turn() {
         terminate!();
     }
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut out = out.tile(&space);
     let c = relay.tile();
     let acc = c.accumulator::<f32, f32, f32>(
         &a,

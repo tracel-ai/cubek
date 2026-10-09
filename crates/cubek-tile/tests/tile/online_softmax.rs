@@ -76,11 +76,11 @@ fn plane_attention<E: Float>(
     #[comptime] block_keys: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(space.clone()));
+    let q = q.tile(&space);
     // Past the attended keys a read is zero: a masked probability never meets a stale value.
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let out = out.tile(comptime!(space.clone()));
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let out = out.tile(&space);
     let bias = Procedural::<f32>::new::<Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
@@ -168,10 +168,10 @@ fn unit_attention<E: Float>(
     #[comptime] ending: UnitEnding,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let out = out.tile(comptime!(space.clone()));
+    let q = q.tile(&space);
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let out = out.tile(&space);
     let bias = Procedural::<f32>::new::<Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
@@ -267,12 +267,12 @@ fn relayed_attention<E: Float>(
     if !relay.has_turn() {
         terminate!();
     }
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let mut out = out.tile(comptime!(space.clone()));
-    let state_max = carried_max.tile(comptime!(space.clone()));
-    let state_sum = carried_sum.tile(comptime!(space.clone()));
+    let q = q.tile(&space);
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let mut out = out.tile(&space);
+    let state_max = carried_max.tile(&space);
+    let state_sum = carried_sum.tile(&space);
     let bias = Procedural::<f32>::new::<Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {

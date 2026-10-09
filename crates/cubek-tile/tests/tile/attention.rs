@@ -56,11 +56,11 @@ fn attention_fold_cmma_kernel<E: Float>(
     #[comptime] plane_units: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone()));
-    let v = v.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let q = q.tile(&space);
+    let k = k.tile(&space);
+    let v = v.tile(&space);
+    let mask_tile = mask.tile(&space);
+    let out = out.tile(&space);
 
     let rows = comptime!(q.space().extent(QP));
     let d = comptime!(q.space().extent(D));
@@ -498,7 +498,7 @@ fn visited_blocks_kernel(
     #[comptime] q_rows: usize,
     #[comptime] causal: bool,
 ) {
-    let k = k.tile(comptime!(space.clone()));
+    let k = k.tile(&space);
     let probe = MaskProbe {
         origin_q: 0,
         row_origin: 0,

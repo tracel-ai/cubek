@@ -70,9 +70,9 @@ fn block_scaled_peak<E: Numeric>(
     #[comptime] words: bool,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile_as::<E>(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile_as::<E>(&space);
+    let b = b.tile_as::<E>(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
         let acc = c.accumulator::<E, E, E>(
@@ -90,12 +90,12 @@ fn block_scaled_peak<E: Numeric>(
             slot.consume(|a_s, b_s| {
                 let (a_s, b_s) = match comptime!(words) {
                     true => (
-                        a_s.mul(&a_scales.tile(comptime!(space.clone())).at(region)),
-                        b_s.mul(&b_scales.tile(comptime!(space.clone())).at(region)),
+                        a_s.mul(&a_scales.tile(&space).at(region)),
+                        b_s.mul(&b_scales.tile(&space).at(region)),
                     ),
                     false => (
-                        a_s.mul(&a_scales.tile_as::<f32>(comptime!(space.clone())).at(region)),
-                        b_s.mul(&b_scales.tile_as::<f32>(comptime!(space.clone())).at(region)),
+                        a_s.mul(&a_scales.tile_as::<f32>(&space).at(region)),
+                        b_s.mul(&b_scales.tile_as::<f32>(&space).at(region)),
                     ),
                 };
                 for plane in region {
@@ -128,9 +128,9 @@ fn float_peak<E: Numeric>(
     #[comptime] repeats: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
         let acc = c.accumulator::<f32, E, E>(

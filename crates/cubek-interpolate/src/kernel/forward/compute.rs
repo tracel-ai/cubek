@@ -54,7 +54,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     #[comptime] config: RegisterBlock,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
 
     let row = tap_distance(TAP_H, OUTPUT_H, row_scale, row_offset, row_divisor, radius);
     let col = tap_distance(TAP_W, OUTPUT_W, col_scale, col_offset, col_divisor, radius);
@@ -75,7 +75,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     }
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
 
     // This cube's box of the output, walked one channel block at a time. Whether the input is
     // staged into shared memory for each block is the launch's call on the window's size, stated

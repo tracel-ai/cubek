@@ -32,10 +32,10 @@ fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.mul(&scale.tile(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let values = w.tile_as::<E>(&space);
+    let w = values.mul(&scale.tile(&space));
+    let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
         let values = values.at(&cube);
@@ -68,11 +68,9 @@ fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&scale.tile(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile_as::<E>(&space).mul(&scale.tile(&space));
+    let c = c.tile(&space);
     for cube in &c {
         let mut c_w = c.at(&cube);
         c_w.zero();

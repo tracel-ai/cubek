@@ -51,9 +51,9 @@ fn depthwise_kernel<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for cube in space {
         let out = out.at(&cube);
         let input = input.at(&cube);

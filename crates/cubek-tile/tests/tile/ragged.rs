@@ -32,8 +32,8 @@ fn ragged_sum_kernel<E: Numeric>(
     #[comptime] token: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let packed = packed.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let packed = packed.tile(&space);
+    let out = out.tile(&space);
 
     for sequence in space.over(&seq) {
         let b = sequence.coord(B);
@@ -177,8 +177,8 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
     #[comptime] token: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let packed = packed.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let packed = packed.tile(&space);
+    let out = out.tile(&space);
 
     for sequence in space.over(&seq) {
         let b = sequence.coord(B);

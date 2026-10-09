@@ -8,13 +8,11 @@ use crate::*;
 #[cube]
 pub fn scale_tile<S: Numeric>(
     level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-    #[comptime] space: Partitioning,
+    partitioning: &Partitioning,
 ) -> ComptimeOption<Tile<S>> {
     #[comptime]
     match level {
-        ComptimeOption::Some(level) => {
-            ComptimeOption::new_Some(level.tile_as::<S>(comptime!(space.clone())))
-        }
+        ComptimeOption::Some(level) => ComptimeOption::new_Some(level.tile_as::<S>(partitioning)),
         ComptimeOption::None => ComptimeOption::new_None(),
     }
 }

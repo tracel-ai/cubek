@@ -119,8 +119,8 @@ pub fn dequantize<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _output_dtype: ElemType,
 ) {
-    let input = input.tile_as::<O>(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile_as::<O>(&space);
+    let scale = scale.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&input.mul(&scale));
 }

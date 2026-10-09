@@ -38,10 +38,10 @@ fn tile_order_gemv<E: Numeric, VX: Size, VW: Size>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.mul(&scale.tile_as::<E>(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let values = w.tile_as::<E>(&space);
+    let w = values.mul(&scale.tile_as::<E>(&space));
+    let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
         let values = values.at(&cube);

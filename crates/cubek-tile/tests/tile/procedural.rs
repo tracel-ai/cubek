@@ -52,7 +52,7 @@ fn materialize<E: Numeric>(
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in source.over(&level) {
         let mut output_region = output.at(&region);
         output_region.copy_from(&source.at(&region));
@@ -114,7 +114,7 @@ fn product_kernel_staged<E: Float>(
         ),
     )
     .tile();
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     let walk = source.over(&level);
     let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
@@ -258,7 +258,7 @@ fn direct_copy_kernel<E: Float>(
         },
     )
     .tile();
-    let mut output = output.tile(comptime!(space.clone()));
+    let mut output = output.tile(&space);
     output.copy_from(&source);
 }
 
@@ -285,7 +285,7 @@ fn divided_direct_copy_kernel<E: Float>(
         0usize,
     );
     let source = source.at(&region);
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     let mut output = output.at(&region);
     output.copy_from(&source);
 }

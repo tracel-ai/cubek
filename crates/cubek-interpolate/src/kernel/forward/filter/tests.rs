@@ -44,7 +44,7 @@ fn materialize<E: Numeric>(
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in source.over(&level) {
         let mut output_region = output.at(&region);
         output_region.copy_from(&source.at(&region));
