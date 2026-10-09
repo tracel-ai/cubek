@@ -20,14 +20,21 @@ fn simple_cyclic_cmma() {
     );
 }
 
-/// A small f32 problem runs rather than declining. On Metal (8×8 instructions, 256 units a cube)
-/// the register compensation once divided the cube down to zero planes at 32 rows while 37 rows
-/// ran, and autotune buckets the two together. Asserted as executed: the default test policy
-/// would accept the decline.
+/// A small f32 problem runs rather than declining: a routine that runs at 37 rows also runs at 32,
+/// since autotune buckets the two together. Asserted as executed on a device with cmma, where the
+/// default test policy would accept the decline; reported as skipped on one without.
 #[test]
 fn simple_cyclic_cmma_runs_a_small_f32_problem() {
+    let client = client();
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device offers no cmma instruction".to_string(),
+        ))
+        .enforce();
+        return;
+    }
     let outcome = run_with_strides(
-        client(),
+        client,
         rect(32, 32, 64, f32_elems()),
         MultiLevel::SimpleCyclicCmma(Default::default()).into(),
     );

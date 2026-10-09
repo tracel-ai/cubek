@@ -2,8 +2,8 @@
 //!
 //! A dimension of length zero outside the reduce axis leaves nothing to write, so the
 //! launch is sized from zero working units. Where the plane count is read from the cpu
-//! core count it had no floor, which gives a cube of zero units, and the unit routine
-//! divides the work by that. These pin that such a call returns instead.
+//! core count, a cube still holds at least one unit, since the unit routine divides the
+//! work by the cube's units. These pin that such a call returns.
 
 use cubecl::{config::autotune::AutotuneLevel, prelude::*, zspace::Shape};
 use cubek_reduce::{

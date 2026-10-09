@@ -272,9 +272,9 @@ fn contract_staged<E: Numeric>(
 /// Which of the ring's schedules a staged test kernel drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Schedule {
-    /// [`pipelined`]: the next region's slot filled ahead of the contraction.
+    /// [`Stages::pipelined`]: the next region's slot filled ahead of the contraction.
     AheadInSlots,
-    /// [`pipelined_through_registers`]: the next region read into registers across the
+    /// [`Stages::prefetched`]: the next region read into registers across the
     /// contraction and written after it.
     ThroughRegisters,
 }

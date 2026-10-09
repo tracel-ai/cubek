@@ -5,7 +5,7 @@
 //! together, and may start in one tile and end in another; no box of a four by two grid holds three
 //! regions.
 //!
-//! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
+//! [`Walk::portion`] is that range, and the [`Portion`] it returns the walk over it. The axes of the
 //! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat index
 //! carries every coordinate; an instance's run is `base` and `steps` into it, both runtime values.
 //!
@@ -646,22 +646,23 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
 
 // -- Merged by the last arrival ---------------------------------------------------------------------
 //
-// The same line, with no atomic and no cube waiting on another: a cube holding a tile whole drains
+// The same line, with no float atomic and no cube waiting on another: a cube holding a tile whole drains
 // it into the output, and of the cubes holding parts of one, each parks its part in a slot and the
 // last to count itself in adds them in the order of their runs and casts the total into the output.
 
 /// The streamed contraction merged by [`LastArrival`](cubek_tile::launch::LastArrival): each cube
 /// contracts its part of every tile its run touches into a register accumulator opened on its slot,
-/// then hands it on.
+/// then hands it on, cast to the output's element `O`.
 #[cube(launch)]
-fn merged_stream_matmul(
+fn merged_stream_matmul<O: Float>(
     a: &TileArg<'_, f32, Const<1>>,
     b: &TileArg<'_, f32, Const<1>>,
     slots: &TileArg<'_, f32, Const<1>>,
-    out: &TileArg<'_, half::f16, Const<1>>,
+    out: &TileArg<'_, O, Const<1>>,
     arrivals: &[Atomic<u32>],
     space: Partitioning,
     #[comptime] steps: Level,
+    #[define(O)] _out_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -718,9 +719,9 @@ impl Product {
 }
 
 /// `a · b` with every tile's blocks shared between `cubes` cubes and merged by the last arrival,
-/// launched `launches` times over the same slots, counters and output: the output after each
-/// launch, and the counters read back.
-fn run_merged_stream(
+/// launched `launches` times over the same slots, counters and output, an output of `O`: the
+/// output after each launch, and the counters read back.
+fn run_merged_stream<O: Float + CubeElement>(
     product: Product,
     (a, b): (Vec<f32>, Vec<f32>),
     cubes: usize,
@@ -728,7 +729,7 @@ fn run_merged_stream(
 ) -> (Vec<HostData>, Vec<u32>) {
     let Product { batches, m, n, k } = product;
     let client = cubecl::test_device().client();
-    let (f32_ty, f16_ty) = (f32::elem_type_native(), half::f16::elem_type_native());
+    let (f32_ty, out_ty) = (f32::elem_type_native(), O::elem_type_native());
     let a = TestInput::builder(client.clone(), shape![batches, m, k])
         .dtype(f32_ty)
         .custom(a)
@@ -738,7 +739,7 @@ fn run_merged_stream(
         .custom(b)
         .generate_without_host_data();
     let out = TestInput::builder(client.clone(), shape![batches, m, n])
-        .dtype(f16_ty)
+        .dtype(out_ty)
         .zeros()
         .generate_without_host_data();
 
@@ -785,6 +786,7 @@ fn run_merged_stream(
             unsafe { BufferArg::from_raw_parts(arrivals.clone(), counters) },
             launcher.partitioning_arg(),
             launcher.partitioning().level(1),
+            out_ty,
         );
         outputs.push(HostData::from_tensor_handle(
             &client,
@@ -846,7 +848,7 @@ fn the_last_arrival_merges_every_tile_of_a_shared_contraction() {
     // Twelve tiles of five blocks: sixty blocks in all.
     let product = Product::single(12, 16, 20);
     for cubes in [1usize, 2, 5, 7, 11, 12, 13, 25, 59, 60, 61, 97] {
-        let (got, arrivals) = run_merged_stream(product, product.integers(), cubes, 1);
+        let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), cubes, 1);
         assert_merged(&got[0], product, &format!("{cubes} cubes"));
         assert!(
             arrivals.iter().all(|&a| a == 0),
@@ -865,7 +867,7 @@ fn the_last_arrival_merges_tiles_that_overhang_the_output() {
     }
     let product = Product::single(10, 14, 20);
     for cubes in [3usize, 8, 23] {
-        let (got, arrivals) = run_merged_stream(product, product.integers(), cubes, 1);
+        let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), cubes, 1);
         assert_merged(&got[0], product, &format!("{cubes} cubes"));
         assert!(
             arrivals.iter().all(|&a| a == 0),
@@ -889,7 +891,7 @@ fn the_last_arrival_merges_the_tiles_of_every_batch() {
         k: 20,
     };
     for cubes in [4usize, 7, 18, 31] {
-        let (got, arrivals) = run_merged_stream(product, product.integers(), cubes, 1);
+        let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), cubes, 1);
         assert_merged(&got[0], product, &format!("{cubes} cubes"));
         assert!(
             arrivals.iter().all(|&a| a == 0),
@@ -906,13 +908,14 @@ fn the_last_arrival_merges_again_on_the_counters_it_left() {
         return;
     }
     let product = Product::single(12, 16, 20);
-    let (got, arrivals) = run_merged_stream(product, product.integers(), 7, 3);
+    let (got, arrivals) = run_merged_stream::<half::f16>(product, product.integers(), 7, 3);
     assert_merged(&got[2], product, "a third launch");
     assert!(arrivals.iter().all(|&a| a == 0), "{arrivals:?}");
 }
 
 /// Sums whose rounding depends on the order of their parts come out the same bits every launch,
-/// whichever cube arrives last: the parts are added in the order of their runs.
+/// whichever cube arrives last: the parts are added in the order of their runs. The output is
+/// `f32`, the sum's own element, since a cast to `f16` would round away the bits an order flips.
 #[test]
 fn the_last_arrival_sums_the_same_bits_every_launch() {
     let client = cubecl::test_device().client();
@@ -923,7 +926,7 @@ fn the_last_arrival_sums_the_same_bits_every_launch() {
     let Product { m, n, k, .. } = product;
     let a = (0..m * k).map(|i| (i as f32 * 0.37).sin() * 3.1).collect();
     let b = (0..k * n).map(|i| (i as f32 * 0.71).cos() / 1.7).collect();
-    let (got, _) = run_merged_stream(product, (a, b), 29, 8);
+    let (got, _) = run_merged_stream::<f32>(product, (a, b), 29, 8);
     let bits = |out: &HostData| -> Vec<u32> {
         (0..m * n)
             .map(|i| out.get_f32(&[0, i / n, i % n]).to_bits())

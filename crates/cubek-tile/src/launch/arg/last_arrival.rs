@@ -56,7 +56,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         i: usize,
         arrivals: &'t [Atomic<u32>],
     ) -> LastArrival<'t, E> {
-        let boxes_space = comptime!(partitioning.clone().arrival_slots_space(self.spec.axes()));
+        let boxes_space = comptime!(arrival_slots_space(&partitioning.clone(), self.spec.axes()));
         let boxes = Partitioning {
             space: Space::with_sizes(
                 comptime!(boxes_space.space().clone()),
@@ -71,9 +71,12 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         let walk = boxes.walk();
         let own_box = walk.region(2 * run + select(portion.starts_in(i, run), 0usize, 1usize));
         let own = slots.at(&own_box);
+        // The merge adds every later run's part into the first run's slot, which already holds
+        // that run's part: no write replaces.
+        let first_turn = false;
         LastArrival::<'t, E> {
             slots,
-            folding: folding_tile::<E, V>(self, &boxes, false),
+            folding: folding_tile::<E, V>(self, &boxes, first_turn),
             boxes: walk,
             own,
             arrivals,
@@ -153,34 +156,37 @@ impl Partitioning {
     /// The shape of a [`LastArrival`]'s slots for an output over `axes`, in that order: two cube
     /// boxes a run of the shared cube level, stacked along the first of `axes`.
     pub fn arrival_slots(&self, axes: &[Axis]) -> cubecl::zspace::Shape {
-        let boxes = self.arrival_slots_space(axes);
+        let boxes = arrival_slots_space(self, axes);
         cubecl::zspace::Shape::from(axes.iter().map(|&axis| boxes.space().extent(axis)))
     }
+}
 
-    /// The space the slots of a [`LastArrival`] for an output over `axes` are boxes of, cut by
-    /// these levels: one cube box, with the first of `axes` two boxes a run long. Every axis the
-    /// cube level cuts, a batch one included, is one box long, so the slot boxes are counted along
-    /// that first axis alone.
-    fn arrival_slots_space(&self, axes: &[Axis]) -> Partitioning {
-        let level = &self.levels()[0];
-        let runs = level.shared_by().expect(
-            "LastArrival: the cube level distributes no grid as one index; say `shared_by`",
-        );
-        let stacked = axes[0];
-        let cube_box = level.child(self.space());
-        let Extent::Static(edge) = cube_box.extent_raw(stacked) else {
-            panic!(
-                "LastArrival: the cube box's {stacked:?} extent is known only at launch; the slots \
-                 stack cube boxes along it, so the cube level cuts it by a stated tile"
-            )
-        };
-        let extents: Vec<(Axis, Extent)> = cube_box
-            .axes()
-            .map(|axis| match axis == stacked {
-                true => (axis, Extent::Static(2 * runs * edge)),
-                false => (axis, cube_box.extent_raw(axis)),
-            })
-            .collect();
-        Partitioning::new(Space::from_extents(&extents), self.levels().to_vec())
-    }
+/// The space the slots of a [`LastArrival`] for an output over `axes` are boxes of, cut by
+/// these levels: one cube box, with the first of `axes` two boxes a run long. Every axis the
+/// cube level cuts, a batch one included, is one box long, so the slot boxes are counted along
+/// that first axis alone.
+fn arrival_slots_space(partitioning: &Partitioning, axes: &[Axis]) -> Partitioning {
+    let level = &partitioning.levels()[0];
+    let runs = level
+        .shared_by()
+        .expect("LastArrival: the cube level distributes no grid as one index; say `shared_by`");
+    let stacked = axes[0];
+    let cube_box = level.child(partitioning.space());
+    let Extent::Static(edge) = cube_box.extent_raw(stacked) else {
+        panic!(
+            "LastArrival: the cube box's {stacked:?} extent is known only at launch; the slots \
+             stack cube boxes along it, so the cube level cuts it by a stated tile"
+        )
+    };
+    let extents: Vec<(Axis, Extent)> = cube_box
+        .axes()
+        .map(|axis| match axis == stacked {
+            true => (axis, Extent::Static(2 * runs * edge)),
+            false => (axis, cube_box.extent_raw(axis)),
+        })
+        .collect();
+    Partitioning::new(
+        Space::from_extents(&extents),
+        partitioning.levels().to_vec(),
+    )
 }

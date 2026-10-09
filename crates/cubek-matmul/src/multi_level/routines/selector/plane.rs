@@ -119,8 +119,8 @@ pub fn infer_blueprint_plane(
         }
         // The compensation narrows the cube, never below one plane: a cube of one plane runs,
         // and declining here would make the routine's availability hinge on where the problem
-        // falls inside its autotune bucket (on Metal at f32, 37 rows ran and 32 declined).
-        (max_plane_per_cube / (tile_factor * precision_factor)).max(1)
+        // falls inside its autotune bucket. A device that fits no plane in a cube still declines.
+        (max_plane_per_cube / (tile_factor * precision_factor)).max(max_plane_per_cube.min(1))
     });
 
     if row_count == 0 {
