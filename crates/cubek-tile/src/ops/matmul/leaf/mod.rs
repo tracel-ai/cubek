@@ -9,5 +9,6 @@ pub(crate) mod registers;
 pub(crate) mod scale;
 
 pub(crate) use cmma::rhs_layout;
+pub(crate) use mma::window_layouts;
 pub(crate) use scale::Side;
 pub(crate) use scale::{check_scales_omit_rather_than_divide, check_scales_ride};

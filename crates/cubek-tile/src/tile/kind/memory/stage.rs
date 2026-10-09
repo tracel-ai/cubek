@@ -29,6 +29,10 @@ impl StageOwner {
         match scope {
             ComputeScope::Cube => StageOwner::Cube,
             ComputeScope::Plane => StageOwner::Plane { planes },
+            ComputeScope::PlaneGroup { .. } => panic!(
+                "StageOwner: this walk hands each plane group a region of its own, and a stage \
+                 is not yet laid out per plane group: stage it from the cube above the groups"
+            ),
             ComputeScope::Unit => panic!(
                 "StageOwner: this walk hands each unit a region of its own, and a stage is \
                  filled cooperatively: stage it from the plane or the cube above the units"

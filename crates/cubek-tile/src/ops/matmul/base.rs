@@ -67,6 +67,25 @@ impl<Acc: Numeric> Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// Commit the warpgroup MMAs this accumulator issued since its last commit, and return their
+    /// completion: once it resolves, they are done reading what they read, the stages a walk
+    /// holds for them among it. Only a warpgroup accumulator contracts asynchronously.
+    pub fn commit(&self) -> Pending<()> {
+        match &self.kind {
+            TileKind::PlanePartition(p) => p.fragment().commit(),
+            TileKind::PlaneTile(t) => t.commit(),
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => panic!(
+                "Tile::commit: only a plane group's warpgroup accumulator contracts asynchronously"
+            ),
+        }
+    }
+}
+
+#[cube]
+impl<Acc: Numeric> Tile<Acc> {
     /// This memory window as a contraction's output: each unit's share tiled into `block`, folded
     /// under `semiring`. A plane-resident accumulator states both when it is opened.
     pub fn accumulating(
@@ -119,16 +138,21 @@ impl<E: Numeric> PlaneTile<E> {
                 flattened_k(lhs, rhs, out);
                 d.mma(lhs, rhs)
             }
+            PlaneTile::Wgmma(d) => {
+                lhs.refuse_factor("PlaneTile::Wgmma");
+                rhs.refuse_factor("PlaneTile::Wgmma");
+                d.mma(lhs, rhs, out)
+            }
             PlaneTile::Registers(d) => match &lhs.kind {
                 TileKind::PlaneTile(block) => match block {
                     PlaneTile::Registers(block) => d.mma_block(block, rhs),
-                    PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                    PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
                 },
                 TileKind::PlanePartition(block) => match block.fragment() {
                     PlaneTile::Registers(block) => d.mma_block(&block, rhs),
-                    PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                    PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
                 },
@@ -184,7 +208,7 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
     match &rhs.kind {
         TileKind::PlaneTile(t) => match t {
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => comptime!(false),
         },
         // The contracted axis is the lhs's trailing one; not every axis the output lacks is.
         // Only a shared stage can answer column-major; a gmem rhs never does.

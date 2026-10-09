@@ -6,7 +6,7 @@ use crate::{
         BatchMatmulRoutine,
         args::{
             ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg,
-            TensorArgs, TensorMapArgs,
+            TensorArgs, TensorMapArgs, TensorMapStoreArgs,
         },
         definition::BatchMatmulBlueprint,
         launch_kernel_concrete,
@@ -67,38 +67,7 @@ pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    if !client.properties().features.tma.contains(Tma::Base) {
-        return Err(MatmulSetupError::Unavailable(
-            MatmulAvailabilityError::TmaUnavailable,
-        ));
-    }
-
-    let lhs = match matrix_batch_layout(&lhs.data().strides, lhs.scheme()) {
-        MatrixBatchLayout::Contiguous
-        | MatrixBatchLayout::MildlyPermuted {
-            transposed: _,
-            batch_swap: false,
-        } => lhs,
-        MatrixBatchLayout::MildlyPermuted {
-            transposed: _,
-            batch_swap: true,
-        }
-        | MatrixBatchLayout::HighlyPermuted => lhs.into_contiguous(client)?,
-    };
-
-    let rhs = match matrix_batch_layout(&rhs.data().strides, rhs.scheme()) {
-        MatrixBatchLayout::Contiguous
-        | MatrixBatchLayout::MildlyPermuted {
-            transposed: _,
-            batch_swap: false,
-        } => rhs,
-        MatrixBatchLayout::MildlyPermuted {
-            transposed: _,
-            batch_swap: true,
-        }
-        | MatrixBatchLayout::HighlyPermuted => rhs.into_contiguous(client)?,
-    };
-
+    let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
     let vector_sizes = AvailableVectorSizes::from_type_size_tma(client, dtypes.acc_global.size());
     launch_inner_ref::<TensorMapArgs, A>(
         client,
@@ -109,6 +78,63 @@ pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint
         vector_sizes,
         dtypes,
     )
+}
+
+/// [`launch_ref_tma`], with the output written by TMA stores as well.
+#[allow(clippy::result_large_err)]
+pub fn launch_ref_tma_store<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint>>(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
+    blueprint_strategy: &BlueprintStrategy<(), A>,
+    dtypes: &mut MatmulElems,
+) -> Result<(), MatmulSetupError> {
+    let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
+    // A tensor map is read and written one element at a time.
+    let vector_sizes = AvailableVectorSizes {
+        out: vec![1],
+        ..AvailableVectorSizes::from_type_size_tma(client, dtypes.acc_global.size())
+    };
+    launch_inner_ref::<TensorMapStoreArgs, A>(
+        client,
+        lhs,
+        rhs,
+        out,
+        blueprint_strategy,
+        vector_sizes,
+        dtypes,
+    )
+}
+
+/// The inputs as TMA reads them: on a device with TMA, and without permuted batches.
+#[allow(clippy::result_large_err)]
+fn tma_inputs(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+) -> Result<(InputBinding, InputBinding), MatmulSetupError> {
+    if !client.properties().features.tma.contains(Tma::Base) {
+        return Err(MatmulSetupError::Unavailable(
+            MatmulAvailabilityError::TmaUnavailable,
+        ));
+    }
+    let contiguous_batches = |binding: InputBinding| match matrix_batch_layout(
+        &binding.data().strides,
+        binding.scheme(),
+    ) {
+        MatrixBatchLayout::Contiguous
+        | MatrixBatchLayout::MildlyPermuted {
+            transposed: _,
+            batch_swap: false,
+        } => Ok(binding),
+        MatrixBatchLayout::MildlyPermuted {
+            transposed: _,
+            batch_swap: true,
+        }
+        | MatrixBatchLayout::HighlyPermuted => binding.into_contiguous(client),
+    };
+    Ok((contiguous_batches(lhs)?, contiguous_batches(rhs)?))
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]

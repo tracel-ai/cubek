@@ -97,6 +97,19 @@ impl Levels {
         self.state(Coverage::Distribute(ComputeScope::Plane), counts)
     }
 
+    /// This many of the level below, one per group of `planes` consecutive planes of the cube: an
+    /// instruction the group's planes issue together, a warpgroup MMA's four, takes each tile.
+    pub fn plane_groups(self, planes: usize, counts: &[(Axis, usize)]) -> Self {
+        assert!(
+            planes > 1,
+            "Levels::plane_groups: a group of {planes} plane is a plane; state `planes`"
+        );
+        self.state(
+            Coverage::Distribute(ComputeScope::PlaneGroup { planes }),
+            counts,
+        )
+    }
+
     /// Every tile of the level below along `axis`, dealt to `planes` planes of the cube in runs:
     /// the planes need not divide the tiles, and a plane past the last whole run takes the rest.
     /// What splits a walk between the planes where its steps have no factor the planes fit.
@@ -179,6 +192,26 @@ impl Levels {
                 );
             }
         }
+        let groups = self
+            .stated
+            .iter()
+            .filter(|stated| {
+                matches!(
+                    stated.coverage,
+                    Coverage::Distribute(ComputeScope::PlaneGroup { .. })
+                )
+            })
+            .count();
+        let planes = self
+            .stated
+            .iter()
+            .any(|stated| stated.coverage == Coverage::Distribute(ComputeScope::Plane));
+        assert!(
+            groups == 0 || (groups == 1 && !planes),
+            "Levels: a cube's planes are dealt to plane groups by one level, beside no level of \
+             single planes; these levels state {groups} plane group level(s){}",
+            if planes { " and a plane level" } else { "" }
+        );
         self.stated.iter().rev().map(StatedLevel::level).collect()
     }
 
@@ -384,6 +417,34 @@ mod tests {
         );
         assert_eq!(levels[1].count(K), Some(Count::AllAcross(4)));
         assert_eq!(levels[1].tile(K), Some(16));
+    }
+
+    /// Plane groups are dealt by one level, beside no level of single planes, which the cube's
+    /// count of planes would otherwise take twice.
+    #[test]
+    #[should_panic(expected = "a cube's planes are dealt to plane groups by one level")]
+    fn plane_groups_take_no_plane_level_beside_them() {
+        Levels::leaf(&[(M, 64), (N, 128), (K, 64)])
+            .planes(&[(N, 2)])
+            .plane_groups(4, &[(M, 2)])
+            .walk_every(&[K])
+            .build();
+    }
+
+    /// A plane group's level counts its groups, and the cube holds each group's planes.
+    #[test]
+    fn a_plane_group_holds_its_planes() {
+        let levels = Levels::leaf(&[(M, 64), (N, 128), (K, 64)])
+            .plane_groups(4, &[(M, 2)])
+            .walk_every(&[K])
+            .filled_by(1)
+            .cubes(&[M, N])
+            .build();
+        let groups = Coverage::Distribute(ComputeScope::PlaneGroup { planes: 4 });
+        assert!(levels.iter().any(|level| level.coverage() == groups));
+        let partitioning = Partitioning::new(Space::new(&[(M, 1024), (N, 1024), (K, 512)]), levels);
+        assert_eq!(partitioning.instances(groups), 2);
+        assert_eq!(partitioning.planes_per_cube(), 9);
     }
 
     /// A closed axis returns to the cube level to be split across cubes.

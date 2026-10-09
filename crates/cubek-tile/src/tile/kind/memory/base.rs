@@ -253,14 +253,11 @@ impl FillUnits {
     /// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
     /// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
     pub(crate) fn worker(#[comptime] fill: FillUnits) -> usize {
-        match comptime!(fill.scope) {
-            ComputeScope::Cube => UNIT_POS as usize,
-            ComputeScope::Plane => UNIT_POS_X as usize,
-            ComputeScope::Unit => comptime!(panic!(
-                "FillUnits::worker: a cooperative fill is shared by a cube or a plane, never \
-                 one unit"
-            )),
-        }
+        comptime!(assert!(
+            fill.scope != ComputeScope::Unit,
+            "FillUnits::worker: a cooperative fill is shared by a cube or a plane, never one unit"
+        ));
+        ComputeScope::unit(comptime!(fill.scope))
     }
 
     /// How many units `fill` names at runtime: the cube's, or one plane's
@@ -269,6 +266,7 @@ impl FillUnits {
         match comptime!(fill.scope) {
             ComputeScope::Cube => CUBE_DIM as usize,
             ComputeScope::Plane => CUBE_DIM_X as usize,
+            ComputeScope::PlaneGroup { planes } => planes * CUBE_DIM_X as usize,
             ComputeScope::Unit => comptime!(panic!(
                 "FillUnits::workers: a cooperative fill is shared by a cube or a plane, never \
                  one unit"

@@ -57,3 +57,21 @@ fn specialized_tma_mma() {
         MultiLevel::SpecializedTmaMma(Default::default()).into(),
     );
 }
+
+#[test]
+fn specialized_tma_mma_tma_store() {
+    test_matmul_strategy(
+        client(),
+        square(256, f16_elems()),
+        MultiLevel::SpecializedTmaMmaTmaStore(Default::default()).into(),
+    );
+}
+
+#[test]
+fn specialized_tma_mma_tma_store_many_tiles() {
+    test_matmul_strategy(
+        client(),
+        square(1024, f16_elems()),
+        MultiLevel::SpecializedTmaMmaTmaStore(Default::default()).into(),
+    );
+}

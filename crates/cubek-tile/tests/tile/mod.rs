@@ -37,6 +37,7 @@ mod space;
 mod split_k;
 mod stream;
 mod vector_tile;
+mod wgmma;
 
 use cubecl::prelude::*;
 use cubek_tile::{Axis, Launcher, Partitioning, Space, launch::Grid};

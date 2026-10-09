@@ -73,7 +73,7 @@ fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
         PlaneTile::Registers(d) => {
             reduce::register_data(d, input, acc_space, monoid);
         }
-        PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
+        PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => {
             panic!(
                 "reduce: a hardware mma fragment scatters its rows across units in a \
                  layout the elementwise walk cannot address; reduce into a register, \

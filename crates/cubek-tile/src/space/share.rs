@@ -165,6 +165,7 @@ impl SplitShare {
         match level.coverage() {
             Coverage::Walk | Coverage::Distribute(ComputeScope::Unit) => return SplitShare::Whole,
             Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::PlaneGroup { .. })
             | Coverage::Distribute(ComputeScope::Cube) => {}
         }
         // A shared flat index over an unspanned axis may cover part of a cell.
@@ -176,7 +177,9 @@ impl SplitShare {
         };
         match (split, level.coverage()) {
             (false, _) => SplitShare::Whole,
-            (true, Coverage::Distribute(ComputeScope::Plane)) => SplitShare::PartialAcrossPlanes,
+            (true, Coverage::Distribute(ComputeScope::Plane | ComputeScope::PlaneGroup { .. })) => {
+                SplitShare::PartialAcrossPlanes
+            }
             (true, _) => SplitShare::PartialAcrossCubes,
         }
     }

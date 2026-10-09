@@ -11,4 +11,7 @@ pub enum Instruction {
     Cmma,
     /// cubek's own fragment transport over the matrix intrinsics, with per-role `io`.
     Mma { io: MmaIo },
+    /// Hopper's warpgroup MMA: a plane group of four contracts its `64 × n` tile together,
+    /// reading both operands out of shared memory, asynchronously.
+    Wgmma,
 }
