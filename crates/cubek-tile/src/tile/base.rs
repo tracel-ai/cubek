@@ -255,17 +255,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile is held in its plane's registers: a fragment, or a grid of them.
-    pub(crate) fn is_plane_resident(&self) -> comptime_type!(bool) {
-        match &self.kind {
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(true),
-            TileKind::Memory(_)
-            | TileKind::Procedural(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Lines(_) => comptime!(false),
-        }
-    }
-
     /// Whether this tile is backed by shared memory, the only space a `sync_cube()` orders.
     pub fn is_shared(&self) -> comptime_type!(bool) {
         match &self.kind {

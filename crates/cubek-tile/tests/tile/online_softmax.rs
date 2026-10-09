@@ -151,7 +151,7 @@ fn plane_attention<E: Float>(
 
 /// [`plane_attention`] with the score held in manual-mma registers from the score's contraction to
 /// the value's: the softmax reads the accumulator where its units hold it, and the probabilities
-/// are the value's left factor in the same registers ([`Tile::as_lhs`]). The leaf is one
+/// are the value's left factor in the same registers ([`Tile::to_lhs`]). The leaf is one
 /// instruction `m × n` along the queries and keys, so the value contracts the keys `n` deep.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -217,7 +217,7 @@ fn register_plane_attention<E: Float>(
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
                     }
                     let correction = softmax.step(&logits, &bias_s, scale);
-                    let p = logits.as_lhs::<E>();
+                    let p = logits.to_lhs::<E>();
                     acc.along(V).mul(&correction);
                     for fragment in stage.walk().routed(D, 0).unrolled() {
                         let mut cell = acc.at(&fragment);

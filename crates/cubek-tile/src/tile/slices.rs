@@ -78,18 +78,18 @@ impl<E: Float> Tile<E> {
 impl<T: Numeric> Tile<T> {
     /// Slices along `axis` one unit keeps a state for: the rows a manual-mma grid's unit holds
     /// cells of, which a reduction reads in its registers; every slice of any other holder.
-    pub fn slices_held(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
+    pub fn slices_per_unit(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
         let every = comptime!(self.place.space.slices_along(axis));
         match &self.kind {
             TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {
                 PlaneTile::Mma(fragment) => {
-                    let held = fragment.rows_held();
-                    comptime!(partition.m_tiles * held)
+                    let rows = fragment.rows_per_unit();
+                    comptime!(partition.m_tiles * rows)
                 }
                 PlaneTile::Cmma(_) | PlaneTile::Registers(_) => comptime!(every),
             },
             TileKind::PlaneTile(tile) => match tile {
-                PlaneTile::Mma(fragment) => fragment.rows_held(),
+                PlaneTile::Mma(fragment) => fragment.rows_per_unit(),
                 PlaneTile::Cmma(_) | PlaneTile::Registers(_) => comptime!(every),
             },
             TileKind::Memory(_)
@@ -117,8 +117,8 @@ impl<E: Float> AxisSlices<E> {
                 partition.scale_add_along(scale, recipe, self.space.clone())
             }
             AxisSlicesKind::Fragment(tile) => {
-                let mut fragment = tile.readable();
-                fragment.scale_add_rows(scale, recipe, self.space.clone(), (0usize, 0usize))
+                let mut fragment = tile.manual_fragment();
+                fragment.scale_add_along(scale, recipe, self.space.clone(), (0usize, 0usize))
             }
         }
     }
@@ -131,18 +131,7 @@ impl<E: Float> AxisSlices<E> {
                 window.maxima_along(seed, self.space.clone(), self.axis)
             }
             AxisSlicesKind::Fragments(partition) => partition.maxima_along(seed),
-            AxisSlicesKind::Fragment(tile) => {
-                let fragment = tile.readable();
-                let rows = fragment.rows_held();
-                let mut maxima = Array::<E>::new(rows);
-                #[unroll]
-                for i in 0..rows {
-                    maxima[i] = seed[i];
-                }
-                fragment.fold_rows(&mut maxima, 0usize, Monoid::Max);
-                fragment.across_rows(&mut maxima, 0usize, Monoid::Max);
-                maxima
-            }
+            AxisSlicesKind::Fragment(tile) => tile.manual_fragment().maxima_along(seed),
         }
     }
 
@@ -155,8 +144,8 @@ impl<E: Float> AxisSlices<E> {
             }
             AxisSlicesKind::Fragments(partition) => partition.exp_minus_along(slices),
             AxisSlicesKind::Fragment(tile) => {
-                let mut fragment = tile.readable();
-                fragment.exp_minus_rows(slices, 0usize)
+                let mut fragment = tile.manual_fragment();
+                fragment.exp_minus_along(slices, 0usize)
             }
         }
     }
@@ -167,18 +156,7 @@ impl<E: Float> AxisSlices<E> {
             AxisSlicesKind::Registers(block) => block.sums_along(),
             AxisSlicesKind::Window(window) => window.sums_along(self.space.clone(), self.axis),
             AxisSlicesKind::Fragments(partition) => partition.sums_along(),
-            AxisSlicesKind::Fragment(tile) => {
-                let fragment = tile.readable();
-                let rows = fragment.rows_held();
-                let mut sums = Array::<E>::new(rows);
-                #[unroll]
-                for i in 0..rows {
-                    sums[i] = E::from_int(0);
-                }
-                fragment.fold_rows(&mut sums, 0usize, Monoid::Sum);
-                fragment.across_rows(&mut sums, 0usize, Monoid::Sum);
-                sums
-            }
+            AxisSlicesKind::Fragment(tile) => tile.manual_fragment().sums_along(),
         }
     }
 

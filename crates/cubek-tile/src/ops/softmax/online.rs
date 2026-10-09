@@ -20,10 +20,18 @@ pub struct OnlineSoftmax<E: Float> {
     slices: usize,
     #[cube(comptime)]
     axis: Axis,
-    /// Whether each unit keeps only the slices it holds cells of, a manual-mma grid's rows, so
-    /// slot `i` names a different slice on each unit and cannot be merged with another plane's.
     #[cube(comptime)]
-    by_unit: bool,
+    slots: SliceSlots,
+}
+
+/// Which slice slot `i` of an [`OnlineSoftmax`]'s state keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SliceSlots {
+    /// Slice `i`, on every unit alike.
+    Every,
+    /// The `i`-th row the unit holds cells of in a manual-mma grid, a different slice on each
+    /// unit: such a state merges with no other plane's slot by slot.
+    Held,
 }
 
 /// What a plane's sum and the carry's rows are multiplied by in its cube's turn at a [`Relay`]
@@ -51,17 +59,20 @@ pub struct OnlineSoftmaxState<E: Float> {
 #[cube]
 impl<E: Float> OnlineSoftmax<E> {
     /// The state of every slice along `axis` of a score held as `score` is, before any block is
-    /// taken in: each unit keeps the slices it holds cells of ([`Tile::slices_held`]).
+    /// taken in: each unit keeps the slices it holds cells of ([`Tile::slices_per_unit`]).
     pub fn along<S: Numeric>(score: &Tile<S>, #[comptime] axis: Axis) -> OnlineSoftmax<E> {
-        let slices = score.slices_held(axis);
-        let by_unit = comptime!(slices != score.place.space.slices_along(axis));
-        OnlineSoftmax::<E>::opened(slices, axis, by_unit)
+        let slices = score.slices_per_unit(axis);
+        let slots = comptime!(match slices == score.place.space.slices_along(axis) {
+            true => SliceSlots::Every,
+            false => SliceSlots::Held,
+        });
+        OnlineSoftmax::<E>::empty(slices, axis, slots)
     }
 
     /// The state of `slices` slices along `axis` before any block is taken in: what a holder opens
     /// before the walk that hands it its score, as a cube's plane does before the cube's ring.
     pub fn new(#[comptime] slices: usize, #[comptime] axis: Axis) -> OnlineSoftmax<E> {
-        OnlineSoftmax::<E>::opened(slices, axis, false)
+        OnlineSoftmax::<E>::empty(slices, axis, SliceSlots::Every)
     }
 
     /// Take one block of `score` into the slices. The block becomes `score · scale + bias`, the
@@ -255,11 +266,11 @@ impl<E: Float> OnlineSoftmax<E> {
         recip
     }
 
-    /// The state of `slices` slices before any block is taken in, kept by unit where `by_unit`.
-    fn opened(
+    /// The state of `slices` slices before any block is taken in, its slots keeping `slots`.
+    fn empty(
         #[comptime] slices: usize,
         #[comptime] axis: Axis,
-        #[comptime] by_unit: bool,
+        #[comptime] slots: SliceSlots,
     ) -> OnlineSoftmax<E> {
         let mut m = Array::<E>::new(slices);
         let mut l = Array::<E>::new(slices);
@@ -273,15 +284,15 @@ impl<E: Float> OnlineSoftmax<E> {
             l,
             slices,
             axis,
-            by_unit,
+            slots,
         }
     }
 
-    /// Panics where each unit keeps only its own rows: their slots are not the same slices from
-    /// unit to unit, so another plane's state cannot be merged into them slot by slot.
+    /// Panics where each unit keeps only its own rows ([`SliceSlots::Held`]): merged slot by slot,
+    /// another plane's state would land on other slices.
     fn refuse_merging(&self, #[comptime] op: &'static str) {
         comptime!(assert!(
-            !self.by_unit,
+            self.slots == SliceSlots::Every,
             "{op}: this state was taken in from a manual-mma grid, each unit keeping the rows it \
              holds cells of; planes that split the keys merge a window's or a cmma grid's state"
         ));

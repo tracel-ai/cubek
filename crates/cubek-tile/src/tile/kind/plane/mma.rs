@@ -268,21 +268,21 @@ impl<T: Numeric> MmaData<T> {
     }
 }
 
-/// An accumulator's rows, read where its units hold them: each register vector runs along one row
-/// of the fragment, and a row's cells lie across the units [`MmaDefinition::position_of_nth`] says
-/// share it. Slot `i` of what these take or return is the row the unit's register vector `i`
-/// lies on, so every unit keeps the rows it holds and no more.
+/// An accumulator read where its units hold it: each register vector runs along one row of the
+/// fragment, and a row's cells lie across the units [`MmaDefinition::position_of_nth`] says share
+/// it. Slot `first + i` of the arrays these take or return is the row of the unit's register
+/// vector `i`, so each unit keeps the state of its own rows and no others.
 #[cube]
 impl<E: Numeric> MmaData<E> {
-    /// Rows of this accumulator one unit holds cells of: one a register vector.
-    pub(crate) fn rows_held(&self) -> comptime_type!(usize) {
+    /// Rows of this accumulator one unit holds cells of, one per register vector.
+    pub(crate) fn rows_per_unit(&self) -> comptime_type!(usize) {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         def.vectors_per_lane(MatrixIdent::Accumulator)
     }
 
     /// `self[r, c] = self[r, c] · scale + bias[r, c]`, `bias` read at the cell's coordinates in
     /// the window over `space`, this fragment's first cell at `origin` of it.
-    pub(crate) fn scale_add_rows(
+    pub(crate) fn scale_add_along(
         &mut self,
         scale: E,
         bias: &Procedural<E>,
@@ -314,9 +314,19 @@ impl<E: Numeric> MmaData<E> {
         }
     }
 
-    /// `slots[first + i]` combined under `monoid` with this unit's cells on its row `i`: the
-    /// unit's own part of each row, which [`across_rows`](Self::across_rows) completes.
-    pub(crate) fn fold_rows(
+    /// `self[r, :] *= factors[first + r]` for every row `r` this unit holds cells of.
+    pub(crate) fn mul_along(&mut self, factors: &Array<E>, #[comptime] first: usize) {
+        let acc = self.acc_registers_mut();
+        #[unroll]
+        for i in 0..acc.len() {
+            acc[i] *= Vector::cast_from(factors[first + i]);
+        }
+    }
+
+    /// `slots[first + r]` combined under `monoid` with this unit's cells on its row `r`: the
+    /// unit's own part of each row, which [`fold_across_units`](Self::fold_across_units)
+    /// completes.
+    pub(crate) fn fold_along(
         &self,
         slots: &mut Array<E>,
         #[comptime] first: usize,
@@ -337,23 +347,14 @@ impl<E: Numeric> MmaData<E> {
         }
     }
 
-    /// `self[r, c] *= factors[first + r]`.
-    pub(crate) fn mul_rows(&mut self, factors: &Array<E>, #[comptime] first: usize) {
-        let acc = self.acc_registers_mut();
-        #[unroll]
-        for i in 0..acc.len() {
-            acc[i] *= Vector::cast_from(factors[first + i]);
-        }
-    }
-
-    /// Each of `slots`' `rows` rows, starting at `first`, combined under `monoid` over the units
-    /// that share it: a butterfly over the lane bits that leave the row in place.
+    /// Each row's slot, from `first` on, combined under `monoid` over the units that share the
+    /// row: a butterfly over the lane bits that leave the row in place.
     ///
     /// Whether a lane bit moves a row is read at lane 0, where both positions are constants the
     /// compiler folds, so a bit that moves it costs no shuffle. That holds for a layout whose row
-    /// is a function of some of the lane's bits, as the manual-mma layouts are; the component
-    /// test of the register attention checks it on every lane.
-    pub(crate) fn across_rows(
+    /// is a function of some of the lane's bits, as the manual-mma layouts are; the register
+    /// attention's component test checks it on every lane.
+    pub(crate) fn fold_across_units(
         &self,
         slots: &mut Array<E>,
         #[comptime] first: usize,
@@ -409,9 +410,9 @@ impl<E: Numeric> MmaData<E> {
 #[cube]
 impl<A: Numeric> MmaData<A> {
     /// This accumulator as the `A` fragment of a contraction over its columns, each cell cast to
-    /// `E` in the register that holds it: an `m × n` accumulator is, cell for cell, the `A`
+    /// `E` in the register that holds it. An `m × n` accumulator is, cell for cell, the `A`
     /// fragment of an `m × · × n` instruction, which the manual-mma layouts share.
-    pub(crate) fn as_lhs<E: Numeric>(&self) -> MmaData<E> {
+    pub(crate) fn to_lhs<E: Numeric>(&self) -> MmaData<E> {
         let (m, n, k) = comptime!((self.m, self.n, self.k));
         let acc_def = MmaDefinition::<A, A, A>::new(m, n, k);
         let lhs_def = MmaDefinition::<E, E, A>::new(m, n, n);
@@ -421,21 +422,13 @@ impl<A: Numeric> MmaData<A> {
         let lhs_width = lhs_def.vector_size(MatrixIdent::A);
         comptime!(assert!(
             acc_regs * acc_width == lhs_regs * lhs_width,
-            "MmaData::as_lhs: an {m}x{n} accumulator holds {} cells a unit, and the A fragment of \
+            "MmaData::to_lhs: an {m}x{n} accumulator holds {} cells a unit, and the A fragment of \
              an {m}x{n} contraction {}; the next contraction contracts the accumulator's columns",
             acc_regs * acc_width,
             lhs_regs * lhs_width
         ));
+        let acc = self.acc_registers();
         let mut lhs = MmaData::<E>::lhs(m, n, n, comptime!(self.layout), comptime!(self.io));
-        let acc = match &self.fragment {
-            MmaFragment::Acc(f) => f,
-            MmaFragment::Lhs(_)
-            | MmaFragment::Rhs(_)
-            | MmaFragment::LhsBlockScaled(..)
-            | MmaFragment::RhsBlockScaled(..) => {
-                panic!("MmaData::as_lhs: only an accumulator is a contraction's output")
-            }
-        };
         match &mut lhs.fragment {
             MmaFragment::Lhs(registers) =>
             {
@@ -456,7 +449,7 @@ impl<A: Numeric> MmaData<A> {
             MmaFragment::Acc(_)
             | MmaFragment::Rhs(_)
             | MmaFragment::LhsBlockScaled(..)
-            | MmaFragment::RhsBlockScaled(..) => panic!("MmaData::as_lhs: allocated as an A"),
+            | MmaFragment::RhsBlockScaled(..) => panic!("MmaData::to_lhs: allocated as an A"),
         }
         lhs
     }
@@ -464,8 +457,34 @@ impl<A: Numeric> MmaData<A> {
 
 #[cube]
 impl<E: Float> MmaData<E> {
-    /// `self[r, c] = exp(self[r, c] − rows[first + r])` ([`AxisSlices::exp_minus_cell`]).
-    pub(crate) fn exp_minus_rows(&mut self, rows: &Array<E>, #[comptime] first: usize) {
+    /// Each row's max, starting from `seed`'s, over the units that share it.
+    pub(crate) fn maxima_along(&self, seed: &Array<E>) -> Array<E> {
+        let rows = self.rows_per_unit();
+        let mut maxima = Array::<E>::new(rows);
+        #[unroll]
+        for i in 0..rows {
+            maxima[i] = seed[i];
+        }
+        self.fold_along(&mut maxima, 0usize, Monoid::Max);
+        self.fold_across_units(&mut maxima, 0usize, Monoid::Max);
+        maxima
+    }
+
+    /// Each row's sum over the units that share it.
+    pub(crate) fn sums_along(&self) -> Array<E> {
+        let rows = self.rows_per_unit();
+        let mut sums = Array::<E>::new(rows);
+        #[unroll]
+        for i in 0..rows {
+            sums[i] = E::from_int(0);
+        }
+        self.fold_along(&mut sums, 0usize, Monoid::Sum);
+        self.fold_across_units(&mut sums, 0usize, Monoid::Sum);
+        sums
+    }
+
+    /// `self[r, c] = exp(self[r, c] − slices[first + r])` ([`AxisSlices::exp_minus_cell`]).
+    pub(crate) fn exp_minus_along(&mut self, slices: &Array<E>, #[comptime] first: usize) {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         let vector_size = def.vector_size(MatrixIdent::Accumulator);
         let acc = self.acc_registers_mut();
@@ -476,7 +495,7 @@ impl<E: Float> MmaData<E> {
             for e in 0..vector_size {
                 vector.insert(
                     e,
-                    AxisSlices::<E>::exp_minus_cell(vector.extract(e), rows[first + i]),
+                    AxisSlices::<E>::exp_minus_cell(vector.extract(e), slices[first + i]),
                 );
             }
             acc[i] = vector;
