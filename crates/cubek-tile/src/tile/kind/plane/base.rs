@@ -108,16 +108,14 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// This accumulator tile as the left factor of a contraction over its columns
-    /// ([`MmaData::to_lhs`]). A cmma fragment's cells lie where the instruction keeps them, and a
-    /// register block is one unit's: both are drained into the plane's window and read from there.
-    pub(crate) fn to_lhs<E: Numeric>(&self) -> PlaneTile<E> {
+    /// This accumulator tile with each cell cast to `E` where its units hold it
+    /// ([`MmaData::cast`]). A cmma fragment or a register block is cast as it drains.
+    pub(crate) fn cast<E: Numeric>(&self) -> PlaneTile<E> {
         match self {
-            PlaneTile::Mma(fragment) => PlaneTile::new_Mma(fragment.to_lhs::<E>()),
+            PlaneTile::Mma(fragment) => PlaneTile::new_Mma(fragment.cast::<E>()),
             PlaneTile::Cmma(_) | PlaneTile::Registers(_) => panic!(
-                "Tile::to_lhs: a manual-mma accumulator is read as the next contraction's factor \
-                 in its registers; a cmma fragment or a register block drains into the plane's \
-                 window first"
+                "Tile::cast: a manual-mma accumulator is cast in its registers; a cmma fragment or \
+                 a register block is cast as it drains"
             ),
         }
     }
@@ -434,13 +432,12 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// This grid as the left factor of a contraction over its columns, fragment for fragment
-    /// ([`PlaneTile::to_lhs`]).
-    pub(crate) fn to_lhs<E: Numeric>(&self) -> PlanePartition<E> {
+    /// This grid with each cell cast to `E`, fragment for fragment ([`PlaneTile::cast`]).
+    pub(crate) fn cast<E: Numeric>(&self) -> PlanePartition<E> {
         let mut frags = Sequence::<PlaneTile<E>>::new();
         #[unroll]
         for i in 0..comptime!(self.m_tiles * self.n_tiles) {
-            frags.push(self.frags.index(i).to_lhs::<E>());
+            frags.push(self.frags.index(i).cast::<E>());
         }
         PlanePartition::<E> {
             frags,

@@ -409,49 +409,22 @@ impl<E: Numeric> MmaData<E> {
 
 #[cube]
 impl<A: Numeric> MmaData<A> {
-    /// This accumulator as the `A` fragment of a contraction over its columns, each cell cast to
-    /// `E` in the register that holds it. An `m × n` accumulator is, cell for cell, the `A`
-    /// fragment of an `m × · × n` instruction, which the manual-mma layouts share.
-    pub(crate) fn to_lhs<E: Numeric>(&self) -> MmaData<E> {
-        let (m, n, k) = comptime!((self.m, self.n, self.k));
-        let acc_def = MmaDefinition::<A, A, A>::new(m, n, k);
-        let lhs_def = MmaDefinition::<E, E, A>::new(m, n, n);
-        let acc_regs = acc_def.vectors_per_lane(MatrixIdent::Accumulator);
-        let acc_width = acc_def.vector_size(MatrixIdent::Accumulator);
-        let lhs_regs = lhs_def.vectors_per_lane(MatrixIdent::A);
-        let lhs_width = lhs_def.vector_size(MatrixIdent::A);
-        comptime!(assert!(
-            acc_regs * acc_width == lhs_regs * lhs_width,
-            "MmaData::to_lhs: an {m}x{n} accumulator holds {} cells a unit, and the A fragment of \
-             an {m}x{n} contraction {}; the next contraction contracts the accumulator's columns",
-            acc_regs * acc_width,
-            lhs_regs * lhs_width
-        ));
+    /// This accumulator with each cell cast to `E` in the register that holds it.
+    pub(crate) fn cast<E: Numeric>(&self) -> MmaData<E> {
         let acc = self.acc_registers();
-        let mut lhs = MmaData::<E>::lhs(m, n, n, comptime!(self.layout), comptime!(self.io));
-        match &mut lhs.fragment {
-            MmaFragment::Lhs(registers) =>
-            {
-                #[unroll]
-                for i in 0..acc_regs {
-                    #[unroll]
-                    for e in 0..acc_width {
-                        let (register, slot) = comptime!((
-                            (i * acc_width + e) / lhs_width,
-                            (i * acc_width + e) % lhs_width
-                        ));
-                        let mut vector = registers[register];
-                        vector.insert(slot, E::cast_from(acc[i].extract(e)));
-                        registers[register] = vector;
-                    }
-                }
-            }
-            MmaFragment::Acc(_)
-            | MmaFragment::Rhs(_)
-            | MmaFragment::LhsBlockScaled(..)
-            | MmaFragment::RhsBlockScaled(..) => panic!("MmaData::to_lhs: allocated as an A"),
+        let mut cast = MmaData::<E>::acc(
+            comptime!(self.m),
+            comptime!(self.n),
+            comptime!(self.k),
+            comptime!(self.layout),
+            comptime!(self.io),
+        );
+        let registers = cast.acc_registers_mut();
+        #[unroll]
+        for i in 0..acc.len() {
+            registers[i] = Vector::cast_from(acc[i]);
         }
-        lhs
+        cast
     }
 }
 
@@ -775,6 +748,45 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
 }
 
 /// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`.
+/// An `m × k` accumulator's registers regrouped as the `A` operand of an `m × n × k` contraction:
+/// the manual-mma layouts put the accumulator's cell `e` where the operand's cell `e` is, so a
+/// product contracting its own output reads it without moving a cell between units.
+#[cube]
+pub(crate) fn accumulator_as_a<L: Numeric>(
+    acc: &Array<Vector<L, NA>>,
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] k: usize,
+) -> Array<Vector<L, NL>> {
+    let acc_def = MmaDefinition::<L, L, L>::new(m, k, k);
+    let a_def = MmaDefinition::<L, L, L>::new(m, n, k);
+    register_lhs_size::<L>(&a_def);
+    let acc_regs = acc_def.vectors_per_lane(MatrixIdent::Accumulator);
+    let acc_width = acc_def.vector_size(MatrixIdent::Accumulator);
+    let a_regs = a_def.vectors_per_lane(MatrixIdent::A);
+    let a_width = a_def.vector_size(MatrixIdent::A);
+    comptime!(assert!(
+        acc_regs * acc_width == a_regs * a_width,
+        "accumulator_as_a: an {m}x{k} accumulator holds {} cells a unit, and the A operand of an \
+         {m}x{n}x{k} contraction {}",
+        acc_regs * acc_width,
+        a_regs * a_width
+    ));
+    let mut registers = Array::<Vector<L, NL>>::new(a_regs);
+    #[unroll]
+    for i in 0..acc_regs {
+        #[unroll]
+        for e in 0..acc_width {
+            let (register, slot) =
+                comptime!(((i * acc_width + e) / a_width, (i * acc_width + e) % a_width));
+            let mut vector = registers[register];
+            vector.insert(slot, acc[i].extract(e));
+            registers[register] = vector;
+        }
+    }
+    registers
+}
+
 #[cube]
 pub(crate) fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<Vector<L, NL>>,

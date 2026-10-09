@@ -400,11 +400,12 @@ fn fill_stage(
     }
 }
 
-/// Each unit's cell positions in the three roles of an `m16n8k16` instruction, written as
-/// `(row, col)` pairs: `A`'s, then the accumulator's.
+/// Each unit's cell positions in an `m16n8k16` instruction, written as `(row, col)` pairs: its
+/// `A`'s, its `f32` accumulator's, and the `f16` accumulator's of the same shape.
 #[cube(launch)]
-fn fragment_positions(a: &mut Tensor<u32>, acc: &mut Tensor<u32>) {
+fn fragment_positions(a: &mut Tensor<u32>, acc: &mut Tensor<u32>, half_acc: &mut Tensor<u32>) {
     let def = MmaDefinition::<f16, f16, f32>::new(ROWS, 8usize, 16usize);
+    let half = MmaDefinition::<f16, f16, f16>::new(ROWS, 8usize, 16usize);
     let lane = UNIT_POS_PLANE;
     let a_elems = def.elems_per_lane(MatrixIdent::A);
     let c_elems = def.elems_per_lane(MatrixIdent::Accumulator);
@@ -421,14 +422,18 @@ fn fragment_positions(a: &mut Tensor<u32>, acc: &mut Tensor<u32>) {
         let at = (lane * comptime!(c_elems as u32) + e as u32) * 2;
         acc[at as usize] = row;
         acc[at as usize + 1] = col;
+        let (row, col) = half.position_of_nth(lane, e as u32, MatrixIdent::Accumulator);
+        half_acc[at as usize] = row;
+        half_acc[at as usize + 1] = col;
     }
 }
 
-/// The two layout facts the leaf rests on. Cell `e` of an `m16k16` `A` fragment sits where cell
-/// `e % half` of the accumulator of `n8` tile `e / half` does, `half` being the accumulator's
-/// cells per unit: where it fails, the probabilities are contracted with the wrong keys. And a
-/// row's units differ in lane bits that differ alike on every lane: where it fails, a row
-/// reduction combines another row's cells.
+/// The layout facts the register leaf rests on. Cell `e` of an `m16k16` `A` fragment sits where
+/// cell `e % half` of the accumulator of `n8` tile `e / half` does, `half` being the accumulator's
+/// cells per unit: where it fails, the probabilities are contracted with the wrong keys. An `f16`
+/// accumulator keeps its cells where an `f32` one does: where it fails, casting the score in its
+/// registers moves its cells. And a row's units differ in lane bits that differ alike on every
+/// lane: where it fails, a row reduction combines another row's cells.
 #[test]
 fn two_accumulator_tiles_are_one_a_fragment() {
     let client = cubecl::test_device().client();
@@ -438,15 +443,22 @@ fn two_accumulator_tiles_are_one_a_fragment() {
     let (a_elems, c_elems) = (8usize, 4usize);
     let a = client.empty(32 * a_elems * 2 * 4);
     let acc = client.empty(32 * c_elems * 2 * 4);
+    let half_acc = client.empty(32 * c_elems * 2 * 4);
     fragment_positions::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_1d(32),
         tensor_arg(a.clone(), &[32 * a_elems * 2]),
         tensor_arg(acc.clone(), &[32 * c_elems * 2]),
+        tensor_arg(half_acc.clone(), &[32 * c_elems * 2]),
     );
     let a = u32::from_bytes(&client.read_one_unchecked(a)).to_vec();
     let acc = u32::from_bytes(&client.read_one_unchecked(acc)).to_vec();
+    let half_acc = u32::from_bytes(&client.read_one_unchecked(half_acc)).to_vec();
+    assert_eq!(
+        half_acc, acc,
+        "an f16 accumulator's cells sit where an f32 one's do"
+    );
     for lane in 0..32 {
         for e in 0..a_elems {
             let (tile, cell) = (e / c_elems, e % c_elems);

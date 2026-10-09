@@ -252,27 +252,25 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// This plane-resident accumulator as the left factor of the next contraction, the one over
-    /// its columns, its cells cast to `E` where its units hold them: what an attention contracts
-    /// its probabilities with the values through, without a round trip through shared memory.
+    /// This plane-resident accumulator with each cell cast to `E` where its units hold it: what
+    /// an attention contracts its probabilities with the values through, the next contraction
+    /// reading the cast accumulator in its registers, without a round trip through shared memory.
     ///
-    /// Only a manual-mma accumulator is read in place, whose layout is the `A` fragment's of an
-    /// instruction as deep as the accumulator is wide; any other drains into its plane's window
-    /// and is staged from there.
-    pub fn to_lhs<E: Numeric>(&self) -> Tile<E> {
+    /// Only a manual-mma accumulator is cast in place; any other is cast as it drains.
+    pub fn cast<E: Numeric>(&self) -> Tile<E> {
         let place = comptime!(self.place.clone());
         match &self.kind {
             TileKind::PlanePartition(partition) => {
-                Tile::new(TileKind::new_PlanePartition(partition.to_lhs::<E>()), place)
+                Tile::new(TileKind::new_PlanePartition(partition.cast::<E>()), place)
             }
             TileKind::PlaneTile(tile) => {
-                Tile::new(TileKind::new_PlaneTile(tile.to_lhs::<E>()), place)
+                Tile::new(TileKind::new_PlaneTile(tile.cast::<E>()), place)
             }
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => {
-                panic!("Tile::to_lhs: only a plane-resident accumulator is a contraction's output")
+                panic!("Tile::cast: only a plane-resident accumulator is cast in its registers")
             }
         }
     }
