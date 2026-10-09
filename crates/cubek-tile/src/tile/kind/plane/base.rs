@@ -101,10 +101,35 @@ impl<T: Numeric> PlaneTile<T> {
                 block.mul_along(factors, first);
             }
             PlaneTile::Cmma(fragment) => fragment.mul_along(factors, first),
-            PlaneTile::Mma(_) => {
-                panic!(
-                    "PlaneTile::mul_along: a manual fragment's slices are not scaled in place yet"
-                )
+            PlaneTile::Mma(fragment) => {
+                let mut fragment = fragment.clone();
+                fragment.mul_rows(factors, first);
+            }
+        }
+    }
+
+    /// This accumulator tile as the left factor of a contraction over its columns
+    /// ([`MmaData::as_lhs`]). A cmma fragment's cells lie where the instruction keeps them, and a
+    /// register block is one unit's: both are drained into the plane's window and read from there.
+    pub(crate) fn as_lhs<E: Numeric>(&self) -> PlaneTile<E> {
+        match self {
+            PlaneTile::Mma(fragment) => PlaneTile::new_Mma(fragment.as_lhs::<E>()),
+            PlaneTile::Cmma(_) | PlaneTile::Registers(_) => panic!(
+                "Tile::as_lhs: a manual-mma accumulator is read as the next contraction's factor \
+                 in its registers; a cmma fragment or a register block drains into the plane's \
+                 window first"
+            ),
+        }
+    }
+
+    /// Slices of this tile one unit keeps a factor for: a manual fragment's rows the unit holds
+    /// cells of, every row of a cmma fragment or a register block.
+    pub(crate) fn rows_held(&self) -> comptime_type!(usize) {
+        match self {
+            PlaneTile::Mma(fragment) => fragment.rows_held(),
+            PlaneTile::Cmma(_) | PlaneTile::Registers(_) => {
+                let (m, _) = self.shape();
+                m
             }
         }
     }
@@ -409,6 +434,25 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
+    /// This grid as the left factor of a contraction over its columns, fragment for fragment
+    /// ([`PlaneTile::as_lhs`]).
+    pub(crate) fn as_lhs<E: Numeric>(&self) -> PlanePartition<E> {
+        let mut frags = Sequence::<PlaneTile<E>>::new();
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            frags.push(self.frags.index(i).as_lhs::<E>());
+        }
+        PlanePartition::<E> {
+            frags,
+            m_tiles: comptime!(self.m_tiles),
+            n_tiles: comptime!(self.n_tiles),
+            rows: comptime!(self.rows),
+            cols: comptime!(self.cols),
+            scratch: ComptimeOption::new_None(),
+            held: Scratch::None,
+        }
+    }
+
     /// `self[r, :] *= corr[r]`, each tile bounced through the scratch.
     ///
     /// The scratch is the plane's own slot (`with_scratch` indexes it by `PLANE_POS`), so
@@ -473,8 +517,9 @@ impl<T: Numeric> PlanePartition<T> {
             for mi in 0..self.m_tiles {
                 #[unroll]
                 for ni in 0..self.n_tiles {
-                    self.at(mi, ni)
-                        .mul_along(factors, comptime!(mi * self.rows));
+                    let tile = self.at(mi, ni);
+                    let held = tile.rows_held();
+                    tile.mul_along(factors, comptime!(mi * held));
                 }
             }
         }
@@ -802,6 +847,85 @@ impl<E: Float> PlanePartition<E> {
             PlaneTile::Cmma(_) | PlaneTile::Mma(_) => AxisSlicesKind::new_Fragments(self.clone()),
         }
     }
+
+    /// `self[r, c] = self[r, c] · scale + bias[r, c]` over every fragment, `bias` read at each
+    /// cell's coordinates in the window over `space`.
+    pub(crate) fn scale_add_along(&self, scale: E, bias: &Procedural<E>, #[comptime] space: Space) {
+        #[unroll]
+        for mi in 0..self.m_tiles {
+            #[unroll]
+            for ni in 0..self.n_tiles {
+                let mut fragment = self.at(mi, ni).readable();
+                fragment.scale_add_rows(
+                    scale,
+                    bias,
+                    comptime!(space.clone()),
+                    comptime!((mi * self.rows, ni * self.cols)),
+                );
+            }
+        }
+    }
+
+    /// Each row's max, starting from `seed`'s: every fragment's cells on it, then the units'.
+    pub(crate) fn maxima_along(&self, seed: &Array<E>) -> Array<E> {
+        let held = self.at(0usize, 0usize).rows_held();
+        let mut maxima = Array::<E>::new(comptime!(self.m_tiles * held));
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * held) {
+            maxima[i] = seed[i];
+        }
+        self.reduce_rows(&mut maxima, Monoid::Max);
+        maxima
+    }
+
+    /// Each row's sum: every fragment's cells on it, then the units'.
+    pub(crate) fn sums_along(&self) -> Array<E> {
+        let held = self.at(0usize, 0usize).rows_held();
+        let mut sums = Array::<E>::new(comptime!(self.m_tiles * held));
+        #[unroll]
+        for i in 0..comptime!(self.m_tiles * held) {
+            sums[i] = E::from_int(0);
+        }
+        self.reduce_rows(&mut sums, Monoid::Sum);
+        sums
+    }
+
+    /// `self[r, c] = exp(self[r, c] − rows[r])` over every fragment.
+    pub(crate) fn exp_minus_along(&self, rows: &Array<E>) {
+        let held = self.at(0usize, 0usize).rows_held();
+        #[unroll]
+        for mi in 0..self.m_tiles {
+            #[unroll]
+            for ni in 0..self.n_tiles {
+                let mut fragment = self.at(mi, ni).readable();
+                fragment.exp_minus_rows(rows, comptime!(mi * held));
+            }
+        }
+    }
+
+    /// `slots` combined under `monoid` with every fragment's cells on each row, the unit's own
+    /// first and then across the units that share the row: one exchange a row, however many
+    /// fragments it spans.
+    fn reduce_rows(&self, slots: &mut Array<E>, #[comptime] monoid: Monoid) {
+        let held = self.at(0usize, 0usize).rows_held();
+        #[unroll]
+        for mi in 0..self.m_tiles {
+            #[unroll]
+            for ni in 0..self.n_tiles {
+                let fragment = self.at(mi, ni).readable();
+                match comptime!(monoid) {
+                    Monoid::Max => fragment.raise_row_maxima(slots, comptime!(mi * held)),
+                    Monoid::Sum => fragment.add_row_sums(slots, comptime!(mi * held)),
+                    Monoid::Prod | Monoid::Min => {
+                        panic!("PlanePartition::reduce_rows: a softmax reduces by max and sum")
+                    }
+                }
+            }
+            self.at(mi, 0usize)
+                .readable()
+                .across_rows(slots, comptime!(mi * held), monoid);
+        }
+    }
 }
 
 #[cube]
@@ -811,6 +935,19 @@ impl<E: Float> PlaneTile<E> {
         match self {
             PlaneTile::Registers(block) => AxisSlicesKind::new_Registers(block.clone()),
             PlaneTile::Cmma(_) | PlaneTile::Mma(_) => AxisSlicesKind::new_Fragment(self.clone()),
+        }
+    }
+
+    /// This fragment where its cells are read by rows: a manual fragment's registers. A cmma
+    /// fragment's cells lie where the instruction keeps them, unknown to the program, and are
+    /// read after draining it into its plane's window.
+    pub(crate) fn readable(&self) -> MmaData<E> {
+        match self {
+            PlaneTile::Mma(fragment) => fragment.clone(),
+            PlaneTile::Cmma(_) | PlaneTile::Registers(_) => panic!(
+                "PlaneTile: a cmma fragment's slices are read after draining it into its plane's \
+                 window; a manual-mma fragment's are read in place"
+            ),
         }
     }
 }

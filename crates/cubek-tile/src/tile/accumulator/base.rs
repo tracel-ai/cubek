@@ -252,6 +252,31 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// This plane-resident accumulator as the left factor of the next contraction, the one over
+    /// its columns, its cells cast to `E` where its units hold them: what an attention contracts
+    /// its probabilities with the values through, without a round trip through shared memory.
+    ///
+    /// Only a manual-mma accumulator is read in place, whose layout is the `A` fragment's of an
+    /// instruction as deep as the accumulator is wide; any other drains into its plane's window
+    /// and is staged from there.
+    pub fn as_lhs<E: Numeric>(&self) -> Tile<E> {
+        let place = comptime!(self.place.clone());
+        match &self.kind {
+            TileKind::PlanePartition(partition) => {
+                Tile::new(TileKind::new_PlanePartition(partition.as_lhs::<E>()), place)
+            }
+            TileKind::PlaneTile(tile) => {
+                Tile::new(TileKind::new_PlaneTile(tile.as_lhs::<E>()), place)
+            }
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!("Tile::as_lhs: only a plane-resident accumulator is a contraction's output")
+            }
+        }
+    }
+
     /// Whether this accumulator's fragments cast to `Out` are fragments the device holds
     /// ([`casts_in_place`]): what decides whether a cmma grid draining into an `Out` destination
     /// stores whole or bounces.
@@ -522,6 +547,45 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
     );
     acc.init_identity(comptime!(accumulation.monoid()));
     acc
+}
+
+#[cube]
+impl<EA: Numeric> Tile<EA> {
+    /// A plane-resident accumulator over one region of `walk` along `axes`, summing `lhs` times a
+    /// factor in the matrix instruction `instruction` names, opened at zero: the accumulator
+    /// [`Tile::scratch`] would open, without the memory, for a product contracted again before
+    /// anything drains it, as an attention's score.
+    pub fn stage_accumulator<EL: Numeric>(
+        walk: &Walk,
+        #[comptime] axes: Vec<Axis>,
+        lhs: &Tile<EL>,
+        #[comptime] instruction: Instruction,
+    ) -> Tile<EA> {
+        comptime!(assert!(
+            !matches!(instruction, Instruction::Registers { .. }),
+            "Tile::stage_accumulator: a register block's accumulator is a unit's, opened on the \
+             output it drains into"
+        ));
+        let place = comptime!(Placement::new(
+            walk.level.child(&walk.space).subspace(&axes),
+            walk.depth(),
+            walk.parent.path.root_levels(),
+        ));
+        let accumulation = comptime!(Accumulation::Contraction(Semiring::SUM_PROD));
+        let mut acc = PlanePartition::<EA>::mirror(
+            comptime!(place.space.clone()),
+            comptime!(MatrixAxes::accumulator(&place.space, &lhs.place.space)),
+            instruction,
+            comptime!(GridShape::new(&place, &lhs.place.space)),
+            1usize,
+            1usize,
+            accumulation,
+            comptime!(place.depth),
+            comptime!(place.levels.clone()),
+        );
+        acc.init_identity(comptime!(accumulation.monoid()));
+        acc
+    }
 }
 
 /// [`Accumulate::drained_into`]'s descent over `levels[i..]`, applying `pass` at every leaf.
