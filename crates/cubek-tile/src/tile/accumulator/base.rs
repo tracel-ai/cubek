@@ -258,22 +258,27 @@ impl<Acc: Numeric> Tile<Acc> {
     fn casts_in_place_to<Out: Numeric>(&self) -> comptime_type!(bool) {
         // Only a cmma fragment has a cast the device may lack. Reading the grid of anything else
         // would ask the extent of an axis that may be dynamic.
-        let cmma = match &self.kind {
-            TileKind::PlanePartition(p) => p.is_cmma(),
+        match &self.kind {
+            // The fragment's own edges: the placement's space spans every plane's grid.
+            TileKind::PlanePartition(p) => {
+                let cmma = p.is_cmma();
+                if comptime!(cmma) {
+                    casts_in_place::<Acc, Out>(comptime!(p.rows), comptime!(p.cols))
+                } else {
+                    comptime!(true)
+                }
+            }
             TileKind::PlaneTile(t) => match t {
-                PlaneTile::Cmma(_) => comptime!(true),
-                PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
+                PlaneTile::Cmma(_) => {
+                    let (_, m, n) = self.fragment_grid();
+                    casts_in_place::<Acc, Out>(m, n)
+                }
+                PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(true),
             },
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lines(_) => comptime!(false),
-        };
-        if comptime!(cmma) {
-            let (_, m, n) = self.fragment_grid();
-            casts_in_place::<Acc, Out>(m, n)
-        } else {
-            comptime!(true)
+            | TileKind::Lines(_) => comptime!(true),
         }
     }
 
