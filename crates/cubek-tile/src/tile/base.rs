@@ -701,7 +701,30 @@ impl<T: Numeric> Tile<T> {
         Memory::<T>::smem(space, vector_size, storage, units)
     }
 
+    /// A shared-memory tile over this tile's box, one element a line, its rows dense and in order,
+    /// at this tile's place in its nest: what a bulk store moves out whole
+    /// ([`copy_from`](Tile::copy_from) into a tile a tensor map backs), and what an accumulator
+    /// drains into first, as it would into this tile. It starts on
+    /// [`Delivery::TMA_STAGE_ALIGNMENT`], which a launch sizing its shared memory counts.
+    pub fn smem_box(&self) -> Tile<T> {
+        let units = self.units();
+        Memory::<T>::smem_owned(
+            comptime!(self.place.space.clone()),
+            1usize,
+            comptime!(StageStorage::Strided),
+            units,
+            comptime!(Delivery::TMA_STAGE_ALIGNMENT),
+            comptime!(StageOwner::Cube),
+        )
+        .nested_like(self)
+    }
+
     /// Move `src` into `self`, the kind pairing picking the instruction.
+    ///
+    /// Into a tile a tensor map backs, from a shared-memory box ([`smem_box`](Tile::smem_box)),
+    /// it is a bulk store that every unit of the cube reaches: each fences the writes it made to
+    /// the box, the cube synchronizes, one unit stores it and waits for the engine to have read
+    /// it, and the cube synchronizes again before anything writes the box.
     ///
     /// A source whose scales a stage keeps beside it copies its values as they are stored, into a
     /// stage that keeps them too; the stage's fill brings the scales.
@@ -749,6 +772,7 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
                 (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window(d, space),
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
+                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from(s),
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
