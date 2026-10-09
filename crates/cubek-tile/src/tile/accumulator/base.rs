@@ -256,15 +256,25 @@ impl<Acc: Numeric> Tile<Acc> {
     /// ([`casts_in_place`]): what decides whether a cmma grid draining into an `Out` destination
     /// stores whole or bounces.
     fn casts_in_place_to<Out: Numeric>(&self) -> comptime_type!(bool) {
+        // Only a cmma fragment has a cast the device may lack. Reading the grid of anything else
+        // would ask the extent of an axis that may be dynamic.
         match &self.kind {
             // The fragment's own edges: the placement's space spans every plane's grid.
             TileKind::PlanePartition(p) => {
-                casts_in_place::<Acc, Out>(comptime!(p.rows), comptime!(p.cols))
+                let cmma = p.is_cmma();
+                if comptime!(cmma) {
+                    casts_in_place::<Acc, Out>(comptime!(p.rows), comptime!(p.cols))
+                } else {
+                    comptime!(true)
+                }
             }
-            TileKind::PlaneTile(_) => {
-                let (_, m, n) = self.fragment_grid();
-                casts_in_place::<Acc, Out>(m, n)
-            }
+            TileKind::PlaneTile(t) => match t {
+                PlaneTile::Cmma(_) => {
+                    let (_, m, n) = self.fragment_grid();
+                    casts_in_place::<Acc, Out>(m, n)
+                }
+                PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(true),
+            },
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
