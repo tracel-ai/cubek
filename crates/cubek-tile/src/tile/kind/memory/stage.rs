@@ -388,16 +388,19 @@ impl<T: Numeric> Memory<T> {
     }
 }
 
-/// The whole-buffer window of a stage: zero origin, its own physical extents.
+/// The whole-buffer window of a stage: zero origin, its extents along the axes its buffer is
+/// addressed by ([`window_extents`](StageForm::window_extents)).
 #[cube]
+#[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
 fn full_window(#[comptime] form: StageForm) -> (Coords<i32>, Coords<u32>) {
     let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
+    let extents = comptime!(form.window_extents());
 
     #[unroll]
-    for p in 0..comptime!(form.extents.len()) {
+    for p in 0..comptime!(extents.len()) {
         origin.push(0);
-        extent.push(comptime!(form.extents[p] as u32).runtime());
+        extent.push(comptime!(extents[p] as u32).runtime());
     }
 
     (origin, extent)
@@ -490,6 +493,21 @@ impl StageForm {
             steps: compaction.steps().iter().copied().collect(),
             extents,
         }
+    }
+
+    /// The extent in lines along each axis the buffer is addressed by, a window's axes: what the
+    /// physical extents carrying that axis hold between them, so a buffer tiled into
+    /// `[grid…, block…]` is still windowed one coordinate an axis.
+    fn window_extents(&self) -> Vec<usize> {
+        (0..self.positional.coordinate_rank())
+            .map(|c| {
+                self.positional
+                    .carriers(Axis(c as u8))
+                    .iter()
+                    .map(|&p| self.extents[p])
+                    .product()
+            })
+            .collect()
     }
 
     /// The buffer's rank: how many physical axes its layout addresses.

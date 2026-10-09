@@ -46,6 +46,14 @@ impl Placement {
         &self.levels[self.depth..]
     }
 
+    /// The levels below `level` in this nest; none where `level` is not one of them.
+    pub(crate) fn below_level(&self, level: &Level) -> &[Level] {
+        match self.levels.iter().position(|other| other == level) {
+            Some(at) => &self.levels[at + 1..],
+            None => &[],
+        }
+    }
+
     /// One level down, through `level`.
     pub(crate) fn at_step(&self, level: &Level) -> Placement {
         Placement::new(
