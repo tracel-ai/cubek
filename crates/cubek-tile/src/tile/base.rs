@@ -196,9 +196,11 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// What a stage of this operand holds ([`StageElement`]).
+    /// What a stage of this operand holds ([`StageElement`]): the values its fill decodes
+    /// ([`decodes`](Tile::decodes)), or what its kind stages.
     pub(crate) fn stage_element(&self) -> comptime_type!(StageElement) {
-        match &self.kind {
+        let decodes = self.decodes();
+        let staged = match &self.kind {
             TileKind::Memory(d) => d.stage_element(),
             TileKind::TmaGmem(t) => comptime!(match t.packing {
                 Packing::Plain => StageElement::Served,
@@ -210,7 +212,11 @@ impl<T: Numeric> Tile<T> {
             | TileKind::Lines(_) => {
                 comptime!(StageElement::Served)
             }
-        }
+        };
+        comptime!(match decodes {
+            true => StageElement::Decoded,
+            false => staged,
+        })
     }
 
     /// How this tile's values sit in memory; see [`Memory::packing`].

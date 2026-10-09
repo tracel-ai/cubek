@@ -91,10 +91,14 @@ impl<T: Numeric> Memory<T> {
         }
     }
 
-    /// What a stage of this store holds: served values if plain, stored words if packed.
+    /// What a stage of this store holds: its values if plain, its words if packed several fields
+    /// a word. Staged as words, a packed operand takes a fraction of the shared memory its values
+    /// would; a field as wide as its word takes the same either way, so it is staged decoded, as
+    /// the values a reader asks for, which a matrix fragment can load where words it cannot.
     pub(crate) fn stage_element(&self) -> comptime_type!(StageElement) {
         comptime!(match self.store.packing {
             Packing::Plain => StageElement::Served,
+            Packing::Packed { field } if field.per_word() == 1 => StageElement::Decoded,
             Packing::Packed { .. } => StageElement::Stored,
         })
     }
