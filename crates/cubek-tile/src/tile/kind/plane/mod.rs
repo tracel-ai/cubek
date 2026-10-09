@@ -8,6 +8,7 @@ pub(crate) mod load_matrix;
 pub(crate) mod matrix_grid;
 pub(crate) mod mma;
 pub(crate) mod registers;
+pub(crate) mod wgmma;
 
 pub(crate) use base::*;
 pub(crate) use cmma::*;
@@ -15,3 +16,4 @@ pub(crate) use lines::*;
 pub(crate) use matrix_grid::*;
 pub(crate) use mma::*;
 pub(crate) use registers::*;
+pub(crate) use wgmma::*;

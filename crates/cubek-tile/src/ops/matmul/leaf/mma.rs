@@ -87,7 +87,7 @@ impl<A: Numeric> MmaData<A> {
 
 /// Each factor's window layout: `A` row-major and `B` col-major when its trailing axis is
 /// contracted, the opposite otherwise.
-fn window_layouts(lhs: &Space, rhs: &Space) -> (MatrixLayout, MatrixLayout) {
+pub(crate) fn window_layouts(lhs: &Space, rhs: &Space) -> (MatrixLayout, MatrixLayout) {
     let trailing = |space: &Space| space.axis_at(space.rank() - 1);
     let lhs_layout = match rhs.contains(trailing(lhs)) {
         true => MatrixLayout::RowMajor,

@@ -218,6 +218,35 @@ mod tests {
         }
     }
 
+    /// A stage of K-major rows one TMA span long lies as a warpgroup MMA reads a tile under the
+    /// same swizzle, so a descriptor over the stage reads what the TMA engine landed.
+    #[test]
+    fn a_tma_span_row_is_the_warpgroup_mma_tile() {
+        use cubecl::wgmma::{Major, Swizzle, WgmmaTileLayout};
+
+        const F16_BYTES: usize = 2;
+        for (row_bytes, swizzle) in [(32, Swizzle::B32), (64, Swizzle::B64), (128, Swizzle::B128)] {
+            let row_lines = row_bytes / F16_BYTES;
+            let stage = ChunkSwizzle::new(&[64, row_lines], LineBytes(F16_BYTES)).unwrap();
+            let tile = WgmmaTileLayout {
+                major: Major::K,
+                swizzle,
+                rows: 64,
+                k: row_lines,
+            };
+            assert_eq!(tile.validate(F16_BYTES), Ok(()), "{tile:?}");
+            for row in 0..64 {
+                for k in 0..row_lines {
+                    assert_eq!(
+                        row * row_lines + stage.line_of(k, row),
+                        tile.offset(row, k, F16_BYTES),
+                        "{row_bytes}-byte rows, row {row}, k {k}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_row_of_one_chunk_is_left_in_order() {
         assert!(ChunkSwizzle::new(&[16, 1], LineBytes(16)).is_none());

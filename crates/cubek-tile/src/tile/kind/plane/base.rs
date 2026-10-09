@@ -21,6 +21,8 @@ pub(crate) enum PlaneTile<T: Numeric> {
     Mma(MmaData<T>),
     /// The software leaf's accumulator: a register block, not a hardware fragment.
     Registers(RegisterData<T>),
+    /// A plane group's warpgroup MMA accumulator, its four planes' share of one `64 × n` tile.
+    Wgmma(WgmmaData<T>),
 }
 
 #[cube]
@@ -29,7 +31,9 @@ impl<T: Numeric> PlaneTile<T> {
     /// alone, a register block the one it was opened with.
     pub(crate) fn semiring(&self) -> comptime_type!(Semiring) {
         match self {
-            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => comptime!(Semiring::SUM_PROD),
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => {
+                comptime!(Semiring::SUM_PROD)
+            }
             PlaneTile::Registers(d) => comptime!(d.accumulation.semiring("PlaneTile::mma")),
         }
     }
@@ -60,6 +64,7 @@ impl<T: Numeric> PlaneTile<T> {
             Instruction::Registers { config } => PlaneTile::new_Registers(
                 RegisterData::<T>::alloc(m, n, axes, vector_size, fold, config, accumulation),
             ),
+            Instruction::Wgmma => PlaneTile::new_Wgmma(WgmmaData::<T>::new(m, n)),
         }
     }
 
@@ -88,6 +93,10 @@ impl<T: Numeric> PlaneTile<T> {
             Instruction::Registers { .. } => {
                 panic!("PlaneTile::operand: the software form stages no operand plane tile")
             }
+            Instruction::Wgmma => panic!(
+                "PlaneTile::operand: a warpgroup MMA reads its operands out of shared memory, \
+                 into no fragment"
+            ),
         }
     }
 
@@ -106,6 +115,10 @@ impl<T: Numeric> PlaneTile<T> {
                     "PlaneTile::mul_along: a manual fragment's slices are not scaled in place yet"
                 )
             }
+            PlaneTile::Wgmma(_) => panic!(
+                "PlaneTile::mul_along: a warpgroup accumulator is written by the MMAs in flight, \
+                 and scaled only once they are done, at its drain"
+            ),
         }
     }
 
@@ -113,7 +126,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn with_scratch(self, scratch: Shared<[T]>) -> PlaneTile<T> {
         match self {
             PlaneTile::Cmma(d) => PlaneTile::new_Cmma(d.with_scratch(scratch)),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::with_scratch: only a cmma tile bounces through a scratch")
             }
         }
@@ -123,7 +136,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn spill_to_scratch(&self) {
         match self {
             PlaneTile::Cmma(d) => d.spill_to_scratch(),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::spill_to_scratch: only a cmma tile bounces through a scratch")
             }
         }
@@ -137,7 +150,7 @@ impl<T: Numeric> PlaneTile<T> {
     ) {
         match self {
             PlaneTile::Cmma(d) => d.add_from_scratch(mem, space),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::add_from_scratch: only a cmma tile bounces through a scratch")
             }
         }
@@ -147,7 +160,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn shape(&self) -> comptime_type!((usize, usize)) {
         match self {
             PlaneTile::Cmma(d) => comptime!(d.shape),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::shape: only a cmma tile states its shape")
             }
         }
@@ -157,7 +170,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn store_scratch(&self, scratch: &Shared<[T]>) {
         match self {
             PlaneTile::Cmma(d) => d.store_scratch(scratch),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::store_scratch: only a cmma tile bounces through a scratch")
             }
         }
@@ -167,7 +180,7 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn load_scratch(&mut self, scratch: &Shared<[T]>) {
         match self {
             PlaneTile::Cmma(d) => d.load_scratch(scratch),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::load_scratch: only a cmma tile bounces through a scratch")
             }
         }
@@ -178,12 +191,13 @@ impl<T: Numeric> PlaneTile<T> {
             PlaneTile::Cmma(d) => d.zero(),
             PlaneTile::Mma(d) => d.zero(),
             PlaneTile::Registers(d) => d.zero(),
+            PlaneTile::Wgmma(d) => d.zero(),
         }
     }
 
     pub(crate) fn init(&mut self, val: T) {
         match self {
-            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::init: a hardware mma fragment has no fill other than zero")
             }
             PlaneTile::Registers(d) => d.init(val),
@@ -198,6 +212,10 @@ impl<T: Numeric> PlaneTile<T> {
             ),
             PlaneTile::Mma(d) => d.scale(factor),
             PlaneTile::Registers(d) => d.scale(factor),
+            PlaneTile::Wgmma(_) => panic!(
+                "PlaneTile::scale: a warpgroup accumulator is written by the MMAs in flight, and \
+                 scaled only once they are done, at its drain"
+            ),
         }
     }
 
@@ -220,6 +238,9 @@ impl<T: Numeric> PlaneTile<T> {
             PlaneTile::Registers(_) => {
                 panic!("PlaneTile::load_window: a register accumulator is not a fill sink")
             }
+            PlaneTile::Wgmma(_) => {
+                panic!("PlaneTile::load_window: a warpgroup accumulator is not a fill sink")
+            }
         }
     }
 
@@ -238,6 +259,7 @@ impl<T: Numeric> PlaneTile<T> {
             PlaneTile::Mma(d) => d.store_window(mem, space),
             // Same-type store; the block drains through `store_cast_window`.
             PlaneTile::Registers(d) => d.store_cast_window(mem, space),
+            PlaneTile::Wgmma(d) => d.store_cast_window(mem, space),
         }
     }
 
@@ -272,6 +294,7 @@ impl<T: Numeric> PlaneTile<T> {
             }
             PlaneTile::Mma(d) => d.store_cast_window(mem, space),
             PlaneTile::Registers(d) => d.store_cast_window(mem, space),
+            PlaneTile::Wgmma(d) => d.store_cast_window(mem, space),
         }
     }
 }
@@ -308,6 +331,13 @@ impl<T: Numeric> PlanePartition<T> {
             PlaneTile::Cmma(_) => comptime!(several.then_some(Instruction::Cmma)),
             PlaneTile::Mma(d) => comptime!(several.then_some(Instruction::Mma { io: d.io })),
             PlaneTile::Registers(_) => comptime!(None),
+            PlaneTile::Wgmma(_) => {
+                comptime!(assert!(
+                    !several,
+                    "PlanePartition: a plane group holds one warpgroup accumulator"
+                ));
+                comptime!(None)
+            }
         }
     }
 
@@ -315,7 +345,7 @@ impl<T: Numeric> PlanePartition<T> {
     pub(crate) fn is_cmma(&self) -> comptime_type!(bool) {
         match self.frags.index(0usize) {
             PlaneTile::Cmma(_) => comptime!(true),
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => comptime!(false),
         }
     }
 
@@ -507,7 +537,7 @@ impl<T: Numeric> PlanePartition<T> {
     fn cmma_at(&self, #[comptime] i: usize) -> CmmaData<T> {
         match self.frags.index(i).clone() {
             PlaneTile::Cmma(fragment) => fragment,
-            PlaneTile::Mma(_) | PlaneTile::Registers(_) => {
+            PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlanePartition: a grid holds one kind of tile")
             }
         }
@@ -660,7 +690,8 @@ impl<T: Numeric> PlanePartition<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => match comptime!(instruction) {
-                Instruction::Registers { .. } => src.clone(),
+                // A warpgroup MMA reads the window itself, through a descriptor.
+                Instruction::Registers { .. } | Instruction::Wgmma => src.clone(),
                 Instruction::Cmma | Instruction::Mma { .. } => {
                     PlanePartition::<T>::fragments_in(src, acc, instruction)
                 }
@@ -694,7 +725,9 @@ impl<T: Numeric> PlanePartition<T> {
         );
         let block_scaled = match comptime!(form) {
             Instruction::Mma { .. } => block_scales_here(src, m, n, k),
-            Instruction::Cmma | Instruction::Registers { .. } => comptime!(false),
+            Instruction::Cmma | Instruction::Registers { .. } | Instruction::Wgmma => {
+                comptime!(false)
+            }
         };
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.place.space.clone()),
@@ -800,6 +833,9 @@ impl<E: Float> PlanePartition<E> {
                 AxisSlicesKind::new_Registers(block)
             }
             PlaneTile::Cmma(_) | PlaneTile::Mma(_) => AxisSlicesKind::new_Fragments(self.clone()),
+            PlaneTile::Wgmma(_) => panic!(
+                "Tile::along: a warpgroup accumulator's slices are not read in place; drain it first"
+            ),
         }
     }
 }
@@ -811,6 +847,9 @@ impl<E: Float> PlaneTile<E> {
         match self {
             PlaneTile::Registers(block) => AxisSlicesKind::new_Registers(block.clone()),
             PlaneTile::Cmma(_) | PlaneTile::Mma(_) => AxisSlicesKind::new_Fragment(self.clone()),
+            PlaneTile::Wgmma(_) => panic!(
+                "Tile::along: a warpgroup accumulator's slices are not read in place; drain it first"
+            ),
         }
     }
 }

@@ -160,7 +160,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
             Instruction::Registers { config } => {
                 register_accumulator::<Acc, EA, EL, ER>(self, lhs, rhs, config, semiring)
             }
-            Instruction::Cmma | Instruction::Mma { .. } => {
+            Instruction::Cmma | Instruction::Mma { .. } | Instruction::Wgmma => {
                 let vector_size = self.vector_size();
                 accumulator_in::<Acc, EA, EL>(
                     self,
@@ -367,7 +367,9 @@ impl<Acc: Numeric> Tile<Acc> {
             TileKind::PlaneTile(t) => {
                 let cmma = match t {
                     PlaneTile::Cmma(_) => comptime!(true),
-                    PlaneTile::Mma(_) | PlaneTile::Registers(_) => comptime!(false),
+                    PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                        comptime!(false)
+                    }
                 };
                 let in_place = self.casts_in_place_to::<Out>();
                 let bounces = dest.fragments_bounce(in_place);

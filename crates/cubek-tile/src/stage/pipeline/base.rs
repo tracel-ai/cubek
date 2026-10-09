@@ -332,6 +332,37 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
     }
 }
 
+impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+    /// Wait for slot `slot`'s fill and pass its two tiles to `compute`, keeping the slot held:
+    /// what `compute` issued may read it after it returns, as a warpgroup MMA does, and the slot
+    /// is refilled only once [`release`](Stages::release) frees it.
+    pub fn consume_held(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+        unexpanded!()
+    }
+
+    /// Free slot `slot`, which [`consume_held`](Stages::consume_held) read, for its next fill.
+    /// Every slot held is released once, before it is consumed again.
+    pub fn release(&mut self, _slot: usize) {
+        unexpanded!()
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
+    pub fn __expand_consume_held_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+    {
+        let slot = self.__expand_slot_mut_method(scope, slot);
+        slot.__expand_acquire_read_method(scope);
+        compute(scope, &slot.data.lhs, &slot.data.rhs);
+    }
+
+    pub fn __expand_release_method(&mut self, scope: &Scope, slot: usize) {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_release_read_method(scope);
+    }
+}
+
 impl<T: Numeric> Stages<Tile<T>> {
     /// [`consume`](Stages::consume) for the sole operand.
     pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<T>)) {
