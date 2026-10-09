@@ -206,6 +206,7 @@ impl Partitioning {
                 .map(|dim| self.cube_instances(dim))
                 .product(),
             Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::PlaneGroup { .. })
             | Coverage::Distribute(ComputeScope::Unit) => {
                 self.count_instances(|level| level.coverage() == coverage, |_, _| true)
             }
@@ -264,9 +265,17 @@ impl Partitioning {
         )
     }
 
-    /// Planes one cube holds: the levels' plane cuts, plus any that only fill.
+    /// Planes one cube holds: the levels' plane cuts, each plane group's planes, plus any that
+    /// only fill.
     pub fn planes_per_cube(&self) -> u32 {
-        self.instances(Coverage::Distribute(ComputeScope::Plane)) + self.fillers()
+        let groups = self.levels.iter().find_map(|level| match level.coverage() {
+            Coverage::Distribute(scope @ ComputeScope::PlaneGroup { planes }) => {
+                Some(self.instances(Coverage::Distribute(scope)) * planes as u32)
+            }
+            _ => None,
+        });
+        self.instances(Coverage::Distribute(ComputeScope::Plane)) * groups.unwrap_or(1)
+            + self.fillers()
     }
 
     /// Planes the cube holds that fill a walk's stages and take no tile

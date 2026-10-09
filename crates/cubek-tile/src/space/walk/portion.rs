@@ -96,8 +96,11 @@ impl Walk {
             Coverage::Distribute(ComputeScope::Plane) => {
                 ComputeScope::position(ComputeScope::Plane)
             }
+            Coverage::Distribute(ComputeScope::PlaneGroup { planes }) => {
+                ComputeScope::position(comptime!(ComputeScope::PlaneGroup { planes }))
+            }
             Coverage::Distribute(ComputeScope::Unit) | Coverage::Walk => {
-                panic!("Walk::portion: only cubes or planes share a grid as one index")
+                panic!("Walk::portion: only cubes, plane groups or planes share a grid as one index")
             }
         };
         let run_length = steps.div_ceil(instances);

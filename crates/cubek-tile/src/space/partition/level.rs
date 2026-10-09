@@ -51,16 +51,37 @@ pub(crate) enum GridCount {
 pub enum ComputeScope {
     Unit,
     Plane,
+    /// `planes` consecutive planes, the first a multiple of `planes`, issuing one instruction
+    /// together: a warpgroup MMA's four.
+    PlaneGroup {
+        planes: usize,
+    },
     Cube,
+}
+
+impl ComputeScope {
+    /// The four planes of a warpgroup, which issue each warpgroup MMA together
+    /// ([`Instruction::Wgmma`](crate::Instruction::Wgmma)).
+    pub const WARPGROUP: Self = Self::PlaneGroup { planes: 4 };
+
+    /// The planes one instance of this scope spans, where it spans whole planes.
+    pub fn planes(self) -> Option<usize> {
+        match self {
+            ComputeScope::Plane => Some(1),
+            ComputeScope::PlaneGroup { planes } => Some(planes),
+            ComputeScope::Unit | ComputeScope::Cube => None,
+        }
+    }
 }
 
 #[cube]
 impl ComputeScope {
-    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of
-    /// the plane.
+    /// This instance's position within `compute_scope`: which plane or plane group of the cube,
+    /// or which unit of the plane.
     pub fn position(#[comptime] compute_scope: ComputeScope) -> usize {
         match comptime!(compute_scope) {
             ComputeScope::Plane => UNIT_POS_Y as usize,
+            ComputeScope::PlaneGroup { planes } => UNIT_POS_Y as usize / planes,
             ComputeScope::Unit => UNIT_POS_X as usize,
             ComputeScope::Cube => {
                 panic!(
@@ -179,18 +200,20 @@ impl Level {
             match (coverage, count) {
                 (
                     Coverage::Distribute(ComputeScope::Cube)
-                    | Coverage::Distribute(ComputeScope::Plane),
+                    | Coverage::Distribute(ComputeScope::Plane)
+                    | Coverage::Distribute(ComputeScope::PlaneGroup { .. }),
                     Count::AllAcross(_),
                 ) => {}
                 (_, Count::AllAcross(_)) => {
                     panic!(
-                        "Level: {axis:?} is distributed across workers in runs, which only cubes \
-                         and planes take"
+                        "Level: {axis:?} is distributed across workers in runs, which only cubes, \
+                         plane groups and planes take"
                     )
                 }
                 (
                     Coverage::Distribute(ComputeScope::Unit)
-                    | Coverage::Distribute(ComputeScope::Plane),
+                    | Coverage::Distribute(ComputeScope::Plane)
+                    | Coverage::Distribute(ComputeScope::PlaneGroup { .. }),
                     Count::All,
                 ) => panic!(
                     "Level: {axis:?} takes every tile on a plane's workers, whose count is the \
@@ -269,7 +292,8 @@ impl Level {
     pub(crate) fn sharing(mut self, n: usize) -> Level {
         match self.coverage {
             Coverage::Distribute(ComputeScope::Cube)
-            | Coverage::Distribute(ComputeScope::Plane) => {}
+            | Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::PlaneGroup { .. }) => {}
             Coverage::Distribute(ComputeScope::Unit) => panic!(
                 "Level::sharing: the plane's units combine in registers, which needs them in \
                  lockstep, and units holding different shares never are"

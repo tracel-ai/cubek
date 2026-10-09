@@ -137,6 +137,7 @@ impl Row {
         match coverage {
             Coverage::Distribute(ComputeScope::Cube) => '▣',
             Coverage::Distribute(ComputeScope::Plane) => '▤',
+            Coverage::Distribute(ComputeScope::PlaneGroup { .. }) => '▥',
             Coverage::Distribute(ComputeScope::Unit) => '▪',
             Coverage::Walk => '↻',
         }
@@ -168,6 +169,10 @@ impl Row {
             Coverage::Distribute(ComputeScope::Plane) => match level.shared_by() {
                 Some(planes) => format!("{planes} planes sharing {many} boxes"),
                 None => format!("{many} planes a cube"),
+            },
+            Coverage::Distribute(ComputeScope::PlaneGroup { planes }) => match level.shared_by() {
+                Some(groups) => format!("{groups} groups of {planes} planes sharing {many} boxes"),
+                None => format!("{many} groups of {planes} planes a cube"),
             },
             Coverage::Distribute(ComputeScope::Unit) => format!("{many} units"),
             Coverage::Walk => format!("{many} steps"),

@@ -256,6 +256,9 @@ impl FillUnits {
         match comptime!(fill.scope) {
             ComputeScope::Cube => UNIT_POS as usize,
             ComputeScope::Plane => UNIT_POS_X as usize,
+            ComputeScope::PlaneGroup { planes } => {
+                (UNIT_POS_Y as usize % planes) * CUBE_DIM_X as usize + UNIT_POS_X as usize
+            }
             ComputeScope::Unit => comptime!(panic!(
                 "FillUnits::worker: a cooperative fill is shared by a cube or a plane, never \
                  one unit"
@@ -269,6 +272,7 @@ impl FillUnits {
         match comptime!(fill.scope) {
             ComputeScope::Cube => CUBE_DIM as usize,
             ComputeScope::Plane => CUBE_DIM_X as usize,
+            ComputeScope::PlaneGroup { planes } => planes * CUBE_DIM_X as usize,
             ComputeScope::Unit => comptime!(panic!(
                 "FillUnits::workers: a cooperative fill is shared by a cube or a plane, never \
                  one unit"
