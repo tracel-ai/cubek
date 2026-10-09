@@ -749,8 +749,10 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
 
 /// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`.
 /// An `m × k` accumulator's registers regrouped as the `A` operand of an `m × n × k` contraction:
-/// the manual-mma layouts put the accumulator's cell `e` where the operand's cell `e` is, so a
-/// product contracting its own output reads it without moving a cell between units.
+/// for 16-bit operands the manual-mma layouts put the accumulator's cell `e` where the operand's
+/// cell `e` is, so a product contracting its own output reads it without moving a cell between
+/// units. A wider operand's `A` lays its cells otherwise (a `tf32` one along the columns first),
+/// and is refused.
 #[cube]
 pub(crate) fn accumulator_as_a<L: Numeric>(
     acc: &Array<Vector<L, NA>>,
@@ -765,6 +767,12 @@ pub(crate) fn accumulator_as_a<L: Numeric>(
     let acc_width = acc_def.vector_size(MatrixIdent::Accumulator);
     let a_regs = a_def.vectors_per_lane(MatrixIdent::A);
     let a_width = a_def.vector_size(MatrixIdent::A);
+    let bytes = L::size().comptime();
+    comptime!(assert!(
+        bytes == 2,
+        "accumulator_as_a: an accumulator's cells sit where the A operand's do for 16-bit \
+         operands; a {bytes}-byte operand's A lays them otherwise"
+    ));
     comptime!(assert!(
         acc_regs * acc_width == a_regs * a_width,
         "accumulator_as_a: an {m}x{k} accumulator holds {} cells a unit, and the A operand of an \
