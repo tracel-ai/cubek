@@ -707,7 +707,30 @@ impl<T: Numeric> Tile<T> {
         Memory::<T>::smem(space, vector_size, storage, units)
     }
 
+    /// A shared-memory tile over this tile's box, one element a line, its rows dense and in order,
+    /// at this tile's place in its nest: what a bulk store moves out whole
+    /// ([`copy_from`](Tile::copy_from) into a tile a tensor map backs), and what an accumulator
+    /// drains into first, as it would into this tile. It starts on
+    /// [`Delivery::TMA_STAGE_ALIGNMENT`], which a launch sizing its shared memory counts.
+    pub fn smem_box(&self) -> Tile<T> {
+        let units = self.units();
+        Memory::<T>::smem_owned(
+            comptime!(self.place.space.clone()),
+            1usize,
+            comptime!(StageStorage::Strided),
+            units,
+            comptime!(Delivery::TMA_STAGE_ALIGNMENT),
+            comptime!(StageOwner::Cube),
+        )
+        .nested_like(self)
+    }
+
     /// Move `src` into `self`, the kind pairing picking the instruction.
+    ///
+    /// Into a tile a tensor map backs, from a shared-memory box ([`smem_box`](Tile::smem_box)),
+    /// it is a bulk store that every unit of the cube reaches: each fences the writes it made to
+    /// the box, the cube synchronizes, one unit stores it and waits for the engine to have read
+    /// it, and the cube synchronizes again before anything writes the box.
     ///
     /// A source whose scales a stage keeps beside it copies its values as they are stored, into a
     /// stage that keeps them too; the stage's fill brings the scales.
@@ -755,6 +778,7 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
                 (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window(d, space),
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
+                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from(s),
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
@@ -1405,31 +1429,53 @@ impl<S: Numeric> Tile<S> {
     }
 
     /// The one value at `coords` of a tile that serves lines: the load holding it, read whole,
-    /// and the value's place in it, whatever axes the load spans.
+    /// and the value's place in it, whatever axes the load spans. A packed load decodes only the
+    /// field that value is, not the whole line.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     fn value_in_line(&self, coords: &Coords<u32>) -> S {
         let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let load = self.vector_tile();
         let width = comptime!(load.values());
-        let size!(W) = width;
-        let line = self
-            .nd_packed::<W>(comptime!(Guard::Checked))
-            .read(load.index(coords, &space));
-        if comptime!(width > 1) {
-            let mut field = 0u32.runtime();
-            #[unroll]
-            for p in 0..rank {
-                let axis = comptime!(space.axis_at(p));
-                let extent = comptime!(load.extent_along(axis) as u32);
-                if comptime!(extent > 1) {
-                    let step = comptime!(load.step_along(axis) as u32);
-                    field += coords.at(p).remainder(extent).times(step);
+        let packing = self.packing();
+        let mut position = 0u32.runtime();
+        #[unroll]
+        for p in 0..rank {
+            let axis = comptime!(space.axis_at(p));
+            let extent = comptime!(load.extent_along(axis) as u32);
+            if comptime!(extent > 1) {
+                let step = comptime!(load.step_along(axis) as u32);
+                position += coords.at(p).remainder(extent).times(step);
+            }
+        }
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(W) = width;
+                let line = self
+                    .nd_packed::<W>(comptime!(Guard::Checked))
+                    .read(load.index(coords, &space));
+                if comptime!(width > 1) {
+                    line.extract_dynamic(position.cast::<usize>())
+                } else {
+                    line.extract(0usize)
                 }
             }
-            line.extract_dynamic(field.cast::<usize>())
-        } else {
-            line.extract(0usize)
+            Packing::Packed { field } => {
+                let (bits, per_word) =
+                    comptime!((field.size_bits() as u32, field.per_word() as u32));
+                let words_wide = comptime!(packing.physical(width));
+                let size!(WP) = words_wide;
+                let words = self
+                    .nd_words::<WP>(comptime!(Guard::Checked))
+                    .read(load.index(coords, &space));
+                let word = if comptime!(words_wide > 1) {
+                    words.extract_dynamic((position / per_word).cast::<usize>())
+                } else {
+                    words.extract(0usize)
+                };
+                let shifted = word >> ((position % per_word) * bits);
+                unpack_line::<S, Const<1>, Const<1>>(Vector::new(shifted), field).extract(0usize)
+            }
         }
     }
 }
