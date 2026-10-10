@@ -89,6 +89,32 @@ impl<T: Numeric> TmaData<T> {
         barrier.wait(token);
     }
 
+    /// Bulk-copy shared-memory `src` out to this box, once every unit of the cube has written its
+    /// share of `src`: every unit fences its writes into the async proxy the engine reads through
+    /// and meets the others on a cube barrier, then one unit issues the store and waits until the
+    /// engine has read `src`, and the cube meets again, so no unit writes `src` before the engine
+    /// is done with it. What lies past the tensor is not written: the descriptor clips the box.
+    pub(crate) fn store_from(&self, src: &Memory<T>) {
+        comptime!(assert!(
+            src.address == AddressSpace::Shared,
+            "TmaData::store_from: a tensor map bulk-copies out of shared memory only"
+        ));
+        comptime!(
+            src.layout
+                .rows
+                .assert_in_order("TmaData::store_from", "a descriptor stores a box dense")
+        );
+        sync_async_proxy_shared();
+        sync_cube();
+        if UNIT_POS == 0 {
+            self.view
+                .tensor_map_store(src.store.buffer().downcast(), self.pos.clone());
+            tma_group_commit();
+            tma_group_wait_read(0usize);
+        }
+        sync_cube();
+    }
+
     /// Window down to `step`: advance the global box origin by each axis's tile offset.
     pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> TmaData<T> {
         let mut pos = CoordsDyn::new();

@@ -37,6 +37,7 @@ mod softmax;
 mod space;
 mod split_k;
 mod stream;
+mod tma_store;
 mod vector_tile;
 
 use cubecl::prelude::*;

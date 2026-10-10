@@ -77,7 +77,7 @@ impl<T: Numeric> CmmaData<T> {
     pub(crate) fn load_window(&mut self, mem: &Memory<T>, #[comptime] row: usize) {
         let element = mem.stage_element();
         comptime!(assert!(
-            element == StageElement::Served,
+            element.holds_values(),
             "CmmaData::load_window: a cmma fragment loads at one element type, so it cannot \
              unpack a packed source as it reads; contract it, which lands it, or decode it into a \
              stage (`stage.copy_from(&w.mul(&scales))`)"
