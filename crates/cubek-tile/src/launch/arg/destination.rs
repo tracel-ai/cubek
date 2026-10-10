@@ -3,7 +3,10 @@
 
 use cubecl::prelude::*;
 
-use crate::{Bound, Output, OutputArgs, Partitioning, Tile, kind::Write};
+use crate::{
+    Bound, Output, OutputArgs, Partitioning, Tile, TmaOperand, TmaTileArg, TmaTileArgLaunch,
+    kind::Write,
+};
 
 /// Which launch argument carries a kernel's output and how the kernel serves it as a [`Tile`].
 #[cube]
@@ -56,5 +59,31 @@ impl DestinationLaunch for Buffered {
                  takes its turn counters beside it; bind the carry as a plain `TileArg`"
             ),
         }
+    }
+}
+
+/// A [`Destination`] the TMA engine stores: the output is a tensor map, served as a tile a
+/// shared-memory box is bulk-stored into ([`Tile::smem_box`], [`Tile::copy_from`]), a box at a
+/// time, which the descriptor clips at the tensor's edge. Its width is the descriptor's cell, so
+/// a launch binds it one element wide.
+pub struct TmaStored;
+
+#[cube]
+impl Destination for TmaStored {
+    type Arg<E: Numeric, V: Size> = TmaTileArg<E>;
+
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] partitioning: Partitioning,
+    ) -> Tile<E> {
+        arg.tile(partitioning)
+    }
+}
+
+impl DestinationLaunch for TmaStored {
+    type Operand = TmaOperand;
+
+    fn arg<E: Numeric, V: Size>(operand: TmaOperand) -> TmaTileArgLaunch<E> {
+        TmaTileArgLaunch::tensor_map(operand.map, &operand.axes, operand.shape)
     }
 }
