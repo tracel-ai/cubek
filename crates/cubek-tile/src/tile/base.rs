@@ -1405,31 +1405,53 @@ impl<S: Numeric> Tile<S> {
     }
 
     /// The one value at `coords` of a tile that serves lines: the load holding it, read whole,
-    /// and the value's place in it, whatever axes the load spans.
+    /// and the value's place in it, whatever axes the load spans. A packed load decodes only the
+    /// field that value is, not the whole line.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     fn value_in_line(&self, coords: &Coords<u32>) -> S {
         let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let load = self.vector_tile();
         let width = comptime!(load.values());
-        let size!(W) = width;
-        let line = self
-            .nd_packed::<W>(comptime!(Guard::Checked))
-            .read(load.index(coords, &space));
-        if comptime!(width > 1) {
-            let mut field = 0u32.runtime();
-            #[unroll]
-            for p in 0..rank {
-                let axis = comptime!(space.axis_at(p));
-                let extent = comptime!(load.extent_along(axis) as u32);
-                if comptime!(extent > 1) {
-                    let step = comptime!(load.step_along(axis) as u32);
-                    field += coords.at(p).remainder(extent).times(step);
+        let packing = self.packing();
+        let mut position = 0u32.runtime();
+        #[unroll]
+        for p in 0..rank {
+            let axis = comptime!(space.axis_at(p));
+            let extent = comptime!(load.extent_along(axis) as u32);
+            if comptime!(extent > 1) {
+                let step = comptime!(load.step_along(axis) as u32);
+                position += coords.at(p).remainder(extent).times(step);
+            }
+        }
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(W) = width;
+                let line = self
+                    .nd_packed::<W>(comptime!(Guard::Checked))
+                    .read(load.index(coords, &space));
+                if comptime!(width > 1) {
+                    line.extract_dynamic(position.cast::<usize>())
+                } else {
+                    line.extract(0usize)
                 }
             }
-            line.extract_dynamic(field.cast::<usize>())
-        } else {
-            line.extract(0usize)
+            Packing::Packed { field } => {
+                let (bits, per_word) =
+                    comptime!((field.size_bits() as u32, field.per_word() as u32));
+                let words_wide = comptime!(packing.physical(width));
+                let size!(WP) = words_wide;
+                let words = self
+                    .nd_words::<WP>(comptime!(Guard::Checked))
+                    .read(load.index(coords, &space));
+                let word = if comptime!(words_wide > 1) {
+                    words.extract_dynamic((position / per_word).cast::<usize>())
+                } else {
+                    words.extract(0usize)
+                };
+                let shifted = word >> ((position % per_word) * bits);
+                unpack_line::<S, Const<1>, Const<1>>(Vector::new(shifted), field).extract(0usize)
+            }
         }
     }
 }
