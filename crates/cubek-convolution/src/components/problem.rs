@@ -103,7 +103,16 @@ impl ConvolutionProblem {
     }
 
     pub fn should_check_channel(&self) -> bool {
-        self.channels != self.padded_channels
+        // Data gradients contract over the forward output channels. Comparing
+        // C_in misses the tail when it happens to equal padded C_out (8 -> 7,
+        // for example), allowing the im2col/weight readers to consume padding.
+        let channels = match self.operation {
+            ConvolutionOperation::BackwardData | ConvolutionOperation::ForwardTransposed => {
+                self.out_channels
+            }
+            _ => self.channels,
+        };
+        channels != self.padded_channels
     }
 
     pub fn should_check_spatial_bounds(&self) -> bool {
