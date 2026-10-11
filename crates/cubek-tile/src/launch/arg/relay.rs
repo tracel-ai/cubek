@@ -61,7 +61,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         let holders = Relay::<'t, E>::holders(partitioning, split);
 
         let carry = self.tile(partitioning);
-        let sink = folding_tile::<E, V>(self, partitioning, turn == 0usize);
+        let sink = adding_tile::<E, V>(self, partitioning, turn == 0usize);
 
         Relay::<'t, E> {
             carry,
@@ -253,7 +253,7 @@ impl Partitioning {
 /// a [`LastArrival`](crate::launch::LastArrival)'s slot, which the last run to arrive adds the
 /// others' parts into.
 #[cube]
-pub(crate) fn folding_tile<E: Numeric, V: Size>(
+pub(crate) fn adding_tile<E: Numeric, V: Size>(
     arg: &TileArg<'_, E, V>,
     partitioning: &Partitioning,
     first: bool,
