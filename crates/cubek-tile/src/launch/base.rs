@@ -25,6 +25,11 @@ pub struct Launcher {
     concrete: Space,
     cube_count: CubeCount,
     cube_dim: CubeDim,
+    /// The axes some tile reaches past the end of over the concrete space, worked out once: every
+    /// operand the launch binds asks for them.
+    overhanging: Vec<Axis>,
+    /// The leaf over the concrete space.
+    leaf: Space,
 }
 
 impl Launcher {
@@ -36,6 +41,8 @@ impl Launcher {
         concrete: &Space,
         grid: Grid,
     ) -> Result<Self, Refusal> {
+        // The kernel-form space may state no extents.
+        let over_concrete = Partitioning::new(concrete.clone(), partitioning.levels().to_vec());
         let (cube_count, cube_dim) = match grid {
             Grid::Stated {
                 cube_count,
@@ -50,9 +57,6 @@ impl Launcher {
                         plane: plane_size,
                     });
                 }
-                // The kernel-form space may state no extents.
-                let over_concrete =
-                    Partitioning::new(concrete.clone(), partitioning.levels().to_vec());
                 (
                     over_concrete.cube_count(),
                     over_concrete.cube_dim(plane_size),
@@ -83,6 +87,8 @@ impl Launcher {
             concrete: concrete.clone(),
             cube_count,
             cube_dim,
+            overhanging: over_concrete.overhanging(),
+            leaf: over_concrete.leaf(),
         })
     }
 
@@ -125,20 +131,14 @@ impl Launcher {
         SpaceLaunch::new(kernel.shape().clone(), sizes)
     }
 
-    /// The partitioning's levels over the concrete space.
-    fn over_concrete(&self) -> Partitioning {
-        Partitioning::new(self.concrete.clone(), self.partitioning.levels().to_vec())
-    }
-
     /// The axes some tile reaches past the end of, whose accesses are masked.
-    pub(crate) fn overhangs(&self) -> Vec<Axis> {
-        self.over_concrete().overhanging()
+    pub(crate) fn overhangs(&self) -> &[Axis] {
+        &self.overhanging
     }
 
     /// The leaf edge along `axis`: the stated tile, or the whole extent where none was.
     fn leaf_edge(&self, axis: Axis) -> usize {
-        self.over_concrete()
-            .leaf()
+        self.leaf
             .extents()
             .iter()
             .find(|&&(a, _)| a == axis)

@@ -187,7 +187,7 @@ impl<'a> Arg<'a, Labelled> {
             &projection,
             &addressed,
             launch.space(),
-            &overhangs,
+            overhangs,
             width,
         )?;
         let spec = TileSpec {
