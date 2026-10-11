@@ -128,6 +128,13 @@ impl GlobalWriterFamily for TmaWriterFamily {
                 "TMA writer needs tile rows of a multiple of 16 bytes, got {row_bytes}"
             )));
         }
+        // Each plane's tile sits `tile_bytes` after the last, and TMA reads from aligned memory.
+        let tile_bytes = smem.elements_per_tile_along_row as usize * row_bytes;
+        if !tile_bytes.is_multiple_of(TMA_ALIGNMENT) {
+            return Err(Box::new(format!(
+                "TMA writer needs tiles of a multiple of {TMA_ALIGNMENT} bytes, got {tile_bytes}"
+            )));
+        }
         Ok(())
     }
 }

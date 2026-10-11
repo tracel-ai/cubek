@@ -73,5 +73,17 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
                 }
             }
         }
+        // The last stage has no stage after it to free it: free it once its reads complete, as
+        // `consume` frees every stage, so the ring is whole again for another walk.
+        if comptime!(depth > 1) {
+            let last = (total + comptime!(depth - 1)) % comptime!(depth);
+            #[unroll]
+            for slot in 0..depth {
+                if total > 0 && slot == last {
+                    issued.index(slot).wait();
+                    self.slots.index_mut(slot).release_read();
+                }
+            }
+        }
     }
 }

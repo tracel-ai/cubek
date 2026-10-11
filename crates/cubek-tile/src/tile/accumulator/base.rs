@@ -163,6 +163,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
             }
             Instruction::Cmma | Instruction::Mma { .. } | Instruction::Wgmma => {
                 if comptime!(instruction == Instruction::Wgmma) {
+                    comptime!(assert_warpgroups_hold(&self.place));
                     comptime!(assert_groups_own_their_box(&self.place));
                 }
                 let vector_size = self.vector_size();
@@ -493,6 +494,24 @@ impl<Acc: Numeric> Tile<Acc> {
             }
         }
     }
+}
+
+/// Panics unless a warpgroup holds each of the output's tiles: the narrowest scope a level below
+/// `place` deals them to, or the one holding `place` where none does. A warpgroup MMA takes all
+/// four of its planes, so a plane, a unit or another group size would issue it short.
+fn assert_warpgroups_hold(place: &Placement) {
+    let holder = place
+        .below()
+        .iter()
+        .filter_map(|level| level.coverage().scope())
+        .min()
+        .unwrap_or_else(|| place.holder());
+    assert!(
+        holder == ComputeScope::WARPGROUP,
+        "Tile::accumulator: a warpgroup MMA's tile is held by {:?}, its four planes together, \
+         and this one's by {holder:?}; deal the tiles to `plane_groups(4, ..)`",
+        ComputeScope::WARPGROUP
+    );
 }
 
 /// Panics where a plane group level splits an axis the output at `place` lacks: each group would

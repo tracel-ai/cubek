@@ -15,10 +15,11 @@ use crate::{
 };
 use cubecl::{
     features::{Tma, TypeUsage},
+    ir::ElemType,
     std::tensor::{MatrixBatchLayout, matrix_batch_layout},
     {client::Client, frontend::TensorBinding},
 };
-use cubek_std::InputBinding;
+use cubek_std::{InputBinding, MatrixLayout, launch::tma::stride_align_bits};
 
 /// Launch a matrix multiplication kernel.
 ///
@@ -91,6 +92,7 @@ pub fn launch_ref_tma_store<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlu
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
+    tma_output(&out, dtypes.acc_global)?;
     // A tensor map is read and written one element at a time.
     let vector_sizes = AvailableVectorSizes {
         out: vec![1],
@@ -135,6 +137,26 @@ fn tma_inputs(
         | MatrixBatchLayout::HighlyPermuted => binding.into_contiguous(client),
     };
     Ok((contiguous_batches(lhs)?, contiguous_batches(rhs)?))
+}
+
+/// Refuse an output a TMA store would write wrong: its descriptor drops the last stride, folds
+/// the batches into one stride, and steps every other stride in multiples of 16 bytes.
+#[allow(clippy::result_large_err)]
+fn tma_output(out: &TensorBinding, dtype: ElemType) -> Result<(), MatmulSetupError> {
+    let rank = out.strides.len();
+    let refuse = |reason: &'static str| Err(MatmulSetupError::InvalidConfig(Box::new(reason)));
+    if out.strides[rank - 1] != 1 {
+        return refuse("TMA stores need an output whose rows are contiguous");
+    }
+    let batches_fold = (0..rank.saturating_sub(3))
+        .all(|d| out.shape[d] == 1 || out.strides[d] == out.strides[d + 1] * out.shape[d + 1]);
+    if !batches_fold {
+        return refuse("TMA stores need an output whose batches are one stride apart");
+    }
+    if stride_align_bits(&out.strides, &MatrixLayout::RowMajor, &dtype) < 4 {
+        return refuse("TMA stores need output strides aligned to 16 bytes");
+    }
+    Ok(())
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]

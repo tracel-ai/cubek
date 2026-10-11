@@ -7,7 +7,10 @@ use cubecl::std::tensor::{
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
 use cubecl::unexpanded;
-use cubek_std::{InputBinding, MatrixLayout, launch::tma::tma_operand};
+use cubek_std::{
+    InputBinding, MatrixLayout,
+    launch::tma::{tma_operand, tma_store_operand},
+};
 
 pub use crate::routine::RuntimeConfig;
 use crate::{
@@ -581,7 +584,7 @@ impl<EG: CubePrimitive, A: BatchMatmulRoutine<()>> ConcreteOutputFactory<A>
             out.shape[rank - 2] as u32,
             out.shape[rank - 1] as u32,
         );
-        let (out, transposed) = tma_operand(
+        let (out, transposed) = tma_store_operand(
             out,
             dims.0,
             MatrixLayout::RowMajor,

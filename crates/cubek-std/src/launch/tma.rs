@@ -71,6 +71,37 @@ pub fn tma_operand(
     storage_ty: ElemType,
     swizzle: TensorMapSwizzle,
 ) -> (TensorMapArg<Tiled>, bool) {
+    tma_operand_typed(
+        binding,
+        batches,
+        layout,
+        box_shape,
+        remap_storage_for_tma(storage_ty),
+        swizzle,
+    )
+}
+
+/// [`tma_operand`] for a bulk-store target: the descriptor keeps `storage_ty` as it is, since a
+/// tf32 descriptor rounds an f32 value to tf32 on its way out.
+pub fn tma_store_operand(
+    binding: TensorBinding,
+    batches: usize,
+    layout: MatrixLayout,
+    box_shape: (usize, usize),
+    storage_ty: ElemType,
+    swizzle: TensorMapSwizzle,
+) -> (TensorMapArg<Tiled>, bool) {
+    tma_operand_typed(binding, batches, layout, box_shape, storage_ty, swizzle)
+}
+
+fn tma_operand_typed(
+    binding: TensorBinding,
+    batches: usize,
+    layout: MatrixLayout,
+    box_shape: (usize, usize),
+    elem_ty: ElemType,
+    swizzle: TensorMapSwizzle,
+) -> (TensorMapArg<Tiled>, bool) {
     let rank = binding.shape.len();
     let mut shape = shape![batches, binding.shape[rank - 2], binding.shape[rank - 1]];
     let mut strides: Strides = if rank > 2 {
@@ -90,12 +121,7 @@ pub fn tma_operand(
         true => shape![1, box_cols, box_rows],
         false => shape![1, box_rows, box_cols],
     };
-    let meta = tma_meta_tiled(
-        Metadata::new(shape, strides),
-        tile_size,
-        remap_storage_for_tma(storage_ty),
-        swizzle,
-    );
+    let meta = tma_meta_tiled(Metadata::new(shape, strides), tile_size, elem_ty, swizzle);
     let arg = TensorMapArg {
         tensor: binding.into_tensor_arg(),
         metadata: meta,
