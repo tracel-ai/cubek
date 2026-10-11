@@ -701,7 +701,6 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`.
 /// An `m × k` accumulator's registers regrouped as the `A` operand of an `m × n × k` contraction:
 /// for 16-bit operands the manual-mma layouts put the accumulator's cell `e` where the operand's
 /// cell `e` is, so a product contracting its own output reads it without moving a cell between
@@ -749,6 +748,7 @@ pub(crate) fn accumulator_as_a<L: Numeric>(
     registers
 }
 
+/// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`.
 #[cube]
 pub(crate) fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<Vector<L, NL>>,
