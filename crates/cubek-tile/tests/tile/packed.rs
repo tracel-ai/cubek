@@ -49,8 +49,8 @@ fn packed_copy<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let input = input.tile_as::<O>(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile_as::<O>(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&input);
 }
 
@@ -66,11 +66,9 @@ fn packed_matmul<E: Numeric, SW: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&scale.tile(comptime!(space.clone())));
-    let x = x.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let w = w.tile_as::<E>(&space).mul(&scale.tile(&space));
+    let x = x.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -94,11 +92,11 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 ) {
     // Two levels, said twice: the blocks, then the factor over the whole tensor.
     let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&blocks.tile(comptime!(space.clone())))
-        .mul(&global.tile(comptime!(space.clone())));
-    let x = x.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+        .tile_as::<E>(&space)
+        .mul(&blocks.tile(&space))
+        .mul(&global.tile(&space));
+    let x = x.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -255,11 +253,9 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile_as::<E>(&space).mul(&scale.tile(&space));
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -282,10 +278,10 @@ fn native_matmul<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let w = w.tile(comptime!(space.clone()));
-    let x = x.tile(comptime!(space.clone()));
-    let w = w.mul(&scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(comptime!(space.clone()));
+    let w = w.tile(&space);
+    let x = x.tile(&space);
+    let w = w.mul(&scale.tile(&space));
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -307,10 +303,10 @@ fn packed_gemv<E: Numeric, V: Size>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.mul(&scale.tile(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let values = w.tile_as::<E>(&space);
+    let w = values.mul(&scale.tile(&space));
+    let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
         let values = values.at(&cube);
@@ -345,11 +341,9 @@ fn packed_matmul_byte_scales<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&scale.tile_as::<E>(comptime!(space.clone())));
-    let x = x.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let w = w.tile_as::<E>(&space).mul(&scale.tile_as::<E>(&space));
+    let x = x.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -369,10 +363,10 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.mul(&scale.tile_as::<E>(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let values = w.tile_as::<E>(&space);
+    let w = values.mul(&scale.tile_as::<E>(&space));
+    let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
         let values = values.at(&cube);
@@ -409,11 +403,9 @@ fn packed_cmma_rhs<E: Numeric>(
 ) {
     // Both factors land on their own: a fragment reads a window as it lies, and a gmem layout is
     // unchecked.
-    let x = x.tile(comptime!(space.clone()));
-    let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&scale.tile_as::<E>(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile_as::<E>(&space).mul(&scale.tile_as::<E>(&space));
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
@@ -1950,9 +1942,9 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w.tile_as::<E>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile_as::<E>(&space);
+    let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
         let w = w.at(&cube);
@@ -2750,9 +2742,9 @@ fn packed_scaled_copy<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let input = input.tile_as::<O>(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile_as::<O>(&space);
+    let scales = scales.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&input.mul(&scales));
 }
 
@@ -2860,10 +2852,10 @@ fn looked_up_copy<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let input = input.tile_as::<O>(comptime!(space.clone()));
-    let table = table.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile_as::<O>(&space);
+    let table = table.tile(&space);
+    let scales = scales.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&input.lookup(&table).mul(&scales));
 }
 

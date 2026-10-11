@@ -50,8 +50,8 @@ fn copy_run<E: Numeric>(
     #[comptime] cubes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let dst = dst.tile(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let dst = dst.tile(&space);
     let walk = dst.over(&level);
     let total = walk.total();
     let pos = CUBE_POS_X as usize;
@@ -76,8 +76,8 @@ fn copy_one_run<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let dst = dst.tile(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let dst = dst.tile(&space);
     let walk = dst.over(&level);
 
     // Stated at launch but taken as runtime values: a window whose bounds fold to constants
@@ -275,9 +275,9 @@ fn stream_matmul<E: Numeric>(
     #[comptime] leaf: Option<Level>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     let portion = space.over(&outer).portion(comptime!(inner.clone()));
     for i in 0..portion.touched() {
         let region = portion.region(i);
@@ -320,9 +320,9 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     let portion = space.over(&outer).portion(comptime!(inner.clone()));
     for i in 0..portion.touched() {
         let region = portion.region(i);
@@ -664,9 +664,9 @@ fn merged_stream_matmul<O: Float>(
     #[comptime] steps: Level,
     #[define(O)] _out_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut out = out.tile(&space);
     let portion = space.walk().portion(comptime!(steps.clone()));
     for i in 0..portion.touched() {
         let region = portion.region(i);

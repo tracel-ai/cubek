@@ -29,9 +29,9 @@ fn tiled_scaled_copy<O: Numeric, V: Size, W: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let values = values.tile_as::<O>(&space);
+    let scales = scales.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&values.mul(&scales));
 }
 
@@ -46,9 +46,9 @@ fn tiled_packed_stage<O: Numeric, V: Size, W: Size>(
     #[comptime] level: Level,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let values = values.tile_as::<O>(&space);
+    let scales = scales.tile(&space);
+    let mut output = output.tile(&space);
     let mut stage = values.stage(level, StageStorage::Strided);
     stage.copy_from(&values);
     sync_cube();

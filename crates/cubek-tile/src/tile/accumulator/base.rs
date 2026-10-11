@@ -136,9 +136,10 @@ pub trait Accumulate<Acc: Numeric>: CubeType + Sized {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA>;
 
-    /// This accumulator opened with a per-plane shared-memory scratch for bouncing drains.
-    /// [`drained_into`](Self::drained_into) opens the smallest one itself where it needs one;
-    /// stating it chooses how much of the grid it holds, or serves a drain region by region.
+    /// This accumulator opened with a per-plane shared-memory scratch for bouncing drains, or
+    /// as it is for [`Scratch::None`]. [`drained_into`](Self::drained_into) opens the smallest
+    /// one itself where it needs one; stating it chooses how much of the grid it holds, or serves
+    /// a drain region by region.
     fn with_scratch(self, #[comptime] scratch: Scratch) -> Self;
 
     /// Drain this accumulator into `dest`, cast to its element. `self` and `dest` must be
@@ -195,46 +196,49 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
     }
 
     fn with_scratch(self, #[comptime] scratch: Scratch) -> Tile<Acc> {
-        match &self.kind {
-            TileKind::PlanePartition(p) => {
-                let (m, n) = p.at(0usize, 0usize).shape();
-                let cells = comptime!(m * n);
-                let tiles = comptime!(p.m_tiles * p.n_tiles);
-                let slots = comptime!(scratch.slots(tiles));
-                // Indexed by hardware plane position, not level position: the launch decides the cube's shape.
-                let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
-                let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
-                let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
-                // Each fragment carries its own slot, so drain order doesn't matter.
-                let mut frags = Sequence::<PlaneTile<Acc>>::new();
-                #[unroll]
-                for i in 0..tiles {
-                    let start = plane + comptime!(cells * scratch.slot_of(i, tiles));
-                    let slot = shared.clone().map(|s| &s[start..start + cells]);
-                    frags.push(p.frags.index(i).clone().with_scratch(slot));
+        match comptime!(scratch) {
+            Scratch::None => self,
+            _ => match &self.kind {
+                TileKind::PlanePartition(p) => {
+                    let (m, n) = p.at(0usize, 0usize).shape();
+                    let cells = comptime!(m * n);
+                    let tiles = comptime!(p.m_tiles * p.n_tiles);
+                    let slots = comptime!(scratch.slots(tiles));
+                    // Indexed by hardware plane position, not level position: the launch decides the cube's shape.
+                    let planes = comptime!(plane_windows(&self.place.space, &self.place.levels));
+                    let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
+                    let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
+                    // Each fragment carries its own slot, so drain order doesn't matter.
+                    let mut frags = Sequence::<PlaneTile<Acc>>::new();
+                    #[unroll]
+                    for i in 0..tiles {
+                        let start = plane + comptime!(cells * scratch.slot_of(i, tiles));
+                        let slot = shared.clone().map(|s| &s[start..start + cells]);
+                        frags.push(p.frags.index(i).clone().with_scratch(slot));
+                    }
+                    Tile::new(
+                        TileKind::new_PlanePartition(PlanePartition::<Acc> {
+                            frags,
+                            m_tiles: comptime!(p.m_tiles),
+                            n_tiles: comptime!(p.n_tiles),
+                            rows: comptime!(p.rows),
+                            cols: comptime!(p.cols),
+                            scratch: ComptimeOption::new_Some(
+                                shared.clone().map(|s| &s[plane..plane + cells]),
+                            ),
+                            held: comptime!(scratch),
+                        }),
+                        comptime!(self.place.clone()),
+                    )
                 }
-                Tile::new(
-                    TileKind::new_PlanePartition(PlanePartition::<Acc> {
-                        frags,
-                        m_tiles: comptime!(p.m_tiles),
-                        n_tiles: comptime!(p.n_tiles),
-                        rows: comptime!(p.rows),
-                        cols: comptime!(p.cols),
-                        scratch: ComptimeOption::new_Some(
-                            shared.clone().map(|s| &s[plane..plane + cells]),
-                        ),
-                        held: comptime!(scratch),
-                    }),
-                    comptime!(self.place.clone()),
-                )
-            }
-            TileKind::Memory(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_)
-            | TileKind::Lines(_) => {
-                panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
-            }
+                TileKind::Memory(_)
+                | TileKind::PlaneTile(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
+                }
+            },
         }
     }
 
@@ -255,15 +259,54 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// This plane-resident accumulator with each cell cast to `E` where its units hold it: what
+    /// an attention contracts its probabilities with the values through, the next contraction
+    /// reading the cast accumulator in its registers, without a round trip through shared memory.
+    ///
+    /// Only a manual-mma accumulator is cast in place; any other is cast as it drains.
+    pub fn cast<E: Numeric>(&self) -> Tile<E> {
+        let place = comptime!(self.place.clone());
+        match &self.kind {
+            TileKind::PlanePartition(partition) => {
+                Tile::new(TileKind::new_PlanePartition(partition.cast::<E>()), place)
+            }
+            TileKind::PlaneTile(tile) => {
+                Tile::new(TileKind::new_PlaneTile(tile.cast::<E>()), place)
+            }
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!("Tile::cast: only a plane-resident accumulator is cast in its registers")
+            }
+        }
+    }
+
     /// Whether this accumulator's fragments cast to `Out` are fragments the device holds
     /// ([`casts_in_place`]): what decides whether a cmma grid draining into an `Out` destination
     /// stores whole or bounces.
     fn casts_in_place_to<Out: Numeric>(&self) -> comptime_type!(bool) {
+        // Only a cmma fragment has a cast the device may lack. Reading the grid of anything else
+        // would ask the extent of an axis that may be dynamic.
         match &self.kind {
-            TileKind::PlanePartition(_) | TileKind::PlaneTile(_) => {
-                let (_, m, n) = self.fragment_grid();
-                casts_in_place::<Acc, Out>(m, n)
+            // The fragment's own edges: the placement's space spans every plane's grid.
+            TileKind::PlanePartition(p) => {
+                let cmma = p.is_cmma();
+                if comptime!(cmma) {
+                    casts_in_place::<Acc, Out>(comptime!(p.rows), comptime!(p.cols))
+                } else {
+                    comptime!(true)
+                }
             }
+            TileKind::PlaneTile(t) => match t {
+                PlaneTile::Cmma(_) => {
+                    let (_, m, n) = self.fragment_grid();
+                    casts_in_place::<Acc, Out>(m, n)
+                }
+                PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    comptime!(true)
+                }
+            },
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -542,6 +585,45 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
     );
     acc.init_identity(comptime!(accumulation.monoid()));
     acc
+}
+
+#[cube]
+impl<EA: Numeric> Tile<EA> {
+    /// A plane-resident accumulator over one region of `walk` along `axes`, summing `lhs` times a
+    /// factor in the matrix instruction `instruction` names, opened at zero: the accumulator
+    /// [`Tile::scratch`] would open, without the memory, for a product contracted again before
+    /// anything drains it, as an attention's score.
+    pub fn stage_accumulator<EL: Numeric>(
+        walk: &Walk,
+        #[comptime] axes: Vec<Axis>,
+        lhs: &Tile<EL>,
+        #[comptime] instruction: Instruction,
+    ) -> Tile<EA> {
+        comptime!(assert!(
+            !matches!(instruction, Instruction::Registers { .. }),
+            "Tile::stage_accumulator: a register block's accumulator is a unit's, opened on the \
+             output it drains into"
+        ));
+        let place = comptime!(Placement::new(
+            walk.level.child(&walk.space).subspace(&axes),
+            walk.depth(),
+            walk.parent.path.root_levels(),
+        ));
+        let accumulation = comptime!(Accumulation::Contraction(Semiring::SUM_PROD));
+        let mut acc = PlanePartition::<EA>::mirror(
+            comptime!(place.space.clone()),
+            comptime!(MatrixAxes::accumulator(&place.space, &lhs.place.space)),
+            instruction,
+            comptime!(GridShape::new(&place, &lhs.place.space)),
+            1usize,
+            1usize,
+            accumulation,
+            comptime!(place.depth),
+            comptime!(place.levels.clone()),
+        );
+        acc.init_identity(comptime!(accumulation.monoid()));
+        acc
+    }
 }
 
 /// [`Accumulate::drained_into`]'s descent over `levels[i..]`, applying `pass` at every leaf.

@@ -39,10 +39,10 @@ fn staged_matmul_quant_rhs<E: Numeric, VA: Size, VB: Size, VC: Size>(
     space: Partitioning,
     #[define(E)] _e_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile_as::<E>(&space);
+    let scales = scales.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         let a = a.at(&cube);
         let b = b.at(&cube);

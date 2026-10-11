@@ -81,7 +81,7 @@ fn separable_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = if comptime!(separable) {
         Procedural::<E>::separable::<Weights<E>>(
@@ -97,7 +97,7 @@ fn separable_kernel<E: Float>(
         .tile()
     };
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in space.over(&level) {
         let mut out = output
             .at(&region)
@@ -117,7 +117,7 @@ fn separable_kernel_staged<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&weight_axes)),
@@ -125,7 +125,7 @@ fn separable_kernel_staged<E: Float>(
     )
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
     stages.pipelined(walk, |slot, region| {
@@ -365,7 +365,7 @@ fn resample_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&[ROW, TAP[0]])),
         resample_weights::<E>(),
@@ -377,7 +377,7 @@ fn resample_kernel<E: Float>(
     }
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in space.over(&level) {
         let mut out = output
             .at(&region)
@@ -484,7 +484,7 @@ fn procedural_mask_kernel<E: Float>(
         affine_along(TAP[0], E::new(1.0_f32), E::new(1.0_f32)),
     )
     .tile();
-    let mut output = output.tile(comptime!(space.clone()));
+    let mut output = output.tile(&space);
     output.zero();
 
     for region in rhs.over(&level) {
@@ -557,7 +557,7 @@ fn resample_kernel_masked<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&[ROW, TAP[0]])),
         resample_weights::<E>(),
@@ -568,7 +568,7 @@ fn resample_kernel_masked<E: Float>(
     )
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in space.over(&level) {
         let mut out = output
             .at(&region)
@@ -587,7 +587,7 @@ fn resample_kernel_masked_staged<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&[ROW, TAP[0]])),
         resample_weights::<E>(),
@@ -598,7 +598,7 @@ fn resample_kernel_masked_staged<E: Float>(
     )
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem_single(&walk, &input, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
@@ -789,7 +789,7 @@ fn column_spanning_resample_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
@@ -797,7 +797,7 @@ fn column_spanning_resample_kernel<E: Float>(
     .normalized(comptime!(TapSupport::Whole), comptime!(DivGuard::default()))
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in space.over(&level) {
         let mut out = output
             .at(&region)
@@ -884,7 +884,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
@@ -895,7 +895,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
     )
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in space.over(&level) {
         let mut out = output
             .at(&region)
@@ -989,7 +989,7 @@ fn zero_sum_fallback_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
     let mut factors = Sequence::new();
     // Factor 0: taps at k=0 (1.0) and k=1 (-1.0), sum = 0.0
     factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(-2.0_f32)));
@@ -1008,7 +1008,7 @@ fn zero_sum_fallback_kernel<E: Float>(
     )
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     for region in space.over(&level) {
         let mut out = output
             .at(&region)
@@ -1081,8 +1081,8 @@ fn separable_scaled_kernel<E: Float, V: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
+    let input = input.tile_as::<E>(&space);
+    let scale = scale.tile(&space);
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Procedural::<E>::separable::<Weights<E>>(
         comptime!(space.space().subspace(&weight_axes)),
@@ -1090,7 +1090,7 @@ fn separable_scaled_kernel<E: Float, V: Size>(
     )
     .tile();
 
-    let output = output.tile(comptime!(space.clone()));
+    let output = output.tile(&space);
     let walk = space.over(&level);
     let decoded = input.mul(&scale);
     let mut stages = Stages::smem_single(&walk, &decoded, StageStorage::Strided, 1usize);

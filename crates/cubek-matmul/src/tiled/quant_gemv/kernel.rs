@@ -125,11 +125,11 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
 ) {
     let config = comptime!(register_block(&bp, &problem));
     let w = w
-        .tile_as::<EC>(comptime!(space.clone()))
-        .mul(&block_scale.tile_as::<ES>(comptime!(space.clone())))
-        .mul_bound(&scale_tile::<ES>(global_scale, comptime!(space.clone())));
-    let x = x.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+        .tile_as::<EC>(&space)
+        .mul(&block_scale.tile_as::<ES>(&space))
+        .mul_bound(&scale_tile::<ES>(global_scale, &space));
+    let x = x.tile(&space);
+    let out = out.tile(&space);
     // Each unit zeroes the window it owns: the output folds every step into what it holds.
     // The output spans no contraction, so the units level is named rather than descended to.
     let plane_units = comptime!(bp.units(&problem));

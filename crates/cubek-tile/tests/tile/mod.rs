@@ -26,6 +26,7 @@ mod ragged;
 mod recursive;
 mod reduce;
 mod references;
+mod register_attention;
 mod relay;
 mod routed;
 mod row_chunks;
@@ -36,6 +37,7 @@ mod softmax;
 mod space;
 mod split_k;
 mod stream;
+mod tma_store;
 mod vector_tile;
 mod wgmma;
 

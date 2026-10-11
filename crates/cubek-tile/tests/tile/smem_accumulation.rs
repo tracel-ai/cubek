@@ -35,9 +35,9 @@ fn smem_split_matmul<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in &space {
         let mut c_cube = c.at(&cube);
         let sum = c_cube.smem_accumulation::<E>();
@@ -72,9 +72,9 @@ fn smem_cyclic_split_matmul<E: Numeric, VC: Size>(
     #[comptime] planes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in &space {
         let mut c_cube = c.at(&cube);
         let sum = c_cube.smem_cyclic_accumulation::<E>(planes);
@@ -339,9 +339,9 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
     #[define(EI)] _input: ElemType,
     #[define(E)] _output: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in &space {
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);

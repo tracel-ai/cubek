@@ -62,10 +62,10 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -91,10 +91,10 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -126,13 +126,13 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
     // The operand is the hierarchy: block scales, under the factor that covers a tile of their
     // tiles. Nothing states a scheme.
-    let blocks = blocks.tile(comptime!(space.clone()));
-    let global = global.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let blocks = blocks.tile(&space);
+    let global = global.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c
@@ -170,10 +170,10 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -1192,10 +1192,10 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -1338,10 +1338,10 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region).accumulating(
@@ -1631,10 +1631,10 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile_as::<E>(&space);
+    let scale = scale.tile(&space);
+    let c = c.tile(&space);
     let mut stage = b.stage(comptime!(level.clone()), StageStorage::Strided);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
@@ -1784,10 +1784,10 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
 ) {
     // Both factors land where the instruction reads a window as it lies, and neither does where
     // it reads through a layout: the contraction decides.
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile_as::<S>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile_as::<E>(&space);
+    let scale = scale.tile_as::<S>(&space);
+    let c = c.tile(&space);
     for cube in space {
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
@@ -2215,11 +2215,11 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] read: UnitRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    let a = a.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
     // The weight is scaled at every step, which lands it on its own.
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile_as::<S>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let b = b.tile_as::<E>(&space);
+    let scale = scale.tile_as::<S>(&space);
+    let c = c.tile(&space);
     for cube in space {
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
@@ -2331,10 +2331,10 @@ fn stepped_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     space: Partitioning,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile_as::<S>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile_as::<E>(&space);
+    let scale = scale.tile_as::<S>(&space);
+    let c = c.tile(&space);
     for cube in space {
         let (a_cube, b_cube) = (a.at(&cube), b.at(&cube));
         let (scale_cube, c_cube) = (scale.at(&cube), c.at(&cube));
@@ -2423,9 +2423,9 @@ fn decoded_tile_order_copy<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] through: CopiedThrough,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile_as::<S>(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let b = b.tile_as::<E>(&space);
+    let scale = scale.tile_as::<S>(&space);
+    let out = out.tile(&space);
     for cube in space {
         let decoded = b.at(&cube).mul(&scale.at(&cube));
         let mut out_cube = out.at(&cube);
@@ -2542,10 +2542,10 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric, SS: Numeric>
     #[comptime] storage: StageStorage,
     #[define(E, A, S, SS)] _dtypes: [ElemType; 4],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let scale = scale.tile_as::<S>(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile_as::<E>(&space);
+    let scale = scale.tile_as::<S>(&space);
+    let c = c.tile(&space);
     for cube in space {
         let (a_cube, b_cube) = (a.at(&cube), b.at(&cube));
         let (scale_cube, c_cube) = (scale.at(&cube), c.at(&cube));
@@ -2811,9 +2811,9 @@ fn scaled_copy<E: Numeric, S: Numeric>(
     #[comptime] staged: bool,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let scale = scale.tile(&space);
+    let mut out = out.tile(&space);
     if comptime!(staged) {
         let mut stage = Tile::<E>::shared(comptime!(space.space().clone()), StageStorage::Strided);
         stage.copy_from(&a.mul(&scale));
@@ -2930,10 +2930,10 @@ fn staged_scaled_matmul<E: Numeric, S: Numeric>(
     #[comptime] depth: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a.mul(&scale), &b, StageStorage::Strided, depth);

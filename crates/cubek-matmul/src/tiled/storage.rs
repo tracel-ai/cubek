@@ -33,8 +33,8 @@ fn relayout<E: Numeric, V: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let dst = dst.tile(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let dst = dst.tile(&space);
     let rank = comptime!(space.space().rank());
     for cube in space.over(&level) {
         let s = src.at(&cube);

@@ -98,8 +98,8 @@ pub fn plain_copy<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&input);
 }
 
@@ -112,9 +112,9 @@ fn block_scaled_copy<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let values = values.tile_as::<O>(&space);
+    let scales = scales.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&values.mul(&scales));
 }
 
@@ -128,10 +128,10 @@ fn two_level_scaled_copy<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
-    let global = global.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let values = values.tile_as::<O>(&space);
+    let scales = scales.tile(&space);
+    let global = global.tile(&space);
+    let mut output = output.tile(&space);
     output.copy_from(&values.mul(&scales).mul(&global));
 }
 
@@ -268,10 +268,8 @@ fn batched_scaled_stage<O: Numeric, V: Size>(
     #[comptime] cols: usize,
     #[define(O)] _dtype: ElemType,
 ) {
-    let decoded = values
-        .tile_as::<O>(comptime!(space.clone()))
-        .mul(&scales.tile(comptime!(space.clone())));
-    let output = output.tile(comptime!(space.clone()));
+    let decoded = values.tile_as::<O>(&space).mul(&scales.tile(&space));
+    let output = output.tile(&space);
     for cube in &space {
         let mut stage = Tile::<O>::smem(
             comptime!(Space::new(&[(M, rows), (N, cols)])),

@@ -64,9 +64,9 @@ fn plain_matmul<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for region in space {
         let mut c_cube = c
             .at(&region)
@@ -84,9 +84,9 @@ fn atomic_matmul<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     for region in space {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
@@ -114,9 +114,9 @@ fn atomic_matmul_units<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     for cube in space {
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
@@ -144,8 +144,8 @@ fn fold_splits<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let partials = partials.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let partials = partials.tile(&space);
+    let out = out.tile(&space);
     for region in space {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);

@@ -60,9 +60,9 @@ fn conv_kernel<E: Numeric, V: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_region = out.at(&region).accumulating(config, Semiring::SUM_PROD);
         out_region.mm(&input.at(&region), &weight.at(&region));
@@ -83,9 +83,9 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
@@ -110,9 +110,9 @@ fn conv_kernel_smem_padded<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem_single_at(
         &walk,
@@ -143,9 +143,9 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for outer in space.over(&outer) {
         let out_outer = out.at(&outer);
         let input_outer = input.at(&outer);
@@ -173,9 +173,9 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let walk = space.over(&outer);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
@@ -1125,9 +1125,9 @@ fn conv_kernel_dynamic<E: Numeric>(
     coefficients.push(stride);
     coefficients.push(dilation);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, coefficients, Coords::new());
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_region = out
             .at(&region)
@@ -1265,9 +1265,9 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, Coords::new(), offsets);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_region = out
             .at(&region)
@@ -1291,9 +1291,9 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, Coords::new(), offsets);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
@@ -1326,9 +1326,9 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, coefficients, offsets);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_region = out
             .at(&region)
@@ -1357,9 +1357,9 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, coefficients, offsets);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     stages.pipelined(walk, |slot, region| {
@@ -2142,9 +2142,9 @@ fn conv_mma_kernel<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let acc = out.accumulator::<E, E, E>(
         &input,
         &weight,
@@ -2580,9 +2580,9 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, coefficients, offsets);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_region = out
             .at(&region)
@@ -2609,9 +2609,9 @@ fn conv_kernel_rational_dynamic_staged<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile_gathered(&space, coefficients, offsets);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     let mut stage = input.stage(comptime!(level.clone()), StageStorage::Strided);
     for region in space.over(&level) {
         stage.copy_from(&input.at(&region));

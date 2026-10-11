@@ -53,9 +53,9 @@ fn split_partials<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let partials = partials.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let partials = partials.tile(&space);
     for region in space.over(&level) {
         let mut partials_cube = partials
             .at(&region)
@@ -73,8 +73,8 @@ fn reduce_splits<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let partials = partials.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let partials = partials.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
@@ -320,9 +320,9 @@ fn atomic_split_matmul<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
     let acc = c.accumulator::<E, E, E>(
@@ -355,9 +355,9 @@ fn atomic_split_matmul_by_unit<E: Numeric>(
     #[comptime] plane_units: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     // Opened above both walks, so it holds what one unit of one cube sums: its own columns
     // against that cube's slice of the contraction.
     let acc = c.accumulator::<E, E, E>(
@@ -687,9 +687,9 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     for region in space.over(&level) {
         let mut c_region = c
             .at(&region)
@@ -790,9 +790,9 @@ fn atomic_split_cmma<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile::<Const<1>>(&space);
     for cube in space {
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
@@ -957,8 +957,8 @@ fn copy_into_folding<E: Numeric>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let mut out = out.tile::<Const<1>>(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let mut out = out.tile::<Const<1>>(&space);
     out.copy_from(&src);
 }
 

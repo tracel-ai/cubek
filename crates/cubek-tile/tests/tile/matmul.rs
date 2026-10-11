@@ -153,9 +153,9 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     #[comptime] semiring: Semiring,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for outer in space.over(&outer) {
         match comptime!(runs.clone()) {
             Some(runs) => {
@@ -224,9 +224,9 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         match comptime!(runs.clone()) {
             Some(runs) => {
@@ -293,9 +293,9 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
     #[comptime] unrolled: bool,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let a = a.at(&cube);
         let b = b.at(&cube);
@@ -354,9 +354,9 @@ fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
     stages.pipelined(walk, |slot, region| {
@@ -380,9 +380,9 @@ fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&level);
     let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, depth);
@@ -409,9 +409,9 @@ fn matmul_padded_rhs_stage<E: Numeric>(
     #[comptime] width: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
     for region in c.over(&level) {
@@ -450,9 +450,9 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
     #[comptime] width: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
     for region in c.over(&outer) {
@@ -497,9 +497,9 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&outer);
     let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
@@ -530,9 +530,9 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
     #[comptime] depth_inner: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
     for region in c.over(&outer) {
@@ -574,9 +574,9 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<EA, E, E>(
         &a,
         &b,
@@ -602,9 +602,9 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         for plane in cube {
             let c_p = c.at(&plane);
@@ -638,9 +638,9 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -681,9 +681,9 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
@@ -708,9 +708,9 @@ fn mma_matmul_k_walk<E: Numeric>(
     #[comptime] io: MmaIo,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -742,9 +742,9 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&outer);
     let mut stages = Stages::smem(
@@ -789,9 +789,9 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
@@ -840,9 +840,9 @@ fn cmma_matmul_partition_in_one_call<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
@@ -889,9 +889,9 @@ fn cmma_matmul_five_levels<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
@@ -2767,9 +2767,9 @@ fn plane_staged_matmul<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         for plane in cube {
             let c_p = c.at(&plane);
@@ -2812,9 +2812,9 @@ fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         for plane in cube {
             let c_p = c.at(&plane);
@@ -3575,9 +3575,9 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
     #[comptime] instruction: Instruction,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(&a, &b, instruction, Semiring::SUM_PROD);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, storage, depth);

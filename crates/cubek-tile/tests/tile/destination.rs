@@ -52,10 +52,7 @@ struct DoubledArg<'a, E: Numeric, V: Size> {
 impl Destination for Doubled {
     type Arg<E: Numeric, V: Size> = DoubledArg<'static, E, V>;
 
-    fn tile<E: Numeric, V: Size>(
-        arg: &Self::Arg<E, V>,
-        #[comptime] partitioning: Partitioning,
-    ) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, partitioning: &Partitioning) -> Tile<E> {
         let mut geometry = RuntimeGeometry::new();
         #[unroll]
         for axis in 0..comptime!(arg.rank) {
@@ -180,8 +177,8 @@ fn store<E: Float, V: Size, O: Destination>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = O::tile::<E, V>(out, comptime!(space.clone()));
+    let src = input.tile(&space);
+    let mut dst = O::tile::<E, V>(out, &space);
     dst.copy_from(&src);
 }
 
@@ -308,9 +305,9 @@ fn contract<E: Numeric, EA: Numeric, O: Destination>(
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = O::tile::<E, Const<1>>(c, comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = O::tile::<E, Const<1>>(c, &space);
     let acc = c.accumulator::<EA, E, E>(
         &a,
         &b,

@@ -128,9 +128,9 @@ fn routed_matmul_kernel<E: Numeric>(
     #[comptime] expert: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile(&space);
+    let out = out.tile(&space);
 
     for tok in space.over(&token) {
         let e = routes[tok.coord(M)] as usize;
@@ -158,9 +158,9 @@ fn routed_staged_matmul_kernel<E: Numeric>(
     #[comptime] expert: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile(&space);
+    let out = out.tile(&space);
 
     for tok in space.over(&token) {
         let e = routes[tok.coord(M)] as usize;
@@ -307,9 +307,9 @@ fn routed_block_matmul_kernel<E: Numeric>(
     #[comptime] depth: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile(&space);
+    let out = out.tile(&space);
 
     for tok in space.over(&token) {
         let e = routes[tok.coord(M)] as usize;
@@ -411,7 +411,7 @@ fn routed_axis_kernel(
     #[comptime] level: Level,
     #[comptime] axis: Axis,
 ) {
-    let k = k.tile(comptime!(space.clone()));
+    let k = k.tile(&space);
     let mut steps = 0u32;
     for _region in k.over(&level).routed(axis, 0usize) {
         steps += 1;

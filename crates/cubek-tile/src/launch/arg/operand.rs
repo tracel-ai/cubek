@@ -25,7 +25,7 @@ pub enum Output<'a, E: Numeric, V: Size> {
 #[cube]
 impl<'a, E: Numeric, V: Size> Input<'a, E, V> {
     /// Serve this operand as a [`Tile`] under the kernel's one `partitioning`.
-    pub fn tile(&self, #[comptime] partitioning: Partitioning) -> Tile<E> {
+    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
         match self {
             Input::Tensor(arg) => arg.tile(partitioning),
             Input::TensorMap(arg) => arg.tile(partitioning),
@@ -36,7 +36,7 @@ impl<'a, E: Numeric, V: Size> Input<'a, E, V> {
 #[cube]
 impl<'a, E: Numeric, V: Size> Output<'a, E, V> {
     /// Serve this operand as a [`Tile`] under the kernel's one `partitioning`.
-    pub fn tile(&self, #[comptime] partitioning: Partitioning) -> Tile<E> {
+    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
         match self {
             Output::Tensor(arg) => arg.tile(partitioning),
             Output::Atomic(arg) => arg.tile::<V>(partitioning),

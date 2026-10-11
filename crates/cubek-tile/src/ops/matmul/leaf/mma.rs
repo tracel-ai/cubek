@@ -35,6 +35,31 @@ impl<A: Numeric> MmaData<A> {
                     },
                     _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
+                (TileKind::PlaneTile(a), TileKind::Memory(_)) => {
+                    // An accumulator contracted again, read as the left factor in its registers:
+                    // only the right one loads.
+                    let (_, rhs_layout) =
+                        comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
+                    let mut rb =
+                        MmaData::<R>::operand(MatrixIdent::B, m, n, k, rhs_layout, io, false);
+                    rb.load_window(rhs);
+                    let b = PlaneTile::new_Mma(rb);
+                    match (a, &b) {
+                        (PlaneTile::Mma(a), PlaneTile::Mma(b)) => {
+                            match (&a.fragment, &b.fragment) {
+                                (MmaFragment::Acc(af), MmaFragment::Rhs(bf)) => {
+                                    let af = accumulator_as_a::<L>(af, m, n, k);
+                                    mma_execute::<L, R, A>(&af, bf, acc, m, n, k)
+                                }
+                                _ => panic!(
+                                    "MmaData::mma: a left factor held against a memory window is an \
+                                 accumulator"
+                                ),
+                            }
+                        }
+                        _ => panic!("MmaData::mma: a held left factor is an mma fragment"),
+                    }
+                }
                 (TileKind::Memory(_), TileKind::Memory(_)) => {
                     // Read each window in its stored order (`{n, k}` reads transposed).
                     let (lhs_layout, rhs_layout) =

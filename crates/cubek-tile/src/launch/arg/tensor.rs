@@ -14,8 +14,9 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 
 #[cube]
 impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
-    /// Serve the operand as a [`Tile`] over the kernel's one `space`.
-    pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
+    /// Serve the operand as a [`Tile`] over the kernel's one `partitioning`.
+    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
+        let space = comptime!(partitioning.clone());
         GlobalOperand::<E>::tensor(
             self.tensor,
             comptime!(space.space().clone()),
@@ -26,7 +27,8 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 
     /// [`tile`](TileArg::tile) reading `O` out of the stored `E`, unpacked where the binding is
     /// [`packed`](TileSpec::packed).
-    pub fn tile_as<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
+    pub fn tile_as<O: Numeric>(&self, partitioning: &Partitioning) -> Tile<O> {
+        let space = comptime!(partitioning.clone());
         GlobalOperand::<O>::stored(
             self.tensor,
             comptime!(space.space().clone()),
@@ -39,10 +41,11 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// [`GlobalOperand::gathered`]'s order.
     pub fn tile_gathered(
         &self,
-        #[comptime] space: Partitioning,
+        partitioning: &Partitioning,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<E> {
+        let space = comptime!(partitioning.clone());
         GlobalOperand::<E>::gathered(
             self.tensor,
             comptime!(space.space().clone()),

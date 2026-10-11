@@ -51,9 +51,9 @@ fn ring_matmul<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
 
     let walk = space.walk();
@@ -81,8 +81,8 @@ fn staged_copy<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let dst = dst.tile(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let dst = dst.tile(&space);
     let mut stage = src.stage(comptime!(level.clone()), StageStorage::Strided);
     for region in space.over(&level) {
         stage.copy_from(&src.at(&region));
@@ -104,8 +104,8 @@ fn staged_packed_copy<O: Numeric, V: Size>(
     #[comptime] level: Level,
     #[define(O)] _dtype: ElemType,
 ) {
-    let src = src.tile_as::<O>(comptime!(space.clone()));
-    let dst = dst.tile(comptime!(space.clone()));
+    let src = src.tile_as::<O>(&space);
+    let dst = dst.tile(&space);
     let mut stage = src.stage(comptime!(level.clone()), StageStorage::Strided);
     for region in space.over(&level) {
         stage.copy_from(&src.at(&region));

@@ -18,10 +18,11 @@ pub(crate) enum AxisSlicesKind<E: Float> {
     /// A window of shared memory a plane holds: its units take a slice's cells in turns and meet
     /// on the slice's partials.
     Window(Memory<E>),
-    /// A plane's grid of cmma fragments, whose cells lie across its units in the instruction's
-    /// own layout: reached only to be scaled, through the plane's scratch.
+    /// A plane's grid of fragments. A manual-mma fragment's cells are read in its registers, each
+    /// unit keeping the rows it holds cells of; a cmma fragment's lie where the instruction keeps
+    /// them, and are only scaled, through the plane's scratch.
     Fragments(PlanePartition<E>),
-    /// One cmma fragment of a plane's, reached the same way.
+    /// One fragment of a plane's, reached the same way.
     Fragment(PlaneTile<E>),
 }
 
@@ -74,6 +75,40 @@ impl<E: Float> Tile<E> {
 }
 
 #[cube]
+impl<T: Numeric> Tile<T> {
+    /// Slices along `axis` one unit keeps a state for: the rows a manual-mma grid's unit holds
+    /// cells of, which a reduction reads in its registers; every slice of any other holder.
+    pub fn slices_per_unit(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
+        let every = comptime!(self.place.space.slices_along(axis));
+        match &self.kind {
+            TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {
+                PlaneTile::Mma(fragment) => {
+                    let rows = fragment.rows_per_unit();
+                    comptime!(partition.m_tiles * rows)
+                }
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) => comptime!(every),
+                PlaneTile::Wgmma(_) => panic!(
+                    "Tile::slices_per_unit: a warpgroup accumulator's slices are not read in \
+                     place; drain it first"
+                ),
+            },
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Mma(fragment) => fragment.rows_per_unit(),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) => comptime!(every),
+                PlaneTile::Wgmma(_) => panic!(
+                    "Tile::slices_per_unit: a warpgroup accumulator's slices are not read in \
+                     place; drain it first"
+                ),
+            },
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(every),
+        }
+    }
+}
+
+#[cube]
 impl<E: Float> AxisSlices<E> {
     /// `self[i, s] = self[i, s] · scale + bias[i, s]`, the procedural `bias` read at each cell's
     /// coordinates, windowed to the same region as the tile.
@@ -86,8 +121,12 @@ impl<E: Float> AxisSlices<E> {
             AxisSlicesKind::Window(window) => {
                 window.scale_add_along(scale, recipe, self.space.clone(), self.axis)
             }
-            AxisSlicesKind::Fragments(_) | AxisSlicesKind::Fragment(_) => {
-                AxisSlices::<E>::refuse_reading()
+            AxisSlicesKind::Fragments(partition) => {
+                partition.scale_add_along(scale, recipe, self.space.clone())
+            }
+            AxisSlicesKind::Fragment(tile) => {
+                let mut fragment = tile.manual_fragment();
+                fragment.scale_add_along(scale, recipe, self.space.clone(), (0usize, 0usize))
             }
         }
     }
@@ -99,9 +138,8 @@ impl<E: Float> AxisSlices<E> {
             AxisSlicesKind::Window(window) => {
                 window.maxima_along(seed, self.space.clone(), self.axis)
             }
-            AxisSlicesKind::Fragments(_) | AxisSlicesKind::Fragment(_) => {
-                AxisSlices::<E>::refuse_reading()
-            }
+            AxisSlicesKind::Fragments(partition) => partition.maxima_along(seed),
+            AxisSlicesKind::Fragment(tile) => tile.manual_fragment().maxima_along(seed),
         }
     }
 
@@ -112,8 +150,10 @@ impl<E: Float> AxisSlices<E> {
             AxisSlicesKind::Window(window) => {
                 window.exp_minus_along(slices, self.space.clone(), self.axis)
             }
-            AxisSlicesKind::Fragments(_) | AxisSlicesKind::Fragment(_) => {
-                AxisSlices::<E>::refuse_reading()
+            AxisSlicesKind::Fragments(partition) => partition.exp_minus_along(slices),
+            AxisSlicesKind::Fragment(tile) => {
+                let mut fragment = tile.manual_fragment();
+                fragment.exp_minus_along(slices, 0usize)
             }
         }
     }
@@ -123,9 +163,8 @@ impl<E: Float> AxisSlices<E> {
         match &self.kind {
             AxisSlicesKind::Registers(block) => block.sums_along(),
             AxisSlicesKind::Window(window) => window.sums_along(self.space.clone(), self.axis),
-            AxisSlicesKind::Fragments(_) | AxisSlicesKind::Fragment(_) => {
-                AxisSlices::<E>::refuse_reading()
-            }
+            AxisSlicesKind::Fragments(partition) => partition.sums_along(),
+            AxisSlicesKind::Fragment(tile) => tile.manual_fragment().sums_along(),
         }
     }
 
@@ -147,11 +186,5 @@ impl<E: Float> AxisSlices<E> {
     pub(crate) fn exp_minus_cell(value: E, slice: E) -> E {
         let live = slice > E::min_value();
         select(live, (value - slice).exp(), E::from_int(0))
-    }
-
-    /// A fragment's cells lie across its plane's units in the instruction's own layout, so only
-    /// a scale reaches them: to read a slice, drain the fragments into the plane's window first.
-    fn refuse_reading() -> ! {
-        panic!("AxisSlices: a fragment's slices are read after draining it into its plane's window")
     }
 }

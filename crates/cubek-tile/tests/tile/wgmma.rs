@@ -13,10 +13,10 @@ use cubecl::{
 };
 use cubek_test_utils::{TestOutcome, ValidationResult};
 use cubek_tile::launch::{TmaBox, TmaTileArg, TmaTileArgLaunch};
-use cubek_tile::stage::{AsyncStage, AsyncStageExpand, Role, RowChunks};
-use half::f16;
 use cubek_tile::space::ComputeScope;
+use cubek_tile::stage::{AsyncStage, AsyncStageExpand, Role, RowChunks};
 use cubek_tile::*;
+use half::f16;
 
 use super::{Form, implied};
 
@@ -68,9 +68,9 @@ fn wgmma_walk(
     #[comptime] storage: StageStorage,
     #[comptime] depth: usize,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
         let walk = cube.walk();
@@ -229,12 +229,24 @@ fn check_wgmma_walk(m: usize, n: usize, k: usize, depth: usize) {
             .expect("a box lands the stage")
     };
     let (box_m, box_n) = (stage(M).extent(M), stage(N).extent(N));
-    let a = tma_matrix(&client, &half(&lhs), (m, k), (box_m, STEP * STEPS), [M, K], swizzle(M));
-    let b = tma_matrix(&client, &half(&rhs), (n, k), (box_n, STEP * STEPS), [N, K], swizzle(N));
+    let a = tma_matrix(
+        &client,
+        &half(&lhs),
+        (m, k),
+        (box_m, STEP * STEPS),
+        [M, K],
+        swizzle(M),
+    );
+    let b = tma_matrix(
+        &client,
+        &half(&rhs),
+        (n, k),
+        (box_n, STEP * STEPS),
+        [N, K],
+        swizzle(N),
+    );
     let out = client.empty(m * n * size_of::<f32>());
-    let c = unsafe {
-        TensorArg::from_raw_parts(out.clone(), strides![n, 1], shape![m, n])
-    };
+    let c = unsafe { TensorArg::from_raw_parts(out.clone(), strides![n, 1], shape![m, n]) };
 
     wgmma_walk::launch(
         &client,
@@ -255,9 +267,7 @@ fn check_wgmma_walk(m: usize, n: usize, k: usize, depth: usize) {
     assert_eq!(got.len(), m * n, "the kernel wrote no product");
     for row in 0..m {
         for col in 0..n {
-            let want: f32 = (0..k)
-                .map(|p| lhs[row * k + p] * rhs[col * k + p])
-                .sum();
+            let want: f32 = (0..k).map(|p| lhs[row * k + p] * rhs[col * k + p]).sum();
             assert_eq!(
                 got[row * n + col],
                 want,

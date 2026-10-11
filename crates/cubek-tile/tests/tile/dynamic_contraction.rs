@@ -37,9 +37,9 @@ fn contract<E: Numeric, VA: Size, VB: Size, VC: Size>(
     #[comptime] budget: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = x.tile(comptime!(space.clone()));
-    let b = w.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let a = x.tile(&space);
+    let b = w.tile(&space);
+    let c = out.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,

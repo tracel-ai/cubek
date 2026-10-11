@@ -41,10 +41,10 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.tile_as::<E>(comptime!(space.clone()));
-    let x = x.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let w = w.tile_as::<E>(&space);
+    let x = x.tile(&space);
+    let scale = scale.tile(&space);
+    let out = out.tile(&space);
     // This instance's windows of `out`, each initialized once: the level projected
     // onto `out`'s own axes walks nothing it does not span.
     for cube in &out {
@@ -91,10 +91,10 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.tile_as::<E>(comptime!(space.clone()));
-    let x = x.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let w = w.tile_as::<E>(&space);
+    let x = x.tile(&space);
+    let scale = scale.tile(&space);
+    let out = out.tile(&space);
     let acc = out.accumulator::<E, E, E>(
         &w,
         &x,

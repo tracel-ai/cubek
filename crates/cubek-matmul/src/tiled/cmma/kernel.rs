@@ -101,9 +101,9 @@ pub fn cmma_kernel<
             .chain([(M, i.m), (N, i.n), (K, i.k)])
             .collect::<Vec<_>>()
     );
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
 
     for cube in space {
         let a = a.at(&cube);

@@ -40,11 +40,11 @@ fn block_scaled_matmul<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile_as::<E>(comptime!(space.clone()));
-    let a_scales = a_scales.tile(comptime!(space.clone()));
-    let b = b.tile_as::<E>(comptime!(space.clone()));
-    let b_scales = b_scales.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile_as::<E>(&space);
+    let a_scales = a_scales.tile(&space);
+    let b = b.tile_as::<E>(&space);
+    let b_scales = b_scales.tile(&space);
+    let c = c.tile(&space);
     let mut acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -64,8 +64,8 @@ fn block_scaled_matmul<E: Numeric>(
         });
     });
     // The per-tensor factors above the block scales, which the instruction holds no level for.
-    acc.scale(&scale_tile::<E>(a_global, comptime!(space.clone())));
-    acc.scale(&scale_tile::<E>(b_global, comptime!(space.clone())));
+    acc.scale(&scale_tile::<E>(a_global, &space));
+    acc.scale(&scale_tile::<E>(b_global, &space));
     acc.drained_into(&c);
 }
 

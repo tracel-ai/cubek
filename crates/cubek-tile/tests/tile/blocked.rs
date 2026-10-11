@@ -50,9 +50,9 @@ fn matmul<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
@@ -72,10 +72,10 @@ fn scaled_matmul<E: Numeric>(
     #[comptime] side: Scaled,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
@@ -527,9 +527,9 @@ fn wide_matmul<E: Numeric, V: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
@@ -626,10 +626,10 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);
@@ -745,9 +745,9 @@ fn promoted_matmul<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -851,10 +851,10 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let c = c.tile(&space);
     let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
@@ -969,10 +969,10 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let scale = scale.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c.at(&region).accumulating(BLOCK, Semiring::SUM_PROD);

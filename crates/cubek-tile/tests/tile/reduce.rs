@@ -39,9 +39,9 @@ fn reduce_matmul_kernel<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c
@@ -102,8 +102,8 @@ fn reduce_kernel<E: Numeric>(
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let mut output = output.tile(&space);
     reduce_body(
         &input,
         &mut output,
@@ -124,8 +124,8 @@ fn reduce_kernel_v4<E: Numeric>(
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let mut output = output.tile(&space);
     reduce_body(
         &input,
         &mut output,
@@ -156,7 +156,7 @@ fn procedural_reduce_kernel<E: Float>(
         },
     )
     .tile();
-    let mut output = output.tile(comptime!(space.clone()));
+    let mut output = output.tile(&space);
     reduce_body(
         &input,
         &mut output,
@@ -1352,8 +1352,8 @@ fn resident_fold_kernel<E: Numeric>(
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let out = output.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let out = output.tile(&space);
     let mut acc = out.block_reducer::<E, E>(&input, REGISTER_BLOCK, monoid);
     acc.init(Monoid::identity::<E>(monoid));
     for region in space.over(&level) {
