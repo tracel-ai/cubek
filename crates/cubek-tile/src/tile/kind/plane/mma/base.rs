@@ -186,7 +186,13 @@ impl<T: Numeric> MmaData<T> {
     /// unit's own cells, so the scale needs no bounce.
     pub(crate) fn scale(&mut self, factor: T) {
         match &mut self.fragment {
-            MmaFragment::Acc(f) => scale_registers(f, factor),
+            MmaFragment::Acc(f) => {
+                let factor = Vector::<T, NA>::cast_from(factor);
+                #[unroll]
+                for i in 0..f.len() {
+                    f[i] *= factor;
+                }
+            }
             MmaFragment::Lhs(_)
             | MmaFragment::Rhs(_)
             | MmaFragment::LhsBlockScaled(..)
@@ -483,17 +489,6 @@ fn register_rhs_size<R: Numeric>(def: &MmaDefinition<R, R, R>) {
     intrinsic!(|scope| {
         scope.register_size::<NR>(vr);
     });
-}
-
-/// Multiply every register slot by `factor`.
-#[cube]
-fn scale_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, factor: E) {
-    let num_vectors = fragment.len();
-    let factor = Vector::<E, N>::cast_from(factor);
-    #[unroll]
-    for i in 0..num_vectors {
-        fragment[i] *= factor;
-    }
 }
 
 /// Fill every register slot with `value`.
