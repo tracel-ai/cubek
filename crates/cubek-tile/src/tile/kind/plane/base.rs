@@ -909,11 +909,13 @@ impl<E: Float> PlanePartition<E> {
         for mi in 0..self.m_tiles {
             #[unroll]
             for ni in 0..self.n_tiles {
-                self.at(mi, ni)
-                    .manual_fragment()
-                    .fold_along(slots, comptime!(mi * rows), monoid);
+                self.at(mi, ni).manual_fragment().reduce_own_cells(
+                    slots,
+                    comptime!(mi * rows),
+                    monoid,
+                );
             }
-            self.at(mi, 0usize).manual_fragment().fold_across_units(
+            self.at(mi, 0usize).manual_fragment().reduce_across_units(
                 slots,
                 comptime!(mi * rows),
                 monoid,
