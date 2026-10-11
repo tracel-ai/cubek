@@ -347,15 +347,17 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// [`drained_chunk_into`](Tile::drained_chunk_into) through the scratch this grid was opened
-    /// with.
+    /// with, where `dest` is one its fragments must bounce to reach.
     fn drain_chunk_as_opened<Out: Numeric>(
         &self,
         dest: &Tile<Out>,
         turn: usize,
         #[comptime] chunks: usize,
     ) {
+        let in_place = self.casts_in_place_to::<Out>();
+        let bounces = dest.fragments_bounce(in_place);
         match &self.kind {
-            TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held)) {
+            TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held, bounces)) {
                 DrainPlan::Straight => drain_chunk_below::<Acc, Out>(
                     self,
                     dest,
@@ -434,10 +436,13 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// [`drained_into`](Accumulate::drained_into) through the scratch this grid was opened with.
+    /// [`drained_into`](Accumulate::drained_into) through the scratch this grid was opened with,
+    /// where `dest` is one its fragments must bounce to reach.
     fn drain_as_opened<Out: Numeric>(&self, dest: &Tile<Out>) {
+        let in_place = self.casts_in_place_to::<Out>();
+        let bounces = dest.fragments_bounce(in_place);
         match &self.kind {
-            TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held)) {
+            TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held, bounces)) {
                 DrainPlan::Straight => drain_below::<Acc, Out>(
                     self,
                     dest,
