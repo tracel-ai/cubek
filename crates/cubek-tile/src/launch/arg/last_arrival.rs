@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use crate::launch::arg::relay::folding_tile;
+use crate::launch::arg::relay::adding_tile;
 use crate::launch::arg::tensor::TileArgExpand;
 use crate::space::Extent;
 use crate::*;
@@ -27,7 +27,7 @@ pub struct LastArrival<'a, E: Numeric> {
     /// The slots, as the boxes of [`Partitioning::arrival_slots`]'s space.
     slots: Tile<E>,
     /// The slots written adding into what they hold, as the last run sums into the first's.
-    folding: Tile<E>,
+    adding: Tile<E>,
     /// The slot boxes, one flat index: a run's two are `2 · run` and the next.
     boxes: Walk,
     /// This run's slot of this box.
@@ -76,7 +76,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         let first_turn = false;
         LastArrival::<'t, E> {
             slots,
-            folding: folding_tile::<E, V>(self, &boxes, first_turn),
+            adding: adding_tile::<E, V>(self, &boxes, first_turn),
             boxes: walk,
             own,
             arrivals,
@@ -125,7 +125,7 @@ impl<'a, E: Numeric> LastArrival<'a, E> {
                 // What the other runs parked is acquired before it is read.
                 sync_storage();
                 let total = self.boxes.region(self.first_slot);
-                let mut sum_into = self.folding.at(&total);
+                let mut sum_into = self.adding.at(&total);
                 // Every run after the first starts in this box: its part is in its first slot.
                 for run in self.first + 1..self.first + self.holders {
                     sum_into.copy_from(&self.slots.at(&self.boxes.region(2 * run)));

@@ -303,9 +303,9 @@ impl<E: Numeric> MmaData<E> {
     }
 
     /// `slots[first + r]` combined under `monoid` with this unit's cells on its row `r`: the
-    /// unit's own part of each row, which [`fold_across_units`](Self::fold_across_units)
+    /// unit's own part of each row, which [`reduce_across_units`](Self::reduce_across_units)
     /// completes.
-    pub(crate) fn fold_along(
+    pub(crate) fn reduce_own_cells(
         &self,
         slots: &mut Array<E>,
         #[comptime] first: usize,
@@ -333,7 +333,7 @@ impl<E: Numeric> MmaData<E> {
     /// compiler folds, so a bit that moves it costs no shuffle. That holds for a layout whose row
     /// is a function of some of the lane's bits, as the manual-mma layouts are; the register
     /// attention's component test checks it on every lane.
-    pub(crate) fn fold_across_units(
+    pub(crate) fn reduce_across_units(
         &self,
         slots: &mut Array<E>,
         #[comptime] first: usize,
@@ -417,8 +417,8 @@ impl<E: Float> MmaData<E> {
         for i in 0..rows {
             maxima[i] = seed[i];
         }
-        self.fold_along(&mut maxima, 0usize, Monoid::Max);
-        self.fold_across_units(&mut maxima, 0usize, Monoid::Max);
+        self.reduce_own_cells(&mut maxima, 0usize, Monoid::Max);
+        self.reduce_across_units(&mut maxima, 0usize, Monoid::Max);
         maxima
     }
 
@@ -430,8 +430,8 @@ impl<E: Float> MmaData<E> {
         for i in 0..rows {
             sums[i] = E::from_int(0);
         }
-        self.fold_along(&mut sums, 0usize, Monoid::Sum);
-        self.fold_across_units(&mut sums, 0usize, Monoid::Sum);
+        self.reduce_own_cells(&mut sums, 0usize, Monoid::Sum);
+        self.reduce_across_units(&mut sums, 0usize, Monoid::Sum);
         sums
     }
 
