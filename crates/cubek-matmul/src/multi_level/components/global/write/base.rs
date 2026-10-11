@@ -16,6 +16,8 @@ use cubecl::{
 
 use cubek_std::InvalidConfigError;
 
+use crate::definition::{MatmulElems, MatmulProblem};
+
 pub type WriterStage<GW, MT> = <<GW as GlobalWriterFamily>::Stage as StageFamily>::Stage<
     definition::Stage<MT>,
     definition::StageSize<MT>,
@@ -32,6 +34,15 @@ pub trait GlobalWriterFamily: 'static + Send + Sync {
 
     /// Verify that configs are valid for a writer, otherwise return an error stating why
     fn validate_with_config(_config: &GlobalWriterConfig) -> Result<(), InvalidConfigError> {
+        Ok(())
+    }
+
+    /// Verify that the problem's output is one this writer can write, otherwise return an error
+    /// stating why
+    fn validate_with_problem(
+        _problem: &MatmulProblem,
+        _dtypes: &MatmulElems,
+    ) -> Result<(), InvalidConfigError> {
         Ok(())
     }
 }

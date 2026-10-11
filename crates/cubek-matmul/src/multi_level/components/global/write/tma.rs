@@ -1,3 +1,4 @@
+use crate::definition::{MatmulElems, MatmulProblem};
 use crate::multi_level::{
     components::{
         global::{
@@ -13,7 +14,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},
 };
-use cubek_std::{InvalidConfigError, MatrixLayout};
+use cubek_std::{InvalidConfigError, MatrixLayout, launch::tma::stride_align_bits};
 
 /// TMA writes shared memory at 128-byte boundaries.
 const TMA_ALIGNMENT: usize = 128;
@@ -134,6 +135,34 @@ impl GlobalWriterFamily for TmaWriterFamily {
             return Err(Box::new(format!(
                 "TMA writer needs tiles of a multiple of {TMA_ALIGNMENT} bytes, got {tile_bytes}"
             )));
+        }
+        Ok(())
+    }
+
+    fn validate_with_problem(
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+    ) -> Result<(), InvalidConfigError> {
+        // The descriptor drops the last stride, folds the batches into one stride, and steps
+        // every other stride in multiples of 16 bytes.
+        let (shape, strides) = (&problem.out_shape, &problem.out_strides);
+        let rank = strides.len();
+        if strides[rank - 1] != 1 {
+            return Err(Box::new(
+                "TMA writer needs an output whose rows are contiguous",
+            ));
+        }
+        let batches_fold = (0..rank.saturating_sub(3))
+            .all(|d| shape[d] == 1 || strides[d] == strides[d + 1] * shape[d + 1]);
+        if !batches_fold {
+            return Err(Box::new(
+                "TMA writer needs an output whose batches are one stride apart",
+            ));
+        }
+        if stride_align_bits(strides, &MatrixLayout::RowMajor, &dtypes.acc_global) < 4 {
+            return Err(Box::new(
+                "TMA writer needs output strides aligned to 16 bytes",
+            ));
         }
         Ok(())
     }
