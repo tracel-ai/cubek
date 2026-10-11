@@ -171,10 +171,10 @@ fn register_plane_attention<E: Float>(
     let instruction = comptime!(Instruction::Mma {
         io: MmaIo::default()
     });
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let out = out.tile(comptime!(space.clone()));
+    let q = q.tile(&space);
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let out = out.tile(&space);
     let bias = Procedural::<f32>::new::<Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
