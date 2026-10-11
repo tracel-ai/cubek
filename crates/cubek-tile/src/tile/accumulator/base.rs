@@ -92,22 +92,26 @@ impl Scratch {
     }
 }
 
-/// The planes `levels` distribute `space` across; panics on a runtime-only count.
+/// The planes `levels` distribute `space` across, a plane group's every plane among them: one
+/// window each, as `PLANE_POS` indexes them. Panics on a runtime-only count.
 pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     let mut handed = space.clone();
     let mut planes = 1;
     for level in levels {
-        for axis in level.axes() {
-            if level.coverage() == Coverage::Distribute(ComputeScope::Plane)
-                && level.distributes(axis)
-            {
-                planes *= level.instances_along(&handed, axis).unwrap_or_else(|| {
-                    panic!(
-                        "Tile::with_scratch: {axis:?} is distributed across the cube's planes at a \
-                         count only the launch knows, so the plane's windows cannot be sized"
-                    )
-                });
+        if let Some(per_instance) = level.coverage().scope().and_then(ComputeScope::planes) {
+            let mut instances = 1;
+            for axis in level.axes() {
+                if level.distributes(axis) {
+                    instances *= level.instances_along(&handed, axis).unwrap_or_else(|| {
+                        panic!(
+                            "Tile::with_scratch: {axis:?} is distributed across the cube's planes \
+                             at a count only the launch knows, so the plane's windows cannot be \
+                             sized"
+                        )
+                    });
+                }
             }
+            planes *= instances * per_instance;
         }
         handed = level.child(&handed);
     }
