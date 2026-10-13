@@ -4,7 +4,7 @@
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{bytes::Bytes, prelude::*, std::tensor::TensorHandle};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
 use cubek_tile::kind::Storage;
 use cubek_tile::layout::{StorageLevels, StoragePartitioning};
 use cubek_tile::*;
@@ -127,6 +127,9 @@ fn a_unit_inside_a_window_across_two_stored_tiles_reads_its_own_scales() {
 fn check_copy(storage: StoragePartitioning, axes: &[Axis]) {
     let (cols, blocks) = (32, 8);
     let client = cubecl::test_device().client();
+    if skip_unless_plane_holds(&client, (2 * TILE_COLUMNS * 2) as u32) {
+        return;
+    }
     let launcher = launcher(&client, cols, blocks);
 
     let extents: Vec<(Axis, usize)> = axes
