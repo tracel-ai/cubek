@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use super::CubeOrder;
+use super::{CubeOrder, PlaneOrder};
 use crate::{Axis, AxisMap, Extent, Space};
 
 /// One decomposition level of a space: who takes its tiles and how it cuts each axis it names.
@@ -16,6 +16,9 @@ pub struct Level {
     shared_by: Option<usize>,
     fillers: usize,
     order: CubeOrder,
+    /// The order the launch's planes take this level's tiles in, where it is a plane level
+    /// spanning the launch rather than one cube ([`spanning_launch`](Level::spanning_launch)).
+    plane_order: Option<PlaneOrder>,
 }
 
 /// One axis of a level: the tile it steps in, how many, and how its instances spread them.
@@ -280,7 +283,56 @@ impl Level {
             shared_by: None,
             fillers: 0,
             order: CubeOrder::RowMajor,
+            plane_order: None,
         }
+    }
+
+    /// The plane level over every tile of `tile`'s axes, each `(axis, tile)`, dealt to the planes
+    /// of the whole launch in `order` rather than to the planes of one cube: the outermost level
+    /// of a partitioning with no cube level, whose cubes are only how the launch groups its planes.
+    pub(crate) fn spanning_launch(tile: &[(Axis, usize)], order: PlaneOrder) -> Level {
+        assert!(
+            !tile.is_empty(),
+            "Level::spanning_launch: the launch's planes take the tiles of at least one axis"
+        );
+        for axis in order.block_axes() {
+            assert!(
+                tile.iter().any(|&(a, _)| a == axis),
+                "Level::spanning_launch: the order's block names {axis:?}, which the level does not"
+            );
+        }
+        assert!(
+            tile.len() > 1 || !order.block_order().swizzles(),
+            "Level::spanning_launch: the blocks of one axis have one order; a swizzle takes two"
+        );
+        let cuts: Vec<_> = tile
+            .iter()
+            .map(|&(axis, tile)| {
+                assert!(tile > 0, "Level: {axis:?} has a tile of nothing");
+                (
+                    axis,
+                    Cut {
+                        tile,
+                        count: Count::All,
+                        spread: Spread::Contiguous,
+                    },
+                )
+            })
+            .collect();
+        Level {
+            coverage: Coverage::Distribute(ComputeScope::Plane),
+            cuts: AxisMap::new(&cuts),
+            batches: Vec::new(),
+            shared_by: None,
+            fillers: 0,
+            order: CubeOrder::RowMajor,
+            plane_order: Some(order),
+        }
+    }
+
+    /// The order the launch's planes take this level's tiles in, where it spans the launch.
+    pub fn plane_order(&self) -> Option<&PlaneOrder> {
+        self.plane_order.as_ref()
     }
 
     /// One tile of each of `axes` per cube, on the grid's `Z` dimension.
