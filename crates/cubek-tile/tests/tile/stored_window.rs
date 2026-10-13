@@ -4,7 +4,7 @@
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{bytes::Bytes, prelude::*, std::tensor::TensorHandle};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::kind::Storage;
 use cubek_tile::layout::{StorageLevels, StoragePartitioning};
 use cubek_tile::*;
@@ -127,6 +127,16 @@ fn a_unit_inside_a_window_across_two_stored_tiles_reads_its_own_scales() {
 fn check_copy(storage: StoragePartitioning, axes: &[Axis]) {
     let (cols, blocks) = (32, 8);
     let client = cubecl::test_device().client();
+    // The levels put 32 units in a plane, and a grid read off them needs the plane to be exactly
+    // that wide.
+    let plane = client.properties().hardware.plane_size_max;
+    if plane != 32 {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "the window takes a 32-unit plane; this runtime reports {plane}"
+        )))
+        .enforce();
+        return;
+    }
     let launcher = launcher(&client, cols, blocks);
 
     let extents: Vec<(Axis, usize)> = axes
