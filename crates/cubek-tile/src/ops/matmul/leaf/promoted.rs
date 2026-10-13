@@ -144,6 +144,9 @@ impl<T: Numeric> RegisterData<T> {
         ));
         let (mr, nr, lw) = (self.mr, self.nr, lhs.vector_size);
         let kc = comptime!(lhs.nr * lw);
+        // A block over budget walks its columns at runtime: unrolled, every cell's read and step
+        // is spelled out once per step of the contraction.
+        let unroll = comptime!(mr * nr * self.vector_size <= self.config.budget);
         let rhs_axes = comptime!(
             MatrixAxes::new(&rhs.place.space, kc, nr * vw).unwrap_or_else(|e| panic!("{e}"))
         );
@@ -151,17 +154,15 @@ impl<T: Numeric> RegisterData<T> {
         let mut b = Array::<Vector<T, RA>>::new(nr);
         #[unroll]
         for k in 0..kc {
-            #[unroll]
+            #[unroll(unroll)]
             for n in 0..nr {
-                b[n] = Vector::<T, RA>::cast_from(
-                    rhs_mat.read(((k as u32).runtime(), (n as u32).runtime())),
-                );
+                b[n] = Vector::<T, RA>::cast_from(rhs_mat.read(((k as u32).runtime(), n as u32)));
             }
             #[unroll]
             for i in 0..mr {
                 let line = lhs.data[i * lhs.nr + k / lw];
                 let a = Vector::<T, RA>::cast_from(line.extract(comptime!(k % lw)));
-                #[unroll]
+                #[unroll(unroll)]
                 for n in 0..nr {
                     let at = i * nr + n;
                     self.data[at] = semiring.step::<Vector<T, RA>>(a, b[n], self.data[at]);
