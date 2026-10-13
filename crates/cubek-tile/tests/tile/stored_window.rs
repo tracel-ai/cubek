@@ -21,6 +21,8 @@ const KI: Axis = Axis(2);
 const BLOCK: usize = 16;
 /// Columns a stored tile holds side by side.
 const TILE_COLUMNS: usize = 8;
+/// Columns a plane's window holds: two stored tiles, so the window crosses from one to the next.
+const PLANE_COLUMNS: usize = 2 * TILE_COLUMNS;
 
 /// `output = input`, each unit copying, cell by cell, the window it is cut down to through its
 /// cube's and its plane's.
@@ -79,16 +81,16 @@ fn copy_cells<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] ran
 }
 
 /// One level of planes over sixteen columns each, two stored tiles of eight, and under it one
-/// unit a column taking four blocks of `K`, interleaved two to a column: the units' level is the
-/// storage tile's, so a unit's window is reached by moving inside a plane's window that spans
-/// two stored tiles.
-fn launcher(client: &Client, cols: usize, blocks: usize) -> Launcher {
+/// unit a column taking four blocks of `K`, interleaved `units_down_k` to a column: the units'
+/// level is the storage tile's, so a unit's window is reached by moving inside a plane's window
+/// that spans two stored tiles.
+fn launcher(client: &Client, cols: usize, blocks: usize, units_down_k: usize) -> Launcher {
     implied(
         client,
         Partitioning::new(
             Space::new(&[(N, cols), (KB, blocks), (KI, BLOCK)]),
             Levels::leaf(&[(N, 1), (KB, 4), (KI, BLOCK)])
-                .units(&[(N, 2 * TILE_COLUMNS), (KB, 2)])
+                .units(&[(N, PLANE_COLUMNS), (KB, units_down_k)])
                 .interleaved(KB)
                 .walk_every(&[KB])
                 .planes(&[(N, 2)])
@@ -122,22 +124,24 @@ fn a_unit_inside_a_window_across_two_stored_tiles_reads_its_own_scales() {
     check_copy(storage, &[N, KB]);
 }
 
-/// An operand over `axes` of 32 columns and 8 blocks of `K`, stored as `storage` states, copied
-/// out unit by unit under [`launcher`]: every cell lands where its logical coordinate says.
+/// An operand over `axes` of two planes' columns and one step of blocks of `K`, stored as
+/// `storage` states, copied out unit by unit under [`launcher`]: every cell lands where its
+/// logical coordinate says.
 fn check_copy(storage: StoragePartitioning, axes: &[Axis]) {
-    let (cols, blocks) = (32, 8);
     let client = cubecl::test_device().client();
-    // The levels put 32 units in a plane, and a grid read off them needs the plane to be exactly
-    // that wide.
-    let plane = client.properties().hardware.plane_size_max;
-    if plane != 32 {
+    // A grid read off the levels fills the plane, so the units the plane holds past its
+    // `PLANE_COLUMNS` columns go down `K`.
+    let plane = client.properties().hardware.plane_size_max as usize;
+    if !plane.is_multiple_of(PLANE_COLUMNS) {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "the window takes a 32-unit plane; this runtime reports {plane}"
+            "a {plane}-unit plane does not split into {PLANE_COLUMNS}-unit rows of columns"
         )))
         .enforce();
         return;
     }
-    let launcher = launcher(&client, cols, blocks);
+    let units_down_k = plane / PLANE_COLUMNS;
+    let (cols, blocks) = (2 * PLANE_COLUMNS, 4 * units_down_k);
+    let launcher = launcher(&client, cols, blocks, units_down_k);
 
     let extents: Vec<(Axis, usize)> = axes
         .iter()
