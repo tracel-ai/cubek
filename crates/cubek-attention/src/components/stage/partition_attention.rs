@@ -72,7 +72,7 @@ impl<
         let p = config.shared().partition_size;
 
         let head_dim_factor =
-            SM::<AP>::new(1.0 / ((p.head_dim * config.tile_size().head_dim) as f32).sqrt());
+            SM::<AP>::new(1.0 / ((p.head_dim * config.tile_size().head_dim) as f64).sqrt());
 
         #[unroll]
         for kv in 0..p.seq_kv {

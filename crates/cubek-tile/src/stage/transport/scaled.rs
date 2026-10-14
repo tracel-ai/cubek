@@ -111,7 +111,7 @@ impl<T: Numeric> Tile<T> {
         // multiply a line rather than one a value.
         let stored_as = self.packing();
         let packing = comptime!(stored_as.placed());
-        let lift = comptime!(packing.lift());
+        let lift = comptime!(packing.lift() as f32);
         let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let mem = self.mem("Tile::copy_from");

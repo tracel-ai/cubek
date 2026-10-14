@@ -26,9 +26,9 @@ fn tap_distance<E: Float>(
     #[comptime] radius: usize,
 ) -> TapDistance<E> {
     sum_of(
-        affine_along(tap, E::new(-(radius as f32)), E::new(1.0_f32)),
+        affine_along(tap, E::new(-(radius as f64)), E::new(1.0)),
         Phase::<E> {
-            coefficient: E::new(-1.0_f32),
+            coefficient: E::new(-1.0),
             numerator_scale: comptime!(scale),
             numerator_offset: comptime!(offset),
             divisor: comptime!(divisor),

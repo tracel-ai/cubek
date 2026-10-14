@@ -49,9 +49,7 @@ impl SeparableFilterFamily for NearestFilter {
 impl<E: Float> SeparableFilter<E> for NearestFilter {
     type Axis = NearestAxis<E>;
     fn along(_distance: TapDistance<E>) -> Self::Axis {
-        NearestAxis::<E> {
-            value: E::new(1.0_f32),
-        }
+        NearestAxis::<E> { value: E::new(1.0) }
     }
 }
 

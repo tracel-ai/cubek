@@ -150,8 +150,8 @@ fn procedural_reduce_kernel<E: Float>(
     let input = Procedural::<E>::new::<AffineCoordinate<E>>(
         comptime!(space.space().clone()),
         AffineCoordinate::<E> {
-            offset: E::new(0.0_f32),
-            coefficient: E::new(1.0_f32),
+            offset: E::new(0.0),
+            coefficient: E::new(1.0),
             axis: K,
         },
     )

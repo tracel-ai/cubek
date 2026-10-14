@@ -30,7 +30,7 @@ pub struct Linear<C: CubeType> {
 impl<T: Float, C: Recipe<T>> Recipe<T> for Linear<C> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
         let x = self.coordinate.evaluate(coordinates).abs();
-        select(x < T::new(1.0_f32), T::new(1.0_f32) - x, T::new(0.0_f32))
+        select(x < T::new(1.0), T::new(1.0) - x, T::new(0.0))
     }
 }
 
