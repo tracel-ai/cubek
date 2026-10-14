@@ -2211,9 +2211,15 @@ impl TileOrdered {
         .unwrap()
     }
 
-    /// The scales as stored, served as `f32` a line (a tile's sixteen) a read: whole words, or
-    /// `ue4m3` bytes four to a word, the same shape in values either way.
-    fn s_op(&self, client: &Client, launcher: &Launcher, scales: TileScales) -> Bound {
+    /// The scales as stored, served `served` values a read, the columns one plane holds: whole
+    /// words, or `ue4m3` bytes four to a word, the same shape in values either way.
+    fn s_op(
+        &self,
+        client: &Client,
+        launcher: &Launcher,
+        scales: TileScales,
+        served: usize,
+    ) -> Bound {
         let axes = Projection::dims()
             .dim(NB)
             .dim(KB)
@@ -2233,7 +2239,7 @@ impl TileOrdered {
                 launcher
                     .arg(s_t.binding())
                     .gathered(axes)
-                    .vectorize(self.tile)
+                    .vectorize(served)
                     .build()
                     .unwrap()
             }
@@ -2260,7 +2266,7 @@ impl TileOrdered {
                     .arg(binding)
                     .gathered(axes)
                     .packed(Field::of_scale(ScaleDtype::UE4M3))
-                    .vectorize(self.tile)
+                    .vectorize(served)
                     .build()
                     .unwrap()
             }
@@ -2356,7 +2362,16 @@ fn check_chunked(arm: Arm, scales: TileScales, read: UnitRead) {
         Arm::Landing => Instruction::Cmma,
     };
     let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
-    let s_op = w.s_op(&client, &launcher, scales);
+    let s_op = w.s_op(
+        &client,
+        &launcher,
+        scales,
+        match arm {
+            Arm::Registers => w.tile,
+            // The landing steps a plane's eight columns of a tile, a line of scales at a time.
+            Arm::Landing => 8,
+        },
+    );
 
     chunked_scaled_matmul::launch(
         &client,
@@ -2497,7 +2512,7 @@ fn check_partitioned(scales: TileScales, read: UnitRead) {
         .build();
     let chunks_level = levels[2].clone();
     let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
-    let s_op = w.s_op(&client, &launcher, scales);
+    let s_op = w.s_op(&client, &launcher, scales, w.tile);
 
     partitioned_scaled_matmul::launch(
         &client,
@@ -2594,7 +2609,7 @@ fn check_stepped(scales: TileScales) {
         .cubes(&[NB])
         .build();
     let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
-    let s_op = w.s_op(&client, &launcher, scales);
+    let s_op = w.s_op(&client, &launcher, scales, w.tile);
 
     stepped_scaled_matmul::launch(
         &client,
@@ -2693,7 +2708,7 @@ fn check_decoded_tile_order_copy(through: CopiedThrough) {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let s_op = w.s_op(&client, &launcher, TileScales::Ue4m3);
+    let s_op = w.s_op(&client, &launcher, TileScales::Ue4m3, w.tile);
     decoded_tile_order_copy::launch(
         &client,
         launcher.cube_count(),
@@ -2865,7 +2880,8 @@ fn check_staged_stepped(
         .cubes(&[NB])
         .build();
     let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
-    let s_op = w.s_op(&client, &launcher, scales);
+    // A plane holds its share of a tile's columns, a line of scales at a time.
+    let s_op = w.s_op(&client, &launcher, scales, w.tile / planes.columns);
 
     staged_stepped_scaled_matmul::launch(
         &client,

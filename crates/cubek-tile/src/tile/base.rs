@@ -1059,7 +1059,6 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
-
     /// This tile without its outer scales that vary only along axes of `space`, and those scales.
     /// With `space` the output's, they are the scales a sum over the rest of the values' axes takes
     /// out of every term and applies once ([`scaled`](Tile::scaled)), and the tile left carries
@@ -1219,7 +1218,6 @@ impl<E: Numeric> TileExpand<E> {
             matrix,
         }
     }
-
 
     pub fn __expand_factor_method(
         &self,
