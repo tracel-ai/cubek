@@ -67,7 +67,7 @@ impl<T: Numeric> Memory<T> {
             StageStorage::Lines { read } => {
                 comptime!(refuse_for_a_plane(owner, "held in the plane's units"));
                 Tile::<T> {
-                    kind: TileKind::new_Lines(Lines::<T>::new(
+                    kind: TileKind::new_Lines(Lines::new(
                         operand,
                         comptime!(level.clone()),
                         comptime!(read),

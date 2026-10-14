@@ -1396,7 +1396,7 @@ impl<S: Numeric> Tile<S> {
     #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
         match &self.kind {
-            TileKind::Lines(lines) => lines.read(coords),
+            TileKind::Lines(lines) => lines.read::<S>(coords),
             TileKind::Memory(_) => self.value_in_line(coords),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
