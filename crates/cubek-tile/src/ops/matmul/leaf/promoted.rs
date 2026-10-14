@@ -119,6 +119,10 @@ impl<T: Numeric> RegisterData<T> {
     /// of its cells is a factor read in registers, and `rhs` is read one step of the contraction
     /// at a time. What an attention's unit does with the probabilities it just computed,
     /// contracting them with the values without leaving registers.
+    ///
+    /// Every cell of `lhs` is a whole value, whatever it folded: a block that summed runs of its
+    /// contraction into its cells is one value wide. This block's lines are neighbours along the
+    /// columns `rhs` is lined along.
     pub(crate) fn mma_block<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &RegisterData<EL>,
@@ -126,8 +130,9 @@ impl<T: Numeric> RegisterData<T> {
     ) {
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma_block"));
         comptime!(assert!(
-            lhs.fold == 1 && self.fold == 1,
-            "RegisterData::mma_block: both blocks hold whole cells, a line of neighbours"
+            self.fold == 1,
+            "RegisterData::mma_block: this block's lines are neighbours along the rhs's columns, \
+             not runs of its contraction"
         ));
         comptime!(assert!(
             lhs.mr == self.mr,
