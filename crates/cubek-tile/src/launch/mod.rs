@@ -12,7 +12,6 @@ pub use arg::destination::{Buffered, Destination, DestinationLaunch, TmaStored};
 pub use arg::last_arrival::LastArrival;
 pub use arg::operand::{Output, OutputArgs};
 pub use arg::relay::Relay;
-pub use arg::scale::{MaybeTile, MaybeTileExpand};
 pub use arg::tma::{TmaBox, TmaLanding, TmaOperand, TmaTiles};
 pub use base::Grid;
 pub use binding::{Arg, Bound, Labelled, Unbound, Unlabelled};

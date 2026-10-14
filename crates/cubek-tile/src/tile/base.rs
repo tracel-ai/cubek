@@ -578,14 +578,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The one value this tile holds.
-    pub(crate) fn only(&self) -> T {
-        let axes = comptime!(MatrixAxes::trailing(&self.place.space));
-        let matrix = self.matrix_packed::<Const<1>>(axes, 0usize);
-        let origin = 0u32.runtime();
-        matrix.read((origin, origin)).extract(0usize)
-    }
-
     /// Multiply every partial this accumulator holds by `factor`.
     pub fn scale_by(&mut self, factor: T) {
         match &mut self.kind {
@@ -597,27 +589,6 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::scale_by: not writable")
             }
-        }
-    }
-
-    /// Multiply every partial this accumulator holds by `factor`'s one value, if bound.
-    pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
-        #[comptime]
-        match factor {
-            ComptimeOption::Some(factor) => {
-                let value = T::cast_from(factor.only());
-                match &mut self.kind {
-                    TileKind::PlaneTile(t) => t.scale(value),
-                    TileKind::PlanePartition(p) => p.scale(value),
-                    TileKind::Memory(_) => panic!(
-                        "Tile::scale: a memory tile is scaled by the cube, not by one unit (Tile::mul)"
-                    ),
-                    TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => {
-                        panic!("Tile::scale: not writable")
-                    }
-                }
-            }
-            ComptimeOption::None => {}
         }
     }
 
@@ -1088,10 +1059,6 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
-    /// [`mul`](Tile::mul) by an optional level; absent, it scales by one.
-    pub fn mul_bound<S: Numeric>(&self, _level: &ComptimeOption<Tile<S>>) -> Tile<E> {
-        unexpanded!()
-    }
 
     /// This tile without its outer scales that vary only along axes of `space`, and those scales.
     /// With `space` the output's, they are the scales a sum over the rest of the values' axes takes
@@ -1253,16 +1220,6 @@ impl<E: Numeric> TileExpand<E> {
         }
     }
 
-    pub fn __expand_mul_bound_method<S: Numeric>(
-        &self,
-        scope: &Scope,
-        level: &ComptimeOptionExpand<Tile<S>>,
-    ) -> TileExpand<E> {
-        match level {
-            ComptimeOptionExpand::Some(level) => self.__expand_mul_method(scope, level),
-            ComptimeOptionExpand::None => self.clone(),
-        }
-    }
 
     pub fn __expand_factor_method(
         &self,
