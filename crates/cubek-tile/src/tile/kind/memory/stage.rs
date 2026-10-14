@@ -1,5 +1,7 @@
 //! Shared-memory stages: the [`StageForm`] a stage takes and the `smem*` constructors.
 
+use core::marker::PhantomData;
+
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
@@ -328,6 +330,7 @@ impl Memory {
             }),
             factor: Factor::none(),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
+            _element: PhantomData,
         }
     }
 

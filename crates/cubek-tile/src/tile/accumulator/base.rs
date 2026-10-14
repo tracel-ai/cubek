@@ -1,5 +1,7 @@
 //! The plane-resident accumulator an output opens ([`Accumulate`]).
 
+use core::marker::PhantomData;
+
 use cubecl::prelude::*;
 
 use crate::ops::matmul::leaf::memory;
@@ -240,6 +242,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                         }),
                         factor: self.factor.clone(),
                         place: comptime!(self.place.clone()),
+                        _element: PhantomData,
                     }
                 }
                 TileKind::Memory(_)
@@ -299,6 +302,7 @@ impl<Acc: Numeric> Tile<Acc> {
             kind,
             factor: self.factor.clone(),
             place: comptime!(self.place.clone()),
+            _element: PhantomData,
         }
     }
 

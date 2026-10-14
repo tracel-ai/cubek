@@ -1,6 +1,8 @@
 //! The plane-level tile ([`PlaneTile`]) and the grid of them one plane owns
 //! ([`PlanePartition`]).
 
+use core::marker::PhantomData;
+
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout},
     prelude::*,
@@ -411,7 +413,7 @@ impl PlanePartition {
 
     /// The `sub_m × sub_n` block of fragments `step` selects, or one fragment if `1 × 1`.
     /// A level that cuts the partition must be walked with comptime coordinates.
-    pub(crate) fn at_step<T: Numeric>(&self, step: &Step, #[comptime] space: Space) -> TileKind<T> {
+    pub(crate) fn at_step(&self, step: &Step, #[comptime] space: Space) -> TileKind {
         let edges = comptime!(MatrixAxes::edges(&space));
         let a0 = comptime!(space.axis_at(edges.row_split));
         let a1 = comptime!(space.axis_at(edges.col_split));
@@ -651,6 +653,7 @@ impl PlanePartition {
             // A `Dynamic` extent here is never read; fragments were sized from the statement.
             factor: Factor::none(),
             place: comptime!(Placement::new(space, depth, levels)),
+            _element: PhantomData,
         }
     }
 
@@ -737,6 +740,7 @@ impl PlanePartition {
             }),
             factor: Factor::none(),
             place: comptime!(Placement::new(window, depth, levels)),
+            _element: PhantomData,
         }
     }
 

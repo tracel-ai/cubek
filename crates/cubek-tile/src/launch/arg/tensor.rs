@@ -8,7 +8,11 @@ use cubecl::frontend::{buffer_len::expand_buffer_length_native, slice};
 use cubecl::ir::pliron::{r#type::TypeHandle, value::Value};
 use cubecl::ir::{Scope, interfaces::TypedExt, types::VectorType};
 use cubecl::prelude::*;
-use cubecl::std::tensor::{ViewMut, layout::CoordsDyn, view::launch::ViewCompilationArg};
+use cubecl::std::tensor::{
+    ViewMut,
+    layout::{CoordsDyn, VirtualLayout, VirtualLayoutExpand},
+    view::launch::ViewCompilationArg,
+};
 use cubecl::unexpanded;
 
 use crate::tile::packing::base::Packing;
@@ -28,10 +32,13 @@ pub struct TileArg<'a, E: Numeric> {
 }
 
 /// Where a [`TileArg`]'s values are: a buffer, or a TMA tensor map, which a stage lands as it
-/// lies.
+/// lies, and where a position in the operand's space lands in it.
 pub enum Values<'a, E: Numeric> {
     Tensor(&'a Tensor<E>),
-    TensorMap(ViewMut<'static, E, CoordsDyn>),
+    TensorMap {
+        map: TensorMap<E, Tiled>,
+        layout: VirtualLayout<CoordsDyn, Sequence<i32>>,
+    },
 }
 
 /// The scales a [`TileArg`]'s values are read under: none, or a coarser operand of its own, which
@@ -105,14 +112,16 @@ fn gathered_tile<E: Numeric>(
 /// A tensor map, served as a TMA-filled tile.
 #[cube]
 fn tensor_map_tile<E: Numeric>(
-    view: &ViewMut<'static, E, CoordsDyn>,
+    map: &TensorMap<E, Tiled>,
+    layout: &VirtualLayout<CoordsDyn, Sequence<i32>>,
     partitioning: &Partitioning,
     #[comptime] spec: TileSpec,
 ) -> Tile<E> {
     let space = comptime!(partitioning.clone());
     let own = comptime!(space.space().subspace(spec.axes()));
     let data = TmaData::from_tensor_map(
-        view.clone(),
+        map.clone(),
+        layout.clone(),
         comptime!(own.rank()),
         comptime!(spec.units),
         comptime!(spec.packing),
@@ -139,7 +148,10 @@ pub enum ValuesExpand<'a, E: Numeric> {
         meta: TensorMetaExpand,
         width: usize,
     },
-    TensorMap(<ViewMut<'static, E, CoordsDyn> as CubeType>::ExpandType),
+    TensorMap {
+        map: NativeExpand<TensorMap<E, Tiled>>,
+        layout: VirtualLayoutExpand<CoordsDyn, Sequence<i32>>,
+    },
 }
 
 /// The device side of a [`ScaleArg`].
@@ -213,14 +225,14 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
             ValuesExpand::Tensor { tensor, .. } => {
                 buffer_tile::expand::<E>(scope, tensor, partitioning, self.spec.clone())
             }
-            ValuesExpand::TensorMap(view) => {
-                tensor_map_tile::expand::<E>(scope, view, partitioning, self.spec.clone())
+            ValuesExpand::TensorMap { map, layout } => {
+                tensor_map_tile::expand::<E>(scope, map, layout, partitioning, self.spec.clone())
             }
         }
     }
 
     fn is_tensor_map(&self) -> bool {
-        matches!(self.values, ValuesExpand::TensorMap(_))
+        matches!(self.values, ValuesExpand::TensorMap { .. })
     }
 }
 
@@ -455,8 +467,22 @@ impl<E: Numeric> LaunchArg for TileArg<'static, E> {
                     width: *width,
                 }
             }
-            ValuesCompilationArg::TensorMap(view) => {
-                ValuesExpand::TensorMap(ViewMut::<'static, E, CoordsDyn>::expand(view, builder))
+            // The map and its layout, as `ViewMut`'s expand takes them apart, kept apart: a tile
+            // builds the view where a box moves, at the element it names.
+            ValuesCompilationArg::TensorMap(ViewCompilationArg::TensorMapTiled {
+                buffer,
+                layout,
+            }) => {
+                let scope = &builder.scope;
+                let ty =
+                    Type::new(E::elem_type(scope)).with_vector_size(E::__expand_vector_size(scope));
+                ValuesExpand::TensorMap {
+                    layout: layout.expand(ty, builder),
+                    map: <TensorMap<E, Tiled> as LaunchArg>::expand(buffer, builder),
+                }
+            }
+            ValuesCompilationArg::TensorMap(_) => {
+                panic!("TileArg: a tensor map's values are tiled boxes")
             }
         };
         let scale = ScaleArg::expand(&arg.scale, builder);
@@ -525,7 +551,10 @@ impl<'a, E: Numeric> Clone for ValuesExpand<'a, E> {
                 meta: *meta,
                 width: *width,
             },
-            ValuesExpand::TensorMap(view) => ValuesExpand::TensorMap(view.clone()),
+            ValuesExpand::TensorMap { map, layout } => ValuesExpand::TensorMap {
+                map: map.clone(),
+                layout: layout.clone(),
+            },
         }
     }
 }

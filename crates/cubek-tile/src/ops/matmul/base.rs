@@ -1,6 +1,8 @@
 //! `c.mm(a, b)` and `c.mma(a, b)` at a final tile, each descending to its leaf through
 //! [`Descent::contract`].
 
+use core::marker::PhantomData;
+
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
@@ -101,6 +103,7 @@ impl<Acc: Numeric> Tile<Acc> {
                     kind: TileKind::new_Memory(g),
                     factor: self.factor.clone(),
                     place: comptime!(self.place.clone()),
+                    _element: PhantomData,
                 }
             }
             TileKind::PlaneTile(_)

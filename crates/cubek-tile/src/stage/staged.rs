@@ -1,5 +1,7 @@
 //! Allocating the tile an operand is staged into, and filling a stage from a procedural source.
 
+use core::marker::PhantomData;
+
 use cubecl::prelude::*;
 
 use crate::*;
@@ -82,6 +84,7 @@ impl Memory {
                         operand.place.depth + 1,
                         operand.place.levels.clone()
                     )),
+                    _element: PhantomData,
                 }
             }
             _ => Memory::stage_memory(operand, level, storage, width, owner),

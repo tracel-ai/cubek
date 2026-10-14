@@ -1,6 +1,7 @@
 //! Values a tile holds apart from the element their type names, each named again where it is
-//! used: a value of a type naming one element ([`Raw`]), an erased call ([`RawCall`]), a cmma
-//! fragment ([`RawMatrix`]) and a warpgroup accumulator ([`RawAccumulator`]).
+//! used: a value of a type naming one element ([`Raw`]: a slice, registers, a tensor map), an
+//! erased call ([`RawCall`]), a cmma fragment ([`RawMatrix`]) and a warpgroup accumulator
+//! ([`RawAccumulator`]).
 
 use std::marker::PhantomData;
 
@@ -25,6 +26,8 @@ pub(crate) struct Slice;
 pub(crate) struct SharedSlice;
 /// A unit's registers, in lines of `W`.
 pub(crate) struct Registers<W: Size>(PhantomData<W>);
+/// A TMA tensor map of tiled boxes.
+pub(crate) struct TiledMap;
 
 impl RawKind for Slice {
     type At<T: Numeric> = Box<[T]>;
@@ -36,6 +39,10 @@ impl RawKind for SharedSlice {
 
 impl<W: Size> RawKind for Registers<W> {
     type At<T: Numeric> = Array<Vector<T, W>>;
+}
+
+impl RawKind for TiledMap {
+    type At<T: Numeric> = TensorMap<T, Tiled>;
 }
 
 /// A value of the type `K` names, held as the value and the element it holds.

@@ -1,5 +1,7 @@
 //! The [`Tile`]: one operand's backing store plus the comptime [`Space`] it projects.
 
+use core::marker::PhantomData;
+
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn, unexpanded};
 
 use cubecl::zspace::SmallVec;
@@ -11,23 +13,27 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Tile<T: Numeric> {
-    pub(crate) kind: TileKind<T>,
+    pub(crate) kind: TileKind,
     /// The scales these values carry, innermost first: none until [`mul`](Tile::mul). A tile
     /// knows them whatever its kind and never applies them by itself.
     pub(crate) factor: Factor,
     /// Where this tile sits in its partitioning.
     #[cube(comptime)]
     pub(crate) place: Placement,
+    /// The element the tile is named at, while it names one: its kinds hold theirs as data.
+    #[cube(comptime)]
+    pub(crate) _element: PhantomData<T>,
 }
 
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Pairs `kind` with its `place`, carrying no scales.
-    pub(crate) fn new(kind: TileKind<T>, #[comptime] place: Placement) -> Tile<T> {
+    pub(crate) fn new(kind: TileKind, #[comptime] place: Placement) -> Tile<T> {
         Tile::<T> {
             kind,
             factor: Factor::none(),
             place,
+            _element: PhantomData,
         }
     }
 
@@ -42,6 +48,7 @@ impl<T: Numeric> Tile<T> {
             kind: self.kind.clone(),
             factor: self.factor.clone(),
             place: comptime!(Placement::new(self.place.space.clone(), depth, levels)),
+            _element: PhantomData,
         }
     }
 
@@ -401,6 +408,7 @@ impl<T: Numeric> Tile<T> {
                 like.place.depth,
                 like.place.levels.clone()
             )),
+            _element: PhantomData,
         }
     }
 
@@ -421,6 +429,7 @@ impl<T: Numeric> Tile<T> {
             kind: tile_kind,
             factor: self.factor.clone(),
             place: comptime!(self.place.clone()),
+            _element: PhantomData,
         }
     }
 
@@ -480,6 +489,7 @@ impl<T: Numeric> Tile<T> {
             kind: tile_kind,
             factor: self.factor.at(step),
             place: comptime!(self.place.at_step(&step.level)),
+            _element: PhantomData,
         }
     }
 
@@ -671,7 +681,8 @@ impl<T: Numeric> Tile<T> {
             walk.depth(),
             walk.parent.path.root_levels(),
         ));
-        let tile = Memory::smem_owned(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
+        let tile =
+            Memory::smem_owned::<T>(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
         Tile::new(tile.kind, place)
     }
 
@@ -786,8 +797,8 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from(src),
                 (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
                 (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window::<T>(d, space),
-                (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
-                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from(s),
+                (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into::<T>(d),
+                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from::<T>(s),
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from::<T>(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural::<T>(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {

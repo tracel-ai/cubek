@@ -196,7 +196,7 @@ impl Meeting {
                     // Single issuer: the transaction count is the elected unit's alone.
                     if UNIT_POS == *elected {
                         full.expect_tx(d.size_bytes::<E>());
-                        s.stage_into(d, full);
+                        s.stage_into::<E>(d, full);
                     }
                 }
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from::<E>(s, space),
