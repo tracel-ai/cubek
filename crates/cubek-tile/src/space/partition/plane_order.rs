@@ -109,14 +109,23 @@ impl PlaneOrder {
     /// Whether some plane the launch spawns for `level` over `space` walks a tile past the last
     /// along `axis`, so the binding masks it there: where the edge cuts a block short along
     /// `axis`, or where the grid holds more planes than the blocks do and the blocks past the last
-    /// land past `axis` ([`block_coords`]). Static extents only.
+    /// land past `axis` ([`block_coords`]). `axis` is static; where an extent the grid counts is
+    /// only the launch's, the planes may run past it, and it is masked.
     pub(crate) fn overruns(&self, level: &Level, space: &Space, axis: Axis) -> bool {
         let ragged = !level
             .tiles(space, axis)
             .is_multiple_of(self.block_along(axis));
+        if ragged {
+            return true;
+        }
+        if Self::spare_blocks_land_past(level, self.block_order) != axis {
+            return false;
+        }
+        if level.axes().into_iter().any(|axis| space.is_dynamic(axis)) {
+            return true;
+        }
         let (x, y) = self.grid(level, space);
-        let spare = x * y * self.planes_per_cube > self.blocks(level, space) * self.block_planes();
-        ragged || (spare && Self::spare_blocks_land_past(level, self.block_order) == axis)
+        x * y * self.planes_per_cube > self.blocks(level, space) * self.block_planes()
     }
 
     /// Blocks `level` holds over `space`, the edge's counted.

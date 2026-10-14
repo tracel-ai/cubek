@@ -449,3 +449,18 @@ fn the_binding_masks_where_the_planes_run_past_the_tiles() {
     let three_a_cube = PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3);
     assert_eq!(masked(three_a_cube, (6, 20)), [false, false, false]);
 }
+
+/// A kernel compiled for every batch count asks the static axes alone: the blocks the edge cuts
+/// short decide them, and the batch, which the spare blocks land past, is the launch's.
+#[test]
+fn a_static_axis_is_answered_beside_a_dynamic_batch() {
+    let partitioning = |n| {
+        Partitioning::new(
+            Space::new(&[(B, 1), (M, 8), (N, n), (K, 8)]).with_dynamic(&[B]),
+            Planes::OfTheLaunch(PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor)).levels(),
+        )
+    };
+    assert!(!partitioning(16).overhangs(M));
+    assert!(!partitioning(16).overhangs(N));
+    assert!(partitioning(20).overhangs(N));
+}
