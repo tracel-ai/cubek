@@ -1059,10 +1059,14 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
-    /// This tile without its outer scales that vary only along axes of `space`, and those scales.
-    /// With `space` the output's, they are the scales a sum over the rest of the values' axes takes
-    /// out of every term and applies once ([`scaled`](Tile::scaled)), and the tile left carries
-    /// the ones each term needs.
+    /// This tile without its outer scales that vary only along axes of `space` and that its load
+    /// does not apply, and those scales. With `space` the output's, they are the scales a sum over
+    /// the rest of the values' axes takes out of every term and applies once
+    /// ([`scaled`](Tile::scaled)), and the tile left carries the ones each term needs.
+    ///
+    /// A tile decoded as it is loaded takes none out: its load multiplies every value by its
+    /// scales anyway, and an outer scale rides that multiply for nothing. Words of block scales are
+    /// read by the instruction, not decoded, so the scales above them leave for the sum.
     pub fn factor(&self, _space: Space) -> (Tile<E>, Factor) {
         unexpanded!()
     }
@@ -1224,6 +1228,9 @@ impl<E: Numeric> TileExpand<E> {
         _scope: &Scope,
         space: Space,
     ) -> (TileExpand<E>, FactorExpand) {
+        if !self.factor.staged_beside() {
+            return (self.clone(), FactorExpand::default());
+        }
         let (inner, outer) = self.factor.split_on(&space);
         let mut values = self.clone();
         values.factor = inner;

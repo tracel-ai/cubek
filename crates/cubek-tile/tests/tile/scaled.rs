@@ -113,9 +113,9 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     acc.drained_into(&c);
 }
 
-/// `c = (a ⊗ blocks ⊗ global) · b`, the global factored out of the sum: each term carries its
-/// block scale, and the scale over the whole operand multiplies the sum once, as it drains, in
-/// the form `instruction` sums in.
+/// `c = (a ⊗ blocks ⊗ global) · b`, written as a kernel writes any sum: what `factor` takes out of
+/// the operand multiplies the sum once, as it drains, in the form `instruction` sums in. A decoded
+/// operand gives up nothing, so here every scale rides the load.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn factored_matmul<E: Numeric, S: Numeric>(
@@ -332,10 +332,10 @@ fn two_levels_fold_in_order() {
     }
 }
 
-/// [`factored_matmul`] in registers: the global leaves the operand for the sum and is applied
-/// once as it drains, the block scales staying with every term; the result is the same product.
+/// [`factored_matmul`] in registers: the operand is decoded as it is loaded, so its global rides
+/// the load with its block scales and `factor` takes nothing out; the result is the same product.
 #[test]
-fn a_scale_over_the_whole_operand_applies_once_as_the_sum_drains() {
+fn a_decoded_operand_keeps_its_global_scale_on_the_load() {
     check_factored(
         Instruction::Registers {
             config: REGISTER_BLOCK,
@@ -344,10 +344,10 @@ fn a_scale_over_the_whole_operand_applies_once_as_the_sum_drains() {
     );
 }
 
-/// [`factored_matmul`] in cmma fragments, which are not read cell by cell: the drain scales them
-/// through a scratch it opens.
+/// [`factored_matmul`] in cmma fragments: the operand lands decoded, its global with it, so the
+/// fragments drain unscaled.
 #[test]
-fn a_scale_over_the_whole_operand_applies_once_to_cmma_fragments() {
+fn a_decoded_operand_keeps_its_global_scale_on_the_load_into_cmma_fragments() {
     let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
@@ -355,8 +355,8 @@ fn a_scale_over_the_whole_operand_applies_once_to_cmma_fragments() {
     check_factored(Instruction::Cmma, 8);
 }
 
-/// `c = (a ⊗ blocks ⊗ global) · b` over `size × size` summed in `instruction`'s form, the global
-/// factored out of the sum, against the host product.
+/// `c = (a ⊗ blocks ⊗ global) · b` over `size × size` summed in `instruction`'s form, written
+/// through `factor` and `scaled` as a kernel writes any sum, against the host product.
 fn check_factored(instruction: Instruction, size: usize) {
     let (rows, cols, block, blocks) = (size, size, 8, 2);
     let depth = block * blocks;
