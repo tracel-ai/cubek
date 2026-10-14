@@ -12,7 +12,7 @@ use cubecl::{
     zspace::{shape, strides},
 };
 use cubek_test_utils::{TestOutcome, ValidationResult};
-use cubek_tile::launch::{TmaBox, TmaTileArg, TmaTileArgLaunch};
+use cubek_tile::launch::TmaBox;
 use cubek_tile::space::ComputeScope;
 use cubek_tile::stage::{AsyncStage, AsyncStageExpand, Role, RowChunks};
 use cubek_tile::*;
@@ -60,9 +60,9 @@ impl AsyncStage<f16, f16> for GroupMma {
 /// `c = a · bᵀ`, each cube's box walked a stage of `K` at a time.
 #[cube(launch)]
 fn wgmma_walk(
-    a: &TmaTileArg<f16>,
-    b: &TmaTileArg<f16>,
-    c: &TileArg<'_, f32, Const<1>>,
+    a: &TileArg<'_, f16>,
+    b: &TileArg<'_, f16>,
+    c: &TileArg<'_, f32>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] storage: StageStorage,
@@ -173,7 +173,7 @@ fn tma_matrix(
     (stage_rows, stage_cols): (usize, usize),
     axes: [Axis; 2],
     swizzle: TensorMapSwizzle,
-) -> TmaTileArgLaunch<f16> {
+) -> TileArgLaunch<'static, f16> {
     let handle = client.create_from_slice(half::f16::as_bytes(values));
     let tensor = unsafe {
         TensorArg::from_raw_parts(
@@ -190,7 +190,7 @@ fn tma_matrix(
         half::f16::elem_type_native(),
     )
     .with_swizzle(swizzle);
-    TmaTileArgLaunch::tensor_map(
+    TileArgLaunch::tensor_map(
         map,
         &axes,
         TmaBox {
@@ -254,7 +254,7 @@ fn check_wgmma_walk(m: usize, n: usize, k: usize, depth: usize) {
         launcher.cube_dim(),
         a,
         b,
-        TileArgLaunch::new(c, TileSpec::direct(&[M, N])),
+        TileArgLaunch::new(c, 1, TileSpec::direct(&[M, N])),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         storage,

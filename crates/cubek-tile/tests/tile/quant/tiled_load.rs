@@ -20,16 +20,17 @@ const N: Axis = Axis(0);
 const KB: Axis = Axis(1);
 const KI: Axis = Axis(2);
 
-/// `output = unpack(values) ⊗ scales`, the values read `W` words a load.
+/// `output = unpack(values) ⊗ scales`, the values read as many words a load as they are bound
+/// wide.
 #[cube(launch)]
-fn tiled_scaled_copy<O: Numeric, V: Size, W: Size>(
-    values: &TileArg<'_, u32, W>,
-    scales: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, O, V>,
+fn tiled_scaled_copy<O: Numeric>(
+    values: &TileArg<'_, O>,
+    scales: &TileArg<'_, f32>,
+    output: &TileArg<'_, O>,
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(&space);
+    let values = values.tile(&space);
     let scales = scales.tile(&space);
     let mut output = output.tile(&space);
     output.dequantize_from(&values.mul(&scales));
@@ -38,15 +39,15 @@ fn tiled_scaled_copy<O: Numeric, V: Size, W: Size>(
 /// `stage = values` as the words they are, then `output = unpack(stage) ⊗ scales`: the weight
 /// staged packed over `level`'s region, decoded out of the stage.
 #[cube(launch)]
-fn tiled_packed_stage<O: Numeric, V: Size, W: Size>(
-    values: &TileArg<'_, u32, W>,
-    scales: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, O, V>,
+fn tiled_packed_stage<O: Numeric>(
+    values: &TileArg<'_, O>,
+    scales: &TileArg<'_, f32>,
+    output: &TileArg<'_, O>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(&space);
+    let values = values.tile(&space);
     let scales = scales.tile(&space);
     let mut output = output.tile(&space);
     let mut stage = values.stage(level, StageStorage::Strided);
@@ -146,21 +147,21 @@ fn check_tiled(storage: StoragePartitioning, cols: usize, words_per_load: usize,
     w_spec.stored_tiles = storage.tiles().to_vec();
     let space = Space::new(&[(N, cols), (KB, blocks), (KI, block)]);
     let (count, dim) = (CubeCount::new_single(), CubeDim::new_single());
-    // Each kernel types its arguments by its own generics, so each arm binds its own.
+    // Each arm launches its own kernel, so each binds its own arguments.
     match read {
         Read::Stored => tiled_scaled_copy::launch(
             &client,
             count,
             dim,
-            4,
-            words_per_load,
-            TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
+            TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), words_per_load, w_spec),
             TileArgLaunch::new(
                 s_tensor.binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[N, KB]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                4,
                 TileSpec::direct(&axes),
             ),
             uncut(&client, &space, &space).partitioning_arg(),
@@ -184,15 +185,15 @@ fn check_tiled(storage: StoragePartitioning, cols: usize, words_per_load: usize,
                 &client,
                 count,
                 dim,
-                4,
-                words_per_load,
-                TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
+                TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), words_per_load, w_spec),
                 TileArgLaunch::new(
                     s_tensor.binding().into_tensor_arg(),
+                    1,
                     TileSpec::direct(&[N, KB]),
                 ),
                 TileArgLaunch::new(
                     out.clone().binding().into_tensor_arg(),
+                    4,
                     TileSpec::direct(&axes),
                 ),
                 launcher.partitioning_arg(),

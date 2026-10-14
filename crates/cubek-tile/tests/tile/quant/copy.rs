@@ -35,8 +35,8 @@ fn copy_non_quantized_matches_reference() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        input.arg(),
-        output.arg(),
+        input.arg(1),
+        output.arg(1),
         uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
@@ -77,8 +77,8 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         &client,
         launch.cube_count(),
         launch.cube_dim(),
-        input.arg(),
-        output.arg(),
+        input.arg(1),
+        output.arg(1),
         launch.partitioning_arg(),
         f32::elem_type_native(),
     );
@@ -93,8 +93,8 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
 #[cube(launch)]
 /// A plain (non-quantized) copy: both tiles serve `E` straight from their tensors.
 pub fn plain_copy<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -105,34 +105,31 @@ pub fn plain_copy<E: Numeric>(
 
 /// `out = values ⊗ scales`, stated where the kernel copies them.
 #[cube(launch)]
-fn block_scaled_copy<O: Numeric, V: Size>(
-    values: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, O, V>,
+fn block_scaled_copy<O: Numeric>(
+    values: &TileArg<'_, O>,
+    scales: &TileArg<'_, f32>,
+    output: &TileArg<'_, O>,
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(&space);
+    let values = values.tile(&space);
     let scales = scales.tile(&space);
     let mut output = output.tile(&space);
     output.dequantize_from(&values.mul(&scales));
 }
 
-/// `out = values ⊗ scales ⊗ global`: two levels, innermost first.
+/// `out = values ⊗ scales ⊗ global`: two levels, innermost first, bound as one operand whose
+/// values carry their block scales, which carry the global one.
 #[cube(launch)]
-fn two_level_scaled_copy<O: Numeric, V: Size>(
-    values: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, f32, Const<1>>,
-    global: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, O, V>,
+fn two_level_scaled_copy<O: Numeric>(
+    values: &TileArg<'_, O>,
+    output: &TileArg<'_, O>,
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let values = values.tile_as::<O>(&space);
-    let scales = scales.tile(&space);
-    let global = global.tile(&space);
+    let values = values.tile(&space);
     let mut output = output.tile(&space);
-    output.dequantize_from(&values.mul(&scales).mul(&global));
+    output.dequantize_from(&values);
 }
 
 /// Block-scaled packed values: each `bm×bn` block carries its own scale, looked up at the
@@ -178,10 +175,13 @@ fn check_block_scaled_copy(m: usize, n: usize, bm: usize, bn: usize, global: Opt
             &client,
             CubeCount::new_single(),
             CubeDim::new_single(),
-            pack,
-            values.values_arg(TileSpec::new(projection.clone())),
-            values.scales_arg(TileSpec::new(scales)),
-            TileArgLaunch::new(output.clone().binding().into_tensor_arg(), output_spec),
+            values.values_arg(1, TileSpec::new(projection.clone())),
+            values.scales_arg(1, TileSpec::new(scales)),
+            TileArgLaunch::new(
+                output.clone().binding().into_tensor_arg(),
+                pack,
+                output_spec,
+            ),
             launch.partitioning_arg(),
             dtype,
         ),
@@ -194,14 +194,19 @@ fn check_block_scaled_copy(m: usize, n: usize, bm: usize, bn: usize, global: Opt
                 &client,
                 CubeCount::new_single(),
                 CubeDim::new_single(),
-                pack,
-                values.values_arg(TileSpec::new(projection.clone())),
-                values.scales_arg(TileSpec::new(scales)),
+                values
+                    .values_arg(1, TileSpec::new(projection.clone()))
+                    .scales(values.scales_arg(1, TileSpec::new(scales)))
+                    .scales(TileArgLaunch::new(
+                        global.binding().into_tensor_arg(),
+                        1,
+                        TileSpec::new(per_tensor),
+                    )),
                 TileArgLaunch::new(
-                    global.binding().into_tensor_arg(),
-                    TileSpec::new(per_tensor),
+                    output.clone().binding().into_tensor_arg(),
+                    pack,
+                    output_spec,
                 ),
-                TileArgLaunch::new(output.clone().binding().into_tensor_arg(), output_spec),
                 launch.partitioning_arg(),
                 dtype,
             )
@@ -259,16 +264,16 @@ const B: Axis = Axis(6);
 /// `stage = values ⊗ scales` over a cube's region, then the stage out: the decode stated where the
 /// stage is filled, as a kernel staging a packed cache block by block does.
 #[cube(launch)]
-fn batched_scaled_stage<O: Numeric, V: Size>(
-    values: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, O, V>,
+fn batched_scaled_stage<O: Numeric>(
+    values: &TileArg<'_, O>,
+    scales: &TileArg<'_, f32>,
+    output: &TileArg<'_, O>,
     space: Partitioning,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
     #[define(O)] _dtype: ElemType,
 ) {
-    let decoded = values.tile_as::<O>(&space).mul(&scales.tile(&space));
+    let decoded = values.tile(&space).mul(&scales.tile(&space));
     let output = output.tile(&space);
     for cube in &space {
         let mut stage = Tile::<O>::smem(
@@ -337,17 +342,19 @@ fn a_scaled_region_decodes_into_a_stage_without_its_one_wide_batch() {
         &client,
         launch.cube_count(),
         launch.cube_dim(),
-        4,
         TileArgLaunch::new(
             binding.into_tensor_arg(),
+            1,
             TileSpec::direct(&[B, M, N]).packed(Field::Quant(QuantValue::Q8S)),
         ),
         TileArgLaunch::new(
             scales_t.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[B, M]),
         ),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            4,
             TileSpec::direct(&[B, M, N]),
         ),
         launch.partitioning_arg(),

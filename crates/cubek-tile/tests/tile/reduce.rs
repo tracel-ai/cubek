@@ -32,9 +32,9 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// same body serves the one-axis and the two-axis contraction, which is the point.
 #[cube(launch)]
 fn reduce_matmul_kernel<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -94,30 +94,8 @@ fn reduce_body<E: Numeric>(
 
 #[cube(launch)]
 fn reduce_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] read: Read,
-    #[comptime] monoid: Monoid,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(&space);
-    let mut output = output.tile(&space);
-    reduce_body(
-        &input,
-        &mut output,
-        &space,
-        comptime!(level.clone()),
-        read,
-        monoid,
-    );
-}
-
-#[cube(launch)]
-fn reduce_kernel_v4<E: Numeric>(
-    input: &TileArg<'_, E, Const<4>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
@@ -141,7 +119,7 @@ fn reduce_kernel_v4<E: Numeric>(
 /// memory; either way the partial-tile mask must survive rather than folding the padded overhang.
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
@@ -209,14 +187,17 @@ fn run(
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(a_axes),
         ),
         TileArgLaunch::new(
             b_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(b_axes),
         ),
         TileArgLaunch::new(
             c_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(c_axes),
         ),
         launcher.partitioning_arg(),
@@ -490,37 +471,22 @@ fn run_reduce_with_vw(
     let in_binding = in_handle.binding();
     let out_binding = out_handle.clone().binding();
 
-    match in_vw {
-        1 => {
-            reduce_kernel::launch(
-                &client,
-                launcher.cube_count(),
-                launcher.cube_dim(),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                launcher.partitioning_arg(),
-                launcher.partitioning().level(0),
-                read,
-                monoid,
-                f32_ty,
-            );
-        }
-        4 => {
-            reduce_kernel_v4::launch(
-                &client,
-                launcher.cube_count(),
-                launcher.cube_dim(),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                launcher.partitioning_arg(),
-                launcher.partitioning().level(0),
-                read,
-                monoid,
-                f32_ty,
-            );
-        }
-        _ => unimplemented!("unsupported in_vw"),
-    }
+    reduce_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            in_binding.into_tensor_arg(),
+            in_vw,
+            TileSpec::direct(in_axes),
+        ),
+        TileArgLaunch::new(out_binding.into_tensor_arg(), 1, TileSpec::direct(out_axes)),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        read,
+        monoid,
+        f32_ty,
+    );
 
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
@@ -853,9 +819,10 @@ fn run_reduce_checked(
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
+            1,
             TileSpec::direct(in_axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
-        TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
+        TileArgLaunch::new(out_binding.into_tensor_arg(), 1, TileSpec::direct(out_axes)),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         read,
@@ -990,6 +957,7 @@ fn check_procedural_reduce(read: Read) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M]),
         ),
         launcher.partitioning_arg(),
@@ -1345,8 +1313,8 @@ fn test_reduce_axis_min_spatial_unit_units() {
 /// from an out-of-bounds read) wins the maximum and the assert catches it.
 #[cube(launch)]
 fn resident_fold_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] monoid: Monoid,
@@ -1399,10 +1367,12 @@ fn resident_max_over_unit_split_k() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N, K]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -1472,10 +1442,12 @@ fn resident_max_over_unit_group_k() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N, K]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),

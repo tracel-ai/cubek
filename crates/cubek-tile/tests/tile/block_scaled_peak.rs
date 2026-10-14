@@ -57,21 +57,20 @@ enum ScaleForm {
 /// `c = repeats · (a ⊗ sa) · (b ⊗ sb)` per cube, over one stage contracted `repeats` times.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn block_scaled_peak<E: Numeric>(
-    a: &TileArg<'_, u32, Const<1>>,
-    a_scales: &TileArg<'_, u32, Const<1>>,
-    b: &TileArg<'_, u32, Const<1>>,
-    b_scales: &TileArg<'_, u32, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn block_scaled_peak<E: Numeric, S: Numeric>(
+    a: &TileArg<'_, E>,
+    a_scales: &TileArg<'_, S>,
+    b: &TileArg<'_, E>,
+    b_scales: &TileArg<'_, S>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] repeats: usize,
-    #[comptime] words: bool,
-    #[define(E)] _dtype: ElemType,
+    #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile_as::<E>(&space);
-    let b = b.tile_as::<E>(&space);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
     let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
@@ -88,16 +87,8 @@ fn block_scaled_peak<E: Numeric>(
         stages.pipelined(walk, |slot, region| {
             let acc_r = acc.at(region);
             slot.consume(|a_s, b_s| {
-                let (a_s, b_s) = match comptime!(words) {
-                    true => (
-                        a_s.mul(&a_scales.tile(&space).at(region)),
-                        b_s.mul(&b_scales.tile(&space).at(region)),
-                    ),
-                    false => (
-                        a_s.mul(&a_scales.tile_as::<f32>(&space).at(region)),
-                        b_s.mul(&b_scales.tile_as::<f32>(&space).at(region)),
-                    ),
-                };
+                let a_s = a_s.mul(&a_scales.tile(&space).at(region));
+                let b_s = b_s.mul(&b_scales.tile(&space).at(region));
                 for plane in region {
                     let acc_p = acc_r.at(&plane);
                     let (a_p, b_p) = (a_s.at(&plane), b_s.at(&plane));
@@ -119,9 +110,9 @@ fn block_scaled_peak<E: Numeric>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn float_peak<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, f32, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, f32>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
@@ -277,9 +268,9 @@ fn launch_nvfp4(
     let values = |rows: Axis| {
         TileSpec::new(Projection::direct(&[rows, K])).packed(Field::Quant(QuantValue::E2M1))
     };
-    let per = match form {
-        ScaleForm::Floats => BLOCK,
-        ScaleForm::Words => STEP,
+    let (per, scale_elem) = match form {
+        ScaleForm::Floats => (BLOCK, f32::elem_type_native()),
+        ScaleForm::Words => (STEP, u32::elem_type_native()),
     };
     // Floats are bound as the words they are stored in, and served as `f32`; words as they are.
     let scales = |rows: Axis| {
@@ -312,20 +303,20 @@ fn launch_nvfp4(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(upload_codes(&operands.a_codes, m), values(M)),
-        TileArgLaunch::new(upload_scales(&operands.a_scales, m), scales(M)),
-        TileArgLaunch::new(upload_codes(&operands.b_codes, n), values(N)),
-        TileArgLaunch::new(upload_scales(&operands.b_scales, n), scales(N)),
+        TileArgLaunch::new(upload_codes(&operands.a_codes, m), 1, values(M)),
+        TileArgLaunch::new(upload_scales(&operands.a_scales, m), 1, scales(M)),
+        TileArgLaunch::new(upload_codes(&operands.b_codes, n), 1, values(N)),
+        TileArgLaunch::new(upload_scales(&operands.b_scales, n), 1, scales(N)),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         repeats,
-        form == ScaleForm::Words,
-        f32::elem_type_native(),
+        [f32::elem_type_native(), scale_elem],
     );
     c
 }
@@ -354,9 +345,9 @@ fn launch_f16(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(zeros(m), m, k), rows(M)),
-        TileArgLaunch::new(tensor(zeros(n), n, k), rows(N)),
-        TileArgLaunch::new(c.binding().into_tensor_arg(), TileSpec::direct(&[M, N])),
+        TileArgLaunch::new(tensor(zeros(m), m, k), 1, rows(M)),
+        TileArgLaunch::new(tensor(zeros(n), n, k), 1, rows(N)),
+        TileArgLaunch::new(c.binding().into_tensor_arg(), 1, TileSpec::direct(&[M, N])),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),

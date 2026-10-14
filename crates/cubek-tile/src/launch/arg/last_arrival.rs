@@ -45,11 +45,11 @@ pub struct LastArrival<'a, E: Numeric> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+impl<'a, E: Numeric> TileArg<'a, E> {
     /// This operand as the slots of a [`LastArrival`] at the `i`-th box `portion` touches, under
     /// `partitioning`, whose cube level shares its steps ([`shared_by`](Levels::shared_by)). The
     /// operand is laid out as [`Partitioning::arrival_slots`] says for its axes.
-    pub fn last_arrival<'t>(
+    pub fn last_arrival<'t, V: Size>(
         &self,
         partitioning: &Partitioning,
         portion: &Portion,

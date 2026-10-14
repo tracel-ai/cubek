@@ -64,10 +64,10 @@ impl Reads for AttendedExpand {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn plane_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
     keys: u32,
     queries: u32,
     scale: f32,
@@ -156,10 +156,10 @@ fn plane_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn register_plane_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
     keys: u32,
     queries: u32,
     scale: f32,
@@ -235,10 +235,10 @@ fn register_plane_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn unit_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
     max: &mut Tensor<f32>,
     sum: &mut Tensor<f32>,
     keys: u32,
@@ -329,13 +329,13 @@ fn unit_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn relayed_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
-    carry: &TileArg<'_, f32, Const<1>>,
-    carried_max: &TileArg<'_, f32, Const<1>>,
-    carried_sum: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
+    carry: &TileArg<'_, f32>,
+    carried_max: &TileArg<'_, f32>,
+    carried_sum: &TileArg<'_, f32>,
     turns: &[Atomic<u32>],
     keys: u32,
     queries: u32,
@@ -345,7 +345,7 @@ fn relayed_attention<E: Float>(
     #[comptime] block_keys: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let relay = carry.relay(&space, turns);
+    let relay = carry.relay::<Const<1>>(&space, turns);
     // Uniform across the cube, so it leaves before any barrier.
     if !relay.has_turn() {
         terminate!();
@@ -537,10 +537,10 @@ fn run<E: Float + CubeElement>(case: Case) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(q_tensor, TileSpec::direct(&[Q, D])),
-        TileArgLaunch::new(k_tensor, TileSpec::direct(&[S, D])),
-        TileArgLaunch::new(v_tensor, TileSpec::direct(&[S, V])),
-        TileArgLaunch::new(out_tensor, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(q_tensor, 1, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(k_tensor, 1, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(v_tensor, 1, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(out_tensor, 1, TileSpec::direct(&[Q, V])),
         attended as u32,
         queries as u32,
         scale,
@@ -623,18 +623,22 @@ fn run_registers<E: Float + CubeElement>(case: Case) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             q_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, D]),
         ),
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, V]),
         ),
         attended as u32,
@@ -719,13 +723,13 @@ fn run_relayed<E: Float + CubeElement>(case: Case, cubes: usize) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(q_handle), TileSpec::direct(&[Q, D])),
-        TileArgLaunch::new(tensor(k_handle), TileSpec::direct(&[S, D])),
-        TileArgLaunch::new(tensor(v_handle), TileSpec::direct(&[S, V])),
-        TileArgLaunch::new(tensor(out_handle.clone()), TileSpec::direct(&[Q, V])),
-        TileArgLaunch::new(tensor(carry), TileSpec::direct(&[Q, V])),
-        TileArgLaunch::new(tensor(carried_max), TileSpec::direct(&[Q])),
-        TileArgLaunch::new(tensor(carried_sum), TileSpec::direct(&[Q])),
+        TileArgLaunch::new(tensor(q_handle), 1, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(tensor(k_handle), 1, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(tensor(v_handle), 1, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(tensor(out_handle.clone()), 1, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(tensor(carry), 1, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(tensor(carried_max), 1, TileSpec::direct(&[Q])),
+        TileArgLaunch::new(tensor(carried_sum), 1, TileSpec::direct(&[Q])),
         unsafe { BufferArg::from_raw_parts(turns, counters) },
         attended as u32,
         queries as u32,
@@ -1010,19 +1014,23 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             q_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, D]),
         ),
         // The keys are stored transposed, so a step's rhs runs along the keys it scores.
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[D, S]),
         ),
         TileArgLaunch::new(
             v_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, V]),
         ),
         max_handle.clone().binding().into_tensor_arg(),

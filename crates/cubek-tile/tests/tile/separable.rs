@@ -74,8 +74,8 @@ fn weights<E: Float>() -> Weights<E> {
 
 #[cube(launch)]
 fn separable_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     #[comptime] separable: bool,
     space: Partitioning,
     #[comptime] level: Level,
@@ -110,8 +110,8 @@ fn separable_kernel<E: Float>(
 /// where one is stated (the operand is scalar, the stage pads it out to whole lines).
 #[cube(launch)]
 fn separable_kernel_staged<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     #[comptime] width: Option<usize>,
     space: Partitioning,
     #[comptime] level: Level,
@@ -210,10 +210,12 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         separable,
@@ -302,9 +304,10 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         Some(4),
@@ -358,8 +361,8 @@ fn resample_weights<E: Float>() -> Weights<E> {
 
 #[cube(launch)]
 fn resample_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     #[comptime] normalized: bool,
     space: Partitioning,
     #[comptime] level: Level,
@@ -435,9 +438,10 @@ fn check_resampling(normalized: bool) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         normalized,
@@ -474,7 +478,7 @@ fn check_resampling(normalized: bool) {
 /// distinguish the checked-read zero from an in-bounds sample without relying on backing memory.
 #[cube(launch)]
 fn procedural_mask_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -533,6 +537,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
@@ -551,8 +556,8 @@ fn masked_normalization_excludes_a_procedural_overhang() {
 
 #[cube(launch)]
 fn resample_kernel_masked<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -581,8 +586,8 @@ fn resample_kernel_masked<E: Float>(
 /// from, and the mask is put to that rectangle.
 #[cube(launch)]
 fn resample_kernel_masked_staged<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -654,9 +659,10 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
@@ -737,9 +743,10 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
@@ -783,8 +790,8 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
 
 #[cube(launch)]
 fn column_spanning_resample_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -848,9 +855,10 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
@@ -878,8 +886,8 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
 
 #[cube(launch)]
 fn column_spanning_resample_kernel_masked<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -946,9 +954,10 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
@@ -983,8 +992,8 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
 
 #[cube(launch)]
 fn zero_sum_fallback_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -1050,10 +1059,12 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[TAP[0], TAP[1], COL]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
@@ -1073,15 +1084,15 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
 /// operands cell by cell (the N-D nest), which takes plain values, so the rhs decodes where the
 /// kernel stages it.
 #[cube(launch)]
-fn separable_scaled_kernel<E: Float, V: Size>(
-    input: &TileArg<'_, u32, Const<1>>,
-    scale: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, E, V>,
+fn separable_scaled_kernel<E: Float>(
+    input: &TileArg<'_, E>,
+    scale: &TileArg<'_, f32>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile_as::<E>(&space);
+    let input = input.tile(&space);
     let scale = scale.tile(&space);
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Procedural::<E>::separable::<Weights<E>>(
@@ -1167,11 +1178,11 @@ fn a_separable_lhs_contracts_a_packed_scaled_rhs() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        pack,
-        input.values_arg(TileSpec::direct(&input_axes)),
-        input.scales_arg(TileSpec::new(per_tensor)),
+        input.values_arg(1, TileSpec::direct(&input_axes)),
+        input.scales_arg(1, TileSpec::new(per_tensor)),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            pack,
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),

@@ -13,7 +13,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Projection,
     Semiring, Space, StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    launch::scale_tile, layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    layout::PhysicalAxisMap, ops::matmul::MmaIo,
 };
 
 use super::{Form, implied};
@@ -26,26 +26,26 @@ const K: Axis = Axis(2);
 const BLOCK: usize = 16;
 
 /// `c = (a ⊗ sa) · (b ⊗ sb)`, a stage of `K` at a time, contracted through the manual-mma
-/// instruction.
+/// instruction. Each operand may carry a per-tensor scale above its block scales.
 #[cube(launch)]
 fn block_scaled_matmul<E: Numeric>(
-    a: &TileArg<'_, u32, Const<1>>,
-    a_scales: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, u32, Const<1>>,
-    b_scales: &TileArg<'_, f32, Const<1>>,
-    a_global: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-    b_global: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    a_scales: &TileArg<'_, f32>,
+    b: &TileArg<'_, E>,
+    b_scales: &TileArg<'_, f32>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile_as::<E>(&space);
+    let mut c = c.tile(&space);
+    // The per-tensor scales, which the instruction holds no level for, leave the operands and
+    // multiply the sum once, as it drains.
+    let (a, a_factor) = a.tile(&space).factor(c.space());
+    let (b, b_factor) = b.tile(&space).factor(c.space());
     let a_scales = a_scales.tile(&space);
-    let b = b.tile_as::<E>(&space);
     let b_scales = b_scales.tile(&space);
-    let c = c.tile(&space);
-    let mut acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E, E, E>(
         &a,
         &b,
         comptime!(Instruction::Mma {
@@ -63,10 +63,7 @@ fn block_scaled_matmul<E: Numeric>(
             acc_r.mma(&a_s.mul(&a_scales_r), &b_s.mul(&b_scales_r));
         });
     });
-    // The per-tensor factors above the block scales, which the instruction holds no level for.
-    acc.scale(&scale_tile::<E, _>(a_global, &space));
-    acc.scale(&scale_tile::<E, _>(b_global, &space));
-    acc.drained_into(&c);
+    c.dequantize_from(&acc.scaled(&a_factor).scaled(&b_factor));
 }
 
 /// A `16 × 8` product of `k` deep, `a` row-major and `b` held `[n, k]`, against the host sum of
@@ -142,24 +139,27 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
         let word = client.create_from_slice(f32::as_bytes(&[value]));
         let spec = TileSpec::new(Projection::new(&[M, N, K], &[PhysicalAxisMap::broadcast()]))
             .packed(Field::Float(FloatKind::F32));
-        ComptimeOptionArgs::Some(TileArgLaunch::new(tensor(word, 1, 1), spec))
+        TileArgLaunch::new(tensor(word, 1, 1), 1, spec)
     };
-    let (a_global, b_global) = match globals {
-        Some((a, b)) => (global(a), global(b)),
-        None => (ComptimeOptionArgs::None, ComptimeOptionArgs::None),
+    // The values, under their per-tensor scale where `globals` states one.
+    let operand = |words, rows: usize, axis: Axis, global_value: Option<f32>| {
+        let operand = TileArgLaunch::new(tensor(words, rows, k), 1, values(axis));
+        match global_value {
+            Some(value) => operand.scales(global(value)),
+            None => operand,
+        }
     };
     block_scaled_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(a_words, m, k), values(M)),
-        TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), scales(M)),
-        TileArgLaunch::new(tensor(b_words, n, k), values(N)),
-        TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), scales(N)),
-        a_global,
-        b_global,
+        operand(a_words, m, M, globals.map(|(a, _)| a)),
+        TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), 1, scales(M)),
+        operand(b_words, n, N, globals.map(|(_, b)| b)),
+        TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), 1, scales(N)),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),

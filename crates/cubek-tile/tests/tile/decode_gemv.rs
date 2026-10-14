@@ -32,16 +32,16 @@ const KI: Axis = Axis(3);
 /// contraction, the leaf running under a block of `budget` scalars.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
-    w: &TileArg<'_, u32, Const<1>>,
-    x: &TileArg<'_, E, VX>,
-    scale: &TileArg<'_, S, Const<1>>,
-    out: &TileArg<'_, E, VO>,
+fn decode_gemv<E: Numeric, S: Numeric>(
+    w: &TileArg<'_, E>,
+    x: &TileArg<'_, E>,
+    scale: &TileArg<'_, S>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.tile_as::<E>(&space);
+    let w = w.tile(&space);
     let x = x.tile(&space);
     let scale = scale.tile(&space);
     let out = out.tile(&space);
@@ -82,16 +82,16 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 /// `RegisterData::mma_scaled` refuses it; the shipping shape thus keeps its accumulator in memory.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
-    w: &TileArg<'_, u32, Const<1>>,
-    x: &TileArg<'_, E, VX>,
-    scale: &TileArg<'_, S, Const<1>>,
-    out: &TileArg<'_, E, VO>,
+fn decode_gemv_promoted<E: Numeric, S: Numeric>(
+    w: &TileArg<'_, E>,
+    x: &TileArg<'_, E>,
+    scale: &TileArg<'_, S>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.tile_as::<E>(&space);
+    let w = w.tile(&space);
     let x = x.tile(&space);
     let scale = scale.tile(&space);
     let out = out.tile(&space);
@@ -301,8 +301,6 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
             &client,
             count,
             dim,
-            x_op.vector_size,
-            out_op.vector_size,
             w_op.arg(),
             x_op.arg(),
             s_op.arg(),
@@ -316,8 +314,6 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
             &client,
             count,
             dim,
-            x_op.vector_size,
-            out_op.vector_size,
             w_op.arg(),
             x_op.arg(),
             s_op.arg(),

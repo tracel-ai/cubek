@@ -23,9 +23,9 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// the leaf running the software instruction on the block's final tiles.
 #[cube(launch)]
 fn ring_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -57,9 +57,9 @@ fn ring_matmul<E: Numeric>(
 /// so the fill arm is emitted and never entered and the compute arm does both halves itself.
 #[cube(launch)]
 fn role_split_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -125,9 +125,9 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(1),
+        b.arg(1),
+        c.arg(1),
         launcher.partitioning_arg(),
         depth,
         dtype,
@@ -205,9 +205,9 @@ fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(1),
+        b.arg(1),
+        c.arg(1),
         launcher.partitioning_arg(),
         f32::elem_type_native(),
     );

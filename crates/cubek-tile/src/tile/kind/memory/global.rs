@@ -60,29 +60,6 @@ impl<T: Numeric> GlobalOperand<T> {
         GlobalOperand::<T>::of_tensor::<E>(tensor, space, spec, coefficients, offsets)
     }
 
-    /// [`tensor`](GlobalOperand::tensor) where stored `E` may differ from served `T`
-    /// (a [`packed`](TileSpec::packed) binding).
-    pub fn stored<E: CubePrimitive>(
-        values: &Tensor<E>,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-    ) -> GlobalOperand<T> {
-        let stored = elem_type_of::<E>();
-        let read = elem_type_of::<T>();
-        comptime!(assert!(
-            spec.packing != Packing::Plain || stored == read,
-            "GlobalOperand::stored: a binding that states no packing is read at the element it \
-             is bound at, {stored:?}, not {read:?}"
-        ));
-        GlobalOperand::<T>::of_tensor::<E>(
-            values,
-            space,
-            spec,
-            Coords::<u32>::new(),
-            Coords::<i32>::new(),
-        )
-    }
-
     /// The shared body: `E` is the binding element, `T` the served scalar.
     fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,

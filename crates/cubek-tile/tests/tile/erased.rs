@@ -48,7 +48,7 @@ impl<T: Float> Recipe<T> for Position {
 /// The store as it has always been: the operand's own buffer.
 #[cube(launch)]
 fn buffer_kernel<E: Float>(
-    out: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -64,14 +64,11 @@ fn buffer_kernel<E: Float>(
 /// what makes the two comparable: nothing about the destination differs except
 /// that this one is addressed through [`Tile::of_sink`] and lands in a call.
 #[cube(launch)]
-fn sink_kernel<E: Float>(
-    out: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
+fn sink_kernel<E: Float>(out: &TileArg<'_, E>, space: Partitioning, #[define(E)] _dtype: ElemType) {
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
-    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(out.tensor, 2usize);
-    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.tensor);
+    let geometry =
+        RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(out.lines::<Const<1>>(), 2usize);
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.lines::<Const<1>>());
     let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
@@ -92,6 +89,7 @@ macro_rules! output_arg {
     ($output:expr) => {
         TileArgLaunch::new(
             $output.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         )
     };
@@ -267,9 +265,9 @@ const BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// comparison is between two kernels in one file rather than across suites.
 #[cube(launch)]
 fn buffer_matmul<E: Numeric, EA: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -299,9 +297,9 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
 /// cell once and never reads it back, so it asks a sink for nothing a sink does not have.
 #[cube(launch)]
 fn sink_matmul<E: Numeric, EA: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -310,8 +308,8 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
-    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
-    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.lines::<Const<1>>(), 2usize);
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.lines::<Const<1>>());
     let c = GlobalOperand::<E>::sink(
         sink,
         geometry,
@@ -342,17 +340,17 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
 /// onto `write_view`. The leaf asks the same layout for the same coordinates, and a call answers.
 #[cube(launch)]
 fn source_matmul<E: Numeric, EA: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
     // The geometry a source cannot be asked for, taken off the tensor behind it.
-    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(a.tensor, 2usize);
-    let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.tensor);
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(a.lines::<Const<1>>(), 2usize);
+    let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.lines::<Const<1>>());
     let a = GlobalOperand::<E>::source(
         source,
         geometry,
@@ -427,9 +425,9 @@ fn run_matmul(backed: Backed) -> HostData {
             &client,
             count,
             dim,
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            a.arg(1),
+            b.arg(1),
+            c.arg(1),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             dtype,
@@ -439,9 +437,9 @@ fn run_matmul(backed: Backed) -> HostData {
             &client,
             count,
             dim,
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            a.arg(1),
+            b.arg(1),
+            c.arg(1),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             dtype,
@@ -451,9 +449,9 @@ fn run_matmul(backed: Backed) -> HostData {
             &client,
             count,
             dim,
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            a.arg(1),
+            b.arg(1),
+            c.arg(1),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             dtype,
@@ -550,8 +548,8 @@ fn masked_space(form: Form) -> Launcher {
 /// could not tell a masked store from a store one unit wide.
 #[cube(launch)]
 fn wide_buffer_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<2>>,
-    out: &TileArg<'_, E, Const<2>>,
+    input: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -563,14 +561,15 @@ fn wide_buffer_kernel<E: Float>(
 /// [`sink_kernel`] at a served width of two, over the same masked nest.
 #[cube(launch)]
 fn wide_sink_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<2>>,
-    out: &TileArg<'_, E, Const<2>>,
+    input: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = input.tile(&space);
-    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.tensor, 2usize);
-    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.tensor);
+    let geometry =
+        RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.lines::<Const<2>>(), 2usize);
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.lines::<Const<2>>());
     let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
@@ -587,13 +586,14 @@ fn wide_sink_kernel<E: Float>(
 /// masked space: the read-side twin of [`wide_sink_kernel`].
 #[cube(launch)]
 fn wide_source_kernel<E: Float>(
-    input: &TileArg<'_, E, Const<2>>,
-    out: &TileArg<'_, E, Const<2>>,
+    input: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.tensor, 2usize);
-    let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<2>>(input.tensor);
+    let geometry =
+        RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.lines::<Const<2>>(), 2usize);
+    let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<2>>(input.lines::<Const<2>>());
     let src = GlobalOperand::<E>::source(
         source,
         geometry,

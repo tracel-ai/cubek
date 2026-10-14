@@ -45,9 +45,9 @@ const RW: Axis = Axis(4);
 /// makes it a batch axis rather than a contracted one; the leaf reads that off the spaces.
 #[cube(launch)]
 fn depthwise_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    weight: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -216,9 +216,9 @@ impl Depthwise {
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
-            TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
-            TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), 1, in_spec),
+            TileArgLaunch::new(w_handle.binding().into_tensor_arg(), 1, w_spec),
+            TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), 1, out_spec),
             launcher.partitioning_arg(),
             f32_ty,
         );

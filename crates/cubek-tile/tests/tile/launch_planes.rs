@@ -34,9 +34,9 @@ const UNITS: usize = 2;
 /// `c += a · b`, every plane of the launch its tile.
 #[cube(launch)]
 fn launch_plane_matmul<O: Destination>(
-    a: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, f32, Const<1>>,
-    c: &O::Arg<f32, Const<1>>,
+    a: &TileArg<'_, f32>,
+    b: &TileArg<'_, f32>,
+    c: &O::Arg<f32>,
     space: Partitioning,
 ) {
     let (a, b) = (a.tile(&space), b.tile(&space));
@@ -49,9 +49,9 @@ fn launch_plane_matmul<O: Destination>(
 /// `c += a · b`, every plane of every cube its tile: the control.
 #[cube(launch)]
 fn cube_plane_matmul<O: Destination>(
-    a: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, f32, Const<1>>,
-    c: &O::Arg<f32, Const<1>>,
+    a: &TileArg<'_, f32>,
+    b: &TileArg<'_, f32>,
+    c: &O::Arg<f32>,
     space: Partitioning,
 ) {
     let (a, b) = (a.tile(&space), b.tile(&space));
@@ -201,10 +201,12 @@ fn run(problem: Problem, planes: &Planes) -> Option<HostData> {
 
     let a_arg = TileArgLaunch::new(
         a_handle.binding().into_tensor_arg(),
+        1,
         TileSpec::direct(&[M, K]).boundary(policy),
     );
     let b_arg = TileArgLaunch::new(
         b_handle.binding().into_tensor_arg(),
+        1,
         TileSpec::direct(&[K, N]).boundary(policy),
     );
     let c_arg = Buffered::arg((bound, Write::Accumulate));

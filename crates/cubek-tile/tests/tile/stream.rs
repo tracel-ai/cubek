@@ -43,8 +43,8 @@ const REGIONS: usize = (ROWS / TILE_ROWS) * (COLS / TILE_COLS);
 /// branch: the runs abut, cover the grid once, and differ in length by at most one.
 #[cube(launch)]
 fn copy_run<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] cubes: usize,
@@ -68,8 +68,8 @@ fn copy_run<E: Numeric>(
 /// regions rather than the same ones in another order.
 #[cube(launch)]
 fn copy_one_run<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     #[comptime] start: usize,
     #[comptime] steps: usize,
     space: Partitioning,
@@ -137,10 +137,12 @@ macro_rules! tile_args {
         (
             TileArgLaunch::new(
                 $src.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[ROW, COL]),
             ),
             TileArgLaunch::new(
                 $dst.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[ROW, COL]),
             ),
         )
@@ -266,8 +268,8 @@ fn contract<E: Numeric>(acc: &Tile<E>, a: &Tile<E>, b: &Tile<E>, region: &Region
 /// itself walked (a unit's run of `K`), or none where the step is the contraction's own.
 #[cube(launch)]
 fn stream_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] outer: Level,
@@ -277,7 +279,7 @@ fn stream_matmul<E: Numeric>(
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = out.tile::<Const<1>>(&space);
+    let c = out.tile(&space);
     let portion = space.over(&outer).portion(comptime!(inner.clone()));
     for i in 0..portion.touched() {
         let region = portion.region(i);
@@ -312,8 +314,8 @@ fn stream_matmul<E: Numeric>(
 /// what any walk does.
 #[cube(launch)]
 fn stream_matmul_staged_rhs<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] outer: Level,
@@ -322,7 +324,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = out.tile::<Const<1>>(&space);
+    let c = out.tile(&space);
     let portion = space.over(&outer).portion(comptime!(inner.clone()));
     for i in 0..portion.touched() {
         let region = portion.region(i);
@@ -405,15 +407,18 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[MM, KK]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[KK, NN]),
             ),
             AccumulateArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
+                1,
             ),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
@@ -427,15 +432,18 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[MM, KK]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[KK, NN]),
             ),
             AccumulateArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
+                1,
             ),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
@@ -612,15 +620,18 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[MM, KK]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[KK, NN]),
             ),
             AccumulateArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
+                1,
             ),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
@@ -655,10 +666,10 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
 /// then hands it on, cast to the output's element `O`.
 #[cube(launch)]
 fn merged_stream_matmul<O: Float>(
-    a: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, f32, Const<1>>,
-    slots: &TileArg<'_, f32, Const<1>>,
-    out: &TileArg<'_, O, Const<1>>,
+    a: &TileArg<'_, f32>,
+    b: &TileArg<'_, f32>,
+    slots: &TileArg<'_, f32>,
+    out: &TileArg<'_, O>,
     arrivals: &[Atomic<u32>],
     space: Partitioning,
     #[comptime] steps: Level,
@@ -671,7 +682,7 @@ fn merged_stream_matmul<O: Float>(
     for i in 0..portion.touched() {
         let region = portion.region(i);
         let (from, count) = portion.steps(i);
-        let merge = slots.last_arrival(&space, &portion, i, arrivals);
+        let merge = slots.last_arrival::<Const<1>>(&space, &portion, i, arrivals);
         let (a_region, b_region) = (a.at(&region), b.at(&region));
         let acc = merge.tile().accumulator::<f32, f32, f32>(
             &a_region,
@@ -771,7 +782,7 @@ fn run_merged_stream<O: Float + CubeElement>(
     let spec =
         |axes: &[Axis]| TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero));
     let arg = |handle: &TensorHandle, axes: &[Axis]| {
-        TileArgLaunch::new(handle.clone().binding().into_tensor_arg(), spec(axes))
+        TileArgLaunch::new(handle.clone().binding().into_tensor_arg(), 1, spec(axes))
     };
     let mut outputs = Vec::with_capacity(launches);
     for _ in 0..launches {
@@ -782,7 +793,11 @@ fn run_merged_stream<O: Float + CubeElement>(
             arg(&a, &[BB, MM, KK]),
             arg(&b, &[KK, NN]),
             arg(&slots, &[BB, MM, NN]),
-            TileArgLaunch::new(out.clone().binding().into_tensor_arg(), spec(&[BB, MM, NN])),
+            TileArgLaunch::new(
+                out.clone().binding().into_tensor_arg(),
+                1,
+                spec(&[BB, MM, NN]),
+            ),
             unsafe { BufferArg::from_raw_parts(arrivals.clone(), counters) },
             launcher.partitioning_arg(),
             launcher.partitioning().level(1),

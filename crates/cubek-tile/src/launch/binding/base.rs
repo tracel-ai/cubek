@@ -222,10 +222,9 @@ pub struct Bound {
 
 impl Bound {
     /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
-    pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V> {
-        let Bound { spec, .. } = &self;
-        let spec = spec.clone();
-        TileArgLaunch::new(self.tensor(), spec)
+    pub fn arg<E: Numeric>(self) -> TileArgLaunch<'static, E> {
+        let (width, spec) = (self.bound_width(), self.spec.clone());
+        TileArgLaunch::new(self.tensor(), width, spec)
     }
 
     /// The tensor argument itself; panics for an operand built over geometry alone.

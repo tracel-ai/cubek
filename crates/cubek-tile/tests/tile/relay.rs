@@ -38,8 +38,8 @@ const PITCH: usize = 32;
 /// `out` written with `input`, as the destination's write says: replaced or added atomically.
 #[cube(launch)]
 fn store<E: Float, V: Size, O: Destination>(
-    input: &TileArg<'_, E, V>,
-    out: &O::Arg<E, V>,
+    input: &TileArg<'_, E>,
+    out: &O::Arg<E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -51,8 +51,8 @@ fn store<E: Float, V: Size, O: Destination>(
 /// `out` written with `input` cast to the output's element.
 #[cube(launch)]
 fn store_cast<E: Float, F: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, F, Const<1>>,
+    input: &TileArg<'_, E>,
+    out: &TileArg<'_, F>,
     space: Partitioning,
     #[define(E, F)] _dtypes: [ElemType; 2],
 ) {
@@ -210,14 +210,14 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
 /// casts the sum into the `f16` output.
 #[cube(launch)]
 fn relayed_split_matmul(
-    a: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, f32, Const<1>>,
-    carry: &TileArg<'_, f32, Const<1>>,
-    out: &TileArg<'_, half::f16, Const<1>>,
+    a: &TileArg<'_, f32>,
+    b: &TileArg<'_, f32>,
+    carry: &TileArg<'_, f32>,
+    out: &TileArg<'_, half::f16>,
     turns: &[Atomic<u32>],
     space: Partitioning,
 ) {
-    let relay = carry.relay(&space, turns);
+    let relay = carry.relay::<Const<1>>(&space, turns);
     // Uniform across the cube, so it leaves before any barrier.
     if !relay.has_turn() {
         terminate!();
@@ -316,18 +316,22 @@ fn run_relayed_split(
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[M, K]),
             ),
             TileArgLaunch::new(
                 b.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[K, N]),
             ),
             TileArgLaunch::new(
                 carry.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[M, N]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[M, N]),
             ),
             unsafe { BufferArg::from_raw_parts(turns.clone(), counters) },

@@ -48,11 +48,15 @@ pub struct Relay<'a, E: Numeric> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+impl<'a, E: Numeric> TileArg<'a, E> {
     /// This operand as the carry of a [`Relay`]: the box the cubes splitting the contraction
     /// along its [`across`](Levels::across) axis take their turns at, under `partitioning`, whose
     /// first level is the cube level. `turns` arrives holding zero and is left holding zero.
-    pub fn relay<'t>(&self, partitioning: &Partitioning, turns: &'t [Atomic<u32>]) -> Relay<'t, E> {
+    pub fn relay<'t, V: Size>(
+        &self,
+        partitioning: &Partitioning,
+        turns: &'t [Atomic<u32>],
+    ) -> Relay<'t, E> {
         let space = comptime!(partitioning.clone());
         let split = comptime!(Relay::<'t, E>::split(&space, &self.spec));
         let walk = partitioning.walk();
@@ -254,17 +258,18 @@ impl Partitioning {
 /// others' parts into.
 #[cube]
 pub(crate) fn adding_tile<E: Numeric, V: Size>(
-    arg: &TileArg<'_, E, V>,
+    arg: &TileArg<'_, E>,
     partitioning: &Partitioning,
     first: bool,
 ) -> Tile<E> {
     let space = comptime!(partitioning.clone());
+    let lines = arg.lines::<V>();
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, V>>(
-        arg.tensor,
+        lines,
         comptime!(arg.spec.projection.physical_rank()),
     );
     GlobalOperand::<E>::sink(
-        relay_sink::<E, V>(arg.tensor, first),
+        relay_sink::<E, V>(lines, first),
         geometry,
         V::value(),
         comptime!(space.space().clone()),

@@ -29,9 +29,9 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// memory and the sum stored once.
 #[cube(launch)]
 fn smem_split_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -64,10 +64,10 @@ fn smem_split_matmul<E: Numeric>(
 /// The same product, the planes meeting in cyclic rounds rather than atomically: each drains its
 /// slice every round, landing one chunk a round, the cube synchronized between rounds.
 #[cube(launch)]
-fn smem_cyclic_split_matmul<E: Numeric, VC: Size>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, VC>,
-    c: &TileArg<'_, E, VC>,
+fn smem_cyclic_split_matmul<E: Numeric>(
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] planes: usize,
     #[define(E)] _dtype: ElemType,
@@ -163,14 +163,17 @@ fn run(
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[M, K]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[K, N]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                1,
                 TileSpec::direct(&[M, N]),
             ),
             launcher.partitioning_arg(),
@@ -190,9 +193,9 @@ fn run(
                 &client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
-                c.vector_size,
                 TileArgLaunch::new(
                     a_handle.clone().binding().into_tensor_arg(),
+                    1,
                     TileSpec::direct(&[M, K]),
                 ),
                 b.arg(),
@@ -331,9 +334,9 @@ fn cyclic_rounds_sum_the_same_every_run() {
 /// is opened with.
 #[cube(launch)]
 fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
-    a: &TileArg<'_, EI, Const<1>>,
-    b: &TileArg<'_, EI, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, EI>,
+    b: &TileArg<'_, EI>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] copies: bool,
     #[define(EI)] _input: ElemType,

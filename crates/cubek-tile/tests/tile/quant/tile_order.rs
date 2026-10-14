@@ -27,20 +27,21 @@ const PER_WORD: usize = 8;
 /// Columns a tile holds side by side.
 const TILE: usize = 16;
 
-/// `c = x · (W ⊗ s)`, the weight read `VW` words a load and its scales a packed `f32` one word a
-/// load, into a register block that lives across the walk over `K` and drains once.
+/// `c = x · (W ⊗ s)`, the weight read as many words a load as it is bound wide and its scales a
+/// packed `f32` one word a load, into a register block that lives across the walk over `K` and
+/// drains once.
 #[cube(launch)]
-fn tile_order_gemv<E: Numeric, VX: Size, VW: Size>(
-    x: &TileArg<'_, E, VX>,
-    w: &TileArg<'_, u32, VW>,
-    scale: &TileArg<'_, u32, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn tile_order_gemv<E: Numeric>(
+    x: &TileArg<'_, E>,
+    w: &TileArg<'_, E>,
+    scale: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(&space);
-    let values = w.tile_as::<E>(&space);
-    let w = values.mul(&scale.tile_as::<E>(&space));
+    let values = w.tile(&space);
+    let w = values.mul(&scale.tile(&space));
     let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
@@ -138,16 +139,16 @@ fn tile_order_reads_two_words_by_two_columns_a_load() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        BLOCK,
-        load_words,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
+            BLOCK,
             TileSpec::direct(&[M, KB, KI]),
         ),
-        TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
-        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), s_spec),
+        TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), load_words, w_spec),
+        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), 1, s_spec),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),

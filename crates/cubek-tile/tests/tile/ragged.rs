@@ -24,8 +24,8 @@ const D: Axis = Axis(2);
 /// lengths give as `[ends[b], ends[b + 1])`.
 #[cube(launch)]
 fn ragged_sum_kernel<E: Numeric>(
-    packed: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    packed: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     ends: &Tensor<u32>,
     space: Partitioning,
     #[comptime] seq: Level,
@@ -110,10 +110,12 @@ fn run() -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             packed_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[P, D]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[B, D]),
         ),
         ends_handle.binding().into_tensor_arg(),
@@ -169,8 +171,8 @@ const BLOCK: usize = 4;
 /// overruns reads zero instead of the next sequence.
 #[cube(launch)]
 fn blocked_ragged_sum_kernel<E: Numeric>(
-    packed: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    packed: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     ends: &Tensor<u32>,
     space: Partitioning,
     #[comptime] seq: Level,
@@ -236,10 +238,12 @@ fn run_blocked(ends: &[u32]) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             packed_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[P, D]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[B, D]),
         ),
         ends_handle.binding().into_tensor_arg(),

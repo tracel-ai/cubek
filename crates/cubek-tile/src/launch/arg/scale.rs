@@ -1,21 +1,8 @@
-//! A scale level a launch may or may not have bound, as the tile it serves.
+//! A scale level that may or may not be there, windowed and staged as the values it scales.
 
 use cubecl::prelude::*;
 
 use crate::*;
-
-/// A scale level a launch may or may not have bound, as the tile it serves.
-#[cube]
-pub fn scale_tile<S: Numeric, V: Size>(
-    level: &ComptimeOption<TileArg<'static, u32, V>>,
-    partitioning: &Partitioning,
-) -> ComptimeOption<Tile<S>> {
-    #[comptime]
-    match level {
-        ComptimeOption::Some(level) => ComptimeOption::new_Some(level.tile_as::<S>(partitioning)),
-        ComptimeOption::None => ComptimeOption::new_None(),
-    }
-}
 
 /// A scale level windowed the way the factor it multiplies is, or nothing where none was bound.
 #[cube]

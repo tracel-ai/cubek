@@ -29,10 +29,10 @@ const FORMS: [Form<'static>; 4] = [
 /// One register block over the whole nest, summed at every leaf and drained once. The two levels
 /// under the planes are the units and the walk, in whichever order the walk puts them.
 #[cube(launch)]
-fn contract<E: Numeric, VA: Size, VB: Size, VC: Size>(
-    x: &TileArg<'_, E, VA>,
-    w: &TileArg<'_, E, VB>,
-    out: &TileArg<'_, E, VC>,
+fn contract<E: Numeric>(
+    x: &TileArg<'_, E>,
+    w: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] budget: usize,
     #[define(E)] _dtype: ElemType,
@@ -136,9 +136,6 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.vector_size,
-        b.vector_size,
-        c.vector_size,
         a.arg(),
         b.arg(),
         c.arg(),

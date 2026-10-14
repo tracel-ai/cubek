@@ -33,8 +33,8 @@ fn recursive_two_level_tiled_view() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        input.arg(),
-        output.arg(),
+        input.arg(1),
+        output.arg(1),
         uncut(&client, &space, &space).partitioning_arg(),
         f32::elem_type_native(),
     );
@@ -59,8 +59,8 @@ fn recursive_two_level_tiled_view() {
 /// Copy every logical element of `input` into `output` through their views.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {

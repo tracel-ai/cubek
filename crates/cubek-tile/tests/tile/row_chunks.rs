@@ -50,10 +50,10 @@ enum Leaf {
 /// `c = a · b` over a walk along `K` whose every region is one stage of `outer`'s tile, read a
 /// fragment of `inner` at a time through `leaf`, the stage laid out as `storage`.
 #[cube(launch)]
-fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
-    a: &TileArg<'_, EI, V>,
-    b: &TileArg<'_, EI, V>,
-    c: &TileArg<'_, EA, Const<1>>,
+fn staged_k_walk<EI: Numeric, EA: Numeric>(
+    a: &TileArg<'_, EI>,
+    b: &TileArg<'_, EI>,
+    c: &TileArg<'_, EA>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
@@ -397,7 +397,6 @@ fn check(case: Case) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        v,
         bind(a_handle.clone().binding(), a_axes, v).arg(),
         bind(b_handle.clone().binding(), b_axes, v).arg(),
         bind(out.clone().binding(), &[M, N], 1).arg(),

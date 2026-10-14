@@ -39,8 +39,8 @@ const TABLE: [u32; SEQS * PAGES_PER_SEQ] = [2, 0, 3, 2];
 /// `out[b] = Σ kv[slot]` over the slots of the pages sequence `b` holds.
 #[cube(launch)]
 fn paged_sum_kernel<E: Numeric>(
-    kv: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    kv: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     table: &Tensor<u32>,
     space: Partitioning,
     #[comptime] seq: Level,
@@ -123,6 +123,7 @@ fn run(table: &[u32]) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             kv_handle.binding().into_tensor_arg(),
+            1,
             // The pool's one dimension read as two axes: `slot = page * PAGE_SIZE + offset`.
             TileSpec::new(Projection::new(
                 &[PAGE, OFFSET, D],
@@ -134,6 +135,7 @@ fn run(table: &[u32]) -> HostData {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[B, D]),
         ),
         table_handle.binding().into_tensor_arg(),
