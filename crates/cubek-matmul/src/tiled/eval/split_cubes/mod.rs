@@ -58,9 +58,9 @@ const FOLD_COLS: usize = 32;
 
 #[cube(launch)]
 fn plain_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -78,15 +78,15 @@ fn plain_matmul<E: Numeric>(
 /// This cube's slice of `K` contracted into a register block, drained through the atomic fold.
 #[cube(launch)]
 fn atomic_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = out.tile::<Const<1>>(&space);
+    let c = out.tile(&space);
     for region in space {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
@@ -108,15 +108,15 @@ fn atomic_matmul<E: Numeric>(
 /// contracts its own slice into the block, the plane combines in registers at the drain.
 #[cube(launch)]
 fn atomic_matmul_units<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
-    let c = out.tile::<Const<1>>(&space);
+    let c = out.tile(&space);
     for cube in space {
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
@@ -139,8 +139,8 @@ fn atomic_matmul_units<E: Numeric>(
 
 #[cube(launch)]
 fn fold_splits<E: Numeric>(
-    partials: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    partials: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -407,9 +407,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
+                    TileArgLaunch::new(self.a.tensor_arg(1), 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), 1, self.rhs_spec.clone()),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone(), 1),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -419,9 +419,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
+                    TileArgLaunch::new(self.a.tensor_arg(1), 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), 1, self.rhs_spec.clone()),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone(), 1),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -431,9 +431,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[M, N])),
+                    TileArgLaunch::new(self.a.tensor_arg(1), 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), 1, self.rhs_spec.clone()),
+                    TileArgLaunch::new(self.c.tensor_arg(1), 1, TileSpec::direct(&[M, N])),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -443,9 +443,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
+                    TileArgLaunch::new(self.a.tensor_arg(1), 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), 1, self.rhs_spec.clone()),
+                    TileArgLaunch::new(self.c.tensor_arg(1), 1, TileSpec::direct(&[KB, M, N])),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -453,8 +453,8 @@ impl Bound {
                     &self.client,
                     self.fold_cube_count.clone(),
                     self.fold_cube_dim,
-                    TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
-                    TileArgLaunch::new(self.folded.tensor_arg(1), TileSpec::direct(&[M, N])),
+                    TileArgLaunch::new(self.c.tensor_arg(1), 1, TileSpec::direct(&[KB, M, N])),
+                    TileArgLaunch::new(self.folded.tensor_arg(1), 1, TileSpec::direct(&[M, N])),
                     self.fold_space.partitioning_arg(),
                     dtype,
                 );

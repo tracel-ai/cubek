@@ -27,8 +27,8 @@ use crate::definition::MatmulSetupError;
 /// layout.
 #[cube(launch)]
 fn relayout<E: Numeric, V: Size>(
-    src: &TileArg<'_, E, V>,
-    dst: &TileArg<'_, E, V>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,

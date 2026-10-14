@@ -64,18 +64,10 @@ impl CpuGemmBlueprint {
 /// output, cast down to its type.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpu_gemm_kernel<
-    E: Numeric,
-    EA: Numeric,
-    EL: Numeric,
-    ER: Numeric,
-    VA: Size,
-    VB: Size,
-    VC: Size,
->(
-    a: &TileArg<'_, EL, VA>,
-    b: &TileArg<'_, ER, VB>,
-    c: &TileArg<'_, E, VC>,
+pub fn cpu_gemm_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
+    a: &TileArg<'_, EL>,
+    b: &TileArg<'_, ER>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
