@@ -112,16 +112,16 @@ fn gathered_tile<E: Numeric>(
 /// A tensor map, served as a TMA-filled tile.
 #[cube]
 fn tensor_map_tile<E: Numeric>(
-    map: &TensorMap<E, Tiled>,
-    layout: &VirtualLayout<CoordsDyn, Sequence<i32>>,
+    map: TensorMap<E, Tiled>,
+    layout: VirtualLayout<CoordsDyn, Sequence<i32>>,
     partitioning: &Partitioning,
     #[comptime] spec: TileSpec,
 ) -> Tile<E> {
     let space = comptime!(partitioning.clone());
     let own = comptime!(space.space().subspace(spec.axes()));
     let data = TmaData::from_tensor_map(
-        map.clone(),
-        layout.clone(),
+        map,
+        layout,
         comptime!(own.rank()),
         comptime!(spec.units),
         comptime!(spec.packing),
@@ -225,9 +225,13 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
             ValuesExpand::Tensor { tensor, .. } => {
                 buffer_tile::expand::<E>(scope, tensor, partitioning, self.spec.clone())
             }
-            ValuesExpand::TensorMap { map, layout } => {
-                tensor_map_tile::expand::<E>(scope, map, layout, partitioning, self.spec.clone())
-            }
+            ValuesExpand::TensorMap { map, layout } => tensor_map_tile::expand::<E>(
+                scope,
+                *map,
+                layout.clone(),
+                partitioning,
+                self.spec.clone(),
+            ),
         }
     }
 
@@ -552,7 +556,7 @@ impl<'a, E: Numeric> Clone for ValuesExpand<'a, E> {
                 width: *width,
             },
             ValuesExpand::TensorMap { map, layout } => ValuesExpand::TensorMap {
-                map: map.clone(),
+                map: *map,
                 layout: layout.clone(),
             },
         }

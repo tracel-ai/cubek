@@ -143,6 +143,8 @@ impl TmaData {
     }
 
     /// Window down to `step`: advance the global box origin by each axis's tile offset.
+    // The layout is `Copy`, but its expand is an `Arc` that the expansion moves: clone it.
+    #[allow(clippy::clone_on_copy)]
     pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> TmaData {
         let mut pos = CoordsDyn::new();
 
@@ -181,7 +183,7 @@ impl TmaDataExpand {
         &self,
         scope: &Scope,
     ) -> ViewMutExpand<'static, T, CoordsDyn> {
-        let map = self.map.__expand_at_method::<T>(scope).clone();
+        let map = *self.map.__expand_at_method::<T>(scope);
         let view = VirtualViewMutExpand::<T, CoordsDyn, Sequence<i32>, TensorMap<T, Tiled>>::new(
             map,
             self.layout.clone(),
