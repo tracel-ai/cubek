@@ -147,8 +147,14 @@ fn activation(rows: usize, k: usize) -> Vec<f32> {
         .collect()
 }
 
-fn assert_product(got: &HostData, n: usize, want: impl Fn(usize, usize) -> f32, what: &str) {
-    for i in 0..16 {
+fn assert_product(
+    got: &HostData,
+    rows: usize,
+    n: usize,
+    want: impl Fn(usize, usize) -> f32,
+    what: &str,
+) {
+    for i in 0..rows {
         for j in 0..n {
             let (have, want) = (got.get_f32(&[i, j]), want(i, j));
             assert!(
@@ -195,6 +201,7 @@ fn check_plain(k: usize, width_a: usize, width_b: usize) {
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     assert_product(
         &got,
+        16,
         8,
         |i, j| (0..k).map(|l| a[i * k + l] * b[j * k + l]).sum(),
         &format!("plain, k = {k}, served {width_a} and {width_b} wide"),
@@ -206,13 +213,19 @@ fn check_plain(k: usize, width_a: usize, width_b: usize) {
 /// two digits a block makes of it, `(KB, KI)`, so the scales are the operand omitting `KI`.
 /// `columns` fragments of eight columns share the plane, each contracting the one `a` it loads.
 fn check_nvfp4(k: usize, width_a: usize, words: usize, columns: usize) {
+    check_nvfp4_rows(16, k, width_a, words, columns)
+}
+
+/// [`check_nvfp4`] at `rows` rows of the fragment's sixteen: a product of fewer rows overhangs
+/// the fragment, its rows past the edge read as zeros and drained nowhere.
+fn check_nvfp4_rows(rows: usize, k: usize, width_a: usize, words: usize, columns: usize) {
     let client = cubecl::test_device().client();
     if skip_without_instruction(&client) {
         return;
     }
     let blocks = k / BLOCK;
     let n = 8 * columns;
-    let leaf = Levels::leaf(&[(M, 16), (N, 8), (KB, WINDOW / BLOCK), (KI, BLOCK)]);
+    let leaf = Levels::leaf(&[(M, 16), (N, 8), (KB, WINDOW / BLOCK), (KI, BLOCK)]).walk_every(&[M]);
     // More than one column of fragments: a level below the walk steps them, `k` held whole.
     let leaf = match columns {
         1 => leaf,
@@ -221,12 +234,12 @@ fn check_nvfp4(k: usize, width_a: usize, words: usize, columns: usize) {
     let launcher = implied(
         &client,
         Partitioning::new(
-            Space::new(&[(M, 16), (N, n), (KB, blocks), (KI, BLOCK)]),
-            leaf.walk_every(&[M, N, KB, KI]).build(),
+            Space::new(&[(M, rows), (N, n), (KB, blocks), (KI, BLOCK)]),
+            leaf.walk_every(&[N, KB, KI]).build(),
         ),
         Form::Static,
     );
-    let a = activation(16, k);
+    let a = activation(rows, k);
     // Every code, varied by position so no column repeats another.
     let codes: Vec<u8> = (0..n * k)
         .map(|i| ((i * 5 + 3 * (i / k)) % 16) as u8)
@@ -266,10 +279,12 @@ fn check_nvfp4(k: usize, width_a: usize, words: usize, columns: usize) {
     let a_op = launcher
         .arg(tensor(
             Bytes::from_elems(half),
-            vec![16, k],
+            vec![rows, blocks, BLOCK],
             f16::elem_type_native(),
         ))
-        .gathered(along_k(M))
+        // A dim a digit, as a product restates its activation: every axis an identity, so a
+        // fragment's rows past the product's are checked at the edge.
+        .axes(&[M, KB, KI])
         .vectorize(width_a)
         .build()
         .unwrap();
@@ -296,7 +311,7 @@ fn check_nvfp4(k: usize, width_a: usize, words: usize, columns: usize) {
         .vectorize(4)
         .build()
         .unwrap();
-    let c = TestInput::builder(client.clone(), Shape::from(vec![16, n]))
+    let c = TestInput::builder(client.clone(), Shape::from(vec![rows, n]))
         .zeros()
         .generate_without_host_data();
     let c_op = launcher
@@ -322,6 +337,7 @@ fn check_nvfp4(k: usize, width_a: usize, words: usize, columns: usize) {
     let decoded = |code: u8| e2m1::from_bits(code).to_f32();
     assert_product(
         &got,
+        rows,
         n,
         |i, j| {
             (0..k)
@@ -412,6 +428,7 @@ fn check_plain_split(k: usize, width: usize) {
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     assert_product(
         &got,
+        16,
         8,
         |i, j| (0..k).map(|l| a[i * k + l] * b[j * k + l]).sum(),
         &format!("plain over (KB, KI), k = {k}, served {width} wide"),
@@ -460,6 +477,15 @@ fn a_walk_of_nvfp4_windows_contracts_in_lane_runs() {
 fn column_fragments_share_one_lane_run_of_a() {
     check_nvfp4(2 * WINDOW, 8, 2, 2);
     check_nvfp4(WINDOW, 8, 2, 4);
+}
+
+/// Fewer rows than a fragment's, one fragment and a grid of them: the rows past the product's
+/// read as zeros and drain nowhere.
+#[test]
+fn a_product_of_fewer_rows_overhangs_its_fragments() {
+    check_nvfp4_rows(3, 2 * WINDOW, 8, 2, 1);
+    check_nvfp4_rows(3, 2 * WINDOW, 8, 2, 2);
+    check_nvfp4_rows(9, WINDOW, 8, 2, 4);
 }
 
 /// Each unit's register `i` of instruction role `ident` holds the cells the lane-run map says it

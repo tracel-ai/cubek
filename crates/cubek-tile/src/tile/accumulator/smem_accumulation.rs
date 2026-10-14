@@ -56,6 +56,7 @@ impl<T: Numeric> Tile<T> {
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Accumulate),
+            comptime!(Overhang::Masked),
         );
         let source = Memory::<T>::smem_backed(
             space,
@@ -67,6 +68,7 @@ impl<T: Numeric> Tile<T> {
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         );
         SmemAccumulation::<A, T> {
             sink: sink.nested_like::<T>(self),

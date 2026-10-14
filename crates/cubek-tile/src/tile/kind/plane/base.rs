@@ -704,7 +704,11 @@ impl<T: Numeric> PlanePartition<T> {
             (MatrixIdent::B, grid.1)
         });
         let (t0, t1) = comptime!(if free == a0 { (tiles, 1) } else { (1, tiles) });
-        let rows_along_free = comptime!(if ident == MatrixIdent::A { m } else { n });
+        // A fragment's edge along the free axis as the window holds it: the instruction's, or
+        // fewer where the product's rows end inside one fragment and the rest read as zeros.
+        let rows_along_free = comptime!(
+            (if ident == MatrixIdent::A { m } else { n }).min(window.extent(free) / tiles)
+        );
         // Every digit of the contraction: the edge of the group `contracted` leads.
         let k = comptime!(if contracted == a0 {
             edges.rows(&window)
@@ -1041,10 +1045,15 @@ impl<E: Float> PlaneTile<E> {
 fn grid_axes(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> MatrixAxes {
     let (rows, cols) = (frag.0 * tiles.0, frag.1 * tiles.1);
     let trailing = MatrixAxes::edges(window);
-    match (trailing.rows(window), trailing.cols(window)) == (rows, cols) {
-        true => trailing,
-        false => MatrixAxes::new(window, rows, cols).unwrap_or(trailing),
+    if (trailing.rows(window), trailing.cols(window)) == (rows, cols) {
+        return trailing;
     }
+    let mut grouped = MatrixAxes::new(window, rows, cols).unwrap_or(trailing);
+    // Axes of one leading the row group are batch: the group starts at the axis a grid cuts.
+    while grouped.row_split + 1 < grouped.col_split && window.extent_at(grouped.row_split) == 1 {
+        grouped.row_split += 1;
+    }
+    grouped
 }
 
 /// The never-walked level cutting an operand's window into the partition's fragments: the
@@ -1053,10 +1062,20 @@ fn grid_axes(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Mat
 fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
     let edges = grid_axes(window, frag, tiles);
     let (p0, p1, rank) = (edges.row_split, edges.col_split, window.rank());
-    // The edge position `p` lies in, its fragment edge and count, where the edge is one axis.
-    let cut = |p: usize| match p {
-        p if p == p0 && p1 == p0 + 1 => Some((frag.0, tiles.0)),
-        p if p == p1 && rank == p1 + 1 => Some((frag.1, tiles.1)),
+    // The one axis longer than one an edge's group spans, where it spans one: the axis a grid
+    // of fragments cuts along that edge.
+    let only = |group: core::ops::Range<usize>| {
+        let mut long = group.filter(|&p| window.extent_at(p) > 1);
+        match (long.next(), long.next()) {
+            (Some(p), None) => Some(p),
+            _ => None,
+        }
+    };
+    let (rows_axis, cols_axis) = (only(p0..p1), only(p1..rank));
+    // The fragment edge and count at position `p`, where it is the one axis of its edge.
+    let cut = |p: usize| match Some(p) {
+        q if q == rows_axis => Some((frag.0, tiles.0)),
+        q if q == cols_axis => Some((frag.1, tiles.1)),
         _ => None,
     };
     let axes: Vec<Axis> = window.axes().collect();
@@ -1078,9 +1097,9 @@ fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -
         );
     }
     assert!(
-        (cut(p0).is_some() || tiles.0 == 1) && (cut(p1).is_some() || tiles.1 == 1),
+        (rows_axis.is_some() || tiles.0 == 1) && (cols_axis.is_some() || tiles.1 == 1),
         "PlanePartition::fill_from: an edge spelled by several axes is a contraction every \
-         fragment holds whole, and {tiles:?} fragments cut one"
+         fragment holds whole, and {tiles:?} fragments of {frag:?} cut one of {window:?}"
     );
     Levels::leaf(&leaf).walk(&counts).build().remove(0)
 }

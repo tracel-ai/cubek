@@ -564,8 +564,8 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The one value this tile holds.
-    pub(crate) fn only(&self) -> T {
+    /// The one value this tile holds: a per-tensor scale's, read once.
+    pub fn only(&self) -> T {
         let axes = comptime!(MatrixAxes::trailing(&self.place.space));
         let matrix = self.matrix_packed::<Const<1>>(axes, 0usize);
         let origin = 0u32.runtime();
@@ -613,9 +613,8 @@ impl<T: Numeric> Tile<T> {
         let rows = comptime!(self.place.space.extent_at(edges.row_split));
         let cols = comptime!(self.place.space.extent_at(edges.col_split));
         match &self.kind {
-            TileKind::PlanePartition(p) => {
-                comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
-            }
+            // A grid's own fragments, which a window shorter than them overhangs.
+            TileKind::PlanePartition(p) => comptime!(((p.m_tiles, p.n_tiles), p.rows, p.cols)),
             TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)

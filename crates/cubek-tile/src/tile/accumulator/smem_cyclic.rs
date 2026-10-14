@@ -79,6 +79,7 @@ impl<T: Numeric> Tile<T> {
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         );
         SmemCyclicAccumulation::<A, T> {
             values,
@@ -117,6 +118,7 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Exclusive(Schedule::Cyclic)),
+            comptime!(Overhang::Masked),
         );
         sink.nested_like::<T>(&self.like)
     }

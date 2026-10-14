@@ -48,6 +48,8 @@ const E2M1_BLOCK: usize = 16;
 /// The depth along `k` one instruction of an `m × n` fragment of `T` contracts: `k` itself where
 /// the device offers that instruction, else the deepest one it offers that divides `k`, else `k`,
 /// which the expansion of the instruction then refuses as it always has.
+// `T` is read by the expansion, which is where a type has its element.
+#[allow(clippy::extra_unused_type_parameters)]
 #[cube]
 pub(crate) fn instruction_depth<T: Numeric>(
     #[comptime] m: usize,
@@ -180,6 +182,17 @@ pub(crate) fn lane_runs_here<T: Numeric>(
     comptime!(refusal.is_none())
 }
 
+/// Rows of the window `space` a fragment `k` deep loads from: its free edge, which a product of
+/// fewer rows than the fragment's leaves short of them, the rest read as zeros by the checked
+/// view.
+fn window_rows(space: &Space, k: usize) -> usize {
+    space
+        .axes()
+        .map(|axis| space.extent(axis))
+        .product::<usize>()
+        / k
+}
+
 /// The register of one instruction of role `ident` that holds pair `pair` of a unit's slots, in
 /// half `half` of its rows: an `A` holds rows `g` and `g + 8` in alternate registers, its first
 /// pair of `k` in registers 0 and 1; a `B` holds one column, a pair a register.
@@ -257,10 +270,8 @@ fn load_plain_runs<T: Numeric, N: Size>(
          operand at most {run} wide"
     ));
     let size!(W) = width;
-    let rows = comptime!(match ident {
-        MatrixIdent::A => m,
-        _ => n,
-    });
+    let _ = (m, n);
+    let rows = comptime!(window_rows(&src.place.space, k));
     // The window read along its rows, `k` running along its lines.
     let view = src.fragment_matrix_packed::<W>(rows, k);
     let lines = comptime!(run / width);
@@ -307,14 +318,11 @@ fn load_e2m1_runs<T: Numeric, N: Size>(
     #[comptime] run: usize,
     #[comptime] per_step: usize,
 ) {
-    let (m, n, k) = comptime!(shape);
+    let (_m, _n, k) = comptime!(shape);
     let space = comptime!(src.place.space.clone());
     // The window's rows are the role's free axis and its columns every digit of `k`, however
     // many axes spell it.
-    let rows = comptime!(match ident {
-        MatrixIdent::A => m,
-        _ => n,
-    });
+    let rows = comptime!(window_rows(&space, k));
     let axes = comptime!(MatrixAxes::new(&space, rows, k).unwrap_or_else(|no| {
         panic!("MmaData::load: a lane-run window is a {rows} x {k} matrix: {no:?}")
     }));
