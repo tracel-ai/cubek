@@ -181,6 +181,8 @@ pub(crate) fn launch_plane_tiles(
 /// Block `block`'s coordinates over `blocks`, one axis for each of `reversed`: the first two in
 /// `order`, the others outermost, first fastest, the last never wrapped, so a block past the grid
 /// lands off it. Each axis is then counted from its far end where `reversed` says so.
+// The loop is an `#[unroll]`ed cube loop indexing a comptime `Vec`, not host iteration.
+#[allow(clippy::needless_range_loop)]
 #[cube]
 fn block_coords(
     block: usize,
