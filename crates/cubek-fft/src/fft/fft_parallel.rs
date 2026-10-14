@@ -4,7 +4,7 @@
 //! outputs live in per-cube `Shared<[F]>`; callers load a bit-reversed
 //! window before calling [`fft_butterfly_parallel`].
 
-use core::f32::consts::PI;
+use core::f64::consts::PI;
 
 use cubecl::prelude::*;
 
@@ -34,7 +34,7 @@ pub(crate) fn fft_butterfly_parallel<F: Float>(
     #[comptime] fft_mode: FftMode,
 ) {
     let num_butterflies = comptime![n_fft / 2];
-    let sign = F::new(fft_mode.sign());
+    let sign = F::new(comptime!(f64::from(fft_mode.sign())));
     let two_pi = F::new(2.0 * PI);
 
     let mut s = 0usize;

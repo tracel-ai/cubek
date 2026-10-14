@@ -55,10 +55,14 @@ fn factor<E: Float>(#[comptime] f: usize) -> Factor<E> {
     sum_of(
         affine_along(
             comptime!(TAP[f]),
-            E::new(comptime!(OFFSET[f])),
-            E::new(comptime!(COEFFICIENT[f])),
+            E::new(comptime!(f64::from(OFFSET[f]))),
+            E::new(comptime!(f64::from(COEFFICIENT[f]))),
         ),
-        affine_along(ROW, E::new(0.0_f32), E::new(comptime!(ROW_COEFFICIENT[f]))),
+        affine_along(
+            ROW,
+            E::new(0.0),
+            E::new(comptime!(f64::from(ROW_COEFFICIENT[f]))),
+        ),
     )
 }
 
@@ -481,7 +485,7 @@ fn procedural_mask_kernel<E: Float>(
 ) {
     let rhs = Procedural::<E>::new::<AffineCoordinate<E>>(
         comptime!(space.space().subspace(&[TAP[0], COL])),
-        affine_along(TAP[0], E::new(1.0_f32), E::new(1.0_f32)),
+        affine_along(TAP[0], E::new(1.0), E::new(1.0)),
     )
     .tile();
     let mut output = output.tile(&space);
@@ -491,7 +495,7 @@ fn procedural_mask_kernel<E: Float>(
         let rhs = rhs.at(&region);
         let child = comptime!(level.clone().child(&space.space().clone()));
         let mut factors = Sequence::new();
-        factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(0.0_f32)));
+        factors.push(affine_along(TAP[0], E::new(1.0), E::new(0.0)));
         let weights = Procedural::<E>::separable::<Factors<AffineCoordinate<E>>>(
             comptime!(child.subspace(&[ROW, TAP[0]])),
             Factors::new(factors),
@@ -992,9 +996,9 @@ fn zero_sum_fallback_kernel<E: Float>(
     let input = input.tile(&space);
     let mut factors = Sequence::new();
     // Factor 0: taps at k=0 (1.0) and k=1 (-1.0), sum = 0.0
-    factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(-2.0_f32)));
+    factors.push(affine_along(TAP[0], E::new(1.0), E::new(-2.0)));
     // Factor 1: taps at k=0 (2.0) and k=1 (2.0), sum = 4.0
-    factors.push(affine_along(TAP[1], E::new(2.0_f32), E::new(0.0_f32)));
+    factors.push(affine_along(TAP[1], E::new(2.0), E::new(0.0)));
     let weights = Procedural::<E>::separable::<Factors<AffineCoordinate<E>>>(
         comptime!(space.space().subspace(&[ROW, TAP[0], TAP[1]])),
         Factors::new(factors),

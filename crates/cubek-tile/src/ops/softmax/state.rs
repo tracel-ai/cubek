@@ -5,10 +5,10 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// Logits at or below this are treated as masked (effectively -inf). Fits f16.
-pub const LOGIT_MASKED: f32 = -6e4;
+pub const LOGIT_MASKED: f64 = -6e4;
 
 /// Below this an `l` row sum is numerically zero (fully-masked row).
-pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
+pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f64 = 1e-4;
 
 /// `1/l`, exactly zero when `l` is numerically zero.
 #[cube]
