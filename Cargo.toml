@@ -43,7 +43,7 @@ cubek-tile = { path = "crates/cubek-tile", version = "0.3.0", default-features =
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-# In flight: tracel-ai/cubecl#1836 (feat/matrix-from-raw), on 80bb36b. Back to a main rev once it merges.
+# In flight: tracel-ai/cubecl#1836 (feat/matrix-from-raw), on main 3430dfb. Back to a main rev once it merges.
 cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "9448d627121370eb8d2f419f05e676a971d8405f", default-features = false }
 cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "9448d627121370eb8d2f419f05e676a971d8405f", default-features = false }
 cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "9448d627121370eb8d2f419f05e676a971d8405f", default-features = false }
