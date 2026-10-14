@@ -69,11 +69,12 @@ impl Lines {
 #[cube]
 impl Lines {
     /// The empty box one region of `level` over `operand` fills, one line per unit.
-    pub(crate) fn new<T: Numeric>(
-        operand: &Tile<T>,
+    pub(crate) fn new(
+        operand: &Tile,
         #[comptime] level: Level,
         #[comptime] read: UnitRead,
     ) -> Lines {
+        let _served = naming::<Served>(operand.element);
         let loaded = comptime!(level.child(&operand.place.space));
         let rank = comptime!(loaded.rank());
         let line = comptime!(loaded.extent_at(rank - 1));
@@ -84,7 +85,7 @@ impl Lines {
         ));
         let (strides, lines) = comptime!(Lines::line_strides(&loaded, &projection));
         let packing = operand.packing();
-        let served = elem_type_of::<T>();
+        let served = elem_type_of::<Served>();
         let field = comptime!(match packing {
             Packing::Packed { field } => field,
             Packing::Plain => match served {
@@ -156,7 +157,8 @@ impl Lines {
     }
 
     /// Load from `src`, the box's memory window: unit `t` reads line `t`.
-    pub(crate) fn load<T: Numeric>(&mut self, src: &Tile<T>) {
+    pub(crate) fn load(&mut self, src: &Tile) {
+        let _served = naming::<Served>(src.element);
         let rank = comptime!(self.loaded.rank());
         let line = self.line();
         let lines = self.lines();
@@ -197,7 +199,9 @@ impl Lines {
                     }
                     Packing::Plain => {
                         let size!(SV) = served;
-                        let values = src.nd_packed::<SV>(comptime!(Guard::Checked)).read(at);
+                        let values = src
+                            .nd_packed::<Served, SV>(comptime!(Guard::Checked))
+                            .read(at);
                         let mut bits = Vector::<u32, WR>::empty();
                         #[unroll]
                         for j in 0..per_read {

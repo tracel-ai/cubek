@@ -2141,7 +2141,7 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(&space);
     let weight = weight.tile(&space);
     let out = out.tile(&space);
-    let acc = out.accumulator::<E, E, E>(
+    let acc = out.accumulator::<E>(
         &input,
         &weight,
         comptime!(Instruction::Mma { io }),

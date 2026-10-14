@@ -19,8 +19,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch,
-    Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
+    Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch, Semiring, Space, StageStorage,
+    Stages, Tile, TileArg, TileArgLaunch, TileSpec,
     ops::{matmul::MmaIo, softmax::OnlineSoftmax},
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
@@ -102,11 +102,11 @@ fn plane_attention<E: Float>(
             let keys_walk = plane.walk();
             let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
             let walk = keys_walk.range(0, blocks);
-            let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-            let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let score = Tile::scratch::<f32>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let mut p = Tile::scratch::<E>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let acc = out
                 .at(&plane)
-                .accumulator::<f32, f32, E>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
+                .accumulator::<f32>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
                 .with_scratch(Scratch::OneTile);
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
@@ -117,12 +117,8 @@ fn plane_attention<E: Float>(
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
-                    let logits = score.accumulator::<f32, E, E>(
-                        &q_s,
-                        k_s,
-                        Instruction::Cmma,
-                        Semiring::SUM_PROD,
-                    );
+                    let logits =
+                        score.accumulator::<f32>(&q_s, k_s, Instruction::Cmma, Semiring::SUM_PROD);
                     for fragment in stage.walk().routed(V, 0).unrolled() {
                         let mut cell = logits.at(&fragment);
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
@@ -194,17 +190,14 @@ fn register_plane_attention<E: Float>(
             let keys_walk = plane.walk();
             let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
             let walk = keys_walk.range(0, blocks);
-            let acc = out.at(&plane).accumulator::<f32, f32, E>(
-                &bias_p,
-                &v_p,
-                instruction,
-                Semiring::SUM_PROD,
-            );
+            let acc =
+                out.at(&plane)
+                    .accumulator::<f32>(&bias_p, &v_p, instruction, Semiring::SUM_PROD);
             let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
             q_s.copy_from(&q_p);
             sync_plane();
             let logits =
-                Tile::<f32>::stage_accumulator(&walk, comptime!(vec![Q, S]), &q_s, instruction);
+                Tile::stage_accumulator::<f32>(&walk, comptime!(vec![Q, S]), &q_s, instruction);
             let mut softmax = OnlineSoftmax::<f32>::along(&logits, S);
             let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
             stages.pipelined(walk, |slot, stage| {
@@ -274,7 +267,7 @@ fn unit_attention<E: Float>(
                 out.at(&unit),
                 bias.at(&unit),
             );
-            let mut acc = out_u.accumulator::<f32, f32, E>(
+            let mut acc = out_u.accumulator::<f32>(
                 &bias_u,
                 &v_u,
                 comptime!(Instruction::Registers {
@@ -290,7 +283,7 @@ fn unit_attention<E: Float>(
                     v_u.at(&step),
                     bias_u.at(&step),
                 );
-                let mut score = bias_s.accumulator::<f32, E, E>(
+                let mut score = bias_s.accumulator::<f32>(
                     &q_s,
                     &k_s,
                     comptime!(Instruction::Registers {
@@ -373,10 +366,10 @@ fn relayed_attention<E: Float>(
     let blocks = reach.div_ceil(block_keys).min(run.total());
     let walk = run.range(0, blocks);
     let sum = relay.tile();
-    let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-    let p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+    let score = Tile::scratch::<f32>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+    let p = Tile::scratch::<E>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
     let acc = sum
-        .accumulator::<f32, f32, E>(&bias, &v, Instruction::Cmma, Semiring::SUM_PROD)
+        .accumulator::<f32>(&bias, &v, Instruction::Cmma, Semiring::SUM_PROD)
         .with_scratch(Scratch::OneTile);
     let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
     // The query spans no key: its box is the first block's, staged once before the walk.
@@ -389,7 +382,7 @@ fn relayed_attention<E: Float>(
         slot.consume(|k_s, v_s| {
             for plane in stage {
                 let score_p = score.at(&plane);
-                let logits = score_p.accumulator::<f32, E, E>(
+                let logits = score_p.accumulator::<f32>(
                     &q_s.at(&plane),
                     &k_s.at(&plane),
                     Instruction::Cmma,

@@ -232,8 +232,8 @@ fn masked_bound_depends_on(
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,

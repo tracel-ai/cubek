@@ -41,7 +41,7 @@ fn ragged_sum_kernel<E: Numeric>(
         let end = ends[b + 1] as usize;
 
         let mut total = out.at(&sequence);
-        total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
         // The whole of it: the walk over the packed axis takes `end - start` steps from `start`,
         // so an empty sequence takes none and a short one never reads its neighbour's tokens.
@@ -188,7 +188,7 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
         let end = ends[b + 1] as usize;
 
         let mut total = out.at(&sequence);
-        total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
         let seq_view = packed.within(P, start, end);
 

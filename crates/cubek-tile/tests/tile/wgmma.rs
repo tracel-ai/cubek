@@ -35,12 +35,12 @@ const GROUPS: usize = 2;
 /// Each group's MMAs into its window of `sum`, every step of the stage.
 #[derive(CubeType)]
 struct GroupMma {
-    sum: Tile<f32>,
+    sum: Tile,
 }
 
 #[cube]
-impl AsyncStage<f16, f16> for GroupMma {
-    fn issue(&self, region: &Region, lhs: &Tile<f16>, rhs: &Tile<f16>) -> Pending<()> {
+impl AsyncStage for GroupMma {
+    fn issue(&self, region: &Region, lhs: &Tile, rhs: &Tile) -> Pending<()> {
         let sum = self.sum.at(region);
         for group in region {
             let (sum, lhs, rhs) = (sum.at(&group), lhs.at(&group), rhs.at(&group));
@@ -90,12 +90,8 @@ fn wgmma_walk(
                 }
             }
             Role::Compute => {
-                let mut sum = c.accumulator::<f32, f16, f16>(
-                    &a,
-                    &b,
-                    comptime!(Instruction::Wgmma),
-                    Semiring::SUM_PROD,
-                );
+                let mut sum =
+                    c.accumulator::<f32>(&a, &b, comptime!(Instruction::Wgmma), Semiring::SUM_PROD);
                 sum.zero();
                 let mma = GroupMma { sum: sum.clone() };
                 stages.consume_async::<GroupMma>(&walk, &mma);

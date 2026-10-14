@@ -13,8 +13,8 @@ use super::coords::cell_read;
 #[cube]
 pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     acc: &mut Memory,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] problem: GatherProblem,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -22,8 +22,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let matrices = comptime!(problem.block.matrices());
     let batch_extents = comptime!(problem.block.batch_extents());
 
-    let lhs_view = lhs.nd_packed::<L>(comptime!(Guard::Checked));
-    let rhs_view = rhs.nd_packed::<V>(comptime!(Guard::Checked));
+    let lhs_view = lhs.nd_packed::<EL, L>(comptime!(Guard::Checked));
+    let rhs_view = rhs.nd_packed::<ER, V>(comptime!(Guard::Checked));
     // `comptime!`-bound so `#[unroll(flag)]` sees a comptime flag; otherwise it silently rolls.
     let lhs_check = comptime!(lhs_view.check);
     let rhs_check = comptime!(rhs_view.check);
@@ -74,8 +74,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
             let inside = operands_inside;
             if inside {
                 walk::<E, EL, L, ER, V, A>(
-                    &lhs.nd_packed::<L>(comptime!(Guard::Proved)),
-                    &rhs.nd_packed::<V>(comptime!(Guard::Proved)),
+                    &lhs.nd_packed::<EL, L>(comptime!(Guard::Proved)),
+                    &rhs.nd_packed::<ER, V>(comptime!(Guard::Proved)),
                     &mut acc,
                     &batch,
                     comptime!(problem.clone()),

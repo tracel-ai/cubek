@@ -5,11 +5,12 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 use crate::*;
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// [`dequantize_from`](Tile::dequantize_from) a source in memory, read in the source's own
     /// loads ([`vector_tile`](Tile::vector_tile)), a run or a rectangle of its stored tiles. The
     /// source may carry extra axes only if each is one wide.
-    pub(crate) fn copy_scaled_from<S: Numeric>(&mut self, src: &Tile<S>) {
+    pub(crate) fn copy_scaled_from(&mut self, src: &Tile) {
+        let _source = naming::<Source>(src.element);
         // It decodes in the unit that loads each line; an async copy lands the bytes as they lie.
         let delivery = src.delivery();
         comptime!(assert!(
@@ -23,11 +24,17 @@ impl<T: Numeric> Tile<T> {
         match comptime!(packing) {
             Packing::Plain => {
                 let size!(SW) = sw;
-                self.copy_decoded(src, src.nd_packed::<SW>(comptime!(Guard::Checked)));
+                self.copy_decoded::<Source, Source, SW>(
+                    src,
+                    src.nd_packed::<Source, SW>(comptime!(Guard::Checked)),
+                );
             }
             Packing::Packed { field: _ } => {
                 let size!(WP) = comptime!(packing.physical(sw));
-                self.copy_decoded(src, src.nd_words::<WP>(comptime!(Guard::Checked)));
+                self.copy_decoded::<Source, u32, WP>(
+                    src,
+                    src.nd_words::<WP>(comptime!(Guard::Checked)),
+                );
             }
         }
     }
@@ -36,9 +43,10 @@ impl<T: Numeric> Tile<T> {
     /// the units that fill this tile.
     fn copy_decoded<S: Numeric, I: Numeric, WP: Size>(
         &mut self,
-        src: &Tile<S>,
+        src: &Tile,
         stored: Masked<'_, Vector<I, WP>, CoordsDyn>,
     ) {
+        let _served = naming::<Served>(self.element);
         let (load, lands) = (src.vector_tile(), self.vector_tile());
         let vw = comptime!(lands.values());
         let size!(VW) = vw;
@@ -53,7 +61,7 @@ impl<T: Numeric> Tile<T> {
         let fill = comptime!(fill.held_by(holder));
         let units = comptime!(fill.count);
         let loads = comptime!(load.counts(&space).iter().product::<usize>());
-        let mut out = self.nd_mut::<VW>();
+        let mut out = self.nd_mut::<Served, VW>();
         // A comptime worker count unrolls the loads, as a straight fill unrolls its lines: a
         // runtime stride stalls each store on Metal's in-order pipe.
         if comptime!(units > 0 && loads.div_ceil(units) <= 8) {
@@ -61,7 +69,7 @@ impl<T: Numeric> Tile<T> {
             for t in 0..comptime!(loads.div_ceil(units)) {
                 let line = FillUnits::worker(fill) as u32 + comptime!((t * units) as u32);
                 if comptime!((t + 1) * units <= loads) {
-                    src.decode_load_into::<T, I, WP, VW>(
+                    src.decode_load_into::<S, Served, I, WP, VW>(
                         &stored,
                         &mut out,
                         line,
@@ -70,7 +78,7 @@ impl<T: Numeric> Tile<T> {
                     );
                 } else {
                     if line < comptime!(loads as u32) {
-                        src.decode_load_into::<T, I, WP, VW>(
+                        src.decode_load_into::<S, Served, I, WP, VW>(
                             &stored,
                             &mut out,
                             line,
@@ -84,7 +92,7 @@ impl<T: Numeric> Tile<T> {
             let first = FillUnits::worker(fill) as u32;
             let stride = FillUnits::workers(fill) as u32;
             for line in range_stepped(first, comptime!(loads as u32), stride) {
-                src.decode_load_into::<T, I, WP, VW>(
+                src.decode_load_into::<S, Served, I, WP, VW>(
                     &stored,
                     &mut out,
                     line,
@@ -97,7 +105,7 @@ impl<T: Numeric> Tile<T> {
 
     /// This source's `line`-th load, read out of `stored`, decoded under its table and scales
     /// into `out`, a window spanning `dst` written in `lands`.
-    fn decode_load_into<O: Numeric, I: Numeric, WP: Size, VW: Size>(
+    fn decode_load_into<S: Numeric, O: Numeric, I: Numeric, WP: Size, VW: Size>(
         &self,
         stored: &Masked<'_, Vector<I, WP>, CoordsDyn>,
         out: &mut MaskedMut<'_, Vector<O, VW>, CoordsDyn>,
@@ -132,9 +140,9 @@ impl<T: Numeric> Tile<T> {
                     to.push(coord);
                 }
             }
-            let values = values_at::<T, I, WP, VW>(held, offset, packing);
+            let values = values_at::<S, I, WP, VW>(held, offset, packing);
             let scale = self.factor.at_coords(&at, comptime!(space.clone())) * lift;
-            // Multiplied in `f32`, rounded to `T` once: a placed `e2m1` value is a lift short,
+            // Multiplied in `f32`, rounded to `S` once: a placed `e2m1` value is a lift short,
             // which the scale carries, and the lift times a scale is past a half's range where
             // its product with the value is not.
             let scaled = Vector::<f32, VW>::cast_from(mem.codebook.entries(values))

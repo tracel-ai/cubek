@@ -45,7 +45,7 @@ fn smem_split_matmul<E: Numeric>(
             let a_plane = a.at(&plane);
             let b_plane = b.at(&plane);
             let sink_plane = sum.sink.at(&plane);
-            let mut partial = sink_plane.accumulator::<E, E, E>(
+            let mut partial = sink_plane.accumulator::<E>(
                 &a_plane,
                 &b_plane,
                 comptime!(Instruction::Registers {
@@ -81,7 +81,7 @@ fn smem_cyclic_split_matmul<E: Numeric>(
         for plane in cube {
             let a_plane = a.at(&plane);
             let b_plane = b.at(&plane);
-            let mut partial = c_cube.at(&plane).accumulator::<E, E, E>(
+            let mut partial = c_cube.at(&plane).accumulator::<E>(
                 &a_plane,
                 &b_plane,
                 comptime!(Instruction::Registers {
@@ -349,12 +349,8 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let mut c_cube = c.at(&cube);
-        let opened = c_cube.accumulator::<E, EI, EI>(
-            &a_cube,
-            &b_cube,
-            Instruction::Cmma,
-            Semiring::SUM_PROD,
-        );
+        let opened =
+            c_cube.accumulator::<E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD);
         // The drain opens the scratch the window needs; a copy is handed one.
         let mut acc = if comptime!(copies) {
             opened.with_scratch(Scratch::OneTile)

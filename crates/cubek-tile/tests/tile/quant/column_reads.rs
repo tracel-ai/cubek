@@ -41,7 +41,7 @@ fn column_gemv<E: Numeric>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &x,
             &values,
             comptime!(Instruction::Registers {

@@ -71,9 +71,9 @@ impl<L: LogicalLayout> Layout for Projected<L> {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// The whole logical box as a writable N-D view; refused where a write would alias.
-    pub(crate) fn nd_mut<W: Size>(&mut self) -> MaskedMut<'_, Vector<T, W>, CoordsDyn> {
+    pub(crate) fn nd_mut<T: Numeric, W: Size>(&mut self) -> MaskedMut<'_, Vector<T, W>, CoordsDyn> {
         let space = comptime!(self.place.space.clone());
         let g = self.mem_mut("nd_mut");
         comptime!(assert!(
@@ -86,7 +86,7 @@ impl<T: Numeric> Tile<T> {
 
     /// The whole logical box, unpacked if packed, under the guard the reader states.
     /// Claim [`Guard::Proved`] only where [`guard_provable`](Tile::guard_provable) allows.
-    pub(crate) fn nd_packed<W: Size>(
+    pub(crate) fn nd_packed<T: Numeric, W: Size>(
         &self,
         #[comptime] guard: Guard,
     ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
@@ -173,9 +173,9 @@ impl<'a, T: Numeric, W: Size> Gathered<'a, T, W> {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// The map, physical read surface and physical rank to step a gathered operand by hand.
-    pub(crate) fn nd_split<W: Size>(&self) -> Gathered<'_, T, W> {
+    pub(crate) fn nd_split<T: Numeric, W: Size>(&self) -> Gathered<'_, T, W> {
         let space = comptime!(self.place.space.clone());
         match &self.kind {
             TileKind::Memory(g) => Gathered::new(
@@ -194,7 +194,7 @@ impl<T: Numeric> Tile<T> {
                     RuntimeMap::integral(comptime!(space.rank())),
                     comptime!(1usize),
                 ),
-                self.nd_packed::<W>(comptime!(Guard::Checked)),
+                self.nd_packed::<T, W>(comptime!(Guard::Checked)),
                 comptime!(space.rank()),
             ),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {

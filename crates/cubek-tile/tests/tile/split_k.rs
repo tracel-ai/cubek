@@ -330,7 +330,7 @@ fn atomic_split_matmul<E: Numeric>(
     let c = out.tile(&space);
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -365,7 +365,7 @@ fn atomic_split_matmul_by_unit<E: Numeric>(
     let c = out.tile(&space);
     // Opened above both walks, so it holds what one unit of one cube sums: its own columns
     // against that cube's slice of the contraction.
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -815,7 +815,7 @@ fn atomic_split_cmma<E: Numeric>(
         let b_cube = b.at(&cube);
         let c_cube = c.at(&cube);
         let acc = c_cube
-            .accumulator::<E, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD)
+            .accumulator::<E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD)
             .with_scratch(Scratch::OneTile);
         let walk = cube.walk();
         let mut stages = Stages::smem(

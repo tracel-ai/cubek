@@ -14,8 +14,8 @@ use super::coords::{cell_position, offset_last};
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     acc: &mut Memory,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] problem: GatherProblem,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -28,7 +28,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     let matrices = comptime!(problem.block.matrices());
     let batch_extents = comptime!(problem.block.batch_extents());
 
-    let rhs_reader = rhs.nd_split::<V>();
+    let rhs_reader = rhs.nd_split::<ER, V>();
     let rhs_check = comptime!(rhs_reader.view.check);
     let factors = comptime!(
         problem
@@ -83,7 +83,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
             #[unroll]
             for f in 0..factors {
                 if comptime!(problem.factor_reuse[f] == FactorReuse::Block) {
-                    factor_walk::<EL, ER>(
+                    factor_walk::<EL>(
                         &mut block_weights,
                         comptime!(problem.offsets[f]),
                         lhs,
@@ -114,7 +114,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                 #[unroll]
                 for f in 0..factors {
                     if comptime!(problem.factor_reuse[f] == FactorReuse::Column) {
-                        factor_walk::<EL, ER>(
+                        factor_walk::<EL>(
                             &mut column_weights,
                             n * comptime!(taps) + comptime!(problem.offsets[f]),
                             lhs,
@@ -145,7 +145,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
             #[unroll]
             for f in 0..factors {
                 if comptime!(problem.factor_reuse[f] == FactorReuse::Row) {
-                    factor_walk::<EL, ER>(
+                    factor_walk::<EL>(
                         &mut row_weights,
                         comptime!(problem.offsets[f]),
                         lhs,
@@ -174,7 +174,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                     #[unroll]
                     for f in 0..factors {
                         if comptime!(problem.factor_reuse[f] == FactorReuse::Cell) {
-                            factor_walk::<EL, ER>(
+                            factor_walk::<EL>(
                                 &mut cell_weights,
                                 comptime!(problem.offsets[f]),
                                 lhs,
@@ -312,11 +312,11 @@ fn rhs_anchor(
 /// Evaluate one factor's complete 1-D tap walk at the accumulator coordinate where it is cached.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn factor_walk<EL: Numeric, ER: Numeric>(
+fn factor_walk<EL: Numeric>(
     weights: &mut Array<EL>,
     offset: usize,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Tile,
+    rhs: &Tile,
     rhs_map: &ProjectionInKernel,
     anchor: &CoordsDyn,
     batch: &Coords<u32>,
@@ -339,7 +339,7 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
                     comptime!(problem.clone()),
                     1usize,
                 );
-                weights[offset + comptime!(k)] = lhs.separable_factor(pos, factor);
+                weights[offset + comptime!(k)] = lhs.separable_factor::<EL>(pos, factor);
             }
         }
         Some(normalization) => {
@@ -356,7 +356,7 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
                     comptime!(problem.clone()),
                     1usize,
                 );
-                let weight = lhs.separable_factor(lhs_pos, factor);
+                let weight = lhs.separable_factor::<EL>(lhs_pos, factor);
                 let weight = match comptime!(normalization.taps) {
                     TapSupport::InBounds => {
                         let rhs_pos = cell_position(

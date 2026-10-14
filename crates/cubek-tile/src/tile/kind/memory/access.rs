@@ -14,10 +14,10 @@ use cubecl::{
 use crate::*;
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// A read [`View`] over `Vector<T, W>` lines through the base layout and `Window`.
     /// `W` is the line width (`self.store.vector_size`).
-    pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
+    pub fn view<T: Numeric, W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem("view");
         if comptime!(g.store.packing != Packing::Plain) {
             panic!(
@@ -42,7 +42,11 @@ impl<T: Numeric> Tile<T> {
 
     /// This unit's share of filling this stage from `src`, read into `fetched` but not yet written.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
-    pub(crate) fn fetch_from<W: Size>(&self, src: &Tile<T>, fetched: &mut Array<Vector<T, W>>) {
+    pub(crate) fn fetch_from<T: Numeric, W: Size>(
+        &self,
+        src: &Tile,
+        fetched: &mut Array<Vector<T, W>>,
+    ) {
         let space = comptime!(self.place.space.clone());
         self.mem("fetch_from")
             .fetch_straight(src.mem("fetch_from"), space, fetched);
@@ -50,11 +54,11 @@ impl<T: Numeric> Tile<T> {
 
     /// Write what [`fetch_from`](Tile::fetch_from) read into this stage.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
-    pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
+    pub(crate) fn store_fetched<T: Numeric, W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         self.mem_mut("store_fetched").store_fetched(fetched);
     }
 
-    pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+    pub fn view_mut<T: Numeric, W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem_mut("view_mut");
         g.window_view_mut::<T, W>(comptime!(Guard::Checked))
     }

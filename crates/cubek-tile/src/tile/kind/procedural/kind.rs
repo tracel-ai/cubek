@@ -329,9 +329,9 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn> for Proc
 #[cube]
 impl Procedural {
     /// This source as a tile, placed alone.
-    pub fn tile<T: Numeric>(self) -> Tile<T> {
+    pub fn tile<T: Numeric>(self) -> Tile {
         let space = comptime!(self.space.clone());
-        Tile::new(
+        Tile::new::<T>(
             TileKind::new_Procedural(self),
             comptime!(Placement::alone(space)),
         )
@@ -339,10 +339,10 @@ impl Procedural {
 
     /// This source as a tile at the root of `partitioning`, windowed by its regions like an
     /// operand bound to it: its space must be the partitioning's, or some of its axes.
-    pub fn tile_in<T: Numeric>(self, partitioning: &Partitioning) -> Tile<T> {
+    pub fn tile_in<T: Numeric>(self, partitioning: &Partitioning) -> Tile {
         let space = comptime!(self.space.clone());
         let levels = comptime!(partitioning.levels().to_vec());
-        Tile::new(
+        Tile::new::<T>(
             TileKind::new_Procedural(self),
             comptime!(Placement::root(space, levels)),
         )

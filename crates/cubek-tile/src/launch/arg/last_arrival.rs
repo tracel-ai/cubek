@@ -23,15 +23,15 @@ use crate::*;
 /// left holding zero. A count publishes the run's part at device scope first, so it runs only where
 /// the runtime hands one cube's writes to another within a dispatch (`device_memory_scope`).
 #[derive(CubeType)]
-pub struct LastArrival<'a, E: Numeric> {
+pub struct LastArrival<'a> {
     /// The slots, as the boxes of [`Partitioning::arrival_slots`]'s space.
-    slots: Tile<E>,
+    slots: Tile,
     /// The slots written adding into what they hold, as the last run sums into the first's.
-    adding: Tile<E>,
+    adding: Tile,
     /// The slot boxes, one flat index: a run's two are `2 · run` and the next.
     boxes: Walk,
     /// This run's slot of this box.
-    own: Tile<E>,
+    own: Tile,
     arrivals: &'a [Atomic<u32>],
     /// This run's box of the output.
     region: Region,
@@ -55,7 +55,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         portion: &Portion,
         i: usize,
         arrivals: &'t [Atomic<u32>],
-    ) -> LastArrival<'t, E> {
+    ) -> LastArrival<'t> {
         let boxes_space = comptime!(partitioning.clone().arrival_slots_space(self.spec.axes()));
         let boxes = Partitioning {
             space: Space::with_sizes(
@@ -74,7 +74,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         // The merge adds every later run's part into the first run's slot, which already holds
         // that run's part: no write replaces.
         let first_turn = false;
-        LastArrival::<'t, E> {
+        LastArrival::<'t> {
             slots,
             adding: adding_tile::<E, V>(self, &boxes, first_turn),
             boxes: walk,
@@ -90,16 +90,16 @@ impl<'a, E: Numeric> TileArg<'a, E> {
 }
 
 #[cube]
-impl<'a, E: Numeric> LastArrival<'a, E> {
+impl<'a> LastArrival<'a> {
     /// This run's slot of its box: what a sum it hands on is opened on.
-    pub fn tile(&self) -> Tile<E> {
+    pub fn tile(&self) -> Tile {
         self.own.clone()
     }
 
     /// Hand `sum`, opened on [`tile`](LastArrival::tile), on to `out` with a cast: drained straight
     /// into it where this run holds the box whole, parked and merged by the last run to arrive
     /// otherwise. Every unit of the cube reaches it.
-    pub fn hand_on<O: Numeric>(&self, sum: &Tile<E>, out: &mut Tile<O>) {
+    pub fn hand_on(&self, sum: &Tile, out: &mut Tile) {
         let slot = self.own.projection();
         let output = out.projection();
         comptime!(assert!(

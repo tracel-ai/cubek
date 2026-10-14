@@ -2,8 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, RegisterBlock,
-    Semiring, Space, TileArg,
+    Axis, Instruction, Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -84,7 +83,7 @@ pub fn cpu_gemm_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
             let b = b.at(&plane);
             let mut c = c.at(&plane);
             // One block per plane, the instruction's shape, read off the levels below the plane.
-            let acc = c.accumulator::<EA, EL, ER>(
+            let acc = c.accumulator::<EA>(
                 &a,
                 &b,
                 comptime!(Instruction::Registers {

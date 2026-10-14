@@ -40,8 +40,8 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile(&space);
     let mask_tile = mask.tile(&space);
-    let mut score = Tile::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
-    let mut p = Tile::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut score = Tile::smem::<f32>(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut p = Tile::smem::<f32>(block_space.clone(), 1usize, StageStorage::Strided, units);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -67,8 +67,8 @@ fn softmax_walk_kernel(
         // Stage the block: each worker fills its own rows and, inside them,
         // each unit the columns the leaf will read back — so no cell crosses a
         // unit and no sync is owed on either arm.
-        let gmem = score_gmem.view::<Const<1>>();
-        let mut smem = score.view_mut::<Const<1>>();
+        let gmem = score_gmem.view::<f32, Const<1>>();
+        let mut smem = score.view_mut::<f32, Const<1>>();
         for ri in 0..rpu {
             let r = worker * rpu + ri;
             if r < rows {
@@ -117,7 +117,7 @@ fn softmax_walk_kernel(
         // The block update `O = corr·O + P·V`, on a scalar accumulator. Each unit sums the columns
         // it owns and the plane closes it, which is the value matmul's own shape; at one unit the
         // reduction is the identity.
-        let p_view = p.view::<Const<1>>();
+        let p_view = p.view::<f32, Const<1>>();
         for ri in 0..rpu {
             let r = worker * rpu + ri;
             if r < rows {
@@ -374,8 +374,8 @@ fn softmax_smem_acc_kernel(
 ) {
     let score_gmem = score_in.tile(&space);
     let mask_tile = mask.tile(&space);
-    let mut score = Tile::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
-    let mut p = Tile::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut score = Tile::smem::<f32>(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut p = Tile::smem::<f32>(block_space.clone(), 1usize, StageStorage::Strided, units);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -384,15 +384,15 @@ fn softmax_smem_acc_kernel(
     let share = comptime!(state.share);
     let rpu = comptime!(share.rows());
 
-    let mut factors = Tile::<f32>::smem(kept_space, 1usize, StageStorage::Strided, units);
+    let mut factors = Tile::smem::<f32>(kept_space, 1usize, StageStorage::Strided, units);
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
-    let mut acc = Tile::<f32>::smem(acc_space, 1usize, StageStorage::Strided, units);
+    let mut acc = Tile::smem::<f32>(acc_space, 1usize, StageStorage::Strided, units);
     acc.zero();
 
     for blk in 0..num_blocks {
         // Stage the block: each unit fills its own rows.
-        let gmem = score_gmem.view::<Const<1>>();
-        let mut smem = score.view_mut::<Const<1>>();
+        let gmem = score_gmem.view::<f32, Const<1>>();
+        let mut smem = score.view_mut::<f32, Const<1>>();
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
@@ -427,8 +427,8 @@ fn softmax_smem_acc_kernel(
         sync_cube();
 
         // `O += P·V_blk`, cyclic ownership: deliberately not the softmax rows'.
-        let p_view = p.view::<Const<1>>();
-        let mut acc_view = acc.view_mut::<Const<1>>();
+        let p_view = p.view::<f32, Const<1>>();
+        let mut acc_view = acc.view_mut::<f32, Const<1>>();
         let total = comptime!(rows * val_dim);
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
@@ -462,7 +462,7 @@ fn softmax_smem_acc_kernel(
     acc.scale_rows(&factors);
     sync_cube();
 
-    let acc_view = acc.view::<Const<1>>();
+    let acc_view = acc.view::<f32, Const<1>>();
     let total = comptime!(rows * val_dim);
     let workers = CUBE_DIM as usize;
     let mut i = UNIT_POS as usize;

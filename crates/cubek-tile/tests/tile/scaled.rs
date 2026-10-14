@@ -95,7 +95,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(&space);
     let scale = scale.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -136,7 +136,7 @@ fn factored_matmul<E: Numeric, S: Numeric>(
     let b = b.tile(&space);
     let mut c = c.tile(&space);
     let (a, a_factor) = a.factor(c.space());
-    let acc = c.accumulator::<E, E, E>(&a, &b, instruction, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, instruction, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         acc_r.mma(&a.at(&region), &b.at(&region));
@@ -205,7 +205,7 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     let b = b.tile(&space);
     let scale = scale.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
@@ -1400,7 +1400,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(&space);
     let scale = scale.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -1848,7 +1848,7 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     let scale = scale.tile(&space);
     let c = c.tile(&space);
     let mut stage = b.stage(comptime!(level.clone()), StageStorage::Strided);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     for region in space.over(&level) {
         stage.copy_from(&b.at(&region));
         sync_cube();
@@ -2018,8 +2018,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let sum =
-                c_plane.accumulator::<E, E, E>(&a_plane, &b_plane, instruction, Semiring::SUM_PROD);
+            let sum = c_plane.accumulator::<E>(&a_plane, &b_plane, instruction, Semiring::SUM_PROD);
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
@@ -2458,12 +2457,8 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric>(
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lines { read }),
             );
-            let sum = c_plane.accumulator::<E, E, E>(
-                &a_plane,
-                &b_plane,
-                Instruction::Cmma,
-                Semiring::SUM_PROD,
-            );
+            let sum =
+                c_plane.accumulator::<E>(&a_plane, &b_plane, Instruction::Cmma, Semiring::SUM_PROD);
             for chunk in plane {
                 lines.copy_from(&scale_plane.at(&chunk));
                 for step in chunk {
@@ -2565,12 +2560,8 @@ fn stepped_scaled_matmul<E: Numeric, S: Numeric>(
         for plane in cube {
             let (a_plane, b_plane) = (a_cube.at(&plane), b_cube.at(&plane));
             let (scale_plane, c_plane) = (scale_cube.at(&plane), c_cube.at(&plane));
-            let sum = c_plane.accumulator::<E, E, E>(
-                &a_plane,
-                &b_plane,
-                Instruction::Cmma,
-                Semiring::SUM_PROD,
-            );
+            let sum =
+                c_plane.accumulator::<E>(&a_plane, &b_plane, Instruction::Cmma, Semiring::SUM_PROD);
             for step in plane {
                 let mut sum_step = sum.at(&step);
                 sum_step.mma(
@@ -2773,8 +2764,7 @@ fn staged_stepped_scaled_matmul<E: Numeric, A: Numeric, S: Numeric>(
     for cube in space {
         let (a_cube, b_cube) = (a.at(&cube), b.at(&cube));
         let (scale_cube, c_cube) = (scale.at(&cube), c.at(&cube));
-        let sum =
-            c_cube.accumulator::<A, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD);
+        let sum = c_cube.accumulator::<A>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD);
         let run = cube.walk();
         let staged = match comptime!(unpacked) {
             Unpacked::ByEachPlane => b_cube.clone(),
@@ -3040,7 +3030,7 @@ fn scaled_copy<E: Numeric, S: Numeric>(
     let scale = scale.tile(&space);
     let mut out = out.tile(&space);
     if comptime!(staged) {
-        let mut stage = Tile::<E>::shared(comptime!(space.space().clone()), StageStorage::Strided);
+        let mut stage = Tile::shared::<E>(comptime!(space.space().clone()), StageStorage::Strided);
         stage.dequantize_from(&a.mul(&scale));
         sync_cube();
         out.copy_from(&stage);

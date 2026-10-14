@@ -77,7 +77,7 @@ fn sink_kernel<E: Float>(out: &TileArg<'_, E>, space: Partitioning, #[define(E)]
         comptime!(out.spec.clone()),
         Write::Replace,
     )
-    .tile(comptime!(space.levels().to_vec()));
+    .tile::<E>(comptime!(space.levels().to_vec()));
     let src =
         Procedural::new::<E, Position>(comptime!(space.space().clone()), Position {}).tile::<E>();
     dst.copy_from(&src);
@@ -196,7 +196,7 @@ fn derived_sink_kernel<E: Float>(
         spec,
         Write::Replace,
     )
-    .tile(comptime!(space.levels().to_vec()));
+    .tile::<E>(comptime!(space.levels().to_vec()));
     let src =
         Procedural::new::<E, Position>(comptime!(space.space().clone()), Position {}).tile::<E>();
     dst.copy_from(&src);
@@ -276,7 +276,7 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<EA, E, E>(
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),
@@ -319,7 +319,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         Write::Replace,
     )
     .tile::<E>(comptime!(space.levels().to_vec()));
-    let acc = c.accumulator::<EA, E, E>(
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),
@@ -358,10 +358,10 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         comptime!(space.space().clone()),
         comptime!(a.spec.clone()),
     )
-    .tile(comptime!(space.levels().to_vec()));
+    .tile::<E>(comptime!(space.levels().to_vec()));
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<EA, E, E>(
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),
@@ -578,7 +578,7 @@ fn wide_sink_kernel<E: Float>(
         comptime!(out.spec.clone()),
         Write::Replace,
     )
-    .tile(comptime!(space.levels().to_vec()));
+    .tile::<E>(comptime!(space.levels().to_vec()));
     dst.copy_from(&src);
 }
 
@@ -601,7 +601,7 @@ fn wide_source_kernel<E: Float>(
         comptime!(space.space().clone()),
         comptime!(input.spec.clone()),
     )
-    .tile(comptime!(space.levels().to_vec()));
+    .tile::<E>(comptime!(space.levels().to_vec()));
     let mut dst = out.tile(&space);
     dst.copy_from(&src);
 }

@@ -71,8 +71,8 @@ pub(crate) fn block_scaled_definition<CD: Numeric>(
 /// sixteen, each exact in `e4m3`. A per-tensor factor above them is the product's to apply: the
 /// instruction holds one level.
 #[cube]
-pub(crate) fn block_scales_here<T: Numeric>(
-    src: &Tile<T>,
+pub(crate) fn block_scales_here(
+    src: &Tile,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
@@ -94,9 +94,9 @@ pub(crate) fn block_scales_here<T: Numeric>(
 /// Whether both `lhs` and `rhs` contract through the device's block-scaled instruction of
 /// `m × n × k` ([`block_scales_here`]): the instruction takes both or neither.
 #[cube]
-pub(crate) fn contracts_block_scaled<L: Numeric, R: Numeric>(
-    lhs: &Tile<L>,
-    rhs: &Tile<R>,
+pub(crate) fn contracts_block_scaled(
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
@@ -148,8 +148,8 @@ fn offers_block_scaled(
 /// Scales stored as words of four, as an NVFP4 checkpoint packs them, are one load each, straight
 /// into the register; scales stored one to a value are read and narrowed one at a time.
 #[cube]
-pub(crate) fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
-    src: &Tile<T>,
+pub(crate) fn load_block_scaled<NV: Size, NS: Size>(
+    src: &Tile,
     values: &mut Array<Vector<e2m1x2, NV>>,
     scales: &mut Array<Vector<e4m3, NS>>,
     #[comptime] ident: MatrixIdent,
@@ -267,8 +267,8 @@ pub(crate) fn load_block_scaled<T: Numeric, NV: Size, NS: Size>(
 /// The address is the window's own arrangement of the row ([`Masked::line_slice`]), so a swizzled
 /// stage is read where its fill wrote it.
 #[cube]
-fn load_block_scaled_ldmatrix<T: Numeric, WP: Size, NV: Size>(
-    src: &Tile<T>,
+fn load_block_scaled_ldmatrix<WP: Size, NV: Size>(
+    src: &Tile,
     words: &Masked<'_, Vector<u32, WP>, CoordsDyn>,
     values: &mut Array<Vector<e2m1x2, NV>>,
     def: &MmaDefinition<e2m1x2, e2m1x2, f32>,

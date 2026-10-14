@@ -54,8 +54,8 @@ impl WgmmaData {
     /// their rows one swizzle span long.
     pub(crate) fn mma<T: Numeric, L: Numeric, R: Numeric>(
         &mut self,
-        lhs: &Tile<L>,
-        rhs: &Tile<R>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
         comptime!(assert_operands_fit(
@@ -161,7 +161,7 @@ fn trailing_extent(space: &Space) -> usize {
 /// from the window's origin.
 #[cube]
 fn descriptor<E: Numeric>(
-    tile: &Tile<E>,
+    tile: &Tile,
     #[comptime] rows: usize,
     #[comptime] k: usize,
 ) -> MatrixDescriptor<E> {
@@ -180,7 +180,7 @@ fn descriptor<E: Numeric>(
         k: row,
     });
     let size!(W) = tile.vector_size();
-    let view = tile.fragment_matrix_packed::<W>(rows, k);
+    let view = tile.fragment_matrix_packed::<E, W>(rows, k);
     let origin = view.line_slice(
         (0u32.runtime(), 0u32.runtime()),
         (1u32.runtime(), 1u32.runtime()),

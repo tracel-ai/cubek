@@ -14,8 +14,8 @@ impl RegisterData {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn mma<T: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
         let data = self.data.at_mut::<T>();
@@ -78,8 +78,8 @@ impl RegisterData {
         let unroll = comptime!(mr * nr * self.vector_size <= config.budget);
         let component_fanout = comptime!(config.component_fanout);
 
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
-        let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, 0usize);
+        let lhs_mat = lhs.matrix_packed::<EL, L>(lhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<ER, RL>(rhs_axes, 0usize);
         let lhs_scales = lhs.reader(
             lhs_axes,
             0usize,
@@ -123,7 +123,7 @@ impl RegisterData {
     pub(crate) fn mma_block<T: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &RegisterData,
-        rhs: &Tile<ER>,
+        rhs: &Tile,
     ) {
         let data = self.data.at_mut::<T>();
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma_block"));
@@ -152,7 +152,7 @@ impl RegisterData {
         let rhs_axes = comptime!(
             MatrixAxes::new(&rhs.place.space, kc, nr * vw).unwrap_or_else(|e| panic!("{e}"))
         );
-        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<ER, RA>(rhs_axes, 0usize);
         let mut b = Array::<Vector<T, RA>>::new(nr);
         #[unroll]
         for k in 0..kc {

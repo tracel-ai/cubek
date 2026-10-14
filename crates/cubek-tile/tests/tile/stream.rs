@@ -255,7 +255,7 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// One step of the contraction into `acc`'s cell at `region`.
 #[cube]
-fn contract<E: Numeric>(acc: &Tile<E>, a: &Tile<E>, b: &Tile<E>, region: &Region) {
+fn contract(acc: &Tile, a: &Tile, b: &Tile, region: &Region) {
     let mut acc_cell = acc.at(region);
     acc_cell.mma(&a.at(region), &b.at(region));
 }
@@ -287,7 +287,7 @@ fn stream_matmul<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let acc = c_region.accumulator::<E, E, E>(
+        let acc = c_region.accumulator::<E>(
             &a_region,
             &b_region,
             comptime!(Instruction::Registers {
@@ -299,10 +299,10 @@ fn stream_matmul<E: Numeric>(
             match comptime!(leaf.clone()) {
                 Some(leaf) => {
                     for step in cell.over(&leaf) {
-                        contract::<E>(&acc, &a_region, &b_region, &step);
+                        contract(&acc, &a_region, &b_region, &step);
                     }
                 }
-                None => contract::<E>(&acc, &a_region, &b_region, &cell),
+                None => contract(&acc, &a_region, &b_region, &cell),
             }
         }
         acc.drained_into(&c_region);
@@ -332,7 +332,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let acc = c_region.accumulator::<E, E, E>(
+        let acc = c_region.accumulator::<E>(
             &a_region,
             &b_region,
             comptime!(Instruction::Registers {
@@ -684,7 +684,7 @@ fn merged_stream_matmul<O: Float>(
         let (from, count) = portion.steps(i);
         let merge = slots.last_arrival::<Const<1>>(&space, &portion, i, arrivals);
         let (a_region, b_region) = (a.at(&region), b.at(&region));
-        let acc = merge.tile().accumulator::<f32, f32, f32>(
+        let acc = merge.tile().accumulator::<f32>(
             &a_region,
             &b_region,
             comptime!(Instruction::Registers {
@@ -693,7 +693,7 @@ fn merged_stream_matmul<O: Float>(
             Semiring::SUM_PROD,
         );
         for cell in region.over(&steps).range(from, count) {
-            contract::<f32>(&acc, &a_region, &b_region, &cell);
+            contract(&acc, &a_region, &b_region, &cell);
         }
         merge.hand_on(&acc, &mut out);
     }

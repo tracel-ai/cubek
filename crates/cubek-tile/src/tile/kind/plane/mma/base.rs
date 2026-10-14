@@ -205,7 +205,7 @@ impl MmaData {
     }
 
     /// Fill this fragment from `src`'s window by the role's transport.
-    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile<T>) {
+    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -535,7 +535,7 @@ fn fill_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, value
 /// Load `fragment` (role `ident`, shaped by `edges`) from a row-major window.
 #[cube]
 fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
-    src: &Tile<T>,
+    src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
@@ -598,7 +598,7 @@ fn loads_matrix<T: Numeric>() -> comptime_type!(bool) {
 /// Manual load: each unit reads its own cells of `src` through the matrix view.
 #[cube]
 fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
-    src: &Tile<T>,
+    src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
@@ -628,9 +628,9 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
          most {line_edge} wide"
     ));
     let view = if comptime!(transposed) {
-        src.fragment_matrix_packed::<W>(cols, rows)
+        src.fragment_matrix_packed::<T, W>(cols, rows)
     } else {
-        src.fragment_matrix_packed::<W>(rows, cols)
+        src.fragment_matrix_packed::<T, W>(rows, cols)
     };
     let along_lines = comptime!(vector_layout == layout);
     comptime!(assert!(

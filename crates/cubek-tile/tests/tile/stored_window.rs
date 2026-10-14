@@ -46,7 +46,7 @@ fn copy_per_unit<E: Numeric>(
                 let input = input.at(&step);
                 let output = output.at(&step);
                 for unit in step {
-                    copy_cells(&input.at(&unit), &mut output.at(&unit), rank);
+                    copy_cells::<E>(&input.at(&unit), &mut output.at(&unit), rank);
                 }
             }
         }
@@ -56,9 +56,9 @@ fn copy_per_unit<E: Numeric>(
 /// Every cell of `input`'s window of `rank` axes into `output`'s, one at a time through their
 /// views, in row-major order.
 #[cube]
-fn copy_cells<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] rank: usize) {
-    let read = input.view::<Const<1>>();
-    let mut write = output.view_mut::<Const<1>>();
+fn copy_cells<E: Numeric>(input: &Tile, output: &mut Tile, #[comptime] rank: usize) {
+    let read = input.view::<E, Const<1>>();
+    let mut write = output.view_mut::<E, Const<1>>();
     let shape = read.shape();
     let mut cells = 1u32;
     #[unroll]

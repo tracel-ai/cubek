@@ -40,7 +40,7 @@ fn contract<E: Numeric>(
     let a = x.tile(&space);
     let b = w.tile(&space);
     let c = out.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {

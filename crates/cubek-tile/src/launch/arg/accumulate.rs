@@ -25,7 +25,7 @@ pub struct AccumulateArg<'a, E: Numeric> {
 #[cube]
 impl<'a, E: Numeric> AccumulateArg<'a, E> {
     /// Serve the output as a [`Tile`] that accumulates into it in lines of its width.
-    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
+    pub fn tile(&self, partitioning: &Partitioning) -> Tile {
         let space = comptime!(partitioning.clone());
         // An atomic element is scalar, so these strides are already in scalars.
         let geometry = RuntimeGeometry::of_tensor::<Atomic<E>>(
@@ -41,7 +41,7 @@ impl<'a, E: Numeric> AccumulateArg<'a, E> {
             comptime!(self.spec.clone()),
             Write::Accumulate,
         )
-        .tile(comptime!(space.levels().to_vec()))
+        .tile::<E>(comptime!(space.levels().to_vec()))
     }
 }
 

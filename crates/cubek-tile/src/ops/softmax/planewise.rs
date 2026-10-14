@@ -7,13 +7,13 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<EA: Float> Tile<EA> {
+impl Tile {
     /// [`scale_and_mask`](Tile::scale_and_mask) at plane ownership.
-    pub(crate) fn scale_and_mask_planar(
+    pub(crate) fn scale_and_mask_planar<EA: Float>(
         &mut self,
         scale: EA,
         probe: &MaskProbe,
-        mask: &Tile<u32>,
+        mask: &Tile,
         #[comptime] rpp: usize,
         #[comptime] units: usize,
     ) {
@@ -22,7 +22,7 @@ impl<EA: Float> Tile<EA> {
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let mut view = self.flat_mut::<W>();
+        let mut view = self.flat_mut::<EA, W>();
 
         #[unroll]
         for ri in 0..rpp {
@@ -48,7 +48,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`row_max`](Tile::row_max) at plane ownership.
-    pub(crate) fn row_max_planar(
+    pub(crate) fn row_max_planar<EA: Float>(
         &self,
         acc: &mut Array<EA>,
         base: &Array<EA>,
@@ -60,7 +60,7 @@ impl<EA: Float> Tile<EA> {
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let view = self.flat::<W>();
+        let view = self.flat::<EA, W>();
 
         #[unroll]
         for ri in 0..rpp {
@@ -85,7 +85,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`exp_diff`](Tile::exp_diff) at plane ownership.
-    pub(crate) fn exp_diff_planar(
+    pub(crate) fn exp_diff_planar<EA: Float>(
         &mut self,
         rowwise: &Array<EA>,
         #[comptime] rpp: usize,
@@ -97,7 +97,7 @@ impl<EA: Float> Tile<EA> {
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let mut view = self.flat_mut::<W>();
+        let mut view = self.flat_mut::<EA, W>();
 
         #[unroll]
         for ri in 0..rpp {
@@ -123,7 +123,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`row_sum`](Tile::row_sum) at plane ownership. Every unit must contribute its lines once.
-    pub(crate) fn row_sum_planar(
+    pub(crate) fn row_sum_planar<EA: Float>(
         &self,
         acc: &mut Array<EA>,
         #[comptime] rpp: usize,
@@ -134,7 +134,7 @@ impl<EA: Float> Tile<EA> {
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let view = self.flat::<W>();
+        let view = self.flat::<EA, W>();
 
         #[unroll]
         for ri in 0..rpp {
@@ -159,9 +159,9 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`write_rows_to`](Tile::write_rows_to) at plane ownership.
-    pub(crate) fn write_rows_to_planar<EP: Numeric>(
+    pub(crate) fn write_rows_to_planar<E: Numeric, EP: Numeric>(
         &self,
-        dest: &mut Tile<EP>,
+        dest: &mut Tile,
         #[comptime] rpp: usize,
         #[comptime] units: usize,
     ) {
@@ -175,8 +175,8 @@ impl<EA: Float> Tile<EA> {
         ));
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let src = self.flat::<W>();
-        let mut dst = dest.flat_mut::<W>();
+        let src = self.flat::<E, W>();
+        let mut dst = dest.flat_mut::<EP, W>();
 
         #[unroll]
         for ri in 0..rpp {

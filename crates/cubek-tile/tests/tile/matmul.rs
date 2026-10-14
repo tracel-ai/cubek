@@ -188,9 +188,9 @@ fn matmul_in_place<E: Numeric>(
 /// `inner` contracted where the operands lie.
 #[cube]
 fn contract_in_place<E: Numeric>(
-    a: &Tile<E>,
-    b: &Tile<E>,
-    c: &Tile<E>,
+    a: &Tile,
+    b: &Tile,
+    c: &Tile,
     owned: &Region,
     #[comptime] inner: Level,
     #[comptime] config: RegisterBlock,
@@ -201,7 +201,7 @@ fn contract_in_place<E: Numeric>(
     let c_o = c.at(owned);
     for region in c_o.over(&inner) {
         let mut c_w = c_o.at(&region);
-        c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
+        c_w.init::<E>(Monoid::identity::<E>(comptime!(semiring.add())));
     }
     for region in owned.over(&inner) {
         let mut c_r = c.at(&region).accumulating(config, semiring);
@@ -231,10 +231,10 @@ fn matmul_smem_ring<E: Numeric>(
         match comptime!(runs.clone()) {
             Some(runs) => {
                 for run in cube.over(&runs) {
-                    contract_staged::<E>(&a, &b, &c, &run, comptime!(steps.clone()), depth);
+                    contract_staged(&a, &b, &c, &run, comptime!(steps.clone()), depth);
                 }
             }
-            None => contract_staged::<E>(&a, &b, &c, &cube, comptime!(steps.clone()), depth),
+            None => contract_staged(&a, &b, &c, &cube, comptime!(steps.clone()), depth),
         }
     }
 }
@@ -242,10 +242,10 @@ fn matmul_smem_ring<E: Numeric>(
 /// One cube's box of `c = a · b`, zeroed once, then contracted through stages staging each
 /// region of `steps`.
 #[cube]
-fn contract_staged<E: Numeric>(
-    a: &Tile<E>,
-    b: &Tile<E>,
-    c: &Tile<E>,
+fn contract_staged(
+    a: &Tile,
+    b: &Tile,
+    c: &Tile,
     owned: &Region,
     #[comptime] steps: Level,
     #[comptime] depth: usize,
@@ -314,7 +314,7 @@ fn matmul_smem_ring_scheduled<E: Numeric>(
                 stages.pipelined(walk, |slot, region| {
                     let c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
+                        contract_on_the_last_unit(&c_r, a_s, b_s);
                     });
                 });
             }
@@ -322,7 +322,7 @@ fn matmul_smem_ring_scheduled<E: Numeric>(
                 stages.prefetched(walk, |slot, region| {
                     let c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
+                        contract_on_the_last_unit(&c_r, a_s, b_s);
                     });
                 });
             }
@@ -335,7 +335,7 @@ fn matmul_smem_ring_scheduled<E: Numeric>(
 /// units that wrote the slot sit in other planes, where only a barrier orders their writes before
 /// this read.
 #[cube]
-fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) {
+fn contract_on_the_last_unit(c: &Tile, a: &Tile, b: &Tile) {
     if UNIT_POS == CUBE_DIM - 1 {
         let mut c = c.clone().accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         c.mma(a, b);
@@ -577,7 +577,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<EA, E, E>(
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config }),
@@ -610,7 +610,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric>(
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let acc = c_p.accumulator::<EA, E, E>(
+            let acc = c_p.accumulator::<EA>(
                 &a_p,
                 &b_p,
                 comptime!(Instruction::Registers { config }),
@@ -641,7 +641,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -684,7 +684,7 @@ fn cmma_matmul_k_walk<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
     stages.pipelined(walk, |slot, region| {
@@ -711,7 +711,7 @@ fn mma_matmul_k_walk<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Mma { io }),
@@ -745,7 +745,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&outer);
     let mut stages = Stages::smem(
         &walk,
@@ -792,7 +792,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
         &walk,
@@ -843,7 +843,7 @@ fn cmma_matmul_partition_in_one_call<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
         &walk,
@@ -892,7 +892,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
         &walk,
@@ -2745,7 +2745,7 @@ fn plane_staged_matmul<E: Numeric>(
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let acc = c_p.accumulator::<E, E, E>(
+            let acc = c_p.accumulator::<E>(
                 &a_p,
                 &b_p,
                 comptime!(Instruction::Registers {
@@ -2790,7 +2790,7 @@ fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let acc = c_p.accumulator::<EA, E, E>(&a_p, &b_p, instruction, Semiring::SUM_PROD);
+            let acc = c_p.accumulator::<EA>(&a_p, &b_p, instruction, Semiring::SUM_PROD);
             for step in plane {
                 let mut acc_s = acc.at(&step);
                 acc_s.mma(&a_p.at(&step), &b_p.at(&step));
@@ -3521,7 +3521,7 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&a, &b, instruction, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&a, &b, instruction, Semiring::SUM_PROD);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
     stages.pipelined(walk, |slot, region| {

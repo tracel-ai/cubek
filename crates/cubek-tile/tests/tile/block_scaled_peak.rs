@@ -22,9 +22,9 @@ use cubecl::{client::Client, ir::FloatKind, prelude::*, quant::scheme::QuantValu
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Projection,
-    Semiring, Space, StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    Axis, Instruction, Level, Levels, Partitioning, Projection, Semiring, Space, StageStorage,
+    Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
+    ops::matmul::MmaIo,
 };
 
 use super::{Form, implied};
@@ -74,7 +74,7 @@ fn block_scaled_peak<E: Numeric, S: Numeric>(
     let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &a,
             &b,
             comptime!(Instruction::Mma {
@@ -124,7 +124,7 @@ fn float_peak<E: Numeric>(
     let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
-        let acc = c.accumulator::<f32, E, E>(
+        let acc = c.accumulator::<f32>(
             &a,
             &b,
             comptime!(Instruction::Mma {

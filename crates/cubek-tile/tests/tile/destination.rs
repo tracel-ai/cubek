@@ -52,7 +52,7 @@ struct DoubledArg<'a, E: Numeric> {
 impl Destination for Doubled {
     type Arg<E: Numeric> = DoubledArg<'static, E>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         let mut geometry = RuntimeGeometry::new();
         #[unroll]
         for axis in 0..comptime!(arg.rank) {
@@ -70,7 +70,7 @@ impl Destination for Doubled {
             comptime!(arg.spec.clone()),
             Write::Replace,
         )
-        .tile(comptime!(partitioning.levels().to_vec()))
+        .tile::<E>(comptime!(partitioning.levels().to_vec()))
     }
 }
 
@@ -310,7 +310,7 @@ fn contract<E: Numeric, EA: Numeric, O: Destination>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = O::tile::<E, Const<1>>(c, &space);
-    let acc = c.accumulator::<EA, E, E>(
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),

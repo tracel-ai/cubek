@@ -6,28 +6,26 @@ use super::leaf as reduce;
 use crate::*;
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// `c = fold(input)`: reduce `input` into `self` across the contracted axes.
-    pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
+    pub fn reduce_axis(&mut self, input: &Tile, #[comptime] monoid: Monoid) {
         self.init_identity(monoid);
         self.reduce_axis_accumulate(input, monoid);
     }
 
     /// `c = fold(c, input)`: fold `input` into what `self` holds, which must be seeded.
-    pub fn reduce_axis_accumulate<In: Numeric>(
-        &mut self,
-        input: &Tile<In>,
-        #[comptime] monoid: Monoid,
-    ) {
-        reduce_leaf(self, input, monoid)
+    pub fn reduce_axis_accumulate(&mut self, input: &Tile, #[comptime] monoid: Monoid) {
+        let _served = naming::<Served>(self.element);
+        let _source = naming::<Source>(input.element);
+        reduce_leaf::<Served, Source>(self, input, monoid)
     }
 }
 
 /// Dispatches to the register nest by the accumulator's form.
 #[cube]
 pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
-    acc: &mut Tile<Acc>,
-    input: &Tile<In>,
+    acc: &mut Tile,
+    input: &Tile,
     #[comptime] monoid: Monoid,
 ) {
     let input_space = comptime!(input.place.space.clone());
@@ -65,7 +63,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
 #[cube]
 fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
     tile: &mut PlaneTile,
-    input: &Tile<In>,
+    input: &Tile,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
 ) {

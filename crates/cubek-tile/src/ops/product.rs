@@ -7,28 +7,31 @@ use crate::ops::matmul::leaf::memory::resolve_nd_coords;
 use crate::*;
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
-    pub fn product<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
-        self.mul_from(a, b)
+    pub fn product(&mut self, a: &Tile, b: &Tile) {
+        let _served = naming::<Served>(self.element);
+        let _lhs = naming::<Lhs>(a.element);
+        let _rhs = naming::<Rhs>(b.element);
+        self.mul_from::<Served, Lhs, Rhs>(a, b)
     }
 
     /// The transport: every unit of the cube strides the destination's groups.
-    fn mul_from<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
+    fn mul_from<D: Numeric, A: Numeric, B: Numeric>(&mut self, a: &Tile, b: &Tile) {
         let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let folds = b.vector_size();
         let split = comptime!(FoldWalk::of(&space, &b.place.space, width, folds));
         let size!(W) = width;
         let size!(F) = folds;
-        let a_reader = a.nd_split::<W>();
-        let b_reader = b.nd_split::<F>();
+        let a_reader = a.nd_split::<A, W>();
+        let b_reader = b.nd_split::<B, F>();
 
         let a_fold_at = comptime!(a.place.space.position(split.axis));
         let extents = Coords::constant(comptime!(split.groups.clone()));
         let total = comptime!(split.groups.iter().product::<usize>());
 
-        let mut dst = self.nd_mut::<W>();
+        let mut dst = self.nd_mut::<D, W>();
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
@@ -59,8 +62,8 @@ impl<T: Numeric> Tile<T> {
                     stepped(&a_base, comptime!(a_fold_at), f),
                     comptime!(moving.clone()),
                 ));
-                let left = Vector::<T, W>::cast_from(value);
-                let right = Vector::<T, W>::cast_from(scales.extract(f));
+                let left = Vector::<D, W>::cast_from(value);
+                let right = Vector::<D, W>::cast_from(scales.extract(f));
                 dst.write(stepped(&group, comptime!(split.at), f), left * right);
             }
             i += workers;

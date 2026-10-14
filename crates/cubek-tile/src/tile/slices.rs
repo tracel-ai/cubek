@@ -42,7 +42,7 @@ pub struct AxisSlices {
 }
 
 #[cube]
-impl<E: Float> Tile<E> {
+impl Tile {
     /// This tile cut into slices along `axis`, where its holder keeps them: a unit's register
     /// block, a plane's window of shared memory, or a plane's fragments. A window of memory any
     /// wider holder shares has no one to read a slice whole, and is refused.
@@ -75,15 +75,16 @@ impl<E: Float> Tile<E> {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// Slices along `axis` one unit keeps a state for: the rows a manual-mma grid's unit holds
     /// cells of, which a reduction reads in its registers; every slice of any other holder.
     pub fn slices_per_unit(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
+        let _served = naming::<Served>(self.element);
         let every = comptime!(self.place.space.slices_along(axis));
         match &self.kind {
             TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {
                 PlaneTile::Mma(fragment) => {
-                    let rows = fragment.rows_per_unit::<T>();
+                    let rows = fragment.rows_per_unit::<Served>();
                     comptime!(partition.m_tiles * rows)
                 }
                 PlaneTile::Cmma(_) | PlaneTile::Registers(_) => comptime!(every),
@@ -93,7 +94,7 @@ impl<T: Numeric> Tile<T> {
                 ),
             },
             TileKind::PlaneTile(tile) => match tile {
-                PlaneTile::Mma(fragment) => fragment.rows_per_unit::<T>(),
+                PlaneTile::Mma(fragment) => fragment.rows_per_unit::<Served>(),
                 PlaneTile::Cmma(_) | PlaneTile::Registers(_) => comptime!(every),
                 PlaneTile::Wgmma(_) => panic!(
                     "Tile::slices_per_unit: a warpgroup accumulator's slices are not read in \
@@ -112,7 +113,7 @@ impl<T: Numeric> Tile<T> {
 impl AxisSlices {
     /// `self[i, s] = self[i, s] · scale + bias[i, s]`, the procedural `bias` read at each cell's
     /// coordinates, windowed to the same region as the tile.
-    pub(crate) fn scale_add<E: Float>(&mut self, scale: E, bias: &Tile<E>) {
+    pub(crate) fn scale_add<E: Float>(&mut self, scale: E, bias: &Tile) {
         let recipe = bias.recipe();
         match &mut self.kind {
             AxisSlicesKind::Registers(block) => {

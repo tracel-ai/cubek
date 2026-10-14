@@ -55,7 +55,7 @@ pub enum ScaleArg {
 
 impl<'a, E: Numeric> TileArg<'a, E> {
     /// Serve the operand as a [`Tile`] over the kernel's one `partitioning`, under its scales.
-    pub fn tile(&self, _partitioning: &Partitioning) -> Tile<E> {
+    pub fn tile(&self, _partitioning: &Partitioning) -> Tile {
         unexpanded!()
     }
 
@@ -66,7 +66,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         _partitioning: &Partitioning,
         _coefficients: Coords<u32>,
         _offsets: Coords<i32>,
-    ) -> Tile<E> {
+    ) -> Tile {
         unexpanded!()
     }
 
@@ -83,10 +83,10 @@ fn buffer_tile<E: Numeric>(
     tensor: &Tensor<E>,
     partitioning: &Partitioning,
     #[comptime] spec: TileSpec,
-) -> Tile<E> {
+) -> Tile {
     let space = comptime!(partitioning.clone());
     GlobalOperand::tensor(tensor, comptime!(space.space().clone()), spec)
-        .tile(comptime!(space.levels().to_vec()))
+        .tile::<E>(comptime!(space.levels().to_vec()))
 }
 
 /// [`buffer_tile`] through a partly runtime gather map.
@@ -97,7 +97,7 @@ fn gathered_tile<E: Numeric>(
     coefficients: Coords<u32>,
     offsets: Coords<i32>,
     #[comptime] spec: TileSpec,
-) -> Tile<E> {
+) -> Tile {
     let space = comptime!(partitioning.clone());
     GlobalOperand::gathered(
         tensor,
@@ -106,7 +106,7 @@ fn gathered_tile<E: Numeric>(
         coefficients,
         offsets,
     )
-    .tile(comptime!(space.levels().to_vec()))
+    .tile::<E>(comptime!(space.levels().to_vec()))
 }
 
 /// A tensor map, served as a TMA-filled tile.
@@ -116,7 +116,7 @@ fn tensor_map_tile<E: Numeric>(
     layout: VirtualLayout<CoordsDyn, Sequence<i32>>,
     partitioning: &Partitioning,
     #[comptime] spec: TileSpec,
-) -> Tile<E> {
+) -> Tile {
     let space = comptime!(partitioning.clone());
     let own = comptime!(space.space().subspace(spec.axes()));
     let data = TmaData::from_tensor_map(
@@ -126,7 +126,7 @@ fn tensor_map_tile<E: Numeric>(
         comptime!(spec.units),
         comptime!(spec.packing),
     );
-    Tile::new(
+    Tile::new::<E>(
         TileKind::new_TmaGmem(data),
         comptime!(Placement::root(own.clone(), space.levels().to_vec())),
     )
@@ -167,7 +167,7 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
         &self,
         scope: &Scope,
         partitioning: &PartitioningExpand,
-    ) -> TileExpand<E> {
+    ) -> TileExpand {
         let values = self.values_tile(scope, partitioning);
         self.scale
             .scaling(scope, &values, partitioning, self.is_tensor_map())
@@ -179,7 +179,7 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
         partitioning: &PartitioningExpand,
         coefficients: CoordsExpand<u32>,
         offsets: CoordsExpand<i32>,
-    ) -> TileExpand<E> {
+    ) -> TileExpand {
         let ValuesExpand::Tensor { tensor, .. } = &self.values else {
             panic!("TileArg::tile_gathered: a gather reads a buffer; a tensor map lands boxes")
         };
@@ -220,7 +220,7 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
     }
 
     /// The values alone, under none of their scales.
-    fn values_tile(&self, scope: &Scope, partitioning: &PartitioningExpand) -> TileExpand<E> {
+    fn values_tile(&self, scope: &Scope, partitioning: &PartitioningExpand) -> TileExpand {
         match &self.values {
             ValuesExpand::Tensor { tensor, .. } => {
                 buffer_tile::expand::<E>(scope, tensor, partitioning, self.spec.clone())
@@ -243,13 +243,13 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
 impl ScaleArgExpand {
     /// `values` under these scales, innermost first. A tensor map's values land in a stage as
     /// they lie, so only words of block scales, which a stage keeps beside them, ride them.
-    fn scaling<E: Numeric>(
+    fn scaling(
         &self,
         scope: &Scope,
-        values: &TileExpand<E>,
+        values: &TileExpand,
         partitioning: &PartitioningExpand,
         tensor_map: bool,
-    ) -> TileExpand<E> {
+    ) -> TileExpand {
         match self {
             ScaleArgExpand::None => values.clone(),
             ScaleArgExpand::Words(level) => {

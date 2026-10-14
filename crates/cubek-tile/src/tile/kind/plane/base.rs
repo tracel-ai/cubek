@@ -1,8 +1,6 @@
 //! The plane-level tile ([`PlaneTile`]) and the grid of them one plane owns
 //! ([`PlanePartition`]).
 
-use core::marker::PhantomData;
-
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout},
     prelude::*,
@@ -262,7 +260,7 @@ impl PlaneTile {
     }
 
     /// Fill this fragment from a memory `src`.
-    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile<T>) {
+    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile) {
         match self {
             PlaneTile::Cmma(d) => match &src.kind {
                 TileKind::Memory(m) => {
@@ -276,7 +274,7 @@ impl PlaneTile {
                     panic!("PlaneTile::load_window: a cmma fragment loads from memory")
                 }
             },
-            PlaneTile::Mma(d) => d.load_window(src),
+            PlaneTile::Mma(d) => d.load_window::<T>(src),
             PlaneTile::Registers(_) => {
                 panic!("PlaneTile::load_window: a register accumulator is not a fill sink")
             }
@@ -619,7 +617,7 @@ impl PlanePartition {
         #[comptime] accumulation: Accumulation,
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
-    ) -> Tile<T> {
+    ) -> Tile {
         let (m_tiles, n_tiles) = comptime!(grid.tiles);
         let (m, n, k) = comptime!((grid.m, grid.n, grid.k));
 
@@ -640,7 +638,7 @@ impl PlanePartition {
                 ));
             }
         }
-        Tile::<T> {
+        Tile {
             kind: TileKind::new_PlanePartition(PlanePartition {
                 frags,
                 m_tiles,
@@ -653,7 +651,6 @@ impl PlanePartition {
             // A `Dynamic` extent here is never read; fragments were sized from the statement.
             factor: Factor::none(),
             place: comptime!(Placement::new(space, depth, levels)),
-            _element: PhantomData,
             element: element_of::<T>(),
         }
     }
@@ -672,7 +669,7 @@ impl PlanePartition {
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
         #[comptime] block_scaled: bool,
-    ) -> Tile<T> {
+    ) -> Tile {
         let edges = comptime!(MatrixAxes::edges(&window));
         let a0 = comptime!(window.axis_at(edges.row_split));
         let a1 = comptime!(window.axis_at(edges.col_split));
@@ -729,7 +726,7 @@ impl PlanePartition {
                 ));
             }
         }
-        Tile::<T> {
+        Tile {
             kind: TileKind::new_PlanePartition(PlanePartition {
                 frags,
                 m_tiles: t0,
@@ -741,7 +738,6 @@ impl PlanePartition {
             }),
             factor: Factor::none(),
             place: comptime!(Placement::new(window, depth, levels)),
-            _element: PhantomData,
             element: element_of::<T>(),
         }
     }
@@ -749,11 +745,11 @@ impl PlanePartition {
     /// This region of an operand, in the form `instruction` reads it: as it is where it already
     /// holds fragments or the form is a register block, else loaded into fragments contracting
     /// into `acc`.
-    pub(crate) fn operand<T: Numeric, Acc: Numeric>(
-        src: &Tile<T>,
-        acc: &Tile<Acc>,
+    pub(crate) fn operand<T: Numeric>(
+        src: &Tile,
+        acc: &Tile,
         #[comptime] instruction: Instruction,
-    ) -> Tile<T> {
+    ) -> Tile {
         match &src.kind {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => src.clone(),
             TileKind::Memory(_)
@@ -763,17 +759,13 @@ impl PlanePartition {
                 // A warpgroup MMA reads the window itself, through a descriptor.
                 Instruction::Registers { .. } | Instruction::Wgmma => src.clone(),
                 Instruction::Cmma | Instruction::Mma { .. } => {
-                    PlanePartition::fragments_in(src, acc, instruction)
+                    PlanePartition::fragments_in::<T>(src, acc, instruction)
                 }
             },
         }
     }
 
-    fn fragments_in<T: Numeric, Acc: Numeric>(
-        src: &Tile<T>,
-        acc: &Tile<Acc>,
-        #[comptime] form: Instruction,
-    ) -> Tile<T> {
+    fn fragments_in<T: Numeric>(src: &Tile, acc: &Tile, #[comptime] form: Instruction) -> Tile {
         let gathered = src.gathered();
         comptime!(assert!(
             !gathered,
@@ -799,7 +791,7 @@ impl PlanePartition {
                 comptime!(false)
             }
         };
-        let mut frags = PlanePartition::store(
+        let mut frags = PlanePartition::store::<T>(
             comptime!(src.place.space.clone()),
             comptime!(form),
             comptime!(acc.place.space.clone()),
@@ -814,7 +806,7 @@ impl PlanePartition {
             // The instruction reads the stored values and their scales as they lie: nothing
             // decodes on the way, so each fragment loads its own window of the source.
             match &frags.kind {
-                TileKind::PlanePartition(partition) => partition.fill_from(src),
+                TileKind::PlanePartition(partition) => partition.fill_from::<T>(src),
                 TileKind::Memory(_)
                 | TileKind::PlaneTile(_)
                 | TileKind::TmaGmem(_)
@@ -838,7 +830,7 @@ impl PlanePartition {
     }
 
     /// Fill each tile from its window of `src`, in row-major order.
-    pub(crate) fn fill_from<T: Numeric>(&self, src: &Tile<T>) {
+    pub(crate) fn fill_from<T: Numeric>(&self, src: &Tile) {
         let level = comptime!(fragment_level(
             &src.place.space,
             (self.rows, self.cols),
@@ -856,7 +848,7 @@ impl PlanePartition {
                     mi,
                     ni,
                 ));
-                frag.load_window(&window);
+                frag.load_window::<T>(&window);
             }
         }
     }

@@ -1,19 +1,17 @@
 //! `c.mm(a, b)` and `c.mma(a, b)` at a final tile, each descending to its leaf through
 //! [`Descent::contract`].
 
-use core::marker::PhantomData;
-
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
 use crate::*;
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// `c = a · b`, under the semiring the accumulator was opened with, or a memory window stated
     /// [`accumulating`](Tile::accumulating). A memory window starts the sum fresh rather than
     /// reading the cell.
-    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+    pub fn mm(&mut self, lhs: &Tile, rhs: &Tile) {
         let in_memory = self.is_memory();
         if comptime!(in_memory) {
             // A clone holds the same window: reading it reads `self`.
@@ -43,8 +41,11 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// `c += a · b`, folding onto what the accumulator or memory window holds.
-    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        Descent::contract(self, lhs, rhs)
+    pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
+        let _served = naming::<Served>(self.element);
+        let _lhs = naming::<Lhs>(lhs.element);
+        let _rhs = naming::<Rhs>(rhs.element);
+        Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
     }
 
     /// This plane-resident accumulator back at its semiring's identity, as it was opened.
@@ -68,14 +69,15 @@ impl<Acc: Numeric> Tile<Acc> {
 }
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// Commit the warpgroup MMAs this accumulator issued since its last commit, and return their
     /// completion: once it resolves, they are done reading what they read, the stages a walk
     /// holds for them among it. Only a warpgroup accumulator contracts asynchronously.
     pub fn commit(&self) -> Pending<()> {
+        let _served = naming::<Served>(self.element);
         match &self.kind {
-            TileKind::PlanePartition(p) => p.fragment().commit::<Acc>(),
-            TileKind::PlaneTile(t) => t.commit::<Acc>(),
+            TileKind::PlanePartition(p) => p.fragment().commit::<Served>(),
+            TileKind::PlaneTile(t) => t.commit::<Served>(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -87,24 +89,23 @@ impl<Acc: Numeric> Tile<Acc> {
 }
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// This memory window as a contraction's output: each unit's share tiled into `block`, folded
     /// under `semiring`. A plane-resident accumulator states both when it is opened.
     pub fn accumulating(
         &self,
         #[comptime] block: RegisterBlock,
         #[comptime] semiring: Semiring,
-    ) -> Tile<Acc> {
+    ) -> Tile {
         match &self.kind {
             TileKind::Memory(g) => {
                 let mut g = g.clone();
                 g.set_contraction(comptime!(Contraction { block, semiring }));
-                Tile::<Acc> {
+                Tile {
                     kind: TileKind::new_Memory(g),
                     factor: self.factor.clone(),
                     place: comptime!(self.place.clone()),
-                    _element: PhantomData,
-                    element: element_of::<Acc>(),
+                    element: comptime!(self.element),
                 }
             }
             TileKind::PlaneTile(_)
@@ -124,8 +125,8 @@ impl PlaneTile {
     /// Contract this plane tile, each factor times whatever scales it carries.
     pub(crate) fn mma<E: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
         match self {
@@ -179,12 +180,7 @@ impl PlaneTile {
 
 /// Asserts that operands are not gathered and read as one matrix each.
 #[cube]
-fn strided_2d<EL: Numeric, ER: Numeric>(
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-    #[comptime] out: Space,
-    #[comptime] rhs_along_k: bool,
-) {
+fn strided_2d(lhs: &Tile, rhs: &Tile, #[comptime] out: Space, #[comptime] rhs_along_k: bool) {
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let flat = comptime!({
@@ -209,10 +205,7 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
 
 /// Whether `rhs` is read col-major: a col-major cmma fragment or a staged `(col, k)` window.
 #[cube]
-fn transposed_rhs<EL: Numeric, ER: Numeric>(
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-) -> comptime_type!(bool) {
+fn transposed_rhs(lhs: &Tile, rhs: &Tile) -> comptime_type!(bool) {
     match &rhs.kind {
         TileKind::PlaneTile(t) => match t {
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
@@ -236,7 +229,7 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
 
 /// Asserts that operands contract their shared axes in the same order.
 #[cube]
-fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
+fn flattened_k(lhs: &Tile, rhs: &Tile, #[comptime] out: Space) {
     comptime!(assert!(
         Space::contraction_agrees(&lhs.place.space, &rhs.place.space, &out),
         "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \

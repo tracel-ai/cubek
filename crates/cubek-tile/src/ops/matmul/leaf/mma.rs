@@ -9,7 +9,7 @@ use crate::*;
 #[cube]
 impl MmaData {
     /// `self += lhs · rhs`; memory-window operands are loaded into transient fragments each call.
-    pub(crate) fn mma<A: Numeric, L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
+    pub(crate) fn mma<A: Numeric, L: Numeric, R: Numeric>(&mut self, lhs: &Tile, rhs: &Tile) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -54,7 +54,7 @@ impl MmaData {
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
                     let mut rb =
                         MmaData::operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, false);
-                    rb.load_window(rhs);
+                    rb.load_window::<R>(rhs);
                     let b = PlaneTile::new_Mma(rb);
                     match (a, &b) {
                         (PlaneTile::Mma(a), PlaneTile::Mma(b)) => {
@@ -93,7 +93,7 @@ impl MmaData {
                         io,
                         block_scaled,
                     );
-                    la.load_window(lhs);
+                    la.load_window::<L>(lhs);
                     let mut rb = MmaData::operand::<R>(
                         MatrixIdent::B,
                         m,
@@ -103,7 +103,7 @@ impl MmaData {
                         io,
                         block_scaled,
                     );
-                    rb.load_window(rhs);
+                    rb.load_window::<R>(rhs);
                     match (&la.fragment, &rb.fragment) {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => mma_execute::<L, R, A>(
                             af.at::<L>(),

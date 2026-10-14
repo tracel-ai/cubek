@@ -13,8 +13,8 @@ use crate::*;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,
@@ -71,8 +71,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
 #[allow(clippy::too_many_arguments)]
 fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Size>(
     acc: &mut Memory,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] shape: ContractShape,
     #[comptime] columns: usize,
     #[comptime] config: RegisterBlock,
@@ -97,8 +97,8 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
     // its lift carried by the factor.
     let (lhs, rhs) = (lhs.placed(), rhs.placed());
     for mat in 0..matrices {
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
-        let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, mat);
+        let lhs_mat = lhs.matrix_packed::<EL, L>(lhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<ER, RL>(rhs_axes, mat);
         let lhs_scales = lhs.reader(
             lhs_axes,
             mat,

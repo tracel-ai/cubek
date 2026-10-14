@@ -82,10 +82,10 @@ fn count_walks(walks: &mut Tensor<f32>, space: Partitioning) {
 
 /// `plane`'s tile of `c += a · b`, every unit of it a block summed in registers.
 #[cube]
-fn plane_product(plane: &Region, a: &Tile<f32>, b: &Tile<f32>, c: &Tile<f32>) {
+fn plane_product(plane: &Region, a: &Tile, b: &Tile, c: &Tile) {
     for unit in plane {
         let (a_unit, b_unit, c_unit) = (a.at(&unit), b.at(&unit), c.at(&unit));
-        let sum = c_unit.accumulator::<f32, f32, f32>(
+        let sum = c_unit.accumulator::<f32>(
             &a_unit,
             &b_unit,
             comptime!(Instruction::Registers {

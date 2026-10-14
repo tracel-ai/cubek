@@ -15,7 +15,7 @@ pub enum Output<'a, E: Numeric> {
 #[cube]
 impl<'a, E: Numeric> Output<'a, E> {
     /// Serve this operand as a [`Tile`] under the kernel's one `partitioning`.
-    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
+    pub fn tile(&self, partitioning: &Partitioning) -> Tile {
         match self {
             Output::Tensor(arg) => arg.tile(partitioning),
             Output::Atomic(arg) => arg.tile(partitioning),

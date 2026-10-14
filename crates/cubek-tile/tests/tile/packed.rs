@@ -318,7 +318,7 @@ fn packed_gemv<E: Numeric>(
         let w = w.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &x,
             &values,
             comptime!(Instruction::Registers {
@@ -377,7 +377,7 @@ fn packed_gemv_byte_scales<E: Numeric>(
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &x,
             &values,
             comptime!(Instruction::Registers {
@@ -411,7 +411,7 @@ fn packed_cmma_rhs<E: Numeric>(
     let x = x.tile(&space);
     let w = w.tile(&space).mul(&scale.tile(&space));
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);
+    let acc = c.accumulator::<E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);
     // The level cuts the columns into two fragments and walks `K`: unrolled, so each region
     // selects its fragment at comptime.
     for region in space.over(&level).unrolled() {
@@ -1986,7 +1986,7 @@ fn packed_gemv_unscaled<E: Numeric>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &x,
             &w,
             comptime!(Instruction::Registers {

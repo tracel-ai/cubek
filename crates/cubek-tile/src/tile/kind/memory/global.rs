@@ -152,12 +152,12 @@ impl GlobalOperand {
     }
 
     /// This operand as a [`Tile`] at the top of `levels`.
-    pub fn tile<T: Numeric>(self, #[comptime] levels: Vec<Level>) -> Tile<T> {
+    pub fn tile<T: Numeric>(self, #[comptime] levels: Vec<Level>) -> Tile {
         let place = comptime!(Placement::root(
             self.space.subspace(self.spec.axes()),
             levels
         ));
-        Tile::new(TileKind::new_Memory(Memory::global(self)), place)
+        Tile::new::<T>(TileKind::new_Memory(Memory::global(self)), place)
     }
 }
 

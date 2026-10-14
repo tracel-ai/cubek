@@ -59,7 +59,7 @@ pub use space::region::{Leaves, Region};
 pub use space::walk::base::Walk;
 pub use stage::base::StageStorage;
 pub use stage::pipeline::base::Stages;
-pub use tile::accumulator::base::{Accumulate, AccumulateExpand, Scratch};
+pub use tile::accumulator::base::Scratch;
 pub use tile::base::{Tile, TileExpand};
 pub use tile::factor::{Factor, FactorExpand};
 pub use tile::slices::{AxisSlices, AxisSlicesExpand};

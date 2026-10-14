@@ -11,9 +11,9 @@ use cubecl::{client::Client, ir::FloatKind, prelude::*, quant::scheme::QuantValu
 use cubecl_common::e2m1;
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Projection,
-    Semiring, Space, StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    Axis, Instruction, Level, Levels, Partitioning, Projection, Semiring, Space, StageStorage,
+    Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
+    ops::matmul::MmaIo,
 };
 
 use super::{Form, implied};
@@ -45,7 +45,7 @@ fn block_scaled_matmul<E: Numeric>(
     let (b, b_factor) = b.tile(&space).factor(c.space());
     let a_scales = a_scales.tile(&space);
     let b_scales = b_scales.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Mma {

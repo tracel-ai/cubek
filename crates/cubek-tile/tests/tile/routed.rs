@@ -322,7 +322,7 @@ fn routed_block_matmul_kernel<E: Numeric>(
             let out_s = out.at(&slab);
             let x_s = x.at(&slab);
             let w_s = w.at(&slab);
-            let acc = out_s.accumulator::<E, E, E>(
+            let acc = out_s.accumulator::<E>(
                 &x_s,
                 &w_s,
                 comptime!(Instruction::Registers {

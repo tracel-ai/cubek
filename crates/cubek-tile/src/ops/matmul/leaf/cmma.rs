@@ -14,8 +14,8 @@ impl CmmaData {
     /// Tensor-core contraction `self += lhs · rhs`, each factor times its scales.
     pub(crate) fn mma<A: Numeric, EL: Numeric, ER: Numeric>(
         &self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
         match (&lhs.kind, &rhs.kind) {
@@ -119,11 +119,11 @@ impl FragmentRead {
 }
 
 #[cube]
-impl<E: Numeric> Tile<E> {
+impl Tile {
     /// This factor read into `frag`. A fragment loads a shared, plain window as it lies; a scaled
     /// or packed factor, or a global one whose layout the load cannot check, goes through its
     /// landing.
-    pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
+    pub(crate) fn load<E: Numeric>(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
         let scaled = self.quantized();
         let packing = self.packing();
         let shared = self.is_shared();
@@ -153,7 +153,7 @@ impl<E: Numeric> Tile<E> {
         #[comptime] side: Side,
         #[comptime] out: Space,
         #[comptime] instruction: Instruction,
-    ) -> Tile<E> {
+    ) -> Tile {
         let scaled = self.quantized();
         let packing = self.packing();
         if comptime!(instruction == Instruction::Cmma && (scaled || packing != Packing::Plain)) {
@@ -165,12 +165,14 @@ impl<E: Numeric> Tile<E> {
 
     /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
     /// that fragments load from.
-    pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
+    pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile {
+        let _served = naming::<Served>(self.element);
         let space = comptime!(self.place.space.clone());
         let units = self.units();
         let planes = comptime!(plane_windows(&space, &self.place.levels));
-        let (stage, mut window) = Memory::landing::<E>(comptime!(space.clone()), units, planes);
-        let landing = Tile::new(stage.kind, comptime!(self.place.clone()));
+        let (stage, mut window) =
+            Memory::landing::<Served>(comptime!(space.clone()), units, planes);
+        let landing = Tile::new::<Served>(stage.kind, comptime!(self.place.clone()));
 
         // A load is read whole, a tile of several axes included, and landed a run of its finest
         // axis at a time, each run under the scale at its own coordinates.
@@ -178,7 +180,7 @@ impl<E: Numeric> Tile<E> {
         let (sw, (finest, run)) = comptime!((load.values(), load.extents()[0]));
         let size!(SW) = sw;
         let size!(RUN) = run;
-        let view = self.nd_packed::<SW>(comptime!(Guard::Checked));
+        let view = self.nd_packed::<Served, SW>(comptime!(Guard::Checked));
         let acc_axes = comptime!(accumulator_axes(side, &out, &space));
         let scales = self.reader(
             comptime!(MatrixAxes::trailing(&space)),
@@ -209,12 +211,12 @@ impl<E: Numeric> Tile<E> {
                         start.at(p) + comptime!(load.offset_along(offset, space.axis_at(p)) as u32),
                     );
                 }
-                let mut values = Vector::<E, RUN>::empty();
+                let mut values = Vector::<Served, RUN>::empty();
                 #[unroll]
                 for v in 0..run {
                     values.insert(v, held.extract(offset + v));
                 }
-                let landed = scales.apply_at::<E, RUN>(values, &at);
+                let landed = scales.apply_at::<Served, RUN>(values, &at);
                 if mine < lines {
                     let base = offset_of(&at, comptime!(strides.clone()));
                     #[unroll]
@@ -230,9 +232,9 @@ impl<E: Numeric> Tile<E> {
 }
 
 #[cube]
-impl<E: Numeric> Tile<E> {
+impl Tile {
     /// This landing loaded into `frag`, dense over the window's axes.
-    pub(crate) fn load_into(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
+    pub(crate) fn load_into<E: Numeric>(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
         let cols = comptime!(landed_cols(&self.place.space, &out) as u32);
         match &self.kind {
             TileKind::Memory(m) => {

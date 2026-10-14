@@ -47,7 +47,7 @@ impl<T: Float> Recipe<T> for AxisValue {
 /// `output`.
 #[cube]
 fn materialize<E: Numeric>(
-    source: &Tile<E>,
+    source: &Tile,
     output: &TileArg<'_, E>,
     space: &Partitioning,
     #[comptime] level: Level,
@@ -133,7 +133,7 @@ fn affine_plus_phase<E: Float>(
     scale: u32,
     offset: i32,
     divisor: u32,
-) -> Tile<E> {
+) -> Tile {
     Procedural::new::<E, Sum<AffineCoordinate<E>, Phase<E>>>(
         space,
         sum_of(

@@ -64,14 +64,14 @@ enum Read {
 /// this seed and the `Monoid` passed to `reduce_axis`.
 #[cube]
 fn reduce_body<E: Numeric>(
-    input: &Tile<E>,
-    output: &mut Tile<E>,
+    input: &Tile,
+    output: &mut Tile,
     space: &Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
 ) {
-    output.init(Monoid::identity::<E>(monoid));
+    output.init::<E>(Monoid::identity::<E>(monoid));
     let walk = space.over(&level);
     match comptime!(read) {
         Read::InPlace => {
@@ -104,7 +104,7 @@ fn reduce_kernel<E: Numeric>(
 ) {
     let input = input.tile(&space);
     let mut output = output.tile(&space);
-    reduce_body(
+    reduce_body::<E>(
         &input,
         &mut output,
         &space,
@@ -135,7 +135,7 @@ fn procedural_reduce_kernel<E: Float>(
     )
     .tile::<E>();
     let mut output = output.tile(&space);
-    reduce_body(
+    reduce_body::<E>(
         &input,
         &mut output,
         &space,
@@ -1322,8 +1322,8 @@ fn resident_fold_kernel<E: Numeric>(
 ) {
     let input = input.tile(&space);
     let out = output.tile(&space);
-    let mut acc = out.block_reducer::<E, E>(&input, REGISTER_BLOCK, monoid);
-    acc.init(Monoid::identity::<E>(monoid));
+    let mut acc = out.block_reducer::<E>(&input, REGISTER_BLOCK, monoid);
+    acc.init::<E>(Monoid::identity::<E>(monoid));
     for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);

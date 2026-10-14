@@ -15,7 +15,7 @@ pub trait Destination: Send + Sync + 'static {
 
     /// Serve the argument as a [`Tile`] under the kernel's one `partitioning`, stored in lines of
     /// `V` where the argument does not state its own width.
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile<E>;
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile;
 }
 
 /// [`Destination`]'s host half: how what the launch built becomes the argument.
@@ -33,7 +33,7 @@ pub struct Buffered;
 impl Destination for Buffered {
     type Arg<E: Numeric> = Output<'static, E>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
     }
 }
@@ -64,7 +64,7 @@ pub struct TmaStored;
 impl Destination for TmaStored {
     type Arg<E: Numeric> = TileArg<'static, E>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
     }
 }

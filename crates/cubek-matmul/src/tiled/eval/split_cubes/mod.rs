@@ -35,8 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Launcher, Levels, Monoid, Partitioning,
-    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    Axis, Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
+    Space, TileArg, TileArgLaunch, TileSpec,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},
     layout::PhysicalAxisMap,
 };
@@ -91,7 +91,7 @@ fn atomic_matmul<E: Numeric>(
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc = c_cube.accumulator::<E, E, E>(
+        let mut acc = c_cube.accumulator::<E>(
             &a_cube,
             &b_cube,
             comptime!(Instruction::Registers {
@@ -121,7 +121,7 @@ fn atomic_matmul_units<E: Numeric>(
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let acc = c_cube.accumulator::<E, E, E>(
+        let acc = c_cube.accumulator::<E>(
             &a_cube,
             &b_cube,
             comptime!(Instruction::Registers {

@@ -69,17 +69,17 @@ pub(crate) trait FactorRead {
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<S: Numeric> FactorRead for TileExpand<S> {
+// A read is expand-time data, held by one thread: `Arc` as the erased tensors hold theirs.
+#[allow(clippy::arc_with_non_send_sync)]
+impl FactorRead for TileExpand {
     fn scale_for(
         &self,
         scope: &Scope,
         coords: &CoordsExpand<u32>,
         values: &Space,
     ) -> NativeExpand<f32> {
-        let scale = self
-            .clone()
-            .__expand_scale_for_method(scope, coords, values.clone());
-        f32::__expand_cast_from(scope, scale)
+        self.clone()
+            .__expand_scale_for_method::<f32>(scope, coords, values.clone())
     }
 
     fn at_step(&self, scope: &Scope, step: &StepExpand) -> Arc<dyn FactorRead> {
@@ -92,10 +92,8 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
         coords: &CoordsExpand<u32>,
         values: &Space,
     ) -> NativeExpand<u32> {
-        let word = self
-            .clone()
-            .__expand_scale_for_method(scope, coords, values.clone());
-        u32::__expand_cast_from(scope, word)
+        self.clone()
+            .__expand_scale_for_method::<u32>(scope, coords, values.clone())
     }
 
     fn staged(&self, scope: &Scope, spec: &StageSpec) -> Arc<dyn FactorRead> {
@@ -104,15 +102,15 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
             width: None,
             ..spec.clone()
         };
-        Arc::new(stage_one::expand::<S>(scope, self, spec))
+        Arc::new(stage_one::expand(scope, self, spec))
     }
 
     fn fill_from(&self, scope: &Scope, src: &dyn FactorRead, meeting: &MeetingExpand) {
         let src = src
             .as_any()
-            .downcast_ref::<TileExpand<S>>()
+            .downcast_ref::<TileExpand>()
             .expect("Factor: a stage of scales fills from scales of its own element");
-        meeting.__expand_fill_method::<S>(scope, &mut self.clone(), src);
+        meeting.__expand_fill_method(scope, &mut self.clone(), src);
     }
 
     fn free_stage(&self, scope: &Scope) {
@@ -183,12 +181,14 @@ impl Factor {
 
 impl FactorExpand {
     /// A factor of one level: `scale`, read at the values' coordinates.
-    pub(crate) fn of<S: Numeric>(scope: &Scope, scale: &TileExpand<S>) -> Self {
+    // As `FactorRead for TileExpand`: expand-time data, held by one thread.
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub(crate) fn of(scope: &Scope, scale: &TileExpand) -> Self {
         FactorExpand {
             levels: vec![FactorLevel {
                 space: scale.place.space.clone(),
                 projection: scale.clone().__expand_projection_method(scope),
-                words: S::elem_type(scope) == u32::elem_type(scope),
+                words: scale.element == u32::elem_type(scope),
                 read: Arc::new(scale.clone()),
             }],
         }

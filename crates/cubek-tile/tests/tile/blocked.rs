@@ -788,7 +788,7 @@ fn promoted_matmul<E: Numeric>(
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),
@@ -901,7 +901,7 @@ fn wide_scaled_promoted<E: Numeric>(
     let b = b.tile(&space);
     let scale = scale.tile(&space);
     let c = c.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),

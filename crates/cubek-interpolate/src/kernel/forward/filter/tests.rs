@@ -39,7 +39,7 @@ impl<T: Float> Recipe<T> for AxisValue {
 /// `output`.
 #[cube]
 fn materialize<E: Numeric>(
-    source: &Tile<E>,
+    source: &Tile,
     output: &TileArg<'_, E>,
     space: &Partitioning,
     #[comptime] level: Level,

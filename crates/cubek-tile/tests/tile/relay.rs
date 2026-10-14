@@ -226,7 +226,7 @@ fn relayed_split_matmul(
     let b = b.tile(&space);
     let mut out = out.tile(&space);
     let c = relay.tile();
-    let acc = c.accumulator::<f32, f32, f32>(
+    let acc = c.accumulator::<f32>(
         &a,
         &b,
         comptime!(Instruction::Registers {

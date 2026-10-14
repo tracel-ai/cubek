@@ -69,7 +69,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
     let b = b.tile(&space);
     let c = c.tile(&space);
     let mut acc = match comptime!(leaf) {
-        Leaf::Mma => c.accumulator::<EA, EI, EI>(
+        Leaf::Mma => c.accumulator::<EA>(
             &a,
             &b,
             comptime!(Instruction::Mma {
@@ -77,7 +77,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
             }),
             Semiring::SUM_PROD,
         ),
-        Leaf::MmaLoadMatrix => c.accumulator::<EA, EI, EI>(
+        Leaf::MmaLoadMatrix => c.accumulator::<EA>(
             &a,
             &b,
             comptime!(Instruction::Mma {
@@ -89,7 +89,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
             }),
             Semiring::SUM_PROD,
         ),
-        Leaf::Cmma => c.accumulator::<EA, EI, EI>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD),
+        Leaf::Cmma => c.accumulator::<EA>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD),
     };
     let walk = space.over(&outer);
     if comptime!(staging == Staging::Global) {
@@ -101,7 +101,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
             }
         }
     } else {
-        staged::<EI, EA>(
+        staged(
             &a,
             &b,
             &mut acc,
@@ -119,10 +119,10 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
 /// The walk through a shared-memory stage, `staging` saying what is declared before it.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn staged<EI: Numeric, EA: Numeric>(
-    a: &Tile<EI>,
-    b: &Tile<EI>,
-    acc: &mut Tile<EA>,
+fn staged(
+    a: &Tile,
+    b: &Tile,
+    acc: &mut Tile,
     walk: Walk,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
@@ -138,23 +138,23 @@ fn staged<EI: Numeric, EA: Numeric>(
             small[0] = 1u32;
         }
         sync_cube();
-        walk_stages::<EI, EA>(a, b, acc, walk, inner, storage, depth, schedule);
+        walk_stages(a, b, acc, walk, inner, storage, depth, schedule);
         sync_cube();
         if small[0] != 1u32 {
             acc.zero();
         }
     } else {
-        walk_stages::<EI, EA>(a, b, acc, walk, inner, storage, depth, schedule);
+        walk_stages(a, b, acc, walk, inner, storage, depth, schedule);
     }
 }
 
 /// `a · b` into `acc`, a stage of `storage` at a time.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn walk_stages<EI: Numeric, EA: Numeric>(
-    a: &Tile<EI>,
-    b: &Tile<EI>,
-    acc: &mut Tile<EA>,
+fn walk_stages(
+    a: &Tile,
+    b: &Tile,
+    acc: &mut Tile,
     walk: Walk,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,

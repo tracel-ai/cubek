@@ -11,8 +11,8 @@ use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Scratch,
-    Semiring, Space, StageStorage, Tile, TileArg, TileArgLaunch, TileSpec,
+    Axis, Instruction, Level, Levels, Partitioning, Scratch, Semiring, Space, StageStorage, Tile,
+    TileArg, TileArgLaunch, TileSpec,
     ops::softmax::{MaskProbe, RowState},
 };
 
@@ -68,14 +68,14 @@ fn attention_fold_cmma_kernel<E: Float>(
     let rows_p = comptime!(rows / planes);
     let (rm, cn, vn, ks) = comptime!((rows_p / frag, block / frag, val_dim / frag, d / frag));
 
-    let mut q_s = Tile::<E>::smem(
+    let mut q_s = Tile::smem::<E>(
         comptime!(Space::new(&[(QP, rows), (D, d)])),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     q_s.copy_from(&q);
-    let score = Tile::<f32>::smem(
+    let score = Tile::smem::<f32>(
         comptime!(Space::new(&[(QP, rows), (S, block)])),
         score_vec,
         StageStorage::Strided,
@@ -85,8 +85,8 @@ fn attention_fold_cmma_kernel<E: Float>(
     let k_walk = k.over(&blocks);
     let k_probe = k.at(&k_walk.region(0usize));
     let v_probe = v.at(&k_walk.region(0usize));
-    let mut k_stage = Tile::<E>::shared(comptime!(k_probe.space()), StageStorage::Strided);
-    let mut v_stage = Tile::<E>::shared(comptime!(v_probe.space()), StageStorage::Strided);
+    let mut k_stage = Tile::shared::<E>(comptime!(k_probe.space()), StageStorage::Strided);
+    let mut v_stage = Tile::shared::<E>(comptime!(v_probe.space()), StageStorage::Strided);
     let bound_s = bound as usize;
     sync_cube();
 
@@ -132,7 +132,7 @@ fn attention_fold_cmma_kernel<E: Float>(
             ]),
         );
         let mut acc = out_g
-            .accumulator::<f32, f32, E>(&score_w, &v_w, Instruction::Cmma, Semiring::SUM_PROD)
+            .accumulator::<f32>(&score_w, &v_w, Instruction::Cmma, Semiring::SUM_PROD)
             .with_scratch(Scratch::OneTile);
         // The fragment grids of every operand, cells in row-major order.
         let acc_cells = out_w.over(&comptime!(Level::every(&[(QP, frag), (V, frag)])));
@@ -165,8 +165,7 @@ fn attention_fold_cmma_kernel<E: Float>(
             sync_cube();
 
             // The score: `q · kᵀ`, the keys' window read col-major by the leaf.
-            let s =
-                score_g.accumulator::<f32, E, E>(&q_w, &k_w, Instruction::Cmma, Semiring::SUM_PROD);
+            let s = score_g.accumulator::<f32>(&q_w, &k_w, Instruction::Cmma, Semiring::SUM_PROD);
             #[unroll]
             for si in 0..ks {
                 #[unroll]

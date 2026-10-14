@@ -95,7 +95,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric>(
     let x = x.tile(&space);
     let scale = scale.tile(&space);
     let out = out.tile(&space);
-    let acc = out.accumulator::<E, E, E>(
+    let acc = out.accumulator::<E>(
         &w,
         &x,
         comptime!(Instruction::Registers {

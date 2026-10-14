@@ -229,9 +229,9 @@ impl Layout for TileMatrix {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// The `i`-th batch matrix over `axes`, unpacked if packed.
-    pub(crate) fn matrix_packed<W: Size>(
+    pub(crate) fn matrix_packed<T: Numeric, W: Size>(
         &self,
         #[comptime] axes: MatrixAxes,
         i: usize,
@@ -242,7 +242,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The fragment's grouped matrix, unpacked if packed; `cols` is in scalars.
-    pub(crate) fn fragment_matrix_packed<W: Size>(
+    pub(crate) fn fragment_matrix_packed<T: Numeric, W: Size>(
         &self,
         #[comptime] rows: usize,
         #[comptime] cols: usize,

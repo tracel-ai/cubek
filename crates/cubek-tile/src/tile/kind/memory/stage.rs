@@ -1,7 +1,5 @@
 //! Shared-memory stages: the [`StageForm`] a stage takes and the `smem*` constructors.
 
-use core::marker::PhantomData;
-
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
@@ -68,8 +66,8 @@ impl Memory {
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
-    ) -> Tile<T> {
-        Memory::smem_owned(
+    ) -> Tile {
+        Memory::smem_owned::<T>(
             space,
             vector_size,
             storage,
@@ -90,7 +88,7 @@ impl Memory {
         #[comptime] units: usize,
         #[comptime] alignment: usize,
         #[comptime] owner: StageOwner,
-    ) -> Tile<T> {
+    ) -> Tile {
         let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let elem_bytes = T::size().comptime();
         let form = comptime!(StageForm::dense(
@@ -100,7 +98,7 @@ impl Memory {
             LineBytes(vector_size * elem_bytes)
         ));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        Memory::smem_with_form(
+        Memory::smem_with_form::<T>(
             space,
             vector_size,
             units,
@@ -124,7 +122,7 @@ impl Memory {
         map: &RuntimeMap,
         #[comptime] signed: bool,
         #[comptime] boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
-    ) -> Tile<T> {
+    ) -> Tile {
         let form = comptime!(StageForm::gathered(
             &space,
             vector_size,
@@ -146,7 +144,7 @@ impl Memory {
             comptime!(signed),
             comptime!(boundaries),
         );
-        Memory::smem_with_form(
+        Memory::smem_with_form::<T>(
             space,
             vector_size,
             units,
@@ -173,7 +171,7 @@ impl Memory {
         source: ComptimeOption<SourceWindow>,
         #[comptime] alignment: usize,
         #[comptime] owner: StageOwner,
-    ) -> Tile<T> {
+    ) -> Tile {
         let size!(W) = vector_size;
         let cells = comptime!(form.cells());
         let smem = match comptime!(owner) {
@@ -198,7 +196,7 @@ impl Memory {
                 }
             }
         };
-        Memory::smem_over(
+        Memory::smem_over::<T, _, _>(
             space,
             vector_size,
             comptime!(owner.fill(units)),
@@ -221,7 +219,7 @@ impl Memory {
         #[comptime] units: usize,
         #[comptime] packing: Packing,
         #[comptime] alignment: usize,
-    ) -> Tile<T> {
+    ) -> Tile {
         let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let word_bytes = u32::size().comptime();
         let form = comptime!(StageForm::dense(
@@ -234,7 +232,7 @@ impl Memory {
         let smem =
             Shared::<[Vector<u32, WP>]>::new_aligned_slice(comptime!(form.cells()), alignment);
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        Memory::smem_over(
+        Memory::smem_over::<T, _, _>(
             space,
             vector_size,
             comptime!(FillUnits::cube(units)),
@@ -258,14 +256,14 @@ impl Memory {
         #[comptime] form: StageForm,
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
-    ) -> Tile<T> {
+    ) -> Tile {
         // Held at the element it is declared at: `u32` words under a packing.
         let backing = Backing::new_Buffer(Raw::<Slice>::of::<H>(unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<H>()
                 .as_boxed_unchecked()
         }));
-        Memory::smem_backed(
+        Memory::smem_backed::<T>(
             space,
             vector_size,
             fill,
@@ -290,13 +288,13 @@ impl Memory {
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
         #[comptime] write: Write,
-    ) -> Tile<T> {
+    ) -> Tile {
         let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent.
         let bound = extent.clone();
         let gmem_projection = comptime!(form.positional.clone());
-        Tile::<T> {
+        Tile {
             kind: TileKind::new_Memory(Memory {
                 address: comptime!(AddressSpace::Shared),
                 store: Store::untiled(backing, vector_size, packing),
@@ -330,7 +328,6 @@ impl Memory {
             }),
             factor: Factor::none(),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
-            _element: PhantomData,
             element: element_of::<T>(),
         }
     }
@@ -341,7 +338,7 @@ impl Memory {
         #[comptime] space: Space,
         #[comptime] units: usize,
         #[comptime] planes: usize,
-    ) -> (Tile<T>, Shared<[T]>) {
+    ) -> (Tile, Shared<[T]>) {
         let cells = comptime!(
             (0..space.rank())
                 .map(|p| space.extent_at(p))
@@ -359,7 +356,7 @@ impl Memory {
             LineBytes(elem_bytes)
         ));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let tile = Memory::smem_over(
+        let tile = Memory::smem_over::<T, _, _>(
             space,
             1usize,
             comptime!(FillUnits::cube(units)),

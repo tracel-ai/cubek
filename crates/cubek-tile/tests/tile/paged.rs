@@ -55,7 +55,7 @@ fn paged_sum_kernel<E: Numeric>(
         let b = sequence.coord(B);
 
         let mut total = out.at(&sequence);
-        total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
         for lp in sequence.over(&logical) {
             let phys = table[b * PAGES_PER_SEQ + lp.coord(LP)] as usize;

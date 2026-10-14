@@ -276,7 +276,7 @@ fn batched_scaled_stage<O: Numeric>(
     let decoded = values.tile(&space).mul(&scales.tile(&space));
     let output = output.tile(&space);
     for cube in &space {
-        let mut stage = Tile::<O>::smem(
+        let mut stage = Tile::smem::<O>(
             comptime!(Space::new(&[(M, rows), (N, cols)])),
             output.vector_size(),
             StageStorage::Strided,
