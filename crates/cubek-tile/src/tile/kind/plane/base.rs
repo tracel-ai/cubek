@@ -654,6 +654,7 @@ impl PlanePartition {
             factor: Factor::none(),
             place: comptime!(Placement::new(space, depth, levels)),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 
@@ -741,6 +742,7 @@ impl PlanePartition {
             factor: Factor::none(),
             place: comptime!(Placement::new(window, depth, levels)),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 

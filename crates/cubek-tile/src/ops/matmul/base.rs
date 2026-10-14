@@ -104,6 +104,7 @@ impl<Acc: Numeric> Tile<Acc> {
                     factor: self.factor.clone(),
                     place: comptime!(self.place.clone()),
                     _element: PhantomData,
+                    element: element_of::<Acc>(),
                 }
             }
             TileKind::PlaneTile(_)

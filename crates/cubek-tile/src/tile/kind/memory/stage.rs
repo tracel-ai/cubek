@@ -331,6 +331,7 @@ impl Memory {
             factor: Factor::none(),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 

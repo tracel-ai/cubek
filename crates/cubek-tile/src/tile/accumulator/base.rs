@@ -243,6 +243,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                         factor: self.factor.clone(),
                         place: comptime!(self.place.clone()),
                         _element: PhantomData,
+                        element: element_of::<Acc>(),
                     }
                 }
                 TileKind::Memory(_)
@@ -303,6 +304,7 @@ impl<Acc: Numeric> Tile<Acc> {
             factor: self.factor.clone(),
             place: comptime!(self.place.clone()),
             _element: PhantomData,
+            element: element_of::<E>(),
         }
     }
 

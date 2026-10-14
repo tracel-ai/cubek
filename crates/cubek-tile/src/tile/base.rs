@@ -20,6 +20,9 @@ pub struct Tile<T: Numeric> {
     /// Where this tile sits in its partitioning.
     #[cube(comptime)]
     pub(crate) place: Placement,
+    /// The element its values are served at ([`Served`]).
+    #[cube(comptime)]
+    pub(crate) element: ElemType,
     /// The element the tile is named at, while it names one: its kinds hold theirs as data.
     #[cube(comptime)]
     pub(crate) _element: PhantomData<T>,
@@ -34,6 +37,7 @@ impl<T: Numeric> Tile<T> {
             factor: Factor::none(),
             place,
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 
@@ -49,6 +53,7 @@ impl<T: Numeric> Tile<T> {
             factor: self.factor.clone(),
             place: comptime!(Placement::new(self.place.space.clone(), depth, levels)),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 
@@ -409,6 +414,7 @@ impl<T: Numeric> Tile<T> {
                 like.place.levels.clone()
             )),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 
@@ -430,6 +436,7 @@ impl<T: Numeric> Tile<T> {
             factor: self.factor.clone(),
             place: comptime!(self.place.clone()),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 
@@ -490,6 +497,7 @@ impl<T: Numeric> Tile<T> {
             factor: self.factor.at(step),
             place: comptime!(self.place.at_step(&step.level)),
             _element: PhantomData,
+            element: element_of::<T>(),
         }
     }
 
@@ -569,10 +577,11 @@ impl<T: Numeric> Tile<T> {
 
     /// Zero this whole tile.
     pub fn zero(&mut self) {
+        let _served = naming::<Served>(self.element);
         match &mut self.kind {
-            TileKind::Memory(d) => d.zero::<T>(),
-            TileKind::PlaneTile(t) => t.zero::<T>(),
-            TileKind::PlanePartition(p) => p.zero::<T>(),
+            TileKind::Memory(d) => d.zero::<Served>(),
+            TileKind::PlaneTile(t) => t.zero::<Served>(),
+            TileKind::PlanePartition(p) => p.zero::<Served>(),
             TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::zero: a procedural tile and the plane's units are not writable")

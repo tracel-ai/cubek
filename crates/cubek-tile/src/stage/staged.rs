@@ -85,6 +85,7 @@ impl Memory {
                         operand.place.levels.clone()
                     )),
                     _element: PhantomData,
+                    element: element_of::<T>(),
                 }
             }
             _ => Memory::stage_memory(operand, level, storage, width, owner),
