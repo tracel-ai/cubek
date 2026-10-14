@@ -68,9 +68,11 @@ pub(crate) struct RegisterData<T: Numeric> {
     pub(crate) accumulation: Accumulation,
 }
 
-/// Bind the block width `RA` for the rest of the kernel's scope.
+/// Bind the block width `RA` for what follows. A kernel may hold blocks of several widths, as an
+/// attention unit holds a score one value a cell beside its output's lines, so every block binds
+/// its own before it touches its lines.
 #[cube]
-fn register_block_size(#[comptime] vector_size: usize) {
+pub(crate) fn register_block_size(#[comptime] vector_size: usize) {
     intrinsic!(|scope| {
         scope.register_size::<RA>(vector_size);
     });
@@ -118,6 +120,7 @@ impl<T: Numeric> RegisterData<T> {
     }
 
     pub(crate) fn init(&mut self, val: T) {
+        register_block_size(self.vector_size);
         let count = comptime!(self.mr * self.nr);
         #[allow(clippy::needless_range_loop)]
         #[unroll]
@@ -139,6 +142,7 @@ impl<T: Numeric> RegisterData<T> {
             src.nr,
             src.fold
         ));
+        register_block_size(self.vector_size);
         let count = comptime!(self.mr * self.nr);
         #[allow(clippy::needless_range_loop)]
         #[unroll]
@@ -150,6 +154,7 @@ impl<T: Numeric> RegisterData<T> {
     /// `self[i, :] *= factors[first + i]` for every slice `i` along the block's columns, in the
     /// registers that hold it.
     pub(crate) fn mul_along(&mut self, factors: &Array<T>, #[comptime] first: usize) {
+        register_block_size(self.vector_size);
         #[unroll]
         for r in 0..self.mr {
             let factor = Vector::<T, RA>::cast_from(factors[first + r]);
@@ -162,6 +167,7 @@ impl<T: Numeric> RegisterData<T> {
 
     /// Multiply every partial this block holds by `factor`.
     pub(crate) fn scale(&mut self, factor: T) {
+        register_block_size(self.vector_size);
         let count = comptime!(self.mr * self.nr);
         let line = Vector::<T, RA>::cast_from(factor);
         #[allow(clippy::needless_range_loop)]
@@ -180,6 +186,7 @@ impl<T: Numeric> RegisterData<T> {
         mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
+        register_block_size(self.vector_size);
         self.drain::<Out, RA>(mem, space);
     }
 

@@ -19,6 +19,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] out: Space,
     ) {
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma"));
+        register_block_size(self.vector_size);
         // A load stored across several columns reads as their runs along the contraction.
         let rhs_load = rhs.vector_tile();
         let vw = comptime!(rhs_load.run_length());
@@ -129,6 +130,7 @@ impl<T: Numeric> RegisterData<T> {
         rhs: &Tile<ER>,
     ) {
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma_block"));
+        register_block_size(self.vector_size);
         comptime!(assert!(
             self.fold == 1,
             "RegisterData::mma_block: this block's lines are neighbours along the rhs's columns, \
