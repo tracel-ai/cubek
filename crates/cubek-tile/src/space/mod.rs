@@ -28,6 +28,7 @@ pub use coords::CoordsExpand;
 pub use extent::Shape;
 pub use partition::cube_order::{CubeOrder, swizzle};
 pub use partition::level::{ComputeScope, Count, Coverage, Spread};
+pub use partition::plane_order::PlaneOrder;
 pub use partition::table::LevelTable;
 pub use share::UnitShare;
 pub use walk::portion::Portion;

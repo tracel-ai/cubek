@@ -3,8 +3,8 @@
 use cubecl::{prelude::*, unexpanded};
 
 use crate::{
-    Axis, ComputeScope, Count, Coverage, CubeAxis, Level, LevelTable, Region, RegionExpand, Space,
-    Walk,
+    Axis, ComputeScope, Count, Coverage, CubeAxis, Level, LevelTable, PlaneOrder, Region,
+    RegionExpand, Space, Walk,
 };
 
 /// A space with the levels that partition it, outermost first: what a kernel's loops iterate.
@@ -116,6 +116,20 @@ impl Partitioning {
                         .iter()
                         .all(|other| other.coverage() != level.coverage()),
                     "Partitioning::new: two levels distribute over {scope:?}"
+                );
+            }
+            if level.plane_order().is_some() {
+                assert!(
+                    i == 0,
+                    "Partitioning::new: a plane level spanning the launch is the outermost level, \
+                     and this one sits {i} levels down"
+                );
+                assert!(
+                    levels.iter().all(|other| other.coverage()
+                        != Coverage::Distribute(ComputeScope::Cube)
+                        && other.fillers() == 0),
+                    "Partitioning::new: the launch's planes take the outermost level, so no cube \
+                     level groups them and no plane only fills a cube's stages"
                 );
             }
         }
@@ -278,6 +292,10 @@ impl Partitioning {
 
     /// The cube grid these levels distribute to.
     pub fn cube_count(&self) -> CubeCount {
+        if let Some(order) = self.levels.first().and_then(Level::plane_order) {
+            let planes = self.spawned_planes(order);
+            return Self::cubes_along_x_then_y(planes.div_ceil(order.planes_per_cube()));
+        }
         CubeCount::Static(
             self.cube_instances(CubeAxis::X),
             self.cube_instances(CubeAxis::Y),
@@ -285,9 +303,39 @@ impl Partitioning {
         )
     }
 
+    /// The most cubes one grid dimension takes on every device a launch may run on.
+    const CUBES_PER_GRID_DIMENSION: usize = 65_535;
+
+    /// `cubes` cubes laid along `x`, spilling into `y` past what one dimension takes: cubes past
+    /// the last read a plane index past the last tile, and hold none. At least one, so an empty
+    /// problem divides by no empty dimension.
+    fn cubes_along_x_then_y(cubes: usize) -> CubeCount {
+        let x = cubes.clamp(1, Self::CUBES_PER_GRID_DIMENSION);
+        CubeCount::Static(x as u32, cubes.div_ceil(x).max(1) as u32, 1)
+    }
+
+    /// Planes a launch spawns for `order`'s level, the outermost: every block's planes, the
+    /// blocks along each axis covering its tiles. Static extents only.
+    fn spawned_planes(&self, order: &PlaneOrder) -> usize {
+        let level = &self.levels[0];
+        let blocks: usize = level
+            .axes()
+            .into_iter()
+            .map(|axis| {
+                level
+                    .tiles(&self.space, axis)
+                    .div_ceil(order.block_along(axis))
+            })
+            .product();
+        blocks * order.block_planes()
+    }
+
     /// Planes one cube holds: the levels' plane cuts, each plane group's planes, plus any that
-    /// only fill.
+    /// only fill; where the planes span the launch, the cubes their order groups them in.
     pub fn planes_per_cube(&self) -> u32 {
+        if let Some(order) = self.levels.first().and_then(Level::plane_order) {
+            return order.planes_per_cube() as u32;
+        }
         // `Levels` deals plane groups by one level, beside no plane level.
         let grouped = self.levels.iter().find_map(|level| {
             let scope = level.coverage().scope()?;
