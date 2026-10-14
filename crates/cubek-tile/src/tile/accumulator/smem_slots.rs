@@ -75,6 +75,7 @@ impl Tile {
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         );
         SmemSlotsAccumulation::<A> {
             values,
@@ -111,6 +112,7 @@ impl<A: Numeric> SmemSlotsAccumulation<A> {
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Masked),
         );
         sink.nested_like(&self.like)
     }

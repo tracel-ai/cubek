@@ -616,9 +616,8 @@ impl Tile {
         let rows = comptime!(self.place.space.extent_at(edges.row_split));
         let cols = comptime!(self.place.space.extent_at(edges.col_split));
         match &self.kind {
-            TileKind::PlanePartition(p) => {
-                comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
-            }
+            // A grid's own fragments, which a window shorter than them overhangs.
+            TileKind::PlanePartition(p) => comptime!(((p.m_tiles, p.n_tiles), p.rows, p.cols)),
             TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)

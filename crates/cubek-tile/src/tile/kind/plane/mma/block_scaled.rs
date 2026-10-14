@@ -16,7 +16,7 @@ use crate::tile::kind::plane::load_matrix::LDMATRIX_ROW_BYTES;
 use crate::*;
 
 /// `e2m1` values one stored word holds, and so one register of the block-scaled instruction.
-const E2M1_PER_WORD: usize = 8;
+pub(crate) const E2M1_PER_WORD: usize = 8;
 
 /// Words one `ldmatrix` row holds.
 const LDMATRIX_ROW_WORDS: usize = LDMATRIX_ROW_BYTES / size_of::<u32>();

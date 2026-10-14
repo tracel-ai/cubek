@@ -137,10 +137,14 @@ impl PlaneTile {
             }
             PlaneTile::Mma(d) => {
                 // The manual-mma instruction reads registers, where a scaled factor cannot land,
-                // unless the device's block-scaled instruction takes the scales beside the values.
+                // unless the device's block-scaled instruction takes the scales beside the values,
+                // or a fragment deeper than its instruction decodes them into its registers as it
+                // loads ([`lane_runs`](crate::tile::kind::plane::mma::lane_runs)), which says why
+                // where it cannot.
                 let (m, n, k) = comptime!((d.m, d.n, d.k));
                 let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
-                if comptime!(!block_scaled) {
+                let steps = lane_run_steps::<EL>(m, n, k);
+                if comptime!(!block_scaled && steps == 1) {
                     lhs.refuse_factor("PlaneTile::Mma");
                     rhs.refuse_factor("PlaneTile::Mma");
                 }
@@ -169,8 +173,12 @@ impl PlaneTile {
                 | TileKind::TmaGmem(_)
                 | TileKind::Procedural(_)
                 | TileKind::Lines(_) => {
-                    let folded = comptime!(d.fold > 1);
-                    strided_2d(lhs, rhs, comptime!(out.clone()), folded);
+                    let rhs_along_k = comptime!(
+                        lhs.place
+                            .space
+                            .contains(rhs.place.space.axis_at(rhs.place.space.rank() - 1))
+                    );
+                    strided_2d(lhs, rhs, comptime!(out.clone()), rhs_along_k);
                     d.mma::<E, EL, ER>(lhs, rhs, out)
                 }
             },

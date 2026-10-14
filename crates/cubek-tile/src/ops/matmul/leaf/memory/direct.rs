@@ -250,6 +250,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
         &mut c,
         lw,
         contracted_per_step,
+        contracted_per_step > 1,
         columns,
         mr,
         nr,

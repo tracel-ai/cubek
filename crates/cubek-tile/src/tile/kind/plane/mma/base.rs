@@ -59,7 +59,8 @@ impl MmaData {
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
     ) -> MmaData {
-        let def = MmaDefinition::<T, T, T>::new(m, n, k);
+        let depth = instruction_depth::<T>(m, n, k);
+        let def = MmaDefinition::<T, T, T>::new(m, n, depth);
         register_acc_size::<T>(&def);
         let count = def.vectors_per_lane(MatrixIdent::Accumulator);
         MmaData {
@@ -80,9 +81,12 @@ impl MmaData {
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
     ) -> MmaData {
-        let def = MmaDefinition::<T, T, T>::new(m, n, k);
+        // A fragment deeper than its instruction holds each of its instructions' registers.
+        let depth = instruction_depth::<T>(m, n, k);
+        let def = MmaDefinition::<T, T, T>::new(m, n, depth);
         register_lhs_size::<T>(&def);
-        let count = def.vectors_per_lane(MatrixIdent::A);
+        let per_step = def.vectors_per_lane(MatrixIdent::A);
+        let count = comptime!(per_step * (k / depth));
         MmaData {
             fragment: MmaFragment::new_Lhs(Raw::<Registers<NL>>::of::<T>(Array::new(count))),
             m,
@@ -101,9 +105,11 @@ impl MmaData {
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
     ) -> MmaData {
-        let def = MmaDefinition::<T, T, T>::new(m, n, k);
+        let depth = instruction_depth::<T>(m, n, k);
+        let def = MmaDefinition::<T, T, T>::new(m, n, depth);
         register_rhs_size::<T>(&def);
-        let count = def.vectors_per_lane(MatrixIdent::B);
+        let per_step = def.vectors_per_lane(MatrixIdent::B);
+        let count = comptime!(per_step * (k / depth));
         MmaData {
             fragment: MmaFragment::new_Rhs(Raw::<Registers<NR>>::of::<T>(Array::new(count))),
             m,
@@ -212,25 +218,32 @@ impl MmaData {
         let layout = comptime!(self.layout);
         let io = comptime!(self.io);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
+        let steps = lane_run_steps::<T>(m, n, k);
         match &mut self.fragment {
-            MmaFragment::Lhs(f) => load_fragment(
-                src,
-                f.at_mut::<T>(),
-                &def,
-                MatrixIdent::A,
-                layout,
-                io,
-                (m, k),
-            ),
-            MmaFragment::Rhs(f) => load_fragment(
-                src,
-                f.at_mut::<T>(),
-                &def,
-                MatrixIdent::B,
-                layout,
-                io,
-                (k, n),
-            ),
+            MmaFragment::Lhs(f) => match comptime!(steps > 1) {
+                true => load_lane_runs(src, f.at_mut::<T>(), MatrixIdent::A, layout, (m, n, k)),
+                false => load_fragment(
+                    src,
+                    f.at_mut::<T>(),
+                    &def,
+                    MatrixIdent::A,
+                    layout,
+                    io,
+                    (m, k),
+                ),
+            },
+            MmaFragment::Rhs(f) => match comptime!(steps > 1) {
+                true => load_lane_runs(src, f.at_mut::<T>(), MatrixIdent::B, layout, (m, n, k)),
+                false => load_fragment(
+                    src,
+                    f.at_mut::<T>(),
+                    &def,
+                    MatrixIdent::B,
+                    layout,
+                    io,
+                    (k, n),
+                ),
+            },
             MmaFragment::Acc(f) => load_fragment(
                 src,
                 f.at_mut::<T>(),
@@ -743,6 +756,12 @@ pub(crate) fn accumulator_as_a<L: Numeric>(
     #[comptime] n: usize,
     #[comptime] k: usize,
 ) -> Array<Vector<L, NL>> {
+    let depth = instruction_depth::<L>(m, n, k);
+    comptime!(assert!(
+        depth == k,
+        "accumulator_as_a: an accumulator read as the A operand is one instruction deep; a \
+         {k}-deep contraction of it would hold `k` in lane runs, which its cells do not lie in"
+    ));
     let acc_def = MmaDefinition::<L, L, L>::new(m, k, k);
     let a_def = MmaDefinition::<L, L, L>::new(m, n, k);
     register_lhs_size::<L>(&a_def);
@@ -778,7 +797,8 @@ pub(crate) fn accumulator_as_a<L: Numeric>(
     registers
 }
 
-/// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`.
+/// `acc += lhs · rhs` over three role fragments via `MmaDefinition::execute`: one instruction,
+/// or, where the fragments are deeper than it, each of theirs in turn ([`lane_runs`]).
 #[cube]
 pub(crate) fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     lhs: &Array<Vector<L, NL>>,
@@ -788,11 +808,17 @@ pub(crate) fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
     #[comptime] n: usize,
     #[comptime] k: usize,
 ) {
-    let def = MmaDefinition::<L, R, A>::new(m, n, k);
-    let out = def.execute(lhs, rhs, &*acc);
-    let num = def.vectors_per_lane(MatrixIdent::Accumulator);
-    #[unroll]
-    for i in 0..num {
-        acc[i] = out[i];
+    let depth = instruction_depth::<L>(m, n, k);
+    if comptime!(depth < k) {
+        let def = MmaDefinition::<L, R, A>::new(m, n, depth);
+        mma_execute_lane_runs::<L, R, A>(&def, lhs, rhs, acc, comptime!(k / depth));
+    } else {
+        let def = MmaDefinition::<L, R, A>::new(m, n, k);
+        let out = def.execute(lhs, rhs, &*acc);
+        let num = def.vectors_per_lane(MatrixIdent::Accumulator);
+        #[unroll]
+        for i in 0..num {
+            acc[i] = out[i];
+        }
     }
 }

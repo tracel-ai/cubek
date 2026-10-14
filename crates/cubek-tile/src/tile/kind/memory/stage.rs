@@ -273,10 +273,12 @@ impl Memory {
             map,
             source,
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         )
     }
 
-    /// The whole-buffer window over a shared-memory `backing` laid out as `form`.
+    /// The whole-buffer window over a shared-memory `backing` laid out as `form`, a write past
+    /// its extent masked where `overhang` says a region larger than the buffer writes into it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn smem_backed<T: Numeric>(
         #[comptime] space: Space,
@@ -288,10 +290,11 @@ impl Memory {
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
         #[comptime] write: Write,
+        #[comptime] overhang: Overhang,
     ) -> Tile {
         let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
         let (origin, extent) = full_window(comptime!(form.clone()));
-        // Smem never overhangs its own buffer, so the bound is the extent.
+        // The bound is the buffer's extent: a region past it is one a masked write skips.
         let bound = extent.clone();
         let gmem_projection = comptime!(form.positional.clone());
         Tile {
@@ -312,7 +315,7 @@ impl Memory {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    overhang: Overhang::Never,
+                    overhang,
                     write,
                     fill,
                     storage: WindowStorage::Stored(Storage::Strided),
