@@ -413,7 +413,16 @@ impl<T: Numeric> PlanePartition<T> {
     /// The `sub_m × sub_n` block of fragments `step` selects, or one fragment if `1 × 1`.
     /// A level that cuts the partition must be walked with comptime coordinates.
     pub(crate) fn at_step(&self, step: &Step, #[comptime] space: Space) -> TileKind<T> {
-        let edges = comptime!(MatrixAxes::edges(&space));
+        // A grid of instruction fragments may span a contraction in digits; a register block's
+        // edges are its own, and it reads the window's trailing pair.
+        let fragments = match self.frags.index(0usize) {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => comptime!(true),
+            PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => comptime!(false),
+        };
+        let edges = comptime!(match fragments {
+            true => grid_axes(&space, (self.rows, self.cols), (self.m_tiles, self.n_tiles)),
+            false => MatrixAxes::edges(&space),
+        });
         let a0 = comptime!(space.axis_at(edges.row_split));
         let a1 = comptime!(space.axis_at(edges.col_split));
         // A single-tile axis folds to `0`; a `Dynamic` axis stays runtime (`None`).
@@ -669,7 +678,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] levels: Vec<Level>,
         #[comptime] block_scaled: bool,
     ) -> Tile<T> {
-        let edges = comptime!(MatrixAxes::edges(&window));
+        let edges = comptime!(MatrixAxes::operand(&window, &out));
         let a0 = comptime!(window.axis_at(edges.row_split));
         let a1 = comptime!(window.axis_at(edges.col_split));
 
@@ -696,7 +705,12 @@ impl<T: Numeric> PlanePartition<T> {
         });
         let (t0, t1) = comptime!(if free == a0 { (tiles, 1) } else { (1, tiles) });
         let rows_along_free = comptime!(if ident == MatrixIdent::A { m } else { n });
-        let k = comptime!(window.extent(contracted));
+        // Every digit of the contraction: the edge of the group `contracted` leads.
+        let k = comptime!(if contracted == a0 {
+            edges.rows(&window)
+        } else {
+            edges.cols(&window)
+        });
         let (e0, e1) = comptime!(if free == a0 {
             (rows_along_free, k)
         } else {
@@ -803,9 +817,16 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(src.place.levels.clone()),
             block_scaled,
         );
-        if comptime!(block_scaled) {
-            // The instruction reads the stored values and their scales as they lie: nothing
-            // decodes on the way, so each fragment loads its own window of the source.
+        let lane_runs = match comptime!(form) {
+            Instruction::Mma { .. } => lane_run_steps::<T>(m, n, k),
+            Instruction::Cmma | Instruction::Registers { .. } | Instruction::Wgmma => {
+                comptime!(1usize)
+            }
+        };
+        if comptime!(block_scaled || lane_runs > 1) {
+            // The instruction reads the stored values and their scales as they lie, or a
+            // fragment deeper than it decodes them as it loads its lane runs: nothing lands on
+            // the way, so each fragment loads its own window of the source.
             match &frags.kind {
                 TileKind::PlanePartition(partition) => partition.fill_from(src),
                 TileKind::Memory(_)
@@ -837,15 +858,21 @@ impl<T: Numeric> PlanePartition<T> {
             (self.rows, self.cols),
             (self.m_tiles, self.n_tiles)
         ));
+        let edges = comptime!(grid_axes(
+            &src.place.space,
+            (self.rows, self.cols),
+            (self.m_tiles, self.n_tiles)
+        ));
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
-                let window = src.at(&Region::trailing(
+                let window = src.at(&Region::cell(
                     comptime!(src.place.depth),
                     comptime!(src.place.space.clone()),
                     comptime!(level.clone()),
+                    edges,
                     mi,
                     ni,
                 ));
@@ -1008,28 +1035,40 @@ impl<E: Float> PlaneTile<E> {
     }
 }
 
-/// The never-walked level cutting an operand's window into the partition's fragments.
+/// The matrix a grid of `tiles` fragments of `frag` each spans in `window`: the window's
+/// trailing pair where its edges are the grid's, else its axes grouped to the grid's two edges,
+/// so an edge spelled by several axes (a contraction in digits) is one edge.
+fn grid_axes(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> MatrixAxes {
+    let (rows, cols) = (frag.0 * tiles.0, frag.1 * tiles.1);
+    let trailing = MatrixAxes::edges(window);
+    match (trailing.rows(window), trailing.cols(window)) == (rows, cols) {
+        true => trailing,
+        false => MatrixAxes::new(window, rows, cols).unwrap_or(trailing),
+    }
+}
+
+/// The never-walked level cutting an operand's window into the partition's fragments: the
+/// window's matrix grouped to `frag` times `tiles` along each edge, an edge spelled by several
+/// axes (a contraction in digits) held whole by every fragment, an edge of one axis cut.
 fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
-    let edges = MatrixAxes::edges(window);
-    let (p0, p1) = (edges.row_split, edges.col_split);
+    let edges = grid_axes(window, frag, tiles);
+    let (p0, p1, rank) = (edges.row_split, edges.col_split, window.rank());
+    // The edge position `p` lies in, its fragment edge and count, where the edge is one axis.
+    let cut = |p: usize| match p {
+        p if p == p0 && p1 == p0 + 1 => Some((frag.0, tiles.0)),
+        p if p == p1 && rank == p1 + 1 => Some((frag.1, tiles.1)),
+        _ => None,
+    };
     let axes: Vec<Axis> = window.axes().collect();
     let leaf: Vec<(Axis, usize)> = axes
         .iter()
         .enumerate()
-        .map(|(p, &axis)| match p {
-            p if p == p0 => (axis, frag.0),
-            p if p == p1 => (axis, frag.1),
-            _ => (axis, window.extent(axis)),
-        })
+        .map(|(p, &axis)| (axis, cut(p).map_or(window.extent(axis), |(edge, _)| edge)))
         .collect();
     let counts: Vec<(Axis, usize)> = axes
         .iter()
         .enumerate()
-        .map(|(p, &axis)| match p {
-            p if p == p0 => (axis, tiles.0),
-            p if p == p1 => (axis, tiles.1),
-            _ => (axis, 1),
-        })
+        .map(|(p, &axis)| (axis, cut(p).map_or(1, |(_, count)| count)))
         .collect();
     for (&(axis, edge), &(_, count)) in leaf.iter().zip(&counts) {
         assert!(
@@ -1038,5 +1077,10 @@ fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -
             window.extent(axis)
         );
     }
+    assert!(
+        (cut(p0).is_some() || tiles.0 == 1) && (cut(p1).is_some() || tiles.1 == 1),
+        "PlanePartition::fill_from: an edge spelled by several axes is a contraction every \
+         fragment holds whole, and {tiles:?} fragments cut one"
+    );
     Levels::leaf(&leaf).walk(&counts).build().remove(0)
 }

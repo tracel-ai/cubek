@@ -26,6 +26,9 @@ pub(crate) struct FactorLevel {
     /// byte, as an NVFP4 checkpoint packs them. Only that instruction reads such a level
     /// ([`FactorExpand::__expand_word_at_method`]); widened to a scale it means nothing.
     pub(crate) words: bool,
+    /// How the scales sit in their buffer: what says whether a scale times a value it scales is
+    /// exact in a 16-bit float ([`lane_runs_here`](crate::tile::kind::plane::mma::lane_runs_here)).
+    pub(crate) stored: Packing,
 }
 
 /// A scale tile as the values read it.
@@ -162,6 +165,12 @@ impl Factor {
         unexpanded!()
     }
 
+    /// How the innermost level's scales sit in their buffer: `None` where these values carry no
+    /// scales.
+    pub(crate) fn inner_stored(&self) -> comptime_type!(Option<Packing>) {
+        unexpanded!()
+    }
+
     /// The innermost level's word at the value at `coords`, read as it is stored.
     pub(crate) fn word_at(&self, _coords: &Coords<u32>, _values: Space) -> u32 {
         unexpanded!()
@@ -180,6 +189,7 @@ impl FactorExpand {
                 space: scale.place.space.clone(),
                 projection: scale.clone().__expand_projection_method(scope),
                 words: S::elem_type(scope) == u32::elem_type(scope),
+                stored: scale.clone().__expand_packing_method(scope),
                 read: Arc::new(scale.clone()),
             }],
         }
@@ -231,6 +241,7 @@ impl FactorExpand {
                     space: level.space.clone(),
                     projection: level.projection.clone(),
                     words: level.words,
+                    stored: level.stored,
                 })
                 .collect(),
         }
@@ -256,6 +267,10 @@ impl FactorExpand {
             });
         }
         product.unwrap_or_else(|| ExpandValue::constant(1u64.into(), f32::elem_type(scope)).into())
+    }
+
+    pub(crate) fn __expand_inner_stored_method(&self, _scope: &Scope) -> Option<Packing> {
+        self.inner().map(|level| level.stored)
     }
 
     pub(crate) fn __expand_holds_words_method(&self, _scope: &Scope) -> bool {
