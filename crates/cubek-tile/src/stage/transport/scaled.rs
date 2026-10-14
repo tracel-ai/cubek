@@ -47,7 +47,10 @@ impl<T: Numeric> Tile<T> {
         let along = comptime!(dst.axis_at(dst.rank() - 1));
         let varies = src.factor.varies_along(comptime!(along));
         comptime!(check_decoding_copy(&space, &dst, &load, vw, varies));
+        // A window its holder shares is the holder's units' to fill, as a plain copy's is.
+        let holder = comptime!(self.place.holder());
         let fill = self.fill_units();
+        let fill = comptime!(fill.held_by(holder));
         let units = comptime!(fill.count);
         let loads = comptime!(load.counts(&space).iter().product::<usize>());
         let mut out = self.nd_mut::<VW>();

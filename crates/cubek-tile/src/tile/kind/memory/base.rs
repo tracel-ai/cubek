@@ -241,6 +241,18 @@ impl FillUnits {
             count,
         }
     }
+
+    /// These units narrowed to `holder`'s where it has fewer: a plane's window of a buffer the
+    /// cube fills is the plane's to fill.
+    pub(crate) fn held_by(self, holder: ComputeScope) -> Self {
+        match holder < self.scope {
+            true => FillUnits {
+                scope: holder,
+                count: 0,
+            },
+            false => self,
+        }
+    }
 }
 
 #[cube]
