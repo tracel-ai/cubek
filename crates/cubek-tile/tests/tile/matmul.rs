@@ -3507,7 +3507,7 @@ fn check_cmma_matmul_k_walk_with(
 /// [`Tile::accumulator`] opens what the plane sums into, and `mma` reads the staged operands the
 /// way that accumulator wants them.
 #[cube(launch)]
-fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
+fn staged_matmul_on_a_stated_instruction<E: Numeric>(
     a: &TileArg<'_, E>,
     b: &TileArg<'_, E>,
     c: &TileArg<'_, E>,
@@ -3583,7 +3583,6 @@ fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
         a.arg(1),
         b.arg(1),
         c.arg(1),

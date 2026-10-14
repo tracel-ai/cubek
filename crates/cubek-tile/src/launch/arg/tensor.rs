@@ -267,10 +267,11 @@ pub struct TileArgLaunch<'a, E: Numeric> {
     _values: PhantomData<&'a E>,
 }
 
-/// The host side of [`Values`]: a tensor and the width it is bound at, or a tensor map's view.
+/// The host side of [`Values`]: a tensor and the width it is bound at, or a tensor map's view,
+/// boxed for being several times a tensor's size.
 enum ValuesLaunch<E: Numeric> {
     Tensor { tensor: TensorArg, width: usize },
-    TensorMap(<ViewMut<'static, E, CoordsDyn> as LaunchArg>::RuntimeArg),
+    TensorMap(Box<<ViewMut<'static, E, CoordsDyn> as LaunchArg>::RuntimeArg>),
 }
 
 /// The host side of a [`ScaleArg`].
@@ -291,7 +292,7 @@ impl<'a, E: Numeric> TileArgLaunch<'a, E> {
         view: <ViewMut<'static, E, CoordsDyn> as LaunchArg>::RuntimeArg,
         spec: TileSpec,
     ) -> Self {
-        Self::of(ValuesLaunch::TensorMap(view), spec)
+        Self::of(ValuesLaunch::TensorMap(Box::new(view)), spec)
     }
 
     fn of(values: ValuesLaunch<E>, spec: TileSpec) -> Self {
@@ -407,7 +408,7 @@ impl<E: Numeric> LaunchArg for TileArg<'static, E> {
             }
             ValuesLaunch::TensorMap(view) => {
                 ValuesCompilationArg::TensorMap(ViewMut::<'static, E, CoordsDyn>::register(
-                    view, launcher,
+                    *view, launcher,
                 ))
             }
         };
