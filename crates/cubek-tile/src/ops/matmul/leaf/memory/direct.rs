@@ -12,7 +12,7 @@ use crate::*;
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Memory<E>,
+    acc: &mut Memory,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
@@ -70,7 +70,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Size>(
-    acc: &mut Memory<E>,
+    acc: &mut Memory,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] shape: ContractShape,
@@ -113,7 +113,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
             comptime!(shape.space.clone()),
             comptime!(shape.acc_axes),
         );
-        let mut acc_view = acc.matrix_accumulate::<A>(
+        let mut acc_view = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(shape.acc_axes),
             comptime!(shape.space.clone()),

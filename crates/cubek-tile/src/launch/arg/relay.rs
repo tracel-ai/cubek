@@ -268,7 +268,7 @@ pub(crate) fn adding_tile<E: Numeric, V: Size>(
         lines,
         comptime!(arg.spec.projection.physical_rank()),
     );
-    GlobalOperand::<E>::sink(
+    GlobalOperand::sink(
         relay_sink::<E, V>(lines, first),
         geometry,
         V::value(),

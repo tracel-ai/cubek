@@ -12,7 +12,7 @@ use super::coords::cell_read;
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and block's, `A` the accumulator's.
 #[cube]
 pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
-    acc: &mut Memory<E>,
+    acc: &mut Memory,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
@@ -58,7 +58,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     for mat in 0..matrices {
         let batch = Coords::constant(comptime!(batch_extents.clone())).unravel(mat.cast::<u32>());
 
-        let mut acc = acc.matrix_accumulate::<A>(
+        let mut acc = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),

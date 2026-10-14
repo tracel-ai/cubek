@@ -13,7 +13,7 @@ use super::coords::{cell_position, offset_last};
 /// level (block, row, column or cell).
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
-    acc: &mut Memory<E>,
+    acc: &mut Memory,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
@@ -49,7 +49,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     for mat in 0..matrices {
         let batch = Coords::constant(comptime!(batch_extents.clone())).unravel(mat.cast::<u32>());
 
-        let mut acc = acc.matrix_accumulate::<A>(
+        let mut acc = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),

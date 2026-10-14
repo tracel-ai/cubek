@@ -33,7 +33,7 @@ impl<'a, E: Numeric> AccumulateArg<'a, E> {
             comptime!(self.spec.projection.physical_rank()),
         );
         let sink = atomic_sink::<E>(self.tensor, comptime!(self.width));
-        GlobalOperand::<E>::sink(
+        GlobalOperand::sink(
             sink,
             geometry,
             comptime!(self.width),

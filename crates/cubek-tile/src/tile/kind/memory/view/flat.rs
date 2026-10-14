@@ -60,11 +60,11 @@ impl<T: Numeric> Tile<T> {
         if comptime!(g.store.packing != Packing::Plain) {
             panic!("Tile::flat: a packed tile only unpacks under Tile::copy_from")
         }
-        g.flat::<W>()
+        g.flat::<T, W>()
     }
 
     /// The mutable twin of [`flat`](Tile::flat).
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
-        self.mem_mut("flat_mut").flat_mut::<W>()
+        self.mem_mut("flat_mut").flat_mut::<T, W>()
     }
 }

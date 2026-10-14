@@ -11,7 +11,7 @@ use crate::*;
 /// Run the register instruction over each batch matrix. A scaled factor requires the 2-D nest.
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Memory<E>,
+    acc: &mut Memory,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,

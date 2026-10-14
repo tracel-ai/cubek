@@ -67,12 +67,12 @@ impl<T: Numeric> Tile<T> {
         sync_cube();
 
         let units = self.units();
-        let source = Memory::<T>::smem_backed(
+        let source = Memory::smem_backed::<T>(
             space,
             width,
             comptime!(FillUnits::cube(units)),
-            Backing::<T>::new_ReadCall(ErasedTensor::<T, ReadOnly>::of_smem_plain_load::<A, W>(
-                &values,
+            Backing::new_ReadCall(RawCall::of::<T>(
+                ErasedTensor::<T, ReadOnly>::of_smem_plain_load::<A, W>(&values),
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
@@ -104,13 +104,12 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
             LineBytes(A::size().comptime() * width)
         ));
         let units = self.like.units();
-        let sink = Memory::<A>::smem_backed(
+        let sink = Memory::smem_backed::<A>(
             space,
             width,
             comptime!(FillUnits::cube(units)),
-            Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_cyclic::<W>(
-                &self.values,
-                round == 0,
+            Backing::new_WriteCall(RawCall::of::<A>(
+                ErasedTensor::<A, WriteOnly>::of_smem_cyclic::<W>(&self.values, round == 0),
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),

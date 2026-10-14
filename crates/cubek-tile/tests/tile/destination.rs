@@ -62,7 +62,7 @@ impl Destination for Doubled {
         // Read at expansion, not as a Rust constant: a launch-time `Size` has no `value()` until
         // the kernel is being defined.
         let width = V::value();
-        GlobalOperand::<E>::sink(
+        GlobalOperand::sink::<E>(
             sink,
             geometry,
             width,

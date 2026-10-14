@@ -15,7 +15,7 @@ use crate::*;
 #[expand(derive(Clone))]
 pub(crate) enum TileKind<T: Numeric> {
     /// An addressable buffer with a window, in global or shared memory.
-    Memory(Memory<T>),
+    Memory(Memory),
     /// One plane-level tile, sliced across the plane's units and never addressable.
     PlaneTile(PlaneTile<T>),
     /// The grid of plane tiles one plane owns; only comptime coordinates select through it.

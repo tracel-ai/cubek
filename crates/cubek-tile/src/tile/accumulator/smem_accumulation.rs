@@ -46,22 +46,26 @@ impl<T: Numeric> Tile<T> {
         sync_cube();
 
         let units = self.units();
-        let sink = Memory::<A>::smem_backed(
+        let sink = Memory::smem_backed::<A>(
             comptime!(space.clone()),
             1usize,
             comptime!(FillUnits::cube(units)),
-            Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_accumulate(&values)),
+            Backing::new_WriteCall(RawCall::of::<A>(
+                ErasedTensor::<A, WriteOnly>::of_smem_accumulate(&values),
+            )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Accumulate),
         );
-        let source = Memory::<T>::smem_backed(
+        let source = Memory::smem_backed::<T>(
             space,
             1usize,
             comptime!(FillUnits::cube(units)),
-            Backing::<T>::new_ReadCall(ErasedTensor::<T, ReadOnly>::of_smem_load::<A>(&values)),
+            Backing::new_ReadCall(RawCall::of::<T>(
+                ErasedTensor::<T, ReadOnly>::of_smem_load::<A>(&values),
+            )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),

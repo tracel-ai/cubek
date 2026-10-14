@@ -226,14 +226,14 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's.
-    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
+    pub(crate) fn store_window(&self, mem: &mut Memory, #[comptime] space: Space) {
         self.store_cast_window::<T>(mem, space)
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window, casting down to the sink element.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         let m = comptime!(self.m);
@@ -664,7 +664,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
 /// Each unit's accumulator cells written one element at a time through `mem`'s own write.
 #[cube]
 fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    mem: &mut Memory<Out>,
+    mem: &mut Memory,
     fragment: &Array<Vector<T, NA>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] layout: MatrixLayout,
@@ -680,7 +680,7 @@ fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let vector_size = def.vector_size(MatrixIdent::Accumulator);
     let unit_id = UNIT_POS_PLANE;
     let axes = comptime!(MatrixAxes::trailing(&space));
-    let mut sink = mem.matrix_mut::<Const<1>>(0usize, axes, space);
+    let mut sink = mem.matrix_mut::<Out, Const<1>>(0usize, axes, space);
 
     #[unroll]
     for i in 0..num_vectors {

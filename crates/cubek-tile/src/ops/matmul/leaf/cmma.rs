@@ -124,7 +124,7 @@ impl<E: Numeric> Tile<E> {
             sync_plane();
         } else {
             match &self.kind {
-                TileKind::Memory(m) => cmma::load(frag, m.window_slice(), m.row_stride()),
+                TileKind::Memory(m) => cmma::load(frag, m.window_slice::<E>(), m.row_stride()),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -159,7 +159,7 @@ impl<E: Numeric> Tile<E> {
         let space = comptime!(self.place.space.clone());
         let units = self.units();
         let planes = comptime!(plane_windows(&space, &self.place.levels));
-        let (stage, mut window) = Memory::<E>::landing(comptime!(space.clone()), units, planes);
+        let (stage, mut window) = Memory::landing::<E>(comptime!(space.clone()), units, planes);
         let landing = Tile::new(stage.kind, comptime!(self.place.clone()));
 
         // A load is read whole, a tile of several axes included, and landed a run of its finest
@@ -230,7 +230,7 @@ impl<E: Numeric> Tile<E> {
                     m.address == AddressSpace::Shared,
                     "mma: a fragment loads from a shared window"
                 ));
-                cmma::load(frag, m.window_slice(), cols)
+                cmma::load(frag, m.window_slice::<E>(), cols)
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)

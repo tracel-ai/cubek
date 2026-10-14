@@ -177,18 +177,18 @@ impl<T: Numeric> RegisterData<T> {
     /// Write the block into `mem`'s window, casting down to its element.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         self.drain::<Out, RA>(mem, space);
     }
 
     /// [`store_cast_window`](Self::store_cast_window) into a sink of `A`-wide cells.
-    fn drain<Out: Numeric, A: Size>(&self, mem: &mut Memory<Out>, #[comptime] space: Space) {
+    fn drain<Out: Numeric, A: Size>(&self, mem: &mut Memory, #[comptime] space: Space) {
         let mem_write = comptime!(mem.access.write);
         let unit_share = comptime!(mem.unit_share);
         let monoid = comptime!(self.accumulation.monoid());
-        let mut sink = mem.matrix_mut::<A>(0usize, comptime!(self.axes), space);
+        let mut sink = mem.matrix_mut::<Out, A>(0usize, comptime!(self.axes), space);
 
         // Split at comptime: a per-line `match` plus a unit guard breaks the CPU backend.
         match comptime!(Drain::of(unit_share, mem_write)) {

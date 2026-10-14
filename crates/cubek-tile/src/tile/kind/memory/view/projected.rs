@@ -81,7 +81,7 @@ impl<T: Numeric> Tile<T> {
             "Tile::nd_mut: an overlapping operand aliases under a write"
         ));
         let layout = g.axis_projection(space);
-        g.masked_mut::<W, CoordsDyn, ProjectionInKernel>(layout)
+        g.masked_mut::<T, W, CoordsDyn, ProjectionInKernel>(layout)
     }
 
     /// The whole logical box, unpacked if packed, under the guard the reader states.
@@ -93,7 +93,7 @@ impl<T: Numeric> Tile<T> {
         match &self.kind {
             TileKind::Memory(g) => {
                 let layout = g.axis_projection(comptime!(self.place.space.clone()));
-                g.packed::<W, CoordsDyn, ProjectionInKernel>(layout, guard)
+                g.packed::<T, W, CoordsDyn, ProjectionInKernel>(layout, guard)
             }
             TileKind::Procedural(data) => {
                 procedural_nd::<T, W>(data, comptime!(self.place.space.clone()), guard)
@@ -181,7 +181,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::Memory(g) => Gathered::new(
                 g.axis_projection(comptime!(space.clone())),
                 // A folded caller derived its coordinates itself, so both guards stay on.
-                g.packed::<W, CoordsDyn, CompactionStep>(
+                g.packed::<T, W, CoordsDyn, CompactionStep>(
                     g.physical_box(),
                     comptime!(Guard::Checked),
                 ),

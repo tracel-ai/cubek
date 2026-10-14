@@ -195,12 +195,12 @@ impl Meeting {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
                     // Single issuer: the transaction count is the elected unit's alone.
                     if UNIT_POS == *elected {
-                        full.expect_tx(d.size_bytes());
+                        full.expect_tx(d.size_bytes::<E>());
                         s.stage_into(d, full);
                     }
                 }
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
-                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from::<E>(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural::<E>(s, space),
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
             },
             Meeting::Cube | Meeting::Plane => dst.copy_from(src),

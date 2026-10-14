@@ -174,11 +174,11 @@ impl<T: Numeric> PlaneTile<T> {
     /// Add this tile's spilled cells into `mem`.
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         match self {
-            PlaneTile::Cmma(d) => d.add_from_scratch(mem, space),
+            PlaneTile::Cmma(d) => d.add_from_scratch::<Out>(mem, space),
             PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
                 panic!("PlaneTile::add_from_scratch: only a cmma tile bounces through a scratch")
             }
@@ -285,7 +285,7 @@ impl<T: Numeric> PlaneTile<T> {
     }
 
     /// Store this tile into `mem`; `space` is the sink window's.
-    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
+    pub(crate) fn store_window(&self, mem: &mut Memory, #[comptime] space: Space) {
         let addressed = mem.store.addressed();
         match self {
             PlaneTile::Cmma(d) => {
@@ -293,13 +293,13 @@ impl<T: Numeric> PlaneTile<T> {
                     FragmentDrain::Intrinsic => {
                         d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
                     }
-                    FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
+                    FragmentDrain::Bounce => d.bounce_cast_window::<T>(mem, space),
                 }
             }
             PlaneTile::Mma(d) => d.store_window(mem, space),
             // Same-type store; the block drains through `store_cast_window`.
-            PlaneTile::Registers(d) => d.store_cast_window(mem, space),
-            PlaneTile::Wgmma(d) => d.store_cast_window(mem, space),
+            PlaneTile::Registers(d) => d.store_cast_window::<T>(mem, space),
+            PlaneTile::Wgmma(d) => d.store_cast_window::<T>(mem, space),
         }
     }
 
@@ -317,7 +317,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// Store this tile into `mem`, casting; `space` is the sink window's.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         let addressed = mem.store.addressed();
@@ -326,15 +326,16 @@ impl<T: Numeric> PlaneTile<T> {
                 let (m, n) = comptime!(d.shape);
                 let in_place = casts_in_place::<T, Out>(m, n);
                 match comptime!(FragmentDrain::of(&mem.access, addressed, in_place)) {
-                    FragmentDrain::Intrinsic => {
-                        d.store_cast_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
-                    }
-                    FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
+                    FragmentDrain::Intrinsic => d.store_cast_window::<Out>(
+                        mem,
+                        comptime!(MatrixAxes::edges(&space).row_split),
+                    ),
+                    FragmentDrain::Bounce => d.bounce_cast_window::<Out>(mem, space),
                 }
             }
-            PlaneTile::Mma(d) => d.store_cast_window(mem, space),
-            PlaneTile::Registers(d) => d.store_cast_window(mem, space),
-            PlaneTile::Wgmma(d) => d.store_cast_window(mem, space),
+            PlaneTile::Mma(d) => d.store_cast_window::<Out>(mem, space),
+            PlaneTile::Registers(d) => d.store_cast_window::<Out>(mem, space),
+            PlaneTile::Wgmma(d) => d.store_cast_window::<Out>(mem, space),
         }
     }
 }

@@ -46,7 +46,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This tile's memory store; panics for kinds with none, naming `site`.
-    pub(crate) fn mem(&self, #[comptime] site: &str) -> &Memory<T> {
+    pub(crate) fn mem(&self, #[comptime] site: &str) -> &Memory {
         match &self.kind {
             TileKind::Memory(g) => g,
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -71,7 +71,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    pub(crate) fn mem_mut(&mut self, #[comptime] site: &str) -> &mut Memory<T> {
+    pub(crate) fn mem_mut(&mut self, #[comptime] site: &str) -> &mut Memory {
         match &mut self.kind {
             TileKind::Memory(g) => g,
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -560,7 +560,7 @@ impl<T: Numeric> Tile<T> {
     /// Zero this whole tile.
     pub fn zero(&mut self) {
         match &mut self.kind {
-            TileKind::Memory(d) => d.zero(),
+            TileKind::Memory(d) => d.zero::<T>(),
             TileKind::PlaneTile(t) => t.zero(),
             TileKind::PlanePartition(p) => p.zero(),
             TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
@@ -614,7 +614,7 @@ impl<T: Numeric> Tile<T> {
     /// Initialize this tile with `val`.
     pub fn init(&mut self, val: T) {
         match &mut self.kind {
-            TileKind::Memory(d) => d.init(val),
+            TileKind::Memory(d) => d.init::<T>(val),
             TileKind::PlaneTile(t) => t.init(val),
             TileKind::PlanePartition(p) => p.init(val),
             TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
@@ -626,7 +626,7 @@ impl<T: Numeric> Tile<T> {
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile<T> {
-        Memory::<T>::stage(
+        Memory::stage(
             self,
             level,
             storage,
@@ -671,14 +671,13 @@ impl<T: Numeric> Tile<T> {
             walk.depth(),
             walk.parent.path.root_levels(),
         ));
-        let tile =
-            Memory::<T>::smem_owned(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
+        let tile = Memory::smem_owned(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
         Tile::new(tile.kind, place)
     }
 
     /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.
     pub fn shared(#[comptime] space: Space, #[comptime] storage: StageStorage) -> Tile<T> {
-        Memory::<T>::smem(space, comptime!(1usize), storage, comptime!(0usize))
+        Memory::smem(space, comptime!(1usize), storage, comptime!(0usize))
     }
 
     /// A fresh shared-memory tile over `space`, served `vector_size` wide and filled by `units`
@@ -689,7 +688,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
     ) -> Tile<T> {
-        Memory::<T>::smem(space, vector_size, storage, units)
+        Memory::smem(space, vector_size, storage, units)
     }
 
     /// A shared-memory tile over this tile's box, one element a line, its rows dense and in order,
@@ -699,7 +698,7 @@ impl<T: Numeric> Tile<T> {
     /// [`Delivery::TMA_STAGE_ALIGNMENT`], which a launch sizing its shared memory counts.
     pub fn smem_box(&self) -> Tile<T> {
         let units = self.units();
-        Memory::<T>::smem_owned(
+        Memory::smem_owned(
             comptime!(self.place.space.clone()),
             1usize,
             comptime!(StageStorage::Strided),
@@ -789,8 +788,8 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window(d, space),
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from(s),
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from(s, space),
-                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from::<T>(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural::<T>(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
                 }
@@ -821,14 +820,14 @@ impl<T: Numeric> Tile<T> {
         let space = comptime!(self.place.space.clone());
         let holder = comptime!(self.place.holder());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window(d, space),
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window::<T>(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().store_cast_window(d, space)
+                s.fragment().store_cast_window::<T>(d, space)
             }
             // A window its holder shares is filled by the holder's units, whoever filled the
             // buffer it windows: a plane's window of the cube's scratch is the plane's.
             (TileKind::Memory(d), TileKind::Memory(s)) => {
-                d.filled_by(holder).fill_cast_from(s, space)
+                d.filled_by(holder).fill_cast_from::<T, S>(s, space)
             }
             _ => panic!(
                 "Tile::copy_cast_from: a fragment or a memory window stores into memory; nothing \
@@ -855,9 +854,9 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch(d, space),
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch::<T>(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().add_from_scratch(d, space)
+                s.fragment().add_from_scratch::<T>(d, space)
             }
             _ => panic!("Tile::add_from_scratch: a spilled plane tile adds into memory"),
         }

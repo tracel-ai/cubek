@@ -96,7 +96,7 @@ impl<T: Numeric> WgmmaData<T> {
     /// each unit writes the cells it holds.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         comptime!(assert!(
@@ -107,7 +107,7 @@ impl<T: Numeric> WgmmaData<T> {
         ));
         let acc = self.acc.clone().wait();
         let unit = ComputeScope::unit(ComputeScope::WARPGROUP) as u32;
-        let mut sink = mem.matrix_mut::<Const<1>>(0usize, comptime!(self.axes), space);
+        let mut sink = mem.matrix_mut::<Out, Const<1>>(0usize, comptime!(self.axes), space);
         #[unroll]
         for nth in 0..acc.len() {
             let at = acc.position_of_nth(unit, nth as u32);

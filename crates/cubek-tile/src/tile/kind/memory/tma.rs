@@ -53,7 +53,7 @@ impl<T: Numeric> TmaData<T> {
 
     /// Issue the `tensor_map_load` into `dst` on `barrier` without arriving or waiting.
     /// Only the electing unit may call it, since it alone declares the transaction count.
-    pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {
+    pub(crate) fn stage_into(&self, dst: &mut Memory, barrier: &Shared<Barrier>) {
         // A box lands its rows dense, swizzled by the descriptor where the stage keeps them
         // swizzled; the launch built the descriptor off the same answer
         // (`StageStorage::tma_swizzle`).
@@ -63,22 +63,29 @@ impl<T: Numeric> TmaData<T> {
                 .tma_swizzle()
                 .unwrap_or_else(|why| panic!("TmaData::stage_into: a TMA box cannot land {why}"))
         );
-        self.view.tensor_map_load(
-            barrier,
-            dst.store.buffer_mut().downcast_mut(),
-            self.pos.clone(),
-        );
+        // A packed stage holds the words the box moves, which the descriptor names at `T`.
+        match comptime!(dst.store.packing) {
+            Packing::Plain => {
+                self.view
+                    .tensor_map_load(barrier, dst.store.buffer_mut::<T>(), self.pos.clone())
+            }
+            Packing::Packed { .. } => self.view.tensor_map_load(
+                barrier,
+                unsafe { dst.store.buffer_mut::<u32>().downcast_mut_unchecked::<T>() },
+                self.pos.clone(),
+            ),
+        }
     }
 
     /// Bulk-copy into shared-memory `dst` and wait, on a local mbarrier.
-    pub(crate) fn load_into(&self, dst: &mut Memory<T>) {
+    pub(crate) fn load_into(&self, dst: &mut Memory) {
         comptime!(assert!(
             dst.address == AddressSpace::Shared,
             "TmaData::load_into: a tensor map bulk-copies into shared memory only"
         ));
         let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
         sync_async_proxy_shared();
-        let expected = select(UNIT_POS == 0, dst.size_bytes(), 0);
+        let expected = select(UNIT_POS == 0, dst.size_bytes::<T>(), 0);
         if UNIT_POS == 0 {
             self.stage_into(dst, &barrier);
         }
@@ -91,7 +98,7 @@ impl<T: Numeric> TmaData<T> {
     /// and meets the others on a cube barrier, then one unit issues the store and waits until the
     /// engine has read `src`, and the cube meets again, so no unit writes `src` before the engine
     /// is done with it. What lies past the tensor is not written: the descriptor clips the box.
-    pub(crate) fn store_from(&self, src: &Memory<T>) {
+    pub(crate) fn store_from(&self, src: &Memory) {
         comptime!(assert!(
             src.address == AddressSpace::Shared,
             "TmaData::store_from: a tensor map bulk-copies out of shared memory only"
@@ -104,9 +111,20 @@ impl<T: Numeric> TmaData<T> {
         sync_async_proxy_shared();
         sync_cube();
         if UNIT_POS == 0 {
-            self.view
-                .tensor_map_store(src.store.buffer().downcast(), self.pos.clone())
-                .wait();
+            // As `stage_into`: a packed stage holds words the descriptor names at `T`.
+            match comptime!(src.store.packing) {
+                Packing::Plain => self
+                    .view
+                    .tensor_map_store(src.store.buffer::<T>(), self.pos.clone())
+                    .wait(),
+                Packing::Packed { .. } => self
+                    .view
+                    .tensor_map_store(
+                        unsafe { src.store.buffer::<u32>().downcast_unchecked::<T>() },
+                        self.pos.clone(),
+                    )
+                    .wait(),
+            }
         }
         sync_cube();
     }

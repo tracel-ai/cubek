@@ -74,7 +74,7 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// Fill this fragment from `mem`'s window, stepping rows by the physical row stride.
-    pub(crate) fn load_window(&mut self, mem: &Memory<T>, #[comptime] row: usize) {
+    pub(crate) fn load_window(&mut self, mem: &Memory, #[comptime] row: usize) {
         let element = mem.stage_element();
         comptime!(assert!(
             element.holds_values(),
@@ -86,19 +86,19 @@ impl<T: Numeric> CmmaData<T> {
         match comptime!(self.ident) {
             MatrixIdent::Accumulator => cmma::load_with_layout(
                 &mut self.matrix,
-                mem.window_slice(),
+                mem.window_slice::<T>(),
                 stride,
                 comptime!(self.layout),
             ),
-            _ => cmma::load(&mut self.matrix, mem.window_slice(), stride),
+            _ => cmma::load(&mut self.matrix, mem.window_slice::<T>(), stride),
         }
     }
 
     /// Drain this fragment into `mem`'s *window* (origin offset, physical row stride).
-    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] row: usize) {
+    pub(crate) fn store_window(&self, mem: &mut Memory, #[comptime] row: usize) {
         let stride = mem.row_stride_at(row);
         cmma::store(
-            mem.window_slice_mut(),
+            mem.window_slice_mut::<T>(),
             &self.matrix,
             stride,
             comptime!(self.layout),
@@ -163,7 +163,7 @@ impl<T: Numeric> CmmaData<T> {
     /// Write this fragment's spilled cells into `mem` through the store's own write.
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         let scratch = self.scratch_slot();
@@ -178,7 +178,7 @@ impl<T: Numeric> CmmaData<T> {
         let lines_per_row = comptime!(n / width);
         let lines = comptime!(m * lines_per_row);
         let axes = comptime!(MatrixAxes::trailing(&space));
-        let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
+        let mut sink = mem.matrix_mut::<Out, W>(0usize, axes, space);
         let plane_units = PLANE_DIM as usize;
         let mut line = UNIT_POS_PLANE as usize;
         while line < lines {
@@ -198,13 +198,13 @@ impl<T: Numeric> CmmaData<T> {
     /// Drain this fragment through the plane's scratch, with cube-wide syncs.
     pub(crate) fn bounce_cast_window<Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         sync_cube();
         self.spill_to_scratch();
         sync_cube();
-        self.add_from_scratch(mem, space);
+        self.add_from_scratch::<Out>(mem, space);
         sync_cube();
     }
 
@@ -222,15 +222,11 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// Drain this fragment into `mem`'s window, casting `T` down to the sink's element type.
-    pub(crate) fn store_cast_window<Out: Numeric>(
-        &self,
-        mem: &mut Memory<Out>,
-        #[comptime] row: usize,
-    ) {
+    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut Memory, #[comptime] row: usize) {
         let stride = mem.row_stride_at(row);
         let casted: Matrix<Out> = cmma::cast(&self.matrix);
         cmma::store(
-            mem.window_slice_mut(),
+            mem.window_slice_mut::<Out>(),
             &casted,
             stride,
             comptime!(self.layout),

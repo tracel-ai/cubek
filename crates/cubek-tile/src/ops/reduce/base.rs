@@ -42,7 +42,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
     let space = comptime!(acc.place.space.clone());
     match &mut acc.kind {
         TileKind::Memory(g) => {
-            reduce::memory(g, input, space, monoid);
+            reduce::memory::<Acc, In>(g, input, space, monoid);
         }
         TileKind::PlaneTile(t) => {
             reduce_plane_tile(t, input, space, monoid);

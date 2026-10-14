@@ -69,7 +69,7 @@ fn sink_kernel<E: Float>(out: &TileArg<'_, E>, space: Partitioning, #[define(E)]
     let geometry =
         RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(out.lines::<Const<1>>(), 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.lines::<Const<1>>());
-    let mut dst = GlobalOperand::<E>::sink(
+    let mut dst = GlobalOperand::sink::<E>(
         sink,
         geometry,
         1usize,
@@ -188,7 +188,7 @@ fn derived_sink_kernel<E: Float>(
     geometry.push(cols, col_stride);
 
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out);
-    let mut dst = GlobalOperand::<E>::sink(
+    let mut dst = GlobalOperand::sink::<E>(
         sink,
         geometry,
         1usize,
@@ -310,7 +310,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.lines::<Const<1>>(), 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.lines::<Const<1>>());
-    let c = GlobalOperand::<E>::sink(
+    let c = GlobalOperand::sink::<E>(
         sink,
         geometry,
         1usize,
@@ -318,7 +318,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         comptime!(c.spec.clone()),
         Write::Replace,
     )
-    .tile(comptime!(space.levels().to_vec()));
+    .tile::<E>(comptime!(space.levels().to_vec()));
     let acc = c.accumulator::<EA, E, E>(
         &a,
         &b,
@@ -351,7 +351,7 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     // The geometry a source cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(a.lines::<Const<1>>(), 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.lines::<Const<1>>());
-    let a = GlobalOperand::<E>::source(
+    let a = GlobalOperand::source::<E>(
         source,
         geometry,
         1usize,
@@ -570,7 +570,7 @@ fn wide_sink_kernel<E: Float>(
     let geometry =
         RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.lines::<Const<2>>(), 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.lines::<Const<2>>());
-    let mut dst = GlobalOperand::<E>::sink(
+    let mut dst = GlobalOperand::sink::<E>(
         sink,
         geometry,
         2usize,
@@ -594,7 +594,7 @@ fn wide_source_kernel<E: Float>(
     let geometry =
         RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.lines::<Const<2>>(), 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<2>>(input.lines::<Const<2>>());
-    let src = GlobalOperand::<E>::source(
+    let src = GlobalOperand::source::<E>(
         source,
         geometry,
         2usize,
