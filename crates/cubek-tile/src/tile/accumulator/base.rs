@@ -94,11 +94,16 @@ impl Scratch {
 
 /// The planes `levels` distribute `space` across, a plane group's every plane among them: one
 /// window each, as `PLANE_POS` indexes them. Panics on a runtime-only count.
+///
+/// A plane level spanning the launch deals its tiles to the launch's planes, not to the cube's,
+/// so the cube holds the planes its order groups in one, whatever the tiles.
 pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     let mut handed = space.clone();
     let mut planes = 1;
     for level in levels {
-        if let Some(per_instance) = level.coverage().scope().and_then(ComputeScope::planes) {
+        if let Some(order) = level.plane_order() {
+            planes *= order.planes_per_cube();
+        } else if let Some(per_instance) = level.coverage().scope().and_then(ComputeScope::planes) {
             let mut instances = 1;
             for axis in level.axes() {
                 if level.distributes(axis) {
@@ -826,5 +831,54 @@ fn drain_leaf<Acc: Numeric, Out: Numeric>(
             window.add_from_scratch(acc);
             sync_cube();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::space::{CubeOrder, PlaneOrder};
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    /// A plane's `16 × 16` tile, walked through `K`.
+    fn plane() -> Levels {
+        Levels::leaf(&[(M, 16), (N, 16), (K, 16)]).walk_every(&[K])
+    }
+
+    /// A plane's windows sized over its own box: one for every plane of its cube.
+    fn windows(levels: Vec<Level>) -> usize {
+        let partitioning =
+            Partitioning::new(Space::new(&[(M, 64), (N, 64), (K, 64)]), levels.clone());
+        plane_windows(&partitioning.box_of(ComputeScope::Plane), &levels)
+    }
+
+    /// The planes of the launch, four to a cube, size the four windows a cube level holding four
+    /// planes does: a plane's own box holds one tile of the level, not the cube's four.
+    #[test]
+    fn the_launch_planes_size_a_window_for_every_plane_of_the_cube() {
+        let of_each_cube = plane().planes(&[(M, 2), (N, 2)]).cubes(&[M, N]).build();
+        let of_the_launch = plane()
+            .launch_planes(
+                &[M, N],
+                PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor),
+            )
+            .build();
+        assert_eq!(windows(of_each_cube), 4);
+        assert_eq!(windows(of_the_launch), 4);
+    }
+
+    /// Blocks of one plane grouped two to a cube: the cube's two planes, not the block's one.
+    #[test]
+    fn blocks_grouped_in_a_cube_size_a_window_for_each_of_its_planes() {
+        let levels = plane()
+            .launch_planes(
+                &[M, N],
+                PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(2),
+            )
+            .build();
+        assert_eq!(windows(levels), 2);
     }
 }

@@ -35,7 +35,7 @@ impl<T: Float> Recipe<T> for Phase<T> {
         let residue = T::cast_from(residue);
         // A folded divisor becomes a reciprocal literal to multiply by.
         let fraction = if comptime!(divisor.is_some()) {
-            residue * T::new(comptime!(1.0 / divisor.unwrap() as f32))
+            residue * T::new(comptime!(1.0 / divisor.unwrap() as f64))
         } else {
             residue / T::cast_from(self.divisor)
         };

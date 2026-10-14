@@ -141,8 +141,8 @@ fn linear_kernel<E: Float>(
         comptime!(space.space().clone()),
         linear_along(
             COL,
-            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-            runtime_scalar::<E>(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+            runtime_scalar::<E>(E::new(1.0)),
         ),
     )
     .tile::<E>();
@@ -162,8 +162,8 @@ fn cubic_kernel<E: Float>(
         comptime!(space.space().clone()),
         cubic_along(
             COL,
-            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-            runtime_scalar::<E>(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+            runtime_scalar::<E>(E::new(1.0)),
             a,
         ),
     )
@@ -184,8 +184,8 @@ fn lanczos_kernel<E: Float>(
         comptime!(space.space().clone()),
         lanczos_along(
             COL,
-            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-            runtime_scalar::<E>(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+            runtime_scalar::<E>(E::new(1.0)),
             lobes,
         ),
     )

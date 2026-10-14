@@ -72,8 +72,8 @@ fn runtime_scalar<E: Numeric>(value: E) -> E {
 fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinate<E> {
     affine_along(
         COL,
-        runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-        runtime_scalar::<E>(E::new(1.0_f32)),
+        runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+        runtime_scalar::<E>(E::new(1.0)),
     )
 }
 
@@ -137,9 +137,9 @@ fn affine_plus_phase<E: Float>(
     Procedural::new::<E, Sum<AffineCoordinate<E>, Phase<E>>>(
         space,
         sum_of(
-            affine_along(ROW, E::from_int(0), runtime_scalar::<E>(E::new(1.0_f32))),
+            affine_along(ROW, E::from_int(0), runtime_scalar::<E>(E::new(1.0))),
             Phase::<E> {
-                coefficient: runtime_scalar::<E>(E::new(-1.0_f32)),
+                coefficient: runtime_scalar::<E>(E::new(-1.0)),
                 axis: COL,
                 numerator_scale: scale,
                 numerator_offset: offset,
@@ -202,7 +202,7 @@ fn constant_kernel<E: Float>(
     let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
-            value: runtime_scalar::<E>(E::new(-1.25_f32)),
+            value: runtime_scalar::<E>(E::new(-1.25)),
         },
     )
     .tile::<E>();
@@ -254,7 +254,7 @@ fn direct_copy_kernel<E: Float>(
     let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
-            value: runtime_scalar::<E>(E::new(1.0_f32)),
+            value: runtime_scalar::<E>(E::new(1.0)),
         },
     )
     .tile::<E>();
@@ -273,7 +273,7 @@ fn divided_direct_copy_kernel<E: Float>(
     let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
-            value: runtime_scalar::<E>(E::new(1.0_f32)),
+            value: runtime_scalar::<E>(E::new(1.0)),
         },
     )
     .tile::<E>();

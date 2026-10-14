@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 
 /// Below this value a row is treated as numerically zero. Above f16's
 /// smallest normal (~6.1e-5).
-pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
+pub const FULLY_MASKED_ROW_THRESHOLD: f64 = 1e-4;
 
 #[derive(CubeType)]
 /// Contains one value per row of a fragment for which the unit contributes

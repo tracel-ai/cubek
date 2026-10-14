@@ -2,8 +2,11 @@
 //! cube level above it, its tiles dealt to the planes of the whole launch in a [`PlaneOrder`].
 //!
 //! Every case adds its products atomically into a zeroed output, so a tile no plane took reads
-//! zero and a tile two planes took reads twice its product: a plane past the last tile must hold
-//! none, not wrap around onto one another plane holds.
+//! zero and a tile two planes took reads twice its product: a plane past the last tile walks one
+//! past the grid, which the binding masks, not one another plane holds.
+//!
+//! Every plane the launch spawns walks one tile, so the planes of a cube all reach a barrier any
+//! of them meets; a plane that walked none would leave the others waiting at it.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -60,6 +63,20 @@ fn cube_plane_matmul<O: Destination>(
         for plane in cube {
             plane_product(&plane, &a, &b, &c);
         }
+    }
+}
+
+/// How many tiles every plane of the launch walks, at the plane's place in the launch: its cube's,
+/// read off the grid's `x` and `y`, then its own in the cube.
+#[cube(launch)]
+fn count_walks(walks: &mut Tensor<f32>, space: Partitioning) {
+    let mut taken = 0.0f32;
+    for _plane in &space {
+        taken += 1.0;
+    }
+    if UNIT_POS_X == 0 {
+        let cube = CUBE_POS_X + CUBE_POS_Y * CUBE_COUNT_X;
+        walks[(cube * CUBE_DIM_Y + UNIT_POS_Y) as usize] = taken;
     }
 }
 
@@ -286,7 +303,7 @@ fn one_block_a_cube_takes_every_tile_once() {
 }
 
 /// One plane a block, three planes a cube: the planes run straight across the tiles, and the
-/// last cube holds planes past the last tile.
+/// last cube holds planes past the last tile, which walk tiles past the grid and add nothing.
 #[test]
 fn planes_past_the_last_tile_take_none() {
     let order = PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3);
@@ -351,4 +368,101 @@ fn the_launch_holds_every_block() {
     assert_eq!(one_block_a_cube.cube_dim(2), CubeDim::new_2d(2, 4));
     let three_a_cube = partitioning(PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3));
     assert_eq!(cubes(&three_a_cube), (11, 1, 1));
+}
+
+/// The orders whose launches hold planes past the last tile, beside one whose blocks the tiles
+/// fill: blocks the edge cuts short, cubes past the last block, and both in a swizzle.
+fn orders() -> [PlaneOrder; 4] {
+    [
+        PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor),
+        PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3),
+        PlaneOrder::new(&[(N, 4)], CubeOrder::RowMajor).cubes_of(2),
+        PlaneOrder::new(&[(M, 2), (N, 1)], CubeOrder::SwizzleCol(3)),
+    ]
+}
+
+/// Every plane the launch spawns walks exactly one tile, a plane past the last tile one past the
+/// grid: the planes of a cube take the same steps, so none skips a barrier the others meet.
+#[test]
+fn every_plane_of_the_launch_walks_one_tile() {
+    let client = cubecl::test_device().client();
+    for order in orders() {
+        for problem in PROBLEMS.map(|problem| problem.batched(2)) {
+            let Problem { m, n, k, batches } = problem;
+            let partitioning = Partitioning::new(
+                Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
+                Planes::OfTheLaunch(order.clone()).levels(),
+            );
+            let cube_count = partitioning.cube_count();
+            let CubeCount::Static(x, y, z) = cube_count else {
+                panic!("a static space spawns a static grid");
+            };
+            let planes = (x * y * z * partitioning.planes_per_cube()) as usize;
+            let walks = TestInput::builder(client.clone(), shape![planes])
+                .dtype(f32::elem_type_native())
+                .custom(vec![0.0; planes])
+                .generate_without_host_data();
+            let grid = Grid::Stated {
+                cube_count,
+                cube_dim: partitioning.cube_dim(UNITS as u32),
+            };
+            let space = partitioning.space().clone();
+            let launcher = Launcher::new(&client, partitioning, &space, grid).unwrap();
+            count_walks::launch(
+                &client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                walks.clone().binding().into_tensor_arg(),
+                launcher.partitioning_arg(),
+            );
+            let got = HostData::from_tensor_handle(&client, walks, HostDataType::F32);
+            for plane in 0..planes {
+                assert_eq!(
+                    got.get_f32(&[plane]),
+                    1.0,
+                    "{order:?} on {problem:?}: plane {plane} of {planes}"
+                );
+            }
+        }
+    }
+}
+
+/// The binding masks an axis where the launch's planes run past its tiles, and no other: along
+/// an axis whose blocks the edge cuts short, and along the axis the blocks past the last land
+/// past, the outermost of three.
+#[test]
+fn the_binding_masks_where_the_planes_run_past_the_tiles() {
+    let masked = |order: PlaneOrder, (m, n): (usize, usize)| {
+        let partitioning = Partitioning::new(
+            Space::new(&[(B, 1), (M, m), (N, n), (K, 8)]),
+            Planes::OfTheLaunch(order).levels(),
+        );
+        [M, N, B].map(|axis| partitioning.overhangs(axis))
+    };
+    let blocks = || PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor);
+    // Tiles of 2 × 4: 4 × 4 of them fill the 2 × 2 blocks.
+    assert_eq!(masked(blocks(), (8, 16)), [false, false, false]);
+    // 4 × 5: the last block along `n` holds one tile of two.
+    assert_eq!(masked(blocks(), (8, 20)), [false, true, false]);
+    // 16 tiles in cubes of three planes: the last cube's two spare planes land past the batch.
+    let three_a_cube = PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3);
+    assert_eq!(masked(three_a_cube, (8, 16)), [false, false, true]);
+    // 15 tiles in cubes of three: none spare.
+    let three_a_cube = PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3);
+    assert_eq!(masked(three_a_cube, (6, 20)), [false, false, false]);
+}
+
+/// A kernel compiled for every batch count asks the static axes alone: the blocks the edge cuts
+/// short decide them, and the batch, which the spare blocks land past, is the launch's.
+#[test]
+fn a_static_axis_is_answered_beside_a_dynamic_batch() {
+    let partitioning = |n| {
+        Partitioning::new(
+            Space::new(&[(B, 1), (M, 8), (N, n), (K, 8)]).with_dynamic(&[B]),
+            Planes::OfTheLaunch(PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor)).levels(),
+        )
+    };
+    assert!(!partitioning(16).overhangs(M));
+    assert!(!partitioning(16).overhangs(N));
+    assert!(partitioning(20).overhangs(N));
 }

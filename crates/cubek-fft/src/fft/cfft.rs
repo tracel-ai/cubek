@@ -20,7 +20,7 @@
 //! the right path. Either way the caller owns any scratch (see `rfft_large`
 //! for the allocator shape contract).
 
-use core::f32::consts::PI;
+use core::f64::consts::PI;
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
@@ -436,7 +436,7 @@ fn cfft_four_step_radix1_kernel<F: Float>(
 
     // Post-twiddle and strided write. W_N^{k1 * n2} with the total-N phase
     // factor is the Cooley-Tukey tying factor between the two sub-FFTs.
-    let sign = F::new(fft_mode.sign());
+    let sign = F::new(comptime!(f64::from(fft_mode.sign())));
     let n_total = comptime![n1 * n2];
     let two_pi = F::new(2.0 * PI);
 
