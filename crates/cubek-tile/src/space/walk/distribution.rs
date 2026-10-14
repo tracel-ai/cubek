@@ -36,6 +36,8 @@ pub(crate) struct Distribution {
     pub(crate) unspanned: usize,
     /// Which of the two jointly decoded in-plane positions this axis takes, when swizzled.
     pub(crate) swizzled: Option<usize>,
+    /// Whether the instances take the tiles from the last to the first.
+    pub(crate) reversed: bool,
 }
 
 impl AxisDistribution {
@@ -75,6 +77,7 @@ impl AxisDistribution {
                 Some((_, y)) if y == p => Some(1),
                 _ => None,
             },
+            reversed: level.reverses(axis),
         })
     }
 

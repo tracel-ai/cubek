@@ -10,7 +10,9 @@ use crate::{
 
 use super::distribution::{AxisDistribution, Distribution};
 use crate::Spread;
-use crate::space::partition::{GridCount, in_plane_axes, launch_plane_tiles, swizzled_positions};
+use crate::space::partition::{
+    GridCount, in_plane_axes, launch_plane_tiles, oriented, swizzled_positions,
+};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
@@ -167,6 +169,7 @@ impl Walk {
                     inner,
                     unspanned,
                     swizzled: joint,
+                    reversed,
                 }) => {
                     // Mixed-radix stride over the later same-dimension axes, spanned or not.
                     let inner_weight = instances.product(inner) * comptime!(unspanned).runtime();
@@ -176,6 +179,7 @@ impl Walk {
                             .divided_by(inner_weight)
                             .remainder(instances.at(p)),
                     };
+                    let position = oriented(position, instances.at(p), reversed);
                     let run = match comptime!(across) {
                         Some(workers) => grid
                             .at(p)

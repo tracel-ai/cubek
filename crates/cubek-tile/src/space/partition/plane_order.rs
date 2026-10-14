@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use super::{CubeOrder, Level, cube_positions};
+use super::{CubeOrder, Level, cube_positions, oriented};
 use crate::{Axis, Coords, CubeAxis, Integer, IntegerExpand, Space};
 
 /// The order the planes of a launch take a level's tiles in, where a plane level spans the launch
@@ -141,7 +141,12 @@ pub(crate) fn launch_plane_tiles(
     let at = block_coords(
         block,
         &blocks,
-        comptime!(named.len()),
+        comptime!(
+            named
+                .iter()
+                .map(|&p| level.reverses(space.axis_at(p)))
+                .collect::<Vec<_>>()
+        ),
         comptime!(order.block_order()),
     );
 
@@ -173,18 +178,20 @@ pub(crate) fn launch_plane_tiles(
     (positions, counts)
 }
 
-/// Block `block`'s coordinates over `blocks`, `named` axes of them: the first two in `order`, the
-/// others outermost, first fastest, the last never wrapped, so a block past the grid lands off it.
+/// Block `block`'s coordinates over `blocks`, one axis for each of `reversed`: the first two in
+/// `order`, the others outermost, first fastest, the last never wrapped, so a block past the grid
+/// lands off it. Each axis is then counted from its far end where `reversed` says so.
 #[cube]
 fn block_coords(
     block: usize,
     blocks: &Coords<usize>,
-    #[comptime] named: usize,
+    #[comptime] reversed: Vec<bool>,
     #[comptime] order: CubeOrder,
 ) -> Coords<usize> {
+    let named = comptime!(reversed.len());
     let mut out = Coords::<usize>::new();
     if comptime!(named == 1) {
-        out.push(block);
+        out.push(oriented(block, blocks.at(0), comptime!(reversed[0])));
     } else {
         let plane = blocks.at(0).times(blocks.at(1));
         let first_two = if comptime!(named == 2) {
@@ -193,15 +200,19 @@ fn block_coords(
             block.remainder(plane)
         };
         let (x, y) = cube_positions(first_two, (blocks.at(0), blocks.at(1)), order);
-        out.push(x);
-        out.push(y);
+        out.push(oriented(x, blocks.at(0), comptime!(reversed[0])));
+        out.push(oriented(y, blocks.at(1), comptime!(reversed[1])));
         let mut rest = block.divided_by(plane);
         #[unroll]
         for i in 2..named {
             if comptime!(i + 1 == named) {
-                out.push(rest);
+                out.push(oriented(rest, blocks.at(i), comptime!(reversed[i])));
             } else {
-                out.push(rest.remainder(blocks.at(i)));
+                out.push(oriented(
+                    rest.remainder(blocks.at(i)),
+                    blocks.at(i),
+                    comptime!(reversed[i]),
+                ));
                 rest = rest.divided_by(blocks.at(i));
             }
         }

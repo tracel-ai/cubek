@@ -53,6 +53,19 @@ pub(crate) fn cube_positions(
     }
 }
 
+/// Position `c` of the `n` along an axis, counted from the far end where the level reverses the
+/// axis ([`Levels::reversed`](crate::Levels::reversed)). Applied after the order decodes `c`, so
+/// it composes with any [`CubeOrder`]. A position past the last stays where it is: its worker
+/// takes no tile either way.
+#[cube]
+pub(crate) fn oriented(c: usize, n: usize, #[comptime] reversed: bool) -> usize {
+    if comptime!(reversed) {
+        if c < n { n - 1 - c } else { c }
+    } else {
+        c
+    }
+}
+
 /// [`swizzle`](fn@swizzle) over strips cut from an axis of `strip_axis` elements that
 /// `step_length` need not divide; the last strip holds what is left.
 #[cube]
@@ -257,6 +270,24 @@ mod tests {
         };
         assert_eq!(span(CubeOrder::RowMajor), 16);
         assert_eq!(span(CubeOrder::SwizzleRow(4)), 4);
+    }
+
+    /// Reversing an axis permutes its positions, and leaves a position past the last past it.
+    #[test]
+    fn a_reversed_axis_is_a_permutation_and_keeps_spares_past_it() {
+        for n in [1usize, 2, 5, 8] {
+            let mut seen = vec![false; n];
+            for c in 0..n {
+                let at = oriented(c, n, true);
+                assert!(at < n && !seen[at], "{c} of {n} reversed lands at {at}");
+                seen[at] = true;
+            }
+            assert_eq!(oriented(0, n, true), n - 1);
+            for spare in [n, n + 3] {
+                assert_eq!(oriented(spare, n, true), spare);
+            }
+            assert_eq!(oriented(n - 1, n, false), n - 1);
+        }
     }
 
     /// The host twin of [`cube_positions`].

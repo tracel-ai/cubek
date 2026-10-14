@@ -19,6 +19,8 @@ pub struct Level {
     /// The order the launch's planes take this level's tiles in, where it is a plane level
     /// spanning the launch rather than one cube ([`spanning_launch`](Level::spanning_launch)).
     plane_order: Option<PlaneOrder>,
+    /// Axes whose tiles go out last first ([`reversing`](Level::reversing)).
+    reversed: Vec<Axis>,
 }
 
 /// One axis of a level: the tile it steps in, how many, and how its instances spread them.
@@ -284,6 +286,7 @@ impl Level {
             fillers: 0,
             order: CubeOrder::RowMajor,
             plane_order: None,
+            reversed: Vec::new(),
         }
     }
 
@@ -327,6 +330,7 @@ impl Level {
             fillers: 0,
             order: CubeOrder::RowMajor,
             plane_order: Some(order),
+            reversed: Vec::new(),
         }
     }
 
@@ -411,6 +415,34 @@ impl Level {
         self
     }
 
+    /// This level handing out the tiles of each of `axes` from the last to the first, on top of
+    /// whatever order it deals them in: the first workers launched take the last tiles. A worker
+    /// past the last tile stays past it, so it still takes none.
+    pub(crate) fn reversing(mut self, axes: &[Axis]) -> Level {
+        assert!(
+            self.coverage == Coverage::Distribute(ComputeScope::Cube) || self.plane_order.is_some(),
+            "Level::reversing: only a cube level or a plane level spanning the launch hands its \
+             tiles out in a launch order, and this level's tiles are taken by {:?}",
+            self.coverage
+        );
+        assert!(
+            self.shared_by.is_none(),
+            "Level::reversing: this level cuts its tiles as one index, which has no axis to reverse"
+        );
+        for &axis in axes {
+            assert!(
+                self.cuts.contains(axis),
+                "Level::reversing: {axis:?} is not an axis of this level"
+            );
+            assert!(
+                !self.reversed.contains(&axis),
+                "Level::reversing: {axis:?} is reversed twice"
+            );
+            self.reversed.push(axis);
+        }
+        self
+    }
+
     fn push(&mut self, axis: Axis, cut: Cut) {
         assert!(
             !self.cuts.contains(axis),
@@ -491,6 +523,11 @@ impl Level {
     /// The order this level distributes its boxes to the grid.
     pub fn order(&self) -> CubeOrder {
         self.order
+    }
+
+    /// Whether this level hands out `axis`'s tiles from the last to the first.
+    pub fn reverses(&self, axis: Axis) -> bool {
+        self.reversed.contains(&axis)
     }
 
     /// The extent one region of this level covers along `axis` of `space`.
