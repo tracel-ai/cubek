@@ -230,7 +230,11 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         }
     } else {
         // CPU and scalar lines keep the flat walk, avoiding a wide fan-out body in LLVM IR.
-        #[unroll(unroll)]
+        // A small register block can still contract a large filter (e.g. a depthwise weight
+        // gradient). Bound tap expansion separately while keeping the cells in registers.
+        // See https://github.com/tracel-ai/burn/issues/6054.
+        let unroll_taps = comptime!(unroll && kc <= config.budget);
+        #[unroll(unroll_taps)]
         for p in 0..kc {
             rank1_update::<E, EL, L, ER, V>(
                 lhs_view,
