@@ -97,8 +97,8 @@ impl Walk {
     }
 
     /// `(counts, positions, scales)` of a plane level spanning the launch: along each of its axes,
-    /// the one tile this plane's place in the launch names, or none past the last; every tile of
-    /// the others.
+    /// the one tile this plane's place in the launch names, past the last for a plane past the
+    /// last tile, which the binding masks; every tile of the others.
     fn spanning_launch(
         #[comptime] host: Space,
         #[comptime] level: Level,

@@ -514,9 +514,13 @@ impl Level {
     /// Whether this level's tile on `axis` fails to divide the extent `space` hands it.
     /// Static extents only.
     pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
-        match self.tile(axis) {
-            Some(tile) => !space.extent(axis).is_multiple_of(tile),
-            None => false,
+        let Some(tile) = self.tile(axis) else {
+            return false;
+        };
+        let cut = !space.extent(axis).is_multiple_of(tile);
+        match &self.plane_order {
+            None => cut,
+            Some(order) => cut || order.overruns(self, space, axis),
         }
     }
 
