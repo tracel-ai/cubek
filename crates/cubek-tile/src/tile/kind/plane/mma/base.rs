@@ -270,7 +270,7 @@ impl<E: Numeric> MmaData<E> {
     pub(crate) fn scale_add_along(
         &mut self,
         scale: E,
-        bias: &Procedural<E>,
+        bias: &Procedural,
         #[comptime] space: Space,
         #[comptime] origin: (usize, usize),
     ) {
@@ -288,7 +288,7 @@ impl<E: Numeric> MmaData<E> {
                     comptime!((i * vector_size + e) as u32),
                     MatrixIdent::Accumulator,
                 );
-                let cell = bias.value_at(
+                let cell = bias.value_at::<E>(
                     row + comptime!(row0 as u32),
                     col + comptime!(col0 as u32),
                     comptime!(space.clone()),

@@ -23,7 +23,7 @@ pub(crate) enum TileKind<T: Numeric> {
     /// A TMA tensor-map source, copied only in bulk into shared memory.
     TmaGmem(TmaData<T>),
     /// A read-only source evaluated from logical coordinates with no backing buffer.
-    Procedural(Procedural<T>),
+    Procedural(Procedural),
     /// A tile the plane holds in its units, one line to a unit ([`Lines`]).
     Lines(Lines),
 }

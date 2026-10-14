@@ -137,7 +137,7 @@ fn linear_kernel<E: Float>(
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LinearAxis<E>>(
+    let source = Procedural::new::<E, LinearAxis<E>>(
         comptime!(space.space().clone()),
         linear_along(
             COL,
@@ -145,7 +145,7 @@ fn linear_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0_f32)),
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -158,7 +158,7 @@ fn cubic_kernel<E: Float>(
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<CubicAxis<E>>(
+    let source = Procedural::new::<E, CubicAxis<E>>(
         comptime!(space.space().clone()),
         cubic_along(
             COL,
@@ -167,7 +167,7 @@ fn cubic_kernel<E: Float>(
             a,
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -180,7 +180,7 @@ fn lanczos_kernel<E: Float>(
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LanczosAxis<E>>(
+    let source = Procedural::new::<E, LanczosAxis<E>>(
         comptime!(space.space().clone()),
         lanczos_along(
             COL,
@@ -189,7 +189,7 @@ fn lanczos_kernel<E: Float>(
             lobes,
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -202,7 +202,7 @@ fn linear_over_axis_value_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LinearScaled>(
+    let source = Procedural::new::<E, LinearScaled>(
         comptime!(space.space().clone()),
         LinearScaled {
             coordinate: AxisValue {
@@ -211,7 +211,7 @@ fn linear_over_axis_value_kernel<E: Float>(
             },
         },
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 

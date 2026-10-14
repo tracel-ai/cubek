@@ -54,7 +54,7 @@ fn buffer_kernel<E: Float>(
 ) {
     let mut dst = out.tile(&space);
     let src =
-        Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
+        Procedural::new::<E, Position>(comptime!(space.space().clone()), Position {}).tile::<E>();
     dst.copy_from(&src);
 }
 
@@ -79,7 +79,7 @@ fn sink_kernel<E: Float>(out: &TileArg<'_, E>, space: Partitioning, #[define(E)]
     )
     .tile(comptime!(space.levels().to_vec()));
     let src =
-        Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
+        Procedural::new::<E, Position>(comptime!(space.space().clone()), Position {}).tile::<E>();
     dst.copy_from(&src);
 }
 
@@ -198,7 +198,7 @@ fn derived_sink_kernel<E: Float>(
     )
     .tile(comptime!(space.levels().to_vec()));
     let src =
-        Procedural::<E>::new::<Position>(comptime!(space.space().clone()), Position {}).tile();
+        Procedural::new::<E, Position>(comptime!(space.space().clone()), Position {}).tile::<E>();
     dst.copy_from(&src);
 }
 

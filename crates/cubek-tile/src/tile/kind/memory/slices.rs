@@ -13,7 +13,7 @@ impl<E: Float> Memory<E> {
     pub(crate) fn scale_add_along(
         &mut self,
         scale: E,
-        bias: &Procedural<E>,
+        bias: &Procedural,
         #[comptime] space: Space,
         #[comptime] axis: Axis,
     ) {
@@ -25,7 +25,7 @@ impl<E: Float> Memory<E> {
             let mut s = UNIT_POS_PLANE as usize;
             while s < length {
                 let at = i * length + s;
-                let cell = bias.value_at(i as u32, s as u32, space.clone());
+                let cell = bias.value_at::<E>(i as u32, s as u32, space.clone());
                 view.write(
                     at,
                     Vector::cast_from(view.read(at).extract(0usize) * scale + cell),

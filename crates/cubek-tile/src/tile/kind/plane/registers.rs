@@ -263,7 +263,7 @@ impl<E: Float> RegisterData<E> {
     pub(crate) fn scale_add_along(
         &mut self,
         scale: E,
-        bias: &Procedural<E>,
+        bias: &Procedural,
         #[comptime] space: Space,
     ) {
         #[unroll]
@@ -275,7 +275,7 @@ impl<E: Float> RegisterData<E> {
                 #[unroll]
                 for j in 0..self.vector_size {
                     let column = n * self.vector_size + j;
-                    let cell = bias.value_at(r as u32, column as u32, space.clone());
+                    let cell = bias.value_at::<E>(r as u32, column as u32, space.clone());
                     line.insert(j, line.extract(j) * scale + cell);
                 }
                 self.data[at] = line;

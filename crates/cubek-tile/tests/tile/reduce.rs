@@ -125,7 +125,7 @@ fn procedural_reduce_kernel<E: Float>(
     #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = Procedural::<E>::new::<AffineCoordinate<E>>(
+    let input = Procedural::new::<E, AffineCoordinate<E>>(
         comptime!(space.space().clone()),
         AffineCoordinate::<E> {
             offset: E::new(0.0_f32),
@@ -133,7 +133,7 @@ fn procedural_reduce_kernel<E: Float>(
             axis: K,
         },
     )
-    .tile();
+    .tile::<E>();
     let mut output = output.tile(&space);
     reduce_body(
         &input,

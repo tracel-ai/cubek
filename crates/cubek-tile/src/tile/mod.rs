@@ -3,6 +3,7 @@
 pub(crate) mod accumulator;
 pub(crate) mod base;
 pub(crate) mod factor;
+pub(crate) mod held;
 pub(crate) mod kind;
 pub(crate) mod packing;
 pub(crate) mod placement;

@@ -903,7 +903,7 @@ impl<E: Float> PlanePartition<E> {
 
     /// `self[r, c] = self[r, c] · scale + bias[r, c]` over every fragment, `bias` read at each
     /// cell's coordinates in the window over `space`.
-    pub(crate) fn scale_add_along(&self, scale: E, bias: &Procedural<E>, #[comptime] space: Space) {
+    pub(crate) fn scale_add_along(&self, scale: E, bias: &Procedural, #[comptime] space: Space) {
         #[unroll]
         for mi in 0..self.m_tiles {
             #[unroll]

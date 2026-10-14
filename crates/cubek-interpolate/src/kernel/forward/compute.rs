@@ -61,7 +61,7 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
     let mut factors = Sequence::new();
     factors.push(F::Filter::<E>::along(row));
     factors.push(F::Filter::<E>::along(col));
-    let weights = Procedural::<E>::separable::<SeparableWeights<E, F::Filter<E>>>(
+    let weights = Procedural::separable::<E, SeparableWeights<E, F::Filter<E>>>(
         comptime!(
             space
                 .space()
@@ -73,7 +73,7 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
         Some((taps, guard)) => weights.normalized(comptime!(taps), comptime!(guard)),
         None => weights,
     }
-    .tile();
+    .tile::<E>();
 
     let output = output.tile(&space);
 

@@ -60,7 +60,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The recipe this procedural tile evaluates; panics for every other kind.
-    pub(crate) fn recipe(&self) -> &Procedural<T> {
+    pub(crate) fn recipe(&self) -> &Procedural {
         match &self.kind {
             TileKind::Procedural(recipe) => recipe,
             TileKind::Memory(_)
@@ -350,7 +350,7 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
         match &self.kind {
             TileKind::Procedural(data) => {
-                data.read_factor_at(&pos, factor, comptime!(self.place.space.clone()))
+                data.read_factor_at::<T>(&pos, factor, comptime!(self.place.space.clone()))
             }
             TileKind::Memory(_)
             | TileKind::PlaneTile(_)

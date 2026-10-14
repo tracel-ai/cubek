@@ -136,7 +136,7 @@ impl<T: Numeric> Tile<T> {
 /// A procedural tile's whole box as an N-D view, evaluated at the coordinate.
 #[cube]
 fn procedural_nd<T: Numeric, W: Size>(
-    data: &Procedural<T>,
+    data: &Procedural,
     #[comptime] space: Space,
     #[comptime] guard: Guard,
 ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
@@ -147,7 +147,7 @@ fn procedural_nd<T: Numeric, W: Size>(
         comptime!(1usize),
     );
     Masked::new(
-        View::<Vector<T, W>, CoordsDyn>::new::<&Procedural<T>, CoordsDyn>(data, layout),
+        View::<Vector<T, W>, CoordsDyn>::new::<&Procedural, CoordsDyn>(data, layout),
         comptime!(guard.checks() && data.bounds_check),
     )
 }

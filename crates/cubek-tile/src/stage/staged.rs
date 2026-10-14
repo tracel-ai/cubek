@@ -27,7 +27,7 @@ impl StageElement {
 impl<T: Numeric> Memory<T> {
     /// Cooperatively materialize a procedural source into this plain, direct scalar tile.
     /// Every unit that shares its fill ([`FillUnits`]) must own this window.
-    pub(crate) fn fill_procedural(&mut self, src: &Procedural<T>, #[comptime] space: Space) {
+    pub(crate) fn fill_procedural(&mut self, src: &Procedural, #[comptime] space: Space) {
         comptime!(assert!(
             self.store.packing == Packing::Plain
                 && self.projection.is_direct()
@@ -46,7 +46,7 @@ impl<T: Numeric> Memory<T> {
             // TODO: masked cells use Procedural's zero fallback, not the reduction's identity.
             dst.write(
                 i,
-                Vector::cast_from(src.read_masked(&pos, comptime!(space.clone()))),
+                Vector::cast_from(src.read_masked::<T>(&pos, comptime!(space.clone()))),
             );
             i += stride;
         }

@@ -81,7 +81,7 @@ fn plane_attention<E: Float>(
     let k = k.tile(&space).within(S, 0, keys as usize);
     let v = v.tile(&space).within(S, 0, keys as usize);
     let out = out.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -89,7 +89,7 @@ fn plane_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     for cube in space {
         let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
         for plane in cube {
@@ -175,7 +175,7 @@ fn register_plane_attention<E: Float>(
     let k = k.tile(&space).within(S, 0, keys as usize);
     let v = v.tile(&space).within(S, 0, keys as usize);
     let out = out.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -183,7 +183,7 @@ fn register_plane_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     for cube in space {
         let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
         for plane in cube {
@@ -255,7 +255,7 @@ fn unit_attention<E: Float>(
     let k = k.tile(&space).within(S, 0, keys as usize);
     let v = v.tile(&space).within(S, 0, keys as usize);
     let out = out.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -263,7 +263,7 @@ fn unit_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     let value = comptime!(space.space().extent(V));
     for cube in space {
         for unit in cube {
@@ -356,7 +356,7 @@ fn relayed_attention<E: Float>(
     let mut out = out.tile(&space);
     let state_max = carried_max.tile(&space);
     let state_sum = carried_sum.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -364,7 +364,7 @@ fn relayed_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     // The cube level's walk is this cube's run of blocks, its planes directly below each block.
     let run = space.walk();
     let first = run.region(0);
