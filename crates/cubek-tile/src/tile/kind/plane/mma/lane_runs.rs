@@ -1,23 +1,17 @@
 //! A manual-mma fragment deeper along `k` than its instruction: the registers of several
 //! instructions, which a contraction issues one after another into the same accumulator.
 //!
-//! A sum does not care which value of `k` it meets in which slot of which instruction, only that
-//! both factors hold the same `k` there. So a fragment deeper than its instruction lays `k` out
-//! in **lane runs**: each unit's slots, across all of the fragment's instructions, hold one
-//! contiguous run of the window's `k`, the run of the unit's quad in it. A unit then reads its
-//! share of the window in loads as wide as the operand is served, sixteen bytes of 16-bit values
-//! or thirty-two packed `e2m1` values, rather than a pair of cells an instruction; and a packed
-//! operand decodes and scales a whole word in registers, where the instruction reads it.
+//! A sum does not care which value of `k` meets which slot, only that both factors hold the same
+//! one there. So such a fragment lays `k` out in **lane runs**: each unit's slots, across all of
+//! the fragment's instructions, hold one contiguous run of `k`. A unit then reads its share in
+//! whole served loads rather than a pair of cells an instruction, and a packed operand decodes
+//! and scales a whole word in registers. Both factors of a contraction are the same depth, so
+//! they agree on the order; a fragment one instruction deep keeps the instruction's own.
 //!
-//! The order is the depth's consequence, not a choice: a fragment one instruction deep keeps the
-//! instruction's own order, and every contraction that names its instruction's depth is the one
-//! it was. Both factors of one contraction are the same depth, so they agree on the order.
-//!
-//! The run a slot belongs to is read off the 16-bit `m16n8k16` layout, which every unit's
-//! registers follow the same way: unit `u` holds the cells of quad `u % 4` along `k`, a pair of
-//! adjacent cells a register, its first pair from the instruction's first eight values of `k` and
-//! its second from the last eight. [`lane_runs_here`] admits the targets whose layout this is,
-//! and the component test checks the map against `position_of_nth` on every unit.
+//! The map is read off the 16-bit `m16n8k16` layout: unit `u` holds the cells of quad `u % 4`
+//! along `k`, a pair of adjacent cells a register, its first pair from the instruction's first
+//! eight values of `k` and its second from the last eight. [`lays_out_lane_runs`] admits the
+//! targets whose layout this is, and the component test checks the map on every unit.
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout, MmaDefinition},
@@ -27,27 +21,25 @@ use cubecl::{
     quant::scheme::QuantValue,
 };
 
+use super::block_scaled::{E2M1_PER_WORD, E2M1_SCALE_BLOCK};
 use super::widths::*;
 use crate::*;
 
 /// Slots of one instruction's `k` a unit holds, on the 16-bit `m16n8k16` layout: four of sixteen.
-pub(crate) const SLOTS_PER_UNIT: usize = 4;
+const SLOTS_PER_UNIT: usize = 4;
 
 /// Adjacent slots one register holds: a pair of 16-bit values.
 const SLOTS_PER_REGISTER: usize = 2;
 
 /// Units sharing one row of `A` or column of `B`, each holding its own quad of `k`.
-const QUADS: u32 = 4;
+const UNITS_PER_ROW: u32 = 4;
 
-/// `e2m1` values one stored word holds.
-const E2M1_PER_WORD: usize = 8;
-
-/// Values one `e2m1` block scale covers along `k`.
-const E2M1_BLOCK: usize = 16;
+/// Rows between the two an `A` unit holds, `g` and `g + 8`.
+const HALF_ROWS: u32 = 8;
 
 /// The depth along `k` one instruction of an `m × n` fragment of `T` contracts: `k` itself where
 /// the device offers that instruction, else the deepest one it offers that divides `k`, else `k`,
-/// which the expansion of the instruction then refuses as it always has.
+/// which the instruction's expansion refuses.
 // `T` is read by the expansion, which is where a type has its element.
 #[allow(clippy::extra_unused_type_parameters)]
 #[cube]
@@ -73,14 +65,14 @@ pub(crate) fn instruction_depth<T: Numeric>(
             })
             .map(|config| config.k as usize)
             .collect::<Vec<_>>();
-        match depths.contains(&k) {
-            true => k,
-            false => depths
-                .into_iter()
-                .filter(|&depth| k.is_multiple_of(depth))
-                .max()
-                .unwrap_or(k),
+        if depths.contains(&k) {
+            return k;
         }
+        depths
+            .into_iter()
+            .filter(|&depth| k.is_multiple_of(depth))
+            .max()
+            .unwrap_or(k)
     })
 }
 
@@ -98,7 +90,7 @@ pub(crate) fn lane_run_steps<T: Numeric>(
 
 /// Whether the target lays a 16-bit `m16n8k16` instruction's registers out as the lane-run map
 /// reads them: a 32-unit plane, `A` along its rows and `B` along its columns, every cell held
-/// once. A target that agrees on these and lays the slots otherwise fails the component test.
+/// once.
 #[cube]
 fn lays_out_lane_runs() -> comptime_type!(bool) {
     intrinsic!(|scope| {
@@ -115,10 +107,9 @@ fn lays_out_lane_runs() -> comptime_type!(bool) {
 /// runs; `None` where it can.
 ///
 /// It can where the fragment is deeper than its instruction, a 16-bit `m16n8k16` one, on a target
-/// [`lays_out_lane_runs`]; its window runs along `k` (an `A` row-major, a `B` col-major); and it
-/// is plain, or `e2m1` codes the device converts under one level of scales a value times its
-/// scale is exact under in 16 bits, NVFP4's `e4m3` or a power of two. A coarser level is the
-/// product's to apply to the accumulator, as it is for the block-scaled instruction.
+/// that [`lays_out_lane_runs`]; its window runs along `k`; and it is plain, or `e2m1` codes under
+/// one level of scales whose product with a code is exact in 16 bits, NVFP4's `e4m3` or a power
+/// of two. A coarser level is the product's to apply to the accumulator.
 #[cube]
 pub(crate) fn lane_runs_refusal<T: Numeric>(
     src: &Tile<T>,
@@ -170,52 +161,52 @@ pub(crate) fn lane_runs_refusal<T: Numeric>(
     })
 }
 
-/// Whether `src` loads in lane runs ([`lane_runs_refusal`]).
-#[cube]
-pub(crate) fn lane_runs_here<T: Numeric>(
-    src: &Tile<T>,
-    #[comptime] ident: MatrixIdent,
-    #[comptime] layout: MatrixLayout,
-    #[comptime] shape: (usize, usize, usize),
-) -> comptime_type!(bool) {
-    let refusal = lane_runs_refusal::<T>(src, ident, layout, shape);
-    comptime!(refusal.is_none())
+/// A unit's run of a lane-run window: how long it is, which window it reads, and the register
+/// each of its slots lands in.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct LaneRun {
+    /// The fragment's role.
+    ident: MatrixIdent,
+    /// Values of `k` the run holds: [`SLOTS_PER_UNIT`] of each instruction.
+    len: usize,
+    /// Registers one instruction holds in this role.
+    per_step: usize,
+    /// The window's rows, its free edge: fewer than the fragment's where a product of fewer rows
+    /// leaves it short, the rest read as zeros by the checked view.
+    rows: usize,
+    /// The window's `k`, however many axes spell it.
+    k: usize,
 }
 
-/// Rows of the window `space` a fragment `k` deep loads from: its free edge, which a product of
-/// fewer rows than the fragment's leaves short of them, the rest read as zeros by the checked
-/// view.
-fn window_rows(space: &Space, k: usize) -> usize {
-    space
-        .axes()
-        .map(|axis| space.extent(axis))
-        .product::<usize>()
-        / k
-}
+impl LaneRun {
+    /// Rows of the window one unit holds: an `A`'s `g` and `g + 8`, a `B`'s one column.
+    fn halves(&self) -> usize {
+        match self.ident {
+            MatrixIdent::A => 2,
+            MatrixIdent::B => 1,
+            MatrixIdent::Accumulator => unreachable!("an accumulator holds no slots of `k`"),
+        }
+    }
 
-/// The register of one instruction of role `ident` that holds pair `pair` of a unit's slots, in
-/// half `half` of its rows: an `A` holds rows `g` and `g + 8` in alternate registers, its first
-/// pair of `k` in registers 0 and 1; a `B` holds one column, a pair a register.
-fn register_of(ident: MatrixIdent, pair: usize, half: usize) -> usize {
-    match ident {
-        MatrixIdent::A => pair * 2 + half,
-        MatrixIdent::B => pair,
-        MatrixIdent::Accumulator => panic!("lane runs: an accumulator holds no slots of `k`"),
+    /// The register holding cell `cell` of the run, in half `half` of the unit's rows. Cell
+    /// `4s + j` is slot `j` of instruction `s`; an `A` holds its rows in alternate registers, its
+    /// first pair of `k` in registers 0 and 1, a `B` a pair a register.
+    fn register(&self, cell: usize, half: usize) -> usize {
+        let (step, pair) = (
+            cell / SLOTS_PER_UNIT,
+            cell % SLOTS_PER_UNIT / SLOTS_PER_REGISTER,
+        );
+        let within = match self.ident {
+            MatrixIdent::A => pair * 2 + half,
+            MatrixIdent::B => pair,
+            MatrixIdent::Accumulator => unreachable!("an accumulator holds no slots of `k`"),
+        };
+        step * self.per_step + within
     }
 }
 
-/// Halves of the rows one unit holds: an `A`'s rows `g` and `g + 8`, a `B`'s one column.
-fn halves_of(ident: MatrixIdent) -> usize {
-    match ident {
-        MatrixIdent::A => 2,
-        MatrixIdent::B => 1,
-        MatrixIdent::Accumulator => panic!("lane runs: an accumulator holds no slots of `k`"),
-    }
-}
-
-/// Load `fragment`, `steps` instructions of role `ident` deep, from `src` in lane runs: each unit
-/// reads the run of its quad along each of its rows (an `A`) or its column (a `B`), and places
-/// slot `j` of instruction `s` at offset `4s + j` of it.
+/// Load `fragment`, an `m × n × k` fragment of role `ident` deeper than its instruction, from
+/// `src` in lane runs: each unit reads the run of its quad along each of its rows of the window.
 #[cube]
 pub(crate) fn load_lane_runs<T: Numeric, N: Size>(
     src: &Tile<T>,
@@ -230,106 +221,94 @@ pub(crate) fn load_lane_runs<T: Numeric, N: Size>(
     });
     let (m, n, k) = comptime!(shape);
     let depth = instruction_depth::<T>(m, n, k);
-    let steps = comptime!(k / depth);
-    let run = comptime!(SLOTS_PER_UNIT * steps);
-    let def = MmaDefinition::<T, T, T>::new(m, n, depth);
-    let per_step = def.vectors_per_lane(ident);
-    let unit = UNIT_POS_PLANE;
-    // The unit's row of `A` or column of `B` within a half, and its quad's run of `k`.
-    let group = unit / QUADS;
-    let first = (unit % QUADS) * comptime!(run as u32);
+    let per_step = MmaDefinition::<T, T, T>::new(m, n, depth).vectors_per_lane(ident);
+    let space = comptime!(&src.place.space);
+    let run = comptime!(LaneRun {
+        ident,
+        len: SLOTS_PER_UNIT * (k / depth),
+        per_step,
+        rows: space
+            .axes()
+            .map(|axis| space.extent(axis))
+            .product::<usize>()
+            / k,
+        k,
+    });
+    let row = UNIT_POS_PLANE / UNITS_PER_ROW;
+    let first = (UNIT_POS_PLANE % UNITS_PER_ROW) * comptime!(run.len as u32);
     let packing = src.packing();
     match comptime!(packing) {
-        Packing::Plain => {
-            load_plain_runs::<T, N>(src, fragment, ident, (m, n, k), group, first, run, per_step)
-        }
-        Packing::Packed { .. } => {
-            load_e2m1_runs::<T, N>(src, fragment, ident, (m, n, k), group, first, run, per_step)
-        }
+        Packing::Plain => load_plain_run::<T, N>(src, fragment, row, first, run),
+        Packing::Packed { .. } => load_e2m1_run::<T, N>(src, fragment, row, first, run),
     }
 }
 
-/// [`load_lane_runs`] of a plain window: each run read a served line at a time.
+/// [`load_lane_runs`] of a plain window: the run read a served line at a time.
 #[cube]
-#[allow(clippy::too_many_arguments)]
-fn load_plain_runs<T: Numeric, N: Size>(
+fn load_plain_run<T: Numeric, N: Size>(
     src: &Tile<T>,
     fragment: &mut Array<Vector<T, N>>,
-    #[comptime] ident: MatrixIdent,
-    #[comptime] shape: (usize, usize, usize),
-    group: u32,
+    row: u32,
     first: u32,
-    #[comptime] run: usize,
-    #[comptime] per_step: usize,
+    #[comptime] run: LaneRun,
 ) {
-    let (m, n, k) = comptime!(shape);
     let width = src.vector_size();
     comptime!(assert!(
-        run.is_multiple_of(width),
-        "MmaData::load: a {width}-wide line runs past a unit's {run}-cell run of `k`; serve the \
-         operand at most {run} wide"
+        run.len.is_multiple_of(width),
+        "MmaData::load: a {width}-wide line runs past a unit's {}-cell run of `k`; serve the \
+         operand at most {} wide",
+        run.len,
+        run.len,
     ));
     let size!(W) = width;
-    let _ = (m, n);
-    let rows = comptime!(window_rows(&src.place.space, k));
-    // The window read along its rows, `k` running along its lines.
-    let view = src.fragment_matrix_packed::<W>(rows, k);
-    let lines = comptime!(run / width);
+    let view = src.fragment_matrix_packed::<W>(comptime!(run.rows), comptime!(run.k));
+    let lines = comptime!(run.len / width);
     #[unroll]
-    for half in 0..comptime!(halves_of(ident)) {
-        let row = group + comptime!((half * 8) as u32);
+    for half in 0..comptime!(run.halves()) {
+        let at = row + comptime!(half as u32) * HALF_ROWS;
         let mut cells = Array::<Vector<T, W>>::new(lines);
         #[unroll]
         for l in 0..lines {
-            cells[l] = view.read((row, first / comptime!(width as u32) + comptime!(l as u32)));
+            cells[l] = view.read((at, first / comptime!(width as u32) + comptime!(l as u32)));
         }
         #[unroll]
-        for offset in 0..comptime!(run / SLOTS_PER_REGISTER) {
-            // Cells `2 · offset` and the next of the run: instruction `s`, pair `pair`.
-            let cell = comptime!(offset * SLOTS_PER_REGISTER);
-            let (s, pair) = comptime!((cell / SLOTS_PER_UNIT, cell % SLOTS_PER_UNIT / 2));
-            let register = comptime!(s * per_step + register_of(ident, pair, half));
-            let mut vector = Vector::<T, N>::empty();
+        for p in 0..comptime!(run.len / SLOTS_PER_REGISTER) {
+            let cell = comptime!(p * SLOTS_PER_REGISTER);
+            let mut pair = Vector::<T, N>::empty();
             #[unroll]
             for e in 0..SLOTS_PER_REGISTER {
-                let at = comptime!(cell + e);
-                vector.insert(
-                    e,
-                    cells[comptime!(at / width)].extract(comptime!(at % width)),
-                );
+                let c = comptime!(cell + e);
+                pair.insert(e, cells[comptime!(c / width)].extract(comptime!(c % width)));
             }
-            fragment[register] = vector;
+            fragment[comptime!(run.register(cell, half))] = pair;
         }
     }
 }
 
-/// [`load_lane_runs`] of `e2m1` codes under one level of block scales: each run read as the
-/// stored words it is, a load at a time, each word decoded to eight values and multiplied by its
-/// block's scale in `T`, exact under [`lane_runs_refusal`]'s conditions.
+/// [`load_lane_runs`] of `e2m1` codes under one level of block scales: the run read as the stored
+/// words it is, each word decoded to eight values and multiplied by its block's scale in `T`,
+/// exact under [`lane_runs_refusal`]'s conditions.
 #[cube]
-#[allow(clippy::too_many_arguments)]
-fn load_e2m1_runs<T: Numeric, N: Size>(
+fn load_e2m1_run<T: Numeric, N: Size>(
     src: &Tile<T>,
     fragment: &mut Array<Vector<T, N>>,
-    #[comptime] ident: MatrixIdent,
-    #[comptime] shape: (usize, usize, usize),
-    group: u32,
+    row: u32,
     first: u32,
-    #[comptime] run: usize,
-    #[comptime] per_step: usize,
+    #[comptime] run: LaneRun,
 ) {
-    let (_m, _n, k) = comptime!(shape);
     let space = comptime!(src.place.space.clone());
-    // The window's rows are the role's free axis and its columns every digit of `k`, however
-    // many axes spell it.
-    let rows = comptime!(window_rows(&space, k));
-    let axes = comptime!(MatrixAxes::new(&space, rows, k).unwrap_or_else(|no| {
-        panic!("MmaData::load: a lane-run window is a {rows} x {k} matrix: {no:?}")
-    }));
+    let axes = comptime!(
+        MatrixAxes::new(&space, run.rows, run.k).unwrap_or_else(|no| {
+            panic!(
+                "MmaData::load: a lane-run window is a {} x {} matrix: {no:?}",
+                run.rows, run.k
+            )
+        })
+    );
     let load = src.vector_tile();
     let values = comptime!(load.values());
-    // A load lies along `k` alone, its words in `k`'s order: a stored tile whose load also
-    // spans columns would place another column's codes in this unit's run.
+    // A load lies along `k` alone: one that also spans rows would place another row's codes in
+    // this unit's run.
     let along_k = comptime!(
         load.space()
             .axes()
@@ -342,83 +321,62 @@ fn load_e2m1_runs<T: Numeric, N: Size>(
         load.space()
     ));
     comptime!(assert!(
-        values.is_multiple_of(E2M1_PER_WORD) && run.is_multiple_of(values),
-        "MmaData::load: a unit's {run}-value run of `k` reads whole loads of e2m1 words, and this \
-         window is read {values} values a load"
-    ));
-    comptime!(assert!(
-        run.is_multiple_of(E2M1_BLOCK) && k.is_multiple_of(E2M1_BLOCK),
-        "MmaData::load: a unit's {run}-value run of `k` holds whole blocks of sixteen, one scale \
-         each"
+        values.is_multiple_of(E2M1_PER_WORD)
+            && run.len.is_multiple_of(values)
+            && run.len.is_multiple_of(E2M1_SCALE_BLOCK),
+        "MmaData::load: a unit's {}-value run of `k` reads whole loads and whole scale blocks, \
+         and this window is read {values} values a load",
+        run.len,
     ));
     let size!(WP) = comptime!(values / E2M1_PER_WORD);
     let words = src.nd_words::<WP>(comptime!(Guard::Checked));
     let factor = src.innermost_factor();
     #[unroll]
-    for half in 0..comptime!(halves_of(ident)) {
-        // The window's rows are the role's free axis: an `A`'s rows, a `B`'s columns.
-        let row = group + comptime!((half * 8) as u32);
-        let mut scales = Array::<T>::new(comptime!(run / E2M1_BLOCK));
+    for half in 0..comptime!(run.halves()) {
+        let at = row + comptime!(half as u32) * HALF_ROWS;
+        let mut scales = Array::<T>::new(comptime!(run.len / E2M1_SCALE_BLOCK));
         #[unroll]
-        for b in 0..comptime!(run / E2M1_BLOCK) {
-            let at = TileMatrix::value_coords(
-                row,
-                first + comptime!((b * E2M1_BLOCK) as u32),
-                0usize,
-                &space,
-                axes,
-                1usize,
-            );
-            scales[b] = T::cast_from(factor.at_coords(&at, comptime!(space.clone())));
+        for b in 0..comptime!(run.len / E2M1_SCALE_BLOCK) {
+            let col = first + comptime!((b * E2M1_SCALE_BLOCK) as u32);
+            let coords = TileMatrix::value_coords(at, col, 0usize, &space, axes, 1usize);
+            scales[b] = T::cast_from(factor.at_coords(&coords, comptime!(space.clone())));
         }
         #[unroll]
-        for l in 0..comptime!(run / values) {
-            let at = TileMatrix::value_coords(
-                row,
-                first + comptime!((l * values) as u32),
-                0usize,
-                &space,
-                axes,
-                1usize,
-            );
-            let line = words.read(load.index(&at, &space));
+        for l in 0..comptime!(run.len / values) {
+            let col = first + comptime!((l * values) as u32);
+            let coords = TileMatrix::value_coords(at, col, 0usize, &space, axes, 1usize);
+            let line = words.read(load.index(&coords, &space));
             #[unroll]
             for w in 0..comptime!(values / E2M1_PER_WORD) {
-                let word_start = comptime!(l * values + w * E2M1_PER_WORD);
+                let word = comptime!(l * values + w * E2M1_PER_WORD);
                 let codes = Vector::<e2m1x2, Const<4>>::reinterpret(line.extract(w));
                 let decoded = Vector::<T, Const<8>>::cast_from(codes)
-                    * Vector::<T, Const<8>>::new(scales[comptime!(word_start / E2M1_BLOCK)]);
+                    * Vector::<T, Const<8>>::new(scales[comptime!(word / E2M1_SCALE_BLOCK)]);
                 #[unroll]
                 for p in 0..comptime!(E2M1_PER_WORD / SLOTS_PER_REGISTER) {
-                    let cell = comptime!(word_start + p * SLOTS_PER_REGISTER);
-                    let (s, pair) = comptime!((cell / SLOTS_PER_UNIT, cell % SLOTS_PER_UNIT / 2));
-                    let register = comptime!(s * per_step + register_of(ident, pair, half));
-                    let mut vector = Vector::<T, N>::empty();
+                    let mut pair = Vector::<T, N>::empty();
                     #[unroll]
                     for e in 0..SLOTS_PER_REGISTER {
-                        vector.insert(e, decoded.extract(comptime!(p * SLOTS_PER_REGISTER + e)));
+                        pair.insert(e, decoded.extract(comptime!(p * SLOTS_PER_REGISTER + e)));
                     }
-                    fragment[register] = vector;
+                    let cell = comptime!(word + p * SLOTS_PER_REGISTER);
+                    fragment[comptime!(run.register(cell, half))] = pair;
                 }
             }
         }
     }
 }
 
-/// `acc += lhs · rhs` over fragments `steps` instructions deep, each `m × n × depth`, issued in
-/// turn into the one accumulator.
+/// `acc += lhs · rhs` over fragments `steps` instructions of `def` deep, issued in turn into the
+/// one accumulator.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn mma_execute_lane_runs<L: Numeric, R: Numeric, A: Numeric>(
+    def: &MmaDefinition<L, R, A>,
     lhs: &Array<Vector<L, NL>>,
     rhs: &Array<Vector<R, NR>>,
     acc: &mut Array<Vector<A, NA>>,
-    #[comptime] m: usize,
-    #[comptime] n: usize,
-    #[comptime] depth: usize,
     #[comptime] steps: usize,
 ) {
-    let def = MmaDefinition::<L, R, A>::new(m, n, depth);
     let a_registers = def.vectors_per_lane(MatrixIdent::A);
     let b_registers = def.vectors_per_lane(MatrixIdent::B);
     #[unroll]
@@ -441,14 +399,41 @@ pub(crate) fn mma_execute_lane_runs<L: Numeric, R: Numeric, A: Numeric>(
 mod tests {
     use super::*;
 
-    /// A unit's slots of one instruction land at offsets `4s + j` of its run, in the order the
-    /// registers hold them: an `A`'s two pairs in registers 0/2 (rows `g`) and 1/3 (rows `g + 8`).
+    /// A run two instructions deep on the 16-bit `m16n8k16` layout.
+    fn two_steps(ident: MatrixIdent, per_step: usize) -> LaneRun {
+        LaneRun {
+            ident,
+            len: 2 * SLOTS_PER_UNIT,
+            per_step,
+            rows: 16,
+            k: 32,
+        }
+    }
+
+    /// Every register of every instruction receives exactly one pair of the run, an `A`'s first
+    /// pair of `k` in registers 0 (rows `g`) and 1 (rows `g + 8`).
     #[test]
-    fn a_registers_pairs_alternate_their_rows() {
-        let a: Vec<_> = (0..2)
-            .flat_map(|pair| (0..2).map(move |half| register_of(MatrixIdent::A, pair, half)))
-            .collect();
-        assert_eq!(a, vec![0, 1, 2, 3]);
-        assert_eq!(register_of(MatrixIdent::B, 1, 0), 1);
+    fn each_register_takes_one_pair_of_the_run() {
+        for (ident, per_step) in [(MatrixIdent::A, 4), (MatrixIdent::B, 2)] {
+            let run = two_steps(ident, per_step);
+            let mut registers: Vec<_> = (0..run.halves())
+                .flat_map(|half| {
+                    (0..run.len)
+                        .step_by(SLOTS_PER_REGISTER)
+                        .map(move |cell| run.register(cell, half))
+                })
+                .collect();
+            registers.sort();
+            assert_eq!(
+                registers,
+                (0..2 * per_step).collect::<Vec<_>>(),
+                "{ident:?}"
+            );
+        }
+        let a = two_steps(MatrixIdent::A, 4);
+        assert_eq!(
+            (a.register(0, 0), a.register(0, 1), a.register(2, 0)),
+            (0, 1, 2)
+        );
     }
 }

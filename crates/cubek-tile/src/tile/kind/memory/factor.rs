@@ -27,7 +27,7 @@ pub(crate) struct FactorLevel {
     /// ([`FactorExpand::__expand_word_at_method`]); widened to a scale it means nothing.
     pub(crate) words: bool,
     /// How the scales sit in their buffer: what says whether a scale times a value it scales is
-    /// exact in a 16-bit float ([`lane_runs_here`](crate::tile::kind::plane::mma::lane_runs_here)).
+    /// exact in a 16-bit float ([`lane_runs_refusal`](crate::tile::kind::plane::mma::lane_runs_refusal)).
     pub(crate) stored: Packing,
 }
 

@@ -780,7 +780,8 @@ pub(crate) fn mma_execute<L: Numeric, R: Numeric, A: Numeric>(
 ) {
     let depth = instruction_depth::<L>(m, n, k);
     if comptime!(depth < k) {
-        mma_execute_lane_runs::<L, R, A>(lhs, rhs, acc, m, n, depth, comptime!(k / depth));
+        let def = MmaDefinition::<L, R, A>::new(m, n, depth);
+        mma_execute_lane_runs::<L, R, A>(&def, lhs, rhs, acc, comptime!(k / depth));
     } else {
         let def = MmaDefinition::<L, R, A>::new(m, n, k);
         let out = def.execute(lhs, rhs, &*acc);
