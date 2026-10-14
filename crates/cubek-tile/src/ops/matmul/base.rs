@@ -160,8 +160,12 @@ impl<E: Numeric> PlaneTile<E> {
                 | TileKind::TmaGmem(_)
                 | TileKind::Procedural(_)
                 | TileKind::Lines(_) => {
-                    let folded = comptime!(d.fold > 1);
-                    strided_2d(lhs, rhs, comptime!(out.clone()), folded);
+                    let rhs_along_k = comptime!(
+                        lhs.place
+                            .space
+                            .contains(rhs.place.space.axis_at(rhs.place.space.rank() - 1))
+                    );
+                    strided_2d(lhs, rhs, comptime!(out.clone()), rhs_along_k);
                     d.mma(lhs, rhs, out)
                 }
             },

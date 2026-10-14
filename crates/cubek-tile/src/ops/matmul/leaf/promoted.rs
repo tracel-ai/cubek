@@ -40,7 +40,7 @@ impl<T: Numeric> RegisterData<T> {
                 .contains(rhs.place.space.axis_at(rhs.place.space.rank() - 1))
         );
         comptime!(assert!(
-            lined_along_k == (fold > 1),
+            fold == if lined_along_k { vw } else { 1 },
             "RegisterData::mma: the block's lines hold {fold} partials of a cell but the rhs lines \
              along {}; open the block against the operands it contracts",
             if lined_along_k {
@@ -65,7 +65,7 @@ impl<T: Numeric> RegisterData<T> {
         let cols = comptime!(acc_axes.cols(&out));
         let lhs_axes =
             comptime!(MatrixAxes::new(&lhs.place.space, mr, kc).unwrap_or_else(|e| panic!("{e}")));
-        let rhs_axes = comptime!(if fold > 1 {
+        let rhs_axes = comptime!(if lined_along_k {
             MatrixAxes::new(&rhs.place.space, cols, kc).unwrap_or_else(|e| panic!("{e}"))
         } else {
             MatrixAxes::new(&rhs.place.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
@@ -103,6 +103,7 @@ impl<T: Numeric> RegisterData<T> {
             &mut self.data,
             lw,
             fold,
+            lined_along_k,
             comptime!(rhs_load.values() / vw),
             mr,
             nr,
