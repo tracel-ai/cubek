@@ -9,7 +9,7 @@ use crate::*;
 
 #[cube]
 pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
-    acc: &mut RegisterData<Acc>,
+    acc: &mut RegisterData,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
@@ -28,7 +28,7 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
 
 #[cube]
 fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
-    acc: &mut RegisterData<Acc>,
+    acc: &mut RegisterData,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
@@ -44,6 +44,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
         "reduce: RegisterData shape mismatch with accumulator space"
     ));
     let in_view = input.nd_packed::<V>(comptime!(Guard::Checked));
+    let data = acc.data.at_mut::<Acc>();
 
     #[unroll]
     for a in 0..total_acc {
@@ -52,7 +53,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
 
         let line_idx = comptime!(a / acc.vector_size);
         let component_idx = comptime!(a % acc.vector_size);
-        let seed = acc.data[line_idx].extract(comptime!(component_idx));
+        let seed = data[line_idx].extract(comptime!(component_idx));
 
         let curr_val: Acc = element::<Acc, In, V>(
             &in_view,
@@ -65,9 +66,9 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
             monoid,
         );
 
-        let mut vec_line = acc.data[line_idx];
+        let mut vec_line = data[line_idx];
         vec_line.insert(comptime!(component_idx), curr_val);
-        acc.data[line_idx] = vec_line;
+        data[line_idx] = vec_line;
     }
 }
 

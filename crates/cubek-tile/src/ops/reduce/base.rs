@@ -45,7 +45,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
             reduce::memory::<Acc, In>(g, input, space, monoid);
         }
         TileKind::PlaneTile(t) => {
-            reduce_plane_tile(t, input, space, monoid);
+            reduce_plane_tile::<Acc, In>(t, input, space, monoid);
         }
         TileKind::PlanePartition(p) => {
             comptime!(assert!(
@@ -53,7 +53,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
                 "reduce_leaf: a multi-tile partition must be contracted at its partition level"
             ));
             let mut t = p.at(0usize, 0usize);
-            reduce_plane_tile(&mut t, input, space, monoid);
+            reduce_plane_tile::<Acc, In>(&mut t, input, space, monoid);
         }
         TileKind::TmaGmem(_) => panic!("reduce: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) | TileKind::Lines(_) => {
@@ -64,14 +64,14 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
 
 #[cube]
 fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
-    tile: &mut PlaneTile<Acc>,
+    tile: &mut PlaneTile,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
 ) {
     match tile {
         PlaneTile::Registers(d) => {
-            reduce::register_data(d, input, acc_space, monoid);
+            reduce::register_data::<Acc, In>(d, input, acc_space, monoid);
         }
         PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => {
             panic!(

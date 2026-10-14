@@ -10,9 +10,9 @@ use crate::ops::matmul::leaf::Side;
 use crate::*;
 
 #[cube]
-impl<A: Numeric> CmmaData<A> {
+impl CmmaData {
     /// Tensor-core contraction `self += lhs · rhs`, each factor times its scales.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<A: Numeric, EL: Numeric, ER: Numeric>(
         &self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
@@ -23,7 +23,12 @@ impl<A: Numeric> CmmaData<A> {
                 (PlaneTile::Cmma(a), PlaneTile::Cmma(b)) => {
                     lhs.refuse_factor("PlaneTile::Mma");
                     rhs.refuse_factor("PlaneTile::Mma");
-                    cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
+                    cmma::execute(
+                        a.fragment.matrix::<EL>(),
+                        b.fragment.matrix::<ER>(),
+                        self.fragment.matrix::<A>(),
+                        self.fragment.matrix::<A>(),
+                    )
                 }
                 _ => panic!("cmma operands must be cmma fragments"),
             },
@@ -60,7 +65,12 @@ impl<A: Numeric> CmmaData<A> {
                 };
                 lhs.load(&mut a_frag, comptime!(a_read));
                 rhs.load(&mut b_frag, comptime!(b_read));
-                cmma::execute(&a_frag, &b_frag, &self.matrix, &self.matrix);
+                cmma::execute(
+                    &a_frag,
+                    &b_frag,
+                    self.fragment.matrix::<A>(),
+                    self.fragment.matrix::<A>(),
+                );
             }
         }
     }

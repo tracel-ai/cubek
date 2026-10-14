@@ -258,7 +258,7 @@ impl Memory {
         source: ComptimeOption<SourceWindow>,
     ) -> Tile<T> {
         // Held at the element it is declared at: `u32` words under a packing.
-        let backing = Backing::new_Buffer(RawBuffer::of::<H>(unsafe {
+        let backing = Backing::new_Buffer(Raw::<Slice>::of::<H>(unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<H>()
                 .as_boxed_unchecked()

@@ -124,8 +124,8 @@ impl Descent {
         rhs: &Tile<Rhs>,
         #[comptime] instruction: Instruction,
     ) {
-        let lhs = PlanePartition::<Lhs>::operand(lhs, acc, instruction);
-        let rhs = PlanePartition::<Rhs>::operand(rhs, acc, instruction);
+        let lhs = PlanePartition::operand(lhs, acc, instruction);
+        let rhs = PlanePartition::operand(rhs, acc, instruction);
         for cell in acc.walk().unrolled() {
             let mut acc_cell = acc.at(&cell);
             Self::contract::<E, Lhs, Rhs>(&mut acc_cell, &lhs.at(&cell), &rhs.at(&cell));
@@ -142,10 +142,10 @@ impl Descent {
         let space = comptime!(acc.place.space.clone());
         let tile_kind = &mut acc.kind;
         match tile_kind {
-            TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
+            TileKind::PlaneTile(t) => t.mma::<E, Lhs, Rhs>(lhs, rhs, space),
             TileKind::PlanePartition(p) => {
                 let mut t = p.at(0usize, 0usize);
-                t.mma(lhs, rhs, space)
+                t.mma::<E, Lhs, Rhs>(lhs, rhs, space)
             }
             TileKind::Memory(g) => {
                 let contraction = g.stated_contraction();

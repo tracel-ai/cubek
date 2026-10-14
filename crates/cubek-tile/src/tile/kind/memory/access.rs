@@ -158,7 +158,7 @@ impl Memory {
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match &mut self.store.backing {
             Backing::Buffer(buffer) => buffer
-                .buffer_mut::<T>()
+                .at_mut::<T>()
                 .as_vectorized_mut()
                 .with_vector_size_mut::<W>()
                 .view_mut(layout),
@@ -180,7 +180,7 @@ impl Memory {
     ) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.store.backing {
             Backing::Buffer(buffer) => buffer
-                .buffer::<T>()
+                .at::<T>()
                 .as_vectorized()
                 .with_vector_size::<W>()
                 .view(layout),

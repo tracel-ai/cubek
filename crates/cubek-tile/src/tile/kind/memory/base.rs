@@ -72,7 +72,7 @@ pub(crate) enum AddressSpace {
 #[allow(dead_code)] // Built through the derived `new_*` expand constructors.
 pub(crate) enum Backing {
     /// Bytes this kernel addresses directly, grouped into lines at `vector_size`.
-    Buffer(RawBuffer),
+    Buffer(Raw<Slice>),
     /// A write-only destination that is not memory (an erased tensor).
     WriteCall(RawCall<WriteOnly>),
     /// A read-only producer that is not memory.
@@ -155,7 +155,7 @@ impl Store {
     #[allow(clippy::borrowed_box)]
     pub(crate) fn buffer<T: Numeric>(&self) -> &Box<[T]> {
         match &self.backing {
-            Backing::Buffer(buffer) => buffer.buffer::<T>(),
+            Backing::Buffer(buffer) => buffer.at::<T>(),
             Backing::WriteCall(_) => panic!(
                 "Store::buffer: this tile's backing is written through a call, which has no \
                  address, it can only be written through its layout"
@@ -190,7 +190,7 @@ impl Store {
     #[allow(clippy::borrowed_box)]
     pub(crate) fn buffer_mut<T: Numeric>(&mut self) -> &mut Box<[T]> {
         match &mut self.backing {
-            Backing::Buffer(buffer) => buffer.buffer_mut::<T>(),
+            Backing::Buffer(buffer) => buffer.at_mut::<T>(),
             Backing::WriteCall(_) => panic!(
                 "Store::buffer_mut: this tile's backing is written through a call, which has no \
                  address, it can only be written through its layout"

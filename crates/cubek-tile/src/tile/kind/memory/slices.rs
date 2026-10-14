@@ -77,7 +77,7 @@ impl Memory {
             while s < length {
                 let at = i * length + s;
                 let cell =
-                    AxisSlices::<E>::exp_minus_cell(view.read(at).extract(0usize), slices[i]);
+                    AxisSlices::exp_minus_cell::<E>(view.read(at).extract(0usize), slices[i]);
                 view.write(at, Vector::cast_from(cell));
                 s += PLANE_DIM as usize;
             }

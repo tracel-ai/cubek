@@ -40,9 +40,10 @@ impl Accumulation {
 /// An `mr × nr` block of `RA`-wide register accumulators, the software [`PlaneTile`].
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) struct RegisterData<T: Numeric> {
-    /// `mr * nr` lines, each `Vector<T, RA>` (width registered in [`alloc`](Self::alloc)).
-    pub(crate) data: Array<Vector<T, RA>>,
+pub(crate) struct RegisterData {
+    /// `mr * nr` lines, each `Vector<T, RA>` at the element `T` the block holds (width
+    /// registered in [`alloc`](Self::alloc)).
+    pub(crate) data: Raw<Registers<RA>>,
     /// Physical line width, the numeric twin of `RA`; comptime, for the line arithmetic.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
@@ -77,11 +78,11 @@ fn register_block_size(#[comptime] vector_size: usize) {
 }
 
 #[cube]
-impl<T: Numeric> RegisterData<T> {
+impl RegisterData {
     /// An uninitialized `m × n` block of `vector_size`-wide lines, contracting an rhs that brings
     /// `fold` values of a cell a step. `n` must be a whole number of lines.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn alloc(
+    pub(crate) fn alloc<T: Numeric>(
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] axes: MatrixAxes,
@@ -89,7 +90,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] fold: usize,
         #[comptime] config: RegisterBlock,
         #[comptime] accumulation: Accumulation,
-    ) -> RegisterData<T> {
+    ) -> RegisterData {
         comptime!(assert!(
             fold == 1 || vector_size == 1,
             "RegisterData::alloc: a block contracting {fold} values of a cell a step sums them into \
@@ -101,8 +102,8 @@ impl<T: Numeric> RegisterData<T> {
         ));
         register_block_size(vector_size);
         let nr = comptime!(n / vector_size);
-        RegisterData::<T> {
-            data: Array::<Vector<T, RA>>::new(comptime!(m * nr)),
+        RegisterData {
+            data: Raw::<Registers<RA>>::of::<T>(Array::<Vector<T, RA>>::new(comptime!(m * nr))),
             vector_size,
             fold,
             mr: m,
@@ -113,21 +114,23 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
-    pub(crate) fn zero(&mut self) {
-        self.init(T::from_int(0));
+    pub(crate) fn zero<T: Numeric>(&mut self) {
+        self.init::<T>(T::from_int(0));
     }
 
-    pub(crate) fn init(&mut self, val: T) {
+    pub(crate) fn init<T: Numeric>(&mut self, val: T) {
+        let data = self.data.at_mut::<T>();
         let count = comptime!(self.mr * self.nr);
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for i in 0..count {
-            self.data[i] = Vector::<T, RA>::cast_from(val);
+            data[i] = Vector::<T, RA>::cast_from(val);
         }
     }
 
     /// Add `src`'s block (same grid and fold) into this one, casting each line up to `T`.
-    pub(crate) fn add_cast_from<S: Numeric>(&mut self, src: &RegisterData<S>) {
+    pub(crate) fn add_cast_from<T: Numeric, S: Numeric>(&mut self, src: &RegisterData) {
+        let data = self.data.at_mut::<T>();
         comptime!(assert!(
             self.mr == src.mr && self.nr == src.nr && self.fold == src.fold,
             "RegisterData::add_cast_from: the blocks are {}x{} fold {} and {}x{} fold {}; a \
@@ -143,48 +146,51 @@ impl<T: Numeric> RegisterData<T> {
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for i in 0..count {
-            self.data[i] += Vector::<T, RA>::cast_from(src.data[i]);
+            data[i] += Vector::<T, RA>::cast_from(src.data.at::<S>()[i]);
         }
     }
 
     /// `self[i, :] *= factors[first + i]` for every slice `i` along the block's columns, in the
     /// registers that hold it.
-    pub(crate) fn mul_along(&mut self, factors: &Array<T>, #[comptime] first: usize) {
+    pub(crate) fn mul_along<T: Numeric>(&mut self, factors: &Array<T>, #[comptime] first: usize) {
+        let data = self.data.at_mut::<T>();
         #[unroll]
         for r in 0..self.mr {
             let factor = Vector::<T, RA>::cast_from(factors[first + r]);
             #[unroll]
             for n in 0..self.nr {
-                self.data[r * self.nr + n] *= factor;
+                data[r * self.nr + n] *= factor;
             }
         }
     }
 
     /// Multiply every partial this block holds by `factor`.
-    pub(crate) fn scale(&mut self, factor: T) {
+    pub(crate) fn scale<T: Numeric>(&mut self, factor: T) {
+        let data = self.data.at_mut::<T>();
         let count = comptime!(self.mr * self.nr);
         let line = Vector::<T, RA>::cast_from(factor);
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for i in 0..count {
-            self.data[i] *= line;
+            data[i] *= line;
         }
     }
 }
 
 #[cube]
-impl<T: Numeric> RegisterData<T> {
+impl RegisterData {
     /// Write the block into `mem`'s window, casting down to its element.
-    pub(crate) fn store_cast_window<Out: Numeric>(
+    pub(crate) fn store_cast_window<T: Numeric, Out: Numeric>(
         &self,
         mem: &mut Memory,
         #[comptime] space: Space,
     ) {
-        self.drain::<Out, RA>(mem, space);
+        self.drain::<T, Out, RA>(mem, space);
     }
 
     /// [`store_cast_window`](Self::store_cast_window) into a sink of `A`-wide cells.
-    fn drain<Out: Numeric, A: Size>(&self, mem: &mut Memory, #[comptime] space: Space) {
+    fn drain<T: Numeric, Out: Numeric, A: Size>(&self, mem: &mut Memory, #[comptime] space: Space) {
+        let data = self.data.at::<T>();
         let mem_write = comptime!(mem.access.write);
         let unit_share = comptime!(mem.unit_share);
         let monoid = comptime!(self.accumulation.monoid());
@@ -198,8 +204,7 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let cell =
-                            Vector::<Out, A>::cast_from(self.data[comptime!(i * self.nr + n)]);
+                        let cell = Vector::<Out, A>::cast_from(data[comptime!(i * self.nr + n)]);
                         sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
                     }
                 }
@@ -210,8 +215,7 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let cell =
-                            Vector::<Out, A>::cast_from(self.data[comptime!(i * self.nr + n)]);
+                        let cell = Vector::<Out, A>::cast_from(data[comptime!(i * self.nr + n)]);
                         if UNIT_POS_X == 0 {
                             sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
                         }
@@ -225,7 +229,7 @@ impl<T: Numeric> RegisterData<T> {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
                         let combined = UnitShare::Plane
-                            .reduce::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
+                            .reduce::<Vector<T, RA>>(data[comptime!(i * self.nr + n)], monoid);
                         let cell = Vector::<Out, A>::cast_from(combined);
                         if UNIT_POS_X == 0 {
                             sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
@@ -240,7 +244,7 @@ impl<T: Numeric> RegisterData<T> {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
                         let combined = comptime!(UnitShare::Group { unit_bits })
-                            .reduce::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
+                            .reduce::<Vector<T, RA>>(data[comptime!(i * self.nr + n)], monoid);
                         let cell = Vector::<Out, A>::cast_from(combined);
                         let unit_in_group = UNIT_POS_X & comptime!(unit_bits as u32);
                         if unit_in_group == 0 {
@@ -257,41 +261,43 @@ impl<T: Numeric> RegisterData<T> {
 /// [`AxisSlices`] runs on a register block. The block holds whole cells, never a line of partials
 /// of one.
 #[cube]
-impl<E: Float> RegisterData<E> {
+impl RegisterData {
     /// `self[i, s] = self[i, s] · scale + bias[i, s]` at every cell, the bias read at the cell of
     /// a tile over `space` that the block holds.
-    pub(crate) fn scale_add_along(
+    pub(crate) fn scale_add_along<E: Float>(
         &mut self,
         scale: E,
         bias: &Procedural,
         #[comptime] space: Space,
     ) {
+        let data = self.data.at_mut::<E>();
         #[unroll]
         for r in 0..self.mr {
             #[unroll]
             for n in 0..self.nr {
                 let at = r * self.nr + n;
-                let mut line = self.data[at];
+                let mut line = data[at];
                 #[unroll]
                 for j in 0..self.vector_size {
                     let column = n * self.vector_size + j;
                     let cell = bias.value_at::<E>(r as u32, column as u32, space.clone());
                     line.insert(j, line.extract(j) * scale + cell);
                 }
-                self.data[at] = line;
+                data[at] = line;
             }
         }
     }
 
     /// Each slice's max, starting from `seed`'s.
-    pub(crate) fn maxima_along(&self, seed: &Array<E>) -> Array<E> {
+    pub(crate) fn maxima_along<E: Float>(&self, seed: &Array<E>) -> Array<E> {
+        let data = self.data.at::<E>();
         let mut maxima = Array::<E>::new(self.mr);
         #[unroll]
         for r in 0..self.mr {
             let mut slice = seed[r];
             #[unroll]
             for n in 0..self.nr {
-                let line = self.data[r * self.nr + n];
+                let line = data[r * self.nr + n];
                 #[unroll]
                 for j in 0..self.vector_size {
                     slice = max(slice, line.extract(j));
@@ -303,34 +309,36 @@ impl<E: Float> RegisterData<E> {
     }
 
     /// `self[i, s] = exp(self[i, s] − slices[i])` ([`AxisSlices::exp_minus_cell`]).
-    pub(crate) fn exp_minus_along(&mut self, slices: &Array<E>) {
+    pub(crate) fn exp_minus_along<E: Float>(&mut self, slices: &Array<E>) {
+        let data = self.data.at_mut::<E>();
         #[unroll]
         for r in 0..self.mr {
             #[unroll]
             for n in 0..self.nr {
                 let at = r * self.nr + n;
-                let mut line = self.data[at];
+                let mut line = data[at];
                 #[unroll]
                 for j in 0..self.vector_size {
                     line.insert(
                         j,
-                        AxisSlices::<E>::exp_minus_cell(line.extract(j), slices[r]),
+                        AxisSlices::exp_minus_cell::<E>(line.extract(j), slices[r]),
                     );
                 }
-                self.data[at] = line;
+                data[at] = line;
             }
         }
     }
 
     /// Each slice's sum.
-    pub(crate) fn sums_along(&self) -> Array<E> {
+    pub(crate) fn sums_along<E: Float>(&self) -> Array<E> {
+        let data = self.data.at::<E>();
         let mut sums = Array::<E>::new(self.mr);
         #[unroll]
         for r in 0..self.mr {
             let mut slice = E::from_int(0);
             #[unroll]
             for n in 0..self.nr {
-                let line = self.data[r * self.nr + n];
+                let line = data[r * self.nr + n];
                 #[unroll]
                 for j in 0..self.vector_size {
                     slice += line.extract(j);

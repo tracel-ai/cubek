@@ -224,8 +224,8 @@ impl<E: Float> OnlineSoftmax<E> {
             let before_max = select(first, E::min_value(), stored_max[i]);
             let before_sum = select(first, E::from_int(0), stored_sum[i]);
             let merged = before_max.max(self.m[i]);
-            own[i] = AxisSlices::<E>::exp_minus_cell(self.m[i], merged);
-            carried[i] = AxisSlices::<E>::exp_minus_cell(before_max, merged);
+            own[i] = AxisSlices::exp_minus_cell::<E>(self.m[i], merged);
+            carried[i] = AxisSlices::exp_minus_cell::<E>(before_max, merged);
             self.l[i] = carried[i] * before_sum + own[i] * self.l[i];
             self.m[i] = merged;
         }

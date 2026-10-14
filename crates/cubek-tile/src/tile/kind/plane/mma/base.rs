@@ -15,8 +15,8 @@ use crate::*;
 /// `Clone` duplicates the handle, not the registers.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) struct MmaData<T: Numeric> {
-    pub(crate) fragment: MmaFragment<T>,
+pub(crate) struct MmaData {
+    pub(crate) fragment: MmaFragment,
     #[cube(comptime)]
     pub m: usize,
     #[cube(comptime)]
@@ -29,17 +29,18 @@ pub(crate) struct MmaData<T: Numeric> {
     pub io: MmaIo,
 }
 
-/// One role's register array, each role at its own width (`NL`/`NR`/`NA`).
+/// One role's register array, each role at its own width (`NL`/`NR`/`NA`), at the element `T`
+/// the fragment holds.
 #[expect(
     dead_code,
     reason = "built through the expand type's generated constructors"
 )]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) enum MmaFragment<T: Numeric> {
-    Lhs(Array<Vector<T, NL>>),
-    Rhs(Array<Vector<T, NR>>),
-    Acc(Array<Vector<T, NA>>),
+pub(crate) enum MmaFragment {
+    Lhs(Raw<Registers<NL>>),
+    Rhs(Raw<Registers<NR>>),
+    Acc(Raw<Registers<NA>>),
     /// A block-scaled `A`: its `e2m1` values as the instruction takes them, two a byte, and the
     /// `e4m3` scales of the row this unit's scale register serves, the one register an array of
     /// one holds, so a handle to the fragment loads the registers the fragment holds.
@@ -49,20 +50,20 @@ pub(crate) enum MmaFragment<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> MmaData<T> {
+impl MmaData {
     /// Allocate an accumulator fragment.
-    pub(crate) fn acc(
+    pub(crate) fn acc<T: Numeric>(
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
-    ) -> MmaData<T> {
+    ) -> MmaData {
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         register_acc_size::<T>(&def);
         let count = def.vectors_per_lane(MatrixIdent::Accumulator);
-        MmaData::<T> {
-            fragment: MmaFragment::new_Acc(Array::new(count)),
+        MmaData {
+            fragment: MmaFragment::new_Acc(Raw::<Registers<NA>>::of::<T>(Array::new(count))),
             m,
             n,
             k,
@@ -72,18 +73,18 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Allocate an `A`-role (lhs) operand fragment.
-    pub(crate) fn lhs(
+    pub(crate) fn lhs<T: Numeric>(
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
-    ) -> MmaData<T> {
+    ) -> MmaData {
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         register_lhs_size::<T>(&def);
         let count = def.vectors_per_lane(MatrixIdent::A);
-        MmaData::<T> {
-            fragment: MmaFragment::new_Lhs(Array::new(count)),
+        MmaData {
+            fragment: MmaFragment::new_Lhs(Raw::<Registers<NL>>::of::<T>(Array::new(count))),
             m,
             n,
             k,
@@ -93,18 +94,18 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Allocate a `B`-role (rhs) operand fragment.
-    pub(crate) fn rhs(
+    pub(crate) fn rhs<T: Numeric>(
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
-    ) -> MmaData<T> {
+    ) -> MmaData {
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         register_rhs_size::<T>(&def);
         let count = def.vectors_per_lane(MatrixIdent::B);
-        MmaData::<T> {
-            fragment: MmaFragment::new_Rhs(Array::new(count)),
+        MmaData {
+            fragment: MmaFragment::new_Rhs(Raw::<Registers<NR>>::of::<T>(Array::new(count))),
             m,
             n,
             k,
@@ -115,7 +116,7 @@ impl<T: Numeric> MmaData<T> {
 
     /// Allocate an operand fragment in role `ident`: block-scaled where `block_scaled` says the
     /// operand contracts through the device's block-scaled instruction ([`block_scales_here`]).
-    pub(crate) fn operand(
+    pub(crate) fn operand<T: Numeric>(
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -123,11 +124,11 @@ impl<T: Numeric> MmaData<T> {
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
         #[comptime] block_scaled: bool,
-    ) -> MmaData<T> {
+    ) -> MmaData {
         match comptime!((ident, block_scaled)) {
-            (_, true) => MmaData::<T>::block_scaled(ident, m, n, k, layout, io),
-            (MatrixIdent::A, false) => MmaData::<T>::lhs(m, n, k, layout, io),
-            (MatrixIdent::B, false) => MmaData::<T>::rhs(m, n, k, layout, io),
+            (_, true) => MmaData::block_scaled(ident, m, n, k, layout, io),
+            (MatrixIdent::A, false) => MmaData::lhs::<T>(m, n, k, layout, io),
+            (MatrixIdent::B, false) => MmaData::rhs::<T>(m, n, k, layout, io),
             (MatrixIdent::Accumulator, false) => {
                 panic!("MmaData::operand: an accumulator is not an operand")
             }
@@ -144,7 +145,7 @@ impl<T: Numeric> MmaData<T> {
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
-    ) -> MmaData<T> {
+    ) -> MmaData {
         let def = block_scaled_definition::<f32>(m, n, k);
         register_block_scaled_sizes(&def, ident);
         let fragment = match comptime!(ident) {
@@ -160,7 +161,7 @@ impl<T: Numeric> MmaData<T> {
                 panic!("MmaData::block_scaled: an accumulator carries no scales")
             }
         };
-        MmaData::<T> {
+        MmaData {
             fragment,
             m,
             n,
@@ -171,11 +172,11 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Zero the fragment, whatever the role.
-    pub(crate) fn zero(&mut self) {
+    pub(crate) fn zero<T: Numeric>(&mut self) {
         match &mut self.fragment {
-            MmaFragment::Lhs(f) => fill_registers(f, T::from_int(0)),
-            MmaFragment::Rhs(f) => fill_registers(f, T::from_int(0)),
-            MmaFragment::Acc(f) => fill_registers(f, T::from_int(0)),
+            MmaFragment::Lhs(f) => fill_registers(f.at_mut::<T>(), T::from_int(0)),
+            MmaFragment::Rhs(f) => fill_registers(f.at_mut::<T>(), T::from_int(0)),
+            MmaFragment::Acc(f) => fill_registers(f.at_mut::<T>(), T::from_int(0)),
             MmaFragment::LhsBlockScaled(..) | MmaFragment::RhsBlockScaled(..) => {
                 panic!("MmaData::zero: a block-scaled operand is loaded, never zeroed")
             }
@@ -184,9 +185,10 @@ impl<T: Numeric> MmaData<T> {
 
     /// Multiply every cell of this (accumulator) fragment by `factor`: its registers are the
     /// unit's own cells, so the scale needs no bounce.
-    pub(crate) fn scale(&mut self, factor: T) {
+    pub(crate) fn scale<T: Numeric>(&mut self, factor: T) {
         match &mut self.fragment {
             MmaFragment::Acc(f) => {
+                let f = f.at_mut::<T>();
                 let factor = Vector::<T, NA>::cast_from(factor);
                 #[unroll]
                 for i in 0..f.len() {
@@ -203,7 +205,7 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Fill this fragment from `src`'s window by the role's transport.
-    pub(crate) fn load_window(&mut self, src: &Tile<T>) {
+    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile<T>) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -211,11 +213,33 @@ impl<T: Numeric> MmaData<T> {
         let io = comptime!(self.io);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         match &mut self.fragment {
-            MmaFragment::Lhs(f) => load_fragment(src, f, &def, MatrixIdent::A, layout, io, (m, k)),
-            MmaFragment::Rhs(f) => load_fragment(src, f, &def, MatrixIdent::B, layout, io, (k, n)),
-            MmaFragment::Acc(f) => {
-                load_fragment(src, f, &def, MatrixIdent::Accumulator, layout, io, (m, n))
-            }
+            MmaFragment::Lhs(f) => load_fragment(
+                src,
+                f.at_mut::<T>(),
+                &def,
+                MatrixIdent::A,
+                layout,
+                io,
+                (m, k),
+            ),
+            MmaFragment::Rhs(f) => load_fragment(
+                src,
+                f.at_mut::<T>(),
+                &def,
+                MatrixIdent::B,
+                layout,
+                io,
+                (k, n),
+            ),
+            MmaFragment::Acc(f) => load_fragment(
+                src,
+                f.at_mut::<T>(),
+                &def,
+                MatrixIdent::Accumulator,
+                layout,
+                io,
+                (m, n),
+            ),
             MmaFragment::LhsBlockScaled(values, scales) => {
                 load_block_scaled(src, values, scales, MatrixIdent::A, layout, io, (m, n, k))
             }
@@ -226,12 +250,12 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's.
-    pub(crate) fn store_window(&self, mem: &mut Memory, #[comptime] space: Space) {
-        self.store_cast_window::<T>(mem, space)
+    pub(crate) fn store_window<T: Numeric>(&self, mem: &mut Memory, #[comptime] space: Space) {
+        self.store_cast_window::<T, T>(mem, space)
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window, casting down to the sink element.
-    pub(crate) fn store_cast_window<Out: Numeric>(
+    pub(crate) fn store_cast_window<T: Numeric, Out: Numeric>(
         &self,
         mem: &mut Memory,
         #[comptime] space: Space,
@@ -242,7 +266,9 @@ impl<T: Numeric> MmaData<T> {
         let layout = comptime!(self.layout);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         match &self.fragment {
-            MmaFragment::Acc(f) => store_cells::<T, Out, T, T, T>(mem, f, &def, layout, space),
+            MmaFragment::Acc(f) => {
+                store_cells::<T, Out, T, T, T>(mem, f.at::<T>(), &def, layout, space)
+            }
             MmaFragment::Lhs(_)
             | MmaFragment::Rhs(_)
             | MmaFragment::LhsBlockScaled(..)
@@ -258,16 +284,16 @@ impl<T: Numeric> MmaData<T> {
 /// it. Slot `first + i` of the arrays these take or return is the row of the unit's register
 /// vector `i`, so each unit keeps the state of its own rows and no others.
 #[cube]
-impl<E: Numeric> MmaData<E> {
+impl MmaData {
     /// Rows of this accumulator one unit holds cells of, one per register vector.
-    pub(crate) fn rows_per_unit(&self) -> comptime_type!(usize) {
+    pub(crate) fn rows_per_unit<E: Numeric>(&self) -> comptime_type!(usize) {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         def.vectors_per_lane(MatrixIdent::Accumulator)
     }
 
     /// `self[r, c] = self[r, c] · scale + bias[r, c]`, `bias` read at the cell's coordinates in
     /// the window over `space`, this fragment's first cell at `origin` of it.
-    pub(crate) fn scale_add_along(
+    pub(crate) fn scale_add_along<E: Numeric>(
         &mut self,
         scale: E,
         bias: &Procedural,
@@ -277,7 +303,7 @@ impl<E: Numeric> MmaData<E> {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         let vector_size = def.vector_size(MatrixIdent::Accumulator);
         let (row0, col0) = comptime!(origin);
-        let acc = self.acc_registers_mut();
+        let acc = self.acc_registers_mut::<E>();
         #[unroll]
         for i in 0..acc.len() {
             let mut vector = acc[i];
@@ -300,8 +326,8 @@ impl<E: Numeric> MmaData<E> {
     }
 
     /// `self[r, :] *= factors[first + r]` for every row `r` this unit holds cells of.
-    pub(crate) fn mul_along(&mut self, factors: &Array<E>, #[comptime] first: usize) {
-        let acc = self.acc_registers_mut();
+    pub(crate) fn mul_along<E: Numeric>(&mut self, factors: &Array<E>, #[comptime] first: usize) {
+        let acc = self.acc_registers_mut::<E>();
         #[unroll]
         for i in 0..acc.len() {
             acc[i] *= Vector::cast_from(factors[first + i]);
@@ -311,7 +337,7 @@ impl<E: Numeric> MmaData<E> {
     /// `slots[first + r]` combined under `monoid` with this unit's cells on its row `r`: the
     /// unit's own part of each row, which [`reduce_across_units`](Self::reduce_across_units)
     /// completes.
-    pub(crate) fn reduce_own_cells(
+    pub(crate) fn reduce_own_cells<E: Numeric>(
         &self,
         slots: &mut Array<E>,
         #[comptime] first: usize,
@@ -319,7 +345,7 @@ impl<E: Numeric> MmaData<E> {
     ) {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         let vector_size = def.vector_size(MatrixIdent::Accumulator);
-        let acc = self.acc_registers();
+        let acc = self.acc_registers::<E>();
         #[unroll]
         for i in 0..acc.len() {
             let vector = acc[i];
@@ -339,7 +365,7 @@ impl<E: Numeric> MmaData<E> {
     /// compiler folds, so a bit that moves it costs no shuffle. That holds for a layout whose row
     /// is a function of some of the lane's bits, as the manual-mma layouts are; the register
     /// attention's component test checks it on every lane.
-    pub(crate) fn reduce_across_units(
+    pub(crate) fn reduce_across_units<E: Numeric>(
         &self,
         slots: &mut Array<E>,
         #[comptime] first: usize,
@@ -367,9 +393,9 @@ impl<E: Numeric> MmaData<E> {
         }
     }
 
-    fn acc_registers(&self) -> &Array<Vector<E, NA>> {
+    fn acc_registers<E: Numeric>(&self) -> &Array<Vector<E, NA>> {
         match &self.fragment {
-            MmaFragment::Acc(f) => f,
+            MmaFragment::Acc(f) => f.at::<E>(),
             MmaFragment::Lhs(_)
             | MmaFragment::Rhs(_)
             | MmaFragment::LhsBlockScaled(..)
@@ -379,9 +405,9 @@ impl<E: Numeric> MmaData<E> {
         }
     }
 
-    fn acc_registers_mut(&mut self) -> &mut Array<Vector<E, NA>> {
+    fn acc_registers_mut<E: Numeric>(&mut self) -> &mut Array<Vector<E, NA>> {
         match &mut self.fragment {
-            MmaFragment::Acc(f) => f,
+            MmaFragment::Acc(f) => f.at_mut::<E>(),
             MmaFragment::Lhs(_)
             | MmaFragment::Rhs(_)
             | MmaFragment::LhsBlockScaled(..)
@@ -393,18 +419,18 @@ impl<E: Numeric> MmaData<E> {
 }
 
 #[cube]
-impl<A: Numeric> MmaData<A> {
+impl MmaData {
     /// This accumulator with each cell cast to `E` in the register that holds it.
-    pub(crate) fn cast<E: Numeric>(&self) -> MmaData<E> {
-        let acc = self.acc_registers();
-        let mut cast = MmaData::<E>::acc(
+    pub(crate) fn cast<A: Numeric, E: Numeric>(&self) -> MmaData {
+        let acc = self.acc_registers::<A>();
+        let mut cast = MmaData::acc::<E>(
             comptime!(self.m),
             comptime!(self.n),
             comptime!(self.k),
             comptime!(self.layout),
             comptime!(self.io),
         );
-        let registers = cast.acc_registers_mut();
+        let registers = cast.acc_registers_mut::<E>();
         #[unroll]
         for i in 0..acc.len() {
             registers[i] = Vector::cast_from(acc[i]);
@@ -414,10 +440,10 @@ impl<A: Numeric> MmaData<A> {
 }
 
 #[cube]
-impl<E: Float> MmaData<E> {
+impl MmaData {
     /// Each row's max, starting from `seed`'s, over the units that share it.
-    pub(crate) fn maxima_along(&self, seed: &Array<E>) -> Array<E> {
-        let rows = self.rows_per_unit();
+    pub(crate) fn maxima_along<E: Float>(&self, seed: &Array<E>) -> Array<E> {
+        let rows = self.rows_per_unit::<E>();
         let mut maxima = Array::<E>::new(rows);
         #[unroll]
         for i in 0..rows {
@@ -429,8 +455,8 @@ impl<E: Float> MmaData<E> {
     }
 
     /// Each row's sum over the units that share it.
-    pub(crate) fn sums_along(&self) -> Array<E> {
-        let rows = self.rows_per_unit();
+    pub(crate) fn sums_along<E: Float>(&self) -> Array<E> {
+        let rows = self.rows_per_unit::<E>();
         let mut sums = Array::<E>::new(rows);
         #[unroll]
         for i in 0..rows {
@@ -442,10 +468,14 @@ impl<E: Float> MmaData<E> {
     }
 
     /// `self[r, c] = exp(self[r, c] − slices[first + r])` ([`AxisSlices::exp_minus_cell`]).
-    pub(crate) fn exp_minus_along(&mut self, slices: &Array<E>, #[comptime] first: usize) {
+    pub(crate) fn exp_minus_along<E: Float>(
+        &mut self,
+        slices: &Array<E>,
+        #[comptime] first: usize,
+    ) {
         let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
         let vector_size = def.vector_size(MatrixIdent::Accumulator);
-        let acc = self.acc_registers_mut();
+        let acc = self.acc_registers_mut::<E>();
         #[unroll]
         for i in 0..acc.len() {
             let mut vector = acc[i];
@@ -453,7 +483,7 @@ impl<E: Float> MmaData<E> {
             for e in 0..vector_size {
                 vector.insert(
                     e,
-                    AxisSlices::<E>::exp_minus_cell(vector.extract(e), slices[first + i]),
+                    AxisSlices::exp_minus_cell::<E>(vector.extract(e), slices[first + i]),
                 );
             }
             acc[i] = vector;

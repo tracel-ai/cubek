@@ -219,7 +219,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                     let plane = PLANE_POS.cast::<usize>() * comptime!(cells * slots);
                     let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
                     // Each fragment carries its own slot, so drain order doesn't matter.
-                    let mut frags = Sequence::<PlaneTile<Acc>>::new();
+                    let mut frags = Sequence::<PlaneTile>::new();
                     #[unroll]
                     for i in 0..tiles {
                         let start = plane + comptime!(cells * scratch.slot_of(i, tiles));
@@ -227,15 +227,15 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
                         frags.push(p.frags.index(i).clone().with_scratch(slot));
                     }
                     Tile::<Acc> {
-                        kind: TileKind::new_PlanePartition(PlanePartition::<Acc> {
+                        kind: TileKind::new_PlanePartition(PlanePartition {
                             frags,
                             m_tiles: comptime!(p.m_tiles),
                             n_tiles: comptime!(p.n_tiles),
                             rows: comptime!(p.rows),
                             cols: comptime!(p.cols),
-                            scratch: ComptimeOption::new_Some(
+                            scratch: ComptimeOption::new_Some(Raw::<SharedSlice>::of::<Acc>(
                                 shared.clone().map(|s| &s[plane..plane + cells]),
-                            ),
+                            )),
                             held: comptime!(scratch),
                         }),
                         factor: self.factor.clone(),
@@ -285,9 +285,9 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn cast<E: Numeric>(&self) -> Tile<E> {
         let kind = match &self.kind {
             TileKind::PlanePartition(partition) => {
-                TileKind::new_PlanePartition(partition.cast::<E>())
+                TileKind::new_PlanePartition(partition.cast::<Acc, E>())
             }
-            TileKind::PlaneTile(tile) => TileKind::new_PlaneTile(tile.cast::<E>()),
+            TileKind::PlaneTile(tile) => TileKind::new_PlaneTile(tile.cast::<Acc, E>()),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -615,7 +615,7 @@ fn accumulator_in<Acc: Numeric, EA: Numeric, EL: Numeric>(
         "Tile::accumulator: a hardware instruction accumulates under the sum of products alone, \
          not {accumulation:?}; contract in a register block to fold under another"
     ));
-    let mut acc = PlanePartition::<EA>::mirror(
+    let mut acc = PlanePartition::mirror(
         comptime!(out.place.space.clone()),
         comptime!(MatrixAxes::accumulator(&out.place.space, &lhs.place.space)),
         comptime!(form),
@@ -653,7 +653,7 @@ impl<EA: Numeric> Tile<EA> {
             walk.parent.path.root_levels(),
         ));
         let accumulation = comptime!(Accumulation::Contraction(Semiring::SUM_PROD));
-        let mut acc = PlanePartition::<EA>::mirror(
+        let mut acc = PlanePartition::mirror(
             comptime!(place.space.clone()),
             comptime!(MatrixAxes::accumulator(&place.space, &lhs.place.space)),
             instruction,

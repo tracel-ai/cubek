@@ -71,13 +71,13 @@ impl GlobalOperand {
         let rank = comptime!(spec.projection.physical_rank());
         // Held at what the binding holds: `T`, or the `u32` words a packed one packs it in.
         let backing = match comptime!(spec.packing) {
-            Packing::Plain => Backing::new_Buffer(RawBuffer::of::<T>(unsafe {
+            Packing::Plain => Backing::new_Buffer(Raw::<Slice>::of::<T>(unsafe {
                 tensor
                     .as_slice()
                     .downcast_unchecked::<T>()
                     .as_boxed_unchecked()
             })),
-            Packing::Packed { .. } => Backing::new_Buffer(RawBuffer::of::<u32>(unsafe {
+            Packing::Packed { .. } => Backing::new_Buffer(Raw::<Slice>::of::<u32>(unsafe {
                 tensor
                     .as_slice()
                     .downcast_unchecked::<u32>()

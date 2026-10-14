@@ -72,8 +72,8 @@ impl<Acc: Numeric> Tile<Acc> {
     /// holds for them among it. Only a warpgroup accumulator contracts asynchronously.
     pub fn commit(&self) -> Pending<()> {
         match &self.kind {
-            TileKind::PlanePartition(p) => p.fragment().commit(),
-            TileKind::PlaneTile(t) => t.commit(),
+            TileKind::PlanePartition(p) => p.fragment().commit::<Acc>(),
+            TileKind::PlaneTile(t) => t.commit::<Acc>(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -116,9 +116,9 @@ impl<Acc: Numeric> Tile<Acc> {
 }
 
 #[cube]
-impl<E: Numeric> PlaneTile<E> {
+impl PlaneTile {
     /// Contract this plane tile, each factor times whatever scales it carries.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<E: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
@@ -128,7 +128,7 @@ impl<E: Numeric> PlaneTile<E> {
             PlaneTile::Cmma(d) => {
                 let transposed = transposed_rhs(lhs, rhs);
                 strided_2d(lhs, rhs, comptime!(out.clone()), transposed);
-                d.mma(lhs, rhs, out)
+                d.mma::<E, EL, ER>(lhs, rhs, out)
             }
             PlaneTile::Mma(d) => {
                 // The manual-mma instruction reads registers, where a scaled factor cannot land,
@@ -140,22 +140,22 @@ impl<E: Numeric> PlaneTile<E> {
                     rhs.refuse_factor("PlaneTile::Mma");
                 }
                 flattened_k(lhs, rhs, out);
-                d.mma(lhs, rhs)
+                d.mma::<E, EL, ER>(lhs, rhs)
             }
             PlaneTile::Wgmma(d) => {
                 lhs.refuse_factor("PlaneTile::Wgmma");
                 rhs.refuse_factor("PlaneTile::Wgmma");
-                d.mma(lhs, rhs, out)
+                d.mma::<E, EL, ER>(lhs, rhs, out)
             }
             PlaneTile::Registers(d) => match &lhs.kind {
                 TileKind::PlaneTile(block) => match block {
-                    PlaneTile::Registers(block) => d.mma_block(block, rhs),
+                    PlaneTile::Registers(block) => d.mma_block::<E, EL, ER>(block, rhs),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
                 },
                 TileKind::PlanePartition(block) => match block.fragment() {
-                    PlaneTile::Registers(block) => d.mma_block(&block, rhs),
+                    PlaneTile::Registers(block) => d.mma_block::<E, EL, ER>(&block, rhs),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
@@ -166,7 +166,7 @@ impl<E: Numeric> PlaneTile<E> {
                 | TileKind::Lines(_) => {
                     let folded = comptime!(d.fold > 1);
                     strided_2d(lhs, rhs, comptime!(out.clone()), folded);
-                    d.mma(lhs, rhs, out)
+                    d.mma::<E, EL, ER>(lhs, rhs, out)
                 }
             },
         }

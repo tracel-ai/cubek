@@ -561,8 +561,8 @@ impl<T: Numeric> Tile<T> {
     pub fn zero(&mut self) {
         match &mut self.kind {
             TileKind::Memory(d) => d.zero::<T>(),
-            TileKind::PlaneTile(t) => t.zero(),
-            TileKind::PlanePartition(p) => p.zero(),
+            TileKind::PlaneTile(t) => t.zero::<T>(),
+            TileKind::PlanePartition(p) => p.zero::<T>(),
             TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::zero: a procedural tile and the plane's units are not writable")
@@ -581,8 +581,8 @@ impl<T: Numeric> Tile<T> {
     /// Multiply every partial this accumulator holds by `factor`.
     pub fn scale_by(&mut self, factor: T) {
         match &mut self.kind {
-            TileKind::PlaneTile(t) => t.scale(factor),
-            TileKind::PlanePartition(p) => p.scale(factor),
+            TileKind::PlaneTile(t) => t.scale::<T>(factor),
+            TileKind::PlanePartition(p) => p.scale::<T>(factor),
             TileKind::Memory(_) => panic!(
                 "Tile::scale_by: a memory tile is scaled by the cube, not by one unit (Tile::mul)"
             ),
@@ -615,8 +615,8 @@ impl<T: Numeric> Tile<T> {
     pub fn init(&mut self, val: T) {
         match &mut self.kind {
             TileKind::Memory(d) => d.init::<T>(val),
-            TileKind::PlaneTile(t) => t.init(val),
-            TileKind::PlanePartition(p) => p.init(val),
+            TileKind::PlaneTile(t) => t.init::<T>(val),
+            TileKind::PlanePartition(p) => p.init::<T>(val),
             TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::init: a procedural tile and the plane's units are not writable")
@@ -768,7 +768,7 @@ impl<T: Numeric> Tile<T> {
         let space = comptime!(self.place.space.clone());
         match &src.kind {
             TileKind::PlanePartition(s) => match &mut self.kind {
-                TileKind::Memory(d) => s.fragment().store_window(d, space),
+                TileKind::Memory(d) => s.fragment().store_window::<T>(d, space),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -785,7 +785,7 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::Lines(d), TileKind::Memory(_)) => d.load(src),
                 (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from(src),
                 (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
-                (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window(d, space),
+                (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window::<T>(d, space),
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from(s),
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from::<T>(s, space),
@@ -801,11 +801,11 @@ impl<T: Numeric> Tile<T> {
     /// Add a resident block `src` into this one, casting up to `T`, without touching memory.
     pub fn add_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         match (&mut self.kind, &src.kind) {
-            (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => d.add_cast_from(s),
+            (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => d.add_cast_from::<T, S>(s),
             (TileKind::PlanePartition(d), TileKind::PlanePartition(s)) => {
                 // The fragment clones the block's array reference, so this promotes the block itself.
                 let mut fragment = d.fragment();
-                fragment.add_cast_from(&s.fragment())
+                fragment.add_cast_from::<T, S>(&s.fragment())
             }
             _ => panic!(
                 "Tile::add_cast_from: a resident block promotes into a resident block; memory \
@@ -820,9 +820,9 @@ impl<T: Numeric> Tile<T> {
         let space = comptime!(self.place.space.clone());
         let holder = comptime!(self.place.holder());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window::<T>(d, space),
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window::<S, T>(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().store_cast_window::<T>(d, space)
+                s.fragment().store_cast_window::<S, T>(d, space)
             }
             // A window its holder shares is filled by the holder's units, whoever filled the
             // buffer it windows: a plane's window of the cube's scratch is the plane's.
@@ -839,8 +839,8 @@ impl<T: Numeric> Tile<T> {
     /// Spill this plane-resident tile into its slot of the plane's scratch.
     pub(crate) fn spill_to_scratch(&self) {
         match &self.kind {
-            TileKind::PlaneTile(t) => t.spill_to_scratch(),
-            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch(),
+            TileKind::PlaneTile(t) => t.spill_to_scratch::<T>(),
+            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch::<T>(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -854,9 +854,9 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch::<T>(d, space),
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch::<S, T>(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().add_from_scratch::<T>(d, space)
+                s.fragment().add_from_scratch::<S, T>(d, space)
             }
             _ => panic!("Tile::add_from_scratch: a spilled plane tile adds into memory"),
         }

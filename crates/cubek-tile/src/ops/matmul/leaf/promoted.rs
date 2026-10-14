@@ -8,16 +8,17 @@ use super::scale::Side;
 use crate::*;
 
 #[cube]
-impl<T: Numeric> RegisterData<T> {
+impl RegisterData {
     /// `self += lhs · rhs` over the block, one rank-1 update per `K` step, with scales folded in.
     /// The block must be opened against the rhs it contracts (width and fold).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<T: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
         #[comptime] out: Space,
     ) {
+        let data = self.data.at_mut::<T>();
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma"));
         // A load stored across several columns reads as their runs along the contraction.
         let rhs_load = rhs.vector_tile();
@@ -99,7 +100,7 @@ impl<T: Numeric> RegisterData<T> {
             &lhs_scales,
             &rhs_mat,
             &rhs_scales,
-            &mut self.data,
+            data,
             lw,
             fold,
             comptime!(rhs_load.values() / vw),
@@ -114,16 +115,17 @@ impl<T: Numeric> RegisterData<T> {
 }
 
 #[cube]
-impl<T: Numeric> RegisterData<T> {
+impl RegisterData {
     /// `self += lhs · rhs` where `lhs` is a register block over the same rows as this one: each
     /// of its cells is a factor read in registers, and `rhs` is read one step of the contraction
     /// at a time. What an attention's unit does with the probabilities it just computed,
     /// contracting them with the values without leaving registers.
-    pub(crate) fn mma_block<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma_block<T: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
-        lhs: &RegisterData<EL>,
+        lhs: &RegisterData,
         rhs: &Tile<ER>,
     ) {
+        let data = self.data.at_mut::<T>();
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma_block"));
         comptime!(assert!(
             lhs.fold == 1 && self.fold == 1,
@@ -160,12 +162,12 @@ impl<T: Numeric> RegisterData<T> {
             }
             #[unroll]
             for i in 0..mr {
-                let line = lhs.data[i * lhs.nr + k / lw];
+                let line = lhs.data.at::<EL>()[i * lhs.nr + k / lw];
                 let a = Vector::<T, RA>::cast_from(line.extract(comptime!(k % lw)));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     let at = i * nr + n;
-                    self.data[at] = semiring.step::<Vector<T, RA>>(a, b[n], self.data[at]);
+                    data[at] = semiring.step::<Vector<T, RA>>(a, b[n], data[at]);
                 }
             }
         }
