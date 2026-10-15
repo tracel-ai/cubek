@@ -179,6 +179,12 @@ struct LaneRun {
 }
 
 impl LaneRun {
+    /// Rows of the window the plane's units cover: an `A`'s sixteen, `g` and `g + 8` for each of
+    /// the eight `g`, a `B`'s eight columns.
+    fn covered_rows(&self) -> usize {
+        self.halves() * HALF_ROWS as usize
+    }
+
     /// Rows of the window one unit holds: an `A`'s `g` and `g + 8`, a `B`'s one column.
     fn halves(&self) -> usize {
         match self.ident {
@@ -263,13 +269,19 @@ fn load_plain_run<T: Numeric, N: Size>(
     let size!(W) = width;
     let view = src.fragment_matrix_packed::<W>(comptime!(run.rows), comptime!(run.k));
     let lines = comptime!(run.len / width);
+    // A window of fewer rows than the units cover, a decode's rows staged as they are, holds no
+    // cells past them: those units read zeros rather than past its buffer.
+    let short = comptime!(run.rows < run.covered_rows());
     #[unroll]
     for half in 0..comptime!(run.halves()) {
         let at = row + comptime!(half as u32) * HALF_ROWS;
         let mut cells = Array::<Vector<T, W>>::new(lines);
         #[unroll]
         for l in 0..lines {
-            cells[l] = view.read((at, first / comptime!(width as u32) + comptime!(l as u32)));
+            cells[l] = Vector::<T, W>::new(T::from_int(0));
+            if !short || at < comptime!(run.rows as u32) {
+                cells[l] = view.read((at, first / comptime!(width as u32) + comptime!(l as u32)));
+            }
         }
         #[unroll]
         for p in 0..comptime!(run.len / SLOTS_PER_REGISTER) {
