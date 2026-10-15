@@ -429,8 +429,8 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
             1,
+            TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
@@ -574,8 +574,8 @@ fn an_atomic_drain_with_units_of_their_own() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
             1,
+            TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
@@ -662,8 +662,8 @@ fn an_atomic_drain_folds_across_planes() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
             1,
+            TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
@@ -769,8 +769,8 @@ fn a_folding_output_contracts_in_place() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
             1,
+            TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
@@ -912,8 +912,8 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
             1,
+            TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         dtype,
@@ -1025,8 +1025,8 @@ fn a_copy_into_a_folding_output_adds() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
             1,
+            TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         dtype,

@@ -15,11 +15,11 @@ use crate::*;
 #[derive(CubeType, CubeLaunch)]
 pub struct AccumulateArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<Atomic<E>>,
-    #[cube(comptime)]
-    pub spec: TileSpec,
     /// The width a line is added in: the buffer's own elements are scalar.
     #[cube(comptime)]
     pub width: usize,
+    #[cube(comptime)]
+    pub spec: TileSpec,
 }
 
 #[cube]

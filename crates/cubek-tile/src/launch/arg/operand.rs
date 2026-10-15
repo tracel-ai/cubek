@@ -33,6 +33,6 @@ impl Bound {
     /// ever adds.
     pub fn atomic<E: Numeric>(self) -> OutputArgs<'static, E> {
         let (spec, width) = (self.spec.clone(), self.vector_size);
-        OutputArgs::Atomic(AccumulateArgLaunch::new(self.tensor(), spec, width))
+        OutputArgs::Atomic(AccumulateArgLaunch::new(self.tensor(), width, spec))
     }
 }

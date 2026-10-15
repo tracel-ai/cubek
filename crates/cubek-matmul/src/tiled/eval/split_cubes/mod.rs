@@ -409,7 +409,7 @@ impl Bound {
                     self.cube_dim,
                     TileArgLaunch::new(self.a.tensor_arg(1), 1, self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), 1, self.rhs_spec.clone()),
-                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone(), 1),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), 1, self.out_spec.clone()),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -421,7 +421,7 @@ impl Bound {
                     self.cube_dim,
                     TileArgLaunch::new(self.a.tensor_arg(1), 1, self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), 1, self.rhs_spec.clone()),
-                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone(), 1),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), 1, self.out_spec.clone()),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );

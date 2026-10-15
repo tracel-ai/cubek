@@ -417,8 +417,8 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             ),
             AccumulateArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[MM, NN]),
                 1,
+                TileSpec::direct(&[MM, NN]),
             ),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
@@ -442,8 +442,8 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             ),
             AccumulateArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[MM, NN]),
                 1,
+                TileSpec::direct(&[MM, NN]),
             ),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
@@ -630,8 +630,8 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
             ),
             AccumulateArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[MM, NN]),
                 1,
+                TileSpec::direct(&[MM, NN]),
             ),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
