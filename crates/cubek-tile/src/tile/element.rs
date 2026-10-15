@@ -14,7 +14,6 @@ use core::marker::PhantomData;
 
 use cubecl::define_scalar;
 use cubecl::ir::{ElemType, Scope};
-use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 // The element of the tile an op runs on.
@@ -67,12 +66,4 @@ pub(crate) mod naming {
     pub(crate) fn expand<'a, M: 'static>(scope: &'a Scope, element: ElemType) -> Naming<'a, M> {
         Naming::new(scope, element)
     }
-}
-
-/// `T`'s element, as data.
-#[cube]
-// `T` is read by the expansion.
-#[allow(clippy::extra_unused_type_parameters)]
-pub(crate) fn element_of<T: Numeric>() -> comptime_type!(ElemType) {
-    intrinsic!(|scope| T::elem_type(scope))
 }

@@ -62,8 +62,8 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
             (2, None) => false,
             (3, Some(_)) => true,
             (r, batch) => panic!(
-                "TileArgLaunch::tensor_map: the descriptor is (batch, row, col); {r} axes with batch {batch:?} \
-                 is not a matrix nor a batched one"
+                "TileArgLaunch::tensor_map: the descriptor is (batch, row, col); {r} axes with \
+                 batch {batch:?} is not a matrix nor a batched one"
             ),
         };
         let dims = (shape.batch.unwrap_or(1), shape.rows, shape.cols);
@@ -102,7 +102,8 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
         assert_eq!(
             axes.len(),
             2,
-            "TileArgLaunch::tensor_map: a storage-tiled descriptor is a matrix; batch it by launching per batch"
+            "TileArgLaunch::tensor_map_stored: a storage-tiled descriptor is a matrix; batch it by \
+             launching per batch"
         );
         let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, tiles.landing);
         ViewArg::new_tensor_map_tiled::<TmaStoredLayout>(tensor_map, layout)

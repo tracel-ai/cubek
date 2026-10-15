@@ -159,7 +159,7 @@ impl Tile {
     }
 
     /// [`write_rows_to`](Tile::write_rows_to) at plane ownership.
-    pub(crate) fn write_rows_to_planar<E: Numeric, EP: Numeric>(
+    pub(crate) fn write_rows_to_planar<EA: Float, EP: Numeric>(
         &self,
         dest: &mut Tile,
         #[comptime] rpp: usize,
@@ -175,7 +175,7 @@ impl Tile {
         ));
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let src = self.flat::<E, W>();
+        let src = self.flat::<EA, W>();
         let mut dst = dest.flat_mut::<EP, W>();
 
         #[unroll]

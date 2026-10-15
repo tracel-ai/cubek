@@ -282,7 +282,7 @@ impl Tile {
             kind,
             factor: self.factor.clone(),
             place: comptime!(self.place.clone()),
-            element: element_of::<E>(),
+            element: elem_type_of::<E>(),
         }
     }
 

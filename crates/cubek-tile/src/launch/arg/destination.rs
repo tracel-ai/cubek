@@ -73,6 +73,6 @@ impl DestinationLaunch for TmaStored {
     type Operand = TmaOperand;
 
     fn arg<E: Numeric>(operand: TmaOperand) -> TileArgLaunch<'static, E> {
-        TileArgLaunch::tensor_map(operand.map, &operand.axes, operand.shape)
+        operand.arg()
     }
 }

@@ -41,8 +41,8 @@ impl Accumulation {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct RegisterData {
-    /// `mr * nr` lines, each `Vector<T, RA>` at the element `T` the block holds (width
-    /// registered in [`alloc`](Self::alloc)).
+    /// `mr * nr` lines, each `RA` wide at the element the block holds (width registered in
+    /// [`alloc`](Self::alloc)).
     pub(crate) data: Raw<Registers<RA>>,
     /// Physical line width, the numeric twin of `RA`; comptime, for the line arithmetic.
     #[cube(comptime)]

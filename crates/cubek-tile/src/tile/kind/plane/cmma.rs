@@ -12,7 +12,7 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct CmmaData {
-    /// The fragment, at the element `T` it holds.
+    /// The fragment, at the element it holds.
     pub fragment: RawMatrix,
     #[cube(comptime)]
     pub ident: MatrixIdent,
@@ -21,7 +21,8 @@ pub(crate) struct CmmaData {
     /// The whole MMA tile's `(m, n)`, whatever the role.
     #[cube(comptime)]
     pub shape: (usize, usize),
-    /// This plane's one-tile window of shared memory the fragment bounces through, at `T`.
+    /// This plane's one-tile window of shared memory the fragment bounces through, at the fragment's
+    /// element.
     pub scratch: ComptimeOption<Raw<SharedSlice>>,
 }
 

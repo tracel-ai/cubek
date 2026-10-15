@@ -14,7 +14,7 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct WgmmaData {
-    /// The accumulator, at the element `T` it holds, handed to its MMAs.
+    /// The accumulator, at the element it holds, handed to its MMAs.
     pub(crate) acc: RawAccumulator,
     #[cube(comptime)]
     pub n: usize,

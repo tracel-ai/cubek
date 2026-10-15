@@ -31,7 +31,7 @@ impl Tile {
             kind,
             factor: Factor::none(),
             place,
-            element: element_of::<T>(),
+            element: elem_type_of::<T>(),
         }
     }
 

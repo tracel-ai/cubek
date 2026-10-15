@@ -331,7 +331,7 @@ impl Memory {
             }),
             factor: Factor::none(),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
-            element: element_of::<T>(),
+            element: elem_type_of::<T>(),
         }
     }
 

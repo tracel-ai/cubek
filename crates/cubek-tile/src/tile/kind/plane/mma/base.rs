@@ -29,8 +29,8 @@ pub(crate) struct MmaData {
     pub io: MmaIo,
 }
 
-/// One role's register array, each role at its own width (`NL`/`NR`/`NA`), at the element `T`
-/// the fragment holds.
+/// One role's register array, each role at its own width (`NL`/`NR`/`NA`), at the element the
+/// fragment holds.
 #[expect(
     dead_code,
     reason = "built through the expand type's generated constructors"

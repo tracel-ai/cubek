@@ -357,7 +357,7 @@ pub struct PlanePartition {
     #[cube(comptime)]
     pub cols: usize,
     /// This plane's one-tile window of shared memory that a row-wise op bounces through, at the
-    /// element `T` the grid holds.
+    /// element the grid holds.
     pub scratch: ComptimeOption<Raw<SharedSlice>>,
     /// How much of this grid the scratch holds.
     #[cube(comptime)]
@@ -660,7 +660,7 @@ impl PlanePartition {
             // A `Dynamic` extent here is never read; fragments were sized from the statement.
             factor: Factor::none(),
             place: comptime!(Placement::new(space, depth, levels)),
-            element: element_of::<T>(),
+            element: elem_type_of::<T>(),
         }
     }
 
@@ -756,7 +756,7 @@ impl PlanePartition {
             }),
             factor: Factor::none(),
             place: comptime!(Placement::new(window, depth, levels)),
-            element: element_of::<T>(),
+            element: elem_type_of::<T>(),
         }
     }
 

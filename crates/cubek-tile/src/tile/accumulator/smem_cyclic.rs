@@ -23,8 +23,9 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// A cube's shared-memory accumulator over one box, summing in `A` and read back at the element of the tile it was opened over, that
-/// `writers` writers reach exclusively, on the [`Cyclic`](Schedule::Cyclic) schedule.
+/// A cube's shared-memory accumulator over one box, summing in `A` and read back at the element
+/// of the tile it was opened over, that `writers` writers reach exclusively, on the
+/// [`Cyclic`](Schedule::Cyclic) schedule.
 ///
 /// A writer drains its partial with [`drain`](SmemCyclicAccumulation::drain) (or
 /// [`drain_at`](SmemCyclicAccumulation::drain_at) for a partial over one window), which runs every

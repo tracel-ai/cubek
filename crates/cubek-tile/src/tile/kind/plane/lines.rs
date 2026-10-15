@@ -74,7 +74,6 @@ impl Lines {
         #[comptime] level: Level,
         #[comptime] read: UnitRead,
     ) -> Lines {
-        let _served = naming::<Served>(operand.element);
         let loaded = comptime!(level.child(&operand.place.space));
         let rank = comptime!(loaded.rank());
         let line = comptime!(loaded.extent_at(rank - 1));
@@ -85,7 +84,7 @@ impl Lines {
         ));
         let (strides, lines) = comptime!(Lines::line_strides(&loaded, &projection));
         let packing = operand.packing();
-        let served = elem_type_of::<Served>();
+        let served = comptime!(operand.element);
         let field = comptime!(match packing {
             Packing::Packed { field } => field,
             Packing::Plain => match served {

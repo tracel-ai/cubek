@@ -22,7 +22,7 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct TmaData {
-    /// The tensor map, at the element `T` it holds.
+    /// The tensor map, at the element it holds.
     map: Raw<TiledMap>,
     /// Where a position in the operand's space lands in the map.
     layout: VirtualLayout<CoordsDyn, Sequence<i32>>,

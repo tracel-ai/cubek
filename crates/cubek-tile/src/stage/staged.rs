@@ -83,7 +83,7 @@ impl Memory {
                         operand.place.depth + 1,
                         operand.place.levels.clone()
                     )),
-                    element: element_of::<Served>(),
+                    element: elem_type_of::<Served>(),
                 }
             }
             _ => Memory::stage_memory(operand, level, storage, width, owner),

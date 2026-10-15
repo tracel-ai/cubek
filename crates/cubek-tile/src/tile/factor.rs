@@ -328,7 +328,7 @@ impl FactorExpand {
     }
 
     pub(crate) fn __expand_holds_words_method(&self, _scope: &Scope) -> bool {
-        self.inner().is_some_and(|level| level.words)
+        self.staged_beside()
     }
 
     /// Whether these scales are staged beside the values they scale rather than decoded into

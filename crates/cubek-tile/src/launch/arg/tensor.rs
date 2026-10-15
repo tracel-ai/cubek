@@ -45,8 +45,8 @@ pub enum Values<'a, E: Numeric> {
 /// may carry scales in turn. Levels are innermost first, so each covers more than the one inside
 /// it: NVFP4's values carry their block scales, which carry the per-tensor scale.
 ///
-/// A level is read at one of two elements while [`Tile`] still names its element: words of block
-/// scales, which only the block-scaled instruction reads, or scales read as numbers.
+/// A level is read at one of two elements, a variant each, since an argument's element is a type:
+/// words of block scales, which only the block-scaled instruction reads, or scales read as numbers.
 pub enum ScaleArg {
     None,
     Words(Box<TileArg<'static, u32>>),
