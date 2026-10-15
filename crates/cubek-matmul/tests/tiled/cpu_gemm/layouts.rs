@@ -40,8 +40,8 @@ fn copy_logical<E: Numeric>(
 ) {
     let src = src.tile(&space);
     let mut dst = dst.tile(&space);
-    let r = src.view::<Const<1>>();
-    let mut w = dst.view_mut::<Const<1>>();
+    let r = src.view::<E, Const<1>>();
+    let mut w = dst.view_mut::<E, Const<1>>();
     let shape = r.shape();
     for i in 0..shape[0] {
         for j in 0..shape[1] {
