@@ -1,6 +1,6 @@
 use super::{
     ArgAccumulator, ReduceFamily, ReduceInstruction, advance_argmin, min_identity,
-    plane_argmin_propagating_nan, plane_min_propagating_nan, select_argmin, select_min,
+    plane_argmin_with_nan_policy, plane_min_with_nan_policy, select_argmin, select_min,
 };
 use crate::components::{
     instructions::{
@@ -12,22 +12,25 @@ use crate::components::{
 use cubecl::prelude::*;
 
 /// Return the minimum item, its coordinate, or both, per [`ReduceOutputMode`].
-/// NaNs take precedence over non-NaN values. When indices are returned, ties
-/// and multiple NaNs select the lowest coordinate.
+/// With `propagate_nan`, NaNs take precedence and multiple NaNs select the
+/// lowest coordinate. Otherwise NaN results are backend-dependent. Ordinary
+/// ties always select the lowest coordinate; paired outputs select one input.
 #[derive(Debug, CubeType, Clone)]
 pub struct Min {
     #[cube(comptime)]
     pub output: ReduceOutputMode,
+    #[cube(comptime)]
+    pub propagate_nan: bool,
 }
 
 impl ReduceFamily for Min {
     type Instruction<P: ReducePrecision> = Self;
-    type Config = ReduceOutputMode;
+    type Config = super::ExtremaConfig;
 }
 
 impl ReduceWithIndicesFamily for Min {
     type Instruction<P: ReducePrecision> = Self;
-    type Config = ReduceOutputMode;
+    type Config = super::ExtremaConfig;
 }
 
 /// As [`min_insert`], for a candidate that comes after everything the
@@ -38,16 +41,21 @@ fn min_advance<T: Numeric, N: Size>(
     coordinates: &mut Value<Vector<u32, N>>,
     candidate: Vector<T, N>,
     candidate_coord: &Value<Vector<u32, N>>,
+    #[comptime] propagate_nan: bool,
 ) {
     let acc = elements.item();
 
     match candidate_coord {
-        Value::None => elements.assign(&Value::new_single(select_min(acc, candidate))),
+        Value::None => elements.assign(&Value::new_single(select_min(
+            acc,
+            candidate,
+            propagate_nan,
+        ))),
         Value::Single(coord) => {
             let candidate_coord = coord.unwrap();
             let acc_coord = coordinates.item();
             let (selected, selected_coord) =
-                advance_argmin(acc, acc_coord, candidate, candidate_coord);
+                advance_argmin(acc, acc_coord, candidate, candidate_coord, propagate_nan);
             elements.assign(&Value::new_single(selected));
             coordinates.assign(&Value::new_single(selected_coord));
         }
@@ -66,16 +74,21 @@ fn min_insert<T: Numeric, N: Size>(
     coordinates: &mut Value<Vector<u32, N>>,
     candidate: Vector<T, N>,
     candidate_coord: &Value<Vector<u32, N>>,
+    #[comptime] propagate_nan: bool,
 ) {
     let acc = elements.item();
 
     match candidate_coord {
-        Value::None => elements.assign(&Value::new_single(select_min(acc, candidate))),
+        Value::None => elements.assign(&Value::new_single(select_min(
+            acc,
+            candidate,
+            propagate_nan,
+        ))),
         Value::Single(coord) => {
             let candidate_coord = coord.unwrap();
             let acc_coord = coordinates.item();
             let (selected, selected_coord) =
-                select_argmin(acc, acc_coord, candidate, candidate_coord);
+                select_argmin(acc, acc_coord, candidate, candidate_coord, propagate_nan);
             elements.assign(&Value::new_single(selected));
             coordinates.assign(&Value::new_single(selected_coord));
         }
@@ -89,11 +102,16 @@ fn min_insert<T: Numeric, N: Size>(
 fn plane_min_candidate<T: Numeric, N: Size>(
     item: Vector<T, N>,
     coordinates: &Value<Vector<u32, N>>,
+    #[comptime] propagate_nan: bool,
 ) -> (Vector<T, N>, Value<Vector<u32, N>>) {
     match coordinates {
-        Value::None => (plane_min_propagating_nan(item), Value::new_None()),
+        Value::None => (
+            plane_min_with_nan_policy(item, propagate_nan),
+            Value::new_None(),
+        ),
         Value::Single(coord) => {
-            let (winning, winning_coord) = plane_argmin_propagating_nan(item, coord.unwrap());
+            let (winning, winning_coord) =
+                plane_argmin_with_nan_policy(item, coord.unwrap(), propagate_nan);
             (winning, Value::new_single(winning_coord))
         }
         Value::Multiple(_) => panic!("a min candidate carries at most one coordinate"),
@@ -103,7 +121,7 @@ fn plane_min_candidate<T: Numeric, N: Size>(
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     type SharedAccumulator = ArgAccumulator<P>;
-    type Config = ReduceOutputMode;
+    type Config = super::ExtremaConfig;
 
     fn requirements(this: &Self) -> ReduceRequirements {
         ReduceRequirements {
@@ -116,7 +134,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn from_config(#[comptime] config: Self::Config) -> Self {
-        Min { output: config }
+        Min {
+            output: config.output,
+            propagate_nan: config.propagate_nan,
+        }
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
@@ -137,13 +158,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn reduce(
-        _this: &Self,
+        this: &Self,
         accumulator: &mut Accumulator<P>,
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
         let (candidate, candidate_coord) = match reduce_step {
-            ReduceStep::Plane => plane_min_candidate(item.elements, &item.args),
+            ReduceStep::Plane => plane_min_candidate(item.elements, &item.args, this.propagate_nan),
             ReduceStep::Identity => (item.elements, item.args),
         };
 
@@ -152,27 +173,33 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
             &mut accumulator.args,
             Vector::cast_from(candidate),
             &candidate_coord,
+            this.propagate_nan,
         );
     }
 
-    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
-        let (candidate, candidate_coord) =
-            plane_min_candidate(accumulator.elements.item(), &accumulator.args);
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
+        let (candidate, candidate_coord) = plane_min_candidate(
+            accumulator.elements.item(),
+            &accumulator.args,
+            this.propagate_nan,
+        );
 
         min_insert(
             &mut accumulator.elements,
             &mut accumulator.args,
             candidate,
             &candidate_coord,
+            this.propagate_nan,
         );
     }
 
-    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+    fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
         min_insert(
             &mut accumulator.elements,
             &mut accumulator.args,
             other.elements.item(),
             &other.args,
+            this.propagate_nan,
         );
     }
 
@@ -181,7 +208,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn to_output_parallel<Out: Numeric, Idx: Numeric>(
-        _this: &Self,
+        this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
@@ -195,13 +222,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
                     min = select_min(
                         Vector::<P::EA, Const<1>>::new(candidate),
                         Vector::<P::EA, Const<1>>::new(min),
+                        this.propagate_nan,
                     )
                     .extract(0usize);
                 }
                 (Value::new_single(Out::cast_from(min)), Value::new_None())
             }
             Value::Single(_) => {
-                let (min, coordinate) = min_finalize_with_coords::<P>(&accumulator);
+                let (min, coordinate) =
+                    min_finalize_with_coords::<P>(&accumulator, this.propagate_nan);
                 (
                     Value::new_single(Out::cast_from(min)),
                     Value::new_single(Idx::cast_from(coordinate)),
@@ -234,7 +263,10 @@ impl<P: ReducePrecision> ReduceWithIndices<P> for Min {}
 /// Ties break towards the lower coordinate, matching the CPU reference. The
 /// accumulator must have been built with coordinate tracking on.
 #[cube]
-fn min_finalize_with_coords<P: ReducePrecision>(accumulator: &Accumulator<P>) -> (P::EA, u32) {
+fn min_finalize_with_coords<P: ReducePrecision>(
+    accumulator: &Accumulator<P>,
+    #[comptime] propagate_nan: bool,
+) -> (P::EA, u32) {
     let vector_size = accumulator.elements.item().vector_size().comptime();
 
     if vector_size > 1 {
@@ -251,6 +283,7 @@ fn min_finalize_with_coords<P: ReducePrecision>(accumulator: &Accumulator<P>) ->
                 Vector::<u32, Const<1>>::new(coordinate),
                 Vector::<P::EA, Const<1>>::new(acc_element),
                 Vector::<u32, Const<1>>::new(acc_coordinate),
+                propagate_nan,
             );
 
             min = selected.extract(0usize);

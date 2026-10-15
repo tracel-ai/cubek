@@ -27,6 +27,7 @@ pub struct TestCase {
     pub input_dtype: ElemType,
     pub accumulation_dtype: ElemType,
     custom_input: Option<Vec<f32>>,
+    propagate_nan: bool,
 }
 
 impl core::fmt::Debug for TestCase {
@@ -38,6 +39,7 @@ impl core::fmt::Debug for TestCase {
             .field("strategy", &self.strategy)
             .field("input_dtype", &self.input_dtype)
             .field("accumulation_dtype", &self.accumulation_dtype)
+            .field("propagate_nan", &self.propagate_nan)
             .finish()
     }
 }
@@ -61,6 +63,7 @@ impl TestCase {
             input_dtype: <P::EI as Scalar>::elem_type_native(),
             accumulation_dtype: <P::EA as Scalar>::elem_type_native(),
             custom_input: None,
+            propagate_nan: false,
         }
     }
 
@@ -68,6 +71,12 @@ impl TestCase {
     /// policy permits unsupported generated configurations to fail compilation.
     pub fn with_data(mut self, data: Vec<f32>) -> Self {
         self.custom_input = Some(data);
+        self
+    }
+
+    /// Request the `*Nan` extrema variants for propagation regression cases.
+    pub fn with_nan_propagation(mut self) -> Self {
+        self.propagate_nan = true;
         self
     }
 
@@ -239,6 +248,7 @@ impl TestCase {
         values_reference: impl FnOnce(&HostData, usize) -> HostData,
         indices_reference: impl FnOnce(&HostData, usize) -> HostData,
     ) {
+        let config = config.with_nan_propagation(self.propagate_nan);
         let client = cubecl::test_device().client();
         let axis = self.axis.unwrap();
         let u32_dtype = u32::elem_type_native();
@@ -339,6 +349,7 @@ impl TestCase {
         epsilon: f32,
         distribution: Distribution,
     ) {
+        let config = config.with_nan_propagation(self.propagate_nan);
         let client = cubecl::test_device().client();
         let axis = self.axis.unwrap();
 

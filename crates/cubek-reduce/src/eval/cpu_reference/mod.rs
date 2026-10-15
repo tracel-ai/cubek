@@ -113,10 +113,15 @@ pub fn comparison_epsilon(config: ReduceOperationConfig) -> f32 {
             1.0
         }
         ReduceOperationConfig::Max
+        | ReduceOperationConfig::MaxNan
         | ReduceOperationConfig::Min
+        | ReduceOperationConfig::MinNan
         | ReduceOperationConfig::MaxAbs
+        | ReduceOperationConfig::MaxAbsNan
         | ReduceOperationConfig::ArgMax
+        | ReduceOperationConfig::ArgMaxNan
         | ReduceOperationConfig::ArgMin
+        | ReduceOperationConfig::ArgMinNan
         | ReduceOperationConfig::TopK(_)
         | ReduceOperationConfig::ArgTopK(_)
         | ReduceOperationConfig::Any
@@ -267,6 +272,8 @@ pub fn cpu_reference_result(
     Ok(reference_for_config(&input_host, axis, config, progress))
 }
 
+// Native extrema share these references for finite inputs. Portable NaN
+// expectations require an explicit `*Nan` configuration.
 fn reference_for_config(
     input: &HostData,
     axis: usize,
@@ -277,11 +284,21 @@ fn reference_for_config(
         ReduceOperationConfig::Sum => reference_sum(input, axis, progress),
         ReduceOperationConfig::Mean => reference_mean(input, axis, progress),
         ReduceOperationConfig::Prod => reference_prod(input, axis, progress),
-        ReduceOperationConfig::Min => reference_min(input, axis, progress),
-        ReduceOperationConfig::Max => reference_max(input, axis, progress),
-        ReduceOperationConfig::MaxAbs => reference_max_abs(input, axis, progress),
-        ReduceOperationConfig::ArgMax => reference_argmax(input, axis, progress),
-        ReduceOperationConfig::ArgMin => reference_argmin(input, axis, progress),
+        ReduceOperationConfig::Min | ReduceOperationConfig::MinNan => {
+            reference_min(input, axis, progress)
+        }
+        ReduceOperationConfig::Max | ReduceOperationConfig::MaxNan => {
+            reference_max(input, axis, progress)
+        }
+        ReduceOperationConfig::MaxAbs | ReduceOperationConfig::MaxAbsNan => {
+            reference_max_abs(input, axis, progress)
+        }
+        ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMaxNan => {
+            reference_argmax(input, axis, progress)
+        }
+        ReduceOperationConfig::ArgMin | ReduceOperationConfig::ArgMinNan => {
+            reference_argmin(input, axis, progress)
+        }
         ReduceOperationConfig::ArgTopK(k) => reference_argtopk(input, axis, k, progress),
         ReduceOperationConfig::TopK(k) => reference_topk(input, axis, k, progress),
         ReduceOperationConfig::Any => reference_any(input, axis, progress),
@@ -310,7 +327,9 @@ fn output_shape_for(shape: &[usize], axis: usize, config: &ReduceOperationConfig
 pub fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: ElemType) -> ElemType {
     match config {
         ReduceOperationConfig::ArgMax
+        | ReduceOperationConfig::ArgMaxNan
         | ReduceOperationConfig::ArgMin
+        | ReduceOperationConfig::ArgMinNan
         | ReduceOperationConfig::ArgTopK(_) => u32::elem_type_native(),
         _ => input_dtype,
     }
