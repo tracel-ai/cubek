@@ -77,7 +77,7 @@ impl AxisDistribution {
                 Some((_, y)) if y == p => Some(1),
                 _ => None,
             },
-            reversed: level.reverses(axis),
+            reversed: level.is_reversed(axis),
         })
     }
 

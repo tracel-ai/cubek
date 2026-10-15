@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use super::{CubeOrder, Level, cube_positions, oriented};
+use super::{CubeOrder, Level, cube_positions, reversed_if};
 use crate::{Axis, Coords, CubeAxis, Integer, IntegerExpand, Space};
 
 /// The order the planes of a launch take a level's tiles in, where a plane level spans the launch
@@ -144,7 +144,7 @@ pub(crate) fn launch_plane_tiles(
         comptime!(
             named
                 .iter()
-                .map(|&p| level.reverses(space.axis_at(p)))
+                .map(|&p| level.is_reversed(space.axis_at(p)))
                 .collect::<Vec<_>>()
         ),
         comptime!(order.block_order()),
@@ -193,7 +193,7 @@ fn block_coords(
     let named = comptime!(reversed.len());
     let mut out = Coords::<usize>::new();
     if comptime!(named == 1) {
-        out.push(oriented(block, blocks.at(0), comptime!(reversed[0])));
+        out.push(reversed_if(block, blocks.at(0), comptime!(reversed[0])));
     } else {
         let plane = blocks.at(0).times(blocks.at(1));
         let first_two = if comptime!(named == 2) {
@@ -202,15 +202,15 @@ fn block_coords(
             block.remainder(plane)
         };
         let (x, y) = cube_positions(first_two, (blocks.at(0), blocks.at(1)), order);
-        out.push(oriented(x, blocks.at(0), comptime!(reversed[0])));
-        out.push(oriented(y, blocks.at(1), comptime!(reversed[1])));
+        out.push(reversed_if(x, blocks.at(0), comptime!(reversed[0])));
+        out.push(reversed_if(y, blocks.at(1), comptime!(reversed[1])));
         let mut rest = block.divided_by(plane);
         #[unroll]
         for i in 2..named {
             if comptime!(i + 1 == named) {
-                out.push(oriented(rest, blocks.at(i), comptime!(reversed[i])));
+                out.push(reversed_if(rest, blocks.at(i), comptime!(reversed[i])));
             } else {
-                out.push(oriented(
+                out.push(reversed_if(
                     rest.remainder(blocks.at(i)),
                     blocks.at(i),
                     comptime!(reversed[i]),

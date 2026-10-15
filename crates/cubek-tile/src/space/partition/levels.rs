@@ -348,7 +348,7 @@ impl StatedLevel {
                 .iter()
                 .map(|&(axis, tile, _)| (axis, tile))
                 .collect();
-            return Level::spanning_launch(&tile, order.clone()).reversing(&self.reversed);
+            return Level::spanning_launch(&tile, order.clone()).reversed(&self.reversed);
         }
         let cuts: Vec<(Axis, usize, Count, Spread)> = self
             .tiles
@@ -384,7 +384,7 @@ impl StatedLevel {
         };
         match self.reversed.is_empty() {
             true => level,
-            false => level.reversing(&self.reversed),
+            false => level.reversed(&self.reversed),
         }
     }
 }
@@ -612,9 +612,9 @@ mod tests {
             .cubes(&[M, N])
             .reversed(M)
             .build();
-        assert!(levels[0].reverses(M));
-        assert!(!levels[0].reverses(N));
-        assert!(levels[1..].iter().all(|level| !level.reverses(M)));
+        assert!(levels[0].is_reversed(M));
+        assert!(!levels[0].is_reversed(N));
+        assert!(levels[1..].iter().all(|level| !level.is_reversed(M)));
     }
 
     /// The planes of one cube are not dealt in launch order, so there is nothing to reverse.

@@ -53,16 +53,20 @@ pub(crate) fn cube_positions(
     }
 }
 
-/// Position `c` of the `n` along an axis, counted from the far end where the level reverses the
-/// axis ([`Levels::reversed`](crate::Levels::reversed)). Applied after the order decodes `c`, so
-/// it composes with any [`CubeOrder`]. A position past the last stays where it is: its worker
-/// takes no tile either way.
+/// `position` of the `count` along an axis, counted from the far end where the axis is
+/// [`reversed`](crate::Levels::reversed). Applied after the order decodes `position`, so it
+/// composes with any [`CubeOrder`]. A position past the last stays where it is: its worker takes
+/// no tile either way.
 #[cube]
-pub(crate) fn oriented(c: usize, n: usize, #[comptime] reversed: bool) -> usize {
+pub(crate) fn reversed_if(position: usize, count: usize, #[comptime] reversed: bool) -> usize {
     if comptime!(reversed) {
-        if c < n { n - 1 - c } else { c }
+        if position < count {
+            count - 1 - position
+        } else {
+            position
+        }
     } else {
-        c
+        position
     }
 }
 
@@ -278,15 +282,15 @@ mod tests {
         for n in [1usize, 2, 5, 8] {
             let mut seen = vec![false; n];
             for c in 0..n {
-                let at = oriented(c, n, true);
+                let at = reversed_if(c, n, true);
                 assert!(at < n && !seen[at], "{c} of {n} reversed lands at {at}");
                 seen[at] = true;
             }
-            assert_eq!(oriented(0, n, true), n - 1);
+            assert_eq!(reversed_if(0, n, true), n - 1);
             for spare in [n, n + 3] {
-                assert_eq!(oriented(spare, n, true), spare);
+                assert_eq!(reversed_if(spare, n, true), spare);
             }
-            assert_eq!(oriented(n - 1, n, false), n - 1);
+            assert_eq!(reversed_if(n - 1, n, false), n - 1);
         }
     }
 

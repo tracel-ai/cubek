@@ -11,7 +11,7 @@ use crate::{
 use super::distribution::{AxisDistribution, Distribution};
 use crate::Spread;
 use crate::space::partition::{
-    GridCount, in_plane_axes, launch_plane_tiles, oriented, swizzled_positions,
+    GridCount, in_plane_axes, launch_plane_tiles, reversed_if, swizzled_positions,
 };
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
@@ -179,7 +179,7 @@ impl Walk {
                             .divided_by(inner_weight)
                             .remainder(instances.at(p)),
                     };
-                    let position = oriented(position, instances.at(p), reversed);
+                    let position = reversed_if(position, instances.at(p), reversed);
                     let run = match comptime!(across) {
                         Some(workers) => grid
                             .at(p)
