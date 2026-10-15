@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use super::{CubeOrder, Level, cube_positions, reversed_if};
+use super::{CubeOrder, Level, cube_positions};
 use crate::{Axis, Coords, CubeAxis, Integer, IntegerExpand, Space};
 
 /// The order the planes of a launch take a level's tiles in, where a plane level spans the launch
@@ -141,12 +141,7 @@ pub(crate) fn launch_plane_tiles(
     let at = block_coords(
         block,
         &blocks,
-        comptime!(
-            named
-                .iter()
-                .map(|&p| level.is_reversed(space.axis_at(p)))
-                .collect::<Vec<_>>()
-        ),
+        comptime!(named.len()),
         comptime!(order.block_order()),
     );
 
@@ -178,22 +173,18 @@ pub(crate) fn launch_plane_tiles(
     (positions, counts)
 }
 
-/// Block `block`'s coordinates over `blocks`, one axis for each of `reversed`: the first two in
-/// `order`, the others outermost, first fastest, the last never wrapped, so a block past the grid
-/// lands off it. Each axis is then counted from its far end where `reversed` says so.
-// The loop is an `#[unroll]`ed cube loop indexing a comptime `Vec`, not host iteration.
-#[allow(clippy::needless_range_loop)]
+/// Block `block`'s coordinates over `blocks`, `named` axes of them: the first two in `order`, the
+/// others outermost, first fastest, the last never wrapped, so a block past the grid lands off it.
 #[cube]
 fn block_coords(
     block: usize,
     blocks: &Coords<usize>,
-    #[comptime] reversed: Vec<bool>,
+    #[comptime] named: usize,
     #[comptime] order: CubeOrder,
 ) -> Coords<usize> {
-    let named = comptime!(reversed.len());
     let mut out = Coords::<usize>::new();
     if comptime!(named == 1) {
-        out.push(reversed_if(block, blocks.at(0), comptime!(reversed[0])));
+        out.push(block);
     } else {
         let plane = blocks.at(0).times(blocks.at(1));
         let first_two = if comptime!(named == 2) {
@@ -202,19 +193,15 @@ fn block_coords(
             block.remainder(plane)
         };
         let (x, y) = cube_positions(first_two, (blocks.at(0), blocks.at(1)), order);
-        out.push(reversed_if(x, blocks.at(0), comptime!(reversed[0])));
-        out.push(reversed_if(y, blocks.at(1), comptime!(reversed[1])));
+        out.push(x);
+        out.push(y);
         let mut rest = block.divided_by(plane);
         #[unroll]
         for i in 2..named {
             if comptime!(i + 1 == named) {
-                out.push(reversed_if(rest, blocks.at(i), comptime!(reversed[i])));
+                out.push(rest);
             } else {
-                out.push(reversed_if(
-                    rest.remainder(blocks.at(i)),
-                    blocks.at(i),
-                    comptime!(reversed[i]),
-                ));
+                out.push(rest.remainder(blocks.at(i)));
                 rest = rest.divided_by(blocks.at(i));
             }
         }

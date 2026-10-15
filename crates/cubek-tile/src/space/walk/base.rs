@@ -10,13 +10,13 @@ use crate::{
 
 use super::distribution::{AxisDistribution, Distribution};
 use crate::Spread;
-use crate::space::partition::{
-    GridCount, in_plane_axes, launch_plane_tiles, reversed_if, swizzled_positions,
-};
+use crate::space::partition::{GridCount, in_plane_axes, launch_plane_tiles, swizzled_positions};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
 pub struct Walk {
+    /// The level's tiles along each axis, which a reversed axis counts back from.
+    tiles: Coords<usize>,
     counts: Coords<usize>,
     positions: Coords<usize>,
     scales: Coords<usize>,
@@ -83,6 +83,7 @@ impl Walk {
         let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
+            tiles: grid,
             counts,
             positions,
             scales,
@@ -169,7 +170,6 @@ impl Walk {
                     inner,
                     unspanned,
                     swizzled: joint,
-                    reversed,
                 }) => {
                     // Mixed-radix stride over the later same-dimension axes, spanned or not.
                     let inner_weight = instances.product(inner) * comptime!(unspanned).runtime();
@@ -179,7 +179,6 @@ impl Walk {
                             .divided_by(inner_weight)
                             .remainder(instances.at(p)),
                     };
-                    let position = reversed_if(position, instances.at(p), reversed);
                     let run = match comptime!(across) {
                         Some(workers) => grid
                             .at(p)
@@ -236,6 +235,7 @@ impl Walk {
         let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
+            tiles: self.tiles,
             counts,
             positions: self.positions,
             scales: self.scales,
@@ -330,9 +330,10 @@ impl Walk {
         }
     }
 
-    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`].
+    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`], counted from the
+    /// last tile where the level hands the axis out [`reversed`](crate::Levels::reversed).
     fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
-        match comptime!(self.distributes[p].clone()) {
+        let tile = match comptime!(self.distributes[p].clone()) {
             AxisDistribution::Walked => digit,
             AxisDistribution::Distributed(Distribution {
                 spread: Spread::Contiguous,
@@ -342,6 +343,11 @@ impl Walk {
                 spread: Spread::Interleaved,
                 ..
             }) => digit.times(self.scales.at(p)).plus(self.positions.at(p)),
+        };
+        if comptime!(self.level.is_reversed(self.space.axis_at(p))) {
+            self.tiles.at(p).minus(1usize).minus(tile)
+        } else {
+            tile
         }
     }
 }

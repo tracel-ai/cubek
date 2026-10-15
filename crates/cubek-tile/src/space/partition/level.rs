@@ -416,8 +416,7 @@ impl Level {
     }
 
     /// This level handing out the tiles of each of `axes` from the last to the first, on top of
-    /// whatever order it deals them in: the first workers launched take the last tiles. A worker
-    /// past the last tile stays past it, so it still takes none.
+    /// whatever order it deals them in: the first workers launched take the last tiles.
     pub(crate) fn reversed(mut self, axes: &[Axis]) -> Level {
         assert!(
             self.coverage == Coverage::Distribute(ComputeScope::Cube) || self.plane_order.is_some(),
