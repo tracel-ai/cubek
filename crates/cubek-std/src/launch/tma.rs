@@ -149,8 +149,9 @@ fn tma_operand_typed(
 /// A binding whose tile is not stored a row at a time: the descriptor takes the innermost dim to
 /// step by one and each row to follow the last, so any other tile would load in silence as the
 /// wrong values. Under [`TmaLanding::Tiles`], a box that is not the binding's tile; under
-/// [`TmaLanding::Rows`], a binding with batch dims or a box that is not whole tiles, which would
-/// land part of a tile's rows. The routine's own checks refuse these first.
+/// [`TmaLanding::Rows`], a binding with batch dims or a box that is not whole tiles along its
+/// rows, which would land part of a tile's rows, nor whole tiles or a part dividing one along its
+/// columns. The routine's own checks refuse these first.
 pub fn tma_operand_tiled(
     binding: TensorBinding,
     box_shape: (usize, usize),
@@ -188,16 +189,22 @@ pub fn tma_operand_tiled(
                 "tma_operand_tiled: a box landing in rows is over (R/tr, C/tc, tr, tc), unbatched"
             );
             let (box_rows, box_cols) = box_shape;
+            // Along its columns a box is whole tiles, or a part of one tile's run dividing it.
+            let (tiles_across, run) = match box_cols.is_multiple_of(tile.1) {
+                true => (box_cols / tile.1, tile.1),
+                false => (1, box_cols),
+            };
             assert!(
-                box_rows.is_multiple_of(tile.0) && box_cols.is_multiple_of(tile.1),
-                "tma_operand_tiled: a box of {box_shape:?} is not whole {tile:?} tiles"
+                box_rows.is_multiple_of(tile.0) && tile.1.is_multiple_of(run),
+                "tma_operand_tiled: a box of {box_shape:?} is not whole {tile:?} tiles along its \
+                 rows, and whole tiles or a part dividing one along its columns"
             );
             let (shape, strides) = (&binding.shape, &binding.strides);
             let metadata = Metadata::new(
                 shape![shape[0], shape[2], shape[1], shape[3]],
                 strides![strides[0], strides[2], strides[1], strides[3]],
             );
-            let box_dims = shape![box_rows / tile.0, tile.0, box_cols / tile.1, tile.1];
+            let box_dims = shape![box_rows / tile.0, tile.0, tiles_across, run];
             (metadata, box_dims)
         }
     };

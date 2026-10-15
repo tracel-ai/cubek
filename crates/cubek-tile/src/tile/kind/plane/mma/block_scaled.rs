@@ -61,17 +61,18 @@ pub(crate) fn block_scaled_definition<CD: Numeric>(
     )
 }
 
-/// Whether `src`, packed `e2m1` values under one level of scales, contracts through the device's
-/// block-scaled instruction of `m × n × k`: the instruction offered for `e2m1` operands under
-/// `e4m3` scales, and the scales one every [`E2M1_SCALE_BLOCK`] values of `k`. A source that is
-/// not reads through the decoding landing, which serves every scaled source.
+/// Whether `src`, packed `e2m1` values under one level of scales loaded into a fragment of `T`,
+/// contracts through the device's block-scaled instruction of `m × n × k`: the instruction offered
+/// for `e2m1` operands under `e4m3` scales, the scales one every [`E2M1_SCALE_BLOCK`] values of
+/// `k`, and a fragment holding the codes as stored. A fragment of a 16-bit float decodes them
+/// instead, and any other source reads through the decoding landing.
 ///
 /// What the instruction takes is NVFP4: the leaf reads each block's scale at its first value and
 /// hands it over as `e4m3`, so the scales must cover sixteen values of `k` or a multiple of
 /// sixteen, each exact in `e4m3`. A per-tensor factor above them is the product's to apply: the
 /// instruction holds one level.
 #[cube]
-pub(crate) fn block_scales_here(
+pub(crate) fn block_scales_here<T: Numeric>(
     src: &Tile,
     #[comptime] m: usize,
     #[comptime] n: usize,
@@ -88,21 +89,37 @@ pub(crate) fn block_scales_here(
     ));
     let blocks = comptime!(k.is_multiple_of(E2M1_SCALE_BLOCK));
     let offered = offers_block_scaled(m, n, k);
-    comptime!(e2m1 && shared && one_level == 1 && blocks && offered)
+    let as_stored = served_as_stored::<T>();
+    comptime!(e2m1 && shared && one_level == 1 && blocks && offered && as_stored)
+}
+
+/// Whether a fragment of `T` holds the codes as they are stored, which the block-scaled
+/// instruction reads: anything but a float of 16 bits or more, which a fragment decoding the
+/// codes into a 16-bit instruction's operand holds instead.
+// `T` is read by the expansion, which is where a type has its element.
+#[allow(clippy::extra_unused_type_parameters)]
+#[cube]
+fn served_as_stored<T: Numeric>() -> comptime_type!(bool) {
+    intrinsic!(|scope| {
+        !matches!(
+            T::elem_type(scope),
+            ElemType::Float(FloatKind::F16 | FloatKind::BF16 | FloatKind::F32 | FloatKind::TF32)
+        )
+    })
 }
 
 /// Whether both `lhs` and `rhs` contract through the device's block-scaled instruction of
 /// `m × n × k` ([`block_scales_here`]): the instruction takes both or neither.
 #[cube]
-pub(crate) fn contracts_block_scaled(
+pub(crate) fn contracts_block_scaled<L: Numeric, R: Numeric>(
     lhs: &Tile,
     rhs: &Tile,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
 ) -> comptime_type!(bool) {
-    let lhs_scaled = block_scales_here(lhs, m, n, k);
-    let rhs_scaled = block_scales_here(rhs, m, n, k);
+    let lhs_scaled = block_scales_here::<L>(lhs, m, n, k);
+    let rhs_scaled = block_scales_here::<R>(rhs, m, n, k);
     comptime!(lhs_scaled && rhs_scaled)
 }
 

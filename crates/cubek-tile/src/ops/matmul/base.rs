@@ -139,10 +139,12 @@ impl PlaneTile {
                 // The manual-mma instruction reads registers, where a scaled factor cannot land,
                 // unless the device's block-scaled instruction takes the scales beside the values,
                 // or a fragment deeper than its instruction decodes them into its registers as it
-                // loads ([`lane_runs`](crate::tile::kind::plane::mma::lane_runs)), which says why
-                // where it cannot.
+                // loads, a step at a time out of shared memory
+                // ([`steps`](crate::tile::kind::plane::mma::steps)) or in lane runs out of global
+                // memory ([`lane_runs`](crate::tile::kind::plane::mma::lane_runs)), each of which
+                // says why where it cannot.
                 let (m, n, k) = comptime!((d.m, d.n, d.k));
-                let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
+                let block_scaled = contracts_block_scaled::<EL, ER>(lhs, rhs, m, n, k);
                 let steps = lane_run_steps::<EL>(m, n, k);
                 if comptime!(!block_scaled && steps == 1) {
                     lhs.refuse_factor("PlaneTile::Mma");

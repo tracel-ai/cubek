@@ -284,8 +284,9 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
 
 impl ScaleArgExpand {
     /// `values` under these scales, a tile carrying its own scales in turn. A tensor map's values
-    /// land in a stage as they lie, so only words of block scales, which a stage keeps beside
-    /// them, ride them.
+    /// land in a stage as they lie, so the scales on them are words of block scales, which a stage
+    /// keeps beside them; a scale above the words leaves the operand for the sum (`Tile::factor`)
+    /// before the stage is filled, and staging checks what is left.
     fn scaling(
         &self,
         scope: &Scope,

@@ -8,7 +8,7 @@ use cubecl::{
 
 use super::block_scaled::*;
 use super::widths::*;
-use crate::tile::kind::plane::load_matrix::{LDMATRIX_ROW_BYTES, load_ldmatrix};
+use crate::tile::kind::plane::load_matrix::{LDMATRIX_ROW_BYTES, along_k, load_ldmatrix};
 use crate::*;
 
 /// One manual-mma fragment: a role's registers plus the shape and transport it dispatches on.
@@ -221,7 +221,7 @@ impl MmaData {
         let steps = lane_run_steps::<T>(m, n, k);
         match &mut self.fragment {
             MmaFragment::Lhs(f) => match comptime!(steps > 1) {
-                true => load_lane_runs(src, f.at_mut::<T>(), MatrixIdent::A, layout, (m, n, k)),
+                true => load_deep(src, f.at_mut::<T>(), MatrixIdent::A, layout, io, (m, n, k)),
                 false => load_fragment(
                     src,
                     f.at_mut::<T>(),
@@ -230,10 +230,11 @@ impl MmaData {
                     layout,
                     io,
                     (m, k),
+                    0usize,
                 ),
             },
             MmaFragment::Rhs(f) => match comptime!(steps > 1) {
-                true => load_lane_runs(src, f.at_mut::<T>(), MatrixIdent::B, layout, (m, n, k)),
+                true => load_deep(src, f.at_mut::<T>(), MatrixIdent::B, layout, io, (m, n, k)),
                 false => load_fragment(
                     src,
                     f.at_mut::<T>(),
@@ -242,6 +243,7 @@ impl MmaData {
                     layout,
                     io,
                     (k, n),
+                    0usize,
                 ),
             },
             MmaFragment::Acc(f) => load_fragment(
@@ -252,6 +254,7 @@ impl MmaData {
                 layout,
                 io,
                 (m, n),
+                0usize,
             ),
             MmaFragment::LhsBlockScaled(values, scales) => {
                 load_block_scaled(src, values, scales, MatrixIdent::A, layout, io, (m, n, k))
@@ -547,7 +550,7 @@ fn fill_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, value
 
 /// Load `fragment` (role `ident`, shaped by `edges`) from a row-major window.
 #[cube]
-fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
+pub(crate) fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     def: &MmaDefinition<A, B, CD>,
@@ -555,6 +558,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] layout: MatrixLayout,
     #[comptime] io: MmaIo,
     #[comptime] edges: (usize, usize),
+    #[comptime] k_offset: usize,
 ) {
     // `ldmatrix` reads 16-byte rows of 16-bit served cells from shared memory, on a device that
     // offers it for the element; any other window, or device, takes the manual load.
@@ -584,11 +588,11 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     match method {
         LoadMethod::Manual => {
             let size!(W) = src.vector_size();
-            load_manual::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
+            load_manual::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges, k_offset)
         }
         LoadMethod::LoadMatrix => {
             let size!(W) = src.vector_size();
-            load_ldmatrix::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
+            load_ldmatrix::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges, k_offset)
         }
     }
 }
@@ -608,7 +612,27 @@ fn loads_matrix<T: Numeric>() -> comptime_type!(bool) {
     })
 }
 
-/// Manual load: each unit reads its own cells of `src` through the matrix view.
+/// A fragment deeper than its instruction, out of `src`: a step at a time in the instruction's own
+/// order out of shared memory, where `ldmatrix` reads each step, in lane runs out of global memory,
+/// where a unit's whole loads pay ([`load_in_steps`], [`load_lane_runs`]).
+#[cube]
+fn load_deep<T: Numeric, N: Size>(
+    src: &Tile,
+    fragment: &mut Array<Vector<T, N>>,
+    #[comptime] ident: MatrixIdent,
+    #[comptime] layout: MatrixLayout,
+    #[comptime] io: MmaIo,
+    #[comptime] shape: (usize, usize, usize),
+) {
+    let shared = src.is_shared();
+    match comptime!(shared) {
+        true => load_in_steps(src, fragment, ident, layout, io, shape),
+        false => load_lane_runs(src, fragment, ident, layout, shape),
+    }
+}
+
+/// Manual load: each unit reads its own cells of `src` through the matrix view, `k_offset` along
+/// `k` into a window deeper than one instruction.
 #[cube]
 fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile,
@@ -617,6 +641,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] edges: (usize, usize),
+    #[comptime] k_offset: usize,
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
@@ -657,6 +682,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
         let mut vector = Vector::empty();
         if comptime!(along_lines) {
             let (row, col) = def.position_of_nth(unit_id, comptime!(i * vector_size) as u32, ident);
+            let (row, col) = along_k(row, col, ident, k_offset);
             let (line_row, cell) = if comptime!(transposed) {
                 (col, row)
             } else {
@@ -688,6 +714,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
             for e in 0..vector_size {
                 let elem_idx = i * vector_size + e;
                 let (row, col) = def.position_of_nth(unit_id, elem_idx as u32, ident);
+                let (row, col) = along_k(row, col, ident, k_offset);
                 let (line_row, cell) = if comptime!(transposed) {
                     (col, row)
                 } else {

@@ -5,8 +5,10 @@
 pub(crate) mod base;
 pub(crate) mod block_scaled;
 pub(crate) mod lane_runs;
+pub(crate) mod steps;
 mod widths;
 
 pub(crate) use base::*;
 pub(crate) use block_scaled::*;
 pub(crate) use lane_runs::*;
+pub(crate) use steps::*;
