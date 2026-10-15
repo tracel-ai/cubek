@@ -99,11 +99,21 @@ impl PlaneOrder {
     /// [`planes_per_cube`](Self::planes_per_cube), laid along `x` and spilling into `y` past what
     /// one dimension takes. At least one cube, so an empty problem divides by no empty dimension.
     /// Static extents only.
+    ///
+    /// A spill lays the cubes out exactly where it can: `x` is the widest count one dimension
+    /// takes that divides the cubes, so no cube runs past the last block. Only a count with no
+    /// such divisor rounds `y` up, and leaves the spare cubes [`overruns`](Self::overruns) masks.
     pub(crate) fn grid(&self, level: &Level, space: &Space) -> (usize, usize) {
         let planes = self.blocks(level, space) * self.block_planes();
-        let cubes = planes.div_ceil(self.planes_per_cube);
-        let x = cubes.clamp(1, CUBES_PER_GRID_DIMENSION);
-        (x, cubes.div_ceil(x).max(1))
+        let cubes = planes.div_ceil(self.planes_per_cube).max(1);
+        if cubes <= CUBES_PER_GRID_DIMENSION {
+            return (cubes, 1);
+        }
+        let rows = cubes.div_ceil(CUBES_PER_GRID_DIMENSION);
+        let x = (rows..=CUBES_PER_GRID_DIMENSION)
+            .find(|&rows| cubes.is_multiple_of(rows) && cubes / rows <= CUBES_PER_GRID_DIMENSION)
+            .map_or(CUBES_PER_GRID_DIMENSION, |rows| cubes / rows);
+        (x, cubes.div_ceil(x))
     }
 
     /// Whether some plane the launch spawns for `level` over `space` walks a tile past the last
@@ -272,4 +282,51 @@ fn block_coords(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Levels, Partitioning};
+
+    const N: Axis = Axis(0);
+
+    /// The grid's `x`, `y` and `z`.
+    fn counts(partitioning: &Partitioning) -> (u32, u32, u32) {
+        let CubeCount::Static(x, y, z) = partitioning.cube_count() else {
+            unreachable!("a static space lays a static grid");
+        };
+        (x, y, z)
+    }
+
+    /// One plane a tile of two along `N`, one plane a cube, over `columns`.
+    fn one_plane_a_cube(columns: usize) -> Partitioning {
+        Partitioning::new(
+            Space::new(&[(N, columns)]),
+            Levels::leaf(&[(N, 2)])
+                .launch_planes(&[N], PlaneOrder::new(&[(N, 1)], CubeOrder::RowMajor))
+                .build(),
+        )
+    }
+
+    /// More cubes than one dimension takes are laid out exactly where a count one dimension takes
+    /// divides them: a vocabulary of columns, two a plane, spills into a second row of the same
+    /// width, and no plane runs past the last tile. A count with no such divisor, a prime past
+    /// one dimension, still spills into a row it does not fill, and overruns it.
+    #[test]
+    fn a_spill_divides_the_cubes_where_it_can() {
+        let vocabulary = one_plane_a_cube(151_936);
+        assert_eq!(counts(&vocabulary), (37_984, 2, 1));
+        assert!(!vocabulary.overhangs(N));
+
+        let prime = one_plane_a_cube(2 * 65_537);
+        assert_eq!(counts(&prime), (CUBES_PER_GRID_DIMENSION as u32, 2, 1));
+        assert!(prime.overhangs(N));
+    }
+
+    /// A grid one dimension holds stays one row.
+    #[test]
+    fn a_grid_one_dimension_holds_is_one_row() {
+        assert_eq!(counts(&one_plane_a_cube(2 * 1000)), (1000, 1, 1));
+    }
 }
