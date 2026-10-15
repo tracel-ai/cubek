@@ -17,8 +17,8 @@ pub enum Instruction {
     Wgmma,
 }
 
-/// What a manual-mma instruction's operands are: the blueprint's choice, which a leaf reads
-/// rather than guessing it from the operands it is handed.
+/// What a manual-mma instruction's operands are: the blueprint's choice, which every leaf reads, so
+/// the operands a leaf is handed never decide it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum MmaOperands {
     /// Values as the instruction takes them. A scaled or packed operand is decoded before it

@@ -27,7 +27,7 @@ pub(crate) struct MmaData {
     pub layout: MatrixLayout,
     #[cube(comptime)]
     pub io: MmaIo,
-    /// What the instruction's operands are, which its leaves read rather than guess.
+    /// What the instruction's operands are ([`MmaOperands`]).
     #[cube(comptime)]
     pub operands: MmaOperands,
 }
