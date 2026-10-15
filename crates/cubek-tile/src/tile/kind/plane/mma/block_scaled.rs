@@ -61,10 +61,11 @@ pub(crate) fn block_scaled_definition<CD: Numeric>(
     )
 }
 
-/// Whether `src`, packed `e2m1` values under one level of scales, contracts through the device's
-/// block-scaled instruction of `m × n × k`: the instruction offered for `e2m1` operands under
-/// `e4m3` scales, and the scales one every [`E2M1_SCALE_BLOCK`] values of `k`. A source that is
-/// not reads through the decoding landing, which serves every scaled source.
+/// Whether `src`, packed `e2m1` values under one level of scales loaded into a fragment of `T`,
+/// contracts through the device's block-scaled instruction of `m × n × k`: the instruction offered
+/// for `e2m1` operands under `e4m3` scales, the scales one every [`E2M1_SCALE_BLOCK`] values of
+/// `k`, and a fragment holding the codes as stored. A fragment of a 16-bit float decodes them
+/// instead, and any other source reads through the decoding landing.
 ///
 /// What the instruction takes is NVFP4: the leaf reads each block's scale at its first value and
 /// hands it over as `e4m3`, so the scales must cover sixteen values of `k` or a multiple of

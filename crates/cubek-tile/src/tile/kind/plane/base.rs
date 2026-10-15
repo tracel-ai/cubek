@@ -828,8 +828,8 @@ impl PlanePartition {
         };
         if comptime!(block_scaled || lane_runs > 1) {
             // The instruction reads the stored values and their scales as they lie, or a
-            // fragment deeper than it decodes them as it loads its lane runs: nothing lands on
-            // the way, so each fragment loads its own window of the source.
+            // fragment deeper than it decodes them as it loads: nothing lands on the way, so each
+            // fragment loads its own window of the source.
             match &frags.kind {
                 TileKind::PlanePartition(partition) => partition.fill_from::<T>(src),
                 TileKind::Memory(_)
