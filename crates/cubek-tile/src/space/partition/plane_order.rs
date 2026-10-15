@@ -9,6 +9,22 @@ use crate::{Axis, Coords, CubeAxis, Integer, IntegerExpand, Space};
 /// The most cubes one grid dimension takes on every device a launch may run on.
 const CUBES_PER_GRID_DIMENSION: usize = 65_535;
 
+/// `cubes` as a grid's `x` and `y`, at least one each: along `x` alone where one dimension takes
+/// them, else folded into `y`. The fold is exact where a divisor of `cubes` both dimensions take
+/// allows, so the grid spawns no cube past the last; only a count no such divisor splits leaves
+/// spare cubes in the last row, whose planes the binding then masks.
+fn fold(cubes: usize) -> (usize, usize) {
+    let cubes = cubes.max(1);
+    if cubes <= CUBES_PER_GRID_DIMENSION {
+        return (cubes, 1);
+    }
+    let rows = cubes.div_ceil(CUBES_PER_GRID_DIMENSION);
+    let exact = (rows..=CUBES_PER_GRID_DIMENSION)
+        .find(|&y| cubes.is_multiple_of(y))
+        .map(|y| (cubes / y, y));
+    exact.unwrap_or((CUBES_PER_GRID_DIMENSION, rows))
+}
+
 /// The order the planes of a launch take a level's tiles in, where a plane level spans the launch
 /// rather than one cube ([`Levels::launch_planes`](crate::Levels::launch_planes)): in blocks, each
 /// a box of tiles held by consecutive planes, the blocks taken in a [`CubeOrder`] over their grid.
@@ -101,9 +117,7 @@ impl PlaneOrder {
     /// Static extents only.
     pub(crate) fn grid(&self, level: &Level, space: &Space) -> (usize, usize) {
         let planes = self.blocks(level, space) * self.block_planes();
-        let cubes = planes.div_ceil(self.planes_per_cube);
-        let x = cubes.clamp(1, CUBES_PER_GRID_DIMENSION);
-        (x, cubes.div_ceil(x).max(1))
+        fold(planes.div_ceil(self.planes_per_cube))
     }
 
     /// Whether some plane the launch spawns for `level` over `space` walks a tile past the last
@@ -272,4 +286,46 @@ fn block_coords(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A launch whose cubes fit one dimension lies along `x` alone.
+    #[test]
+    fn cubes_one_dimension_takes_lie_along_x() {
+        assert_eq!(fold(0), (1, 1));
+        assert_eq!(fold(1), (1, 1));
+        assert_eq!(
+            fold(CUBES_PER_GRID_DIMENSION),
+            (CUBES_PER_GRID_DIMENSION, 1)
+        );
+    }
+
+    /// Past one dimension, the fold spawns no spare cube where a divisor allows: a spare cube's
+    /// planes land past the last tile, which a binding reading lines along an axis it cannot
+    /// prove in bounds refuses. Qwen3's vocabulary at two columns a plane is 75,968 cubes.
+    #[test]
+    fn a_fold_spawns_no_spare_cube_where_a_divisor_allows() {
+        assert_eq!(fold(75_968), (37_984, 2));
+        assert_eq!(
+            fold(4 * CUBES_PER_GRID_DIMENSION),
+            (CUBES_PER_GRID_DIMENSION, 4)
+        );
+        for cubes in [65_536, 75_968, 151_936, 1_000_000] {
+            let (x, y) = fold(cubes);
+            assert!(x <= CUBES_PER_GRID_DIMENSION && y <= CUBES_PER_GRID_DIMENSION);
+            assert_eq!(x * y, cubes, "{cubes} cubes folded as {x} x {y}");
+        }
+    }
+
+    /// A count no divisor splits keeps every cube, the spare ones in the last row.
+    #[test]
+    fn a_count_no_divisor_splits_keeps_every_cube() {
+        // 65,537 is prime.
+        let (x, y) = fold(65_537);
+        assert_eq!((x, y), (CUBES_PER_GRID_DIMENSION, 2));
+        assert!(x * y >= 65_537);
+    }
 }
