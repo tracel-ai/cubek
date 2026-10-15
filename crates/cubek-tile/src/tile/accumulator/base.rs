@@ -388,7 +388,7 @@ impl Tile {
                     chunks,
                 ),
                 DrainPlan::BounceTogether => {
-                    sync_cube();
+                    sync_scratch(comptime!(self.place.holder()));
                     drain_chunk_below(
                         self,
                         dest,
@@ -399,7 +399,7 @@ impl Tile {
                         turn,
                         chunks,
                     );
-                    sync_cube();
+                    sync_scratch(comptime!(self.place.holder()));
                     drain_chunk_below(
                         self,
                         dest,
@@ -410,11 +410,11 @@ impl Tile {
                         turn,
                         chunks,
                     );
-                    sync_cube();
+                    sync_scratch(comptime!(self.place.holder()));
                 }
             },
             // One tile: it is the one chunk of its grid. A fragment bouncing into its destination
-            // meets the cube at its barriers whatever the turn, so it bounces through the
+            // meets its holder at its barriers whatever the turn, so it bounces through the
             // predicated pass; anything else stores with no barrier at all.
             TileKind::PlaneTile(t) => {
                 let cmma = match t {
@@ -466,7 +466,7 @@ impl Tile {
                 ),
                 // Own slots: every spill precedes any add, so the descent runs twice.
                 DrainPlan::BounceTogether => {
-                    sync_cube();
+                    sync_scratch(comptime!(self.place.holder()));
                     drain_below(
                         self,
                         dest,
@@ -474,7 +474,7 @@ impl Tile {
                         0usize,
                         comptime!(DrainPass::Spill),
                     );
-                    sync_cube();
+                    sync_scratch(comptime!(self.place.holder()));
                     drain_below(
                         self,
                         dest,
@@ -482,7 +482,7 @@ impl Tile {
                         0usize,
                         comptime!(DrainPass::Add),
                     );
-                    sync_cube();
+                    sync_scratch(comptime!(self.place.holder()));
                 }
             },
             // No grid: the accumulator is one tile and the drain is one store.
@@ -741,6 +741,17 @@ fn drain_chunk_below(
     }
 }
 
+/// Waits for the units that share the scratch a drain bounces through, `holder` being who holds
+/// the accumulator: a plane's windows are its own ([`plane_windows`]), so its plane alone meets
+/// them; a plane group's fragments span its planes, so the cube does.
+#[cube]
+fn sync_scratch(#[comptime] holder: ComputeScope) {
+    match comptime!(holder) {
+        ComputeScope::Unit | ComputeScope::Plane => sync_plane(),
+        ComputeScope::PlaneGroup { .. } | ComputeScope::Cube => sync_cube(),
+    }
+}
+
 /// [`drain_leaf`] for a fragment that lands only where `lands`: every barrier is reached
 /// whatever it says, so planes landing different fragments still meet at the same ones.
 #[cube]
@@ -765,15 +776,15 @@ fn drain_chunk_leaf(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass, lands:
         }
         DrainPass::Bounce => {
             let mut window = dest.clone();
-            sync_cube();
+            sync_scratch(comptime!(acc.place.holder()));
             if lands {
                 acc.spill_to_scratch();
             }
-            sync_cube();
+            sync_scratch(comptime!(acc.place.holder()));
             if lands {
                 window.add_from_scratch(acc);
             }
-            sync_cube();
+            sync_scratch(comptime!(acc.place.holder()));
         }
     }
 }
@@ -793,11 +804,11 @@ fn drain_leaf(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass) {
         }
         DrainPass::Bounce => {
             let mut window = dest.clone();
-            sync_cube();
+            sync_scratch(comptime!(acc.place.holder()));
             acc.spill_to_scratch();
-            sync_cube();
+            sync_scratch(comptime!(acc.place.holder()));
             window.add_from_scratch(acc);
-            sync_cube();
+            sync_scratch(comptime!(acc.place.holder()));
         }
     }
 }
