@@ -284,7 +284,9 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
 
 impl ScaleArgExpand {
     /// `values` under these scales, innermost first. A tensor map's values land in a stage as
-    /// they lie, so only words of block scales, which a stage keeps beside them, ride them.
+    /// they lie, so the level on them is words of block scales, which a stage keeps beside them;
+    /// a coarser level above the words leaves the operand for the sum (`Tile::factor`) before the
+    /// stage is filled, and staging checks what is left.
     fn scaling(
         &self,
         scope: &Scope,
@@ -297,9 +299,7 @@ impl ScaleArgExpand {
             ScaleArgExpand::Words(level) => {
                 let scales = level.values_tile(scope, partitioning);
                 let scaled = values.__expand_mul_method(scope, &scales);
-                level
-                    .scale
-                    .scaling(scope, &scaled, partitioning, tensor_map)
+                level.scale.scaling(scope, &scaled, partitioning, false)
             }
             ScaleArgExpand::Scales(level) => {
                 assert!(
