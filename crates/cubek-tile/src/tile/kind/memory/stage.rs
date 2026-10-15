@@ -306,6 +306,7 @@ impl Memory {
                     physical_strides,
                     projection: gmem_projection,
                     rows: comptime!(form.rows),
+                    paging: ComptimeOption::new_None(),
                 },
                 // Empty: a list over the buffer's own dims would misalign one level down.
                 window: Window::new(origin, extent, bound, false, comptime!(SmallVec::new())),

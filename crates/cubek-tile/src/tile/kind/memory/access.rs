@@ -160,6 +160,12 @@ impl Memory {
         &mut self,
         layout: BufferLayout,
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+        // Two sequences may share a page, and an entry past the pool is read as its last.
+        comptime!(assert!(
+            layout.paging.is_none(),
+            "Memory::write_view: a pool of pages is read through its table, never written \
+             through it; write the pool where it lies"
+        ));
         match &mut self.store.backing {
             Backing::Buffer(buffer) => buffer
                 .at_mut::<T>()
@@ -279,6 +285,7 @@ impl Memory {
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
             rows: RowArrangement::InOrder,
+            paging: ComptimeOption::new_None(),
         }
     }
 
@@ -315,6 +322,13 @@ impl Memory {
 
     /// Line offset of the window origin; the window must be one contiguous region.
     fn window_offset(&self) -> usize {
+        // A base and a row stride step past a page into whichever page lies next in the pool.
+        // Ahead of the overhang's: a pool's table-set extents always mask.
+        comptime!(assert!(
+            self.layout.paging.is_none(),
+            "Memory::window_offset: a pool of pages is read through its table one line at a \
+             time, never as one raw run; stage it"
+        ));
         comptime!(assert!(
             !self.access.overhang.masks(),
             "Memory::window_offset: cmma cannot mask an overhang"
@@ -655,6 +669,33 @@ impl Memory {
         let start = self
             .window_start
             .plus(advances.sum(comptime!((0..rank).collect::<Vec<_>>())));
+        // The window's extent along each dim in loads where the level fixes it, which only a pool
+        // of pages reads; it is direct, so these are the edges `direct_descent` cut.
+        let edges = comptime!(match self.layout.paging.is_some() {
+            true => {
+                let width = self.store.vector_size;
+                let load = VectorTile::new(
+                    &self.store.stored_tiles,
+                    space.axis_at(space.rank() - 1),
+                    width,
+                )
+                .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"));
+                Some(
+                    (0..rank)
+                        .map(|p| {
+                            let axis = space.axis_at(p);
+                            match step.level.extent_in(&space, axis) {
+                                Extent::Dynamic => None,
+                                edge => {
+                                    Some(load.loads_in(axis, edge.get(), space.extent_raw(axis)))
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            false => None,
+        });
 
         self.moved_to(
             Window::new(
@@ -664,6 +705,7 @@ impl Memory {
                 comptime!(self.window.signed),
                 comptime!(self.window.boundaries.clone()),
             ),
+            comptime!(edges),
             start,
             map,
             // No longer covers the buffer, so no straight-through fill.
@@ -775,11 +817,14 @@ impl Memory {
         (origin, extent, advances, map)
     }
 
-    /// This store looking at `window` from line `window_start` on; buffer and layout unchanged.
+    /// This store looking at `window` from line `window_start` on; buffer unchanged, and the layout
+    /// pinned at the window where it reads a pool of pages. `edges` is the window's extent along
+    /// each dim in loads where a level fixes it, `None` where the extent is the one before.
     #[allow(clippy::too_many_arguments)]
     fn moved_to(
         &self,
         window: Window,
+        #[comptime] edges: Option<Vec<Option<usize>>>,
         window_start: u32,
         map: RuntimeMap,
         #[comptime] access: Access,
@@ -789,7 +834,7 @@ impl Memory {
         Memory {
             address: comptime!(self.address),
             store: self.store.clone(),
-            layout: self.layout.clone(),
+            layout: self.layout.pinned_at(&window.origin, edges),
             window,
             projection: comptime!(self.projection.clone()),
             source_window: self.source_window.clone(),
@@ -811,6 +856,7 @@ impl Memory {
         let fill = comptime!(self.access.fill.held_by(holder));
         self.moved_to(
             self.window.clone(),
+            comptime!(None),
             self.window_start,
             self.map.clone(),
             comptime!(Access {
@@ -868,6 +914,7 @@ impl Memory {
                     boundaries
                 }),
             ),
+            comptime!(None),
             start,
             self.map.clone(),
             // `until` is a runtime bound, so the window masks from here down.

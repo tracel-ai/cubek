@@ -59,6 +59,19 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         unexpanded!()
     }
 
+    /// [`tile`](TileArg::tile), read through `pages` where the operand is a pool of pages bound
+    /// [`paged`](crate::launch::Arg::paged), and where it lies where `pages` is `None`: one
+    /// kernel serves either. The launch decides which it compiles by the `pages` it passes, which
+    /// must match the binding: a table for a pool bound `paged`, `None` for any other operand;
+    /// a mismatch panics as the kernel expands.
+    pub fn tile_paged(
+        &self,
+        _partitioning: &Partitioning,
+        _pages: ComptimeOption<&Tensor<u32>>,
+    ) -> Tile {
+        unexpanded!()
+    }
+
     /// [`tile`](TileArg::tile) for a partly runtime gather map, its dynamic values in
     /// [`GlobalOperand::gathered`]'s order. Only a buffer is gathered.
     pub fn tile_gathered(
@@ -107,6 +120,19 @@ fn gathered_tile<E: Numeric>(
         offsets,
     )
     .tile::<E>(comptime!(space.levels().to_vec()))
+}
+
+/// [`buffer_tile`] over a pool of pages, read as the sequences `table` names.
+#[cube]
+fn paged_tile<E: Numeric>(
+    tensor: &Tensor<E>,
+    table: &Tensor<u32>,
+    partitioning: &Partitioning,
+    #[comptime] spec: TileSpec,
+) -> Tile {
+    let space = comptime!(partitioning.clone());
+    GlobalOperand::paged(tensor, table, comptime!(space.space().clone()), spec)
+        .tile::<E>(comptime!(space.levels().to_vec()))
 }
 
 /// A tensor map, served as a TMA-filled tile.
@@ -191,6 +217,22 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
             offsets,
             self.spec.clone(),
         );
+        self.scale.scaling(scope, &values, partitioning, false)
+    }
+
+    pub fn __expand_tile_paged_method(
+        &self,
+        scope: &Scope,
+        partitioning: &PartitioningExpand,
+        pages: ComptimeOptionExpand<&Tensor<u32>>,
+    ) -> TileExpand {
+        let ComptimeOptionExpand::Some(table) = pages else {
+            return self.__expand_tile_method(scope, partitioning);
+        };
+        let ValuesExpand::Tensor { tensor, .. } = &self.values else {
+            panic!("TileArg::tile_paged: a pool of pages is a buffer; a tensor map lands boxes")
+        };
+        let values = paged_tile::expand::<E>(scope, tensor, table, partitioning, self.spec.clone());
         self.scale.scaling(scope, &values, partitioning, false)
     }
 

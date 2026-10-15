@@ -175,8 +175,23 @@ fn adds_atomically(client: &cubecl::client::Client) -> bool {
     adds
 }
 
+/// Whether the test device holds one cube of `partitioning`, which every case its cube outgrows
+/// skips.
+fn holds_a_cube(client: &cubecl::client::Client, partitioning: &Partitioning) -> bool {
+    let units = partitioning.cube_dim(UNITS as u32).num_elems();
+    let most = client.properties().hardware.max_units_per_cube;
+    let holds = units <= most;
+    if !holds {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "a cube of {units} units, past the {most} this device holds"
+        )))
+        .enforce();
+    }
+    holds
+}
+
 /// `problem`'s product, its tiles taken by `planes`; `None` where the device cannot add into the
-/// output.
+/// output or hold its cube.
 fn run(problem: Problem, planes: &Planes) -> Option<HostData> {
     let Problem { m, n, k, batches } = problem;
     let client = cubecl::test_device().client();
@@ -203,6 +218,9 @@ fn run(problem: Problem, planes: &Planes) -> Option<HostData> {
         Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
         planes.levels(),
     );
+    if !holds_a_cube(&client, &partitioning) {
+        return None;
+    }
     let grid = Grid::Stated {
         cube_count: partitioning.cube_count(),
         cube_dim: partitioning.cube_dim(UNITS as u32),
@@ -393,6 +411,9 @@ fn every_plane_of_the_launch_walks_one_tile() {
                 Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
                 Planes::OfTheLaunch(order.clone()).levels(),
             );
+            if !holds_a_cube(&client, &partitioning) {
+                continue;
+            }
             let cube_count = partitioning.cube_count();
             let CubeCount::Static(x, y, z) = cube_count else {
                 panic!("a static space spawns a static grid");
