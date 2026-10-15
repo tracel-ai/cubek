@@ -283,8 +283,9 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
 }
 
 impl ScaleArgExpand {
-    /// `values` under these scales, innermost first. A tensor map's values land in a stage as
-    /// they lie, so only words of block scales, which a stage keeps beside them, ride them.
+    /// `values` under these scales, a tile carrying its own scales in turn. A tensor map's values
+    /// land in a stage as they lie, so only words of block scales, which a stage keeps beside
+    /// them, ride them.
     fn scaling(
         &self,
         scope: &Scope,
@@ -295,11 +296,7 @@ impl ScaleArgExpand {
         match self {
             ScaleArgExpand::None => values.clone(),
             ScaleArgExpand::Words(level) => {
-                let scales = level.values_tile(scope, partitioning);
-                let scaled = values.__expand_mul_method(scope, &scales);
-                level
-                    .scale
-                    .scaling(scope, &scaled, partitioning, tensor_map)
+                values.__expand_mul_method(scope, &level.__expand_tile_method(scope, partitioning))
             }
             ScaleArgExpand::Scales(level) => {
                 assert!(
@@ -307,11 +304,7 @@ impl ScaleArgExpand {
                     "TileArg: a tensor map lands its values as they lie, so it rides only scales \
                      a stage keeps beside them: words of block scales"
                 );
-                let scales = level.values_tile(scope, partitioning);
-                let scaled = values.__expand_mul_method(scope, &scales);
-                level
-                    .scale
-                    .scaling(scope, &scaled, partitioning, tensor_map)
+                values.__expand_mul_method(scope, &level.__expand_tile_method(scope, partitioning))
             }
         }
     }

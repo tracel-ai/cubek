@@ -1130,7 +1130,7 @@ impl Tile {
         unexpanded!()
     }
 
-    /// How many levels of scales these values carry ([`mul`](Tile::mul)), innermost first.
+    /// How many scales these values carry ([`mul`](Tile::mul)), down the chain.
     pub(crate) fn factor_levels(&self) -> comptime_type!(usize) {
         unexpanded!()
     }
@@ -1186,7 +1186,7 @@ impl Tile {
 }
 
 impl TileExpand {
-    pub fn __expand_mul_method(&self, scope: &Scope, scale: &TileExpand) -> TileExpand {
+    pub fn __expand_mul_method(&self, _scope: &Scope, scale: &TileExpand) -> TileExpand {
         let values = self.place.space.clone();
         let scales = scale.place.space.clone();
         assert!(
@@ -1197,7 +1197,7 @@ impl TileExpand {
             values.axes().collect::<Vec<_>>()
         );
         let mut out = self.clone();
-        out.factor = out.factor.and(FactorExpand::of(scope, scale));
+        out.factor = out.factor.and(FactorExpand::of(scale));
         out
     }
 
@@ -1216,12 +1216,13 @@ impl TileExpand {
         // columns is read as their runs, each placed at its own column.
         let vector_size = self.clone().__expand_vector_tile_method(scope).extents()[0].1;
         let factor = self.factor.clone();
-        if let Some(inner) = factor.inner() {
-            check_scales_omit_rather_than_divide(&inner.projection);
-            check_scales_ride(side, &inner.space, &out, acc_axes);
+        if let Some(inner) = factor.innermost_tile() {
+            let projection = inner.clone().__expand_projection_method(scope);
+            check_scales_omit_rather_than_divide(&projection);
+            check_scales_ride(side, &inner.place.space, &out, acc_axes);
             let innermost = values.axis_at(values.rank() - 1);
             assert!(
-                vector_size == 1 || !inner.projection.addresses(innermost),
+                vector_size == 1 || !projection.addresses(innermost),
                 "Tile::mul: a line runs {vector_size} values along {innermost:?}, which its \
                  scales address, so one line lies under several scales; serve the factor one \
                  value a line, or omit {innermost:?} from the scales"
@@ -1252,13 +1253,13 @@ impl TileExpand {
 
     pub fn __expand_factor_method(
         &self,
-        _scope: &Scope,
+        scope: &Scope,
         space: Space,
     ) -> (TileExpand, FactorExpand) {
-        if !self.factor.staged_beside() {
+        if !self.factor.staged_beside(scope) {
             return (self.clone(), FactorExpand::default());
         }
-        let (inner, outer) = self.factor.split_on(&space);
+        let (inner, outer) = self.factor.split_on(scope, &space);
         let mut values = self.clone();
         values.factor = inner;
         (values, outer)
@@ -1291,7 +1292,7 @@ impl TileExpand {
     }
 
     pub(crate) fn __expand_factor_levels_method(&self, _scope: &Scope) -> usize {
-        self.factor.levels.len()
+        self.factor.depth()
     }
 
     pub(crate) fn __expand_unscaled_method(&self, _scope: &Scope) -> TileExpand {
@@ -1308,8 +1309,8 @@ impl TileExpand {
         self.__expand_quantized_method(scope) && !self.__expand_scales_beside_method(scope)
     }
 
-    pub(crate) fn __expand_scales_beside_method(&self, _scope: &Scope) -> bool {
-        !self.looks_up() && self.factor.staged_beside()
+    pub(crate) fn __expand_scales_beside_method(&self, scope: &Scope) -> bool {
+        !self.looks_up() && self.factor.staged_beside(scope)
     }
 
     pub(crate) fn __expand_with_scales_staged_method(
@@ -1331,7 +1332,7 @@ impl TileExpand {
         src: &TileExpand,
         meeting: &MeetingExpand,
     ) {
-        if self.factor.staged_beside() {
+        if self.factor.staged_beside(scope) {
             self.factor.fill_from(scope, &src.factor, meeting);
         }
     }
@@ -1344,7 +1345,7 @@ impl TileExpand {
     }
 
     pub(crate) fn __expand_free_scales_method(&self, scope: &Scope) {
-        if self.factor.staged_beside() {
+        if self.factor.staged_beside(scope) {
             self.factor.free_stage(scope);
         }
     }
@@ -1416,7 +1417,7 @@ impl TileExpand {
 #[cube]
 impl Tile {
     /// The one scale at `coords`, one entry per axis of this tile's space.
-    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
+    #[allow(dead_code)] // Reached through its expand, from [`Factor`].
     pub(crate) fn scale_at<S: Numeric>(&self, coords: &Coords<u32>) -> S {
         match &self.kind {
             TileKind::Lines(lines) => lines.read::<S>(coords),
@@ -1433,7 +1434,7 @@ impl Tile {
     /// The one scale covering the value at `coords` of a tile spanning `values`. An axis of the
     /// scales the values do not span is one the scales do not vary along: a sum's scale names the
     /// operand's axes, and is read at the origin of the ones the sum has summed away.
-    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
+    #[allow(dead_code)] // Reached through its expand, from [`Factor`].
     pub(crate) fn scale_for<S: Numeric>(
         &self,
         coords: &Coords<u32>,
