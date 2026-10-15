@@ -222,22 +222,38 @@ fn load_e2m1_steps<T: Numeric, N: Size>(
         );
         held[l] = words.read(load.index(&at, &space));
     }
+    // Each word of scales once, for the steps its four blocks cover.
+    let scale_words = comptime!(steps.div_ceil(SCALES_PER_WORD));
+    let mut held_scales = Array::<u32>::new(scale_words);
+    if comptime!(words_of_scales) {
+        #[unroll]
+        for w in 0..scale_words {
+            let block = TileMatrix::value_coords(
+                served,
+                comptime!((w * SCALES_PER_WORD * E2M1_SCALE_BLOCK) as u32),
+                0usize,
+                &space,
+                axes,
+                1usize,
+            );
+            held_scales[w] = factor.word_at(&block, comptime!(space.clone()));
+        }
+    }
     #[unroll]
     for s in 0..steps {
-        let block = TileMatrix::value_coords(
-            served,
-            comptime!((s * E2M1_SCALE_BLOCK) as u32),
-            0usize,
-            &space,
-            axes,
-            1usize,
-        );
         let scale = if comptime!(words_of_scales) {
-            let fields = Vector::<e4m3, Const<4>>::reinterpret(
-                factor.word_at(&block, comptime!(space.clone())),
-            );
+            let fields =
+                Vector::<e4m3, Const<4>>::reinterpret(held_scales[comptime!(s / SCALES_PER_WORD)]);
             T::cast_from(fields.extract(comptime!(s % SCALES_PER_WORD)))
         } else {
+            let block = TileMatrix::value_coords(
+                served,
+                comptime!((s * E2M1_SCALE_BLOCK) as u32),
+                0usize,
+                &space,
+                axes,
+                1usize,
+            );
             T::cast_from(factor.at_coords(&block, comptime!(space.clone())))
         };
         #[unroll]
