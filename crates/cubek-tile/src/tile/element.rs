@@ -25,8 +25,9 @@ define_scalar!(pub(crate) Lhs);
 define_scalar!(pub(crate) Rhs);
 // The element of the tile an op writes to: a drain's destination.
 define_scalar!(pub(crate) Out);
-// The type a held value is kept at, never bound: a cmma fragment, a warpgroup accumulator or an
-// erased call, named at the element it holds where it is used.
+// The element a value is held at, apart from any name: a cmma fragment, a warpgroup accumulator
+// or an erased call is kept at it and named at its element where it is used, and a read that
+// converts a value binds it for as long as the read expands.
 define_scalar!(pub(crate) Held);
 
 /// The placeholder `M` naming `element` until this is dropped.
