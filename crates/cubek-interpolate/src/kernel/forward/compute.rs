@@ -90,7 +90,7 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
                     let output_block = output.at(block);
                     let weights_block = weights.at(block);
                     slot.consume(|input_block| {
-                        interpolate_block::<E>(
+                        interpolate_block(
                             block,
                             &output_block,
                             &weights_block,
@@ -102,7 +102,7 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
             }
             InputStage::InPlace => {
                 for block in blocks {
-                    interpolate_block::<E>(
+                    interpolate_block(
                         &block,
                         &output.at(&block),
                         &weights.at(&block),
@@ -118,7 +118,7 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
 /// One block of the cube's walk: this plane's rows, then this unit's columns and channel
 /// lines, each output cell contracting its whole tap window at the leaf under `config`.
 #[cube]
-fn interpolate_block<E: Float>(
+fn interpolate_block(
     block: &Region,
     output: &Tile,
     weights: &Tile,
