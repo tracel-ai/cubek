@@ -92,7 +92,7 @@ pub(crate) fn lane_run_steps<T: Numeric>(
 /// reads them: a 32-unit plane, `A` along its rows and `B` along its columns, every cell held
 /// once.
 #[cube]
-fn lays_out_lane_runs() -> comptime_type!(bool) {
+pub(crate) fn lays_out_lane_runs() -> comptime_type!(bool) {
     intrinsic!(|scope| {
         let mma = &scope.state().target_properties.mma;
         mma.const_plane_size == 32

@@ -35,6 +35,7 @@ pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] edges: (usize, usize),
+    #[comptime] k_offset: usize,
 ) {
     let width = src.vector_size();
     let elem_size = T::size().comptime();
@@ -63,6 +64,8 @@ pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric
     let row_in_matrix = unit % 8;
     let nth_matrix = unit / 8 % comptime!(num_regs as u32);
     let (row, col) = def.position_of_nth(0, nth_matrix * comptime!(vector_size as u32), ident);
+    // The step this fragment loads, where the window is several instructions deep.
+    let (row, col) = along_k(row, col, ident, k_offset);
     // The unit's row runs along the window's lines, and the next unit's starts a line-row on.
     let (line_row, cell) = if comptime!(col_major_window) {
         (col + row_in_matrix, row)
@@ -81,5 +84,21 @@ pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric
     #[unroll]
     for i in 0..num_regs {
         fragment[i] = regs[i];
+    }
+}
+
+/// `(row, col)`, a cell of an `ident` operand one instruction deep, moved `k_offset` along `k`:
+/// where it lies in a window several instructions deep, at the step `k_offset` starts.
+#[cube]
+pub(crate) fn along_k(
+    row: u32,
+    col: u32,
+    #[comptime] ident: MatrixIdent,
+    #[comptime] k_offset: usize,
+) -> (u32, u32) {
+    match comptime!(ident) {
+        MatrixIdent::A => (row, col + comptime!(k_offset as u32)),
+        MatrixIdent::B => (row + comptime!(k_offset as u32), col),
+        MatrixIdent::Accumulator => (row, col),
     }
 }

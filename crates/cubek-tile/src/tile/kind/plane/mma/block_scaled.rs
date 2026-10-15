@@ -61,17 +61,17 @@ pub(crate) fn block_scaled_definition<CD: Numeric>(
     )
 }
 
-/// Refuses `src` as an operand of the device's block-scaled instruction of `m × n × k`
-/// ([`MmaOperands::BlockScaled`]) unless it is one: packed `e2m1` values in shared memory under one
-/// level of scales, one every [`E2M1_SCALE_BLOCK`] values of `k`, on a device that offers the
-/// instruction.
+/// Refuses `src`, loaded into a fragment of `T`, as an operand of the device's block-scaled
+/// instruction of `m × n × k` ([`MmaOperands::BlockScaled`]) unless it is one: packed `e2m1` values
+/// in shared memory under one level of scales, one every [`E2M1_SCALE_BLOCK`] values of `k`, served
+/// as stored, on a device that offers the instruction.
 ///
 /// What the instruction takes is NVFP4: the leaf reads each block's scale at its first value and
 /// hands it over as `e4m3`, so the scales must cover sixteen values of `k` or a multiple of
 /// sixteen, each exact in `e4m3`. A per-tensor factor above them is the product's to apply: the
 /// instruction holds one level.
 #[cube]
-pub(crate) fn assert_block_scaled(
+pub(crate) fn assert_block_scaled<T: Numeric>(
     src: &Tile,
     #[comptime] m: usize,
     #[comptime] n: usize,
@@ -81,6 +81,7 @@ pub(crate) fn assert_block_scaled(
     let shared = src.is_shared();
     let levels = src.factor_levels();
     let offered = offers_block_scaled(m, n, k);
+    let as_stored = served_as_stored::<T>();
     comptime!({
         let e2m1 = matches!(
             packing,
@@ -96,6 +97,12 @@ pub(crate) fn assert_block_scaled(
             Some(format!(
                 "the operand is stored as {packing:?}, not packed e2m1 values"
             ))
+        } else if !as_stored {
+            Some(
+                "the operand is served at a 16-bit float, which a fragment decodes the codes into \
+                 as it loads; state the instruction's operands `MmaOperands::Plain`"
+                    .to_string(),
+            )
         } else if !shared {
             Some("the operand is not in shared memory; stage it as stored".to_string())
         } else if levels != 1 {
@@ -114,6 +121,21 @@ pub(crate) fn assert_block_scaled(
             panic!("MmaOperands::BlockScaled: {refusal}");
         }
     });
+}
+
+/// Whether a fragment of `T` holds the codes as they are stored, which the block-scaled
+/// instruction reads: anything but a float of 16 bits or more, which a fragment decoding the
+/// codes into a 16-bit instruction's operand holds instead.
+// `T` is read by the expansion, which is where a type has its element.
+#[allow(clippy::extra_unused_type_parameters)]
+#[cube]
+fn served_as_stored<T: Numeric>() -> comptime_type!(bool) {
+    intrinsic!(|scope| {
+        !matches!(
+            T::elem_type(scope),
+            ElemType::Float(FloatKind::F16 | FloatKind::BF16 | FloatKind::F32 | FloatKind::TF32)
+        )
+    })
 }
 
 /// Whether the device offers the block-scaled instruction of `m × n × k` over `e2m1` operands

@@ -77,7 +77,7 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
         tiles: TmaTiles,
     ) -> Self {
         Self::of_view(
-            Self::stored_view(tensor_map, axes, tiles),
+            Self::stored_view(tensor_map, axes, tiles, 1),
             TileSpec::direct(axes),
         )
     }
@@ -90,14 +90,16 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
         tiles: TmaTiles,
         field: Field,
     ) -> Self {
-        let view = Self::stored_view(tensor_map, axes, tiles);
+        let view = Self::stored_view(tensor_map, axes, tiles, field.per_word() as u32);
         Self::of_view(view, TileSpec::direct(axes).packed(field))
     }
 
+    /// The view over `tensor_map`, its descriptor moving `per_cell` values a cell along `cols`.
     fn stored_view(
         tensor_map: TensorMapArg<Tiled>,
         axes: &[Axis],
         tiles: TmaTiles,
+        per_cell: u32,
     ) -> ViewArg<CoordsDyn> {
         assert_eq!(
             axes.len(),
@@ -105,7 +107,7 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
             "TileArgLaunch::tensor_map_stored: a storage-tiled descriptor is a matrix; batch it by \
              launching per batch"
         );
-        let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, tiles.landing);
+        let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, per_cell, tiles.landing);
         ViewArg::new_tensor_map_tiled::<TmaStoredLayout>(tensor_map, layout)
     }
 }
@@ -117,9 +119,11 @@ pub enum TmaLanding {
     /// One storage tile a box, landing as the contiguous run it is stored as: the descriptor is
     /// the operand as stored, `[.., R/tr, C/tc, tr, tc]`.
     Tiles,
-    /// Whole tiles both ways, landing the box's rows one after another, each a run of its tiles'
-    /// rows, as a row-major operand's box would land them: the descriptor is the operand as
-    /// `[R/tr, tr, C/tc, tc]`, the tiles' rows nested inside the tiles' columns.
+    /// Whole tiles along the rows, landing the box's rows one after another, each a run of its
+    /// tiles' rows, as a row-major operand's box would land them: the descriptor is the operand as
+    /// `[R/tr, tr, C/tc, tc]`, the tiles' rows nested inside the tiles' columns. Along the columns
+    /// a box is whole tiles, or a part of one tile's run that divides it, starting where the box's
+    /// own columns do.
     Rows,
 }
 
@@ -139,6 +143,8 @@ pub(crate) struct TmaStoredLayout {
     dims: (u32, u32),
     /// The storage tile `(rows, cols)`.
     tile: (u32, u32),
+    /// Values one cell of the descriptor holds along `cols`: one, or a packed field's per word.
+    per_cell: u32,
     /// The order the descriptor states the tiles in.
     #[cube(comptime)]
     landing: TmaLanding,
@@ -152,7 +158,8 @@ impl Layout for TmaStoredLayout {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (tile_rows, tile_cols) = self.tile;
         let mut src = CoordsDyn::new();
-        // A box origin is tile-aligned, so the in-tile offset is zero.
+        // A box origin is tile-aligned along the rows, so the in-tile offset there is zero; along
+        // the columns a box landing rows may start partway into a tile's run, in cells.
         match comptime!(self.landing) {
             TmaLanding::Tiles => {
                 src.push(pos[0] / tile_rows);
@@ -164,7 +171,7 @@ impl Layout for TmaStoredLayout {
                 src.push(pos[0] / tile_rows);
                 src.push(0u32);
                 src.push(pos[1] / tile_cols);
-                src.push(0u32);
+                src.push(pos[1] % tile_cols / self.per_cell);
             }
         }
         src

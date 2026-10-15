@@ -92,8 +92,8 @@ impl MmaData {
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
                     let operands = comptime!(self.operands);
                     if comptime!(operands == MmaOperands::BlockScaled) {
-                        assert_block_scaled(lhs, m, n, k);
-                        assert_block_scaled(rhs, m, n, k);
+                        assert_block_scaled::<L>(lhs, m, n, k);
+                        assert_block_scaled::<R>(rhs, m, n, k);
                     }
                     let mut la =
                         MmaData::operand::<L>(MatrixIdent::A, m, n, k, lhs_layout, io, operands);
