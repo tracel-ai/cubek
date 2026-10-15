@@ -15,6 +15,8 @@ use crate::space::partition::{GridCount, in_plane_axes, launch_plane_tiles, swiz
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
 pub struct Walk {
+    /// The level's tiles along each axis, which a reversed axis counts back from.
+    tiles: Coords<usize>,
     counts: Coords<usize>,
     positions: Coords<usize>,
     scales: Coords<usize>,
@@ -81,6 +83,7 @@ impl Walk {
         let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
+            tiles: grid,
             counts,
             positions,
             scales,
@@ -232,6 +235,7 @@ impl Walk {
         let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
+            tiles: self.tiles,
             counts,
             positions: self.positions,
             scales: self.scales,
@@ -326,9 +330,10 @@ impl Walk {
         }
     }
 
-    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`].
+    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`], counted from the
+    /// last tile where the level hands the axis out [`reversed`](crate::Levels::reversed).
     fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
-        match comptime!(self.distributes[p].clone()) {
+        let tile = match comptime!(self.distributes[p].clone()) {
             AxisDistribution::Walked => digit,
             AxisDistribution::Distributed(Distribution {
                 spread: Spread::Contiguous,
@@ -338,6 +343,13 @@ impl Walk {
                 spread: Spread::Interleaved,
                 ..
             }) => digit.times(self.scales.at(p)).plus(self.positions.at(p)),
+        };
+        let tiles = self.tiles.at(p);
+        // A plane past the last tile stays past it, where the binding masks it.
+        if comptime!(self.level.is_reversed(self.space.axis_at(p))) && tile < tiles {
+            tiles.minus(1usize).minus(tile)
+        } else {
+            tile
         }
     }
 }

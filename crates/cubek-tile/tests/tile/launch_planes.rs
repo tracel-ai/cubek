@@ -7,6 +7,9 @@
 //!
 //! Every plane the launch spawns walks one tile, so the planes of a cube all reach a barrier any
 //! of them meets; a plane that walked none would leave the others waiting at it.
+//!
+//! The same cases run with axes reversed ([`Levels::reversed`]), on the planes of the launch and
+//! on the cube level of the control, over static extents and runtime ones.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -21,6 +24,8 @@ use cubek_tile::kind::{Boundary, Write};
 use cubek_tile::launch::{BoundaryPolicy, Buffered, Destination, DestinationLaunch, Grid};
 use cubek_tile::space::{CubeOrder, PlaneOrder};
 use cubek_tile::*;
+
+use super::{Form, kernel_form};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -111,20 +116,21 @@ enum Planes {
 }
 
 impl Planes {
-    /// The levels the planes take a plane's `2 × 4` tile at.
-    fn levels(&self) -> Vec<Level> {
+    /// The levels the planes take a plane's `2 × 4` tile at, the outermost handing out `reversed`
+    /// from the last tile to the first.
+    fn levels(&self, reversed: &[Axis]) -> Vec<Level> {
         let [rows, columns, depth] = BLOCK;
         let units = Levels::leaf(&[(M, rows), (N, columns), (K, depth)])
             .walk_every(&[K])
             .units(&[(N, UNITS)]);
-        match self {
-            Planes::OfEachCube => units
-                .planes(&[(M, 2), (N, 2)])
-                .cubes(&[M, N])
-                .batches(&[B])
-                .build(),
-            Planes::OfTheLaunch(order) => units.launch_planes(&[M, N, B], order.clone()).build(),
-        }
+        let outermost = match self {
+            Planes::OfEachCube => units.planes(&[(M, 2), (N, 2)]).cubes(&[M, N]).batches(&[B]),
+            Planes::OfTheLaunch(order) => units.launch_planes(&[M, N, B], order.clone()),
+        };
+        reversed
+            .iter()
+            .fold(outermost, |levels, &axis| levels.reversed(axis))
+            .build()
     }
 }
 
@@ -175,6 +181,21 @@ fn adds_atomically(client: &cubecl::client::Client) -> bool {
     adds
 }
 
+/// How the outermost level hands out its tiles, and which extents the kernel reads at runtime.
+#[derive(Clone, Copy, Debug)]
+struct Dealt<'a> {
+    reversed: &'a [Axis],
+    form: Form<'a>,
+}
+
+impl Dealt<'_> {
+    /// In launch order, over static extents.
+    const IN_ORDER: Dealt<'static> = Dealt {
+        reversed: &[],
+        form: Form::Static,
+    };
+}
+
 /// Whether the test device holds one cube of `partitioning`, which every case its cube outgrows
 /// skips.
 fn holds_a_cube(client: &cubecl::client::Client, partitioning: &Partitioning) -> bool {
@@ -190,9 +211,9 @@ fn holds_a_cube(client: &cubecl::client::Client, partitioning: &Partitioning) ->
     holds
 }
 
-/// `problem`'s product, its tiles taken by `planes`; `None` where the device cannot add into the
-/// output or hold its cube.
-fn run(problem: Problem, planes: &Planes) -> Option<HostData> {
+/// `problem`'s product, its tiles taken by `planes` as `dealt` says; `None` where the device
+/// cannot add into the output or hold its cube.
+fn run(problem: Problem, planes: &Planes, dealt: Dealt<'_>) -> Option<HostData> {
     let Problem { m, n, k, batches } = problem;
     let client = cubecl::test_device().client();
     if !adds_atomically(&client) {
@@ -216,7 +237,7 @@ fn run(problem: Problem, planes: &Planes) -> Option<HostData> {
 
     let partitioning = Partitioning::new(
         Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
-        planes.levels(),
+        planes.levels(dealt.reversed),
     );
     if !holds_a_cube(&client, &partitioning) {
         return None;
@@ -226,7 +247,8 @@ fn run(problem: Problem, planes: &Planes) -> Option<HostData> {
         cube_dim: partitioning.cube_dim(UNITS as u32),
     };
     let space = partitioning.space().clone();
-    let launcher = Launcher::new(&client, partitioning, &space, grid).unwrap();
+    let kernel = kernel_form(&partitioning, dealt.form);
+    let launcher = Launcher::new(&client, kernel, &space, grid).unwrap();
     let policy = BoundaryPolicy::Every(Boundary::Zero);
     let bound = launcher
         .arg(out.clone().binding())
@@ -297,10 +319,10 @@ const PROBLEMS: [Problem; 3] = [
     Problem::new(13, 5, 6),
 ];
 
-/// Every problem's product, its tiles taken by `planes`.
-fn assert_takes_every_tile_once(planes: Planes, what: &str) {
+/// Every problem's product, its tiles taken by `planes` as `dealt` says.
+fn assert_takes_every_tile_once(planes: Planes, dealt: Dealt<'_>, what: &str) {
     for problem in PROBLEMS {
-        if let Some(got) = run(problem, &planes) {
+        if let Some(got) = run(problem, &planes, dealt) {
             assert_every_tile_once(&got, problem, what);
         }
     }
@@ -309,7 +331,7 @@ fn assert_takes_every_tile_once(planes: Planes, what: &str) {
 /// The control: a cube level holding a `2 × 2` plane level.
 #[test]
 fn a_cube_level_holding_planes_takes_every_tile_once() {
-    assert_takes_every_tile_once(Planes::OfEachCube, "cubes holding planes");
+    assert_takes_every_tile_once(Planes::OfEachCube, Dealt::IN_ORDER, "cubes holding planes");
 }
 
 /// One block a cube, a `2 × 2` box of tiles: what a cube level holding a plane level of
@@ -317,7 +339,11 @@ fn a_cube_level_holding_planes_takes_every_tile_once() {
 #[test]
 fn one_block_a_cube_takes_every_tile_once() {
     let order = PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor);
-    assert_takes_every_tile_once(Planes::OfTheLaunch(order), "one block a cube");
+    assert_takes_every_tile_once(
+        Planes::OfTheLaunch(order),
+        Dealt::IN_ORDER,
+        "one block a cube",
+    );
 }
 
 /// One plane a block, three planes a cube: the planes run straight across the tiles, and the
@@ -325,14 +351,22 @@ fn one_block_a_cube_takes_every_tile_once() {
 #[test]
 fn planes_past_the_last_tile_take_none() {
     let order = PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3);
-    assert_takes_every_tile_once(Planes::OfTheLaunch(order), "three planes a cube");
+    assert_takes_every_tile_once(
+        Planes::OfTheLaunch(order),
+        Dealt::IN_ORDER,
+        "three planes a cube",
+    );
 }
 
 /// A block of four tiles along `n` held across two cubes of two planes.
 #[test]
 fn a_block_spans_several_cubes() {
     let order = PlaneOrder::new(&[(N, 4)], CubeOrder::RowMajor).cubes_of(2);
-    assert_takes_every_tile_once(Planes::OfTheLaunch(order), "a block across two cubes");
+    assert_takes_every_tile_once(
+        Planes::OfTheLaunch(order),
+        Dealt::IN_ORDER,
+        "a block across two cubes",
+    );
 }
 
 /// The blocks taken in a swizzle, ragged where its strips do not divide the blocks.
@@ -340,7 +374,11 @@ fn a_block_spans_several_cubes() {
 fn swizzled_blocks_take_every_tile_once() {
     for block_order in [CubeOrder::SwizzleRow(2), CubeOrder::SwizzleCol(3)] {
         let order = PlaneOrder::new(&[(M, 2), (N, 1)], block_order);
-        assert_takes_every_tile_once(Planes::OfTheLaunch(order), &format!("{block_order:?}"));
+        assert_takes_every_tile_once(
+            Planes::OfTheLaunch(order),
+            Dealt::IN_ORDER,
+            &format!("{block_order:?}"),
+        );
     }
 }
 
@@ -355,10 +393,48 @@ fn the_batches_ride_outermost() {
     ] {
         let planes = Planes::OfTheLaunch(order);
         for problem in PROBLEMS.map(|problem| problem.batched(3)) {
-            if let Some(got) = run(problem, &planes) {
+            if let Some(got) = run(problem, &planes, Dealt::IN_ORDER) {
                 assert_every_tile_once(&got, problem, &format!("three batches, {planes:?}"));
             }
         }
+    }
+}
+
+/// Axes reversed, alone and together, the batch among them.
+const REVERSALS: [&[Axis]; 4] = [&[M], &[N], &[M, N], &[M, N, B]];
+
+/// `planes`, each of [`REVERSALS`] over static extents and runtime ones, takes every tile of
+/// three batches once, on problems whose edges cut the boxes short.
+fn assert_reversed_takes_every_tile_once(planes: Planes) {
+    for reversed in REVERSALS {
+        for form in [Form::Static, Form::Dynamic] {
+            let dealt = Dealt { reversed, form };
+            for problem in PROBLEMS.map(|problem| problem.batched(3)) {
+                if let Some(got) = run(problem, &planes, dealt) {
+                    assert_every_tile_once(&got, problem, &format!("{planes:?}, {dealt:?}"));
+                }
+            }
+        }
+    }
+}
+
+/// A cube level reversed along its axes: the cube at the start of an axis takes the box at its
+/// end.
+#[test]
+fn reversed_cubes_take_every_tile_once() {
+    assert_reversed_takes_every_tile_once(Planes::OfEachCube);
+}
+
+/// The planes of the launch reversed along their axes, one block a cube, swizzled, and three
+/// planes a cube: the last cube's planes past the last batch stay past it, and take none.
+#[test]
+fn reversed_launch_planes_take_every_tile_once() {
+    for order in [
+        PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor),
+        PlaneOrder::new(&[(M, 2), (N, 1)], CubeOrder::SwizzleRow(2)),
+        PlaneOrder::new(&[], CubeOrder::RowMajor).cubes_of(3),
+    ] {
+        assert_reversed_takes_every_tile_once(Planes::OfTheLaunch(order));
     }
 }
 
@@ -409,7 +485,7 @@ fn every_plane_of_the_launch_walks_one_tile() {
             let Problem { m, n, k, batches } = problem;
             let partitioning = Partitioning::new(
                 Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
-                Planes::OfTheLaunch(order.clone()).levels(),
+                Planes::OfTheLaunch(order.clone()).levels(&[]),
             );
             if !holds_a_cube(&client, &partitioning) {
                 continue;
@@ -456,7 +532,7 @@ fn the_binding_masks_where_the_planes_run_past_the_tiles() {
     let masked = |order: PlaneOrder, (m, n): (usize, usize)| {
         let partitioning = Partitioning::new(
             Space::new(&[(B, 1), (M, m), (N, n), (K, 8)]),
-            Planes::OfTheLaunch(order).levels(),
+            Planes::OfTheLaunch(order).levels(&[]),
         );
         [M, N, B].map(|axis| partitioning.overhangs(axis))
     };
@@ -480,7 +556,8 @@ fn a_static_axis_is_answered_beside_a_dynamic_batch() {
     let partitioning = |n| {
         Partitioning::new(
             Space::new(&[(B, 1), (M, 8), (N, n), (K, 8)]).with_dynamic(&[B]),
-            Planes::OfTheLaunch(PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor)).levels(),
+            Planes::OfTheLaunch(PlaneOrder::new(&[(M, 2), (N, 2)], CubeOrder::RowMajor))
+                .levels(&[]),
         )
     };
     assert!(!partitioning(16).overhangs(M));

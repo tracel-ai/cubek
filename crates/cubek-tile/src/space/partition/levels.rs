@@ -29,6 +29,7 @@ struct StatedLevel {
     fillers: usize,
     batches: Vec<Axis>,
     interleaved: Vec<Axis>,
+    reversed: Vec<Axis>,
     /// Closed axes this cube level names again, to distribute across cubes.
     reopened: Vec<Axis>,
     order: CubeOrder,
@@ -199,6 +200,15 @@ impl Levels {
         self
     }
 
+    /// The level just stated, a cube level or a plane level spanning the launch, hands out
+    /// `axis`'s tiles from the last to the first: the first workers launched take the last tiles.
+    /// Where the later tiles hold more work, the heaviest start first and the light ones fill in
+    /// behind them.
+    pub fn reversed(mut self, axis: Axis) -> Self {
+        self.last("reversed").reversed.push(axis);
+        self
+    }
+
     /// The levels, outermost first.
     pub fn build(self) -> Vec<Level> {
         for stated in &self.stated {
@@ -315,6 +325,7 @@ impl StatedLevel {
             fillers: 0,
             batches: Vec::new(),
             interleaved: Vec::new(),
+            reversed: Vec::new(),
             reopened: Vec::new(),
             order: CubeOrder::RowMajor,
             plane_order: None,
@@ -337,7 +348,7 @@ impl StatedLevel {
                 .iter()
                 .map(|&(axis, tile, _)| (axis, tile))
                 .collect();
-            return Level::spanning_launch(&tile, order.clone());
+            return Level::spanning_launch(&tile, order.clone()).reversed(&self.reversed);
         }
         let cuts: Vec<(Axis, usize, Count, Spread)> = self
             .tiles
@@ -367,9 +378,13 @@ impl StatedLevel {
             false => level,
             true => level.distributed_in(self.order),
         };
-        match self.shared_by {
+        let level = match self.shared_by {
             None => level,
             Some(cubes) => level.sharing(cubes),
+        };
+        match self.reversed.is_empty() {
+            true => level,
+            false => level.reversed(&self.reversed),
         }
     }
 }
@@ -586,6 +601,30 @@ mod tests {
     #[should_panic(expected = "only cubes take an axis in runs")]
     fn only_cubes_take_an_axis_in_runs() {
         let _ = Levels::leaf(&[(K, 16)]).planes(&[(K, 4)]).across(K, 2);
+    }
+
+    /// A reversed axis reaches the cube level that states it, and no level below.
+    #[test]
+    fn a_reversed_axis_reaches_the_cube_level() {
+        let levels = Levels::leaf(&[(M, 16), (N, 8), (K, 16)])
+            .walk_every(&[K])
+            .planes(&[(M, 2)])
+            .cubes(&[M, N])
+            .reversed(M)
+            .build();
+        assert!(levels[0].is_reversed(M));
+        assert!(!levels[0].is_reversed(N));
+        assert!(levels[1..].iter().all(|level| !level.is_reversed(M)));
+    }
+
+    /// The planes of one cube are not dealt in launch order, so there is nothing to reverse.
+    #[test]
+    #[should_panic(expected = "only a cube level or a plane level spanning the launch")]
+    fn only_a_launch_order_is_reversed() {
+        let _ = Levels::leaf(&[(M, 16)])
+            .planes(&[(M, 2)])
+            .reversed(M)
+            .build();
     }
 
     #[test]

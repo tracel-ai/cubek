@@ -3698,6 +3698,66 @@ fn cmma_matmul_plane_partitioned_stage() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
+/// [`cmma_matmul_plane_partitioned_stage`] over a `12×12` output its four `8×8` fragments overhang,
+/// every operand bound through the launch, which masks the axes its tiles reach past: each
+/// plane's fragment bounces through the plane's own window of scratch to land masked, the plane
+/// meeting only itself at the bounce's barriers. Tensor-core only.
+#[test]
+fn cmma_matmul_plane_partitioned_stage_bounces_where_it_overhangs() {
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let (m, n, k, edge) = (12usize, 12usize, 32usize, 8usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .planes(&[(M, m.div_ceil(edge)), (N, n.div_ceil(edge))])
+                .walk_every(&[M, N, K])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel zeroes the accumulator fragment, and a cell past the edge
+    // written through would land on a cell of the next row.
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+    let bind = |input: &TileInput, axes: &[Axis]| {
+        launcher
+            .arg(input.handle().binding())
+            .axes(axes)
+            .build()
+            .unwrap()
+    };
+    let (a_op, b_op, c_op) = (bind(&a, &[M, K]), bind(&b, &[K, N]), bind(&c, &[M, N]));
+
+    cmma_matmul_two_levels_planes::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
+        2,
+        f32::elem_type_native(),
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
 /// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³ fragments,
 /// resident across a double-buffered K walk; the fragment level reads the stage where it lies, so
 /// the unrolled walk reloads operand fragments per execute (no restaging). Tensor-core only.
