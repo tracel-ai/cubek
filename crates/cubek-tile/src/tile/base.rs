@@ -1072,8 +1072,8 @@ impl Iterable for &TileExpand {
 }
 
 impl Tile {
-    /// These values under `scale`, multiplied in where they are read. Every axis of `scale` must
-    /// be one of the values'.
+    /// These values under `scale`, multiplied in where they are read. Every axis `scale` varies
+    /// along must be one of the values'; one it spans without varying along is read at its origin.
     pub fn mul(&self, _scale: &Tile) -> Tile {
         unexpanded!()
     }
@@ -1186,14 +1186,22 @@ impl Tile {
 }
 
 impl TileExpand {
-    pub fn __expand_mul_method(&self, _scope: &Scope, scale: &TileExpand) -> TileExpand {
+    pub fn __expand_mul_method(&self, scope: &Scope, scale: &TileExpand) -> TileExpand {
         let values = self.place.space.clone();
-        let scales = scale.place.space.clone();
+        let projection = scale.clone().__expand_projection_method(scope);
+        // An axis the scales span without varying along it is read at its origin
+        // ([`scale_for`](Tile::scale_for)): a scale broadcasts by omission.
+        let varied: Vec<Axis> = scale
+            .place
+            .space
+            .axes()
+            .filter(|&axis| projection.addresses(axis))
+            .collect();
         assert!(
-            scales.axes().all(|axis| values.contains(axis)),
-            "Tile::mul: the scales span {:?} where the values span {:?}; a scale is looked up at \
-             the value's coordinates, so every axis of the scales is one of the values'",
-            scales.axes().collect::<Vec<_>>(),
+            varied.iter().all(|&axis| values.contains(axis)),
+            "Tile::mul: the scales vary along {varied:?} where the values span {:?}; a scale is \
+             looked up at the value's coordinates, so every axis the scales vary along is one of \
+             the values'",
             values.axes().collect::<Vec<_>>()
         );
         let mut out = self.clone();
