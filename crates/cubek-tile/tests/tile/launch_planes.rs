@@ -363,11 +363,11 @@ fn the_batches_ride_outermost() {
     }
 }
 
-/// Axes reversed, alone and together, the batch among them, over static extents and runtime
-/// ones: each still a permutation of its tiles, on problems whose edges cut the boxes short.
+/// Axes reversed, alone and together, the batch among them.
 const REVERSALS: [&[Axis]; 4] = [&[M], &[N], &[M, N], &[M, N, B]];
 
-/// `planes`, each of [`REVERSALS`] on each form, takes every tile of three batches once.
+/// `planes`, each of [`REVERSALS`] over static extents and runtime ones, takes every tile of
+/// three batches once, on problems whose edges cut the boxes short.
 fn assert_reversed_takes_every_tile_once(planes: Planes) {
     for reversed in REVERSALS {
         for form in [Form::Static, Form::Dynamic] {

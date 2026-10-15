@@ -201,7 +201,7 @@ impl Levels {
     }
 
     /// The level just stated, a cube level or a plane level spanning the launch, hands out
-    /// `axis`'s tiles from the last to the first: the first cubes launched take the last tiles.
+    /// `axis`'s tiles from the last to the first: the first workers launched take the last tiles.
     /// Where the later tiles hold more work, the heaviest start first and the light ones fill in
     /// behind them.
     pub fn reversed(mut self, axis: Axis) -> Self {
