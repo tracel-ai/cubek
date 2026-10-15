@@ -35,9 +35,9 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// every `k` the block covers.
 #[cube(launch)]
 fn coarse_lhs_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -110,10 +110,11 @@ fn run(launcher: Launcher) -> HostData {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(a.binding().into_tensor_arg(), coarse_spec()),
-        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
+        TileArgLaunch::new(a.binding().into_tensor_arg(), 1, coarse_spec()),
+        TileArgLaunch::new(b.binding().into_tensor_arg(), 1, TileSpec::direct(&[K, N])),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),

@@ -100,8 +100,8 @@ impl Walk {
     }
 
     /// `(counts, positions, scales)` of a plane level spanning the launch: along each of its axes,
-    /// the one tile this plane's place in the launch names, or none past the last; every tile of
-    /// the others.
+    /// the one tile this plane's place in the launch names, past the last for a plane past the
+    /// last tile, which the binding masks; every tile of the others.
     fn spanning_launch(
         #[comptime] host: Space,
         #[comptime] level: Level,
@@ -344,8 +344,10 @@ impl Walk {
                 ..
             }) => digit.times(self.scales.at(p)).plus(self.positions.at(p)),
         };
-        if comptime!(self.level.is_reversed(self.space.axis_at(p))) {
-            self.tiles.at(p).minus(1usize).minus(tile)
+        let tiles = self.tiles.at(p);
+        // A plane past the last tile stays past it, where the binding masks it.
+        if comptime!(self.level.is_reversed(self.space.axis_at(p))) && tile < tiles {
+            tiles.minus(1usize).minus(tile)
         } else {
             tile
         }

@@ -1,8 +1,6 @@
 //! A tile the plane holds in its units: loaded once, coalesced, and shared by shuffle.
 //! Unit `t` holds line `t`, so the box must not hold more lines than the plane has units.
 
-use std::marker::PhantomData;
-
 use cubecl::{ir::ElemType, prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
@@ -21,7 +19,7 @@ fn register_line_words(#[comptime] words: usize) {
 /// The lines a plane holds in its units, and where inside them a window sits.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) struct Lines<T: Numeric> {
+pub(crate) struct Lines {
     /// This unit's line, as words (unit `t` holds line `t`); filled under [`UnitRead::Shuffle`].
     line: Array<Vector<u32, LW>>,
     /// Every line, in this plane's shared-memory window; only under [`UnitRead::PlaneShared`].
@@ -49,11 +47,9 @@ pub(crate) struct Lines<T: Numeric> {
     /// How a value gets from the unit that loaded its line to the unit that asks.
     #[cube(comptime)]
     read: UnitRead,
-    #[cube(comptime)]
-    _served: PhantomData<T>,
 }
 
-impl<T: Numeric> Lines<T> {
+impl Lines {
     /// Each axis of `loaded` counted in lines, and the total line count.
     fn line_strides(loaded: &Space, projection: &Projection) -> (Vec<usize>, usize) {
         let rank = loaded.rank();
@@ -71,13 +67,13 @@ impl<T: Numeric> Lines<T> {
 }
 
 #[cube]
-impl<T: Numeric> Lines<T> {
+impl Lines {
     /// The empty box one region of `level` over `operand` fills, one line per unit.
     pub(crate) fn new(
-        operand: &Tile<T>,
+        operand: &Tile,
         #[comptime] level: Level,
         #[comptime] read: UnitRead,
-    ) -> Lines<T> {
+    ) -> Lines {
         let loaded = comptime!(level.child(&operand.place.space));
         let rank = comptime!(loaded.rank());
         let line = comptime!(loaded.extent_at(rank - 1));
@@ -86,9 +82,9 @@ impl<T: Numeric> Lines<T> {
             projection.addresses(loaded.axis_at(rank - 1)),
             "Lines: the line runs along the operand's innermost axis, which it must address"
         ));
-        let (strides, lines) = comptime!(Lines::<T>::line_strides(&loaded, &projection));
+        let (strides, lines) = comptime!(Lines::line_strides(&loaded, &projection));
         let packing = operand.packing();
-        let served = elem_type_of::<T>();
+        let served = comptime!(operand.element);
         let field = comptime!(match packing {
             Packing::Packed { field } => field,
             Packing::Plain => match served {
@@ -124,7 +120,7 @@ impl<T: Numeric> Lines<T> {
         for _axis in 0..rank {
             origin.push(0u32.runtime());
         }
-        Lines::<T> {
+        Lines {
             line: Array::<Vector<u32, LW>>::new(1usize),
             window,
             origin,
@@ -135,7 +131,6 @@ impl<T: Numeric> Lines<T> {
             field,
             words,
             read,
-            _served: PhantomData,
         }
     }
 
@@ -161,7 +156,8 @@ impl<T: Numeric> Lines<T> {
     }
 
     /// Load from `src`, the box's memory window: unit `t` reads line `t`.
-    pub(crate) fn load(&mut self, src: &Tile<T>) {
+    pub(crate) fn load(&mut self, src: &Tile) {
+        let _served = naming::<Served>(src.element);
         let rank = comptime!(self.loaded.rank());
         let line = self.line();
         let lines = self.lines();
@@ -202,7 +198,9 @@ impl<T: Numeric> Lines<T> {
                     }
                     Packing::Plain => {
                         let size!(SV) = served;
-                        let values = src.nd_packed::<SV>(comptime!(Guard::Checked)).read(at);
+                        let values = src
+                            .nd_packed::<Served, SV>(comptime!(Guard::Checked))
+                            .read(at);
                         let mut bits = Vector::<u32, WR>::empty();
                         #[unroll]
                         for j in 0..per_read {
@@ -240,7 +238,7 @@ impl<T: Numeric> Lines<T> {
     }
 
     /// This window one level down, to `step`'s box: only the origin moves.
-    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Lines<T> {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Lines {
         let rank = comptime!(space.rank());
         let mut origin = Coords::<u32>::new();
         #[unroll]
@@ -253,7 +251,7 @@ impl<T: Numeric> Lines<T> {
                     .plus(step.coord(axis).times(edge).cast::<u32>()),
             );
         }
-        Lines::<T> {
+        Lines {
             line: self.line,
             window: self.window.clone(),
             origin,
@@ -264,14 +262,13 @@ impl<T: Numeric> Lines<T> {
             field: comptime!(self.field),
             words: comptime!(self.words),
             read: comptime!(self.read),
-            _served: PhantomData,
         }
     }
 
-    /// The value at `coords` of this window, one entry per axis of the box.
+    /// The value at `coords` of this window, one entry per axis of the box, as `E`.
     /// The shuffle is the whole plane's, so a caller keeps its units converged around this.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
-    pub(crate) fn read(&self, coords: &Coords<u32>) -> T {
+    pub(crate) fn read<E: Numeric>(&self, coords: &Coords<u32>) -> E {
         let rank = comptime!(self.loaded.rank());
         let mut line = 0u32.runtime();
         #[unroll]
@@ -318,7 +315,7 @@ impl<T: Numeric> Lines<T> {
             true => held >> field.times(bits),
             false => held,
         };
-        unpack_line::<T, Const<1>, Const<1>>(
+        unpack_line::<E, Const<1>, Const<1>>(
             Vector::<u32, Const<1>>::new(only),
             comptime!(self.field),
         )

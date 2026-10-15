@@ -9,7 +9,7 @@ use cubek_std::StageIdent;
 
 /// Logits below this are considered masked (effectively -inf).
 /// Value chosen to fit within f16 range (~-65,504 max).
-pub const LOGIT_MASKED: f32 = -6e4;
+pub const LOGIT_MASKED: f64 = -6e4;
 
 /// Row-shape descriptor for online softmax.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

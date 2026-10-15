@@ -12,9 +12,9 @@ use crate::*;
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Memory<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    acc: &mut Memory,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,
@@ -70,9 +70,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Size>(
-    acc: &mut Memory<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    acc: &mut Memory,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] shape: ContractShape,
     #[comptime] columns: usize,
     #[comptime] config: RegisterBlock,
@@ -97,8 +97,8 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
     // its lift carried by the factor.
     let (lhs, rhs) = (lhs.placed(), rhs.placed());
     for mat in 0..matrices {
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
-        let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, mat);
+        let lhs_mat = lhs.matrix_packed::<EL, L>(lhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<ER, RL>(rhs_axes, mat);
         let lhs_scales = lhs.reader(
             lhs_axes,
             mat,
@@ -113,7 +113,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
             comptime!(shape.space.clone()),
             comptime!(shape.acc_axes),
         );
-        let mut acc_view = acc.matrix_accumulate::<A>(
+        let mut acc_view = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(shape.acc_axes),
             comptime!(shape.space.clone()),
@@ -250,6 +250,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, RL: Siz
         &mut c,
         lw,
         contracted_per_step,
+        contracted_per_step > 1,
         columns,
         mr,
         nr,

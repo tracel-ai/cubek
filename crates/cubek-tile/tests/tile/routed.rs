@@ -119,9 +119,9 @@ fn unwritten_output(client: &Client) -> TensorHandle {
 /// `out[m] = x[m] · W[routes[m]]`: one token per step, its expert's slab picked by the table.
 #[cube(launch)]
 fn routed_matmul_kernel<E: Numeric>(
-    x: &TileArg<'_, E, Const<1>>,
-    w: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    x: &TileArg<'_, E>,
+    w: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     routes: &Tensor<u32>,
     space: Partitioning,
     #[comptime] token: Level,
@@ -149,9 +149,9 @@ fn routed_matmul_kernel<E: Numeric>(
 /// over the routed walk, so what it fills is the expert the table named.
 #[cube(launch)]
 fn routed_staged_matmul_kernel<E: Numeric>(
-    x: &TileArg<'_, E, Const<1>>,
-    w: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    x: &TileArg<'_, E>,
+    w: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     routes: &Tensor<u32>,
     space: Partitioning,
     #[comptime] token: Level,
@@ -218,13 +218,15 @@ fn run(routes: &[u32]) -> HostData {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(x.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(x.binding().into_tensor_arg(), 1, TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             w.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[EXPERT, K, N]),
         ),
         TileArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         table.binding().into_tensor_arg(),
@@ -247,13 +249,15 @@ fn run_staged(routes: &[u32]) -> HostData {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(x.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(x.binding().into_tensor_arg(), 1, TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             w.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[EXPERT, K, N]),
         ),
         TileArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         table.binding().into_tensor_arg(),
@@ -297,9 +301,9 @@ fn a_route_past_the_last_expert_clamps_to_it() {
 /// is opened inside the route, so everything it reads is already the one expert the table named.
 #[cube(launch)]
 fn routed_block_matmul_kernel<E: Numeric>(
-    x: &TileArg<'_, E, Const<4>>,
-    w: &TileArg<'_, E, Const<4>>,
-    out: &TileArg<'_, E, Const<1>>,
+    x: &TileArg<'_, E>,
+    w: &TileArg<'_, E>,
+    out: &TileArg<'_, E>,
     routes: &Tensor<u32>,
     space: Partitioning,
     #[comptime] token: Level,
@@ -318,7 +322,7 @@ fn routed_block_matmul_kernel<E: Numeric>(
             let out_s = out.at(&slab);
             let x_s = x.at(&slab);
             let w_s = w.at(&slab);
-            let acc = out_s.accumulator::<E, E, E>(
+            let acc = out_s.accumulator::<E>(
                 &x_s,
                 &w_s,
                 comptime!(Instruction::Registers {
@@ -367,13 +371,19 @@ fn run_block(routes: &[u32]) -> HostData {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(x.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(
+            x.binding().into_tensor_arg(),
+            LINE,
+            TileSpec::direct(&[M, K]),
+        ),
         TileArgLaunch::new(
             w.binding().into_tensor_arg(),
+            LINE,
             TileSpec::direct(&[EXPERT, N, K]),
         ),
         TileArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         table.binding().into_tensor_arg(),
@@ -405,7 +415,7 @@ fn a_routed_walk_folds_its_contraction_into_a_register_block() {
 /// does not carry.
 #[cube(launch)]
 fn routed_axis_kernel(
-    k: &TileArg<'_, f32, Const<1>>,
+    k: &TileArg<'_, f32>,
     out: &mut Tensor<f32>,
     space: Partitioning,
     #[comptime] level: Level,
@@ -447,6 +457,7 @@ fn launch_routed_on(axis: Axis) -> f32 {
         launcher.cube_dim(),
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, EXPERT]),
         ),
         out_handle.clone().binding().into_tensor_arg(),

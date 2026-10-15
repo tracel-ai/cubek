@@ -19,8 +19,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch,
-    Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
+    Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch, Semiring, Space, StageStorage,
+    Stages, Tile, TileArg, TileArgLaunch, TileSpec,
     ops::{matmul::MmaIo, softmax::OnlineSoftmax},
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
@@ -64,10 +64,10 @@ impl Reads for AttendedExpand {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn plane_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
     keys: u32,
     queries: u32,
     scale: f32,
@@ -81,7 +81,7 @@ fn plane_attention<E: Float>(
     let k = k.tile(&space).within(S, 0, keys as usize);
     let v = v.tile(&space).within(S, 0, keys as usize);
     let out = out.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -89,7 +89,7 @@ fn plane_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     for cube in space {
         let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
         for plane in cube {
@@ -102,11 +102,11 @@ fn plane_attention<E: Float>(
             let keys_walk = plane.walk();
             let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
             let walk = keys_walk.range(0, blocks);
-            let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-            let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let score = Tile::scratch::<f32>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let mut p = Tile::scratch::<E>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let acc = out
                 .at(&plane)
-                .accumulator::<f32, f32, E>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
+                .accumulator::<f32>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
                 .with_scratch(Scratch::OneTile);
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
@@ -117,12 +117,8 @@ fn plane_attention<E: Float>(
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
-                    let logits = score.accumulator::<f32, E, E>(
-                        &q_s,
-                        k_s,
-                        Instruction::Cmma,
-                        Semiring::SUM_PROD,
-                    );
+                    let logits =
+                        score.accumulator::<f32>(&q_s, k_s, Instruction::Cmma, Semiring::SUM_PROD);
                     for fragment in stage.walk().routed(V, 0).unrolled() {
                         let mut cell = logits.at(&fragment);
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
@@ -156,10 +152,10 @@ fn plane_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn register_plane_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
     keys: u32,
     queries: u32,
     scale: f32,
@@ -175,7 +171,7 @@ fn register_plane_attention<E: Float>(
     let k = k.tile(&space).within(S, 0, keys as usize);
     let v = v.tile(&space).within(S, 0, keys as usize);
     let out = out.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -183,7 +179,7 @@ fn register_plane_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     for cube in space {
         let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
         for plane in cube {
@@ -194,17 +190,14 @@ fn register_plane_attention<E: Float>(
             let keys_walk = plane.walk();
             let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
             let walk = keys_walk.range(0, blocks);
-            let acc = out.at(&plane).accumulator::<f32, f32, E>(
-                &bias_p,
-                &v_p,
-                instruction,
-                Semiring::SUM_PROD,
-            );
+            let acc =
+                out.at(&plane)
+                    .accumulator::<f32>(&bias_p, &v_p, instruction, Semiring::SUM_PROD);
             let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
             q_s.copy_from(&q_p);
             sync_plane();
             let logits =
-                Tile::<f32>::stage_accumulator(&walk, comptime!(vec![Q, S]), &q_s, instruction);
+                Tile::stage_accumulator::<f32>(&walk, comptime!(vec![Q, S]), &q_s, instruction);
             let mut softmax = OnlineSoftmax::<f32>::along(&logits, S);
             let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
             stages.pipelined(walk, |slot, stage| {
@@ -235,10 +228,10 @@ fn register_plane_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn unit_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
     max: &mut Tensor<f32>,
     sum: &mut Tensor<f32>,
     keys: u32,
@@ -255,7 +248,7 @@ fn unit_attention<E: Float>(
     let k = k.tile(&space).within(S, 0, keys as usize);
     let v = v.tile(&space).within(S, 0, keys as usize);
     let out = out.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -263,7 +256,7 @@ fn unit_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     let value = comptime!(space.space().extent(V));
     for cube in space {
         for unit in cube {
@@ -274,7 +267,7 @@ fn unit_attention<E: Float>(
                 out.at(&unit),
                 bias.at(&unit),
             );
-            let mut acc = out_u.accumulator::<f32, f32, E>(
+            let mut acc = out_u.accumulator::<f32>(
                 &bias_u,
                 &v_u,
                 comptime!(Instruction::Registers {
@@ -290,7 +283,7 @@ fn unit_attention<E: Float>(
                     v_u.at(&step),
                     bias_u.at(&step),
                 );
-                let mut score = bias_s.accumulator::<f32, E, E>(
+                let mut score = bias_s.accumulator::<f32>(
                     &q_s,
                     &k_s,
                     comptime!(Instruction::Registers {
@@ -329,13 +322,13 @@ fn unit_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn relayed_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
-    carry: &TileArg<'_, f32, Const<1>>,
-    carried_max: &TileArg<'_, f32, Const<1>>,
-    carried_sum: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_, E>,
+    k: &TileArg<'_, E>,
+    v: &TileArg<'_, E>,
+    out: &TileArg<'_, f32>,
+    carry: &TileArg<'_, f32>,
+    carried_max: &TileArg<'_, f32>,
+    carried_sum: &TileArg<'_, f32>,
     turns: &[Atomic<u32>],
     keys: u32,
     queries: u32,
@@ -345,7 +338,7 @@ fn relayed_attention<E: Float>(
     #[comptime] block_keys: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let relay = carry.relay(&space, turns);
+    let relay = carry.relay::<Const<1>>(&space, turns);
     // Uniform across the cube, so it leaves before any barrier.
     if !relay.has_turn() {
         terminate!();
@@ -356,7 +349,7 @@ fn relayed_attention<E: Float>(
     let mut out = out.tile(&space);
     let state_max = carried_max.tile(&space);
     let state_sum = carried_sum.tile(&space);
-    let bias = Procedural::<f32>::new::<Attended>(
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -364,7 +357,7 @@ fn relayed_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     // The cube level's walk is this cube's run of blocks, its planes directly below each block.
     let run = space.walk();
     let first = run.region(0);
@@ -373,10 +366,10 @@ fn relayed_attention<E: Float>(
     let blocks = reach.div_ceil(block_keys).min(run.total());
     let walk = run.range(0, blocks);
     let sum = relay.tile();
-    let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-    let p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+    let score = Tile::scratch::<f32>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+    let p = Tile::scratch::<E>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
     let acc = sum
-        .accumulator::<f32, f32, E>(&bias, &v, Instruction::Cmma, Semiring::SUM_PROD)
+        .accumulator::<f32>(&bias, &v, Instruction::Cmma, Semiring::SUM_PROD)
         .with_scratch(Scratch::OneTile);
     let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
     // The query spans no key: its box is the first block's, staged once before the walk.
@@ -389,7 +382,7 @@ fn relayed_attention<E: Float>(
         slot.consume(|k_s, v_s| {
             for plane in stage {
                 let score_p = score.at(&plane);
-                let logits = score_p.accumulator::<f32, E, E>(
+                let logits = score_p.accumulator::<f32>(
                     &q_s.at(&plane),
                     &k_s.at(&plane),
                     Instruction::Cmma,
@@ -537,10 +530,10 @@ fn run<E: Float + CubeElement>(case: Case) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(q_tensor, TileSpec::direct(&[Q, D])),
-        TileArgLaunch::new(k_tensor, TileSpec::direct(&[S, D])),
-        TileArgLaunch::new(v_tensor, TileSpec::direct(&[S, V])),
-        TileArgLaunch::new(out_tensor, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(q_tensor, 1, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(k_tensor, 1, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(v_tensor, 1, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(out_tensor, 1, TileSpec::direct(&[Q, V])),
         attended as u32,
         queries as u32,
         scale,
@@ -623,18 +616,22 @@ fn run_registers<E: Float + CubeElement>(case: Case) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             q_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, D]),
         ),
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, V]),
         ),
         attended as u32,
@@ -719,13 +716,13 @@ fn run_relayed<E: Float + CubeElement>(case: Case, cubes: usize) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(q_handle), TileSpec::direct(&[Q, D])),
-        TileArgLaunch::new(tensor(k_handle), TileSpec::direct(&[S, D])),
-        TileArgLaunch::new(tensor(v_handle), TileSpec::direct(&[S, V])),
-        TileArgLaunch::new(tensor(out_handle.clone()), TileSpec::direct(&[Q, V])),
-        TileArgLaunch::new(tensor(carry), TileSpec::direct(&[Q, V])),
-        TileArgLaunch::new(tensor(carried_max), TileSpec::direct(&[Q])),
-        TileArgLaunch::new(tensor(carried_sum), TileSpec::direct(&[Q])),
+        TileArgLaunch::new(tensor(q_handle), 1, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(tensor(k_handle), 1, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(tensor(v_handle), 1, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(tensor(out_handle.clone()), 1, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(tensor(carry), 1, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(tensor(carried_max), 1, TileSpec::direct(&[Q])),
+        TileArgLaunch::new(tensor(carried_sum), 1, TileSpec::direct(&[Q])),
         unsafe { BufferArg::from_raw_parts(turns, counters) },
         attended as u32,
         queries as u32,
@@ -1010,19 +1007,23 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             q_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, D]),
         ),
         // The keys are stored transposed, so a step's rhs runs along the keys it scores.
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[D, S]),
         ),
         TileArgLaunch::new(
             v_handle.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[Q, V]),
         ),
         max_handle.clone().binding().into_tensor_arg(),

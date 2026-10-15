@@ -12,20 +12,23 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// A cube's shared-memory accumulator over one box, summing in `A`, read back as `T`.
+/// A cube's shared-memory accumulator over one box, summing in the element it was opened with,
+/// read back at the element of the tile it was opened over.
 #[derive(CubeType)]
-pub struct SmemAccumulation<A: Numeric, T: Numeric> {
+pub struct SmemAccumulation {
     /// Writes add into the cell atomically.
-    pub sink: Tile<A>,
-    /// Reads the sum back as `T`; valid only once every plane has drained and the cube has synced.
-    pub source: Tile<T>,
+    pub sink: Tile,
+    /// Reads the sum back at the opened tile's element; valid only once every plane has drained
+    /// and the cube has synced.
+    pub source: Tile,
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// A zeroed shared-memory accumulator over this tile's box, summing in `A`, with the cube
     /// synchronized on both sides of the zeroing.
-    pub fn smem_accumulation<A: Numeric>(&self) -> SmemAccumulation<A, T> {
+    pub fn smem_accumulation<A: Numeric>(&self) -> SmemAccumulation {
+        let _served = naming::<Served>(self.element);
         let space = comptime!(self.place.space.clone());
         let elem_bytes = A::size().comptime();
         let form = comptime!(StageForm::dense(
@@ -46,31 +49,37 @@ impl<T: Numeric> Tile<T> {
         sync_cube();
 
         let units = self.units();
-        let sink = Memory::<A>::smem_backed(
+        let sink = Memory::smem_backed::<A>(
             comptime!(space.clone()),
             1usize,
             comptime!(FillUnits::cube(units)),
-            Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_accumulate(&values)),
+            Backing::new_WriteCall(RawCall::of::<A>(
+                ErasedTensor::<A, WriteOnly>::of_smem_accumulate(&values),
+            )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Accumulate),
+            comptime!(Overhang::Masked),
         );
-        let source = Memory::<T>::smem_backed(
+        let source = Memory::smem_backed::<Served>(
             space,
             1usize,
             comptime!(FillUnits::cube(units)),
-            Backing::<T>::new_ReadCall(ErasedTensor::<T, ReadOnly>::of_smem_load::<A>(&values)),
+            Backing::new_ReadCall(RawCall::of::<Served>(
+                ErasedTensor::<Served, ReadOnly>::of_smem_load::<A>(&values),
+            )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         );
-        SmemAccumulation::<A, T> {
-            sink: sink.nested_like::<T>(self),
-            source: source.nested_like::<T>(self),
+        SmemAccumulation {
+            sink: sink.nested_like(self),
+            source: source.nested_like(self),
         }
     }
 }

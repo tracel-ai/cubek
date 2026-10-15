@@ -16,6 +16,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
     c: &mut Array<Vector<E, V>>,
     #[comptime] lw: usize,
     #[comptime] contracted_per_step: usize,
+    #[comptime] along_k: bool,
     #[comptime] columns: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
@@ -25,12 +26,12 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
     #[comptime] semiring: Semiring,
 ) {
     comptime!(assert!(
-        columns == 1 || contracted_per_step > 1,
+        columns == 1 || along_k,
         "mm: a rhs load holds the runs of {columns} columns along the contraction, and this rhs \
          lines along the accumulator"
     ));
     let mut b = Array::<Vector<E, V>>::new(nr);
-    let folded = comptime!(contracted_per_step > 1);
+    let folded = along_k;
     let width = comptime!(match folded {
         true => contracted_per_step,
         false => lw,
@@ -54,6 +55,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
                 0usize,
                 comptime!(Some(0usize)),
                 contracted_per_step,
+                along_k,
                 columns,
                 mr,
                 nr,
@@ -75,6 +77,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
                     0usize,
                     comptime!(Some(unit)),
                     contracted_per_step,
+                    along_k,
                     columns,
                     mr,
                     nr,
@@ -96,6 +99,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
                     unit,
                     comptime!(None),
                     contracted_per_step,
+                    along_k,
                     columns,
                     mr,
                     nr,
@@ -121,6 +125,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, R
             0usize,
             comptime!(Some(unit)),
             contracted_per_step,
+            along_k,
             columns,
             mr,
             nr,
@@ -154,13 +159,14 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, RL: Size
     unit: usize,
     #[comptime] fixed: Option<usize>,
     #[comptime] contracted_per_step: usize,
+    #[comptime] along_k: bool,
     #[comptime] columns: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
     #[comptime] semiring: Semiring,
 ) {
-    if comptime!(contracted_per_step > 1) {
+    if comptime!(along_k) {
         let cell = V::value();
         comptime!(assert!(
             cell == contracted_per_step || cell == 1,

@@ -78,8 +78,21 @@ impl Region {
         c0: usize,
         c1: usize,
     ) -> Region {
-        let rank = comptime!(space.rank());
         let edges = comptime!(MatrixAxes::edges(&space));
+        Region::cell(depth, space, level, edges, c0, c1)
+    }
+
+    /// The region one level below the root at coordinates `(c0, c1)` along the first axis of
+    /// each of `edges`' two groups under `level`, `0` elsewhere, for a tile at `depth`.
+    pub(crate) fn cell(
+        #[comptime] depth: usize,
+        #[comptime] space: Space,
+        #[comptime] level: Level,
+        #[comptime] edges: MatrixAxes,
+        c0: usize,
+        c1: usize,
+    ) -> Region {
+        let rank = comptime!(space.rank());
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {

@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 
 use cubecl::{
     prelude::*,
@@ -84,15 +84,15 @@ fn fft_butterfly_stages<F: Float>(
         let half_m = m >> 1;
 
         // twiddle base: exp(-2πi / m)
-        let theta = F::new(fft_mode.sign() * 2.0 * PI) / F::cast_from(m);
+        let theta = F::new(comptime!(f64::from(fft_mode.sign()) * 2.0 * PI)) / F::cast_from(m);
 
         let wm_re = theta.cos();
         let wm_in = theta.sin();
 
         let mut k = 0;
         while k < n {
-            let mut w_re = F::new(1.0_f32);
-            let mut w_im = F::new(0.0_f32);
+            let mut w_re = F::new(1.0);
+            let mut w_im = F::new(0.0);
 
             let mut j = 0;
             while j < half_m {

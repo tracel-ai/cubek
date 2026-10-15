@@ -1,0 +1,318 @@
+//! A pool of fixed-size pages read as sequences: [`Paging`] states it, [`PageTable`] resolves it.
+//!
+//! The buffer is a pool whose `sequence` dim holds pages and whose `position` dim a page's
+//! positions. An operand bound over it is read as the sequences a table names: sequence `b`'s
+//! position `s` lies in page `table[b, s / page_size]`, at row `s % page_size`. The projection stays
+//! direct over the logical `[…, sequence, …, position, …]` axes, so every window, walk and bound
+//! is the logical one; the table is resolved only where a coordinate becomes an offset
+//! ([`BufferLayout`](super::projection::BufferLayout)), at every offset taken, a masked cell's
+//! included. The pool is bound as it lies; the operand's extents along the two axes are the
+//! table's, read off it at launch, so nothing states them twice. A coordinate past the table reads
+//! the pool's first page without loading from the table, and a table entry past the pool its last:
+//! a table is device data a launch may never have written.
+//!
+//! The table is read as each window is cut, not as each line is: a window pins the page its origin
+//! lies in, and one whose extent is a single sequence and at most a page of positions the next page
+//! too, so its lines pick between the two without touching the table.
+
+use cubecl::prelude::*;
+
+use crate::*;
+
+/// Which axes of an operand a page table resolves: `sequence` names the page a table row lists,
+/// `position` a run of `page_size` positions within one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Paging {
+    pub sequence: Axis,
+    pub position: Axis,
+    /// Positions one page holds: the pool's extent along `position`.
+    pub page_size: usize,
+}
+
+impl Paging {
+    /// The buffer dims `projection` carries the two axes on, `(sequence, position)`.
+    ///
+    /// # Errors
+    ///
+    /// Either axis not one dim's identity, or both on one dim: a page is resolved digit for digit.
+    pub(crate) fn dims(&self, projection: &Projection) -> Result<(usize, usize), Refusal> {
+        let dim = |axis: Axis| {
+            (0..projection.physical_rank())
+                .find(|&pa| projection.physical_axis(pa).is_identity(axis))
+                .ok_or(Refusal::PagingOfAnUnlabelledAxis(axis))
+        };
+        let (sequence, position) = (dim(self.sequence)?, dim(self.position)?);
+        match sequence == position {
+            true => Err(Refusal::PagingOfOneDim(self.sequence)),
+            false => Ok((sequence, position)),
+        }
+    }
+
+    /// What an operand read through a table owes, checked once for the build and the kernel both:
+    /// a direct, untiled mapping over a pool of pages, never packed, moved a line at a time, its
+    /// lines whole within a page and never along the pages.
+    ///
+    /// # Errors
+    ///
+    /// The [`Refusal`] naming the first thing the table cannot resolve.
+    pub(crate) fn validate(
+        &self,
+        projection: &Projection,
+        stored_tiles: &[(Axis, usize)],
+        packing: Packing,
+        delivery: Delivery,
+        width: usize,
+    ) -> Result<(), Refusal> {
+        if !projection.is_direct() || projection.is_tiled() || !stored_tiles.is_empty() {
+            return Err(Refusal::PagingOfAStatedLayout);
+        }
+        if packing != Packing::Plain
+            || !matches!(delivery, Delivery::SyncPerUnit | Delivery::AsyncPerUnit)
+        {
+            return Err(Refusal::PagingMovedByRuns);
+        }
+        let (sequence, position) = self.dims(projection)?;
+        let innermost = projection.physical_rank() - 1;
+        if sequence == innermost {
+            return Err(Refusal::PagesAlongALine(self.sequence));
+        }
+        if self.page_size == 0 {
+            return Err(Refusal::PagingOfAnEmptyPool);
+        }
+        if position == innermost && !self.page_size.is_multiple_of(width) {
+            return Err(Refusal::PageSplitsALine {
+                page_size: self.page_size,
+                width,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// What a window's extent proves of the pages its lines lie in.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Spans {
+    /// Nothing: a line leaving the pinned page reads its own off the table.
+    Any,
+    /// One sequence and at most a page of positions: the pinned page, or the next.
+    TwoPages,
+}
+
+/// A page table as a kernel reads it: `u32`, `[sequences, pages_per_sequence]`, read by stride.
+/// Its shape is the operand's: the sequences it lists and their positions, `page_size` a column.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub(crate) struct PageTable {
+    entries: Box<[u32]>,
+    sequence_stride: u32,
+    page_stride: u32,
+    /// The table's rows: a sequence past them is outside the operand, and reads the pool's first
+    /// page without touching the table.
+    pub(crate) sequences: u32,
+    /// The table's columns: a position past them is likewise outside, and reads the first page.
+    pub(crate) pages_per_sequence: u32,
+    /// The pool's last page: a table entry past it reads it, since a table is device data a
+    /// launch may never have written.
+    last_page: u32,
+    /// The page a window's origin lies in, resolved once as the window is cut
+    /// ([`pinned_at`](Self::pinned_at)): a line in the same sequence and the same column of the
+    /// table reads it without loading from the table.
+    pin_sequence: u32,
+    pin_column: u32,
+    pin_page: u32,
+    /// The page of the column after the pin's, where the window [`Spans::TwoPages`].
+    next_page: u32,
+    /// What the window's extent proves of the pages its lines lie in.
+    #[cube(comptime)]
+    spans: Spans,
+    #[cube(comptime)]
+    pub(crate) page_size: usize,
+    /// The buffer dim the pages lie along.
+    #[cube(comptime)]
+    pub(crate) sequence_dim: usize,
+    /// The buffer dim a page's positions lie along.
+    #[cube(comptime)]
+    pub(crate) position_dim: usize,
+    /// Positions one step of the position dim's coordinate covers: a line's width where the
+    /// positions run along the innermost dim, which is addressed in lines; one elsewhere.
+    #[cube(comptime)]
+    unit: usize,
+}
+
+#[cube]
+impl PageTable {
+    /// `table` resolving `paging`'s axes, which `projection` carries, over a pool of `pool_pages`
+    /// pages, an operand read `width` values a line along its innermost dim.
+    pub(crate) fn new(
+        table: &Tensor<u32>,
+        pool_pages: u32,
+        #[comptime] paging: Paging,
+        #[comptime] projection: Projection,
+        #[comptime] width: usize,
+    ) -> PageTable {
+        let (sequence_dim, position_dim) = comptime!(
+            paging
+                .dims(&projection)
+                .unwrap_or_else(|refusal| panic!("PageTable: {refusal}"))
+        );
+        let unit = comptime!(match position_dim == projection.physical_rank() - 1 {
+            true => width,
+            false => 1,
+        });
+        // Only `[sequences, pages_per_sequence]` names a page per sequence and column; any other
+        // rank reads as a table of no rows, so every line is masked rather than a dim past the
+        // table's rank read for its extent.
+        let mut sequence_stride = 0u32;
+        let mut page_stride = 0u32;
+        let mut sequences = 0u32;
+        let mut pages_per_sequence = 0u32;
+        if table.rank() == 2 {
+            sequence_stride = table.stride(0) as u32;
+            page_stride = table.stride(1) as u32;
+            sequences = table.shape(0) as u32;
+            pages_per_sequence = table.shape(1) as u32;
+        }
+        let unpinned = PageTable {
+            entries: unsafe { table.as_slice().as_boxed_unchecked() },
+            sequence_stride,
+            page_stride,
+            sequences,
+            pages_per_sequence,
+            // A bound pool holds a page at least; one stated by hand is kept off underflow.
+            last_page: pool_pages.max_with(1u32).minus(1u32),
+            pin_sequence: 0u32,
+            pin_column: 0u32,
+            pin_page: 0u32,
+            next_page: 0u32,
+            spans: comptime!(Spans::Any),
+            page_size: comptime!(paging.page_size),
+            sequence_dim,
+            position_dim,
+            unit,
+        };
+        unpinned.pinned(0u32, 0u32, comptime!(Spans::Any))
+    }
+
+    /// This table for the window whose origin is `origin` and whose extent along each dim, in
+    /// loads, is `edges` (`None` where the window's extent is the one this table was pinned for).
+    /// Every window is cut through here, so its pages are resolved once: where its extent is one
+    /// sequence and at most a page of positions, its lines lie in the page its origin does or the
+    /// next, both resolved now; elsewhere a line reads the table where it leaves the origin's.
+    pub(crate) fn pinned_at(
+        &self,
+        origin: &Coords<i32>,
+        #[comptime] edges: Option<Vec<Option<usize>>>,
+    ) -> PageTable {
+        let page_size = comptime!(self.page_size as u32);
+        let unit = comptime!(self.unit as u32);
+        let spans = comptime!(match edges {
+            None => self.spans,
+            Some(edges) => {
+                let positions = edges[self.position_dim].map(|loads| loads * self.unit);
+                match (edges[self.sequence_dim], positions) {
+                    (Some(1), Some(positions)) if positions <= self.page_size => Spans::TwoPages,
+                    _ => Spans::Any,
+                }
+            }
+        });
+        let sequence = origin.at(comptime!(self.sequence_dim)).cast::<u32>();
+        let position = origin
+            .at(comptime!(self.position_dim))
+            .cast::<u32>()
+            .times(unit);
+        self.pinned(sequence, position.divided_by(page_size), spans)
+    }
+
+    /// This table pinned at the page column `column` of sequence `sequence` lists.
+    fn pinned(&self, sequence: u32, column: u32, #[comptime] spans: Spans) -> PageTable {
+        let next_page = match comptime!(spans) {
+            Spans::TwoPages => self.lookup(sequence, column.plus(1u32)),
+            Spans::Any => 0u32,
+        };
+        PageTable {
+            entries: self.entries.clone(),
+            sequence_stride: self.sequence_stride,
+            page_stride: self.page_stride,
+            sequences: self.sequences,
+            pages_per_sequence: self.pages_per_sequence,
+            last_page: self.last_page,
+            pin_sequence: sequence,
+            pin_column: column,
+            pin_page: self.lookup(sequence, column),
+            next_page,
+            spans,
+            page_size: comptime!(self.page_size),
+            sequence_dim: comptime!(self.sequence_dim),
+            position_dim: comptime!(self.position_dim),
+            unit: comptime!(self.unit),
+        }
+    }
+
+    /// The page column `column` of sequence `sequence` lists, clamped to the pool.
+    ///
+    /// A coordinate outside the table, which only a masked read asks for before the mask drops
+    /// it, reads the pool's first page and never loads past the table: the table may be empty.
+    fn lookup(&self, sequence: u32, column: u32) -> u32 {
+        let mut page = 0u32;
+        if sequence < self.sequences && column < self.pages_per_sequence {
+            let at = sequence
+                .times(self.sequence_stride)
+                .plus(column.times(self.page_stride));
+            page = self.entries[at.cast::<usize>()].min_with(self.last_page);
+        }
+        page
+    }
+
+    /// `pool`, the geometry of the pool as it lies, as the sequences this table lists: the table's
+    /// rows along the sequence dim and their positions along the position dim, over the pool's
+    /// strides.
+    pub(crate) fn sequences_over(&self, pool: &RuntimeGeometry) -> RuntimeGeometry {
+        let page_size = comptime!(self.page_size as u32);
+        let mut sequences = RuntimeGeometry::new();
+        #[unroll]
+        for pa in 0..pool.shape.len() {
+            let extent = if comptime!(pa == self.sequence_dim) {
+                self.sequences
+            } else if comptime!(pa == self.position_dim) {
+                self.pages_per_sequence.times(page_size)
+            } else {
+                pool.shape.at(pa)
+            };
+            sequences.push(extent, pool.strides.at(pa));
+        }
+        sequences
+    }
+
+    /// `digits`, a logical coordinate along each buffer dim, with the sequence's digit replaced
+    /// by the page its position lies in and the position's by its row there: the pinned page
+    /// where the line lies in it, else the table's [`lookup`](Self::lookup).
+    pub(crate) fn resolve(&self, digits: &Coords<u32>) -> Coords<u32> {
+        let page_size = comptime!(self.page_size as u32);
+        let unit = comptime!(self.unit as u32);
+        let sequence = digits.at(comptime!(self.sequence_dim));
+        let position = digits.at(comptime!(self.position_dim)).times(unit);
+        let column = position.divided_by(page_size);
+        let page = match comptime!(self.spans) {
+            Spans::TwoPages => select(column == self.pin_column, self.pin_page, self.next_page),
+            Spans::Any => {
+                let mut page = self.pin_page;
+                if sequence != self.pin_sequence || column != self.pin_column {
+                    page = self.lookup(sequence, column);
+                }
+                page
+            }
+        };
+        let mut resolved = Coords::<u32>::new();
+        #[unroll]
+        for pa in 0..digits.len() {
+            if comptime!(pa == self.sequence_dim) {
+                resolved.push(page);
+            } else if comptime!(pa == self.position_dim) {
+                resolved.push(position.remainder(page_size).divided_by(unit));
+            } else {
+                resolved.push(digits.at(pa));
+            }
+        }
+        resolved
+    }
+}

@@ -6,6 +6,9 @@ use cubecl::prelude::*;
 use super::{CubeOrder, Level, cube_positions};
 use crate::{Axis, Coords, CubeAxis, Integer, IntegerExpand, Space};
 
+/// The most cubes one grid dimension takes on every device a launch may run on.
+const CUBES_PER_GRID_DIMENSION: usize = 65_535;
+
 /// The order the planes of a launch take a level's tiles in, where a plane level spans the launch
 /// rather than one cube ([`Levels::launch_planes`](crate::Levels::launch_planes)): in blocks, each
 /// a box of tiles held by consecutive planes, the blocks taken in a [`CubeOrder`] over their grid.
@@ -16,6 +19,11 @@ use crate::{Axis, Coords, CubeAxis, Integer, IntegerExpand, Space};
 /// and the launch deals its tiles as a cube level with a plane level inside it would. Any order
 /// is right: the planes share nothing, so the order only says which tiles the planes of one cube
 /// take together.
+///
+/// Every plane the launch spawns walks one tile, as every plane of a cube level's cube does: a
+/// plane past the last tile, of a block the edge cuts short or of a cube past the last block,
+/// walks one past the grid, which the binding masks ([`overruns`](PlaneOrder::overruns)). So the
+/// planes of a cube all reach any barrier one of them meets.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PlaneOrder {
     /// Tiles one block holds along each axis it names; along an axis it does not name, one.
@@ -86,11 +94,68 @@ impl PlaneOrder {
     pub(crate) fn one_block_a_cube(&self) -> bool {
         self.block_planes() == self.planes_per_cube
     }
+
+    /// The grid's `x` and `y` for `level`'s blocks over `space`: every block's planes in cubes of
+    /// [`planes_per_cube`](Self::planes_per_cube), laid along `x` and spilling into `y` past what
+    /// one dimension takes. At least one cube, so an empty problem divides by no empty dimension.
+    /// Static extents only.
+    pub(crate) fn grid(&self, level: &Level, space: &Space) -> (usize, usize) {
+        let planes = self.blocks(level, space) * self.block_planes();
+        let cubes = planes.div_ceil(self.planes_per_cube);
+        let x = cubes.clamp(1, CUBES_PER_GRID_DIMENSION);
+        (x, cubes.div_ceil(x).max(1))
+    }
+
+    /// Whether some plane the launch spawns for `level` over `space` walks a tile past the last
+    /// along `axis`, so the binding masks it there: where the edge cuts a block short along
+    /// `axis`, or where the grid holds more planes than the blocks do and the blocks past the last
+    /// land past `axis` ([`block_coords`]). `axis` is static; where an extent the grid counts is
+    /// only the launch's, the planes may run past it, and it is masked.
+    pub(crate) fn overruns(&self, level: &Level, space: &Space, axis: Axis) -> bool {
+        let ragged = !level
+            .tiles(space, axis)
+            .is_multiple_of(self.block_along(axis));
+        if ragged {
+            return true;
+        }
+        if Self::spare_blocks_land_past(level, self.block_order) != axis {
+            return false;
+        }
+        if level.axes().into_iter().any(|axis| space.is_dynamic(axis)) {
+            return true;
+        }
+        let (x, y) = self.grid(level, space);
+        x * y * self.planes_per_cube > self.blocks(level, space) * self.block_planes()
+    }
+
+    /// Blocks `level` holds over `space`, the edge's counted.
+    fn blocks(&self, level: &Level, space: &Space) -> usize {
+        level
+            .axes()
+            .into_iter()
+            .map(|axis| level.tiles(space, axis).div_ceil(self.block_along(axis)))
+            .product()
+    }
+
+    /// The axis a block index past the last lands past ([`block_coords`]): the one axis; of two,
+    /// the one `order` runs out along; of more, the outermost, which is never wrapped.
+    fn spare_blocks_land_past(level: &Level, order: CubeOrder) -> Axis {
+        let axes = level.axes();
+        match axes.len() {
+            1 => axes[0],
+            2 => match order.canonicalize() {
+                CubeOrder::SwizzleRow(_) => axes[0],
+                CubeOrder::RowMajor | CubeOrder::SwizzleCol(_) => axes[1],
+            },
+            _ => axes[axes.len() - 1],
+        }
+    }
 }
 
 /// This plane's tile of `level`, a plane level spanning the launch, along each axis of `space`:
-/// `(positions, counts)`, each tile's index and `1` where the plane holds it, `0` along every
-/// axis where a plane past the last tile holds none. `grid` is the tiles along each axis.
+/// `(positions, counts)`: along each of the level's axes the tile's index and `1`, an index past
+/// the last for a plane past the last tile; along each other axis `0` and every tile. `grid` is
+/// the tiles along each axis.
 #[cube]
 pub(crate) fn launch_plane_tiles(
     #[comptime] space: Space,
@@ -166,7 +231,7 @@ pub(crate) fn launch_plane_tiles(
                 let within = local.divided_by(inner.runtime()).remainder(along.runtime());
                 let tile = at.at(i).times(along.runtime()).plus(within);
                 positions.push(tile);
-                counts.push(select(tile < grid.at(p), 1usize, 0usize));
+                counts.push(1usize);
             }
         }
     }

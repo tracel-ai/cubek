@@ -24,14 +24,14 @@ const CI: Axis = Axis(2);
 /// `out = weights ⊗ scales`. The weights arrive packed and unpack at the read; the scales
 /// broadcast over the axis they omit. Neither fact is stated here; both are the operands'.
 #[cube(launch)]
-fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
-    weights: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, S, F>,
-    out: &TileArg<'_, E, W>,
+fn dequantize<E: Numeric, S: Numeric>(
+    weights: &TileArg<'_, E>,
+    scales: &TileArg<'_, S>,
+    out: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let weights = weights.tile_as::<E>(&space);
+    let weights = weights.tile(&space);
     let scales = scales.tile(&space);
     let mut out = out.tile(&space);
     out.product(&weights, &scales);
@@ -138,8 +138,6 @@ fn a_packed_tensor_decodes_against_its_scales() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        factor,
-        scale_units,
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),

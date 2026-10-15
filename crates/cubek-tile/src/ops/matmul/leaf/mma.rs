@@ -7,9 +7,9 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<A: Numeric> MmaData<A> {
+impl MmaData {
     /// `self += lhs · rhs`; memory-window operands are loaded into transient fragments each call.
-    pub(crate) fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
+    pub(crate) fn mma<A: Numeric, L: Numeric, R: Numeric>(&mut self, lhs: &Tile, rhs: &Tile) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -19,15 +19,27 @@ impl<A: Numeric> MmaData<A> {
             MmaFragment::Acc(acc) => match (&lhs.kind, &rhs.kind) {
                 (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
                     (PlaneTile::Mma(a), PlaneTile::Mma(b)) => match (&a.fragment, &b.fragment) {
-                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                        }
+                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => mma_execute::<L, R, A>(
+                            af.at::<L>(),
+                            bf.at::<R>(),
+                            acc.at_mut::<A>(),
+                            m,
+                            n,
+                            k,
+                        ),
                         (
                             MmaFragment::LhsBlockScaled(af, a_scales),
                             MmaFragment::RhsBlockScaled(bf, b_scales),
-                        ) => {
-                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
-                        }
+                        ) => mma_execute_block_scaled::<A>(
+                            af,
+                            a_scales,
+                            bf,
+                            b_scales,
+                            acc.at_mut::<A>(),
+                            m,
+                            n,
+                            k,
+                        ),
                         _ => panic!(
                             "MmaData::mma: operands must carry the Lhs/Rhs roles, both \
                              block-scaled or neither"
@@ -41,15 +53,22 @@ impl<A: Numeric> MmaData<A> {
                     let (_, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
                     let mut rb =
-                        MmaData::<R>::operand(MatrixIdent::B, m, n, k, rhs_layout, io, false);
-                    rb.load_window(rhs);
+                        MmaData::operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, false);
+                    rb.load_window::<R>(rhs);
                     let b = PlaneTile::new_Mma(rb);
                     match (a, &b) {
                         (PlaneTile::Mma(a), PlaneTile::Mma(b)) => {
                             match (&a.fragment, &b.fragment) {
                                 (MmaFragment::Acc(af), MmaFragment::Rhs(bf)) => {
-                                    let af = accumulator_as_a::<L>(af, m, n, k);
-                                    mma_execute::<L, R, A>(&af, bf, acc, m, n, k)
+                                    let af = accumulator_as_a::<L>(af.at::<L>(), m, n, k);
+                                    mma_execute::<L, R, A>(
+                                        &af,
+                                        bf.at::<R>(),
+                                        acc.at_mut::<A>(),
+                                        m,
+                                        n,
+                                        k,
+                                    )
                                 }
                                 _ => panic!(
                                     "MmaData::mma: a left factor held against a memory window is an \
@@ -65,7 +84,7 @@ impl<A: Numeric> MmaData<A> {
                     let (lhs_layout, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
                     let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
-                    let mut la = MmaData::<L>::operand(
+                    let mut la = MmaData::operand::<L>(
                         MatrixIdent::A,
                         m,
                         n,
@@ -74,8 +93,8 @@ impl<A: Numeric> MmaData<A> {
                         io,
                         block_scaled,
                     );
-                    la.load_window(lhs);
-                    let mut rb = MmaData::<R>::operand(
+                    la.load_window::<L>(lhs);
+                    let mut rb = MmaData::operand::<R>(
                         MatrixIdent::B,
                         m,
                         n,
@@ -84,17 +103,29 @@ impl<A: Numeric> MmaData<A> {
                         io,
                         block_scaled,
                     );
-                    rb.load_window(rhs);
+                    rb.load_window::<R>(rhs);
                     match (&la.fragment, &rb.fragment) {
-                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                        }
+                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => mma_execute::<L, R, A>(
+                            af.at::<L>(),
+                            bf.at::<R>(),
+                            acc.at_mut::<A>(),
+                            m,
+                            n,
+                            k,
+                        ),
                         (
                             MmaFragment::LhsBlockScaled(af, a_scales),
                             MmaFragment::RhsBlockScaled(bf, b_scales),
-                        ) => {
-                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
-                        }
+                        ) => mma_execute_block_scaled::<A>(
+                            af,
+                            a_scales,
+                            bf,
+                            b_scales,
+                            acc.at_mut::<A>(),
+                            m,
+                            n,
+                            k,
+                        ),
                         _ => panic!("MmaData::mma: transient operand fragments in the wrong roles"),
                     }
                 }

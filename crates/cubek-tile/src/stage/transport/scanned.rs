@@ -7,24 +7,28 @@ use super::straight::fill_extent;
 use crate::*;
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// General path of [`fill_from`](Memory::fill_from); `scan` is what the source hands out.
-    pub(crate) fn fill_scanned<W: Size>(&mut self, src: &Memory<T>, #[comptime] scan: Scan) {
+    pub(crate) fn fill_scanned<T: Numeric, W: Size>(
+        &mut self,
+        src: &Memory,
+        #[comptime] scan: Scan,
+    ) {
         match comptime!(scan) {
-            Scan::Element => self.scan_unpacked::<W, W>(src),
+            Scan::Element => self.scan_unpacked::<T, W, W>(src),
             Scan::Words => {
                 let size!(WP) = comptime!(src.store.packing.physical(src.store.vector_size));
-                self.scan_unpacked::<WP, W>(src)
+                self.scan_unpacked::<T, WP, W>(src)
             }
         }
     }
 
     /// Cooperative cyclic flat scan across the units that share this fill ([`FillUnits`]); a
     /// packed source unpacks.
-    fn scan_unpacked<WP: Size, W: Size>(&mut self, src: &Memory<T>) {
+    fn scan_unpacked<T: Numeric, WP: Size, W: Size>(&mut self, src: &Memory) {
         let fill = comptime!(self.access.fill);
-        let s = src.flat_unpacked::<WP, W>();
-        let mut d = self.flat_mut::<W>();
+        let s = src.flat_unpacked::<T, WP, W>();
+        let mut d = self.flat_mut::<T, W>();
         let total = d.shape();
         // One line per unit, striding by the units that fill: the distribution must stay
         // disjoint, or a destination that adds (`Accumulate`, `Relay`) takes a value more than once.
@@ -41,7 +45,11 @@ impl<T: Numeric> Memory<T> {
     /// line: what a sum held in a wider buffer becomes when it lands in its output. The two are
     /// the same box, plain, and served at one width; the same cyclic scan across the units that
     /// share the window as [`fill_scanned`](Memory::fill_scanned), each casting the lines it moves.
-    pub(crate) fn fill_cast_from<S: Numeric>(&mut self, src: &Memory<S>, #[comptime] space: Space) {
+    pub(crate) fn fill_cast_from<T: Numeric, S: Numeric>(
+        &mut self,
+        src: &Memory,
+        #[comptime] space: Space,
+    ) {
         comptime!(assert!(
             src.store.packing == Packing::Plain
                 && self.store.packing == Packing::Plain
@@ -61,8 +69,8 @@ impl<T: Numeric> Memory<T> {
         ));
         let fill = comptime!(self.access.fill);
         let size!(W) = comptime!(self.store.vector_size);
-        let s = src.flat_unpacked::<W, W>();
-        let mut d = self.flat_mut::<W>();
+        let s = src.flat_unpacked::<S, W, W>();
+        let mut d = self.flat_mut::<T, W>();
         let total = d.shape();
         // The units that share this window, as the uncast scan strides: a window of one plane's
         // is moved by that plane alone, and a destination that adds takes each line once.

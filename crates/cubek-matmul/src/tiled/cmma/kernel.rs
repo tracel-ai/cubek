@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Semiring, Space,
-    StageStorage, Stages, TileArg, launch::Input, stage::RowChunks,
+    Axis, Instruction, Level, Levels, Partitioning, Semiring, Space, StageStorage, Stages, TileArg,
+    stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -71,18 +71,10 @@ impl CmmaBlueprint {
 /// output `E` on drain.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn cmma_kernel<
-    E: Numeric,
-    EA: Numeric,
-    EL: Numeric,
-    ER: Numeric,
-    VA: Size,
-    VB: Size,
-    VC: Size,
->(
-    a: &Input<'_, EL, VA>,
-    b: &Input<'_, ER, VB>,
-    c: &TileArg<'_, E, VC>,
+pub fn cmma_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
+    a: &TileArg<'_, EL>,
+    b: &TileArg<'_, ER>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] bp: CmmaBlueprint,
     #[comptime] batch: Vec<Axis>,
@@ -111,7 +103,7 @@ pub fn cmma_kernel<
         let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
         // The accumulator's grid is the partition's, read off the levels below the cube.
-        let acc = c.accumulator::<EA, EL, ER>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+        let acc = c.accumulator::<EA>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
 
         // One stage of K per region, both inputs staged for it.
         let steps = cube.walk();

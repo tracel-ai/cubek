@@ -1,40 +1,13 @@
-//! The TMA delivery's argument and its in-kernel layouts.
+//! A TMA tensor map as an operand's values ([`TileArgLaunch::tensor_map`]) and its in-kernel
+//! layouts.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
-    ViewMut,
     layout::{CoordsDyn, Layout, LayoutExpand},
     view::launch::ViewArg,
 };
 
 use crate::*;
-
-/// The TMA [`Delivery`]'s argument: a tensor-map [`ViewMut`] with its comptime [`TileSpec`].
-#[derive(CubeType, CubeLaunch)]
-pub struct TmaTileArg<E: Numeric> {
-    pub view: ViewMut<'static, E, CoordsDyn>,
-    #[cube(comptime)]
-    pub spec: TileSpec,
-}
-
-#[cube]
-impl<E: Numeric> TmaTileArg<E> {
-    /// Serve the tensor map as a TMA-filled tile over `partitioning`.
-    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
-        let space = comptime!(partitioning.clone());
-        let own = comptime!(space.space().subspace(self.spec.axes()));
-        let data = TmaData::from_tensor_map(
-            self.view.clone(),
-            comptime!(own.rank()),
-            comptime!(self.spec.units),
-            comptime!(self.spec.packing),
-        );
-        Tile::new(
-            TileKind::new_TmaGmem(data),
-            comptime!(Placement::root(own.clone(), space.levels().to_vec())),
-        )
-    }
-}
 
 /// The box a TMA descriptor moves: logical `(rows, cols)`, optional batch, and whether the
 /// descriptor is transposed (column-major).
@@ -53,12 +26,19 @@ pub struct TmaOperand {
     pub shape: TmaBox,
 }
 
-impl<E: Numeric> TmaTileArgLaunch<E> {
+impl TmaOperand {
+    /// The tensor map as an operand's values, read at `E`, under no scales.
+    pub fn arg<E: Numeric>(self) -> TileArgLaunch<'static, E> {
+        TileArgLaunch::tensor_map(self.map, &self.axes, self.shape)
+    }
+}
+
+impl<E: Numeric> TileArgLaunch<'static, E> {
     /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set.
     pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
         let layout = Self::dyn_layout(axes, shape, 1);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes))
+        Self::of_view(view, TileSpec::direct(axes))
     }
 
     /// [`tensor_map`](Self::tensor_map) over a packed operand: the descriptor moves the words its
@@ -72,7 +52,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
     ) -> Self {
         let layout = Self::dyn_layout(axes, shape, field.per_word() as u32);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes).packed(field))
+        Self::of_view(view, TileSpec::direct(axes).packed(field))
     }
 
     /// The layout of a descriptor over `axes` moving cells of `per_cell` values along its
@@ -82,8 +62,8 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
             (2, None) => false,
             (3, Some(_)) => true,
             (r, batch) => panic!(
-                "TmaTileArg: the descriptor is (batch, row, col); {r} axes with batch {batch:?} \
-                 is not a matrix nor a batched one"
+                "TileArgLaunch::tensor_map: the descriptor is (batch, row, col); {r} axes with \
+                 batch {batch:?} is not a matrix nor a batched one"
             ),
         };
         let dims = (shape.batch.unwrap_or(1), shape.rows, shape.cols);
@@ -96,7 +76,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         axes: &[Axis],
         tiles: TmaTiles,
     ) -> Self {
-        Self::new(
+        Self::of_view(
             Self::stored_view(tensor_map, axes, tiles),
             TileSpec::direct(axes),
         )
@@ -111,7 +91,7 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         field: Field,
     ) -> Self {
         let view = Self::stored_view(tensor_map, axes, tiles);
-        Self::new(view, TileSpec::direct(axes).packed(field))
+        Self::of_view(view, TileSpec::direct(axes).packed(field))
     }
 
     fn stored_view(
@@ -122,7 +102,8 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         assert_eq!(
             axes.len(),
             2,
-            "TmaTileArg: a storage-tiled descriptor is a matrix; batch it by launching per batch"
+            "TileArgLaunch::tensor_map_stored: a storage-tiled descriptor is a matrix; batch it by \
+             launching per batch"
         );
         let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, tiles.landing);
         ViewArg::new_tensor_map_tiled::<TmaStoredLayout>(tensor_map, layout)

@@ -23,8 +23,9 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// A cube's shared-memory accumulator over one box, summing in `A` and read back as `T`, that
-/// `writers` writers reach exclusively, on the [`Cyclic`](Schedule::Cyclic) schedule.
+/// A cube's shared-memory accumulator over one box, summing in `A` and read back at the element
+/// of the tile it was opened over, that `writers` writers reach exclusively, on the
+/// [`Cyclic`](Schedule::Cyclic) schedule.
 ///
 /// A writer drains its partial with [`drain`](SmemCyclicAccumulation::drain) (or
 /// [`drain_at`](SmemCyclicAccumulation::drain_at) for a partial over one window), which runs every
@@ -33,18 +34,18 @@ use crate::*;
 ///
 /// [`source`]: SmemCyclicAccumulation::source
 #[derive(CubeType)]
-pub struct SmemCyclicAccumulation<A: Numeric, T: Numeric> {
+pub struct SmemCyclicAccumulation<A: Numeric> {
     values: Shared<[A]>,
     /// The box the accumulator was opened over, which every round's sink is shaped like.
-    like: Tile<T>,
-    /// Reads the sum back as `T`; valid only once every writer has drained.
-    pub source: Tile<T>,
+    like: Tile,
+    /// Reads the sum back at the opened tile's element; valid only once every writer has drained.
+    pub source: Tile,
     #[cube(comptime)]
     writers: usize,
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// A shared-memory accumulator over this tile's box, summing in `A`, that `writers` writers
     /// reach exclusively, one chunk each a round. Nothing is zeroed: every cell's first writer
     /// replaces it. It is served in lines as wide as this tile's, so a partial drains into it and
@@ -52,7 +53,8 @@ impl<T: Numeric> Tile<T> {
     pub fn smem_cyclic_accumulation<A: Numeric>(
         &self,
         #[comptime] writers: usize,
-    ) -> SmemCyclicAccumulation<A, T> {
+    ) -> SmemCyclicAccumulation<A> {
+        let _served = naming::<Served>(self.element);
         let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let size!(W) = width;
@@ -67,33 +69,34 @@ impl<T: Numeric> Tile<T> {
         sync_cube();
 
         let units = self.units();
-        let source = Memory::<T>::smem_backed(
+        let source = Memory::smem_backed::<Served>(
             space,
             width,
             comptime!(FillUnits::cube(units)),
-            Backing::<T>::new_ReadCall(ErasedTensor::<T, ReadOnly>::of_smem_plain_load::<A, W>(
-                &values,
+            Backing::new_ReadCall(RawCall::of::<Served>(
+                ErasedTensor::<Served, ReadOnly>::of_smem_plain_load::<A, W>(&values),
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         );
-        SmemCyclicAccumulation::<A, T> {
+        SmemCyclicAccumulation::<A> {
             values,
             like: self.clone(),
-            source: source.nested_like::<T>(self),
+            source: source.nested_like(self),
             writers,
         }
     }
 }
 
 #[cube]
-impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
+impl<A: Numeric> SmemCyclicAccumulation<A> {
     /// The sink every writer drains into in `round`: it replaces each cell it is handed in round
     /// zero and adds into it after.
-    fn sink(&self, round: usize) -> Tile<A> {
+    fn sink(&self, round: usize) -> Tile {
         let space = comptime!(self.like.place.space.clone());
         let width = self.like.vector_size();
         let size!(W) = width;
@@ -104,43 +107,53 @@ impl<A: Numeric, T: Numeric> SmemCyclicAccumulation<A, T> {
             LineBytes(A::size().comptime() * width)
         ));
         let units = self.like.units();
-        let sink = Memory::<A>::smem_backed(
+        let sink = Memory::smem_backed::<A>(
             space,
             width,
             comptime!(FillUnits::cube(units)),
-            Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_cyclic::<W>(
-                &self.values,
-                round == 0,
+            Backing::new_WriteCall(RawCall::of::<A>(
+                ErasedTensor::<A, WriteOnly>::of_smem_cyclic::<W>(&self.values, round == 0),
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Exclusive(Schedule::Cyclic)),
+            comptime!(Overhang::Masked),
         );
-        sink.nested_like::<T>(&self.like)
+        sink.nested_like(&self.like)
     }
 
     /// Drain `partial`, an accumulator over the whole box, every round of the schedule, the cube
     /// synchronized after each: each unit lands its plane's fragments of the round's chunk as
     /// `writer`, its plane's place among the writers. Once every writer of the cube has, the sum is
     /// in [`source`](SmemCyclicAccumulation::source).
-    pub fn drain<P: Numeric>(&self, partial: &Tile<P>, writer: usize) {
+    pub fn drain(&self, partial: &Tile, writer: usize) {
+        let _served = naming::<Served>(partial.element);
         #[unroll]
         for round in 0..self.writers {
             let turn = (writer + round) % comptime!(self.writers);
-            partial.drained_chunk_into(&self.sink(round), turn, comptime!(self.writers));
+            partial.drained_chunk_into::<Served, A>(
+                &self.sink(round),
+                turn,
+                comptime!(self.writers),
+            );
             sync_cube();
         }
     }
 
     /// [`drain`](SmemCyclicAccumulation::drain) for a partial over one `window` of the box, as a
     /// kernel that walks its planes itself holds one.
-    pub fn drain_at<P: Numeric>(&self, partial: &Tile<P>, window: &Region, writer: usize) {
+    pub fn drain_at(&self, partial: &Tile, window: &Region, writer: usize) {
+        let _served = naming::<Served>(partial.element);
         #[unroll]
         for round in 0..self.writers {
             let turn = (writer + round) % comptime!(self.writers);
-            partial.drained_chunk_into(&self.sink(round).at(window), turn, comptime!(self.writers));
+            partial.drained_chunk_into::<Served, A>(
+                &self.sink(round).at(window),
+                turn,
+                comptime!(self.writers),
+            );
             sync_cube();
         }
     }

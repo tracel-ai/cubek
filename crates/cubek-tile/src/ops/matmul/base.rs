@@ -7,11 +7,11 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// `c = a · b`, under the semiring the accumulator was opened with, or a memory window stated
     /// [`accumulating`](Tile::accumulating). A memory window starts the sum fresh rather than
     /// reading the cell.
-    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+    pub fn mm(&mut self, lhs: &Tile, rhs: &Tile) {
         let in_memory = self.is_memory();
         if comptime!(in_memory) {
             // A clone holds the same window: reading it reads `self`.
@@ -41,8 +41,11 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// `c += a · b`, folding onto what the accumulator or memory window holds.
-    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        Descent::contract(self, lhs, rhs)
+    pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
+        let _served = naming::<Served>(self.element);
+        let _lhs = naming::<Lhs>(lhs.element);
+        let _rhs = naming::<Rhs>(rhs.element);
+        Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
     }
 
     /// This plane-resident accumulator back at its semiring's identity, as it was opened.
@@ -66,14 +69,15 @@ impl<Acc: Numeric> Tile<Acc> {
 }
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// Commit the warpgroup MMAs this accumulator issued since its last commit, and return their
     /// completion: once it resolves, they are done reading what they read, the stages a walk
     /// holds for them among it. Only a warpgroup accumulator contracts asynchronously.
     pub fn commit(&self) -> Pending<()> {
+        let _served = naming::<Served>(self.element);
         match &self.kind {
-            TileKind::PlanePartition(p) => p.fragment().commit(),
-            TileKind::PlaneTile(t) => t.commit(),
+            TileKind::PlanePartition(p) => p.fragment().commit::<Served>(),
+            TileKind::PlaneTile(t) => t.commit::<Served>(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -85,19 +89,24 @@ impl<Acc: Numeric> Tile<Acc> {
 }
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// This memory window as a contraction's output: each unit's share tiled into `block`, folded
     /// under `semiring`. A plane-resident accumulator states both when it is opened.
     pub fn accumulating(
         &self,
         #[comptime] block: RegisterBlock,
         #[comptime] semiring: Semiring,
-    ) -> Tile<Acc> {
+    ) -> Tile {
         match &self.kind {
             TileKind::Memory(g) => {
                 let mut g = g.clone();
                 g.set_contraction(comptime!(Contraction { block, semiring }));
-                Tile::new(TileKind::new_Memory(g), comptime!(self.place.clone()))
+                Tile {
+                    kind: TileKind::new_Memory(g),
+                    factor: self.factor.clone(),
+                    place: comptime!(self.place.clone()),
+                    element: comptime!(self.element),
+                }
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -112,46 +121,50 @@ impl<Acc: Numeric> Tile<Acc> {
 }
 
 #[cube]
-impl<E: Numeric> PlaneTile<E> {
+impl PlaneTile {
     /// Contract this plane tile, each factor times whatever scales it carries.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<E: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
         match self {
             PlaneTile::Cmma(d) => {
                 let transposed = transposed_rhs(lhs, rhs);
                 strided_2d(lhs, rhs, comptime!(out.clone()), transposed);
-                d.mma(lhs, rhs, out)
+                d.mma::<E, EL, ER>(lhs, rhs, out)
             }
             PlaneTile::Mma(d) => {
                 // The manual-mma instruction reads registers, where a scaled factor cannot land,
-                // unless the device's block-scaled instruction takes the scales beside the values.
+                // unless the device's block-scaled instruction takes the scales beside the values,
+                // or a fragment deeper than its instruction decodes them into its registers as it
+                // loads ([`lane_runs`](crate::tile::kind::plane::mma::lane_runs)), which says why
+                // where it cannot.
                 let (m, n, k) = comptime!((d.m, d.n, d.k));
                 let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
-                if comptime!(!block_scaled) {
+                let steps = lane_run_steps::<EL>(m, n, k);
+                if comptime!(!block_scaled && steps == 1) {
                     lhs.refuse_factor("PlaneTile::Mma");
                     rhs.refuse_factor("PlaneTile::Mma");
                 }
                 flattened_k(lhs, rhs, out);
-                d.mma(lhs, rhs)
+                d.mma::<E, EL, ER>(lhs, rhs)
             }
             PlaneTile::Wgmma(d) => {
                 lhs.refuse_factor("PlaneTile::Wgmma");
                 rhs.refuse_factor("PlaneTile::Wgmma");
-                d.mma(lhs, rhs, out)
+                d.mma::<E, EL, ER>(lhs, rhs, out)
             }
             PlaneTile::Registers(d) => match &lhs.kind {
                 TileKind::PlaneTile(block) => match block {
-                    PlaneTile::Registers(block) => d.mma_block(block, rhs),
+                    PlaneTile::Registers(block) => d.mma_block::<E, EL, ER>(block, rhs),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
                 },
                 TileKind::PlanePartition(block) => match block.fragment() {
-                    PlaneTile::Registers(block) => d.mma_block(&block, rhs),
+                    PlaneTile::Registers(block) => d.mma_block::<E, EL, ER>(&block, rhs),
                     PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => panic!(
                         "mma: a register block contracts a register block it holds, or memory"
                     ),
@@ -160,9 +173,13 @@ impl<E: Numeric> PlaneTile<E> {
                 | TileKind::TmaGmem(_)
                 | TileKind::Procedural(_)
                 | TileKind::Lines(_) => {
-                    let folded = comptime!(d.fold > 1);
-                    strided_2d(lhs, rhs, comptime!(out.clone()), folded);
-                    d.mma(lhs, rhs, out)
+                    let rhs_along_k = comptime!(
+                        lhs.place
+                            .space
+                            .contains(rhs.place.space.axis_at(rhs.place.space.rank() - 1))
+                    );
+                    strided_2d(lhs, rhs, comptime!(out.clone()), rhs_along_k);
+                    d.mma::<E, EL, ER>(lhs, rhs, out)
                 }
             },
         }
@@ -171,12 +188,7 @@ impl<E: Numeric> PlaneTile<E> {
 
 /// Asserts that operands are not gathered and read as one matrix each.
 #[cube]
-fn strided_2d<EL: Numeric, ER: Numeric>(
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-    #[comptime] out: Space,
-    #[comptime] rhs_along_k: bool,
-) {
+fn strided_2d(lhs: &Tile, rhs: &Tile, #[comptime] out: Space, #[comptime] rhs_along_k: bool) {
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let flat = comptime!({
@@ -201,10 +213,7 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
 
 /// Whether `rhs` is read col-major: a col-major cmma fragment or a staged `(col, k)` window.
 #[cube]
-fn transposed_rhs<EL: Numeric, ER: Numeric>(
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-) -> comptime_type!(bool) {
+fn transposed_rhs(lhs: &Tile, rhs: &Tile) -> comptime_type!(bool) {
     match &rhs.kind {
         TileKind::PlaneTile(t) => match t {
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
@@ -228,7 +237,7 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
 
 /// Asserts that operands contract their shared axes in the same order.
 #[cube]
-fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
+fn flattened_k(lhs: &Tile, rhs: &Tile, #[comptime] out: Space) {
     comptime!(assert!(
         Space::contraction_agrees(&lhs.place.space, &rhs.place.space, &out),
         "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \

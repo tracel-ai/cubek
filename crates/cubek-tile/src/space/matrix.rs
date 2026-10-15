@@ -39,6 +39,38 @@ impl MatrixAxes {
         }
     }
 
+    /// An operand's matrix against the output `out` it contracts into: the axes `out` lacks as
+    /// one edge, however many digits spell the contraction, and the free axis beside them as the
+    /// other. The contraction is the window's trailing run of axes `out` lacks, or the run below
+    /// its free trailing axis.
+    pub(crate) fn operand(window: &Space, out: &Space) -> Self {
+        let rank = window.rank();
+        let contracted = |p: usize| !out.contains(window.axis_at(p));
+        // The run of contracted axes ending at `end`, exclusive: its first position.
+        let run_start = |end: usize| {
+            let mut start = end;
+            while start > 0 && contracted(start - 1) {
+                start -= 1;
+            }
+            start
+        };
+        match contracted(rank - 1) {
+            // `{.., free, k..}`: the contraction the columns, the free axis above it the rows.
+            true => {
+                let col_split = run_start(rank);
+                MatrixAxes {
+                    row_split: col_split.saturating_sub(1),
+                    col_split,
+                }
+            }
+            // `{.., k.., free}`: the free axis the columns, the contraction above it the rows.
+            false => MatrixAxes {
+                row_split: run_start(rank - 1),
+                col_split: rank - 1,
+            },
+        }
+    }
+
     /// An accumulator's matrix, against the lhs it is contracted with.
     pub(crate) fn accumulator(acc: &Space, lhs: &Space) -> Self {
         let mut col_split = acc.rank() - 1;

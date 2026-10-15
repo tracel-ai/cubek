@@ -4,7 +4,7 @@
 //! boundary kernels use the current upstream packed CFFT and an in-place
 //! inverse while preserving explicit public normalization.
 
-use core::f32::consts::PI;
+use core::f64::consts::PI;
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
@@ -119,30 +119,27 @@ fn rfft_post_interleaved_kernel<F: Float>(
     let re = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));
     let im = packed_im.view(BatchSignalLayout::new(packed_im, window, dim));
     let scale = match normalization {
-        FftNormalization::None => F::new(1.0_f32),
-        FftNormalization::ByN => F::new(1.0_f32) / F::cast_from(n_fft),
-        FftNormalization::Ortho => F::new(1.0_f32) / F::cast_from(n_fft).sqrt(),
+        FftNormalization::None => F::new(1.0),
+        FftNormalization::ByN => F::new(1.0) / F::cast_from(n_fft),
+        FftNormalization::Ortho => F::new(1.0) / F::cast_from(n_fft).sqrt(),
     };
     let (x_re, x_im) = if k == 0 {
-        (re.read_checked(0) + im.read_checked(0), F::new(0.0_f32))
+        (re.read_checked(0) + im.read_checked(0), F::new(0.0))
     } else if k == m {
-        (re.read_checked(0) - im.read_checked(0), F::new(0.0_f32))
+        (re.read_checked(0) - im.read_checked(0), F::new(0.0))
     } else {
         let a_re = re.read_checked(k);
         let a_im = im.read_checked(k);
         let b_re = re.read_checked(m - k);
         let b_im = -im.read_checked(m - k);
-        let theta = -F::new(2.0_f32 * PI) * F::cast_from(k) / F::cast_from(n_fft);
+        let theta = -F::new(2.0 * PI) * F::cast_from(k) / F::cast_from(n_fft);
         let c = theta.cos();
         let s = theta.sin();
         (
-            F::new(0.5_f32)
-                * (a_re * (F::new(1.0_f32) + s) + a_im * c + b_re * (F::new(1.0_f32) - s)
-                    - b_im * c),
-            F::new(0.5_f32)
-                * (a_im * (F::new(1.0_f32) + s) - a_re * c
-                    + b_re * c
-                    + b_im * (F::new(1.0_f32) - s)),
+            F::new(0.5)
+                * (a_re * (F::new(1.0) + s) + a_im * c + b_re * (F::new(1.0) - s) - b_im * c),
+            F::new(0.5)
+                * (a_im * (F::new(1.0) + s) - a_re * c + b_re * c + b_im * (F::new(1.0) - s)),
         )
     };
     {
@@ -262,34 +259,26 @@ fn irfft_pre_interleaved_kernel<F: Float>(
         let nyquist = m < spec_bins as usize;
         let x0 = spectrum_re.read_checked(0);
         let xm = select(nyquist, m, 0);
-        let xm_re = select(nyquist, spectrum_re.read_checked(xm), F::new(0.0_f32));
-        output_re.write_checked(k, F::new(0.5_f32) * (x0 + xm_re));
-        output_im.write_checked(k, F::new(0.5_f32) * (x0 - xm_re));
+        let xm_re = select(nyquist, spectrum_re.read_checked(xm), F::new(0.0));
+        output_re.write_checked(k, F::new(0.5) * (x0 + xm_re));
+        output_im.write_checked(k, F::new(0.5) * (x0 - xm_re));
     } else {
         let active = k < spec_bins as usize;
         let src = select(active, k, 0);
-        let x_re = select(active, spectrum_re.read_checked(src), F::new(0.0_f32));
-        let x_im = select(active, spectrum_im.read_checked(src), F::new(0.0_f32));
+        let x_re = select(active, spectrum_re.read_checked(src), F::new(0.0));
+        let x_im = select(active, spectrum_im.read_checked(src), F::new(0.0));
         let mirrored = m - k;
         let mirror_active = mirrored < spec_bins as usize;
         let mirror = select(mirror_active, mirrored, 0);
-        let xm_re = select(
-            mirror_active,
-            spectrum_re.read_checked(mirror),
-            F::new(0.0_f32),
-        );
-        let xm_im = -select(
-            mirror_active,
-            spectrum_im.read_checked(mirror),
-            F::new(0.0_f32),
-        );
-        let theta = F::new(2.0_f32 * PI) * F::cast_from(k) / F::cast_from(n_fft);
+        let xm_re = select(mirror_active, spectrum_re.read_checked(mirror), F::new(0.0));
+        let xm_im = -select(mirror_active, spectrum_im.read_checked(mirror), F::new(0.0));
+        let theta = F::new(2.0 * PI) * F::cast_from(k) / F::cast_from(n_fft);
         let c = theta.cos();
         let s = theta.sin();
-        let y_re = F::new(0.5_f32)
-            * (x_re * (F::new(1.0_f32) - s) - x_im * c + xm_re * (F::new(1.0_f32) + s) + xm_im * c);
-        let y_im = F::new(0.5_f32)
-            * (x_im * (F::new(1.0_f32) - s) + x_re * c - xm_re * c + xm_im * (F::new(1.0_f32) + s));
+        let y_re = F::new(0.5)
+            * (x_re * (F::new(1.0) - s) - x_im * c + xm_re * (F::new(1.0) + s) + xm_im * c);
+        let y_im = F::new(0.5)
+            * (x_im * (F::new(1.0) - s) + x_re * c - xm_re * c + xm_im * (F::new(1.0) + s));
         output_re.write_checked(k, y_re);
         output_im.write_checked(k, y_im);
     }
@@ -320,7 +309,7 @@ fn irfft_unpack_interleaved_kernel<F: Float>(
     let n_fft = comptime![2 * m];
     let adjustment = match normalization {
         FftNormalization::None => F::cast_from(n_fft),
-        FftNormalization::ByN => F::new(1.0_f32),
+        FftNormalization::ByN => F::new(1.0),
         FftNormalization::Ortho => F::cast_from(n_fft).sqrt(),
     };
     let scale = adjustment / F::cast_from(m);

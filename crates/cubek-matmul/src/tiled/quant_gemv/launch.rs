@@ -11,7 +11,6 @@
 //! buffer. A wide read wants a unit owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
-use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::{client::Client, prelude::*};
 use cubek_tile::{Launcher, Projection, kind::Field, launch::Grid, layout::PhysicalAxisMap};
 
@@ -188,12 +187,10 @@ pub fn launch_ref(
                 .build()?,
         );
     }
-    let mut levels = levels.into_iter();
-    let block_scale = levels.next().expect("a block level, checked above").arg();
-    let global_scale = match levels.next() {
-        Some(global) => ComptimeOptionArgs::Some(global.arg()),
-        None => ComptimeOptionArgs::None,
-    };
+    // Innermost first: the block level, then the one over the whole tensor where there is one.
+    let w = levels
+        .into_iter()
+        .fold(w_op.arg(), |w, level| w.scales(level.arg()));
     // Each unit holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
     let out_op = launch.arg(out).axes(&[M, N]).build()?;
@@ -202,19 +199,14 @@ pub fn launch_ref(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        x_op.vector_size,
-        out_op.vector_size,
-        w_op.arg(),
+        w,
         x_op.arg(),
-        block_scale,
-        global_scale,
         out_op.arg(),
         launch.partitioning_arg(),
         blueprint,
         *problem,
         dtypes.served,
         dtypes.x,
-        ElemType::from_scale_dtype(problem.scales),
         dtypes.out,
     );
     Ok(())

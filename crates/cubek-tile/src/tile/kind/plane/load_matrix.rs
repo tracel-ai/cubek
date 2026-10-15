@@ -29,7 +29,7 @@ pub(super) const LDMATRIX_ROW_BYTES: usize = 16;
 /// manual-mma fragment load reads any other window a cell at a time.
 #[cube]
 pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
-    src: &Tile<T>,
+    src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
@@ -48,9 +48,9 @@ pub(super) fn load_ldmatrix<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric
         }
     });
     let view = if comptime!(col_major_window) {
-        src.fragment_matrix_packed::<W>(cols, rows)
+        src.fragment_matrix_packed::<T, W>(cols, rows)
     } else {
-        src.fragment_matrix_packed::<W>(rows, cols)
+        src.fragment_matrix_packed::<T, W>(rows, cols)
     };
 
     let num_regs = def.vectors_per_lane(ident);

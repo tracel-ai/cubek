@@ -58,16 +58,16 @@ impl StageOwner {
 }
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// Allocate a shared-memory tile over `space` at physical `vector_size`.
     /// `units` is the launch's cube size, `0` when unknown.
-    pub(crate) fn smem(
+    pub(crate) fn smem<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
-    ) -> Tile<T> {
-        Memory::smem_owned(
+    ) -> Tile {
+        Memory::smem_owned::<T>(
             space,
             vector_size,
             storage,
@@ -81,14 +81,14 @@ impl<T: Numeric> Memory<T> {
     /// own copy, with a minimum byte alignment on the buffer, never below one
     /// [`RowChunks::CHUNK_BYTES`] chunk: an `ldmatrix` row address needs it. `units` is the
     /// launch's cube size, `0` when unknown.
-    pub(crate) fn smem_owned(
+    pub(crate) fn smem_owned<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
         #[comptime] alignment: usize,
         #[comptime] owner: StageOwner,
-    ) -> Tile<T> {
+    ) -> Tile {
         let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let elem_bytes = T::size().comptime();
         let form = comptime!(StageForm::dense(
@@ -98,7 +98,7 @@ impl<T: Numeric> Memory<T> {
             LineBytes(vector_size * elem_bytes)
         ));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        Memory::smem_with_form(
+        Memory::smem_with_form::<T>(
             space,
             vector_size,
             units,
@@ -113,7 +113,7 @@ impl<T: Numeric> Memory<T> {
     /// [`smem`](Memory::smem) for a gathered operand: the compacted physical window its sub-tile
     /// reads ([`Compaction`]), still addressed by the operand's own [`Projection`].
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn smem_gathered(
+    pub(crate) fn smem_gathered<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
@@ -122,7 +122,7 @@ impl<T: Numeric> Memory<T> {
         map: &RuntimeMap,
         #[comptime] signed: bool,
         #[comptime] boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
-    ) -> Tile<T> {
+    ) -> Tile {
         let form = comptime!(StageForm::gathered(
             &space,
             vector_size,
@@ -139,12 +139,12 @@ impl<T: Numeric> Memory<T> {
             } else {
                 stage_map
             };
-        let source = Memory::<T>::pending_source_window(
+        let source = Memory::pending_source_window(
             comptime!(form.steps.clone()),
             comptime!(signed),
             comptime!(boundaries),
         );
-        Memory::smem_with_form(
+        Memory::smem_with_form::<T>(
             space,
             vector_size,
             units,
@@ -162,7 +162,7 @@ impl<T: Numeric> Memory<T> {
     /// windowed out by its position on the launch's `y` ([`Partitioning::cube_dim`]), each copy
     /// starting on the whole buffer's alignment.
     #[allow(clippy::too_many_arguments)]
-    fn smem_with_form(
+    fn smem_with_form<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] units: usize,
@@ -171,7 +171,7 @@ impl<T: Numeric> Memory<T> {
         source: ComptimeOption<SourceWindow>,
         #[comptime] alignment: usize,
         #[comptime] owner: StageOwner,
-    ) -> Tile<T> {
+    ) -> Tile {
         let size!(W) = vector_size;
         let cells = comptime!(form.cells());
         let smem = match comptime!(owner) {
@@ -196,7 +196,7 @@ impl<T: Numeric> Memory<T> {
                 }
             }
         };
-        Memory::smem_over(
+        Memory::smem_over::<T, _, _>(
             space,
             vector_size,
             comptime!(owner.fill(units)),
@@ -212,14 +212,14 @@ impl<T: Numeric> Memory<T> {
     ///
     /// The buffer starts on `alignment` bytes, never below one [`RowChunks::CHUNK_BYTES`] chunk: an
     /// `ldmatrix` row address needs it, and a TMA box the descriptor's swizzle span.
-    pub(crate) fn smem_packed(
+    pub(crate) fn smem_packed<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
         #[comptime] packing: Packing,
         #[comptime] alignment: usize,
-    ) -> Tile<T> {
+    ) -> Tile {
         let alignment = comptime!(alignment.max(RowChunks::CHUNK_BYTES));
         let word_bytes = u32::size().comptime();
         let form = comptime!(StageForm::dense(
@@ -232,7 +232,7 @@ impl<T: Numeric> Memory<T> {
         let smem =
             Shared::<[Vector<u32, WP>]>::new_aligned_slice(comptime!(form.cells()), alignment);
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        Memory::smem_over(
+        Memory::smem_over::<T, _, _>(
             space,
             vector_size,
             comptime!(FillUnits::cube(units)),
@@ -247,7 +247,7 @@ impl<T: Numeric> Memory<T> {
     /// The body every smem constructor shares: scalar-erases `smem` and windows the whole buffer,
     /// filled by the units `fill` names.
     #[allow(clippy::too_many_arguments)]
-    fn smem_over<S: CubePrimitive>(
+    fn smem_over<T: Numeric, H: Numeric, S: CubePrimitive<Scalar = H>>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] fill: FillUnits,
@@ -256,13 +256,14 @@ impl<T: Numeric> Memory<T> {
         #[comptime] form: StageForm,
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
-    ) -> Tile<T> {
-        let backing = Backing::<T>::new_Buffer(unsafe {
+    ) -> Tile {
+        // Held at the element it is declared at: `u32` words under a packing.
+        let backing = Backing::new_Buffer(Raw::<Slice>::of::<H>(unsafe {
             smem.inner_ref()
-                .downcast_unchecked::<T>()
+                .downcast_unchecked::<H>()
                 .as_boxed_unchecked()
-        });
-        Memory::smem_backed(
+        }));
+        Memory::smem_backed::<T>(
             space,
             vector_size,
             fill,
@@ -272,36 +273,40 @@ impl<T: Numeric> Memory<T> {
             map,
             source,
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         )
     }
 
-    /// The whole-buffer window over a shared-memory `backing` laid out as `form`.
+    /// The whole-buffer window over a shared-memory `backing` laid out as `form`, a write past
+    /// its extent masked where `overhang` says a region larger than the buffer writes into it.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn smem_backed(
+    pub(crate) fn smem_backed<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] fill: FillUnits,
-        backing: Backing<T>,
+        backing: Backing,
         #[comptime] packing: Packing,
         #[comptime] form: StageForm,
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
         #[comptime] write: Write,
-    ) -> Tile<T> {
+        #[comptime] overhang: Overhang,
+    ) -> Tile {
         let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
         let (origin, extent) = full_window(comptime!(form.clone()));
-        // Smem never overhangs its own buffer, so the bound is the extent.
+        // The bound is the buffer's extent: a region past it is one a masked write skips.
         let bound = extent.clone();
         let gmem_projection = comptime!(form.positional.clone());
-        Tile::<T> {
-            kind: TileKind::new_Memory(Memory::<T> {
+        Tile {
+            kind: TileKind::new_Memory(Memory {
                 address: comptime!(AddressSpace::Shared),
-                store: Store::<T>::untiled(backing, vector_size, packing),
+                store: Store::untiled(backing, vector_size, packing),
                 layout: BufferLayout {
                     physical_shape,
                     physical_strides,
                     projection: gmem_projection,
                     rows: comptime!(form.rows),
+                    paging: ComptimeOption::new_None(),
                 },
                 // Empty: a list over the buffer's own dims would misalign one level down.
                 window: Window::new(origin, extent, bound, false, comptime!(SmallVec::new())),
@@ -311,7 +316,7 @@ impl<T: Numeric> Memory<T> {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    overhang: Overhang::Never,
+                    overhang,
                     write,
                     fill,
                     storage: WindowStorage::Stored(Storage::Strided),
@@ -322,21 +327,22 @@ impl<T: Numeric> Memory<T> {
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 contraction: comptime!(None),
-                factor: Factor::none(),
                 codebook: Codebook::none(),
                 source_window: source,
             }),
+            factor: Factor::none(),
             place: comptime!(Placement::new(space, 0usize, Vec::new())),
+            element: elem_type_of::<T>(),
         }
     }
 
     /// One plane's landing: a dense scalar stage over `space`, one window per plane in one buffer.
     /// The buffer is returned beside the tile.
-    pub(crate) fn landing(
+    pub(crate) fn landing<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] units: usize,
         #[comptime] planes: usize,
-    ) -> (Tile<T>, Shared<[T]>) {
+    ) -> (Tile, Shared<[T]>) {
         let cells = comptime!(
             (0..space.rank())
                 .map(|p| space.extent_at(p))
@@ -354,7 +360,7 @@ impl<T: Numeric> Memory<T> {
             LineBytes(elem_bytes)
         ));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let tile = Memory::smem_over(
+        let tile = Memory::smem_over::<T, _, _>(
             space,
             1usize,
             comptime!(FillUnits::cube(units)),

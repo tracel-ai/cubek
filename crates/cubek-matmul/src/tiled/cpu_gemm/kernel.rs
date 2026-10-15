@@ -2,8 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, RegisterBlock,
-    Semiring, Space, TileArg,
+    Axis, Instruction, Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -64,18 +63,10 @@ impl CpuGemmBlueprint {
 /// output, cast down to its type.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpu_gemm_kernel<
-    E: Numeric,
-    EA: Numeric,
-    EL: Numeric,
-    ER: Numeric,
-    VA: Size,
-    VB: Size,
-    VC: Size,
->(
-    a: &TileArg<'_, EL, VA>,
-    b: &TileArg<'_, ER, VB>,
-    c: &TileArg<'_, E, VC>,
+pub fn cpu_gemm_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
+    a: &TileArg<'_, EL>,
+    b: &TileArg<'_, ER>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
@@ -92,7 +83,7 @@ pub fn cpu_gemm_kernel<
             let b = b.at(&plane);
             let mut c = c.at(&plane);
             // One block per plane, the instruction's shape, read off the levels below the plane.
-            let acc = c.accumulator::<EA, EL, ER>(
+            let acc = c.accumulator::<EA>(
                 &a,
                 &b,
                 comptime!(Instruction::Registers {
