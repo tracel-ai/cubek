@@ -92,7 +92,7 @@ pub(crate) fn lane_run_steps<T: Numeric>(
 /// reads them: a 32-unit plane, `A` along its rows and `B` along its columns, every cell held
 /// once.
 #[cube]
-fn lays_out_lane_runs() -> comptime_type!(bool) {
+pub(crate) fn lays_out_lane_runs() -> comptime_type!(bool) {
     intrinsic!(|scope| {
         let mma = &scope.state().target_properties.mma;
         mma.const_plane_size == 32
@@ -112,7 +112,7 @@ fn lays_out_lane_runs() -> comptime_type!(bool) {
 /// of two. A coarser level is the product's to apply to the accumulator.
 #[cube]
 pub(crate) fn lane_runs_refusal<T: Numeric>(
-    src: &Tile<T>,
+    src: &Tile,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] shape: (usize, usize, usize),
@@ -215,7 +215,7 @@ impl LaneRun {
 /// `src` in lane runs: each unit reads the run of its quad along each of its rows of the window.
 #[cube]
 pub(crate) fn load_lane_runs<T: Numeric, N: Size>(
-    src: &Tile<T>,
+    src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -252,7 +252,7 @@ pub(crate) fn load_lane_runs<T: Numeric, N: Size>(
 /// [`load_lane_runs`] of a plain window: the run read a served line at a time.
 #[cube]
 fn load_plain_run<T: Numeric, N: Size>(
-    src: &Tile<T>,
+    src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     row: u32,
     first: u32,
@@ -267,7 +267,7 @@ fn load_plain_run<T: Numeric, N: Size>(
         run.len,
     ));
     let size!(W) = width;
-    let view = src.fragment_matrix_packed::<W>(comptime!(run.rows), comptime!(run.k));
+    let view = src.fragment_matrix_packed::<T, W>(comptime!(run.rows), comptime!(run.k));
     let lines = comptime!(run.len / width);
     // A window of fewer rows than the units cover, a decode's rows staged as they are, holds no
     // cells past them: those units read zeros rather than past its buffer.
@@ -302,7 +302,7 @@ fn load_plain_run<T: Numeric, N: Size>(
 /// exact under [`lane_runs_refusal`]'s conditions.
 #[cube]
 fn load_e2m1_run<T: Numeric, N: Size>(
-    src: &Tile<T>,
+    src: &Tile,
     fragment: &mut Array<Vector<T, N>>,
     row: u32,
     first: u32,

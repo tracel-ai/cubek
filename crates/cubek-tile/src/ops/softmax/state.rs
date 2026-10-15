@@ -172,7 +172,7 @@ pub struct MaskProbe {
 #[cube]
 impl MaskProbe {
     /// Bound, causal, and materialized predicates at global position (q, s).
-    pub fn masked(&self, q: usize, s: usize, mask: &Tile<u32>) -> bool {
+    pub fn masked(&self, q: usize, s: usize, mask: &Tile) -> bool {
         let mut masked = q >= self.bound_q || s >= self.bound_s;
         if comptime!(self.causal) {
             masked = masked || s > q;
@@ -181,7 +181,7 @@ impl MaskProbe {
             let size!(W) = mask.vector_size();
             let rank = comptime!(mask.place.space.rank());
             let cols = mask.runtime_extent(comptime!(mask.place.space.axis_at(rank - 1)));
-            masked = masked || mask.flat::<W>().read(q * cols + s).extract(0usize) != 0;
+            masked = masked || mask.flat::<u32, W>().read(q * cols + s).extract(0usize) != 0;
         }
         masked
     }

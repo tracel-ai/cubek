@@ -44,9 +44,9 @@ fn has_copy_engine(client: &Client) -> bool {
 /// the one contracted: the pipelined schedule, its slots published through the barrier.
 #[cube(launch)]
 fn ring_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -75,8 +75,8 @@ fn ring_matmul<E: Numeric>(
 /// and the wait a kernel without a pipeline runs.
 #[cube(launch)]
 fn staged_copy<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -97,14 +97,14 @@ fn staged_copy<E: Numeric>(
 /// [`staged_copy`] over packed words: the stage keeps them packed, as they lie, and the copy out
 /// of it unpacks.
 #[cube(launch)]
-fn staged_packed_copy<O: Numeric, V: Size>(
-    src: &TileArg<'_, u32, Const<1>>,
-    dst: &TileArg<'_, O, V>,
+fn staged_packed_copy<O: Numeric>(
+    src: &TileArg<'_, O>,
+    dst: &TileArg<'_, O>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(O)] _dtype: ElemType,
 ) {
-    let src = src.tile_as::<O>(&space);
+    let src = src.tile(&space);
     let dst = dst.tile(&space);
     let mut stage = src.stage(comptime!(level.clone()), StageStorage::Strided);
     for region in space.over(&level) {
@@ -151,9 +151,9 @@ fn ring_matmul_with(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(a.tensor_arg(1), a.spec().delivery(delivery)),
-        TileArgLaunch::new(b.tensor_arg(1), b.spec().delivery(delivery)),
-        c.arg(),
+        TileArgLaunch::new(a.tensor_arg(1), 1, a.spec().delivery(delivery)),
+        TileArgLaunch::new(b.tensor_arg(1), 1, b.spec().delivery(delivery)),
+        c.arg(1),
         launcher.partitioning_arg(),
         depth,
         f32::elem_type_native(),
@@ -235,9 +235,10 @@ fn staged_copy_with(
         &client,
         CubeCount::new_single(),
         launcher.cube_dim(),
-        TileArgLaunch::new(src.binding().into_tensor_arg(), src_spec),
+        TileArgLaunch::new(src.binding().into_tensor_arg(), 1, src_spec),
         TileArgLaunch::new(
             dst.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -323,13 +324,14 @@ fn staged_packed_copy_with(
         &client,
         CubeCount::new_single(),
         launcher.cube_dim(),
-        factor,
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]).packed(field).delivery(delivery),
         ),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            factor,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),

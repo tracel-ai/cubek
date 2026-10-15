@@ -38,9 +38,9 @@ fn tap_distance<E: Float>(
 }
 
 #[cube(launch)]
-pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
-    input: &TileArg<'_, E, V>,
-    output: &TileArg<'_, E, V>,
+pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] row_scale: u32,
     #[comptime] row_offset: i32,
@@ -61,7 +61,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     let mut factors = Sequence::new();
     factors.push(F::Filter::<E>::along(row));
     factors.push(F::Filter::<E>::along(col));
-    let weights = Procedural::<E>::separable::<SeparableWeights<E, F::Filter<E>>>(
+    let weights = Procedural::separable::<E, SeparableWeights<E, F::Filter<E>>>(
         comptime!(
             space
                 .space()
@@ -73,7 +73,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         Some((taps, guard)) => weights.normalized(comptime!(taps), comptime!(guard)),
         None => weights,
     }
-    .tile();
+    .tile::<E>();
 
     let output = output.tile(&space);
 
@@ -118,11 +118,11 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
 /// One block of the cube's walk: this plane's rows, then this unit's columns and channel
 /// lines, each output cell contracting its whole tap window at the leaf under `config`.
 #[cube]
-fn interpolate_block<E: Float>(
+fn interpolate_block(
     block: &Region,
-    output: &Tile<E>,
-    weights: &Tile<E>,
-    input: &Tile<E>,
+    output: &Tile,
+    weights: &Tile,
+    input: &Tile,
     #[comptime] config: RegisterBlock,
 ) {
     for plane in block {

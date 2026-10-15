@@ -39,8 +39,8 @@ impl<T: Float> Recipe<T> for AxisValue {
 /// `output`.
 #[cube]
 fn materialize<E: Numeric>(
-    source: &Tile<E>,
-    output: &TileArg<'_, E, Const<1>>,
+    source: &Tile,
+    output: &TileArg<'_, E>,
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
@@ -102,6 +102,7 @@ macro_rules! output_arg {
     ($output:expr) => {
         TileArgLaunch::new(
             $output.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[ROW, COL]),
         )
     };
@@ -130,13 +131,13 @@ type LinearScaled = Linear<AxisValue>;
 
 #[cube(launch)]
 fn linear_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LinearAxis<E>>(
+    let source = Procedural::new::<E, LinearAxis<E>>(
         comptime!(space.space().clone()),
         linear_along(
             COL,
@@ -144,20 +145,20 @@ fn linear_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0)),
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn cubic_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<CubicAxis<E>>(
+    let source = Procedural::new::<E, CubicAxis<E>>(
         comptime!(space.space().clone()),
         cubic_along(
             COL,
@@ -166,20 +167,20 @@ fn cubic_kernel<E: Float>(
             a,
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn lanczos_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LanczosAxis<E>>(
+    let source = Procedural::new::<E, LanczosAxis<E>>(
         comptime!(space.space().clone()),
         lanczos_along(
             COL,
@@ -188,7 +189,7 @@ fn lanczos_kernel<E: Float>(
             lobes,
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -196,12 +197,12 @@ fn lanczos_kernel<E: Float>(
 /// generic over their inner recipe buys.
 #[cube(launch)]
 fn linear_over_axis_value_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LinearScaled>(
+    let source = Procedural::new::<E, LinearScaled>(
         comptime!(space.space().clone()),
         LinearScaled {
             coordinate: AxisValue {
@@ -210,7 +211,7 @@ fn linear_over_axis_value_kernel<E: Float>(
             },
         },
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 

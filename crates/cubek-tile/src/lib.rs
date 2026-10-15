@@ -43,12 +43,12 @@ pub(crate) use {algebra::*, launch::*, layout::*, ops::*, space::*, stage::*, ti
 
 pub use algebra::monoid::{Carrier, Monoid};
 pub use algebra::semiring::Semiring;
-pub use launch::arg::tensor::{TileArg, TileArgLaunch};
+pub use launch::arg::tensor::{ScaleArg, TileArg, TileArgLaunch, Values};
 pub use launch::base::Launcher;
 pub use launch::spec::TileSpec;
 pub use layout::projection::Projection;
 pub use layout::storage::Geometry;
-pub use ops::matmul::instruction::Instruction;
+pub use ops::matmul::instruction::{Instruction, MmaOperands};
 pub use ops::matmul::register_block::RegisterBlock;
 pub use space::axis::Axis;
 pub use space::base::Space;
@@ -59,6 +59,7 @@ pub use space::region::{Leaves, Region};
 pub use space::walk::base::Walk;
 pub use stage::base::StageStorage;
 pub use stage::pipeline::base::Stages;
-pub use tile::accumulator::base::{Accumulate, AccumulateExpand, Scratch};
+pub use tile::accumulator::base::Scratch;
 pub use tile::base::{Tile, TileExpand};
+pub use tile::factor::{Factor, FactorExpand};
 pub use tile::slices::{AxisSlices, AxisSlicesExpand};

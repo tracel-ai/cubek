@@ -33,15 +33,15 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
     let mut dst = dst.tile(&space);
-    let r = src.view::<Const<1>>();
-    let mut w = dst.view_mut::<Const<1>>();
+    let r = src.view::<E, Const<1>>();
+    let mut w = dst.view_mut::<E, Const<1>>();
     let shape = r.shape();
     for i in 0..shape[0] {
         for j in 0..shape[1] {
@@ -168,12 +168,12 @@ fn physical_binding(op: &Operand) -> TensorBinding {
 
 /// The operand as one launch argument: its tensor arg (with the layout's physical
 /// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
-fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V> {
+fn tile_arg<E: Numeric>(op: &Operand) -> TileArgLaunch<'static, E> {
     let binding = physical_binding(op);
     let axes: Vec<_> = op.launcher.space().axes().collect();
     let labels = Geometry::from(&binding).labels(&axes);
     let tensor = op.layout.tensor_arg(binding, 1);
-    TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, &labels)))
+    TileArgLaunch::new(tensor, 1, TileSpec::new(Projection::tiled(&axes, &labels)))
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.

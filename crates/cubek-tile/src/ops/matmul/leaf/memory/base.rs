@@ -11,15 +11,15 @@ use crate::*;
 /// Run the register instruction over each batch matrix. A scaled factor requires the 2-D nest.
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Memory<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    acc: &mut Memory,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let lhs_scaled = lhs.scaled();
-    let rhs_scaled = rhs.scaled();
+    let lhs_scaled = lhs.quantized();
+    let rhs_scaled = rhs.quantized();
     let scaled = comptime!(lhs_scaled || rhs_scaled);
 
     let lhs_gathered = lhs.gathered();

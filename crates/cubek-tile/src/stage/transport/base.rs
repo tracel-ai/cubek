@@ -120,11 +120,11 @@ impl TransportKind {
 }
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// Cooperative cyclic copy of `src` into `self`, whole lines at `self`'s width.
     /// The caller must `sync_cube`, or `sync_plane` for a stage a plane owns, between this fill
     /// and its readers.
-    pub(crate) fn fill_from(&mut self, src: &Memory<T>, #[comptime] space: Space) {
+    pub(crate) fn fill_from<T: Numeric>(&mut self, src: &Memory, #[comptime] space: Space) {
         let size!(W) = comptime!(self.store.vector_size);
         // A gathered stage records where it read from: nothing in the staged window says which
         // taps took the boundary value.
@@ -166,7 +166,7 @@ impl<T: Numeric> Memory<T> {
                 self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
             }
             TransportKind::Straight => self.fill_straight::<T, W>(src, comptime!(space.clone())),
-            TransportKind::Scanned(scan) => self.fill_scanned::<W>(src, comptime!(scan)),
+            TransportKind::Scanned(scan) => self.fill_scanned::<T, W>(src, comptime!(scan)),
         }
     }
 }

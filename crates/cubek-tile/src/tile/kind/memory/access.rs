@@ -14,10 +14,10 @@ use cubecl::{
 use crate::*;
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// A read [`View`] over `Vector<T, W>` lines through the base layout and `Window`.
     /// `W` is the line width (`self.store.vector_size`).
-    pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
+    pub fn view<T: Numeric, W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem("view");
         if comptime!(g.store.packing != Packing::Plain) {
             panic!(
@@ -25,7 +25,7 @@ impl<T: Numeric> Tile<T> {
                  Tile::matrix_packed)"
             )
         }
-        g.window_view::<W>(comptime!(Guard::Checked))
+        g.window_view::<T, W>(comptime!(Guard::Checked))
     }
 
     /// Scalars of this stage one unit holds in registers across a contraction.
@@ -42,7 +42,11 @@ impl<T: Numeric> Tile<T> {
 
     /// This unit's share of filling this stage from `src`, read into `fetched` but not yet written.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
-    pub(crate) fn fetch_from<W: Size>(&self, src: &Tile<T>, fetched: &mut Array<Vector<T, W>>) {
+    pub(crate) fn fetch_from<T: Numeric, W: Size>(
+        &self,
+        src: &Tile,
+        fetched: &mut Array<Vector<T, W>>,
+    ) {
         let space = comptime!(self.place.space.clone());
         self.mem("fetch_from")
             .fetch_straight(src.mem("fetch_from"), space, fetched);
@@ -50,18 +54,18 @@ impl<T: Numeric> Tile<T> {
 
     /// Write what [`fetch_from`](Tile::fetch_from) read into this stage.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
-    pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
+    pub(crate) fn store_fetched<T: Numeric, W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         self.mem_mut("store_fetched").store_fetched(fetched);
     }
 
-    pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+    pub fn view_mut<T: Numeric, W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem_mut("view_mut");
-        g.window_view_mut::<W>(comptime!(Guard::Checked))
+        g.window_view_mut::<T, W>(comptime!(Guard::Checked))
     }
 }
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// State what the accumulation being lowered starts from.
     pub(crate) fn set_init_from(&mut self, #[comptime] init_from: InitFrom) {
         comptime!({
@@ -77,14 +81,14 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// Zero this window; a checked window skips cells past the logical bound.
-    pub(crate) fn zero(&mut self) {
-        self.init(T::from_int(0));
+    pub(crate) fn zero<T: Numeric>(&mut self) {
+        self.init::<T>(T::from_int(0));
     }
 
     /// Initialize this window with `val`; a checked window skips cells past the logical bound.
-    pub(crate) fn init(&mut self, val: T) {
+    pub(crate) fn init<T: Numeric>(&mut self, val: T) {
         let size!(W) = comptime!(self.store.vector_size);
-        let mut d = self.flat_mut::<W>();
+        let mut d = self.flat_mut::<T, W>();
         let total = d.shape();
         for i in 0..total {
             d.write(i, Vector::<T, W>::cast_from(val));
@@ -109,12 +113,15 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// This buffer's byte length: the transaction count a TMA fill into it lands.
-    pub(crate) fn size_bytes(&self) -> u32 {
-        let lines = self.store.buffer().len() as u32;
+    pub(crate) fn size_bytes<T: Numeric>(&self) -> u32 {
         let wp = comptime!(self.store.packing.physical(self.store.vector_size) as u32);
         match comptime!(self.store.packing) {
-            Packing::Plain => lines * T::size().comptime() as u32 * wp,
-            Packing::Packed { field: _ } => lines * u32::size().comptime() as u32 * wp,
+            Packing::Plain => {
+                self.store.buffer::<T>().len() as u32 * T::size().comptime() as u32 * wp
+            }
+            Packing::Packed { field: _ } => {
+                self.store.buffer::<u32>().len() as u32 * u32::size().comptime() as u32 * wp
+            }
         }
     }
 
@@ -133,31 +140,42 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The buffer re-grouped into `Vector<T, W>` lines; buffers only.
-    fn lines<W: Size>(&self) -> &[Vector<T, W>] {
-        self.store.buffer().as_vectorized().with_vector_size::<W>()
+    fn lines<T: Numeric, W: Size>(&self) -> &[Vector<T, W>] {
+        self.store
+            .buffer::<T>()
+            .as_vectorized()
+            .with_vector_size::<W>()
     }
 
     /// The mutable twin of [`lines`](Memory::lines); buffers only.
-    fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+    fn lines_mut<T: Numeric, W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.store
-            .buffer_mut()
+            .buffer_mut::<T>()
             .as_vectorized_mut()
             .with_vector_size_mut::<W>()
     }
 
     /// The backing as a [`ViewMut`] addressed by `layout`: the write path.
-    fn write_view<W: Size>(
+    fn write_view<T: Numeric, W: Size>(
         &mut self,
         layout: BufferLayout,
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+        // Two sequences may share a page, and an entry past the pool is read as its last.
+        comptime!(assert!(
+            layout.paging.is_none(),
+            "Memory::write_view: a pool of pages is read through its table, never written \
+             through it; write the pool where it lies"
+        ));
         match &mut self.store.backing {
             Backing::Buffer(buffer) => buffer
+                .at_mut::<T>()
                 .as_vectorized_mut()
                 .with_vector_size_mut::<W>()
                 .view_mut(layout),
-            Backing::WriteCall(destination) => {
-                ViewMut::new::<&mut ErasedTensor<T, WriteOnly>, Coords1d>(destination, layout)
-            }
+            Backing::WriteCall(destination) => ViewMut::new::<
+                &mut ErasedTensor<T, WriteOnly>,
+                Coords1d,
+            >(destination.call_mut::<T>(), layout),
             Backing::ReadCall(_) => panic!(
                 "Memory::write_view: this tile's backing is read through a call, which is \
                  read-only"
@@ -166,11 +184,18 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The backing as a [`View`] addressed by `layout`: the read path.
-    fn read_view<W: Size>(&self, layout: BufferLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
+    fn read_view<T: Numeric, W: Size>(
+        &self,
+        layout: BufferLayout,
+    ) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.store.backing {
-            Backing::Buffer(buffer) => buffer.as_vectorized().with_vector_size::<W>().view(layout),
+            Backing::Buffer(buffer) => buffer
+                .at::<T>()
+                .as_vectorized()
+                .with_vector_size::<W>()
+                .view(layout),
             Backing::ReadCall(producer) => {
-                View::new::<&ErasedTensor<T, ReadOnly>, Coords1d>(producer, layout)
+                View::new::<&ErasedTensor<T, ReadOnly>, Coords1d>(producer.call::<T>(), layout)
             }
             Backing::WriteCall(_) => panic!(
                 "Memory::read_view: this tile's backing is written through a call, and is never \
@@ -180,15 +205,18 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The window as a view over its own coordinates, served at `T` grouped `W` wide.
-    fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
+    fn window_view<T: Numeric, W: Size>(
+        &self,
+        #[comptime] guard: Guard,
+    ) -> View<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
             WindowStorage::Contiguous => {
                 let start = self.window_start.cast::<usize>();
-                let all = self.lines::<W>();
+                let all = self.lines::<T, W>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
             WindowStorage::Stored(_) => self
-                .read_view::<W>(self.base())
+                .read_view::<T, W>(self.base())
                 .view(self.window().with_guard(guard)),
         }
     }
@@ -212,7 +240,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The mutable twin of [`window_view`](Memory::window_view).
-    fn window_view_mut<W: Size>(
+    fn window_view_mut<T: Numeric, W: Size>(
         &mut self,
         #[comptime] guard: Guard,
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
@@ -220,14 +248,14 @@ impl<T: Numeric> Memory<T> {
             WindowStorage::Contiguous => {
                 let start = self.window_start.cast::<usize>();
                 let layout = self.contiguous_layout();
-                let all = self.lines_mut::<W>();
+                let all = self.lines_mut::<T, W>();
                 let len = all.len();
                 all.slice_mut(start, len).view_mut(layout)
             }
             WindowStorage::Stored(_) => {
                 let base = self.base();
                 let window = self.window().with_guard(guard);
-                self.write_view::<W>(base).view_mut(window)
+                self.write_view::<T, W>(base).view_mut(window)
             }
         }
     }
@@ -257,36 +285,50 @@ impl<T: Numeric> Memory<T> {
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
             rows: RowArrangement::InOrder,
+            paging: ComptimeOption::new_None(),
         }
     }
 
     /// [`lines`](Memory::lines) re-typed to the storage element `I` (`u32` words when packed).
     fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
-        let storage = unsafe { self.store.buffer().downcast_unchecked::<I>() };
-        storage.as_vectorized().with_vector_size::<W>()
+        self.store
+            .buffer::<I>()
+            .as_vectorized()
+            .with_vector_size::<W>()
     }
 
     /// The mutable twin of [`lines_storage`](Memory::lines_storage).
     pub(crate) fn lines_storage_mut<I: Numeric, W: Size>(&mut self) -> &mut [Vector<I, W>] {
-        let storage = unsafe { self.store.buffer_mut().downcast_mut_unchecked::<I>() };
-        storage.as_vectorized_mut().with_vector_size_mut::<W>()
+        self.store
+            .buffer_mut::<I>()
+            .as_vectorized_mut()
+            .with_vector_size_mut::<W>()
     }
 
     /// The buffer from the window origin on, rows stepping by [`row_stride`](Memory::row_stride).
-    pub(crate) fn window_slice(&self) -> &[T] {
+    pub(crate) fn window_slice<T: Numeric>(&self) -> &[T] {
         let offset = self.window_offset();
-        self.store.buffer().slice(offset, self.store.buffer().len())
+        self.store
+            .buffer::<T>()
+            .slice(offset, self.store.buffer::<T>().len())
     }
 
     /// The mutable twin of [`window_slice`](Memory::window_slice).
-    pub(crate) fn window_slice_mut(&mut self) -> &mut [T] {
+    pub(crate) fn window_slice_mut<T: Numeric>(&mut self) -> &mut [T] {
         let offset = self.window_offset();
-        let end = self.store.buffer().len();
-        self.store.buffer_mut().slice_mut(offset, end)
+        let end = self.store.buffer::<T>().len();
+        self.store.buffer_mut::<T>().slice_mut(offset, end)
     }
 
     /// Line offset of the window origin; the window must be one contiguous region.
     fn window_offset(&self) -> usize {
+        // A base and a row stride step past a page into whichever page lies next in the pool.
+        // Ahead of the overhang's: a pool's table-set extents always mask.
+        comptime!(assert!(
+            self.layout.paging.is_none(),
+            "Memory::window_offset: a pool of pages is read through its table one line at a \
+             time, never as one raw run; stage it"
+        ));
         comptime!(assert!(
             !self.access.overhang.masks(),
             "Memory::window_offset: cmma cannot mask an overhang"
@@ -345,7 +387,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// Re-view this buffer through `layout` as a [`Masked`] carrying its own mask flag.
-    pub(crate) fn masked<W: Size, C: Coordinates, L: TileLayout<C>>(
+    pub(crate) fn masked<T: Numeric, W: Size, C: Coordinates, L: TileLayout<C>>(
         &self,
         layout: L,
         #[comptime] guard: Guard,
@@ -357,7 +399,7 @@ impl<T: Numeric> Memory<T> {
             )
         }
         Masked::new(
-            self.window_view::<W>(guard).view(layout),
+            self.window_view::<T, W>(guard).view(layout),
             comptime!(guard.checks() && self.access.overhang.masks()),
         )
     }
@@ -374,7 +416,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The mutable twin of [`masked`](Memory::masked).
-    pub(crate) fn masked_mut<W: Size, C: Coordinates, L: TileLayout<C>>(
+    pub(crate) fn masked_mut<T: Numeric, W: Size, C: Coordinates, L: TileLayout<C>>(
         &mut self,
         layout: L,
     ) -> MaskedMut<'_, Vector<T, W>, C> {
@@ -383,24 +425,26 @@ impl<T: Numeric> Memory<T> {
         }
         let check = self.write_check();
         MaskedMut::new(
-            self.window_view_mut::<W>(comptime!(Guard::Checked))
+            self.window_view_mut::<T, W>(comptime!(Guard::Checked))
                 .view_mut(layout),
             check,
         )
     }
 
     /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent.
-    pub(crate) fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+    pub(crate) fn flat<T: Numeric, W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         FlatView::new(
-            self.window_view::<W>(comptime!(Guard::Checked))
+            self.window_view::<T, W>(comptime!(Guard::Checked))
                 .view(FlatLayout::new(self.window.extent.clone())),
             comptime!(self.access.overhang.masks()),
         )
     }
 
     /// [`flat`](Memory::flat) unpacked through [`Packing`]; `WP` is the physical line.
-    pub(crate) fn flat_unpacked<WP: Size, W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
-        self.unpacked::<WP, W, Coords1d, FlatLayout>(
+    pub(crate) fn flat_unpacked<T: Numeric, WP: Size, W: Size>(
+        &self,
+    ) -> FlatView<'_, Vector<T, W>> {
+        self.unpacked::<T, WP, W, Coords1d, FlatLayout>(
             FlatLayout::new(self.window.extent.clone()),
             comptime!(Guard::Checked),
         )
@@ -408,14 +452,20 @@ impl<T: Numeric> Memory<T> {
 
     /// [`masked`](Memory::masked) unpacked through [`Packing`].
     /// `WP` is the physical line, `W` the served one.
-    pub(crate) fn unpacked<WP: Size, W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
+    pub(crate) fn unpacked<
+        T: Numeric,
+        WP: Size,
+        W: Size,
+        C: Coordinates + 'static,
+        L: TileLayout<C>,
+    >(
         &self,
         layout: L,
         #[comptime] guard: Guard,
     ) -> Masked<'_, Vector<T, W>, C> {
         let packing = self.packing();
         match comptime!(packing) {
-            Packing::Plain => self.masked::<W, C, L>(layout, guard),
+            Packing::Plain => self.masked::<T, W, C, L>(layout, guard),
             Packing::Packed { field } => {
                 let words = self
                     .window_view_storage::<u32, WP>(comptime!(Guard::Checked))
@@ -430,7 +480,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// [`unpacked`](Memory::unpacked) with the physical line taken from this store's [`Packing`].
-    pub(crate) fn packed<W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
+    pub(crate) fn packed<T: Numeric, W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
         &self,
         layout: L,
         #[comptime] guard: Guard,
@@ -441,11 +491,11 @@ impl<T: Numeric> Memory<T> {
         match comptime!(packing) {
             Packing::Plain => {
                 let size!(WP) = physical;
-                self.unpacked::<WP, W, C, L>(layout, guard)
+                self.unpacked::<T, WP, W, C, L>(layout, guard)
             }
             Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
-                self.unpacked::<WP, W, C, L>(layout, guard)
+                self.unpacked::<T, WP, W, C, L>(layout, guard)
             }
         }
     }
@@ -529,21 +579,21 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The mutable twin of [`flat`](Memory::flat).
-    pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+    pub(crate) fn flat_mut<T: Numeric, W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         if comptime!(self.store.packing != Packing::Plain) {
             panic!("Tile::flat_mut: writing a packed tile requires repacking")
         }
         let extent = self.window.extent.clone();
         let check = self.write_check();
         FlatViewMut::new(
-            self.window_view_mut::<W>(comptime!(Guard::Checked))
+            self.window_view_mut::<T, W>(comptime!(Guard::Checked))
                 .view_mut(FlatLayout::new(extent)),
             check,
         )
     }
 
     /// The `i`-th batch matrix as a writable 2-D view.
-    pub(crate) fn matrix_mut<W: Size>(
+    pub(crate) fn matrix_mut<T: Numeric, W: Size>(
         &mut self,
         i: usize,
         #[comptime] axes: MatrixAxes,
@@ -555,11 +605,11 @@ impl<T: Numeric> Memory<T> {
             "Memory::matrix_mut: an overlapping operand aliases under a write"
         ));
         let layout = self.batch_matrix(space, axes, i);
-        self.masked_mut::<W, Coords2d, ProjectedMatrix>(layout)
+        self.masked_mut::<T, W, Coords2d, ProjectedMatrix>(layout)
     }
 
     /// The [`AccumulateView`] over batch matrix `i`, carrying its share, [`Monoid`] and init.
-    pub(crate) fn matrix_accumulate<W: Size>(
+    pub(crate) fn matrix_accumulate<T: Numeric, W: Size>(
         &mut self,
         i: usize,
         #[comptime] axes: MatrixAxes,
@@ -571,7 +621,7 @@ impl<T: Numeric> Memory<T> {
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
-            self.matrix_mut::<W>(i, axes, space),
+            self.matrix_mut::<T, W>(i, axes, space),
             unit_share,
             split_share,
             write,
@@ -581,7 +631,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// The [`AccumulateView`] over flat elements.
-    pub(crate) fn flat_accumulate<W: Size>(
+    pub(crate) fn flat_accumulate<T: Numeric, W: Size>(
         &mut self,
         #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W, Coords1d> {
@@ -599,7 +649,7 @@ impl<T: Numeric> Memory<T> {
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
-            self.flat_mut::<W>(),
+            self.flat_mut::<T, W>(),
             unit_share,
             split_share,
             write,
@@ -609,7 +659,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// Window down to the region `step` names, re-boxing the same buffer; `bound` carries through.
-    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Memory<T> {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Memory {
         let rank = comptime!(self.projection.physical_rank());
         let (origin, extent, advances, map) = if comptime!(self.projection.is_direct()) {
             self.direct_descent(step, comptime!(space.clone()))
@@ -619,6 +669,33 @@ impl<T: Numeric> Memory<T> {
         let start = self
             .window_start
             .plus(advances.sum(comptime!((0..rank).collect::<Vec<_>>())));
+        // The window's extent along each dim in loads where the level fixes it, which only a pool
+        // of pages reads; it is direct, so these are the edges `direct_descent` cut.
+        let edges = comptime!(match self.layout.paging.is_some() {
+            true => {
+                let width = self.store.vector_size;
+                let load = VectorTile::new(
+                    &self.store.stored_tiles,
+                    space.axis_at(space.rank() - 1),
+                    width,
+                )
+                .unwrap_or_else(|why| panic!("Memory: {width} values a load: {why}"));
+                Some(
+                    (0..rank)
+                        .map(|p| {
+                            let axis = space.axis_at(p);
+                            match step.level.extent_in(&space, axis) {
+                                Extent::Dynamic => None,
+                                edge => {
+                                    Some(load.loads_in(axis, edge.get(), space.extent_raw(axis)))
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            false => None,
+        });
 
         self.moved_to(
             Window::new(
@@ -628,6 +705,7 @@ impl<T: Numeric> Memory<T> {
                 comptime!(self.window.signed),
                 comptime!(self.window.boundaries.clone()),
             ),
+            comptime!(edges),
             start,
             map,
             // No longer covers the buffer, so no straight-through fill.
@@ -642,7 +720,6 @@ impl<T: Numeric> Memory<T> {
             comptime!(UnitShare::new(&step.level, &space).under(self.unit_share)),
             // Per level: the level's space still has the axis the projection dropped.
             comptime!(SplitShare::new(&step.level, &step.space, &space).under(self.split_share)),
-            self.factor.at(step),
         )
     }
 
@@ -740,22 +817,24 @@ impl<T: Numeric> Memory<T> {
         (origin, extent, advances, map)
     }
 
-    /// This store looking at `window` from line `window_start` on; buffer and layout unchanged.
+    /// This store looking at `window` from line `window_start` on; buffer unchanged, and the layout
+    /// pinned at the window where it reads a pool of pages. `edges` is the window's extent along
+    /// each dim in loads where a level fixes it, `None` where the extent is the one before.
     #[allow(clippy::too_many_arguments)]
     fn moved_to(
         &self,
         window: Window,
+        #[comptime] edges: Option<Vec<Option<usize>>>,
         window_start: u32,
         map: RuntimeMap,
         #[comptime] access: Access,
         #[comptime] unit_share: UnitShare,
         #[comptime] split_share: SplitShare,
-        factor: Factor,
-    ) -> Memory<T> {
-        Memory::<T> {
+    ) -> Memory {
+        Memory {
             address: comptime!(self.address),
             store: self.store.clone(),
-            layout: self.layout.clone(),
+            layout: self.layout.pinned_at(&window.origin, edges),
             window,
             projection: comptime!(self.projection.clone()),
             source_window: self.source_window.clone(),
@@ -767,23 +846,17 @@ impl<T: Numeric> Memory<T> {
             split_share,
             init_from: comptime!(self.init_from),
             contraction: comptime!(self.contraction),
-            factor,
             codebook: self.codebook.clone(),
         }
     }
 
     /// This window filled by the units of `holder` where they are fewer than the ones that fill
     /// its buffer: a plane's window of a buffer the cube fills is the plane's to fill.
-    pub(crate) fn filled_by(&self, #[comptime] holder: ComputeScope) -> Memory<T> {
-        let fill = comptime!(match holder < self.access.fill.scope {
-            true => FillUnits {
-                scope: holder,
-                count: 0,
-            },
-            false => self.access.fill,
-        });
+    pub(crate) fn filled_by(&self, #[comptime] holder: ComputeScope) -> Memory {
+        let fill = comptime!(self.access.fill.held_by(holder));
         self.moved_to(
             self.window.clone(),
+            comptime!(None),
             self.window_start,
             self.map.clone(),
             comptime!(Access {
@@ -792,12 +865,11 @@ impl<T: Numeric> Memory<T> {
             }),
             comptime!(self.unit_share),
             comptime!(self.split_share),
-            self.factor.clone(),
         )
     }
 
     /// This window placed at element `from` on `axis`, reading up to `until` (zero past it).
-    pub(crate) fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Memory<T> {
+    pub(crate) fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Memory {
         let proj = comptime!(self.projection.clone());
         comptime!(assert!(
             proj.untiled().is_direct() && !proj.is_tiled(),
@@ -842,6 +914,7 @@ impl<T: Numeric> Memory<T> {
                     boundaries
                 }),
             ),
+            comptime!(None),
             start,
             self.map.clone(),
             // `until` is a runtime bound, so the window masks from here down.
@@ -855,7 +928,6 @@ impl<T: Numeric> Memory<T> {
             }),
             comptime!(self.unit_share),
             comptime!(self.split_share),
-            self.factor.clone(),
         )
     }
 }

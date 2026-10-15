@@ -7,8 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Geometry, Launcher, Space,
-    launch::{Delivery, Grid, InputArgs, TmaBox, TmaLanding, TmaTileArgLaunch, TmaTiles},
+    Axis, Geometry, Launcher, Space, TileArgLaunch,
+    launch::{Delivery, Grid, TmaBox, TmaLanding, TmaTiles},
 };
 
 use crate::{
@@ -311,11 +311,8 @@ fn launch_strided(
         client,
         cube_count,
         cube_dim,
-        a.vector_size,
-        b.vector_size,
-        c.vector_size,
-        a.input(),
-        b.input(),
+        a.arg(),
+        b.arg(),
         c.arg(),
         launch.partitioning_arg(),
         blueprint.clone(),
@@ -354,17 +351,17 @@ fn launch_tma(
     // refused it otherwise), so the descriptor's box is one storage tile and each stage is one
     // contiguous run. A plain operand is collapsed to the descriptor's `(batch, row, col)` and
     // its box is the stage cut out of rows.
-    fn operand<E: Numeric, V: Size>(
+    fn operand<E: Numeric>(
         axes: &[Axis],
         dtype: ElemType,
         binding: TensorBinding,
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
-    ) -> InputArgs<'static, E, V> {
+    ) -> TileArgLaunch<'static, E> {
         if binding.tiling.is_tiled() {
             let landing = TmaLanding::Tiles;
             let map = tma_operand_tiled(binding, box_dims, landing, dtype, TensorMapSwizzle::None);
-            return InputArgs::TensorMap(TmaTileArgLaunch::tensor_map_stored(
+            return TileArgLaunch::tensor_map_stored(
                 map,
                 axes,
                 TmaTiles {
@@ -372,7 +369,7 @@ fn launch_tma(
                     tile: (box_dims.0 as u32, box_dims.1 as u32),
                     landing,
                 },
-            ));
+            );
         }
         let (map, transposed) = tma_operand(
             binding,
@@ -382,7 +379,7 @@ fn launch_tma(
             dtype,
             TensorMapSwizzle::None,
         );
-        InputArgs::TensorMap(TmaTileArgLaunch::tensor_map(
+        TileArgLaunch::tensor_map(
             map,
             axes,
             TmaBox {
@@ -391,7 +388,7 @@ fn launch_tma(
                 batch: None,
                 transposed,
             },
-        ))
+        )
     }
     let a = operand(
         &[M, K],
@@ -418,9 +415,6 @@ fn launch_tma(
         client,
         cube_count,
         cube_dim,
-        1,
-        1,
-        c.vector_size,
         a,
         b,
         c.arg(),

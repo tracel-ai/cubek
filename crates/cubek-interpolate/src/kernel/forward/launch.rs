@@ -230,7 +230,6 @@ fn dispatch<F: SeparableFilterFamily>(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        vector_size,
         input_arg.arg(),
         output_arg.arg(),
         launch.partitioning_arg(),

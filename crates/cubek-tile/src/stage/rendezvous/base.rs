@@ -171,12 +171,12 @@ impl Meeting {
     }
 
     /// Fill staged `dst` from `src`, spread over the units `dst` names ([`FillUnits`]).
-    pub(crate) fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
+    pub(crate) fn fill(&self, dst: &mut Tile, src: &Tile) {
         // Bound before the match, which borrows the kind.
         let space = comptime!(dst.place.space.clone());
         let element = src.stage_element();
         if comptime!(element == StageElement::Decoded) {
-            dst.copy_from(src);
+            dst.dequantize_from(src);
         } else {
             self.fill_as_it_lies(dst, src, space);
             dst.fill_scales_from(src, self);
@@ -184,23 +184,21 @@ impl Meeting {
     }
 
     /// [`fill`](Meeting::fill) a source that decodes nothing.
-    fn fill_as_it_lies<E: Numeric>(
-        &self,
-        dst: &mut Tile<E>,
-        src: &Tile<E>,
-        #[comptime] space: Space,
-    ) {
+    fn fill_as_it_lies(&self, dst: &mut Tile, src: &Tile, #[comptime] space: Space) {
+        let _served = naming::<Served>(dst.element);
         match self {
             Meeting::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
                     // Single issuer: the transaction count is the elected unit's alone.
                     if UNIT_POS == *elected {
-                        full.expect_tx(d.size_bytes());
-                        s.stage_into(d, full);
+                        full.expect_tx(d.size_bytes::<Served>());
+                        s.stage_into::<Served>(d, full);
                     }
                 }
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
-                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from::<Served>(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => {
+                    d.fill_procedural::<Served>(s, space)
+                }
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
             },
             Meeting::Cube | Meeting::Plane => dst.copy_from(src),

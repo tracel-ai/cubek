@@ -231,9 +231,9 @@ fn masked_bound_depends_on(
 /// projected operands; a separable lhs takes its own schedule.
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Memory<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    acc: &mut Memory,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,

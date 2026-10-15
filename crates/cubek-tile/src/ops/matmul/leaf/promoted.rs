@@ -8,16 +8,17 @@ use super::scale::Side;
 use crate::*;
 
 #[cube]
-impl<T: Numeric> RegisterData<T> {
+impl RegisterData {
     /// `self += lhs · rhs` over the block, one rank-1 update per `K` step, with scales folded in.
     /// The block must be opened against the rhs it contracts (width and fold).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<T: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
+        let data = self.data.at_mut::<T>();
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma"));
         register_block_size(self.vector_size);
         // A load stored across several columns reads as their runs along the contraction.
@@ -78,8 +79,8 @@ impl<T: Numeric> RegisterData<T> {
         let unroll = comptime!(mr * nr * self.vector_size <= config.budget);
         let component_fanout = comptime!(config.component_fanout);
 
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
-        let rhs_mat = rhs.matrix_packed::<RL>(rhs_axes, 0usize);
+        let lhs_mat = lhs.matrix_packed::<EL, L>(lhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<ER, RL>(rhs_axes, 0usize);
         let lhs_scales = lhs.reader(
             lhs_axes,
             0usize,
@@ -100,7 +101,7 @@ impl<T: Numeric> RegisterData<T> {
             &lhs_scales,
             &rhs_mat,
             &rhs_scales,
-            &mut self.data,
+            data,
             lw,
             fold,
             lined_along_k,
@@ -116,7 +117,7 @@ impl<T: Numeric> RegisterData<T> {
 }
 
 #[cube]
-impl<T: Numeric> RegisterData<T> {
+impl RegisterData {
     /// `self += lhs · rhs` where `lhs` is a register block over the same rows as this one: each
     /// of its cells is a factor read in registers, and `rhs` is read one step of the contraction
     /// at a time. What an attention's unit does with the probabilities it just computed,
@@ -125,11 +126,12 @@ impl<T: Numeric> RegisterData<T> {
     /// Every cell of `lhs` is a whole value, whatever it folded: a block that summed runs of its
     /// contraction into its cells is one value wide. This block's lines are neighbours along the
     /// columns `rhs` is lined along.
-    pub(crate) fn mma_block<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma_block<T: Numeric, EL: Numeric, ER: Numeric>(
         &mut self,
-        lhs: &RegisterData<EL>,
-        rhs: &Tile<ER>,
+        lhs: &RegisterData,
+        rhs: &Tile,
     ) {
+        let data = self.data.at_mut::<T>();
         let semiring = comptime!(self.accumulation.semiring("RegisterData::mma_block"));
         register_block_size(self.vector_size);
         comptime!(assert!(
@@ -158,7 +160,7 @@ impl<T: Numeric> RegisterData<T> {
         let rhs_axes = comptime!(
             MatrixAxes::new(&rhs.place.space, kc, nr * vw).unwrap_or_else(|e| panic!("{e}"))
         );
-        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<ER, RA>(rhs_axes, 0usize);
         let mut b = Array::<Vector<T, RA>>::new(nr);
         #[unroll]
         for k in 0..kc {
@@ -168,12 +170,12 @@ impl<T: Numeric> RegisterData<T> {
             }
             #[unroll]
             for i in 0..mr {
-                let line = lhs.data[i * lhs.nr + k / lw];
+                let line = lhs.data.at::<EL>()[i * lhs.nr + k / lw];
                 let a = Vector::<T, RA>::cast_from(line.extract(comptime!(k % lw)));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     let at = i * nr + n;
-                    self.data[at] = semiring.step::<Vector<T, RA>>(a, b[n], self.data[at]);
+                    data[at] = semiring.step::<Vector<T, RA>>(a, b[n], data[at]);
                 }
             }
         }

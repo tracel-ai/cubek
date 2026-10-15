@@ -56,7 +56,7 @@ pub(crate) enum Form<'a> {
     DynamicAlong(&'a [Axis]),
 }
 
-fn kernel_form(partitioning: &Partitioning, form: Form<'_>) -> Partitioning {
+pub(crate) fn kernel_form(partitioning: &Partitioning, form: Form<'_>) -> Partitioning {
     let space = partitioning.space().clone();
     let kernel = match form {
         Form::Static => space,

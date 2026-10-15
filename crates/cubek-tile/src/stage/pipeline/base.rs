@@ -150,17 +150,17 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
 }
 
 #[cube]
-impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+impl Stages<OperandPair> {
     /// The `depth` slots staging both operands of a contraction into shared memory laid out as
     /// `storage`.
     pub fn smem(
         walk: &Walk,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] storage: StageStorage,
         #[comptime] depth: usize,
-    ) -> Stages<OperandPair<Lhs, Rhs>> {
-        let sources = OperandPair::<Lhs, Rhs> {
+    ) -> Stages<OperandPair> {
+        let sources = OperandPair {
             lhs: lhs.clone(),
             rhs: rhs.clone(),
         };
@@ -169,25 +169,25 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
 }
 
 #[cube]
-impl<T: Numeric> Stages<Tile<T>> {
+impl Stages<Tile> {
     /// [`smem`](Stages::smem) for the sole operand `input`.
     pub fn smem_single(
         walk: &Walk,
-        input: &Tile<T>,
+        input: &Tile,
         #[comptime] storage: StageStorage,
         #[comptime] depth: usize,
-    ) -> Stages<Tile<T>> {
+    ) -> Stages<Tile> {
         Stages::new(walk, input, storage, comptime!(None), depth)
     }
 
     /// [`smem_single`](Stages::smem_single) with the stage served in `width`-wide lines.
     pub fn smem_single_at(
         walk: &Walk,
-        input: &Tile<T>,
+        input: &Tile,
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
         #[comptime] depth: usize,
-    ) -> Stages<Tile<T>> {
+    ) -> Stages<Tile> {
         Stages::new(walk, input, storage, width, depth)
     }
 }
@@ -209,10 +209,10 @@ fn register_fetched_widths(#[comptime] lhs: usize, #[comptime] rhs: usize) {
 }
 
 #[cube]
-impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+impl Stages<OperandPair> {
     /// Registers holding one unit's fill of both operands across a contraction.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
-    pub(crate) fn fetch_buffers(&self) -> FetchBuffers<Lhs, Rhs> {
+    pub(crate) fn fetch_buffers<Lhs: Numeric, Rhs: Numeric>(&self) -> FetchBuffers<Lhs, Rhs> {
         let staged = self.slots.index(FIRST_SLOT);
         let lhs = staged.data.lhs.fetched_scalars();
         let rhs = staged.data.rhs.fetched_scalars();
@@ -232,7 +232,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
 
     /// Read this unit's share of filling slot `slot` for `region` into `lhs` and `rhs`.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
-    pub(crate) fn fetch(
+    pub(crate) fn fetch<Lhs: Numeric, Rhs: Numeric>(
         &self,
         #[comptime] slot: usize,
         region: &Region,
@@ -252,7 +252,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
 
     /// Write what [`fetch`](Stages::fetch) read into slot `slot`; the caller owns the rendezvous.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
-    pub(crate) fn store(
+    pub(crate) fn store<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         #[comptime] slot: usize,
         lhs: &Array<Vector<Lhs, FL>>,
@@ -279,17 +279,17 @@ impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
 }
 
 // `consume` is spelled per payload shape: closure inference cannot resolve `P::ExpandType`.
-impl<Lhs: Numeric, Rhs: Numeric> Slot<OperandPair<Lhs, Rhs>> {
+impl Slot<OperandPair> {
     /// Wait for the slot's fill, pass its two tiles to `compute`, then free the slot.
-    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+    pub fn consume(&mut self, _compute: impl FnOnce(&Tile, &Tile)) {
         unexpanded!()
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<OperandPair<Lhs, Rhs>> {
+impl SlotExpand<OperandPair> {
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
-        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+        F: FnOnce(&Scope, &TileExpand, &TileExpand),
     {
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.lhs, &self.data.rhs);
@@ -297,17 +297,17 @@ impl<Lhs: Numeric, Rhs: Numeric> SlotExpand<OperandPair<Lhs, Rhs>> {
     }
 }
 
-impl<T: Numeric> Slot<Tile<T>> {
+impl Slot<Tile> {
     /// [`consume`](Slot::consume) for the sole operand.
-    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<T>)) {
+    pub fn consume(&mut self, _compute: impl FnOnce(&Tile)) {
         unexpanded!()
     }
 }
 
-impl<T: Numeric> SlotExpand<Tile<T>> {
+impl SlotExpand<Tile> {
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
-        F: FnOnce(&Scope, &TileExpand<T>),
+        F: FnOnce(&Scope, &TileExpand),
     {
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data);
@@ -315,34 +315,34 @@ impl<T: Numeric> SlotExpand<Tile<T>> {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+impl Stages<OperandPair> {
     /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk.
-    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile, &Tile)) {
         unexpanded!()
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
+impl StagesExpand<OperandPair> {
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
     where
-        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+        F: FnOnce(&Scope, &TileExpand, &TileExpand),
     {
         self.__expand_slot_mut_method(scope, slot)
             .__expand_consume_method(scope, compute);
     }
 }
 
-impl<T: Numeric> Stages<Tile<T>> {
+impl Stages<Tile> {
     /// [`consume`](Stages::consume) for the sole operand.
-    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<T>)) {
+    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile)) {
         unexpanded!()
     }
 }
 
-impl<T: Numeric> StagesExpand<Tile<T>> {
+impl StagesExpand<Tile> {
     pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
     where
-        F: FnOnce(&Scope, &TileExpand<T>),
+        F: FnOnce(&Scope, &TileExpand),
     {
         self.__expand_slot_mut_method(scope, slot)
             .__expand_consume_method(scope, compute);

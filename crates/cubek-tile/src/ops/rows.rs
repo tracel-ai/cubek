@@ -6,10 +6,10 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<EA: Float> Tile<EA> {
+impl Tile {
     /// Publish per-owned-row `values` into this factors tile, one cell per score row.
     /// The caller syncs before any cross-worker read.
-    pub fn store_rows(&mut self, values: &Array<EA>, state: &RowState<EA>) {
+    pub fn store_rows<EA: Float>(&mut self, values: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         let rpu = comptime!(share.rows());
         let rows = comptime!(self.place.space.cells());
@@ -22,7 +22,7 @@ impl<EA: Float> Tile<EA> {
             self.place.space
         ));
         let size!(W) = self.vector_size();
-        let mut view = self.flat_mut::<W>();
+        let mut view = self.flat_mut::<EA, W>();
 
         // One writer per row: the owning unit, or the owning plane's first unit.
         let writer = owned_unit(share) == 0;
@@ -36,7 +36,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Online-softmax rescale by the row's owner: `self[r, :] *= corr[ri]` over `share`'s rows.
-    pub fn rescale_rows(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
+    pub fn rescale_rows<EA: Float>(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         match &self.kind {
             TileKind::Memory(_) => self.rescale_rows_in_memory(corr, state),
@@ -58,7 +58,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    fn rescale_rows_in_memory(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
+    fn rescale_rows_in_memory<EA: Float>(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         let rank = comptime!(self.place.space.rank());
         let rows = comptime!(self.place.space.extent_at(rank - 2));
@@ -69,7 +69,7 @@ impl<EA: Float> Tile<EA> {
         let rpw = comptime!(share.rows());
         let units = comptime!(share.units());
         let plane_unit = owned_unit(share);
-        let mut view = self.flat_mut::<W>();
+        let mut view = self.flat_mut::<EA, W>();
         #[unroll]
         for ri in 0..rpw {
             let r = state.owned_row(ri);
@@ -88,7 +88,8 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Multiply each row by its factor: `self[r, c] *= factors[r]`. The caller syncs on both sides.
-    pub fn scale_rows(&mut self, factors: &Tile<EA>) {
+    pub fn scale_rows(&mut self, factors: &Tile) {
+        let _served = naming::<Served>(self.element);
         let cols = comptime!(self.place.space.extent_at(1));
         comptime!(assert!(
             self.place.space.rank() == 2,
@@ -103,8 +104,8 @@ impl<EA: Float> Tile<EA> {
         let total = comptime!(self.place.space.cells());
         let size!(W) = w;
         let size!(WF) = wf;
-        let f = factors.flat::<WF>();
-        let mut view = self.flat_mut::<W>();
+        let f = factors.flat::<Served, WF>();
+        let mut view = self.flat_mut::<Served, W>();
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
@@ -115,7 +116,11 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Cast-copy the owned rows into `dest`, laid out in the same lines.
-    pub(crate) fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, state: &RowState<EA>) {
+    pub(crate) fn write_rows_to<EA: Float, EP: Numeric>(
+        &self,
+        dest: &mut Tile,
+        state: &RowState<EA>,
+    ) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -127,8 +132,8 @@ impl<EA: Float> Tile<EA> {
         ));
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let src = self.flat::<W>();
-        let mut dst = dest.flat_mut::<W>();
+        let src = self.flat::<EA, W>();
+        let mut dst = dest.flat_mut::<EP, W>();
 
         #[unroll]
         for ri in 0..rpu {
