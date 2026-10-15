@@ -1,18 +1,20 @@
 //! Values a tile holds apart from the element their type names, each named again where it is
-//! used: a value of a type naming one element ([`Raw`]: a slice, registers, a tensor map), an
-//! erased call ([`RawCall`]), a cmma fragment ([`RawMatrix`]) and a warpgroup accumulator
-//! ([`RawAccumulator`]).
-
+//! used: a value of a type naming one element ([`Raw`]: a slice, registers, a tensor map) and an
+//! erased call ([`RawCall`]). A cmma fragment and a warpgroup accumulator need neither: they are
+//! kept at [`Held`] and named again with their own `downcast`.
 use std::marker::PhantomData;
 
-use cubecl::cmma::{Matrix, MatrixExpand, MatrixIdent, Plane};
+use cubecl::define_size;
 use cubecl::frontend::{AsMutExpand, AsRefExpand, CubeDebug, ExpandTypeClone, IntoExpand, IntoMut};
-use cubecl::ir::pliron::value::Value;
-use cubecl::ir::{ElemType, ExpandValue, Scope};
+use cubecl::ir::{ElemType, ExpandValue, Scope, VectorSize};
 use cubecl::prelude::*;
-use cubecl::std::tensor::{ErasedTensor, ErasedTensorExpand, ErasedTensorRaw};
+use cubecl::std::tensor::{
+    ErasedIo, ErasedTensor, ErasedTensorExpand, ErasedTensorOperationsExpand, ReadsLines,
+    WriteOnly, WritesLines,
+};
 use cubecl::unexpanded;
-use cubecl::wgmma::{Accumulator, PendingAccumulatorRaw};
+
+use crate::Held;
 
 /// Which type a [`Raw`] value is, at whatever element it holds.
 pub(crate) trait RawKind: 'static {
@@ -137,7 +139,8 @@ pub(crate) struct RawCall<IO> {
 }
 
 pub(crate) struct RawCallExpand<IO> {
-    raw: ErasedTensorRaw<IO>,
+    call: ErasedTensorExpand<Held, IO>,
+    held: ElemType,
 }
 
 impl<IO> Clone for RawCall<IO> {
@@ -149,12 +152,13 @@ impl<IO> Clone for RawCall<IO> {
 impl<IO> Clone for RawCallExpand<IO> {
     fn clone(&self) -> Self {
         RawCallExpand {
-            raw: self.raw.clone(),
+            call: self.call.clone(),
+            held: self.held,
         }
     }
 }
 
-impl<IO: 'static> RawCall<IO> {
+impl<IO: RenamedIo> RawCall<IO> {
     /// `call`, its element kept beside it.
     pub(crate) fn of<T: Numeric>(_call: ErasedTensor<T, IO>) -> RawCall<IO> {
         unexpanded!()
@@ -175,128 +179,111 @@ impl<IO: 'static> RawCall<IO> {
         call: ErasedTensorExpand<T, IO>,
     ) -> RawCallExpand<IO> {
         RawCallExpand {
-            raw: call.into_raw(scope),
+            call: IO::renamed(call),
+            held: T::elem_type(scope),
         }
     }
 }
 
-impl<IO: 'static> RawCallExpand<IO> {
+impl<IO: RenamedIo> RawCallExpand<IO> {
     pub(crate) fn __expand_call_mut_method<'a, T: Numeric>(
         &mut self,
         scope: &Scope,
     ) -> &'a mut ErasedTensorExpand<T, IO> {
-        scope.create_kernel_ref(ErasedTensorExpand::from_raw(scope, self.raw.clone()))
+        scope.create_kernel_ref(self.named::<T>(scope))
     }
 
     pub(crate) fn __expand_call_method<'a, T: Numeric>(
         &self,
         scope: &Scope,
     ) -> &'a ErasedTensorExpand<T, IO> {
-        scope.create_kernel_ref(ErasedTensorExpand::from_raw(scope, self.raw.clone()))
+        scope.create_kernel_ref(self.named::<T>(scope))
+    }
+
+    /// The call named at `T`, which must be the element it holds.
+    fn named<T: Numeric>(&self, scope: &Scope) -> ErasedTensorExpand<T, IO> {
+        let named = T::elem_type(scope);
+        assert_eq!(
+            self.held, named,
+            "RawCall: the call holds {:?}, not {named:?}",
+            self.held
+        );
+        IO::renamed(self.call.clone())
     }
 }
 
-/// A cmma fragment, held as its variable and the operand it is.
-#[derive(Clone)]
-pub(crate) struct RawMatrix;
-
-#[derive(Clone)]
-pub(crate) struct RawMatrixExpand {
-    elem: Value,
-    ident: MatrixIdent,
+/// The visibilities a [`RawCall`] is read or written at, each renaming a call through the half
+/// of the interface it offers.
+pub(crate) trait RenamedIo: ErasedIo {
+    /// `call`'s lines, served at `O`: the lines cross untyped, so only the name changes.
+    fn renamed<E: Numeric, O: Numeric>(
+        call: ErasedTensorExpand<E, Self>,
+    ) -> ErasedTensorExpand<O, Self>;
 }
 
-impl RawMatrix {
-    /// `matrix`, its element kept in its variable's type.
-    pub(crate) fn of<T: Numeric>(_matrix: Matrix<T>) -> RawMatrix {
-        unexpanded!()
-    }
-
-    /// The fragment, named at `T`, the element it holds.
-    pub(crate) fn matrix<T: Numeric>(&self) -> &Matrix<T> {
-        unexpanded!()
-    }
-
-    /// The mutable twin of [`matrix`](Self::matrix).
-    pub(crate) fn matrix_mut<T: Numeric>(&mut self) -> &mut Matrix<T> {
-        unexpanded!()
-    }
-
-    pub(crate) fn __expand_of<T: Numeric>(
-        _scope: &Scope,
-        matrix: MatrixExpand<T, Plane>,
-    ) -> RawMatrixExpand {
-        let (elem, ident) = matrix.into_raw();
-        RawMatrixExpand { elem, ident }
+impl RenamedIo for ReadOnly {
+    fn renamed<E: Numeric, O: Numeric>(
+        call: ErasedTensorExpand<E, Self>,
+    ) -> ErasedTensorExpand<O, Self> {
+        ErasedTensorExpand::new(Renamed { call })
     }
 }
 
-impl RawMatrixExpand {
-    pub(crate) fn __expand_matrix_method<'a, T: Numeric>(
-        &self,
-        scope: &Scope,
-    ) -> &'a MatrixExpand<T, Plane> {
-        scope.create_kernel_ref(MatrixExpand::from_raw(scope, self.elem, self.ident))
+impl RenamedIo for WriteOnly {
+    fn renamed<E: Numeric, O: Numeric>(
+        call: ErasedTensorExpand<E, Self>,
+    ) -> ErasedTensorExpand<O, Self> {
+        ErasedTensorExpand::new(Renamed { call })
+    }
+}
+
+/// A call's backing at another element than its own.
+struct Renamed<E: Numeric, IO> {
+    call: ErasedTensorExpand<E, IO>,
+}
+
+// The width a renamed line crosses at, bound to the call's own before each access.
+define_size!(Width);
+
+impl<E: Numeric, O: Numeric> ErasedTensorOperationsExpand<O> for Renamed<E, ReadOnly> {
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        self.call.__expand_vector_size_method(scope)
     }
 
-    pub(crate) fn __expand_matrix_mut_method<'a, T: Numeric>(
+    fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        self.call.__expand_len_method(scope)
+    }
+
+    fn __expand_read_line_method(&self, scope: &Scope, index: NativeExpand<usize>) -> ExpandValue {
+        scope.register_size::<Width>(self.call.__expand_vector_size_method(scope));
+        self.call.__expand_read_method::<Width>(scope, index).expand
+    }
+}
+
+impl<E: Numeric, O: Numeric> ReadsLines<O> for Renamed<E, ReadOnly> {}
+
+impl<E: Numeric, O: Numeric> ErasedTensorOperationsExpand<O> for Renamed<E, WriteOnly> {
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        self.call.__expand_vector_size_method(scope)
+    }
+
+    fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
+        self.call.__expand_len_method(scope)
+    }
+
+    fn __expand_write_line_method(
         &mut self,
         scope: &Scope,
-    ) -> &'a mut MatrixExpand<T, Plane> {
-        scope.create_kernel_ref(MatrixExpand::from_raw(scope, self.elem, self.ident))
+        index: NativeExpand<usize>,
+        value: ExpandValue,
+    ) {
+        scope.register_size::<Width>(self.call.__expand_vector_size_method(scope));
+        self.call
+            .__expand_write_method::<Width>(scope, index, value.into())
     }
 }
 
-/// A warpgroup accumulator handed to its MMAs, held apart from its element.
-#[derive(Clone)]
-pub(crate) struct RawAccumulator;
-
-#[derive(Clone)]
-pub(crate) struct RawAccumulatorExpand {
-    raw: PendingAccumulatorRaw,
-}
-
-impl RawAccumulator {
-    /// `acc`, its element kept beside it.
-    pub(crate) fn of<T: Numeric>(_acc: Pending<Accumulator<T>>) -> RawAccumulator {
-        unexpanded!()
-    }
-
-    /// The accumulator, named at `T`, the element it holds.
-    pub(crate) fn pending<T: Numeric>(&self) -> &Pending<Accumulator<T>> {
-        unexpanded!()
-    }
-
-    /// The mutable twin of [`pending`](Self::pending).
-    pub(crate) fn pending_mut<T: Numeric>(&mut self) -> &mut Pending<Accumulator<T>> {
-        unexpanded!()
-    }
-
-    pub(crate) fn __expand_of<T: Numeric>(
-        scope: &Scope,
-        acc: PendingExpand<Accumulator<T>>,
-    ) -> RawAccumulatorExpand {
-        RawAccumulatorExpand {
-            raw: acc.into_raw(scope),
-        }
-    }
-}
-
-impl RawAccumulatorExpand {
-    pub(crate) fn __expand_pending_method<'a, T: Numeric>(
-        &self,
-        scope: &Scope,
-    ) -> &'a PendingExpand<Accumulator<T>> {
-        scope.create_kernel_ref(PendingExpand::from_raw(scope, self.raw))
-    }
-
-    pub(crate) fn __expand_pending_mut_method<'a, T: Numeric>(
-        &mut self,
-        scope: &Scope,
-    ) -> &'a mut PendingExpand<Accumulator<T>> {
-        scope.create_kernel_ref(PendingExpand::from_raw(scope, self.raw))
-    }
-}
+impl<E: Numeric, O: Numeric> WritesLines<O> for Renamed<E, WriteOnly> {}
 
 impl<K: RawKind> Clone for Raw<K> {
     fn clone(&self) -> Self {
@@ -318,16 +305,8 @@ impl<K: RawKind> CubeType for Raw<K> {
     type ExpandType = RawExpand<K>;
 }
 
-impl<IO: 'static> CubeType for RawCall<IO> {
+impl<IO: RenamedIo> CubeType for RawCall<IO> {
     type ExpandType = RawCallExpand<IO>;
-}
-
-impl CubeType for RawMatrix {
-    type ExpandType = RawMatrixExpand;
-}
-
-impl CubeType for RawAccumulator {
-    type ExpandType = RawAccumulatorExpand;
 }
 
 macro_rules! expand_value {
@@ -364,5 +343,3 @@ macro_rules! expand_value {
 
 expand_value!(RawExpand<K>, K: RawKind);
 expand_value!(RawCallExpand<IO>, IO: 'static);
-expand_value!(RawMatrixExpand);
-expand_value!(RawAccumulatorExpand);

@@ -24,10 +24,10 @@ impl CmmaData {
                     lhs.refuse_factor("PlaneTile::Mma");
                     rhs.refuse_factor("PlaneTile::Mma");
                     cmma::execute(
-                        a.fragment.matrix::<EL>(),
-                        b.fragment.matrix::<ER>(),
-                        self.fragment.matrix::<A>(),
-                        self.fragment.matrix::<A>(),
+                        &a.fragment.downcast::<EL>(),
+                        &b.fragment.downcast::<ER>(),
+                        &self.fragment.downcast::<A>(),
+                        &self.fragment.downcast::<A>(),
                     )
                 }
                 _ => panic!("cmma operands must be cmma fragments"),
@@ -68,8 +68,8 @@ impl CmmaData {
                 cmma::execute(
                     &a_frag,
                     &b_frag,
-                    self.fragment.matrix::<A>(),
-                    self.fragment.matrix::<A>(),
+                    &self.fragment.downcast::<A>(),
+                    &self.fragment.downcast::<A>(),
                 );
             }
         }

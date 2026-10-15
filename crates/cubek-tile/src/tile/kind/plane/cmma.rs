@@ -12,8 +12,8 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct CmmaData {
-    /// The fragment, at the element it holds.
-    pub fragment: RawMatrix,
+    /// The fragment, kept at [`Held`] and named at the element it holds where it is used.
+    pub fragment: Matrix<Held>,
     #[cube(comptime)]
     pub ident: MatrixIdent,
     #[cube(comptime)]
@@ -38,7 +38,7 @@ impl CmmaData {
     ) -> CmmaData {
         let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, layout) };
         CmmaData {
-            fragment: RawMatrix::of::<T>(matrix),
+            fragment: unsafe { matrix.downcast_unchecked::<Held>() },
             ident,
             layout,
             shape: comptime!((m, n)),
@@ -63,7 +63,7 @@ impl CmmaData {
         let mut window = scratch.clone();
         cmma::store(
             &mut window,
-            self.fragment.matrix::<T>(),
+            &self.fragment.downcast::<T>(),
             n,
             MatrixLayout::RowMajor,
         )
@@ -73,7 +73,7 @@ impl CmmaData {
     pub(crate) fn load_scratch<T: Numeric>(&mut self, scratch: &Shared<[T]>) {
         let n = comptime!(self.shape.1 as u32);
         cmma::load_with_layout(
-            self.fragment.matrix_mut::<T>(),
+            &mut self.fragment.downcast::<T>(),
             scratch,
             n,
             MatrixLayout::RowMajor,
@@ -82,7 +82,7 @@ impl CmmaData {
 
     /// Zero the fragment.
     pub(crate) fn zero<T: Numeric>(&mut self) {
-        cmma::fill(self.fragment.matrix_mut::<T>(), T::from_int(0));
+        cmma::fill(&mut self.fragment.downcast::<T>(), T::from_int(0));
     }
 
     /// Fill this fragment from `mem`'s window, stepping rows by the physical row stride.
@@ -97,13 +97,13 @@ impl CmmaData {
         let stride = mem.row_stride_at(row);
         match comptime!(self.ident) {
             MatrixIdent::Accumulator => cmma::load_with_layout(
-                self.fragment.matrix_mut::<T>(),
+                &mut self.fragment.downcast::<T>(),
                 mem.window_slice::<T>(),
                 stride,
                 comptime!(self.layout),
             ),
             _ => cmma::load(
-                self.fragment.matrix_mut::<T>(),
+                &mut self.fragment.downcast::<T>(),
                 mem.window_slice::<T>(),
                 stride,
             ),
@@ -115,7 +115,7 @@ impl CmmaData {
         let stride = mem.row_stride_at(row);
         cmma::store(
             mem.window_slice_mut::<T>(),
-            self.fragment.matrix::<T>(),
+            &self.fragment.downcast::<T>(),
             stride,
             comptime!(self.layout),
         )
@@ -244,7 +244,7 @@ impl CmmaData {
         #[comptime] row: usize,
     ) {
         let stride = mem.row_stride_at(row);
-        let casted: Matrix<Out> = cmma::cast(self.fragment.matrix::<T>());
+        let casted: Matrix<Out> = cmma::cast(&self.fragment.downcast::<T>());
         cmma::store(
             mem.window_slice_mut::<Out>(),
             &casted,
