@@ -61,49 +61,59 @@ pub(crate) fn block_scaled_definition<CD: Numeric>(
     )
 }
 
-/// Whether `src`, packed `e2m1` values under one level of scales, contracts through the device's
-/// block-scaled instruction of `m × n × k`: the instruction offered for `e2m1` operands under
-/// `e4m3` scales, and the scales one every [`E2M1_SCALE_BLOCK`] values of `k`. A source that is
-/// not reads through the decoding landing, which serves every scaled source.
+/// Refuses `src` as an operand of the device's block-scaled instruction of `m × n × k`
+/// ([`MmaOperands::BlockScaled`]) unless it is one: packed `e2m1` values in shared memory under one
+/// level of scales, one every [`E2M1_SCALE_BLOCK`] values of `k`, on a device that offers the
+/// instruction.
 ///
 /// What the instruction takes is NVFP4: the leaf reads each block's scale at its first value and
 /// hands it over as `e4m3`, so the scales must cover sixteen values of `k` or a multiple of
 /// sixteen, each exact in `e4m3`. A per-tensor factor above them is the product's to apply: the
 /// instruction holds one level.
 #[cube]
-pub(crate) fn block_scales_here(
+pub(crate) fn assert_block_scaled(
     src: &Tile,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
-) -> comptime_type!(bool) {
+) {
     let packing = src.packing();
     let shared = src.is_shared();
-    let one_level = src.factor_levels();
-    let e2m1 = comptime!(matches!(
-        packing,
-        Packing::Packed {
-            field: Field::Quant(QuantValue::E2M1) | Field::ConvertedE2M1
-        }
-    ));
-    let blocks = comptime!(k.is_multiple_of(E2M1_SCALE_BLOCK));
+    let levels = src.factor_levels();
     let offered = offers_block_scaled(m, n, k);
-    comptime!(e2m1 && shared && one_level == 1 && blocks && offered)
-}
-
-/// Whether both `lhs` and `rhs` contract through the device's block-scaled instruction of
-/// `m × n × k` ([`block_scales_here`]): the instruction takes both or neither.
-#[cube]
-pub(crate) fn contracts_block_scaled(
-    lhs: &Tile,
-    rhs: &Tile,
-    #[comptime] m: usize,
-    #[comptime] n: usize,
-    #[comptime] k: usize,
-) -> comptime_type!(bool) {
-    let lhs_scaled = block_scales_here(lhs, m, n, k);
-    let rhs_scaled = block_scales_here(rhs, m, n, k);
-    comptime!(lhs_scaled && rhs_scaled)
+    comptime!({
+        let e2m1 = matches!(
+            packing,
+            Packing::Packed {
+                field: Field::Quant(QuantValue::E2M1) | Field::ConvertedE2M1
+            }
+        );
+        let refusal = if !offered {
+            Some(format!(
+                "the device offers no block-scaled instruction of {m}x{n}x{k}"
+            ))
+        } else if !e2m1 {
+            Some(format!(
+                "the operand is stored as {packing:?}, not packed e2m1 values"
+            ))
+        } else if !shared {
+            Some("the operand is not in shared memory; stage it as stored".to_string())
+        } else if levels != 1 {
+            Some(format!(
+                "the operand carries {levels} levels of scales and the instruction reads one; \
+                 take the coarser ones out for the sum (`Tile::factor`)"
+            ))
+        } else if !k.is_multiple_of(E2M1_SCALE_BLOCK) {
+            Some(format!(
+                "a depth of {k} is not whole blocks of {E2M1_SCALE_BLOCK}"
+            ))
+        } else {
+            None
+        };
+        if let Some(refusal) = refusal {
+            panic!("MmaOperands::BlockScaled: {refusal}");
+        }
+    });
 }
 
 /// Whether the device offers the block-scaled instruction of `m × n × k` over `e2m1` operands

@@ -1,18 +1,17 @@
 //! `acc.mma(&a.mul(&sa), &b.mul(&sb))` over `e2m1` values under `e4m3` scales, one every sixteen
-//! values of `k`: NVFP4, contracted through the device's block-scaled instruction where it offers
-//! one, the values and scales handed to it as they lie rather than decoded first.
+//! values of `k`: NVFP4, contracted through the device's block-scaled instruction, the values and
+//! scales handed to it as they lie rather than decoded first.
 //!
-//! The kernel is the plain staged walk a float product takes; nothing in it names the
-//! instruction. Whether the block-scaled path ran is the device's to say, so the test also holds
-//! the device that offers it to the reference on values the decoding path would read the same:
-//! codes and scales that are exact in `f32`.
+//! The kernel is the plain staged walk a float product takes, its instruction stating its operands
+//! block-scaled (`MmaOperands::BlockScaled`). It runs only where the device offers that
+//! instruction, and is held to the reference on codes and scales that are exact in `f32`.
 
 use cubecl::{client::Client, ir::FloatKind, prelude::*, quant::scheme::QuantValue, zspace::Shape};
 use cubecl_common::e2m1;
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Instruction, Level, Levels, Partitioning, Projection, Semiring, Space, StageStorage,
-    Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
+    Axis, Instruction, Level, Levels, MmaOperands, Partitioning, Projection, Semiring, Space,
+    StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
     ops::matmul::MmaIo,
 };
 
@@ -49,7 +48,8 @@ fn block_scaled_matmul<E: Numeric>(
         &a,
         &b,
         comptime!(Instruction::Mma {
-            io: MmaIo::manual()
+            io: MmaIo::manual(),
+            operands: MmaOperands::BlockScaled,
         }),
         Semiring::SUM_PROD,
     );

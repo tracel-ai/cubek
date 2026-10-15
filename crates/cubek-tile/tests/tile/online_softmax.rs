@@ -19,8 +19,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch, Semiring, Space, StageStorage,
-    Stages, Tile, TileArg, TileArgLaunch, TileSpec,
+    Axis, Instruction, Levels, MmaOperands, Partitioning, RegisterBlock, Scratch, Semiring, Space,
+    StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
     ops::{matmul::MmaIo, softmax::OnlineSoftmax},
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
@@ -165,7 +165,8 @@ fn register_plane_attention<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     let instruction = comptime!(Instruction::Mma {
-        io: MmaIo::default()
+        io: MmaIo::default(),
+        operands: MmaOperands::Plain,
     });
     let q = q.tile(&space);
     let k = k.tile(&space).within(S, 0, keys as usize);

@@ -73,7 +73,8 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
             &a,
             &b,
             comptime!(Instruction::Mma {
-                io: MmaIo::manual()
+                io: MmaIo::manual(),
+                operands: MmaOperands::Plain,
             }),
             Semiring::SUM_PROD,
         ),
@@ -85,7 +86,8 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
                     lhs_load_method: LoadMethod::LoadMatrix,
                     rhs_load_method: LoadMethod::LoadMatrix,
                     ..MmaIo::manual()
-                }
+                },
+                operands: MmaOperands::Plain,
             }),
             Semiring::SUM_PROD,
         ),

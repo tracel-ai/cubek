@@ -714,7 +714,10 @@ fn mma_matmul_k_walk<E: Numeric>(
     let acc = c.accumulator::<E>(
         &a,
         &b,
-        comptime!(Instruction::Mma { io }),
+        comptime!(Instruction::Mma {
+            io,
+            operands: MmaOperands::Plain,
+        }),
         Semiring::SUM_PROD,
     );
     let walk = space.over(&level);

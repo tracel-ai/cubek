@@ -27,6 +27,9 @@ pub(crate) struct MmaData {
     pub layout: MatrixLayout,
     #[cube(comptime)]
     pub io: MmaIo,
+    /// What the instruction's operands are, which its leaves read rather than guess.
+    #[cube(comptime)]
+    pub operands: MmaOperands,
 }
 
 /// One role's register array, each role at its own width (`NL`/`NR`/`NA`), at the element the
@@ -58,6 +61,7 @@ impl MmaData {
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
+        #[comptime] operands: MmaOperands,
     ) -> MmaData {
         let depth = instruction_depth::<T>(m, n, k);
         let def = MmaDefinition::<T, T, T>::new(m, n, depth);
@@ -70,6 +74,7 @@ impl MmaData {
             k,
             layout,
             io,
+            operands,
         }
     }
 
@@ -80,6 +85,7 @@ impl MmaData {
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
+        #[comptime] operands: MmaOperands,
     ) -> MmaData {
         // A fragment deeper than its instruction holds each of its instructions' registers.
         let depth = instruction_depth::<T>(m, n, k);
@@ -94,6 +100,7 @@ impl MmaData {
             k,
             layout,
             io,
+            operands,
         }
     }
 
@@ -104,6 +111,7 @@ impl MmaData {
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
+        #[comptime] operands: MmaOperands,
     ) -> MmaData {
         let depth = instruction_depth::<T>(m, n, k);
         let def = MmaDefinition::<T, T, T>::new(m, n, depth);
@@ -117,11 +125,11 @@ impl MmaData {
             k,
             layout,
             io,
+            operands,
         }
     }
 
-    /// Allocate an operand fragment in role `ident`: block-scaled where `block_scaled` says the
-    /// operand contracts through the device's block-scaled instruction ([`block_scales_here`]).
+    /// Allocate an operand fragment in role `ident`, of the form `operands` names.
     pub(crate) fn operand<T: Numeric>(
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
@@ -129,13 +137,19 @@ impl MmaData {
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
-        #[comptime] block_scaled: bool,
+        #[comptime] operands: MmaOperands,
     ) -> MmaData {
-        match comptime!((ident, block_scaled)) {
-            (_, true) => MmaData::block_scaled(ident, m, n, k, layout, io),
-            (MatrixIdent::A, false) => MmaData::lhs::<T>(m, n, k, layout, io),
-            (MatrixIdent::B, false) => MmaData::rhs::<T>(m, n, k, layout, io),
-            (MatrixIdent::Accumulator, false) => {
+        match comptime!((ident, operands)) {
+            (_, MmaOperands::BlockScaled) => {
+                MmaData::block_scaled(ident, m, n, k, layout, io, operands)
+            }
+            (MatrixIdent::A, MmaOperands::Plain) => {
+                MmaData::lhs::<T>(m, n, k, layout, io, operands)
+            }
+            (MatrixIdent::B, MmaOperands::Plain) => {
+                MmaData::rhs::<T>(m, n, k, layout, io, operands)
+            }
+            (MatrixIdent::Accumulator, MmaOperands::Plain) => {
                 panic!("MmaData::operand: an accumulator is not an operand")
             }
         }
@@ -143,7 +157,7 @@ impl MmaData {
 
     /// Allocate a block-scaled operand fragment in role `ident`: `e2m1` values under an `e4m3`
     /// scale every [`E2M1_SCALE_BLOCK`] of them along `k`, the device's block-scaled instruction
-    /// of `m × n × k` ([`block_scales_here`]).
+    /// of `m × n × k` ([`MmaOperands::BlockScaled`]).
     pub(crate) fn block_scaled(
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
@@ -151,6 +165,7 @@ impl MmaData {
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
+        #[comptime] operands: MmaOperands,
     ) -> MmaData {
         let def = block_scaled_definition::<f32>(m, n, k);
         register_block_scaled_sizes(&def, ident);
@@ -174,6 +189,7 @@ impl MmaData {
             k,
             layout,
             io,
+            operands,
         }
     }
 
@@ -442,6 +458,7 @@ impl MmaData {
             comptime!(self.k),
             comptime!(self.layout),
             comptime!(self.io),
+            comptime!(self.operands),
         );
         let registers = cast.acc_registers_mut::<E>();
         #[unroll]

@@ -2144,7 +2144,10 @@ fn conv_mma_kernel<E: Numeric>(
     let acc = out.accumulator::<E>(
         &input,
         &weight,
-        comptime!(Instruction::Mma { io }),
+        comptime!(Instruction::Mma {
+            io,
+            operands: MmaOperands::Plain,
+        }),
         Semiring::SUM_PROD,
     );
     // The walk selects fragments by coordinate, so it is unrolled.

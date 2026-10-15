@@ -60,9 +60,14 @@ impl PlaneTile {
                 k,
                 MatrixLayout::RowMajor,
             )),
-            Instruction::Mma { io } => {
-                PlaneTile::new_Mma(MmaData::acc::<T>(m, n, k, MatrixLayout::RowMajor, io))
-            }
+            Instruction::Mma { io, operands } => PlaneTile::new_Mma(MmaData::acc::<T>(
+                m,
+                n,
+                k,
+                MatrixLayout::RowMajor,
+                io,
+                operands,
+            )),
             Instruction::Registers { config } => PlaneTile::new_Registers(
                 RegisterData::alloc::<T>(m, n, axes, vector_size, fold, config, accumulation),
             ),
@@ -70,8 +75,8 @@ impl PlaneTile {
         }
     }
 
-    /// An uninitialized operand tile in role `ident`, loaded in `layout`, block-scaled where
-    /// `block_scaled` says so. `k` is the operand's own contraction depth, not the instruction's.
+    /// An uninitialized operand tile in role `ident`, loaded in `layout`, of the form `form`
+    /// names. `k` is the operand's own contraction depth, not the instruction's.
     pub(crate) fn operand<T: Numeric>(
         #[comptime] form: Instruction,
         #[comptime] ident: MatrixIdent,
@@ -79,19 +84,12 @@ impl PlaneTile {
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] layout: MatrixLayout,
-        #[comptime] block_scaled: bool,
     ) -> PlaneTile {
         match comptime!(form) {
             Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::alloc::<T>(ident, m, n, k, layout)),
-            Instruction::Mma { io } => PlaneTile::new_Mma(MmaData::operand::<T>(
-                ident,
-                m,
-                n,
-                k,
-                layout,
-                io,
-                block_scaled,
-            )),
+            Instruction::Mma { io, operands } => {
+                PlaneTile::new_Mma(MmaData::operand::<T>(ident, m, n, k, layout, io, operands))
+            }
             Instruction::Registers { .. } => {
                 panic!("PlaneTile::operand: the software form stages no operand plane tile")
             }
@@ -372,7 +370,10 @@ impl PlanePartition {
         let several = comptime!(self.m_tiles * self.n_tiles > 1);
         match self.frags.index(0usize) {
             PlaneTile::Cmma(_) => comptime!(several.then_some(Instruction::Cmma)),
-            PlaneTile::Mma(d) => comptime!(several.then_some(Instruction::Mma { io: d.io })),
+            PlaneTile::Mma(d) => comptime!(several.then_some(Instruction::Mma {
+                io: d.io,
+                operands: d.operands,
+            })),
             PlaneTile::Registers(_) => comptime!(None),
             PlaneTile::Wgmma(_) => {
                 comptime!(assert!(
@@ -664,9 +665,8 @@ impl PlanePartition {
         }
     }
 
-    /// Uninitialized operand fragments for one region under `out`'s contraction, block-scaled
-    /// where `block_scaled` says the region contracts through the device's block-scaled
-    /// instruction ([`block_scales_here`]). `m`/`n` are the accumulator fragment's.
+    /// Uninitialized operand fragments for one region under `out`'s contraction, of the form
+    /// `form` names. `m`/`n` are the accumulator fragment's.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn store<T: Numeric>(
         #[comptime] window: Space,
@@ -677,7 +677,6 @@ impl PlanePartition {
         #[comptime] n: usize,
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
-        #[comptime] block_scaled: bool,
     ) -> Tile {
         let edges = comptime!(MatrixAxes::operand(&window, &out));
         let a0 = comptime!(window.axis_at(edges.row_split));
@@ -733,15 +732,7 @@ impl PlanePartition {
         for _i in 0..t0 {
             #[unroll]
             for _j in 0..t1 {
-                frags.push(PlaneTile::operand::<T>(
-                    form,
-                    ident,
-                    m,
-                    n,
-                    k,
-                    layout,
-                    block_scaled,
-                ));
+                frags.push(PlaneTile::operand::<T>(form, ident, m, n, k, layout));
             }
         }
         Tile {
@@ -803,12 +794,16 @@ impl PlanePartition {
                 .map(|axis| src.place.space.extent(axis))
                 .product::<usize>()
         );
-        let block_scaled = match comptime!(form) {
-            Instruction::Mma { .. } => block_scales_here(src, m, n, k),
-            Instruction::Cmma | Instruction::Registers { .. } | Instruction::Wgmma => {
-                comptime!(false)
+        let block_scaled = comptime!(matches!(
+            form,
+            Instruction::Mma {
+                operands: MmaOperands::BlockScaled,
+                ..
             }
-        };
+        ));
+        if comptime!(block_scaled) {
+            assert_block_scaled(src, m, n, k);
+        }
         let mut frags = PlanePartition::store::<T>(
             comptime!(src.place.space.clone()),
             comptime!(form),
@@ -818,7 +813,6 @@ impl PlanePartition {
             comptime!(n),
             comptime!(src.place.depth),
             comptime!(src.place.levels.clone()),
-            block_scaled,
         );
         let lane_runs = match comptime!(form) {
             Instruction::Mma { .. } => lane_run_steps::<T>(m, n, k),

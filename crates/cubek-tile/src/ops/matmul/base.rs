@@ -142,7 +142,11 @@ impl PlaneTile {
                 // loads ([`lane_runs`](crate::tile::kind::plane::mma::lane_runs)), which says why
                 // where it cannot.
                 let (m, n, k) = comptime!((d.m, d.n, d.k));
-                let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
+                let block_scaled = comptime!(d.operands == MmaOperands::BlockScaled);
+                if comptime!(block_scaled) {
+                    assert_block_scaled(lhs, m, n, k);
+                    assert_block_scaled(rhs, m, n, k);
+                }
                 let steps = lane_run_steps::<EL>(m, n, k);
                 if comptime!(!block_scaled && steps == 1) {
                     lhs.refuse_factor("PlaneTile::Mma");

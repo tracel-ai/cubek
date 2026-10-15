@@ -22,8 +22,8 @@ use cubecl::{client::Client, ir::FloatKind, prelude::*, quant::scheme::QuantValu
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Instruction, Level, Levels, Partitioning, Projection, Semiring, Space, StageStorage,
-    Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
+    Axis, Instruction, Level, Levels, MmaOperands, Partitioning, Projection, Semiring, Space,
+    StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
     ops::matmul::MmaIo,
 };
 
@@ -78,7 +78,8 @@ fn block_scaled_peak<E: Numeric, S: Numeric>(
             &a,
             &b,
             comptime!(Instruction::Mma {
-                io: MmaIo::manual()
+                io: MmaIo::manual(),
+                operands: MmaOperands::BlockScaled,
             }),
             Semiring::SUM_PROD,
         );
@@ -128,7 +129,8 @@ fn float_peak<E: Numeric>(
             &a,
             &b,
             comptime!(Instruction::Mma {
-                io: MmaIo::manual()
+                io: MmaIo::manual(),
+                operands: MmaOperands::Plain,
             }),
             Semiring::SUM_PROD,
         );

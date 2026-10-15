@@ -52,8 +52,15 @@ impl MmaData {
                     // only the right one loads.
                     let (_, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let mut rb =
-                        MmaData::operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, false);
+                    let mut rb = MmaData::operand::<R>(
+                        MatrixIdent::B,
+                        m,
+                        n,
+                        k,
+                        rhs_layout,
+                        io,
+                        MmaOperands::Plain,
+                    );
                     rb.load_window::<R>(rhs);
                     let b = PlaneTile::new_Mma(rb);
                     match (a, &b) {
@@ -83,26 +90,16 @@ impl MmaData {
                     // Read each window in its stored order (`{n, k}` reads transposed).
                     let (lhs_layout, rhs_layout) =
                         comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
-                    let mut la = MmaData::operand::<L>(
-                        MatrixIdent::A,
-                        m,
-                        n,
-                        k,
-                        lhs_layout,
-                        io,
-                        block_scaled,
-                    );
+                    let operands = comptime!(self.operands);
+                    if comptime!(operands == MmaOperands::BlockScaled) {
+                        assert_block_scaled(lhs, m, n, k);
+                        assert_block_scaled(rhs, m, n, k);
+                    }
+                    let mut la =
+                        MmaData::operand::<L>(MatrixIdent::A, m, n, k, lhs_layout, io, operands);
                     la.load_window::<L>(lhs);
-                    let mut rb = MmaData::operand::<R>(
-                        MatrixIdent::B,
-                        m,
-                        n,
-                        k,
-                        rhs_layout,
-                        io,
-                        block_scaled,
-                    );
+                    let mut rb =
+                        MmaData::operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, operands);
                     rb.load_window::<R>(rhs);
                     match (&la.fragment, &rb.fragment) {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => mma_execute::<L, R, A>(

@@ -18,8 +18,8 @@ use cubecl::{
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Instruction, Level, Levels, Partitioning, Projection, Semiring, Space, TileArg,
-    TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    Axis, Instruction, Level, Levels, MmaOperands, Partitioning, Projection, Semiring, Space,
+    TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap, ops::matmul::MmaIo,
 };
 use half::f16;
 
@@ -55,7 +55,8 @@ fn lane_run_matmul<E: Numeric>(
         &a,
         &b,
         comptime!(Instruction::Mma {
-            io: MmaIo::manual()
+            io: MmaIo::manual(),
+            operands: MmaOperands::Plain,
         }),
         Semiring::SUM_PROD,
     );
