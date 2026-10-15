@@ -15,7 +15,7 @@
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout, MmaDefinition},
-    e2m1x2,
+    e2m1x2, e4m3,
     ir::types::Fp8Format,
     prelude::*,
     quant::scheme::QuantValue,
@@ -30,6 +30,9 @@ const SLOTS_PER_UNIT: usize = 4;
 
 /// Adjacent slots one register holds: a pair of 16-bit values.
 const SLOTS_PER_REGISTER: usize = 2;
+
+/// `e4m3` block scales one word of them holds.
+const SCALES_PER_WORD: usize = 4;
 
 /// Units sharing one row of `A` or column of `B`, each holding its own quad of `k`.
 const UNITS_PER_ROW: u32 = 4;
@@ -110,6 +113,10 @@ fn lays_out_lane_runs() -> comptime_type!(bool) {
 /// that [`lays_out_lane_runs`]; its window runs along `k`; and it is plain, or `e2m1` codes under
 /// one level of scales whose product with a code is exact in 16 bits, NVFP4's `e4m3` or a power
 /// of two. A coarser level is the product's to apply to the accumulator.
+///
+/// The level may be the words NVFP4 packs four `e4m3` block scales in, as the block-scaled
+/// instruction reads them, where the fragment is a whole number of words deep: each block's
+/// scale is then its field of the word its window's run reads, every window starting on a word.
 #[cube]
 pub(crate) fn lane_runs_refusal<T: Numeric>(
     src: &Tile,
@@ -135,12 +142,16 @@ pub(crate) fn lane_runs_refusal<T: Numeric>(
             field: Field::Quant(QuantValue::E2M1) | Field::ConvertedE2M1
         }
     ));
-    let exact_scales = comptime!(matches!(
-        stored,
-        Some(Packing::Packed {
-            field: Field::Fp8(Fp8Format::E4M3 | Fp8Format::UE8M0)
-        })
-    ));
+    let words = src.innermost_factor().holds_words();
+    let exact_scales = comptime!(
+        words
+            || matches!(
+                stored,
+                Some(Packing::Packed {
+                    field: Field::Fp8(Fp8Format::E4M3 | Fp8Format::UE8M0)
+                })
+            )
+    );
     comptime!(if k <= depth {
         Some("the fragment is one instruction deep, which keeps the instruction's own order")
     } else if (m, n, depth) != (16, 8, 16) || bytes != 2 || !laid_out {
@@ -155,6 +166,11 @@ pub(crate) fn lane_runs_refusal<T: Numeric>(
         Some(
             "e2m1 codes load in lane runs under one level of e4m3 or power-of-two scales, whose \
              product with a code is exact in 16 bits",
+        )
+    } else if words && !k.is_multiple_of(E2M1_SCALE_BLOCK * SCALES_PER_WORD) {
+        Some(
+            "e2m1 codes load in lane runs under words of e4m3 block scales where the fragment is \
+             a whole number of words deep, so each window starts on a word",
         )
     } else {
         None
@@ -287,7 +303,9 @@ fn load_plain_run<T: Numeric, N: Size>(
 
 /// [`load_lane_runs`] of `e2m1` codes under one level of block scales: the run read as the stored
 /// words it is, each word decoded to eight values and multiplied by its block's scale in `T`,
-/// exact under [`lane_runs_refusal`]'s conditions.
+/// exact under [`lane_runs_refusal`]'s conditions. Scales stored as words of four are read a word
+/// at a time, each block's its field of it: the window starts on a word, so a block's place in
+/// its word is its place along the window's `k`.
 #[cube]
 fn load_e2m1_run<T: Numeric, N: Size>(
     src: &Tile,
@@ -331,6 +349,7 @@ fn load_e2m1_run<T: Numeric, N: Size>(
     let size!(WP) = comptime!(values / E2M1_PER_WORD);
     let words = src.nd_words::<WP>(comptime!(Guard::Checked));
     let factor = src.innermost_factor();
+    let words_of_scales = factor.holds_words();
     #[unroll]
     for half in 0..comptime!(run.halves()) {
         let at = row + comptime!(half as u32) * HALF_ROWS;
@@ -339,7 +358,15 @@ fn load_e2m1_run<T: Numeric, N: Size>(
         for b in 0..comptime!(run.len / E2M1_SCALE_BLOCK) {
             let col = first + comptime!((b * E2M1_SCALE_BLOCK) as u32);
             let coords = TileMatrix::value_coords(at, col, 0usize, &space, axes, 1usize);
-            scales[b] = T::cast_from(factor.at_coords(&coords, comptime!(space.clone())));
+            if comptime!(words_of_scales) {
+                let word = factor.word_at(&coords, comptime!(space.clone()));
+                let field =
+                    (col / comptime!(E2M1_SCALE_BLOCK as u32)) % comptime!(SCALES_PER_WORD as u32);
+                let fields = Vector::<e4m3, Const<4>>::reinterpret(word);
+                scales[b] = T::cast_from(fields.extract_dynamic(field as usize));
+            } else {
+                scales[b] = T::cast_from(factor.at_coords(&coords, comptime!(space.clone())));
+            }
         }
         #[unroll]
         for l in 0..comptime!(run.len / values) {

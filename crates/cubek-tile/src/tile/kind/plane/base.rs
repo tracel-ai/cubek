@@ -804,7 +804,7 @@ impl PlanePartition {
                 .product::<usize>()
         );
         let block_scaled = match comptime!(form) {
-            Instruction::Mma { .. } => block_scales_here(src, m, n, k),
+            Instruction::Mma { .. } => block_scales_here::<T>(src, m, n, k),
             Instruction::Cmma | Instruction::Registers { .. } | Instruction::Wgmma => {
                 comptime!(false)
             }
