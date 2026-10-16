@@ -973,6 +973,21 @@ impl PlanePartition {
         sums
     }
 
+    /// `values`, a slot for every row a unit holds cells of, written at the rows of `window`, one
+    /// cell a row, each row by one unit ([`MmaData::store_along`]).
+    pub(crate) fn store_along<E: Float>(&self, values: &Array<E>, window: &mut Memory) {
+        let rows = self.at(0usize, 0usize).rows_per_unit::<E>();
+        #[unroll]
+        for mi in 0..self.m_tiles {
+            self.at(mi, 0usize).manual_fragment().store_along::<E>(
+                values,
+                window,
+                comptime!(mi * rows),
+                comptime!(mi * self.rows),
+            );
+        }
+    }
+
     /// `self[r, c] = exp(self[r, c] − slices[r])` over every fragment.
     pub(crate) fn exp_minus_along<E: Float>(&self, slices: &Array<E>) {
         let rows = self.at(0usize, 0usize).rows_per_unit::<E>();

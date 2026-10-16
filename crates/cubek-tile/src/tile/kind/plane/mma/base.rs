@@ -357,6 +357,36 @@ impl MmaData {
         }
     }
 
+    /// `values[first + r]` written at cell `origin + r` of `window` for every row `r` this unit
+    /// holds cells of, by the one unit holding the row's first column: each of the fragment's
+    /// rows written once.
+    pub(crate) fn store_along<E: Float>(
+        &self,
+        values: &Array<E>,
+        window: &mut Memory,
+        #[comptime] first: usize,
+        #[comptime] origin: usize,
+    ) {
+        let def = MmaDefinition::<E, E, E>::new(self.m, self.n, self.k);
+        let vector_size = def.vector_size(MatrixIdent::Accumulator);
+        let size!(W) = 1usize;
+        let mut view = window.flat_mut::<E, W>();
+        #[unroll]
+        for i in 0..self.rows_per_unit::<E>() {
+            let (row, column) = def.position_of_nth(
+                UNIT_POS_PLANE,
+                comptime!((i * vector_size) as u32),
+                MatrixIdent::Accumulator,
+            );
+            if column == 0 {
+                view.write(
+                    comptime!(origin) + row as usize,
+                    Vector::cast_from(values[first + i]),
+                );
+            }
+        }
+    }
+
     /// `self[r, :] *= factors[first + r]` for every row `r` this unit holds cells of.
     pub(crate) fn mul_along<E: Numeric>(&mut self, factors: &Array<E>, #[comptime] first: usize) {
         let acc = self.acc_registers_mut::<E>();

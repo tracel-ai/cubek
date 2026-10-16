@@ -182,6 +182,47 @@ impl AxisSlices {
         }
     }
 
+    /// `values`, the slots a unit of a manual-mma grid keeps for the rows it holds cells of
+    /// ([`Tile::slices_per_unit`]), written into `window`, a plane's window of one cell a slice in
+    /// slice order: each slice written once, by a unit holding it. The caller meets the plane
+    /// before the window is read.
+    pub(crate) fn store_held<E: Float>(&self, values: &Array<E>, window: &mut Tile) {
+        comptime!(assert!(
+            window.place.holder() == ComputeScope::Plane
+                && window.place.space.cells() == self.space.slices_along(self.axis),
+            "AxisSlices::store_held: a plane's window of one cell for each of the {} slices of \
+             {:?}, not {:?} held by {:?}",
+            self.space.slices_along(self.axis),
+            self.space,
+            window.place.space,
+            window.place.holder()
+        ));
+        match &mut window.kind {
+            TileKind::Memory(memory) => self.store_held_in::<E>(values, memory),
+            TileKind::PlanePartition(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => panic!(
+                "AxisSlices::store_held: the slices' state lands in a window of shared memory"
+            ),
+        }
+    }
+
+    /// [`store_held`](Self::store_held) into the window's memory.
+    fn store_held_in<E: Float>(&self, values: &Array<E>, memory: &mut Memory) {
+        match &self.kind {
+            AxisSlicesKind::Fragments(partition) => partition.store_along::<E>(values, memory),
+            AxisSlicesKind::Fragment(tile) => tile
+                .manual_fragment()
+                .store_along::<E>(values, memory, 0usize, 0usize),
+            AxisSlicesKind::Registers(_) | AxisSlicesKind::Window(_) => panic!(
+                "AxisSlices::store_held: a unit's block and a plane's window keep every slice's \
+                 slot alike; only a manual-mma grid's units keep their own rows"
+            ),
+        }
+    }
+
     /// `exp(value − slice)`, zero where `slice` is itself masked: a slice with nothing live yet,
     /// whose max is still the minimum value.
     pub(crate) fn exp_minus_cell<E: Float>(value: E, slice: E) -> E {

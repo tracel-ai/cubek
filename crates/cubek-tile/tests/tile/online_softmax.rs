@@ -156,12 +156,16 @@ fn register_plane_attention<E: Float>(
     k: &TileArg<'_>,
     v: &TileArg<'_>,
     out: &TileArg<'_>,
+    max: &mut Tensor<f32>,
+    sum: &mut Tensor<f32>,
     keys: u32,
     queries: u32,
     scale: f32,
     space: Partitioning,
     #[comptime] causal: bool,
     #[comptime] block_keys: usize,
+    #[comptime] plane_rows: usize,
+    #[comptime] ending: Ending,
     #[define(E)] _dtype: ElemType,
 ) {
     let instruction = comptime!(Instruction::Mma {
@@ -219,7 +223,31 @@ fn register_plane_attention<E: Float>(
                     }
                 });
             });
-            acc.along(V).mul(&softmax.recip_l());
+            match comptime!(ending) {
+                Ending::Normalized => acc.along(V).mul(&softmax.recip_l()),
+                Ending::Undivided => {
+                    // Each unit holds its own rows' state: written out row by row, then read by
+                    // any unit.
+                    let rows_walk = plane.walk().range(0, blocks);
+                    let mut max_w =
+                        Tile::scratch::<f32>(&rows_walk, comptime!(vec![Q]), StageStorage::Strided);
+                    let mut sum_w =
+                        Tile::scratch::<f32>(&rows_walk, comptime!(vec![Q]), StageStorage::Strided);
+                    softmax.store_rows(&logits, &mut max_w, &mut sum_w);
+                    sync_plane();
+                    let (max_r, sum_r) =
+                        (max_w.flat::<f32, Const<1>>(), sum_w.flat::<f32, Const<1>>());
+                    let first = plane.origin(Q);
+                    let mut r = UNIT_POS_PLANE as usize;
+                    while r < plane_rows {
+                        if first + r < queries as usize {
+                            max[first + r] = max_r.read(r).extract(0usize);
+                            sum[first + r] = sum_r.read(r).extract(0usize);
+                        }
+                        r += PLANE_DIM as usize;
+                    }
+                }
+            }
             out_cube.drain(&acc, &plane);
         }
         out_cube.write();
@@ -242,7 +270,7 @@ fn unit_attention(
     #[comptime] causal: bool,
     #[comptime] block_keys: usize,
     #[comptime] rows: usize,
-    #[comptime] ending: UnitEnding,
+    #[comptime] ending: Ending,
 ) {
     let q = q.tile(&space);
     let k = k.tile(&space).within(S, 0, keys as usize);
@@ -297,8 +325,8 @@ fn unit_attention(
                 acc.mma(&score, &v_s);
             }
             match comptime!(ending) {
-                UnitEnding::Normalized => acc.along(V).mul(&softmax.recip_l()),
-                UnitEnding::Undivided => {
+                Ending::Normalized => acc.along(V).mul(&softmax.recip_l()),
+                Ending::Undivided => {
                     let state = softmax.state();
                     let first = unit.origin(Q);
                     #[unroll]
@@ -551,7 +579,7 @@ fn run<E: Float + CubeElement>(case: Case) {
 /// A case through [`register_plane_attention`]: the leaf one `16 × 8` instruction along the
 /// queries and keys, `16` deep along the head and `8` wide along the values, so the score
 /// contracts `m16n8k16` and the value `m16n8k8`.
-fn run_registers<E: Float + CubeElement>(case: Case) {
+fn run_registers<E: Float + CubeElement>(case: Case, ending: Ending) {
     let client: Client = cubecl::test_device().client();
     let e_ty = E::elem_type_native();
     let f32_ty = f32::elem_type_native();
@@ -609,6 +637,13 @@ fn run_registers<E: Float + CubeElement>(case: Case) {
         .dtype(f32_ty)
         .zeros()
         .generate_without_host_data();
+    let state = || {
+        TestInput::builder(client.clone(), Shape::new([queries]))
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data()
+    };
+    let (max_handle, sum_handle) = (state(), state());
     let scale = 1. / (head as f32).sqrt();
     register_plane_attention::launch(
         &client,
@@ -638,18 +673,33 @@ fn run_registers<E: Float + CubeElement>(case: Case) {
             1,
             TileSpec::direct(&[Q, V]),
         ),
+        max_handle.clone().binding().into_tensor_arg(),
+        sum_handle.clone().binding().into_tensor_arg(),
         attended as u32,
         queries as u32,
         scale,
         launcher.partitioning_arg(),
         causal,
         n * block,
+        m * rows,
+        ending,
         e_ty,
     );
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    check(
-        &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, false,
-    );
+    match ending {
+        Ending::Normalized => check(
+            &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, false,
+        ),
+        Ending::Undivided => {
+            let max = HostData::from_tensor_handle(&client, max_handle, HostDataType::F32);
+            let sum = HostData::from_tensor_handle(&client, sum_handle, HostDataType::F32);
+            // f16 operands and probabilities: a few ulps of each through two contractions.
+            check_undivided(
+                &out, &max, &sum, &q_data, &k_data, &v_data, queries, keys, attended, head, value,
+                causal, false, 2e-2,
+            );
+        }
+    }
 }
 
 /// A case whose keys `cubes` cubes split, each walking its run of blocks with one plane.
@@ -898,9 +948,10 @@ fn check(
     }
 }
 
-/// An undivided ending against the host's rows ([`reference_row`]), the keys stored
-/// transposed: each row's `max` and `sum` as the state held them, and its `out` the normalized
-/// output times that sum. A row that saw no key holds a zero sum and a zero output.
+/// An undivided ending against the host's rows ([`reference_row`]): each row's `max` and `sum` as
+/// the state held them, and its `out` the normalized output times that sum, each within
+/// `tolerance` of it relative to one plus its size. A row that saw no key holds a zero sum and a
+/// zero output.
 #[allow(clippy::too_many_arguments)]
 fn check_undivided(
     out: &HostData,
@@ -915,13 +966,24 @@ fn check_undivided(
     head: usize,
     value: usize,
     causal: bool,
+    transposed_keys: bool,
+    tolerance: f64,
 ) {
-    // f32 operands summed in f32: a few ulps through one contraction and the exponentials.
     let close =
-        |actual: f64, expected: f64| (actual - expected).abs() <= 1e-4 * (1. + expected.abs());
+        |actual: f64, expected: f64| (actual - expected).abs() <= tolerance * (1. + expected.abs());
     for i in 0..queries {
         let (row_max, row_sum, row) = reference_row(
-            i, q_data, k_data, v_data, queries, keys, attended, head, value, causal, true,
+            i,
+            q_data,
+            k_data,
+            v_data,
+            queries,
+            keys,
+            attended,
+            head,
+            value,
+            causal,
+            transposed_keys,
         );
         let (held_max, held_sum) = (max.get_f32(&[i]) as f64, sum.get_f32(&[i]) as f64);
         assert!(
@@ -944,10 +1006,10 @@ fn check_undivided(
     }
 }
 
-/// How a unit leaves its rows: normalized, or undivided beside the softmax state it read, which
-/// the host divides by.
+/// How a holder leaves its rows: normalized, or undivided beside the softmax state it read,
+/// which the host divides by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum UnitEnding {
+enum Ending {
     Normalized,
     Undivided,
 }
@@ -965,7 +1027,7 @@ struct UnitCase {
     units: usize,
     block: usize,
     causal: bool,
-    ending: UnitEnding,
+    ending: Ending,
 }
 
 fn run_units<E: Float + CubeElement>(case: UnitCase) {
@@ -1052,15 +1114,17 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
     );
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
     match ending {
-        UnitEnding::Normalized => check(
+        Ending::Normalized => check(
             &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, true,
         ),
-        UnitEnding::Undivided => {
+        Ending::Undivided => {
             let max = HostData::from_tensor_handle(&client, max_handle, HostDataType::F32);
             let sum = HostData::from_tensor_handle(&client, sum_handle, HostDataType::F32);
+            // f32 operands summed in f32: a few ulps through one contraction and the
+            // exponentials. The keys are stored transposed.
             check_undivided(
                 &out, &max, &sum, &q_data, &k_data, &v_data, queries, keys, attended, head, value,
-                causal,
+                causal, true, 1e-4,
             );
         }
     }
@@ -1128,24 +1192,45 @@ const REGISTER_PREFILL: Case = Case {
 
 #[test]
 fn register_plane_attention_matches_the_reference() {
-    run_registers::<half::f16>(REGISTER_PREFILL);
+    run_registers::<half::f16>(REGISTER_PREFILL, Ending::Normalized);
 }
 
 #[test]
 fn register_plane_attention_reads_nothing_past_the_attended_keys() {
-    run_registers::<half::f16>(Case {
-        attended: 90,
-        ..REGISTER_PREFILL
-    });
+    run_registers::<half::f16>(
+        Case {
+            attended: 90,
+            ..REGISTER_PREFILL
+        },
+        Ending::Normalized,
+    );
 }
 
 #[test]
 fn register_plane_attention_masks_causally_from_the_bottom_right() {
-    run_registers::<half::f16>(Case {
-        attended: 100,
-        causal: true,
-        ..REGISTER_PREFILL
-    });
+    run_registers::<half::f16>(
+        Case {
+            attended: 100,
+            causal: true,
+            ..REGISTER_PREFILL
+        },
+        Ending::Normalized,
+    );
+}
+
+/// Each unit holding only its own rows' state, written out row by row
+/// ([`OnlineSoftmax::store_rows`]) beside the undivided sum: past the attended keys and causally,
+/// so a masked cell weighs nothing in either.
+#[test]
+fn register_plane_attention_hands_its_undivided_state_by_rows() {
+    run_registers::<half::f16>(
+        Case {
+            attended: 100,
+            causal: true,
+            ..REGISTER_PREFILL
+        },
+        Ending::Undivided,
+    );
 }
 
 /// Planes splitting the keys of the same queries: two, then four, each walking a share.
@@ -1230,7 +1315,7 @@ const UNIT: UnitCase = UnitCase {
     units: 4,
     block: 4,
     causal: false,
-    ending: UnitEnding::Normalized,
+    ending: Ending::Normalized,
 };
 
 #[test]
@@ -1267,7 +1352,7 @@ fn unit_attention_hands_its_undivided_state() {
     run_units::<f32>(UnitCase {
         attended: 30,
         causal: true,
-        ending: UnitEnding::Undivided,
+        ending: Ending::Undivided,
         ..UNIT
     });
 }
