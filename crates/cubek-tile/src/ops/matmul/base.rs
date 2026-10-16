@@ -145,8 +145,13 @@ impl PlaneTile {
                 // says why where it cannot.
                 let (m, n, k) = comptime!((d.m, d.n, d.k));
                 let block_scaled = comptime!(d.operands == MmaOperands::BlockScaled);
-                if comptime!(block_scaled) {
+                // An operand already in fragments was held to the instruction as it loaded
+                // (`PlanePartition::operand`), and a fragment no longer states its storage.
+                let (lhs_in_memory, rhs_in_memory) = (lhs.is_memory(), rhs.is_memory());
+                if comptime!(block_scaled && lhs_in_memory) {
                     assert_block_scaled::<EL>(lhs, m, n, k);
+                }
+                if comptime!(block_scaled && rhs_in_memory) {
                     assert_block_scaled::<ER>(rhs, m, n, k);
                 }
                 let steps = lane_run_steps::<EL>(m, n, k);
