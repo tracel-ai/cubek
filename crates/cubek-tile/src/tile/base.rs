@@ -18,7 +18,8 @@ pub struct Tile {
     /// Where this tile sits in its partitioning.
     #[cube(comptime)]
     pub(crate) place: Placement,
-    /// The element its values are served at ([`Served`]).
+    /// The element it holds: its values', or the `u32` words a packed tile stores its fields in
+    /// ([`read_element`](Tile::read_element) is what a reader takes them at).
     #[cube(comptime)]
     pub(crate) element: ElemType,
 }
@@ -229,6 +230,28 @@ impl Tile {
         comptime!(match decodes {
             true => StageElement::Decoded,
             false => staged,
+        })
+    }
+
+    /// The element a reader takes these values at where it names none: what the tile holds, or
+    /// `f32` for the fields a packed tile decodes ([`dequantized`](Tile::dequantized) names
+    /// another).
+    pub(crate) fn read_element(&self) -> comptime_type!(ElemType) {
+        let packing = self.packing();
+        comptime!(match packing {
+            Packing::Plain => self.element,
+            Packing::Packed { .. } => f32::elem_type_native(),
+        })
+    }
+
+    /// The element a stage of this tile holds: the values its fill decodes, at
+    /// [`read_element`](Tile::read_element), or what the tile holds.
+    pub(crate) fn staged_element(&self) -> comptime_type!(ElemType) {
+        let staged = self.stage_element();
+        let read = self.read_element();
+        comptime!(match staged {
+            StageElement::Decoded => read,
+            StageElement::Served | StageElement::Stored => self.element,
         })
     }
 
@@ -644,8 +667,8 @@ impl Tile {
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile {
-        let define!(Served) = self.element;
-        Memory::stage::<Served>(
+        let define!(Staged) = self.staged_element();
+        Memory::stage::<Staged>(
             self,
             level,
             storage,
@@ -774,7 +797,7 @@ impl Tile {
                      fragments, contract them: the fragment lands them"
                 ));
                 let define!(Served) = self.element;
-                let define!(Source) = src.element;
+                let define!(Source) = src.read_element();
                 self.copy_scaled_from::<Served, Source>(src);
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {

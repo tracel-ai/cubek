@@ -17,7 +17,7 @@ impl Tile {
     /// `c = fold(c, input)`: fold `input` into what `self` holds, which must be seeded.
     pub fn reduce_axis_accumulate(&mut self, input: &Tile, #[comptime] monoid: Monoid) {
         let define!(Served) = self.element;
-        let define!(Source) = input.element;
+        let define!(Source) = input.read_element();
         reduce_leaf::<Served, Source>(self, input, monoid)
     }
 }

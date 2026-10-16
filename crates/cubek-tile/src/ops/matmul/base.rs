@@ -84,12 +84,39 @@ impl Tile {
         }
     }
 
-    /// `c += a · b`, folding onto what the accumulator or memory window holds.
+    /// `c += a · b`, folding onto what the accumulator or memory window holds. A packed factor is
+    /// decoded at its [`read_element`](Tile::read_element), but where the instruction reads its
+    /// codes as stored.
     pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
+        let stored = self.reads_codes_as_stored();
+        let (lhs_read, rhs_read) = (lhs.read_element(), rhs.read_element());
         let define!(Served) = self.element;
-        let define!(Lhs) = lhs.element;
-        let define!(Rhs) = rhs.element;
+        let define!(Lhs) = comptime!(if stored { lhs.element } else { lhs_read });
+        let define!(Rhs) = comptime!(if stored { rhs.element } else { rhs_read });
         Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
+    }
+
+    /// Whether this accumulator contracts through the block-scaled instruction, which reads its
+    /// factors' packed codes as they are stored.
+    fn reads_codes_as_stored(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    comptime!(false)
+                }
+            },
+            TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {
+                PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    comptime!(false)
+                }
+            },
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
     }
 
     /// This plane-resident accumulator back at its semiring's identity, as it was opened.

@@ -19,12 +19,13 @@ use crate::tile::packing::base::Packing;
 use crate::*;
 
 /// An operand as a single launch argument: its values, a buffer or a TMA tensor map, its comptime
-/// [`TileSpec`], the element it serves them at, and the scales they are read under.
+/// [`TileSpec`], the element its buffer holds, and the scales they are read under.
 ///
 /// The element is data the argument carries, stated where the operand is bound
-/// ([`TileArgLaunch::new`]), not a type of the kernel's: a tile reads the values at it. A buffer is
-/// declared at what it holds: the element where the spec states no packing, the `u32` words it
-/// packs them in where it does, `width` of them a line.
+/// ([`TileArgLaunch::new`]), not a type of the kernel's: what the buffer holds, `width` of them a
+/// line. A packed buffer holds `u32` words, its spec's packing naming the fields in them; a reader
+/// decodes them into the element it asks for ([`Tile::dequantized`]), or `f32` where it asks for
+/// none.
 ///
 /// Scales are levels innermost first, so each covers more than the one inside it: NVFP4's values
 /// carry their block scales, which carry the per-tensor scale. A level served at `u32` is words of
@@ -32,7 +33,7 @@ use crate::*;
 /// numbers.
 pub struct TileArg<'a> {
     pub spec: TileSpec,
-    /// The element the values are served at.
+    /// The element the buffer holds.
     pub element: ElemType,
     _values: PhantomData<&'a ()>,
 }
@@ -68,7 +69,7 @@ impl TileArg<'_> {
         unexpanded!()
     }
 
-    /// The buffer as lines of `V` of `E`, which must be the element it serves and the width it is
+    /// The buffer as lines of `V` of `E`, which must be the element it holds and the width it is
     /// bound at: what a write that adds into a line reads and writes it as. A launch that bound
     /// the buffer at another element is refused as the kernel expands.
     pub fn lines<E: Numeric, V: Size>(&self) -> &Tensor<Vector<E, V>> {
@@ -149,7 +150,7 @@ fn tensor_map_tile<E: Numeric>(
 pub struct TileArgExpand<'a> {
     values: ValuesExpand<'a>,
     pub spec: TileSpec,
-    /// The element the values are served at.
+    /// The element the buffer holds.
     pub element: ElemType,
     /// The scales the values are read under: none, or a coarser operand carrying its own.
     scale: Option<Box<TileArgExpand<'static>>>,
@@ -301,9 +302,10 @@ impl<'a> TileArgExpand<'a> {
         let Some(level) = &self.scale else {
             return values;
         };
+        let words =
+            level.element == u32::elem_type_native() && level.spec.packing == Packing::Plain;
         assert!(
-            level.element == u32::elem_type_native()
-                || !matches!(self.values, ValuesExpand::TensorMap { .. }),
+            words || !matches!(self.values, ValuesExpand::TensorMap { .. }),
             "TileArg: a tensor map lands its values as they lie, so it rides only scales a stage \
              keeps beside them: words of block scales"
         );
@@ -311,7 +313,7 @@ impl<'a> TileArgExpand<'a> {
     }
 }
 
-/// The host side of a [`TileArg`]: its values, its spec, the element it serves them at and its
+/// The host side of a [`TileArg`]: its values, its spec, the element its buffer holds and its
 /// scales.
 pub struct TileArgLaunch {
     values: ValuesLaunch,
@@ -334,19 +336,19 @@ enum ValuesLaunch {
 }
 
 impl TileArgLaunch {
-    /// `tensor`, served at `element`, bound `width` wide, as `spec` reads it, under no scales.
+    /// `tensor`, holding `element`, bound `width` wide, as `spec` reads it, under no scales.
     pub fn new(tensor: TensorArg, element: ElemType, width: usize, spec: TileSpec) -> Self {
         Self::of(ValuesLaunch::Tensor { tensor, width }, element, spec)
     }
 
-    /// A tensor map landing through `layout`, served at `element`, as `spec` reads it, under no
-    /// scales.
+    /// A tensor map landing through `layout`, holding the element its descriptor moves, as `spec`
+    /// reads it, under no scales.
     pub(crate) fn of_tensor_map(
         map: TensorMapArg<Tiled>,
         layout: VirtualViewLayoutLaunch<CoordsDyn, Sequence<i32>, TensorMapArg<Tiled>>,
-        element: ElemType,
         spec: TileSpec,
     ) -> Self {
+        let element = map.metadata.elem_ty;
         let map = Box::new(map);
         Self::of(ValuesLaunch::TensorMap { map, layout }, element, spec)
     }
@@ -390,15 +392,6 @@ enum ValuesCompilationArg {
     TensorMap(VirtualViewLayoutCompilationArg<CoordsDyn, Sequence<i32>>),
 }
 
-/// What a buffer serving `element` holds: the element, or the `u32` words a packed binding packs
-/// it in.
-fn stored(element: ElemType, spec: &TileSpec) -> ElemType {
-    match spec.packing {
-        Packing::Plain => element,
-        Packing::Packed { .. } => u32::elem_type_native(),
-    }
-}
-
 impl<'a> CubeType for TileArg<'a> {
     type ExpandType = TileArgExpand<'a>;
 }
@@ -416,7 +409,7 @@ impl LaunchArg for TileArg<'static> {
         } = arg;
         let values = match values {
             ValuesLaunch::Tensor { tensor, width } => {
-                let line_size = stored(element, &spec).size() * width;
+                let line_size = element.size() * width;
                 let meta = TensorMetaLaunch::new(tensor.size() / width, tensor.shape().len());
                 let buffer = match &tensor {
                     TensorArg::Handle { .. } => BufferCompilationArg { inplace: None },
@@ -453,7 +446,7 @@ impl LaunchArg for TileArg<'static> {
                     Some(id) => builder.inplace(id),
                     None => {
                         let scope = &builder.scope;
-                        let held = stored(arg.element, &arg.spec).to_type(scope.ctx());
+                        let held = arg.element.to_type(scope.ctx());
                         let line = match *width {
                             1 => held,
                             width => VectorType::get(scope.ctx(), held, width).into(),

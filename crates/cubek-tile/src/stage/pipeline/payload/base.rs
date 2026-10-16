@@ -57,15 +57,15 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
 /// out of it takes a window for every plane the levels lay out.
 #[cube]
 pub(crate) fn stage_one(operand: &Tile, #[comptime] spec: StageSpec) -> Tile {
-    let define!(Served) = operand.element;
-    let stage = Memory::stage::<Served>(
+    let define!(Staged) = operand.staged_element();
+    let stage = Memory::stage::<Staged>(
         operand,
         comptime!(spec.level.clone()),
         comptime!(spec.storage.clone()),
         comptime!(spec.width),
         comptime!(spec.owner),
     );
-    let stage = Tile::new::<Served>(
+    let stage = Tile::new::<Staged>(
         stage.kind,
         comptime!(Placement::new(
             stage.place.space.clone(),
