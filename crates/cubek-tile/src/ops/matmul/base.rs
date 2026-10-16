@@ -41,6 +41,15 @@ impl Tile {
         }
     }
 
+    /// `operand` dequantized at `element` into its plane's landing, as this accumulator contracts
+    /// it: the plane-level dequantize, called where the kernel wants it instead of left to the
+    /// leaf.
+    pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
+        let side = comptime!(Side::of(&operand.place.space, &self.place.space));
+        let define!(Target) = element;
+        operand.landed::<Target>(side, comptime!(self.place.space.clone()))
+    }
+
     /// `c += a · b`, folding onto what the accumulator or memory window holds.
     pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
         let define!(Served) = self.element;

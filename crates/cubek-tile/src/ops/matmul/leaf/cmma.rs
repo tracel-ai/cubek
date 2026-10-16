@@ -133,8 +133,21 @@ impl Tile {
             // The landing is this region's until every unit's load has read it.
             sync_plane();
         } else {
+            // A row is every axis past the last one on the other side of the output, which a
+            // window of several axes a side holds as one run: its stride is that axis's.
+            let row = comptime!({
+                let space = &self.place.space;
+                let rank = space.rank();
+                let innermost = read.out.contains(space.axis_at(rank - 1));
+                (0..rank)
+                    .rev()
+                    .find(|&p| read.out.contains(space.axis_at(p)) != innermost)
+                    .unwrap_or(rank - 2)
+            });
             match &self.kind {
-                TileKind::Memory(m) => cmma::load(frag, m.window_slice::<E>(), m.row_stride()),
+                TileKind::Memory(m) => {
+                    cmma::load(frag, m.window_slice::<E>(), m.row_stride_at(row))
+                }
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
