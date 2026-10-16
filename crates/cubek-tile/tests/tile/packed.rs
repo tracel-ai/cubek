@@ -415,6 +415,33 @@ fn packed_cmma_rhs<E: Numeric>(
     acc.drained_into(&c);
 }
 
+/// [`packed_cmma_rhs`] with the weight bound at what its fields are and dequantized at `element`
+/// by the kernel, before it contracts.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn packed_cmma_rhs_dequantized<E: Numeric>(
+    x: &TileArg<'_>,
+    w: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[comptime] element: ElemType,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(&space);
+    let w = w.tile(&space).mul(&scale.tile(&space));
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&x, &w, Instruction::Cmma, Semiring::SUM_PROD);
+    for region in space.over(&level).unrolled() {
+        let mut acc_r = acc.at(&region);
+        let w_r = acc_r.dequantized(&w.at(&region), element);
+        acc_r.mma(&x.at(&region), &w_r);
+        sync_plane();
+    }
+    acc.drained_into(&c);
+}
+
 /// Four 8-bit values per word.
 #[test]
 fn eight_bit_fields_unpack_on_read() {
@@ -2765,7 +2792,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         launcher.cube_count(),
         launcher.cube_dim(),
         TileArgLaunch::new(
-            x_tensor.binding().into_tensor_arg(),
+            x_tensor.clone().binding().into_tensor_arg(),
             dtype,
             1,
             TileSpec::new(Projection::new(
@@ -2777,7 +2804,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
             )),
         ),
         TileArgLaunch::new(
-            w_tensor.binding().into_tensor_arg(),
+            w_tensor.clone().binding().into_tensor_arg(),
             dtype,
             1,
             TileSpec::new(Projection::new(
@@ -2790,7 +2817,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
             .packed(field),
         ),
         TileArgLaunch::new(
-            s_tensor.binding().into_tensor_arg(),
+            s_tensor.clone().binding().into_tensor_arg(),
             dtype,
             1,
             TileSpec::new(Projection::new(
@@ -2828,6 +2855,77 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
             assert!(
                 (have - want).abs() < 1e-3,
                 "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+
+    let dequantized = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    packed_cmma_rhs_dequantized::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            x_tensor.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            w_tensor.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
+            TileSpec::new(Projection::new(
+                &[KB, KI, NB, NI],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            s_tensor.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
+            TileSpec::new(Projection::new(
+                &[KB, KI, NB],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
+            ))
+            .packed(FloatKind::F16),
+        ),
+        TileArgLaunch::new(
+            dequantized.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            )),
+        ),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        dtype,
+        dtype,
+    );
+    let twin = HostData::from_tensor_handle(&client, dequantized, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            assert_eq!(
+                twin.get_f32(&[m, n]),
+                got.get_f32(&[m, n]),
+                "at ({m}, {n}): the explicit dequantize differs from the leaf's"
             );
         }
     }
