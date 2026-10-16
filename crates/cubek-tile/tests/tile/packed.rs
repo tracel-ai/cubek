@@ -437,7 +437,6 @@ fn packed_cmma_rhs_dequantized<E: Numeric>(
         let mut acc_r = acc.at(&region);
         let w_r = acc_r.dequantized(&w.at(&region), element);
         acc_r.mma(&x.at(&region), &w_r);
-        sync_plane();
     }
     acc.drained_into(&c);
 }

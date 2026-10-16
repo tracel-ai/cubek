@@ -1,9 +1,10 @@
 //! `c.mm(a, b)` and `c.mma(a, b)` at a final tile, each descending to its leaf through
 //! [`Descent::contract`].
 
-use cubecl::cmma::MatrixLayout;
+use cubecl::cmma::{MatrixIdent, MatrixLayout};
 use cubecl::prelude::*;
 
+use crate::ops::matmul::leaf::FragmentRead;
 use crate::*;
 
 #[cube]
@@ -41,13 +42,46 @@ impl Tile {
         }
     }
 
-    /// `operand` dequantized at `element` into its plane's landing, as this accumulator contracts
-    /// it: the plane-level dequantize, called where the kernel wants it instead of left to the
-    /// leaf.
+    /// `operand` dequantized at `element` into the fragments this accumulator contracts it in:
+    /// the plane-level dequantize, called where the kernel wants it instead of left to the leaf,
+    /// which loads it as the leaf would, through a landing or in lane runs.
     pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
-        let side = comptime!(Side::of(&operand.place.space, &self.place.space));
+        let grid = match &self.kind {
+            TileKind::PlanePartition(partition) => partition.grid(),
+            TileKind::PlaneTile(_) => comptime!(None),
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!("Tile::dequantized: an operand is dequantized for the fragments it meets")
+            }
+        };
         let define!(Target) = element;
-        operand.landed::<Target>(side, comptime!(self.place.space.clone()))
+        match comptime!(grid) {
+            Some(instruction) => PlanePartition::operand::<Target>(operand, self, instruction),
+            // One fragment loads its operand as its leaf would: the fragment the leaf builds.
+            None => {
+                let own = comptime!(operand.place.space.clone());
+                let side = comptime!(Side::of(&own, &self.place.space));
+                let read = comptime!(FragmentRead::new(side, &own, &self.place.space));
+                let ident = comptime!(match side {
+                    Side::Lhs => MatrixIdent::A,
+                    Side::Rhs => MatrixIdent::B,
+                });
+                let fragment = operand.cmma_fragment::<Target>(ident, comptime!(read.clone()));
+                let data = CmmaData {
+                    fragment: unsafe { fragment.downcast_unchecked::<Held>() },
+                    ident,
+                    layout: comptime!(read.layout),
+                    shape: comptime!((read.m, read.n)),
+                    scratch: ComptimeOption::new_None(),
+                };
+                Tile::new::<Target>(
+                    TileKind::new_PlaneTile(PlaneTile::new_Cmma(data)),
+                    comptime!(operand.place.clone()),
+                )
+            }
+        }
     }
 
     /// `c += a · b`, folding onto what the accumulator or memory window holds.

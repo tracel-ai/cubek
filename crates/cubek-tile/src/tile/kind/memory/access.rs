@@ -364,13 +364,8 @@ impl Memory {
         self.window_start.cast::<usize>()
     }
 
-    /// Scalar stride between matrix rows.
-    pub(crate) fn row_stride(&self) -> u32 {
-        let rank = comptime!(self.layout.projection.physical_rank());
-        self.row_stride_at(comptime!(rank - 2))
-    }
-
-    /// [`row_stride`](Memory::row_stride) with the row axis stated (direct, untiled stores only).
+    /// Scalar stride between matrix rows, `row` the dim a row steps along (direct, untiled stores;
+    /// any other steps along its second-to-last dim).
     pub(crate) fn row_stride_at(&self, #[comptime] row: usize) -> u32 {
         let rank = comptime!(self.layout.projection.physical_rank());
         let row = comptime!(

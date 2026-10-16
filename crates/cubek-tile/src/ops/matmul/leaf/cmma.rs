@@ -18,59 +18,52 @@ impl CmmaData {
         rhs: &Tile,
         #[comptime] out: Space,
     ) {
-        match (&lhs.kind, &rhs.kind) {
-            (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
-                (PlaneTile::Cmma(a), PlaneTile::Cmma(b)) => {
-                    lhs.refuse_factor("PlaneTile::Mma");
-                    rhs.refuse_factor("PlaneTile::Mma");
-                    cmma::execute(
-                        &a.fragment.downcast::<EL>(),
-                        &b.fragment.downcast::<ER>(),
-                        &self.fragment.downcast::<A>(),
-                        &self.fragment.downcast::<A>(),
-                    )
+        let a_read = comptime!(FragmentRead::new(Side::Lhs, &lhs.place.space, &out));
+        let b_read = comptime!(FragmentRead::new(Side::Rhs, &rhs.place.space, &out));
+        cmma::execute(
+            &lhs.cmma_fragment::<EL>(MatrixIdent::A, a_read),
+            &rhs.cmma_fragment::<ER>(MatrixIdent::B, b_read),
+            &self.fragment.downcast::<A>(),
+            &self.fragment.downcast::<A>(),
+        );
+    }
+}
+
+#[cube]
+impl Tile {
+    /// This factor as the `ident` fragment of a tensor-core contraction: the one it holds, or its
+    /// window loaded as `read` says.
+    pub(crate) fn cmma_fragment<E: Numeric>(
+        &self,
+        #[comptime] ident: MatrixIdent,
+        #[comptime] read: FragmentRead,
+    ) -> Matrix<E> {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Cmma(fragment) => {
+                    self.refuse_factor("PlaneTile::Mma");
+                    fragment.fragment.downcast::<E>()
                 }
-                _ => panic!("cmma operands must be cmma fragments"),
+                PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    panic!("cmma operands must be cmma fragments")
+                }
             },
-            _ => {
-                let a_read = comptime!(FragmentRead::new(
-                    Side::Lhs,
-                    &lhs.place.space,
-                    &rhs.place.space,
-                    &out
-                ));
-                let b_read = comptime!(FragmentRead::new(
-                    Side::Rhs,
-                    &lhs.place.space,
-                    &rhs.place.space,
-                    &out
-                ));
-                let mut a_frag = unsafe {
-                    Matrix::<EL>::uninitialized(
-                        MatrixIdent::A,
-                        a_read.m,
-                        a_read.n,
-                        a_read.k,
-                        MatrixLayout::RowMajor,
+            TileKind::Memory(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                let mut fragment = unsafe {
+                    Matrix::<E>::uninitialized(
+                        ident,
+                        read.m,
+                        read.n,
+                        read.k,
+                        comptime!(read.layout),
                     )
                 };
-                let mut b_frag = unsafe {
-                    Matrix::<ER>::uninitialized(
-                        MatrixIdent::B,
-                        b_read.m,
-                        b_read.n,
-                        b_read.k,
-                        b_read.layout,
-                    )
-                };
-                lhs.load(&mut a_frag, comptime!(a_read));
-                rhs.load(&mut b_frag, comptime!(b_read));
-                cmma::execute(
-                    &a_frag,
-                    &b_frag,
-                    &self.fragment.downcast::<A>(),
-                    &self.fragment.downcast::<A>(),
-                );
+                self.load(&mut fragment, comptime!(read));
+                fragment
             }
         }
     }
@@ -99,14 +92,19 @@ pub(crate) struct FragmentRead {
 }
 
 impl FragmentRead {
-    pub(crate) fn new(side: Side, lhs: &Space, rhs: &Space, out: &Space) -> Self {
-        // A split contraction is one `k` edge.
-        let acc_axes = MatrixAxes::accumulator(out, lhs);
+    /// How the `side` factor spanning `own` is read for a contraction into `out`, from it alone.
+    pub(crate) fn new(side: Side, own: &Space, out: &Space) -> Self {
+        let acc_axes = accumulator_axes(side, out, own);
         let m = acc_axes.rows(out);
         let n = acc_axes.cols(out);
-        let operands = Space::merge(&[lhs, rhs]);
-        let k = operands.contracted_extent(out);
-        let layout = rhs_layout(rhs, lhs.axis_at(lhs.rank() - 1));
+        // A split contraction is one `k` edge.
+        let k = own.contracted_extent(out);
+        // The lhs is row-major; the rhs col-major where its trailing axis is contracted.
+        let layout = match side {
+            Side::Lhs => MatrixLayout::RowMajor,
+            Side::Rhs if out.contains(own.axis_at(own.rank() - 1)) => MatrixLayout::RowMajor,
+            Side::Rhs => MatrixLayout::ColMajor,
+        };
         FragmentRead {
             m,
             n,
