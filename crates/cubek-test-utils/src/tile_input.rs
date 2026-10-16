@@ -5,7 +5,6 @@
 //! `tiled_view`. No `Tiler`, no semantic-view juggling.
 #![allow(dead_code)]
 
-use cubecl::ir::ElemType;
 use cubecl::{
     bytes::Bytes,
     client::Client,
@@ -482,18 +481,13 @@ impl QuantizedTileInput {
         }
     }
 
-    /// The packed values as an operand served at `element`, bound `width` words wide: `u32` words
-    /// of [`field`](Self::field)s, addressed as `spec` says (declared in values), under none of
-    /// their scales.
-    pub fn values_arg(
-        &self,
-        element: ElemType,
-        width: usize,
-        spec: CubekTileSpec,
-    ) -> TileArgLaunch {
+    /// The packed values as an operand, bound `width` words wide: `u32` words of
+    /// [`field`](Self::field)s, addressed as `spec` says (declared in values), under none of their
+    /// scales.
+    pub fn values_arg(&self, width: usize, spec: CubekTileSpec) -> TileArgLaunch {
         TileArgLaunch::new(
             self.tile.tensor_arg(1),
-            element,
+            self.tile.handle.dtype,
             width,
             spec.packed(self.field()),
         )

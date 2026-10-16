@@ -174,7 +174,7 @@ fn nvfp4_shaped_decode() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
@@ -415,8 +415,8 @@ fn packed_cmma_rhs<E: Numeric>(
     acc.drained_into(&c);
 }
 
-/// [`packed_cmma_rhs`] with the weight bound at what its fields are and dequantized at `element`
-/// by the kernel, before it contracts.
+/// [`packed_cmma_rhs`] with the weight dequantized at `element` by the kernel, before it
+/// contracts.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn packed_cmma_rhs_dequantized<E: Numeric>(
@@ -493,7 +493,7 @@ fn eight_bit_fields_unpack_on_read() {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field),
         ),
@@ -568,7 +568,7 @@ fn four_bit_fields_unpack_on_read() {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field),
         ),
@@ -676,7 +676,7 @@ fn check_fp4_codes_unpack(client: &Client, field: Field) {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field),
         ),
@@ -751,7 +751,7 @@ fn two_bit_fields_unpack_on_read() {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field),
         ),
@@ -850,7 +850,7 @@ fn a_packed_operand_contracts_against_its_scales() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
@@ -978,7 +978,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
@@ -1109,7 +1109,7 @@ fn a_folded_walk_takes_its_scales_several_at_a_time() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
@@ -1261,7 +1261,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -1409,7 +1409,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -1560,7 +1560,7 @@ fn several_lines_may_share_one_scale() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -1825,7 +1825,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -1970,7 +1970,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -2142,7 +2142,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, N],
@@ -2223,7 +2223,7 @@ fn e4m3_fields_unpack_on_read() {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field),
         ),
@@ -2340,7 +2340,7 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(w_projection.clone()).packed(field),
         ),
@@ -2358,7 +2358,7 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(w_projection.scales_per(KB)).packed(Fp8Format::UE8M0),
         ),
@@ -2500,7 +2500,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(w_projection.clone()).packed(field),
         ),
@@ -2518,7 +2518,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(w_projection.scales_per(KB)).packed(kind),
         ),
@@ -2646,7 +2646,7 @@ fn e4m3_scales_reach_the_promoted_block() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -2659,7 +2659,7 @@ fn e4m3_scales_reach_the_promoted_block() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB],
@@ -2804,7 +2804,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         ),
         TileArgLaunch::new(
             w_tensor.clone().binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -2817,7 +2817,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         ),
         TileArgLaunch::new(
             s_tensor.clone().binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB],
@@ -2880,7 +2880,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         ),
         TileArgLaunch::new(
             w_tensor.clone().binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB, NI],
@@ -2893,7 +2893,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         ),
         TileArgLaunch::new(
             s_tensor.clone().binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, NB],
@@ -3007,7 +3007,7 @@ fn a_copy_of_scaled_packed_fields_decodes_them() {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(projection.clone()).packed(field),
         ),
@@ -3137,7 +3137,7 @@ fn check_looked_up_copy(bits: usize, width: usize) {
         CubeDim::new_single(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(projection.clone()).packed(Field::Index { bits }),
         ),

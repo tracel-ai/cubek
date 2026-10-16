@@ -95,9 +95,9 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 /// or a scale binding: which values one scale covers is the scales operand's own axes, stated in
 /// the space.
 ///
-/// Every operand keeps its own element: the weight's is what the words decode to, the
-/// activation's what its buffer holds, the output's its own, and the leaf casts each into the
-/// accumulator as it always does. The activation is served in lines along the contraction, one
+/// Every operand keeps its own element: the weight's words decode to `f32`, the activation is
+/// what its buffer holds, the output its own, and the leaf casts each into the accumulator as it
+/// always does. The activation is served in lines along the contraction, one
 /// stored word's worth a step, and the output scalar, because each unit holds a partial of its
 /// group's cell.
 ///

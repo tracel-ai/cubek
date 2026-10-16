@@ -161,7 +161,7 @@ fn check_block_scaled_copy(m: usize, n: usize, bm: usize, bn: usize, global: Opt
             &client,
             CubeCount::new_single(),
             CubeDim::new_single(),
-            values.values_arg(dtype, 1, TileSpec::new(projection.clone())),
+            values.values_arg(1, TileSpec::new(projection.clone())),
             values.scales_arg(1, TileSpec::new(scales)),
             TileArgLaunch::new(
                 output.clone().binding().into_tensor_arg(),
@@ -181,7 +181,7 @@ fn check_block_scaled_copy(m: usize, n: usize, bm: usize, bn: usize, global: Opt
                 CubeCount::new_single(),
                 CubeDim::new_single(),
                 values
-                    .values_arg(dtype, 1, TileSpec::new(projection.clone()))
+                    .values_arg(1, TileSpec::new(projection.clone()))
                     .scales(values.scales_arg(1, TileSpec::new(scales)))
                     .scales(TileArgLaunch::new(
                         global.binding().into_tensor_arg(),
@@ -331,7 +331,7 @@ fn a_scaled_region_decodes_into_a_stage_without_its_one_wide_batch() {
         launch.cube_dim(),
         TileArgLaunch::new(
             binding.into_tensor_arg(),
-            f32::elem_type_native(),
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[B, M, N]).packed(Field::Quant(QuantValue::Q8S)),
         ),

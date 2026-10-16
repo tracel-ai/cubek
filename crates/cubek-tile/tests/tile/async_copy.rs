@@ -323,7 +323,7 @@ fn staged_packed_copy_with(
         launcher.cube_dim(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field).delivery(delivery),
         ),

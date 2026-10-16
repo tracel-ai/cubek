@@ -26,15 +26,11 @@ use crate::{
     },
 };
 
-/// The element each of the four operands is read at.
-///
-/// Off the bindings rather than on them, because one of them is not a binding's to answer: the
-/// weight's buffer holds `u32` words and `served` is what they decode to, which is also the
-/// element the contraction runs in. At `f32` the partials never round-trip through a narrower
-/// element between `K` steps, which is what a long walk needs.
+/// The elements the activation, the per-tensor scale and the output hold. The weight holds `u32`
+/// words, which the contraction decodes to `f32`: its partials never round-trip through a
+/// narrower element between `K` steps, which is what a long walk needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QuantGemvElems {
-    pub served: ElemType,
     pub x: ElemType,
     /// The per-tensor level's stored element, where the scheme has one. One number, read as
     /// the word it fills: a width that does not fill one is refused.
@@ -99,7 +95,7 @@ pub fn launch_ref(
     // the scales span `KB` alone and address it as it stands.
     let split = || PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
     let w_op = launch
-        .arg(weights, dtypes.served)
+        .arg(weights, u32::elem_type_native())
         .gathered(Projection::new(
             &[M, KB, KI],
             &[PhysicalAxisMap::of(M), split()],

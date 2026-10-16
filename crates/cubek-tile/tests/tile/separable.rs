@@ -1193,7 +1193,7 @@ fn a_separable_lhs_contracts_a_packed_scaled_rhs() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        input.values_arg(f32_ty, 1, TileSpec::direct(&input_axes)),
+        input.values_arg(1, TileSpec::direct(&input_axes)),
         input.scales_arg(1, TileSpec::new(per_tensor)),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),

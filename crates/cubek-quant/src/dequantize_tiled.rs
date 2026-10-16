@@ -93,7 +93,7 @@ pub fn launch_ref(
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
     let values = TileArgLaunch::new(
         input.into_tensor_arg(),
-        output_dtype,
+        u32::elem_type_native(),
         1,
         TileSpec::direct(&[M, N]).packed(field),
     )
