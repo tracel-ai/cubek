@@ -63,7 +63,8 @@ impl<'a, E: Numeric> TileArg<'a, E> {
     /// [`paged`](crate::launch::Arg::paged), and where it lies where `pages` is `None`: one
     /// kernel serves either. The launch decides which it compiles by the `pages` it passes, which
     /// must match the binding: a table for a pool bound `paged`, `None` for any other operand;
-    /// a mismatch panics as the kernel expands.
+    /// a mismatch panics as the kernel expands. A table holds at least one entry, which every
+    /// window reads; a launch over no sequences or no positions is the caller's to skip.
     pub fn tile_paged(
         &self,
         _partitioning: &Partitioning,

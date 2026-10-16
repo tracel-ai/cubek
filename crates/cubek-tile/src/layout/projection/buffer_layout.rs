@@ -36,7 +36,8 @@ impl Layout for BufferLayout {
         for pa in 0..rank {
             digits.push(self.physical_digit(&pos, pa));
         }
-        let digits = self.placed(&self.paged(digits));
+        let (digits, base) = self.paged(digits);
+        let digits = self.placed(&digits);
         let mut terms = Sequence::<u32>::new();
         #[unroll]
         for pa in 0..rank {
@@ -44,6 +45,7 @@ impl Layout for BufferLayout {
         }
         terms
             .sum(comptime!((0..rank).collect::<Vec<_>>()))
+            .plus(base)
             .cast::<usize>()
     }
 
@@ -143,18 +145,24 @@ impl BufferLayout {
                 physical_strides: self.physical_strides.clone(),
                 projection: comptime!(self.projection.clone()),
                 rows: comptime!(self.rows),
-                paging: ComptimeOption::new_Some(table.pinned_at(origin, edges)),
+                paging: ComptimeOption::new_Some(table.pinned_at(
+                    origin,
+                    edges,
+                    self.physical_strides.at(comptime!(table.sequence_dim)),
+                    self.physical_strides.at(comptime!(table.position_dim)),
+                )),
             },
             ComptimeOption::None => self.clone(),
         }
     }
 
-    /// `digits` resolved through the page table where the buffer is a pool of pages.
-    fn paged(&self, digits: Coords<u32>) -> Coords<u32> {
+    /// `digits` located through the page table where the buffer is a pool of pages
+    /// ([`PageTable::located`]), with the base the line's offset adds past them.
+    fn paged(&self, digits: Coords<u32>) -> (Coords<u32>, u32) {
         #[comptime]
         match &self.paging {
-            ComptimeOption::Some(table) => table.resolve(&digits),
-            ComptimeOption::None => digits,
+            ComptimeOption::Some(table) => table.located(&digits),
+            ComptimeOption::None => (digits, 0u32),
         }
     }
 

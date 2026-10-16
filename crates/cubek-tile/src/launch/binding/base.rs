@@ -38,11 +38,13 @@ struct ArgData<'a> {
     paged: Option<PagedPool>,
 }
 
-/// What [`Arg::paged`] states: the axes a table resolves.
+/// What [`Arg::paged`] states: the axes a table resolves, and whether it covers the launch
+/// ([`Arg::paged_covering`]).
 #[derive(Clone, Copy)]
 struct PagedPool {
     sequence: Axis,
     position: Axis,
+    covering: bool,
 }
 
 /// One operand of a launch, being described; `S` says whether its axes are stated yet.
@@ -148,8 +150,30 @@ impl<'a> Arg<'a, Labelled> {
     /// bound as it lies; the kernel reads it through
     /// [`TileArg::tile_paged`](crate::TileArg::tile_paged) with the table, whose shape is the
     /// operand's extent along the two axes, so both are checked against it on every read.
-    pub fn paged(mut self, sequence: Axis, position: Axis) -> Self {
-        self.data.paged = Some(PagedPool { sequence, position });
+    pub fn paged(self, sequence: Axis, position: Axis) -> Self {
+        self.paged_as(PagedPool {
+            sequence,
+            position,
+            covering: false,
+        })
+    }
+
+    /// [`paged`](Self::paged) through a table the caller states covers the launch's extents
+    /// along both axes, so a read the launch keeps in bounds is in bounds through the table: the
+    /// two axes are checked only where the launch overhangs, as a buffer read where it lies is.
+    /// A table that stops short reads its clamped entries there: other positions of the pool,
+    /// never past it. Where the launch overhangs a table axis its lines run along, wider than
+    /// one, the binding is refused ([`Refusal::UncheckableVectorEdge`]), not checked line by line.
+    pub fn paged_covering(self, sequence: Axis, position: Axis) -> Self {
+        self.paged_as(PagedPool {
+            sequence,
+            position,
+            covering: true,
+        })
+    }
+
+    fn paged_as(mut self, pool: PagedPool) -> Self {
+        self.data.paged = Some(pool);
         self
     }
 
@@ -219,10 +243,13 @@ impl<'a> Arg<'a, Labelled> {
         };
         served.map_err(|why| Refusal::WidthNotServed { width, why })?;
         let overhangs = launch.overhangs();
-        let table_bounded: Vec<Axis> = paging
-            .iter()
-            .flat_map(|p| [p.sequence, p.position])
-            .collect();
+        let table_bounded: Vec<Axis> = match data.paged.is_some_and(|pool| pool.covering) {
+            true => Vec::new(),
+            false => paging
+                .iter()
+                .flat_map(|p| [p.sequence, p.position])
+                .collect(),
+        };
         let boundaries = Boundaries::new(
             data.boundary,
             &projection,

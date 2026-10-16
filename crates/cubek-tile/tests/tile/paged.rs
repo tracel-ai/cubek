@@ -15,7 +15,7 @@
 use super::{Form, implied};
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::launch::{Delivery, Refusal};
+use cubek_tile::launch::{Arg, Delivery, Labelled, Refusal};
 use cubek_tile::layout::PhysicalAxisMap;
 use cubek_tile::*;
 
@@ -296,16 +296,22 @@ fn run_paged_read_blocks(
         pages.iter().flatten().copied().collect(),
         block,
         from,
+        |arg, s, p| arg.paged(s, p),
     )
 }
 
-/// [`run_paged_read_blocks`] through a table of `entries` laid out as `shape`, any rank.
+/// How a read binds its pool: [`Arg::paged`] or [`Arg::paged_covering`].
+type Bind = for<'a> fn(Arg<'a, Labelled>, Axis, Axis) -> Arg<'a, Labelled>;
+
+/// [`run_paged_read_blocks`] through a table of `entries` laid out as `shape`, any rank, the pool
+/// bound by `bind`.
 fn run_paged_read_table(
     lens: &[u32; SEQUENCES],
     shape: &[usize],
     entries: Vec<u32>,
     block: usize,
     from: u32,
+    bind: Bind,
 ) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
@@ -345,10 +351,7 @@ fn run_paged_read_table(
         .custom(vec![-1.0; SEQUENCES * FEATURES_READ])
         .generate_without_host_data();
 
-    let pool = launcher
-        .arg(pool_handle.binding())
-        .axes(&[B, S, F])
-        .paged(B, S)
+    let pool = bind(launcher.arg(pool_handle.binding()).axes(&[B, S, F]), B, S)
         .build()
         .unwrap();
 
@@ -470,16 +473,16 @@ fn a_paged_read_of_steps_within_a_page_reads_each_sequence_through_its_table() {
 }
 
 /// The table sets the operand's extent, not the launch: a table of fewer rows or narrower rows
-/// than the launch walks reads zero past them, and an empty one reads zero throughout. That no
-/// load lands past the table is the guard in `PageTable::resolve`'s doing, which values cannot
-/// show: the mask drops whatever such a load returns.
+/// than the launch walks reads zero past them, down to a table of one entry. That no load lands
+/// past the table is `PageTable::lookup`'s clamp, which values cannot show: the mask drops
+/// whatever such a load returns.
 #[test]
 fn a_paged_read_past_the_table_reads_zero() {
     let lens = [6, 5, 4];
     for pages in [
         rows(&PAGES[..2]),
         PAGES.iter().map(|row| row[..2].to_vec()).collect(),
-        Vec::new(),
+        vec![vec![PAGES[0][0]]],
     ] {
         let got = run_paged_read_over(&lens, &pages);
         let want = expected_paged_read_over(&lens, &pages);
@@ -495,13 +498,43 @@ fn a_paged_read_past_the_table_reads_zero() {
     }
 }
 
+/// A table stated to cover the launch reads as one checked against its shape wherever the
+/// launch keeps its reads in bounds: steps that cross pages, lengths ending inside a page.
+#[test]
+fn a_covering_table_reads_each_sequence_through_it() {
+    let entries = PAGES.iter().flatten().copied().collect::<Vec<_>>();
+    for lens in [[5, 6, 1], [6, 3, 4]] {
+        let shape = [SEQUENCES, PAGES_EACH];
+        let got = run_paged_read_table(
+            &lens,
+            &shape,
+            entries.clone(),
+            READ_BLOCK,
+            0,
+            |arg, s, p| arg.paged_covering(s, p),
+        );
+        for (b, row) in expected_paged_read(&lens).iter().enumerate() {
+            for (f, cell) in row.iter().enumerate() {
+                assert_eq!(got.get_f32(&[b, f]), *cell, "sequence {b} feature {f}");
+            }
+        }
+    }
+}
+
 /// A table is `[sequences, pages_per_sequence]`: one of any other rank, here the same entries
 /// flat, names no page for any sequence and reads zero throughout, never its missing dims.
 #[test]
 fn a_paged_read_through_a_table_not_of_rank_two_reads_zero() {
     let lens = [6, 5, 4];
     let entries: Vec<u32> = PAGES.iter().flatten().copied().collect();
-    let got = run_paged_read_table(&lens, &[entries.len()], entries, READ_BLOCK, 0);
+    let got = run_paged_read_table(
+        &lens,
+        &[entries.len()],
+        entries,
+        READ_BLOCK,
+        0,
+        |arg, s, p| arg.paged(s, p),
+    );
     for b in 0..SEQUENCES {
         for f in 0..FEATURES_READ {
             assert_eq!(got.get_f32(&[b, f]), 0.0, "sequence {b} feature {f}");
