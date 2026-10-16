@@ -42,28 +42,55 @@ impl Tile {
         }
     }
 
-    /// `operand` dequantized at `element` into the fragments this accumulator contracts it in:
-    /// the plane-level dequantize, called where the kernel wants it instead of left to the leaf,
-    /// which loads it as the leaf would, through a landing or in lane runs.
+    /// `operand` dequantized at `element` for this accumulator to contract: the plane-level
+    /// dequantize, called where the kernel wants it instead of left to the leaf, which loads it as
+    /// the multiply would. A grid loads it into its fragments (through a landing, or in lane runs);
+    /// one fragment into the fragment its leaf builds; a walk of steps into the landing the steps
+    /// read, where the tensor cores read through one. A plain operand is returned as it is: it
+    /// has nothing to decode.
     pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
-        let out = comptime!(self.place.space.clone());
-        let define!(Target) = element;
-        match &self.kind {
-            TileKind::PlanePartition(partition) => {
-                let grid = partition.grid();
-                match comptime!(grid) {
-                    Some(instruction) => {
-                        PlanePartition::operand::<Target>(operand, self, instruction)
+        let (quantized, packing) = (operand.quantized(), operand.packing());
+        let decodes = comptime!(quantized || packing != Packing::Plain);
+        if comptime!(!decodes) {
+            operand.clone()
+        } else {
+            let out = comptime!(self.place.space.clone());
+            let own = comptime!(operand.place.space.clone());
+            let define!(Target) = element;
+            match &self.kind {
+                TileKind::PlanePartition(partition) => {
+                    let grid = partition.grid();
+                    match comptime!(Descent::of(grid, &self.place, &own, &own)) {
+                        Descent::Here => {
+                            operand.fragment_for::<Target>(&partition.at(0usize, 0usize), out)
+                        }
+                        Descent::Cells(instruction) => {
+                            PlanePartition::operand::<Target>(operand, self, instruction)
+                        }
+                        Descent::Steps(instruction) => match comptime!(instruction) {
+                            Instruction::Cmma => {
+                                let side = comptime!(Side::of(&own, &out));
+                                operand.landed::<Target>(side, out)
+                            }
+                            Instruction::Mma { .. }
+                            | Instruction::Registers { .. }
+                            | Instruction::Wgmma => panic!(
+                                "Tile::dequantized: a walk of manual-mma steps decodes its operand \
+                                 into each step's registers as it loads them; no tile carries that \
+                                 decode, so the leaf does it"
+                            ),
+                        },
                     }
-                    None => operand.fragment_for::<Target>(&partition.at(0usize, 0usize), out),
                 }
-            }
-            TileKind::PlaneTile(fragment) => operand.fragment_for::<Target>(fragment, out),
-            TileKind::Memory(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_)
-            | TileKind::Lines(_) => {
-                panic!("Tile::dequantized: an operand is dequantized for the fragments it meets")
+                TileKind::PlaneTile(fragment) => operand.fragment_for::<Target>(fragment, out),
+                TileKind::Memory(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!(
+                        "Tile::dequantized: an operand is dequantized for the fragments it meets"
+                    )
+                }
             }
         }
     }
