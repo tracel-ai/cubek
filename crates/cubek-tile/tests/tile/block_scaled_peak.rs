@@ -57,17 +57,17 @@ enum ScaleForm {
 /// `c = repeats · (a ⊗ sa) · (b ⊗ sb)` per cube, over one stage contracted `repeats` times.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn block_scaled_peak<E: Numeric, S: Numeric>(
-    a: &TileArg<'_, E>,
+fn block_scaled_peak<V: Numeric, E: Numeric, S: Numeric>(
+    a: &TileArg<'_, V>,
     a_scales: &TileArg<'_, S>,
-    b: &TileArg<'_, E>,
+    b: &TileArg<'_, V>,
     b_scales: &TileArg<'_, S>,
     c: &TileArg<'_, E>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] repeats: usize,
-    #[define(E, S)] _dtypes: [ElemType; 2],
+    #[define(V, E, S)] _dtypes: [ElemType; 3],
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -318,7 +318,12 @@ fn launch_nvfp4(
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         repeats,
-        [f32::elem_type_native(), scale_elem],
+        // The values are served as stored, which is what the block-scaled instruction reads.
+        [
+            ElemType::Float(FloatKind::E2M1),
+            f32::elem_type_native(),
+            scale_elem,
+        ],
     );
     c
 }
