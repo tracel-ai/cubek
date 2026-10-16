@@ -343,3 +343,86 @@ macro_rules! expand_value {
 
 expand_value!(RawExpand<K>, K: RawKind);
 expand_value!(RawCallExpand<IO>, IO: 'static);
+
+#[cfg(test)]
+mod tests {
+    use cubecl::ir::{AddressType, Scope, settings};
+    use cubecl::prelude::*;
+    use cubecl::std::tensor::{
+        ErasedTensorExpand, ErasedTensorOperationsExpand, ReadsLines, WritesLines,
+    };
+    use half::f16;
+
+    use super::*;
+
+    fn test_scope() -> Scope {
+        Scope::root(settings::KernelSettings::new(
+            settings::Dim3::new_single(),
+            settings::ExecutionMode::Checked,
+            AddressType::U32,
+        ))
+    }
+
+    /// A slice of shared memory held at `H`, then named at `N`.
+    #[cube]
+    fn slice_named_at<H: Numeric, N: Numeric>() {
+        let smem = Shared::<[H]>::new_slice(4usize);
+        let raw = Raw::<Slice>::of::<H>(unsafe { smem.inner_ref().as_boxed_unchecked() });
+        let _ = raw.at::<N>();
+    }
+
+    /// A slice is named at the element it holds.
+    #[test]
+    fn a_slice_is_named_at_its_element() {
+        slice_named_at::expand::<f16, f16>(&test_scope());
+    }
+
+    /// A slice named at an element it does not hold is refused at expansion.
+    ///
+    /// Read at the wrong element, a slice addresses the wrong bytes: an `f16` slice read as `f32`
+    /// takes two values for one, and nothing at runtime notices.
+    #[test]
+    #[should_panic(expected = "Raw: the value holds")]
+    fn a_slice_refuses_another_element() {
+        slice_named_at::expand::<f16, f32>(&test_scope());
+    }
+
+    /// A backing of four one-wide lines that the tests name but never read or write.
+    struct Unread;
+
+    impl<E: Numeric> ErasedTensorOperationsExpand<E> for Unread {
+        fn __expand_vector_size_method(&self, _scope: &Scope) -> VectorSize {
+            1
+        }
+
+        fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
+            4usize.into_expand(scope)
+        }
+    }
+
+    impl<E: Numeric> ReadsLines<E> for Unread {}
+    impl<E: Numeric> WritesLines<E> for Unread {}
+
+    /// An erased call is named at the element it holds, read or written.
+    #[test]
+    fn an_erased_call_is_named_at_its_element() {
+        let scope = test_scope();
+        let read = RawCall::<ReadOnly>::__expand_of::<f16>(&scope, ErasedTensorExpand::new(Unread));
+        let _ = read.__expand_call_method::<f16>(&scope);
+        let mut write =
+            RawCall::<WriteOnly>::__expand_of::<f16>(&scope, ErasedTensorExpand::new(Unread));
+        let _ = write.__expand_call_mut_method::<f16>(&scope);
+    }
+
+    /// An erased call named at an element it does not hold is refused at expansion.
+    ///
+    /// The call's lines cross untyped, so a call named at the wrong element would hand its
+    /// backing values of another width than it serves.
+    #[test]
+    #[should_panic(expected = "RawCall: the call holds")]
+    fn an_erased_call_refuses_another_element() {
+        let scope = test_scope();
+        let read = RawCall::<ReadOnly>::__expand_of::<f16>(&scope, ErasedTensorExpand::new(Unread));
+        let _ = read.__expand_call_method::<f32>(&scope);
+    }
+}

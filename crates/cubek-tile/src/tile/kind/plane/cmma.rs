@@ -362,3 +362,52 @@ mod fragment_drain_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod held_fragment_tests {
+    use cubecl::ir::{AddressType, Scope, settings};
+    use half::f16;
+
+    use super::*;
+
+    fn test_scope() -> Scope {
+        Scope::root(settings::KernelSettings::new(
+            settings::Dim3::new_single(),
+            settings::ExecutionMode::Checked,
+            AddressType::U32,
+        ))
+    }
+
+    /// A `16 × 16` accumulator fragment allocated at `H`, kept at [`Held`], and stored into a
+    /// scratch of `N`.
+    #[cube]
+    fn fragment_stored_at<H: Numeric, N: Numeric>() {
+        let data = CmmaData::alloc::<H>(
+            MatrixIdent::Accumulator,
+            16usize,
+            16usize,
+            16usize,
+            MatrixLayout::Undefined,
+        );
+        let scratch = Shared::<[N]>::new_slice(256usize);
+        data.store_scratch::<N>(&scratch);
+    }
+
+    /// A fragment kept at [`Held`] is named again at the element it was allocated at.
+    #[test]
+    fn a_held_fragment_is_named_at_its_element() {
+        fragment_stored_at::expand::<f16, f16>(&test_scope());
+    }
+
+    /// A fragment kept at [`Held`] and named at an element it does not hold is refused at
+    /// expansion.
+    ///
+    /// The tile keeps every fragment at one dummy type, so nothing in Rust ties a fragment to the
+    /// element it was allocated at: only this check stops an `f16` fragment being stored as an
+    /// `f32` one.
+    #[test]
+    #[should_panic(expected = "Matrix::downcast: the fragment holds")]
+    fn a_held_fragment_refuses_another_element() {
+        fragment_stored_at::expand::<f16, f32>(&test_scope());
+    }
+}
