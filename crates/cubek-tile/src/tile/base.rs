@@ -571,7 +571,7 @@ impl Tile {
 
     /// Zero this whole tile.
     pub fn zero(&mut self) {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         match &mut self.kind {
             TileKind::Memory(d) => d.zero::<Served>(),
             TileKind::PlaneTile(t) => t.zero::<Served>(),
@@ -584,19 +584,18 @@ impl Tile {
     }
 
     /// Seed this tile with `monoid`'s identity.
-    pub(crate) fn init_identity(&mut self, #[comptime] monoid: Monoid) {
-        let _served = naming::<Served>(self.element);
+    pub(crate) fn init_identity<S: Numeric>(&mut self, #[comptime] monoid: Monoid) {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
             Monoid::Prod | Monoid::Max | Monoid::Min => {
-                self.init::<Served>(Monoid::identity::<Served>(monoid))
+                self.init::<S>(Monoid::identity::<S>(monoid))
             }
         }
     }
 
     /// Multiply every partial this accumulator holds by `factor`, cast to its element.
     pub fn scale_by<E: Numeric>(&mut self, factor: E) {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let factor = Served::cast_from(factor);
         match &mut self.kind {
             TileKind::PlaneTile(t) => t.scale::<Served>(factor),
@@ -630,7 +629,7 @@ impl Tile {
 
     /// Initialize this tile with `val`, cast to its element.
     pub fn init<E: Numeric>(&mut self, val: E) {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let val = Served::cast_from(val);
         match &mut self.kind {
             TileKind::Memory(d) => d.init::<Served>(val),
@@ -645,7 +644,8 @@ impl Tile {
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile {
-        Memory::stage(
+        let define!(Served) = self.element;
+        Memory::stage::<Served>(
             self,
             level,
             storage,
@@ -717,7 +717,7 @@ impl Tile {
     /// drains into first, as it would into this tile. It starts on
     /// [`Delivery::TMA_STAGE_ALIGNMENT`], which a launch sizing its shared memory counts.
     pub fn smem_box(&self) -> Tile {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let units = self.units();
         Memory::smem_owned::<Served>(
             comptime!(self.place.space.clone()),
@@ -753,7 +753,9 @@ impl Tile {
             "Tile::copy_from: this source's scales are kept beside its values, which only a stage \
              that keeps them too takes as they are stored"
         ));
-        self.copy_unscaled_from(src);
+        let define!(Served) = self.element;
+        let define!(Source) = src.element;
+        self.copy_unscaled_from::<Served, Source>(src);
     }
 
     /// Writes `src`'s numbers into this tile, every scale it carries applied and its table looked
@@ -771,7 +773,9 @@ impl Tile {
                     "Tile::dequantize_from: values are decoded into memory; to load them into \
                      fragments, contract them: the fragment lands them"
                 ));
-                self.copy_scaled_from(src);
+                let define!(Served) = self.element;
+                let define!(Source) = src.element;
+                self.copy_scaled_from::<Served, Source>(src);
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 let dest = self.clone();
@@ -784,13 +788,12 @@ impl Tile {
         }
     }
 
-    fn copy_unscaled_from(&mut self, src: &Tile) {
-        let _served = naming::<Served>(self.element);
+    fn copy_unscaled_from<S: Numeric, R: Numeric>(&mut self, src: &Tile) {
         // Bound before the match, which borrows the kind.
         let space = comptime!(self.place.space.clone());
         match &src.kind {
             TileKind::PlanePartition(s) => match &mut self.kind {
-                TileKind::Memory(d) => s.fragment().store_window::<Served>(d, space),
+                TileKind::Memory(d) => s.fragment().store_window::<S>(d, space),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -804,16 +807,14 @@ impl Tile {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => match (&mut self.kind, &src.kind) {
-                (TileKind::Lines(d), TileKind::Memory(_)) => d.load(src),
-                (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from::<Served>(src),
-                (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window::<Served>(src),
-                (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window::<Served>(d, space),
-                (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into::<Served>(d),
-                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from::<Served>(s),
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from::<Served>(s, space),
-                (TileKind::Memory(d), TileKind::Procedural(s)) => {
-                    d.fill_procedural::<Served>(s, space)
-                }
+                (TileKind::Lines(d), TileKind::Memory(_)) => d.load::<R>(src),
+                (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from::<S>(src),
+                (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window::<S>(src),
+                (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window::<S>(d, space),
+                (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into::<S>(d),
+                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from::<S>(s),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from::<S>(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural::<S>(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
                 }
@@ -824,8 +825,8 @@ impl Tile {
 
     /// Add a resident block `src` into this one, casting up to `T`, without touching memory.
     pub fn add_cast_from(&mut self, src: &Tile) {
-        let _served = naming::<Served>(self.element);
-        let _source = naming::<Source>(src.element);
+        let define!(Served) = self.element;
+        let define!(Source) = src.element;
         match (&mut self.kind, &src.kind) {
             (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => {
                 d.add_cast_from::<Served, Source>(s)
@@ -845,8 +846,8 @@ impl Tile {
     /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`,
     /// or copies a memory window of the same box, the units sharing it a line at a time.
     pub fn copy_cast_from(&mut self, src: &Tile) {
-        let _served = naming::<Served>(self.element);
-        let _source = naming::<Source>(src.element);
+        let define!(Served) = self.element;
+        let define!(Source) = src.element;
         let space = comptime!(self.place.space.clone());
         let holder = comptime!(self.place.holder());
         match (&mut self.kind, &src.kind) {
@@ -869,11 +870,10 @@ impl Tile {
     }
 
     /// Spill this plane-resident tile into its slot of the plane's scratch.
-    pub(crate) fn spill_to_scratch(&self) {
-        let _served = naming::<Served>(self.element);
+    pub(crate) fn spill_to_scratch<S: Numeric>(&self) {
         match &self.kind {
-            TileKind::PlaneTile(t) => t.spill_to_scratch::<Served>(),
-            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch::<Served>(),
+            TileKind::PlaneTile(t) => t.spill_to_scratch::<S>(),
+            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch::<S>(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -884,16 +884,12 @@ impl Tile {
     }
 
     /// Add `src`'s spilled cells into this memory window.
-    pub(crate) fn add_from_scratch(&mut self, src: &Tile) {
-        let _served = naming::<Served>(self.element);
-        let _source = naming::<Source>(src.element);
+    pub(crate) fn add_from_scratch<S: Numeric, R: Numeric>(&mut self, src: &Tile) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => {
-                s.add_from_scratch::<Source, Served>(d, space)
-            }
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch::<R, S>(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().add_from_scratch::<Source, Served>(d, space)
+                s.fragment().add_from_scratch::<R, S>(d, space)
             }
             _ => panic!("Tile::add_from_scratch: a spilled plane tile adds into memory"),
         }
@@ -1473,7 +1469,7 @@ impl Tile {
     /// field that value is, not the whole line.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     fn value_in_line<S: Numeric>(&self, coords: &Coords<u32>) -> S {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let load = self.vector_tile();

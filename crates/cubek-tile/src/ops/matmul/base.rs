@@ -28,9 +28,10 @@ impl Tile {
             };
             let semiring = contraction.semiring;
             let init_from = self.request_init_from(comptime!(InitFrom::Identity));
+            let define!(Served) = self.element;
             match comptime!(init_from) {
                 InitFrom::Identity => {}
-                InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
+                InitFrom::Cell => self.init_identity::<Served>(comptime!(semiring.add())),
             }
             self.mma(lhs, rhs);
             self.request_init_from(comptime!(InitFrom::Cell));
@@ -42,9 +43,9 @@ impl Tile {
 
     /// `c += a · b`, folding onto what the accumulator or memory window holds.
     pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
-        let _served = naming::<Served>(self.element);
-        let _lhs = naming::<Lhs>(lhs.element);
-        let _rhs = naming::<Rhs>(rhs.element);
+        let define!(Served) = self.element;
+        let define!(Lhs) = lhs.element;
+        let define!(Rhs) = rhs.element;
         Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
     }
 
@@ -64,7 +65,8 @@ impl Tile {
                 )
             }
         };
-        self.init_identity(comptime!(semiring.add()));
+        let define!(Served) = self.element;
+        self.init_identity::<Served>(comptime!(semiring.add()));
     }
 }
 
@@ -74,7 +76,7 @@ impl Tile {
     /// completion: once it resolves, they are done reading what they read, the stages a walk
     /// holds for them among it. Only a warpgroup accumulator contracts asynchronously.
     pub fn commit(&self) -> Pending<()> {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         match &self.kind {
             TileKind::PlanePartition(p) => p.fragment().commit::<Served>(),
             TileKind::PlaneTile(t) => t.commit::<Served>(),

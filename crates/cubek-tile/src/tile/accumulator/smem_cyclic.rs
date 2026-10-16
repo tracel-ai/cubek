@@ -54,7 +54,7 @@ impl Tile {
         &self,
         #[comptime] writers: usize,
     ) -> SmemCyclicAccumulation<A> {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let size!(W) = width;
@@ -129,7 +129,7 @@ impl<A: Numeric> SmemCyclicAccumulation<A> {
     /// `writer`, its plane's place among the writers. Once every writer of the cube has, the sum is
     /// in [`source`](SmemCyclicAccumulation::source).
     pub fn drain(&self, partial: &Tile, writer: usize) {
-        let _served = naming::<Served>(partial.element);
+        let define!(Served) = partial.element;
         #[unroll]
         for round in 0..self.writers {
             let turn = (writer + round) % comptime!(self.writers);
@@ -145,7 +145,7 @@ impl<A: Numeric> SmemCyclicAccumulation<A> {
     /// [`drain`](SmemCyclicAccumulation::drain) for a partial over one `window` of the box, as a
     /// kernel that walks its planes itself holds one.
     pub fn drain_at(&self, partial: &Tile, window: &Region, writer: usize) {
-        let _served = naming::<Served>(partial.element);
+        let define!(Served) = partial.element;
         #[unroll]
         for round in 0..self.writers {
             let turn = (writer + round) % comptime!(self.writers);

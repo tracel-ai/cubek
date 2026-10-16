@@ -209,8 +209,10 @@ impl StagesExpand<OperandPair> {
     {
         let depth = self.depth;
         // The registers a fetch holds a region in are at the elements the sources hold.
-        let _lhs = Naming::<Lhs>::new(scope, self.sources.lhs.element);
-        let _rhs = Naming::<Rhs>::new(scope, self.sources.rhs.element);
+        define_scalar!(Lhs);
+        define_scalar!(Rhs);
+        let _lhs = scope.define_type::<Lhs>(self.sources.lhs.element);
+        let _rhs = scope.define_type::<Rhs>(self.sources.rhs.element);
         let (mut lhs, mut rhs) = self.__expand_fetch_buffers_method::<Lhs, Rhs>(scope);
         let steady =
             self.steady_prefetching_laps(scope, &walk, total, &mut lhs, &mut rhs, &mut compute);

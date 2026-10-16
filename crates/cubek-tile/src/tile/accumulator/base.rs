@@ -181,7 +181,7 @@ impl Tile {
     /// one itself where it needs one; stating it chooses how much of the grid it holds, or serves
     /// a drain region by region.
     pub fn with_scratch(self, #[comptime] scratch: Scratch) -> Tile {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         match comptime!(scratch) {
             Scratch::None => self,
             _ => match &self.kind {
@@ -234,8 +234,8 @@ impl Tile {
     /// indexed by the same region. A cmma grid opened with no scratch opens one where `dest`
     /// needs its fragments bounced.
     pub fn drained_into(&self, dest: &Tile) {
-        let _served = naming::<Served>(self.element);
-        let _out = naming::<Out>(dest.element);
+        let define!(Served) = self.element;
+        let define!(Out) = dest.element;
         // A sum written out is a sum with its scales applied: multiplied by them once, as it
         // drains. A grid of cmma fragments is scaled, and reaches a destination it cannot store
         // to directly, through a scratch: where none was opened, the drain opens the smallest.
@@ -265,7 +265,7 @@ impl Tile {
     ///
     /// Only a manual-mma accumulator is cast in place; any other is cast as it drains.
     pub fn cast<E: Numeric>(&self) -> Tile {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let kind = match &self.kind {
             TileKind::PlanePartition(partition) => {
                 TileKind::new_PlanePartition(partition.cast::<Served, E>())
@@ -377,7 +377,7 @@ impl Tile {
         let bounces = dest.fragments_bounce(in_place);
         match &self.kind {
             TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held, bounces)) {
-                DrainPlan::Straight => drain_chunk_below(
+                DrainPlan::Straight => drain_chunk_below::<A, Out>(
                     self,
                     dest,
                     comptime!(self.place.below().to_vec()),
@@ -387,7 +387,7 @@ impl Tile {
                     turn,
                     chunks,
                 ),
-                DrainPlan::BounceEach => drain_chunk_below(
+                DrainPlan::BounceEach => drain_chunk_below::<A, Out>(
                     self,
                     dest,
                     comptime!(self.place.below().to_vec()),
@@ -399,7 +399,7 @@ impl Tile {
                 ),
                 DrainPlan::BounceTogether => {
                     self.sync_scratch();
-                    drain_chunk_below(
+                    drain_chunk_below::<A, Out>(
                         self,
                         dest,
                         comptime!(self.place.below().to_vec()),
@@ -410,7 +410,7 @@ impl Tile {
                         chunks,
                     );
                     self.sync_scratch();
-                    drain_chunk_below(
+                    drain_chunk_below::<A, Out>(
                         self,
                         dest,
                         comptime!(self.place.below().to_vec()),
@@ -436,9 +436,9 @@ impl Tile {
                 let in_place = self.casts_in_place_to::<A, Out>();
                 let bounces = dest.fragments_bounce(in_place);
                 if comptime!(cmma && bounces) {
-                    drain_chunk_leaf(self, dest, comptime!(DrainPass::Bounce), turn == 0);
+                    drain_chunk_leaf::<A, Out>(self, dest, comptime!(DrainPass::Bounce), turn == 0);
                 } else {
-                    drain_chunk_leaf(self, dest, comptime!(DrainPass::Copy), turn == 0);
+                    drain_chunk_leaf::<A, Out>(self, dest, comptime!(DrainPass::Copy), turn == 0);
                 }
             }
             TileKind::Memory(_)
@@ -459,7 +459,7 @@ impl Tile {
         let bounces = dest.fragments_bounce(in_place);
         match &self.kind {
             TileKind::PlanePartition(p) => match comptime!(DrainPlan::new(p.held, bounces)) {
-                DrainPlan::Straight => drain_below(
+                DrainPlan::Straight => drain_below::<A, Out>(
                     self,
                     dest,
                     comptime!(self.place.below().to_vec()),
@@ -467,7 +467,7 @@ impl Tile {
                     comptime!(DrainPass::Copy),
                 ),
                 // One slot shared: each spill and add pair off at its leaf.
-                DrainPlan::BounceEach => drain_below(
+                DrainPlan::BounceEach => drain_below::<A, Out>(
                     self,
                     dest,
                     comptime!(self.place.below().to_vec()),
@@ -477,7 +477,7 @@ impl Tile {
                 // Own slots: every spill precedes any add, so the descent runs twice.
                 DrainPlan::BounceTogether => {
                     self.sync_scratch();
-                    drain_below(
+                    drain_below::<A, Out>(
                         self,
                         dest,
                         comptime!(self.place.below().to_vec()),
@@ -485,7 +485,7 @@ impl Tile {
                         comptime!(DrainPass::Spill),
                     );
                     self.sync_scratch();
-                    drain_below(
+                    drain_below::<A, Out>(
                         self,
                         dest,
                         comptime!(self.place.below().to_vec()),
@@ -496,7 +496,7 @@ impl Tile {
                 }
             },
             // No grid: the accumulator is one tile and the drain is one store.
-            TileKind::PlaneTile(_) => drain_leaf(self, dest, comptime!(DrainPass::Copy)),
+            TileKind::PlaneTile(_) => drain_leaf::<A, Out>(self, dest, comptime!(DrainPass::Copy)),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -613,7 +613,7 @@ fn accumulator_in<EA: Numeric>(
         comptime!(out.place.depth),
         comptime!(out.place.levels.clone()),
     );
-    acc.init_identity(comptime!(accumulation.monoid()));
+    acc.init_identity::<EA>(comptime!(accumulation.monoid()));
     acc
 }
 
@@ -651,14 +651,14 @@ impl Tile {
             comptime!(place.depth),
             comptime!(place.levels.clone()),
         );
-        acc.init_identity(comptime!(accumulation.monoid()));
+        acc.init_identity::<EA>(comptime!(accumulation.monoid()));
         acc
     }
 }
 
 /// [`Tile::drained_into`]'s descent over `levels[i..]`, applying `pass` at every leaf.
 #[cube]
-fn drain_below(
+fn drain_below<A: Numeric, O: Numeric>(
     acc: &Tile,
     dest: &Tile,
     #[comptime] levels: Vec<Level>,
@@ -666,13 +666,13 @@ fn drain_below(
     #[comptime] pass: DrainPass,
 ) {
     if comptime!(i == levels.len()) {
-        drain_leaf(acc, dest, pass);
+        drain_leaf::<A, O>(acc, dest, pass);
     } else {
         let level = comptime!(levels[i].clone());
         // A walked level's coordinates must fold to constants: its regions select fragments.
         if comptime!(level.coverage() == Coverage::Walk) {
             for region in dest.over(&level).unrolled() {
-                drain_below(
+                drain_below::<A, O>(
                     &acc.at(&region),
                     &dest.at(&region),
                     comptime!(levels.clone()),
@@ -682,7 +682,7 @@ fn drain_below(
             }
         } else {
             for region in dest.over(&level) {
-                drain_below(
+                drain_below::<A, O>(
                     &acc.at(&region),
                     &dest.at(&region),
                     comptime!(levels.clone()),
@@ -699,7 +699,7 @@ fn drain_below(
 /// `place` modulo `chunks`.
 #[cube]
 #[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
-fn drain_chunk_below(
+fn drain_chunk_below<A: Numeric, O: Numeric>(
     acc: &Tile,
     dest: &Tile,
     #[comptime] levels: Vec<Level>,
@@ -710,7 +710,7 @@ fn drain_chunk_below(
     #[comptime] chunks: usize,
 ) {
     if comptime!(i == levels.len()) {
-        drain_chunk_leaf(acc, dest, pass, place % chunks == turn);
+        drain_chunk_leaf::<A, O>(acc, dest, pass, place % chunks == turn);
     } else {
         let level = comptime!(levels[i].clone());
         let axes = comptime!(dest.place.space.axes().collect::<Vec<_>>());
@@ -723,7 +723,7 @@ fn drain_chunk_below(
                 for a in 0..comptime!(axes.len()) {
                     here += region.coord(comptime!(axes[a]));
                 }
-                drain_chunk_below(
+                drain_chunk_below::<A, O>(
                     &acc.at(&region),
                     &dest.at(&region),
                     comptime!(levels.clone()),
@@ -736,7 +736,7 @@ fn drain_chunk_below(
             }
         } else {
             for region in dest.over(&level) {
-                drain_chunk_below(
+                drain_chunk_below::<A, O>(
                     &acc.at(&region),
                     &dest.at(&region),
                     comptime!(levels.clone()),
@@ -754,7 +754,12 @@ fn drain_chunk_below(
 /// [`drain_leaf`] for a fragment that lands only where `lands`: every barrier is reached
 /// whatever it says, so planes landing different fragments still meet at the same ones.
 #[cube]
-fn drain_chunk_leaf(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass, lands: bool) {
+fn drain_chunk_leaf<A: Numeric, O: Numeric>(
+    acc: &Tile,
+    dest: &Tile,
+    #[comptime] pass: DrainPass,
+    lands: bool,
+) {
     match comptime!(pass) {
         DrainPass::Copy => {
             if lands {
@@ -764,24 +769,24 @@ fn drain_chunk_leaf(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass, lands:
         }
         DrainPass::Spill => {
             if lands {
-                acc.spill_to_scratch();
+                acc.spill_to_scratch::<A>();
             }
         }
         DrainPass::Add => {
             if lands {
                 let mut window = dest.clone();
-                window.add_from_scratch(acc);
+                window.add_from_scratch::<O, A>(acc);
             }
         }
         DrainPass::Bounce => {
             let mut window = dest.clone();
             acc.sync_scratch();
             if lands {
-                acc.spill_to_scratch();
+                acc.spill_to_scratch::<A>();
             }
             acc.sync_scratch();
             if lands {
-                window.add_from_scratch(acc);
+                window.add_from_scratch::<O, A>(acc);
             }
             acc.sync_scratch();
         }
@@ -790,23 +795,23 @@ fn drain_chunk_leaf(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass, lands:
 
 /// One tile of a drain against the one window it lands in.
 #[cube]
-fn drain_leaf(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass) {
+fn drain_leaf<A: Numeric, O: Numeric>(acc: &Tile, dest: &Tile, #[comptime] pass: DrainPass) {
     match comptime!(pass) {
         DrainPass::Copy => {
             let mut window = dest.clone();
             window.copy_cast_from(acc);
         }
-        DrainPass::Spill => acc.spill_to_scratch(),
+        DrainPass::Spill => acc.spill_to_scratch::<A>(),
         DrainPass::Add => {
             let mut window = dest.clone();
-            window.add_from_scratch(acc);
+            window.add_from_scratch::<O, A>(acc);
         }
         DrainPass::Bounce => {
             let mut window = dest.clone();
             acc.sync_scratch();
-            acc.spill_to_scratch();
+            acc.spill_to_scratch::<A>();
             acc.sync_scratch();
-            window.add_from_scratch(acc);
+            window.add_from_scratch::<O, A>(acc);
             acc.sync_scratch();
         }
     }

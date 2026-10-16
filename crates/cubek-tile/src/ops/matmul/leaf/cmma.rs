@@ -128,7 +128,7 @@ impl Tile {
         let packing = self.packing();
         let shared = self.is_shared();
         if comptime!(scaled || packing != Packing::Plain || !shared) {
-            let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
+            let landing = self.landed::<E>(comptime!(read.side), comptime!(read.out.clone()));
             landing.load_into(frag, comptime!(read.out.clone()));
             // The landing is this region's until every unit's load has read it.
             sync_plane();
@@ -148,7 +148,7 @@ impl Tile {
 
     /// This factor as `instruction` reads it over its whole window: in its plane's landing where
     /// the tensor cores read it through one, scaled or packed, and as it is otherwise.
-    pub(crate) fn landed_for(
+    pub(crate) fn landed_for<S: Numeric>(
         &self,
         #[comptime] side: Side,
         #[comptime] out: Space,
@@ -157,7 +157,7 @@ impl Tile {
         let scaled = self.quantized();
         let packing = self.packing();
         if comptime!(instruction == Instruction::Cmma && (scaled || packing != Packing::Plain)) {
-            self.landed(side, out)
+            self.landed::<S>(side, out)
         } else {
             self.clone()
         }
@@ -165,14 +165,16 @@ impl Tile {
 
     /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
     /// that fragments load from.
-    pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile {
-        let _served = naming::<Served>(self.element);
+    pub(crate) fn landed<S: Numeric>(
+        &self,
+        #[comptime] side: Side,
+        #[comptime] out: Space,
+    ) -> Tile {
         let space = comptime!(self.place.space.clone());
         let units = self.units();
         let planes = comptime!(plane_windows(&space, &self.place.levels));
-        let (stage, mut window) =
-            Memory::landing::<Served>(comptime!(space.clone()), units, planes);
-        let landing = Tile::new::<Served>(stage.kind, comptime!(self.place.clone()));
+        let (stage, mut window) = Memory::landing::<S>(comptime!(space.clone()), units, planes);
+        let landing = Tile::new::<S>(stage.kind, comptime!(self.place.clone()));
 
         // A load is read whole, a tile of several axes included, and landed a run of its finest
         // axis at a time, each run under the scale at its own coordinates.
@@ -180,7 +182,7 @@ impl Tile {
         let (sw, (finest, run)) = comptime!((load.values(), load.extents()[0]));
         let size!(SW) = sw;
         let size!(RUN) = run;
-        let view = self.nd_packed::<Served, SW>(comptime!(Guard::Checked));
+        let view = self.nd_packed::<S, SW>(comptime!(Guard::Checked));
         let acc_axes = comptime!(accumulator_axes(side, &out, &space));
         let scales = self.reader(
             comptime!(MatrixAxes::trailing(&space)),
@@ -211,12 +213,12 @@ impl Tile {
                         start.at(p) + comptime!(load.offset_along(offset, space.axis_at(p)) as u32),
                     );
                 }
-                let mut values = Vector::<Served, RUN>::empty();
+                let mut values = Vector::<S, RUN>::empty();
                 #[unroll]
                 for v in 0..run {
                     values.insert(v, held.extract(offset + v));
                 }
-                let landed = scales.apply_at::<Served, RUN>(values, &at);
+                let landed = scales.apply_at::<S, RUN>(values, &at);
                 if mine < lines {
                     let base = offset_of(&at, comptime!(strides.clone()));
                     #[unroll]

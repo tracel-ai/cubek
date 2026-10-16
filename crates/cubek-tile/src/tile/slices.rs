@@ -79,7 +79,7 @@ impl Tile {
     /// Slices along `axis` one unit keeps a state for: the rows a manual-mma grid's unit holds
     /// cells of, which a reduction reads in its registers; every slice of any other holder.
     pub fn slices_per_unit(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let every = comptime!(self.place.space.slices_along(axis));
         match &self.kind {
             TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {

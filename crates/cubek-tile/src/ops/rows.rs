@@ -89,7 +89,7 @@ impl Tile {
 
     /// Multiply each row by its factor: `self[r, c] *= factors[r]`. The caller syncs on both sides.
     pub fn scale_rows(&mut self, factors: &Tile) {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let cols = comptime!(self.place.space.extent_at(1));
         comptime!(assert!(
             self.place.space.rank() == 2,

@@ -156,8 +156,7 @@ impl Lines {
     }
 
     /// Load from `src`, the box's memory window: unit `t` reads line `t`.
-    pub(crate) fn load(&mut self, src: &Tile) {
-        let _served = naming::<Served>(src.element);
+    pub(crate) fn load<S: Numeric>(&mut self, src: &Tile) {
         let rank = comptime!(self.loaded.rank());
         let line = self.line();
         let lines = self.lines();
@@ -198,9 +197,7 @@ impl Lines {
                     }
                     Packing::Plain => {
                         let size!(SV) = served;
-                        let values = src
-                            .nd_packed::<Served, SV>(comptime!(Guard::Checked))
-                            .read(at);
+                        let values = src.nd_packed::<S, SV>(comptime!(Guard::Checked)).read(at);
                         let mut bits = Vector::<u32, WR>::empty();
                         #[unroll]
                         for j in 0..per_read {

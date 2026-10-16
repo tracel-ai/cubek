@@ -48,7 +48,7 @@ impl Tile {
         &self,
         #[comptime] writers: usize,
     ) -> SmemSlotsAccumulation<A> {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let size!(W) = width;

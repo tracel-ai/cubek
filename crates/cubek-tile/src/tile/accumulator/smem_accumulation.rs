@@ -28,7 +28,7 @@ impl Tile {
     /// A zeroed shared-memory accumulator over this tile's box, summing in `A`, with the cube
     /// synchronized on both sides of the zeroing.
     pub fn smem_accumulation<A: Numeric>(&self) -> SmemAccumulation {
-        let _served = naming::<Served>(self.element);
+        let define!(Served) = self.element;
         let space = comptime!(self.place.space.clone());
         let elem_bytes = A::size().comptime();
         let form = comptime!(StageForm::dense(

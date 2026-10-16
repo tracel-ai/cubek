@@ -22,7 +22,7 @@ impl CodebookRead for TileExpand {
 /// `table[index]`, the table read as the one-axis tile it is.
 #[cube]
 fn table_entry(table: &Tile, index: u32) -> f32 {
-    let _served = naming::<Served>(table.element);
+    let define!(Served) = table.element;
     let entries = table.nd_packed::<Served, Const<1>>(comptime!(Guard::Checked));
     let mut at = CoordsDyn::new();
     at.push(index);

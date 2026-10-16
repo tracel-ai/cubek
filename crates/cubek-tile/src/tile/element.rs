@@ -1,73 +1,20 @@
 //! The element a tile serves its values at, held as data ([`Tile::element`](crate::Tile)), and
 //! named as a type where code needs one.
 //!
-//! A tile's ops are written once, at placeholder elements ([`Served`], [`Source`], [`Lhs`],
-//! [`Rhs`], [`Out`]); an op names each placeholder as a tile's element for as long as it runs
-//! ([`Naming`]), then gives it back what it named before, so an op running inside another, on a
-//! tile of another element, leaves the outer op's naming as it found it.
+//! A function defines a type for a tile's element where it first meets the tile as data
+//! (`let define!(Served) = self.element;`), and hands the type to what it calls as a generic. A
+//! public op does it for the tiles it is handed; inside the crate, so does the code that holds
+//! tiles apart from any op: a pipeline's payloads and sources, a meeting's stages, a factor's
+//! scales, a codebook's table.
 //!
-//! A placeholder is resolved wherever it is used, so a function that names one takes no element
-//! generic a caller could name with it: inside, the generic would mean the function's naming, not
-//! the caller's. A function that hands a tile's element down passes it as a generic instead.
-
-use core::marker::PhantomData;
+//! The type a function defines is its own: no caller can pass it in, and nothing the function
+//! calls names it but through a generic, so no function goes on at an element another one
+//! named. A function re-entered on a tile of another element gets its type back when the inner
+//! call returns.
 
 use cubecl::define_scalar;
-use cubecl::ir::{ElemType, Scope};
-use cubecl::unexpanded;
 
-// The element of the tile an op runs on.
-define_scalar!(pub(crate) Served);
-// The element of a tile an op reads from: a copy's source, a table, scales.
-define_scalar!(pub(crate) Source);
-// The elements of a contraction's two operands.
-define_scalar!(pub(crate) Lhs);
-define_scalar!(pub(crate) Rhs);
-// The element of the tile an op writes to: a drain's destination.
-define_scalar!(pub(crate) Out);
 // The element a value is held at, apart from any name: a cmma fragment, a warpgroup accumulator
 // or an erased call is kept at it and named at its element where it is used, and a read that
-// converts a value binds it for as long as the read expands.
+// converts a value defines it for as long as the read expands.
 define_scalar!(pub(crate) Held);
-
-/// The placeholder `M` naming `element` until this is dropped.
-pub(crate) struct Naming<'a, M: 'static> {
-    scope: &'a Scope,
-    before: Option<ElemType>,
-    _placeholder: PhantomData<M>,
-}
-
-impl<'a, M: 'static> Naming<'a, M> {
-    /// `M` names `element` from here on.
-    pub(crate) fn new(scope: &'a Scope, element: ElemType) -> Self {
-        let before = scope.resolve_type::<M>();
-        scope.register_type::<M>(element);
-        Naming {
-            scope,
-            before,
-            _placeholder: PhantomData,
-        }
-    }
-}
-
-impl<M: 'static> Drop for Naming<'_, M> {
-    fn drop(&mut self) {
-        if let Some(before) = self.before {
-            self.scope.register_type::<M>(before);
-        }
-    }
-}
-
-/// The placeholder `M` naming `element` for as long as the returned [`Naming`] lives: bound to a
-/// name, to the end of the op that binds it.
-pub(crate) fn naming<M: 'static>(_element: ElemType) -> Naming<'static, M> {
-    unexpanded!()
-}
-
-pub(crate) mod naming {
-    use super::*;
-
-    pub(crate) fn expand<'a, M: 'static>(scope: &'a Scope, element: ElemType) -> Naming<'a, M> {
-        Naming::new(scope, element)
-    }
-}

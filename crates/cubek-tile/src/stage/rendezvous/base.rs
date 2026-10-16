@@ -186,7 +186,7 @@ impl Meeting {
 
     /// [`fill`](Meeting::fill) a source that decodes nothing.
     fn fill_as_it_lies(&self, dst: &mut Tile, src: &Tile, #[comptime] space: Space) {
-        let _served = naming::<Served>(dst.element);
+        let define!(Served) = dst.element;
         match self {
             Meeting::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {

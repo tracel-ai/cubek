@@ -59,14 +59,13 @@ impl Memory {
     /// Allocate a tile staging one `divide()` sub-tile of `operand`, laid out as `storage` and
     /// served `width` wide where stated, for `owner`: the cube, or each plane a copy of its own,
     /// which only a plain stage of served values is.
-    pub(crate) fn stage(
+    pub(crate) fn stage<S: Numeric>(
         operand: &Tile,
         #[comptime] level: Level,
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
         #[comptime] owner: StageOwner,
     ) -> Tile {
-        let _served = naming::<Served>(operand.element);
         match comptime!(storage.clone()) {
             // The plane holds the units at the depth of one region of `level`.
             StageStorage::Lines { read } => {
@@ -83,22 +82,21 @@ impl Memory {
                         operand.place.depth + 1,
                         operand.place.levels.clone()
                     )),
-                    element: elem_type_of::<Served>(),
+                    element: elem_type_of::<S>(),
                 }
             }
-            _ => Memory::stage_memory(operand, level, storage, width, owner),
+            _ => Memory::stage_memory::<S>(operand, level, storage, width, owner),
         }
     }
 
     /// [`stage`](Memory::stage) in shared memory.
-    fn stage_memory(
+    fn stage_memory<S: Numeric>(
         operand: &Tile,
         #[comptime] level: Level,
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
         #[comptime] owner: StageOwner,
     ) -> Tile {
-        let _served = naming::<Served>(operand.element);
         let element = operand.stage_element();
         let decodes = comptime!(element == StageElement::Decoded);
         match comptime!(element) {
@@ -141,17 +139,10 @@ impl Memory {
                 });
                 // A decoded stage is dense over the values' axes whatever the source's map.
                 if comptime!(projection.is_direct() || decodes) {
-                    Memory::smem_owned::<Served>(
-                        space,
-                        vector_size,
-                        storage,
-                        units,
-                        alignment,
-                        owner,
-                    )
+                    Memory::smem_owned::<S>(space, vector_size, storage, units, alignment, owner)
                 } else {
                     comptime!(refuse_for_a_plane(owner, "gathered"));
-                    Memory::smem_gathered::<Served>(
+                    Memory::smem_gathered::<S>(
                         space,
                         vector_size,
                         storage,
@@ -166,20 +157,19 @@ impl Memory {
             }
             StageElement::Stored => {
                 comptime!(refuse_for_a_plane(owner, "kept in its stored form"));
-                Memory::smem_stored(operand, level, storage, owner)
+                Memory::smem_stored::<S>(operand, level, storage, owner)
             }
         }
     }
 
     /// [`stage`](Memory::stage) in the element the operand is stored in, for the cube `owner`
     /// names, whose units fill it.
-    fn smem_stored(
+    fn smem_stored<S: Numeric>(
         operand: &Tile,
         #[comptime] level: Level,
         #[comptime] storage: StageStorage,
         #[comptime] owner: StageOwner,
     ) -> Tile {
-        let _served = naming::<Served>(operand.element);
         let space = comptime!(level.child(&operand.place.space));
         let vector_size = operand.vector_size();
         let units = operand.units();
@@ -200,9 +190,9 @@ impl Memory {
             Packing::Plain => {
                 // The values the bulk engine lands come packed; a plain stored stage keeps the
                 // copy's alignment.
-                Memory::smem_owned::<Served>(space, vector_size, storage, units, 0usize, owner)
+                Memory::smem_owned::<S>(space, vector_size, storage, units, 0usize, owner)
             }
-            packing => Memory::smem_packed::<Served>(
+            packing => Memory::smem_packed::<S>(
                 space,
                 vector_size,
                 storage,

@@ -16,7 +16,7 @@ impl Tile {
         mask: &Tile,
         scale: EA,
     ) -> Array<EA> {
-        let _out = naming::<Out>(p.element);
+        let define!(Out) = p.element;
         let corr = self.softmax_in_place::<EA>(state, probe, mask, scale);
         match comptime!(state.share) {
             RowShare::Unit { rows: _ } => self.write_rows_to::<EA, Out>(p, &*state),

@@ -838,7 +838,7 @@ impl PlanePartition {
             // A scaled, packed or global operand loads from its plane's landing, as the direct
             // contraction does: a fragment reads a shared, plain window as it lies.
             let side = comptime!(Side::of(&src.place.space, &acc.place.space));
-            let landing = src.landed(side, comptime!(acc.place.space.clone()));
+            let landing = src.landed::<T>(side, comptime!(acc.place.space.clone()));
             frags.copy_from(&landing);
             // The landing is this region's until every unit's load has read it.
             sync_plane();

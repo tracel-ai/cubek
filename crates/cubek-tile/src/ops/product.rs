@@ -10,9 +10,9 @@ use crate::*;
 impl Tile {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
     pub fn product(&mut self, a: &Tile, b: &Tile) {
-        let _served = naming::<Served>(self.element);
-        let _lhs = naming::<Lhs>(a.element);
-        let _rhs = naming::<Rhs>(b.element);
+        let define!(Served) = self.element;
+        let define!(Lhs) = a.element;
+        let define!(Rhs) = b.element;
         self.mul_from::<Served, Lhs, Rhs>(a, b)
     }
 
