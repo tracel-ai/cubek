@@ -46,42 +46,74 @@ impl Tile {
     /// the plane-level dequantize, called where the kernel wants it instead of left to the leaf,
     /// which loads it as the leaf would, through a landing or in lane runs.
     pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
-        let grid = match &self.kind {
-            TileKind::PlanePartition(partition) => partition.grid(),
-            TileKind::PlaneTile(_) => comptime!(None),
+        let out = comptime!(self.place.space.clone());
+        let define!(Target) = element;
+        match &self.kind {
+            TileKind::PlanePartition(partition) => {
+                let grid = partition.grid();
+                match comptime!(grid) {
+                    Some(instruction) => {
+                        PlanePartition::operand::<Target>(operand, self, instruction)
+                    }
+                    None => operand.fragment_for::<Target>(&partition.at(0usize, 0usize), out),
+                }
+            }
+            TileKind::PlaneTile(fragment) => operand.fragment_for::<Target>(fragment, out),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => {
                 panic!("Tile::dequantized: an operand is dequantized for the fragments it meets")
             }
-        };
-        let define!(Target) = element;
-        match comptime!(grid) {
-            Some(instruction) => PlanePartition::operand::<Target>(operand, self, instruction),
-            // One fragment loads its operand as its leaf would: the fragment the leaf builds.
-            None => {
-                let own = comptime!(operand.place.space.clone());
-                let side = comptime!(Side::of(&own, &self.place.space));
-                let read = comptime!(FragmentRead::new(side, &own, &self.place.space));
-                let ident = comptime!(match side {
-                    Side::Lhs => MatrixIdent::A,
-                    Side::Rhs => MatrixIdent::B,
-                });
-                let fragment = operand.cmma_fragment::<Target>(ident, comptime!(read.clone()));
-                let data = CmmaData {
+        }
+    }
+
+    /// This operand as the fragment the one-fragment `acc`'s leaf loads it into, at `T`.
+    fn fragment_for<T: Numeric>(&self, acc: &PlaneTile, #[comptime] out: Space) -> Tile {
+        let own = comptime!(self.place.space.clone());
+        let side = comptime!(Side::of(&own, &out));
+        let ident = comptime!(match side {
+            Side::Lhs => MatrixIdent::A,
+            Side::Rhs => MatrixIdent::B,
+        });
+        let fragment = match acc {
+            PlaneTile::Cmma(_) => {
+                let read = comptime!(FragmentRead::new(side, &own, &out));
+                let fragment = self.cmma_fragment::<T>(ident, comptime!(read.clone()));
+                PlaneTile::new_Cmma(CmmaData {
                     fragment: unsafe { fragment.downcast_unchecked::<Held>() },
                     ident,
                     layout: comptime!(read.layout),
                     shape: comptime!((read.m, read.n)),
                     scratch: ComptimeOption::new_None(),
-                };
-                Tile::new::<Target>(
-                    TileKind::new_PlaneTile(PlaneTile::new_Cmma(data)),
-                    comptime!(operand.place.clone()),
-                )
+                })
             }
-        }
+            PlaneTile::Mma(data) => {
+                // `A` row-major and `B` col-major where the window's trailing axis is contracted.
+                let contracted = comptime!(!out.contains(own.axis_at(own.rank() - 1)));
+                let layout = comptime!(match (side, contracted) {
+                    (Side::Lhs, true) | (Side::Rhs, false) => MatrixLayout::RowMajor,
+                    (Side::Lhs, false) | (Side::Rhs, true) => MatrixLayout::ColMajor,
+                });
+                PlaneTile::new_Mma(self.mma_operand::<T>(
+                    ident,
+                    comptime!(data.m),
+                    comptime!(data.n),
+                    comptime!(data.k),
+                    layout,
+                    comptime!(data.io),
+                    comptime!(data.operands),
+                ))
+            }
+            PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => panic!(
+                "Tile::dequantized: a register block and a warpgroup MMA read their operands where \
+                 they lie"
+            ),
+        };
+        Tile::new::<T>(
+            TileKind::new_PlaneTile(fragment),
+            comptime!(self.place.clone()),
+        )
     }
 
     /// `c += a · b`, folding onto what the accumulator or memory window holds. A packed factor is
