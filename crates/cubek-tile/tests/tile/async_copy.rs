@@ -43,13 +43,12 @@ fn has_copy_engine(client: &Client) -> bool {
 /// `c = a · b` over a K walk whose blocks are staged `depth` deep and filled one region ahead of
 /// the one contracted: the pipelined schedule, its slots published through the barrier.
 #[cube(launch)]
-fn ring_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn ring_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -74,12 +73,11 @@ fn ring_matmul<E: Numeric>(
 /// Each region of `src` staged by a blocking `copy_from`, then copied out of the stage: the fill
 /// and the wait a kernel without a pipeline runs.
 #[cube(launch)]
-fn staged_copy<E: Numeric>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+fn staged_copy(
+    src: &TileArg<'_>,
+    dst: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
     let dst = dst.tile(&space);
@@ -97,12 +95,11 @@ fn staged_copy<E: Numeric>(
 /// [`staged_copy`] over packed words: the stage keeps them packed, as they lie, and the copy out
 /// of it unpacks.
 #[cube(launch)]
-fn staged_packed_copy<O: Numeric>(
-    src: &TileArg<'_, O>,
-    dst: &TileArg<'_, O>,
+fn staged_packed_copy(
+    src: &TileArg<'_>,
+    dst: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(O)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
     let dst = dst.tile(&space);
@@ -147,16 +144,16 @@ fn ring_matmul_with(
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
+    let dtype = f32::elem_type_native();
     ring_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(a.tensor_arg(1), 1, a.spec().delivery(delivery)),
-        TileArgLaunch::new(b.tensor_arg(1), 1, b.spec().delivery(delivery)),
+        TileArgLaunch::new(a.tensor_arg(1), dtype, 1, a.spec().delivery(delivery)),
+        TileArgLaunch::new(b.tensor_arg(1), dtype, 1, b.spec().delivery(delivery)),
         c.arg(1),
         launcher.partitioning_arg(),
         depth,
-        f32::elem_type_native(),
     );
     HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32)
 }
@@ -235,15 +232,15 @@ fn staged_copy_with(
         &client,
         CubeCount::new_single(),
         launcher.cube_dim(),
-        TileArgLaunch::new(src.binding().into_tensor_arg(), 1, src_spec),
+        TileArgLaunch::new(src.binding().into_tensor_arg(), dtype, 1, src_spec),
         TileArgLaunch::new(
             dst.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
     let got = HostData::from_tensor_handle(&client, dst, HostDataType::F32);
     (0..rows_space * cols)
@@ -326,17 +323,18 @@ fn staged_packed_copy_with(
         launcher.cube_dim(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]).packed(field).delivery(delivery),
         ),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            dtype,
             factor,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
     let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
     (0..rows * cols)

@@ -50,10 +50,10 @@ enum Leaf {
 /// `c = a · b` over a walk along `K` whose every region is one stage of `outer`'s tile, read a
 /// fragment of `inner` at a time through `leaf`, the stage laid out as `storage`.
 #[cube(launch)]
-fn staged_k_walk<EI: Numeric, EA: Numeric>(
-    a: &TileArg<'_, EI>,
-    b: &TileArg<'_, EI>,
-    c: &TileArg<'_, EA>,
+fn staged_k_walk<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
@@ -62,7 +62,6 @@ fn staged_k_walk<EI: Numeric, EA: Numeric>(
     #[comptime] schedule: Schedule,
     #[comptime] leaf: Leaf,
     #[comptime] staging: Staging,
-    #[define(EI)] _input: ElemType,
     #[define(EA)] _sum: ElemType,
 ) {
     let a = a.tile(&space);
@@ -396,9 +395,9 @@ fn check(case: Case) {
     };
     let a_axes: &'static [Axis] = if lhs_transposed { &[K, M] } else { &[M, K] };
     let b_axes: &'static [Axis] = if transposed { &[N, K] } else { &[K, N] };
-    let bind = |binding, axes: &'static [Axis], width| {
+    let bind = |binding, element, axes: &'static [Axis], width| {
         launcher
-            .arg(binding)
+            .arg(binding, element)
             .axes(axes)
             .vectorize(width)
             .build()
@@ -408,9 +407,9 @@ fn check(case: Case) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        bind(a_handle.clone().binding(), a_axes, v).arg(),
-        bind(b_handle.clone().binding(), b_axes, v).arg(),
-        bind(out.clone().binding(), &[M, N], 1).arg(),
+        bind(a_handle.clone().binding(), input, a_axes, v).arg(),
+        bind(b_handle.clone().binding(), input, b_axes, v).arg(),
+        bind(out.clone().binding(), f32::elem_type_native(), &[M, N], 1).arg(),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -419,7 +418,6 @@ fn check(case: Case) {
         schedule,
         leaf,
         staging,
-        input,
         f32::elem_type_native(),
     );
 

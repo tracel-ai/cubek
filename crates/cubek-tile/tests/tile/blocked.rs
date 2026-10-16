@@ -42,13 +42,12 @@ const BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// `C = A · B`, whichever axes the operands spell their contraction over.
 #[cube(launch)]
-fn matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -62,15 +61,14 @@ fn matmul<E: Numeric>(
 
 /// `C = (A ⊗ S) · B`, the scales an operand like the other two.
 #[cube(launch)]
-fn scaled_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    scale: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn scaled_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] side: Scaled,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -127,22 +125,24 @@ fn one_contracted_axis_is_the_reference() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[K, N]),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -200,6 +200,7 @@ fn a_partitioned_axis_contracts_the_same() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
@@ -211,6 +212,7 @@ fn a_partitioned_axis_contracts_the_same() {
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, N],
@@ -222,12 +224,12 @@ fn a_partitioned_axis_contracts_the_same() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -292,6 +294,7 @@ fn scales_omit_the_axis_inside_the_block() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
@@ -303,6 +306,7 @@ fn scales_omit_the_axis_inside_the_block() {
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[KB, KI, N],
@@ -314,6 +318,7 @@ fn scales_omit_the_axis_inside_the_block() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
+            dtype,
             1,
             // The block index alone. The position inside a block is not an axis of this operand,
             // which is the whole statement that one scale covers the block.
@@ -324,13 +329,13 @@ fn scales_omit_the_axis_inside_the_block() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         Scaled::Lhs,
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -395,11 +400,13 @@ fn a_split_output_axis_contracts_the_same() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -411,6 +418,7 @@ fn a_split_output_axis_contracts_the_same() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -422,7 +430,6 @@ fn a_split_output_axis_contracts_the_same() {
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -491,11 +498,13 @@ fn scales_omit_the_axis_inside_the_column_block() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -507,6 +516,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
+            dtype,
             1,
             // `K` carried and addressed by nothing, and the position inside a column block is
             // not an axis here at all: the scale varies over the block index alone.
@@ -514,6 +524,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -526,7 +537,6 @@ fn scales_omit_the_axis_inside_the_column_block() {
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         Scaled::Rhs,
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -548,13 +558,12 @@ fn scales_omit_the_axis_inside_the_column_block() {
 /// exactly one column block wide, so the column group's two axes straddle the line boundary: `NI`
 /// is one whole line and `NB` counts them.
 #[cube(launch)]
-fn wide_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn wide_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -606,11 +615,13 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             inside,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -622,6 +633,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             inside,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -633,7 +645,6 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -651,14 +662,13 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
 
 /// `C = A · (B ⊗ S)` with the scales served as lines, as many a read as they are bound wide.
 #[cube(launch)]
-fn wide_scaled_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    scale: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn wide_scaled_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -721,11 +731,13 @@ fn scales_are_served_several_at_a_time() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -737,6 +749,7 @@ fn scales_are_served_several_at_a_time() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
+            dtype,
             units,
             // The block index alone, and it is innermost: the width lands on the axis the scales
             // vary over, so one read serves `units` different scales.
@@ -744,6 +757,7 @@ fn scales_are_served_several_at_a_time() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -755,7 +769,6 @@ fn scales_are_served_several_at_a_time() {
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
@@ -778,9 +791,9 @@ fn scales_are_served_several_at_a_time() {
 /// innermost axis.
 #[cube(launch)]
 fn promoted_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -841,11 +854,13 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -857,6 +872,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -889,10 +905,10 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
 /// four column blocks still arrive in one read.
 #[cube(launch)]
 fn wide_scaled_promoted<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    scale: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -960,11 +976,13 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -976,11 +994,13 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
+            dtype,
             units,
             TileSpec::new(Projection::new(&[K, NB], &[PhysicalAxisMap::of(NB)])),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -1012,14 +1032,13 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
 
 /// [`wide_scaled_matmul`] with the scales at their own element type as well as their own width.
 #[cube(launch)]
-fn wide_typed_scaled_matmul<E: Numeric, S: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    scale: &TileArg<'_, S>,
-    c: &TileArg<'_, E>,
+fn wide_typed_scaled_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -1082,11 +1101,13 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[K, NB, NI],
@@ -1098,11 +1119,13 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
+            scale_dtype,
             units,
             TileSpec::new(Projection::new(&[K, NB], &[PhysicalAxisMap::of(NB)])),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::new(Projection::new(
                 &[M, NB, NI],
@@ -1114,7 +1137,6 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        [dtype, scale_dtype],
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);

@@ -68,19 +68,16 @@ impl CmmaBlueprint {
 /// one's contraction. Inside a stage each plane takes its box, loads the instruction's operands
 /// into fragments one `K` step at a time, and contracts every fragment of its partition. The
 /// accumulator is resident in `EA` (typically `f32`) for the whole walk and cast down to the
-/// output `E` on drain.
+/// output's element on drain.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn cmma_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
-    a: &TileArg<'_, EL>,
-    b: &TileArg<'_, ER>,
-    c: &TileArg<'_, E>,
+pub fn cmma_kernel<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] bp: CmmaBlueprint,
     #[comptime] batch: Vec<Axis>,
-    #[define(EL)] _lhs_dtype: ElemType,
-    #[define(ER)] _rhs_dtype: ElemType,
-    #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
     let depth = comptime!(bp.buffering);

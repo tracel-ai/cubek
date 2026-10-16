@@ -45,7 +45,7 @@ pub struct LastArrival<'a> {
 }
 
 #[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
+impl<'a> TileArg<'a> {
     /// This operand as the slots of a [`LastArrival`] at the `i`-th box `portion` touches, under
     /// `partitioning`, whose cube level shares its steps ([`shared_by`](Levels::shared_by)). The
     /// operand is laid out as [`Partitioning::arrival_slots`] says for its axes.
@@ -68,6 +68,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         let run = portion.run();
         let first_slot = 2 * first + select(portion.starts_in(i, first), 0usize, 1usize);
         let slots = self.tile(&boxes);
+        let _served = naming::<Served>(self.element);
         let walk = boxes.walk();
         let own_box = walk.region(2 * run + select(portion.starts_in(i, run), 0usize, 1usize));
         let own = slots.at(&own_box);
@@ -76,7 +77,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         let first_turn = false;
         LastArrival::<'t> {
             slots,
-            adding: adding_tile::<E, V>(self, &boxes, first_turn),
+            adding: adding_tile::<Served, V>(self, &boxes, first_turn),
             boxes: walk,
             own,
             arrivals,

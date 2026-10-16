@@ -54,23 +54,21 @@ impl CpuGemmBlueprint {
 /// Each operand arrives as one argument bundling its tensor with its comptime spec; the one
 /// kernel [`Space`] is built here and projected onto each in the first lines. `a` stays scalar
 /// (broadcast per `K`); `b` and `c` carry the launch-chosen line size along their contiguous `N`
-/// axis. Each keeps its own element type, `EL`/`ER` for the inputs, `EA` for the accumulator and
-/// `E` for the stored output, and the leaf casts the inputs into `EA`, so mixed-precision GEMM
-/// falls out of one kernel (same dtype is the `EL = ER = EA = E` case, where the casts fold away).
+/// axis. Each keeps its own element, the one it is bound at for the inputs and the stored output,
+/// `EA` for the accumulator, and the leaf casts the inputs into `EA`, so mixed-precision GEMM
+/// falls out of one kernel (same dtype is the case where every element is `EA`, and the casts
+/// vanish).
 ///
 /// Each cube takes a box of the output; each of its planes a register block of that box, which
 /// it opens, steps through `K` in the instruction's depth, and stores to its window of the
 /// output, cast down to its type.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn cpu_gemm_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric>(
-    a: &TileArg<'_, EL>,
-    b: &TileArg<'_, ER>,
-    c: &TileArg<'_, E>,
+pub fn cpu_gemm_kernel<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(EL)] _lhs_dtype: ElemType,
-    #[define(ER)] _rhs_dtype: ElemType,
-    #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
     let a = a.tile(&space);

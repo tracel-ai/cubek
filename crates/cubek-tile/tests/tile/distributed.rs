@@ -27,9 +27,9 @@ const PLANES: usize = 2;
 /// `c = a · b`, every unit summing its blocks in registers.
 #[cube(launch)]
 fn distributed_block_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -115,16 +115,19 @@ fn run(m: usize, n: usize, k: usize, distributed: usize, units: u32) -> HostData
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, K]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[K, N]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         TileArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),

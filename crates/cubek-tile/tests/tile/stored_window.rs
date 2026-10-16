@@ -28,8 +28,8 @@ const PLANE_COLUMNS: usize = 2 * TILE_COLUMNS;
 /// cube's and its plane's.
 #[cube(launch)]
 fn copy_per_unit<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] rank: usize,
     #[define(E)] _dtype: ElemType,
@@ -185,14 +185,14 @@ fn check_copy(storage: StoragePartitioning, axes: &[Axis]) {
 
     let mut binding = input.binding();
     binding.tiling = geometry.tiling();
-    let input_op = launcher.arg(binding).axes(axes).build().unwrap();
+    let input_op = launcher.arg(binding, dtype).axes(axes).build().unwrap();
     assert_eq!(
         input_op.spec.storage,
         Storage::Tiled(Some(3)),
         "the units' level is the storage tile's"
     );
     let output_op = launcher
-        .arg(output.clone().binding())
+        .arg(output.clone().binding(), dtype)
         .axes(axes)
         .build()
         .unwrap();

@@ -57,17 +57,17 @@ enum ScaleForm {
 /// `c = repeats · (a ⊗ sa) · (b ⊗ sb)` per cube, over one stage contracted `repeats` times.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn block_scaled_peak<V: Numeric, E: Numeric, S: Numeric>(
-    a: &TileArg<'_, V>,
-    a_scales: &TileArg<'_, S>,
-    b: &TileArg<'_, V>,
-    b_scales: &TileArg<'_, S>,
-    c: &TileArg<'_, E>,
+fn block_scaled_peak<E: Numeric>(
+    a: &TileArg<'_>,
+    a_scales: &TileArg<'_>,
+    b: &TileArg<'_>,
+    b_scales: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] repeats: usize,
-    #[define(V, E, S)] _dtypes: [ElemType; 3],
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -110,15 +110,14 @@ fn block_scaled_peak<V: Numeric, E: Numeric, S: Numeric>(
 /// instruction.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn float_peak<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, f32>,
+fn float_peak(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] repeats: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -301,16 +300,30 @@ fn launch_nvfp4(
             k,
         )
     };
+    // The values are served as stored, which is what the block-scaled instruction reads.
+    let stored = ElemType::Float(FloatKind::E2M1);
+    let element = f32::elem_type_native();
     block_scaled_peak::launch(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(upload_codes(&operands.a_codes, m), 1, values(M)),
-        TileArgLaunch::new(upload_scales(&operands.a_scales, m), 1, scales(M)),
-        TileArgLaunch::new(upload_codes(&operands.b_codes, n), 1, values(N)),
-        TileArgLaunch::new(upload_scales(&operands.b_scales, n), 1, scales(N)),
+        TileArgLaunch::new(upload_codes(&operands.a_codes, m), stored, 1, values(M)),
+        TileArgLaunch::new(
+            upload_scales(&operands.a_scales, m),
+            scale_elem,
+            1,
+            scales(M),
+        ),
+        TileArgLaunch::new(upload_codes(&operands.b_codes, n), stored, 1, values(N)),
+        TileArgLaunch::new(
+            upload_scales(&operands.b_scales, n),
+            scale_elem,
+            1,
+            scales(N),
+        ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            element,
             1,
             TileSpec::direct(&[M, N]),
         ),
@@ -318,12 +331,7 @@ fn launch_nvfp4(
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         repeats,
-        // The values are served as stored, which is what the block-scaled instruction reads.
-        [
-            ElemType::Float(FloatKind::E2M1),
-            f32::elem_type_native(),
-            scale_elem,
-        ],
+        element,
     );
     c
 }
@@ -348,18 +356,23 @@ fn launch_f16(
         .zeros()
         .generate_without_host_data();
     let rows = |axis: Axis| TileSpec::new(Projection::direct(&[axis, K]));
+    let element = half::f16::elem_type_native();
     float_peak::launch(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(zeros(m), m, k), 1, rows(M)),
-        TileArgLaunch::new(tensor(zeros(n), n, k), 1, rows(N)),
-        TileArgLaunch::new(c.binding().into_tensor_arg(), 1, TileSpec::direct(&[M, N])),
+        TileArgLaunch::new(tensor(zeros(m), m, k), element, 1, rows(M)),
+        TileArgLaunch::new(tensor(zeros(n), n, k), element, 1, rows(N)),
+        TileArgLaunch::new(
+            c.binding().into_tensor_arg(),
+            f32::elem_type_native(),
+            1,
+            TileSpec::direct(&[M, N]),
+        ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         repeats,
-        half::f16::elem_type_native(),
     );
 }
 

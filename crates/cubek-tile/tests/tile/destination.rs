@@ -174,7 +174,7 @@ const WIDTH: usize = 2;
 /// width of two both values of a line would be one, and a store a line off would go unseen.
 #[cube(launch)]
 fn store<E: Float, V: Size, O: Destination>(
-    input: &TileArg<'_, E>,
+    input: &TileArg<'_>,
     out: &O::Arg<E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -208,7 +208,7 @@ fn run_store(sink: bool) -> HostData {
         .arange()
         .generate_without_host_data();
     let src = launcher
-        .arg(input.binding())
+        .arg(input.binding(), dtype)
         .axes(&[ROW, COL])
         .vectorize(WIDTH)
         .build()
@@ -243,7 +243,7 @@ fn run_store(sink: bool) -> HostData {
         }
         false => {
             let bound = launcher
-                .arg(output.clone().binding())
+                .arg(output.clone().binding(), dtype)
                 .axes(&[ROW, COL])
                 .vectorize(WIDTH)
                 .build()
@@ -299,8 +299,8 @@ const BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// touch of the output, which is the shape of a kernel a fused epilogue is handed to.
 #[cube(launch)]
 fn contract<E: Numeric, EA: Numeric, O: Destination>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     c: &O::Arg<E>,
     space: Partitioning,
     #[comptime] level: Level,
@@ -376,7 +376,7 @@ fn run_contract(sink: bool) -> HostData {
         }
         false => {
             let bound = launcher
-                .arg(c.handle().binding())
+                .arg(c.handle().binding(), dtype)
                 .axes(&[M, N])
                 .build()
                 .unwrap();

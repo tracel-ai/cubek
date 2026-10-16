@@ -99,7 +99,7 @@ pub fn launch_ref(
     // the scales span `KB` alone and address it as it stands.
     let split = || PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
     let w_op = launch
-        .arg(weights)
+        .arg(weights, dtypes.served)
         .gathered(Projection::new(
             &[M, KB, KI],
             &[PhysicalAxisMap::of(M), split()],
@@ -109,7 +109,7 @@ pub fn launch_ref(
         .vectorize(factor)
         .build()?;
     let x_op = launch
-        .arg(x)
+        .arg(x, dtypes.x)
         .gathered(Projection::new(
             &[N, KB, KI],
             &[PhysicalAxisMap::of(N), split()],
@@ -181,7 +181,7 @@ pub fn launch_ref(
         // field in it, which the plan distributed on the problem's own count of them.
         levels.push(
             launch
-                .arg(binding)
+                .arg(binding, f32::elem_type_native())
                 .gathered(projection)
                 .packed(field)
                 .build()?,
@@ -193,7 +193,7 @@ pub fn launch_ref(
         .fold(w_op.arg(), |w, level| w.scales(level.arg()));
     // Each unit holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
-    let out_op = launch.arg(out).axes(&[M, N]).build()?;
+    let out_op = launch.arg(out, dtypes.out).axes(&[M, N]).build()?;
 
     quant_gemv_kernel::launch(
         client,
@@ -205,9 +205,6 @@ pub fn launch_ref(
         launch.partitioning_arg(),
         blueprint,
         *problem,
-        dtypes.served,
-        dtypes.x,
-        dtypes.out,
     );
     Ok(())
 }

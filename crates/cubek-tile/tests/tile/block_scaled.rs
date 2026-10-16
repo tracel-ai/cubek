@@ -32,15 +32,15 @@ const STEP: usize = 64;
 /// `c = (a ⊗ sa) · (b ⊗ sb)`, a stage of `K` at a time, contracted through the manual-mma
 /// instruction, the block scales applied to each stage as numbers.
 #[cube(launch)]
-fn block_scaled_matmul<V: Numeric, E: Numeric>(
-    a: &TileArg<'_, V>,
-    a_scales: &TileArg<'_, f32>,
-    b: &TileArg<'_, V>,
-    b_scales: &TileArg<'_, f32>,
-    c: &TileArg<'_, E>,
+fn block_scaled_matmul<E: Numeric>(
+    a: &TileArg<'_>,
+    a_scales: &TileArg<'_>,
+    b: &TileArg<'_>,
+    b_scales: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(V, E)] _dtypes: [ElemType; 2],
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -74,13 +74,13 @@ fn block_scaled_matmul<V: Numeric, E: Numeric>(
 /// instruction holds no level for, so it leaves the operand and multiplies the sum once, as it
 /// drains.
 #[cube(launch)]
-fn block_scaled_matmul_under_words<V: Numeric, E: Numeric>(
-    a: &TileArg<'_, V>,
-    b: &TileArg<'_, V>,
-    c: &TileArg<'_, E>,
+fn block_scaled_matmul_under_words<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(V, E)] _dtypes: [ElemType; 2],
+    #[define(E)] _dtype: ElemType,
 ) {
     let mut c = c.tile(&space);
     let (a, a_factor) = a.tile(&space).factor(c.space());
@@ -171,20 +171,22 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
     let tensor = |handle, rows: usize, cols: usize| unsafe {
         TensorArg::from_raw_parts(handle, [cols, 1].into(), [rows, cols].into())
     };
+    // The values are served as stored, which is what the block-scaled instruction reads.
+    let stored = ElemType::Float(FloatKind::E2M1);
+    let element = f32::elem_type_native();
     // One `f32` over the whole operand, read as the word it is stored in.
     let global = |value: f32| {
         let word = client.create_from_slice(f32::as_bytes(&[value]));
         let spec = TileSpec::new(Projection::new(&[M, N, K], &[PhysicalAxisMap::broadcast()]))
             .packed(Field::Float(FloatKind::F32));
-        TileArgLaunch::new(tensor(word, 1, 1), 1, spec)
+        TileArgLaunch::new(tensor(word, 1, 1), element, 1, spec)
     };
     let out = TileArgLaunch::new(
         c.clone().binding().into_tensor_arg(),
+        element,
         1,
         TileSpec::direct(&[M, N]),
     );
-    // The values are served as stored, which is what the block-scaled instruction reads.
-    let elements = [ElemType::Float(FloatKind::E2M1), f32::elem_type_native()];
     match globals {
         // Block scales the values carry beside them only as words of four `e4m3`, as an NVFP4
         // checkpoint packs them: a factor above scales read as numbers is decoded into the values
@@ -206,11 +208,16 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
                     &[axis, K],
                     &[PhysicalAxisMap::of(axis), PhysicalAxisMap::of(K).over(STEP)],
                 ));
-                TileArgLaunch::new(tensor(handle, rows, k / STEP), 1, spec)
+                TileArgLaunch::new(
+                    tensor(handle, rows, k / STEP),
+                    u32::elem_type_native(),
+                    1,
+                    spec,
+                )
             };
             let operand = |words, rows: usize, axis: Axis, scales: &[f32], global_value: f32| {
-                TileArgLaunch::new(tensor(words, rows, k), 1, values(axis))
-                    .words(word_scales(scales, rows, axis))
+                TileArgLaunch::new(tensor(words, rows, k), stored, 1, values(axis))
+                    .scales(word_scales(scales, rows, axis))
                     .scales(global(global_value))
             };
             block_scaled_matmul_under_words::launch(
@@ -222,7 +229,7 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
                 out,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                elements,
+                element,
             );
         }
         None => {
@@ -232,14 +239,14 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
                 &client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
-                TileArgLaunch::new(tensor(a_words, m, k), 1, values(M)),
-                TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), 1, scales(M)),
-                TileArgLaunch::new(tensor(b_words, n, k), 1, values(N)),
-                TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), 1, scales(N)),
+                TileArgLaunch::new(tensor(a_words, m, k), stored, 1, values(M)),
+                TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), element, 1, scales(M)),
+                TileArgLaunch::new(tensor(b_words, n, k), stored, 1, values(N)),
+                TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), element, 1, scales(N)),
                 out,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                elements,
+                element,
             );
         }
     }

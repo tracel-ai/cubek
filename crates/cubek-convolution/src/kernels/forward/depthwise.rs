@@ -178,12 +178,11 @@ impl DepthwiseSpace {
 /// this unit's channel lines, whose column block the leaf walks with the whole tap window at
 /// each cell.
 #[cube(launch)]
-fn depthwise_kernel<E: Numeric>(
-    weight: &TileArg<'_, E>,
-    input: &TileArg<'_, E>,
-    out: &TileArg<'_, E>,
+fn depthwise_kernel(
+    weight: &TileArg<'_>,
+    input: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
     let weight = weight.tile(&space);
     let input = input.tile(&space);
@@ -482,11 +481,10 @@ pub fn launch_depthwise(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        TileArgLaunch::new(weight.into_tensor_arg(), width, w_spec),
-        TileArgLaunch::new(input.into_tensor_arg(), width, in_spec),
-        TileArgLaunch::new(out.into_tensor_arg(), width, out_spec),
+        TileArgLaunch::new(weight.into_tensor_arg(), dtype, width, w_spec),
+        TileArgLaunch::new(input.into_tensor_arg(), dtype, width, in_spec),
+        TileArgLaunch::new(out.into_tensor_arg(), dtype, width, out_spec),
         launch.partitioning_arg(),
-        dtype,
     );
 
     Ok(())

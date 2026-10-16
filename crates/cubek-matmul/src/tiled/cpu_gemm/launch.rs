@@ -176,18 +176,18 @@ pub fn launch_ref(
     // dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let a = launch
-        .arg(lhs.into_data())
+        .arg(lhs.into_data(), dtypes.lhs_global)
         .axes(&[M, K])
         .batches(&out_batch_axes)
         .build()?;
     let b = launch
-        .arg(rhs)
+        .arg(rhs, dtypes.rhs_global)
         .axes(&[K, N])
         .batches(&out_batch_axes)
         .vectorize(v)
         .build()?;
     let c = launch
-        .arg(out)
+        .arg(out, dtypes.acc_global)
         .axes(&[M, N])
         .batches(&out_batch_axes)
         .vectorize(v)
@@ -200,9 +200,6 @@ pub fn launch_ref(
         b.arg(),
         c.arg(),
         launch.partitioning_arg(),
-        dtypes.lhs_global,
-        dtypes.rhs_global,
-        dtypes.acc_global,
         dtypes.acc_register,
     );
     Ok(())

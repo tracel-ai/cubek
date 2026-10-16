@@ -63,12 +63,11 @@ const K: Axis = Axis(2);
 /// The kernel under test for the one-level mappings: this cube's region, contracted whole at
 /// the leaf. The mapping is the only variable.
 #[cube(launch)]
-fn split_k_matmul_one_level<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn split_k_matmul_one_level(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -84,12 +83,11 @@ fn split_k_matmul_one_level<E: Numeric>(
 /// [`split_k_matmul_one_level`] for the mappings that cut the cube's region across the
 /// plane's units as a second level.
 #[cube(launch)]
-fn split_k_matmul_two_levels<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn split_k_matmul_two_levels(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -297,21 +295,19 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, plane_units: u
             client,
             launcher.cube_count(),
             mapping.cube_dim(&launcher),
-            TileArgLaunch::new(a.tensor_arg(1), 1, a.spec()),
-            TileArgLaunch::new(rhs_arg(&b, mapping), 1, b.spec()),
-            TileArgLaunch::new(c.tensor_arg(1), 1, c.spec()),
+            TileArgLaunch::new(a.tensor_arg(1), dtype, 1, a.spec()),
+            TileArgLaunch::new(rhs_arg(&b, mapping), dtype, 1, b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), dtype, 1, c.spec()),
             launcher.partitioning_arg(),
-            dtype,
         ),
         NestDepth::Two => split_k_matmul_two_levels::launch(
             client,
             launcher.cube_count(),
             mapping.cube_dim(&launcher),
-            TileArgLaunch::new(a.tensor_arg(1), 1, a.spec()),
-            TileArgLaunch::new(rhs_arg(&b, mapping), 1, b.spec()),
-            TileArgLaunch::new(c.tensor_arg(1), 1, c.spec()),
+            TileArgLaunch::new(a.tensor_arg(1), dtype, 1, a.spec()),
+            TileArgLaunch::new(rhs_arg(&b, mapping), dtype, 1, b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), dtype, 1, c.spec()),
             launcher.partitioning_arg(),
-            dtype,
         ),
     }
     c
@@ -348,21 +344,19 @@ impl Benchmark for SplitKBench {
                 &self.client,
                 self.cube_count.clone(),
                 self.cube_dim,
-                TileArgLaunch::new(a.tensor_arg(1), 1, a.spec()),
-                TileArgLaunch::new(rhs_arg(b, self.mapping), 1, b.spec()),
-                TileArgLaunch::new(c.tensor_arg(1), 1, c.spec()),
+                TileArgLaunch::new(a.tensor_arg(1), dtype, 1, a.spec()),
+                TileArgLaunch::new(rhs_arg(b, self.mapping), dtype, 1, b.spec()),
+                TileArgLaunch::new(c.tensor_arg(1), dtype, 1, c.spec()),
                 self.launcher.partitioning_arg(),
-                dtype,
             ),
             NestDepth::Two => split_k_matmul_two_levels::launch(
                 &self.client,
                 self.cube_count.clone(),
                 self.cube_dim,
-                TileArgLaunch::new(a.tensor_arg(1), 1, a.spec()),
-                TileArgLaunch::new(rhs_arg(b, self.mapping), 1, b.spec()),
-                TileArgLaunch::new(c.tensor_arg(1), 1, c.spec()),
+                TileArgLaunch::new(a.tensor_arg(1), dtype, 1, a.spec()),
+                TileArgLaunch::new(rhs_arg(b, self.mapping), dtype, 1, b.spec()),
+                TileArgLaunch::new(c.tensor_arg(1), dtype, 1, c.spec()),
                 self.launcher.partitioning_arg(),
-                dtype,
             ),
         }
         Ok(())

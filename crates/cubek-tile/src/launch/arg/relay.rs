@@ -48,7 +48,7 @@ pub struct Relay<'a> {
 }
 
 #[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
+impl<'a> TileArg<'a> {
     /// This operand as the carry of a [`Relay`]: the box the cubes splitting the contraction
     /// along its [`across`](Levels::across) axis take their turns at, under `partitioning`, whose
     /// first level is the cube level. `turns` arrives holding zero and is left holding zero.
@@ -65,7 +65,8 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         let holders = Relay::holders(partitioning, split);
 
         let carry = self.tile(partitioning);
-        let sink = adding_tile::<E, V>(self, partitioning, turn == 0usize);
+        let _served = naming::<Served>(self.element);
+        let sink = adding_tile::<Served, V>(self, partitioning, turn == 0usize);
 
         Relay::<'t> {
             carry,
@@ -258,12 +259,12 @@ impl Partitioning {
 /// others' parts into.
 #[cube]
 pub(crate) fn adding_tile<E: Numeric, V: Size>(
-    arg: &TileArg<'_, E>,
+    arg: &TileArg<'_>,
     partitioning: &Partitioning,
     first: bool,
 ) -> Tile {
     let space = comptime!(partitioning.clone());
-    let lines = arg.lines::<V>();
+    let lines = arg.lines::<E, V>();
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, V>>(
         lines,
         comptime!(arg.spec.projection.physical_rank()),

@@ -1,10 +1,11 @@
 //! A TMA tensor map as an operand's values ([`TileArgLaunch::tensor_map`]) and its in-kernel
 //! layouts.
 
+use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
-    layout::{CoordsDyn, Layout, LayoutExpand},
-    view::launch::ViewArg,
+    layout::{CoordsDyn, Layout, LayoutExpand, as_dyn::IntoDynLayout},
+    view::launch::VirtualViewLayoutLaunch,
 };
 
 use crate::*;
@@ -27,32 +28,44 @@ pub struct TmaOperand {
 }
 
 impl TmaOperand {
-    /// The tensor map as an operand's values, read at `E`, under no scales.
-    pub fn arg<E: Numeric>(self) -> TileArgLaunch<'static, E> {
+    /// The tensor map as an operand's values, served at the element it moves, under no scales.
+    pub fn arg(self) -> TileArgLaunch {
         TileArgLaunch::tensor_map(self.map, &self.axes, self.shape)
     }
 }
 
-impl<E: Numeric> TileArgLaunch<'static, E> {
-    /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set.
+impl TileArgLaunch {
+    /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set. It
+    /// is served at the element the descriptor moves.
     pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
         let layout = Self::dyn_layout(axes, shape, 1);
-        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::of_view(view, TileSpec::direct(axes))
+        let element = tensor_map.metadata.elem_ty;
+        Self::of_tensor_map(
+            tensor_map,
+            VirtualViewLayoutLaunch::new::<IntoDynLayout<TmaDynLayout>>(layout),
+            element,
+            TileSpec::direct(axes),
+        )
     }
 
-    /// [`tensor_map`](Self::tensor_map) over a packed operand: the descriptor moves the words its
-    /// values are stored in, `field.per_word()` values a cell along its innermost dimension, which
-    /// the layout divides the values' coordinate along it by. `shape` counts values.
+    /// [`tensor_map`](Self::tensor_map) over a packed operand, served at `element`: the descriptor
+    /// moves the words its values are stored in, `field.per_word()` values a cell along its
+    /// innermost dimension, which the layout divides the values' coordinate along it by. `shape`
+    /// counts values.
     pub fn tensor_map_packed(
         tensor_map: TensorMapArg<Tiled>,
+        element: ElemType,
         axes: &[Axis],
         shape: TmaBox,
         field: Field,
     ) -> Self {
         let layout = Self::dyn_layout(axes, shape, field.per_word() as u32);
-        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::of_view(view, TileSpec::direct(axes).packed(field))
+        Self::of_tensor_map(
+            tensor_map,
+            VirtualViewLayoutLaunch::new::<IntoDynLayout<TmaDynLayout>>(layout),
+            element,
+            TileSpec::direct(axes).packed(field),
+        )
     }
 
     /// The layout of a descriptor over `axes` moving cells of `per_cell` values along its
@@ -70,37 +83,47 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
         TmaDynLayoutLaunch::new(dims, batched, shape.transposed, per_cell)
     }
 
-    /// A storage-tiled operand's tensor map over two `axes`, landing as `tiles.landing` says.
+    /// A storage-tiled operand's tensor map over two `axes`, landing as `tiles.landing` says,
+    /// served at the element the descriptor moves.
     pub fn tensor_map_stored(
         tensor_map: TensorMapArg<Tiled>,
         axes: &[Axis],
         tiles: TmaTiles,
     ) -> Self {
-        Self::of_view(
-            Self::stored_view(tensor_map, axes, tiles, 1),
+        let element = tensor_map.metadata.elem_ty;
+        Self::of_tensor_map(
+            tensor_map,
+            Self::stored_layout(axes, tiles, 1),
+            element,
             TileSpec::direct(axes),
         )
     }
 
-    /// [`tensor_map_stored`](Self::tensor_map_stored) over a packed operand: its words hold
-    /// `field`, `field.per_word()` values a word along `cols`. `tiles` counts values.
+    /// [`tensor_map_stored`](Self::tensor_map_stored) over a packed operand, served at `element`:
+    /// its words hold `field`, `field.per_word()` values a word along `cols`. `tiles` counts
+    /// values.
     pub fn tensor_map_stored_packed(
         tensor_map: TensorMapArg<Tiled>,
+        element: ElemType,
         axes: &[Axis],
         tiles: TmaTiles,
         field: Field,
     ) -> Self {
-        let view = Self::stored_view(tensor_map, axes, tiles, field.per_word() as u32);
-        Self::of_view(view, TileSpec::direct(axes).packed(field))
+        Self::of_tensor_map(
+            tensor_map,
+            Self::stored_layout(axes, tiles, field.per_word() as u32),
+            element,
+            TileSpec::direct(axes).packed(field),
+        )
     }
 
-    /// The view over `tensor_map`, its descriptor moving `per_cell` values a cell along `cols`.
-    fn stored_view(
-        tensor_map: TensorMapArg<Tiled>,
+    /// The layout of a storage-tiled descriptor over `axes` moving `per_cell` values a cell along
+    /// `cols`.
+    fn stored_layout(
         axes: &[Axis],
         tiles: TmaTiles,
         per_cell: u32,
-    ) -> ViewArg<CoordsDyn> {
+    ) -> VirtualViewLayoutLaunch<CoordsDyn, Sequence<i32>, TensorMapArg<Tiled>> {
         assert_eq!(
             axes.len(),
             2,
@@ -108,7 +131,7 @@ impl<E: Numeric> TileArgLaunch<'static, E> {
              launching per batch"
         );
         let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, per_cell, tiles.landing);
-        ViewArg::new_tensor_map_tiled::<TmaStoredLayout>(tensor_map, layout)
+        VirtualViewLayoutLaunch::new::<IntoDynLayout<TmaStoredLayout>>(layout)
     }
 }
 

@@ -23,12 +23,11 @@ const KI: Axis = Axis(2);
 /// `output = unpack(values) ⊗ scales`, the values read as many words a load as they are bound
 /// wide.
 #[cube(launch)]
-fn tiled_scaled_copy<O: Numeric>(
-    values: &TileArg<'_, O>,
-    scales: &TileArg<'_, f32>,
-    output: &TileArg<'_, O>,
+fn tiled_scaled_copy(
+    values: &TileArg<'_>,
+    scales: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
-    #[define(O)] _dtype: ElemType,
 ) {
     let values = values.tile(&space);
     let scales = scales.tile(&space);
@@ -39,13 +38,12 @@ fn tiled_scaled_copy<O: Numeric>(
 /// `stage = values` as the words they are, then `output = unpack(stage) ⊗ scales`: the weight
 /// staged packed over `level`'s region, decoded out of the stage.
 #[cube(launch)]
-fn tiled_packed_stage<O: Numeric>(
-    values: &TileArg<'_, O>,
-    scales: &TileArg<'_, f32>,
-    output: &TileArg<'_, O>,
+fn tiled_packed_stage(
+    values: &TileArg<'_>,
+    scales: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(O)] _dtype: ElemType,
 ) {
     let values = values.tile(&space);
     let scales = scales.tile(&space);
@@ -153,19 +151,25 @@ fn check_tiled(storage: StoragePartitioning, cols: usize, words_per_load: usize,
             &client,
             count,
             dim,
-            TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), words_per_load, w_spec),
+            TileArgLaunch::new(
+                w_tensor.binding().into_tensor_arg(),
+                dtype,
+                words_per_load,
+                w_spec,
+            ),
             TileArgLaunch::new(
                 s_tensor.binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[N, KB]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                dtype,
                 4,
                 TileSpec::direct(&axes),
             ),
             uncut(&client, &space, &space).partitioning_arg(),
-            dtype,
         ),
         Read::PackedStage => {
             // One cube over the whole box: the region the stage holds.
@@ -185,20 +189,26 @@ fn check_tiled(storage: StoragePartitioning, cols: usize, words_per_load: usize,
                 &client,
                 count,
                 dim,
-                TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), words_per_load, w_spec),
+                TileArgLaunch::new(
+                    w_tensor.binding().into_tensor_arg(),
+                    dtype,
+                    words_per_load,
+                    w_spec,
+                ),
                 TileArgLaunch::new(
                     s_tensor.binding().into_tensor_arg(),
+                    dtype,
                     1,
                     TileSpec::direct(&[N, KB]),
                 ),
                 TileArgLaunch::new(
                     out.clone().binding().into_tensor_arg(),
+                    dtype,
                     4,
                     TileSpec::direct(&axes),
                 ),
                 launcher.partitioning_arg(),
                 level,
-                dtype,
             )
         }
     }
