@@ -38,7 +38,7 @@ const PITCH: usize = 32;
 /// `out` written with `input`, as the destination's write says: replaced or added atomically.
 #[cube(launch)]
 fn store<E: Float, V: Size, O: Destination>(
-    input: &TileArg<'_, E>,
+    input: &TileArg<'_>,
     out: &O::Arg<E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -50,12 +50,7 @@ fn store<E: Float, V: Size, O: Destination>(
 
 /// `out` written with `input` cast to the output's element.
 #[cube(launch)]
-fn store_cast<E: Float, F: Float>(
-    input: &TileArg<'_, E>,
-    out: &TileArg<'_, F>,
-    space: Partitioning,
-    #[define(E, F)] _dtypes: [ElemType; 2],
-) {
+fn store_cast(input: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
     let src = input.tile(&space);
     let mut dst = out.tile(&space);
     dst.copy_cast_from(&src);
@@ -100,12 +95,12 @@ fn add_launches(write: Write, layout: StridedLayout, launches: usize) -> HostDat
         .generate_without_host_data();
     for _ in 0..launches {
         let src = launcher
-            .arg(input.clone().binding())
+            .arg(input.clone().binding(), dtype)
             .axes(&[ROW, COL])
             .build()
             .unwrap();
         let bound = launcher
-            .arg(output.clone().binding())
+            .arg(output.clone().binding(), dtype)
             .axes(&[ROW, COL])
             .build()
             .unwrap();
@@ -172,12 +167,12 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
         .zeros()
         .generate_without_host_data();
     let src = launcher
-        .arg(input.binding())
+        .arg(input.binding(), wide)
         .axes(&[ROW, COL])
         .build()
         .unwrap();
     let dst = launcher
-        .arg(output.clone().binding())
+        .arg(output.clone().binding(), narrow)
         .axes(&[ROW, COL])
         .build()
         .unwrap();
@@ -188,7 +183,6 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
         src.arg(),
         dst.arg(),
         launcher.partitioning_arg(),
-        [wide, narrow],
     );
     let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
     for row in 0..ROWS {
@@ -210,10 +204,10 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
 /// casts the sum into the `f16` output.
 #[cube(launch)]
 fn relayed_split_matmul(
-    a: &TileArg<'_, f32>,
-    b: &TileArg<'_, f32>,
-    carry: &TileArg<'_, f32>,
-    out: &TileArg<'_, half::f16>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    carry: &TileArg<'_>,
+    out: &TileArg<'_>,
     turns: &[Atomic<u32>],
     space: Partitioning,
 ) {
@@ -316,21 +310,25 @@ fn run_relayed_split(
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a.clone().binding().into_tensor_arg(),
+                f32_ty,
                 1,
                 TileSpec::direct(&[M, K]),
             ),
             TileArgLaunch::new(
                 b.clone().binding().into_tensor_arg(),
+                f32_ty,
                 1,
                 TileSpec::direct(&[K, N]),
             ),
             TileArgLaunch::new(
                 carry.clone().binding().into_tensor_arg(),
+                f32_ty,
                 1,
                 TileSpec::direct(&[M, N]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                f16_ty,
                 1,
                 TileSpec::direct(&[M, N]),
             ),

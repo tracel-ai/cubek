@@ -39,11 +39,11 @@ const C: Axis = Axis(6); // score cols = one S block
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_cmma_kernel<E: Float>(
-    q: &TileArg<'_, E>,      // {QP, D}
-    k: &TileArg<'_, E>,      // {S, D}
-    v: &TileArg<'_, E>,      // {S, V}
-    mask: &TileArg<'_, u32>, // 1-cell dummy (materialized = false)
-    out: &TileArg<'_, f32>,  // {QP, V}
+    q: &TileArg<'_>,    // {QP, D}
+    k: &TileArg<'_>,    // {S, D}
+    v: &TileArg<'_>,    // {S, V}
+    mask: &TileArg<'_>, // 1-cell dummy (materialized = false)
+    out: &TileArg<'_>,  // {QP, V}
     scale: f32,
     bound: u32,
     space: Partitioning,
@@ -355,26 +355,31 @@ fn run_cmma<E: Float + CubeElement>(
         CubeDim::new_2d(plane_units as u32, planes as u32),
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
+            e_ty,
             1,
             TileSpec::direct(&[QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
+            e_ty,
             1,
             TileSpec::direct(k_axes),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
+            e_ty,
             1,
             TileSpec::direct(v_axes),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
+            u32_ty,
             1,
             TileSpec::direct(&[R, C]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[QP, V]),
         ),
@@ -493,7 +498,7 @@ fn fold_cmma_lined_scores() {
 /// masking would make right either way: the walk's own step count, written out.
 #[cube(launch)]
 fn visited_blocks_kernel(
-    k: &TileArg<'_, f32>,
+    k: &TileArg<'_>,
     out: &mut Tensor<f32>,
     bound: u32,
     space: Partitioning,
@@ -553,6 +558,7 @@ fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
         launcher.cube_dim(),
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[S, D]),
         ),

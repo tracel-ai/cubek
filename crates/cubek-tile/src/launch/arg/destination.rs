@@ -62,7 +62,7 @@ pub struct TmaStored;
 
 #[cube]
 impl Destination for TmaStored {
-    type Arg<E: Numeric> = TileArg<'static, E>;
+    type Arg<E: Numeric> = TileArg<'static>;
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         arg.tile(partitioning)
@@ -72,7 +72,7 @@ impl Destination for TmaStored {
 impl DestinationLaunch for TmaStored {
     type Operand = TmaOperand;
 
-    fn arg<E: Numeric>(operand: TmaOperand) -> TileArgLaunch<'static, E> {
+    fn arg<E: Numeric>(operand: TmaOperand) -> TileArgLaunch {
         operand.arg()
     }
 }

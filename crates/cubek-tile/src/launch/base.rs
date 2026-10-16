@@ -1,6 +1,6 @@
 //! One kernel launch: the [`Launcher`].
 
-use cubecl::ir::OpaqueType;
+use cubecl::ir::{ElemType, OpaqueType};
 use cubecl::prelude::*;
 
 use crate::{
@@ -146,9 +146,10 @@ impl Launcher {
             .unwrap_or_else(|| self.concrete.extent(axis))
     }
 
-    /// Bind `binding` as an operand of this launch.
-    pub fn arg(&self, binding: TensorBinding) -> Arg<'_, Unlabelled> {
-        Arg::bound(self, binding)
+    /// Bind `binding`, served at `element`, as an operand of this launch: what the buffer holds
+    /// where it is not [`packed`](Arg::packed), what its words' fields are served at where it is.
+    pub fn arg(&self, binding: TensorBinding, element: ElemType) -> Arg<'_, Unlabelled> {
+        Arg::bound(self, binding, element)
     }
 
     /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor; end it with

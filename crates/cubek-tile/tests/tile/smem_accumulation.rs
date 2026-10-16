@@ -29,9 +29,9 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// memory and the sum stored once.
 #[cube(launch)]
 fn smem_split_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -65,9 +65,9 @@ fn smem_split_matmul<E: Numeric>(
 /// slice every round, landing one chunk a round, the cube synchronized between rounds.
 #[cube(launch)]
 fn smem_cyclic_split_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] planes: usize,
     #[define(E)] _dtype: ElemType,
@@ -163,16 +163,19 @@ fn run(
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[M, K]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[K, N]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[M, N]),
             ),
@@ -182,7 +185,7 @@ fn run(
         Meet::Cyclic { out_width } => {
             let wide = |handle: &cubecl::std::tensor::TensorHandle, axes: &[Axis]| {
                 launcher
-                    .arg(handle.clone().binding())
+                    .arg(handle.clone().binding(), handle.dtype)
                     .axes(axes)
                     .vectorize(out_width)
                     .build()
@@ -195,6 +198,7 @@ fn run(
                 launcher.cube_dim(),
                 TileArgLaunch::new(
                     a_handle.clone().binding().into_tensor_arg(),
+                    dtype,
                     1,
                     TileSpec::direct(&[M, K]),
                 ),
@@ -333,13 +337,12 @@ fn cyclic_rounds_sum_the_same_every_run() {
 /// or where `copies` through [`Tile::copy_from`], which bounces the same way through the scratch it
 /// is opened with.
 #[cube(launch)]
-fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
-    a: &TileArg<'_, EI>,
-    b: &TileArg<'_, EI>,
-    c: &TileArg<'_, E>,
+fn fragment_matmul_into_a_short_window<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] copies: bool,
-    #[define(EI)] _input: ElemType,
     #[define(E)] _output: ElemType,
 ) {
     let a = a.tile(&space);
@@ -453,17 +456,18 @@ fn short_window_matmul(copies: bool) {
     );
     // Bound through the launcher, which reads the overhang off the partitioning and masks the
     // output's writes past its edge.
-    let bind = |binding, axes: &'static [Axis]| launcher.arg(binding).axes(axes).build().unwrap();
+    let bind = |binding, element, axes: &'static [Axis]| {
+        launcher.arg(binding, element).axes(axes).build().unwrap()
+    };
     fragment_matmul_into_a_short_window::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        bind(a_handle.clone().binding(), &[M, K]).arg(),
-        bind(b_handle.clone().binding(), &[K, N]).arg(),
-        bind(out.clone().binding(), &[M, N]).arg(),
+        bind(a_handle.clone().binding(), input, &[M, K]).arg(),
+        bind(b_handle.clone().binding(), input, &[K, N]).arg(),
+        bind(out.clone().binding(), out.dtype, &[M, N]).arg(),
         launcher.partitioning_arg(),
         copies,
-        input,
         f32::elem_type_native(),
     );
 

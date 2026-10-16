@@ -95,25 +95,23 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 /// or a scale binding: which values one scale covers is the scales operand's own axes, stated in
 /// the space.
 ///
-/// Every operand keeps its own element: `EC` is what the words decode to, `EX` what the
-/// activation buffer holds, `EO` the output's, and the leaf casts each into the accumulator as it
-/// always does. The activation is served in lines along the contraction, one stored word's worth
-/// a step, and the output scalar, because each unit holds a partial of its group's cell.
+/// Every operand keeps its own element: the weight's is what the words decode to, the
+/// activation's what its buffer holds, the output's its own, and the leaf casts each into the
+/// accumulator as it always does. The activation is served in lines along the contraction, one
+/// stored word's worth a step, and the output scalar, because each unit holds a partial of its
+/// group's cell.
 ///
 /// Four levels, each one region per instance: the cube's strip of rows, the plane's group of
 /// rows, the plane's walk over the blocks, and the unit's rows against its turn at them, which
 /// the leaf folds across the plane's units as it writes.
 #[cube(launch)]
-pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, EO: Numeric>(
-    w: &TileArg<'_, EC>,
-    x: &TileArg<'_, EX>,
-    out: &TileArg<'_, EO>,
+pub fn quant_gemv_kernel(
+    w: &TileArg<'_>,
+    x: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] bp: QuantGemvBlueprint,
     #[comptime] problem: QuantGemvProblem,
-    #[define(EC)] _served_dtype: ElemType,
-    #[define(EX)] _x_dtype: ElemType,
-    #[define(EO)] _out_dtype: ElemType,
 ) {
     let config = comptime!(register_block(&bp, &problem));
     let w = w.tile(&space);

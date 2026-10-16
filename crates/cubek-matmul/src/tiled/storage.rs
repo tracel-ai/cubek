@@ -27,8 +27,8 @@ use crate::definition::MatmulSetupError;
 /// layout.
 #[cube(launch)]
 fn relayout<E: Numeric, V: Size>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+    src: &TileArg<'_>,
+    dst: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -303,7 +303,7 @@ fn relayout_launch(
     };
     let bind = |binding| {
         launch
-            .arg(binding)
+            .arg(binding, dtype)
             .axes(&named)
             .batches(&batch_axes)
             .vectorize(v)

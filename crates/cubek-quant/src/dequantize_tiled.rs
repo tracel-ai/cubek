@@ -93,11 +93,13 @@ pub fn launch_ref(
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
     let values = TileArgLaunch::new(
         input.into_tensor_arg(),
+        output_dtype,
         1,
         TileSpec::direct(&[M, N]).packed(field),
     )
     .scales(TileArgLaunch::new(
         scales.into_tensor_arg(),
+        f32::elem_type_native(),
         1,
         TileSpec::new(per_tensor),
     ));
@@ -108,25 +110,20 @@ pub fn launch_ref(
         values,
         TileArgLaunch::new(
             output.into_tensor_arg(),
+            output_dtype,
             per_word,
             TileSpec::direct(&[M, N]),
         ),
         launch.partitioning_arg(),
-        output_dtype,
     );
 
     Ok(())
 }
 
 #[cube(launch)]
-/// The values are fields of the scheme's element read out of `u32` words, served as `O` under
-/// their scale, which the copy that says so multiplies in.
-pub fn dequantize<O: Numeric>(
-    input: &TileArg<'_, O>,
-    output: &TileArg<'_, O>,
-    space: Partitioning,
-    #[define(O)] _output_dtype: ElemType,
-) {
+/// The values are fields of the scheme's element read out of `u32` words, served as the output's
+/// element under their scale, which the copy that says so multiplies in.
+pub fn dequantize(input: &TileArg<'_>, output: &TileArg<'_>, space: Partitioning) {
     let input = input.tile(&space);
     let mut output = output.tile(&space);
     output.dequantize_from(&input);

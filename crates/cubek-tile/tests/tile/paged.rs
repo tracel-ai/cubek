@@ -44,8 +44,8 @@ const TABLE: [u32; SEQS * PAGES_PER_SEQ] = [2, 0, 3, 2];
 /// `out[b] = Σ kv[slot]` over the slots of the pages sequence `b` holds.
 #[cube(launch)]
 fn paged_sum_kernel<E: Numeric>(
-    kv: &TileArg<'_, E>,
-    out: &TileArg<'_, E>,
+    kv: &TileArg<'_>,
+    out: &TileArg<'_>,
     table: &Tensor<u32>,
     space: Partitioning,
     #[comptime] seq: Level,
@@ -128,6 +128,7 @@ fn run(table: &[u32]) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             kv_handle.binding().into_tensor_arg(),
+            f32_ty,
             1,
             // The pool's one dimension read as two axes: `slot = page * PAGE_SIZE + offset`.
             TileSpec::new(Projection::new(
@@ -140,6 +141,7 @@ fn run(table: &[u32]) -> HostData {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[B, D]),
         ),
@@ -216,10 +218,10 @@ const PAGES: [[u32; PAGES_EACH]; SEQUENCES] = [[5, 0, 3], [1, 6, 2], [4, 4, 0]];
 /// a step, and [`Tile::within`] cuts each sequence at its own length.
 #[cube(launch)]
 fn paged_read_sum_kernel<E: Numeric>(
-    pool: &TileArg<'_, E>,
+    pool: &TileArg<'_>,
     pages: ComptimeOption<&Tensor<u32>>,
     lens: &Tensor<u32>,
-    out: &TileArg<'_, E>,
+    out: &TileArg<'_>,
     from: u32,
     space: Partitioning,
     #[comptime] seq: Level,
@@ -351,9 +353,13 @@ fn run_paged_read_table(
         .custom(vec![-1.0; SEQUENCES * FEATURES_READ])
         .generate_without_host_data();
 
-    let pool = bind(launcher.arg(pool_handle.binding()).axes(&[B, S, F]), B, S)
-        .build()
-        .unwrap();
+    let pool = bind(
+        launcher.arg(pool_handle.binding(), f32_ty).axes(&[B, S, F]),
+        B,
+        S,
+    )
+    .build()
+    .unwrap();
 
     paged_read_sum_kernel::launch(
         &client,
@@ -364,6 +370,7 @@ fn run_paged_read_table(
         lens_handle.binding().into_tensor_arg(),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[B, F]),
         ),
@@ -568,7 +575,7 @@ fn a_paged_operand_the_table_cannot_resolve_is_refused_at_build() {
     };
     let refusal = |binding, axes: &[Axis], (sequence, position), width| {
         launcher
-            .arg(binding)
+            .arg(binding, f32::elem_type_native())
             .axes(axes)
             .vectorize(width)
             .paged(sequence, position)
@@ -599,7 +606,7 @@ fn a_paged_operand_the_table_cannot_resolve_is_refused_at_build() {
     strided.shape = [POOL, 3, 4].into();
     strided.strides = [12, 1, 3].into();
     let reordered = launcher
-        .arg(strided)
+        .arg(strided, f32::elem_type_native())
         .axes(&[B, S, F])
         .in_stride_order()
         .vectorize(2)
@@ -620,7 +627,7 @@ fn a_paged_operand_the_table_cannot_resolve_is_refused_at_build() {
     );
     let f = pool([POOL, 3, 4]);
     let by_runs = launcher
-        .arg(f.binding())
+        .arg(f.binding(), f32::elem_type_native())
         .axes(&[B, S, F])
         .delivery(Delivery::Tma)
         .paged(B, S)
@@ -651,7 +658,7 @@ fn a_paged_pool_binds_wherever_its_pages_lie() {
         .zeros()
         .generate_without_host_data();
     let heads_outside = launcher
-        .arg(pool.binding())
+        .arg(pool.binding(), f32::elem_type_native())
         .axes(&[H, B, S, F])
         .paged(B, S)
         .build();
@@ -664,7 +671,7 @@ fn a_paged_pool_binds_wherever_its_pages_lie() {
     binding.shape = [POOL, 1, PAGE_LEN, 4].into();
     binding.strides = [PAGE_LEN * 4, 4096, 4, 1].into();
     let one_head = launcher
-        .arg(binding)
+        .arg(binding, f32::elem_type_native())
         .axes(&[B, H, S, F])
         .paged(B, S)
         .build();

@@ -31,13 +31,12 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// `c.zero(); c.mma(a, b)` region by region over whatever one-level space it is handed: the
 /// same body serves the one-axis and the two-axis contraction, which is the point.
 #[cube(launch)]
-fn reduce_matmul_kernel<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+fn reduce_matmul_kernel(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -94,8 +93,8 @@ fn reduce_body<E: Numeric>(
 
 #[cube(launch)]
 fn reduce_kernel<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
@@ -119,7 +118,7 @@ fn reduce_kernel<E: Numeric>(
 /// memory; either way the partial-tile mask must survive rather than folding the padded overhang.
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
-    output: &TileArg<'_, E>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
@@ -187,22 +186,24 @@ fn run(
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(a_axes),
         ),
         TileArgLaunch::new(
             b_handle.binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(b_axes),
         ),
         TileArgLaunch::new(
             c_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(c_axes),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        f32_ty,
     );
 
     HostData::from_tensor_handle(&client, c_handle, HostDataType::F32)
@@ -477,10 +478,16 @@ fn run_reduce_with_vw(
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
+            f32_ty,
             in_vw,
             TileSpec::direct(in_axes),
         ),
-        TileArgLaunch::new(out_binding.into_tensor_arg(), 1, TileSpec::direct(out_axes)),
+        TileArgLaunch::new(
+            out_binding.into_tensor_arg(),
+            f32_ty,
+            1,
+            TileSpec::direct(out_axes),
+        ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         read,
@@ -819,10 +826,16 @@ fn run_reduce_checked(
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(in_axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
-        TileArgLaunch::new(out_binding.into_tensor_arg(), 1, TileSpec::direct(out_axes)),
+        TileArgLaunch::new(
+            out_binding.into_tensor_arg(),
+            f32_ty,
+            1,
+            TileSpec::direct(out_axes),
+        ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         read,
@@ -957,6 +970,7 @@ fn check_procedural_reduce(read: Read) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M]),
         ),
@@ -1313,8 +1327,8 @@ fn test_reduce_axis_min_spatial_unit_units() {
 /// from an out-of-bounds read) wins the maximum and the assert catches it.
 #[cube(launch)]
 fn resident_fold_kernel<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] monoid: Monoid,
@@ -1367,11 +1381,13 @@ fn resident_max_over_unit_split_k() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[M, N, K]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[M, N]),
         ),
@@ -1442,11 +1458,13 @@ fn resident_max_over_unit_group_k() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[M, N, K]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[M, N]),
         ),

@@ -2,6 +2,7 @@
 
 use core::marker::PhantomData;
 
+use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 
 use super::{boundaries::Boundaries, labels::Labels};
@@ -19,8 +20,9 @@ pub struct Labelled;
 /// What the builder accumulates.
 struct ArgData<'a> {
     launch: &'a Launcher,
-    /// The tensor this operand is served from; `None` for a destination with no address.
-    binding: Option<TensorBinding>,
+    /// The tensor this operand is served from and the element it is served at; `None` for a
+    /// destination with no address.
+    binding: Option<(TensorBinding, ElemType)>,
     geometry: Geometry,
     axes: &'a [Axis],
     batches: &'a [Axis],
@@ -54,16 +56,20 @@ pub struct Arg<'a, S> {
 }
 
 impl<'a> Arg<'a, Unlabelled> {
-    pub(crate) fn bound(launch: &'a Launcher, binding: TensorBinding) -> Self {
+    pub(crate) fn bound(launch: &'a Launcher, binding: TensorBinding, element: ElemType) -> Self {
         let geometry = Geometry::from(&binding);
-        Self::over(launch, Some(binding), geometry)
+        Self::over(launch, Some((binding, element)), geometry)
     }
 
     pub(crate) fn unbound(launch: &'a Launcher, geometry: &Geometry) -> Self {
         Self::over(launch, None, geometry.clone())
     }
 
-    fn over(launch: &'a Launcher, binding: Option<TensorBinding>, geometry: Geometry) -> Self {
+    fn over(
+        launch: &'a Launcher,
+        binding: Option<(TensorBinding, ElemType)>,
+        geometry: Geometry,
+    ) -> Self {
         Arg {
             data: ArgData {
                 launch,
@@ -197,7 +203,11 @@ impl<'a> Arg<'a, Labelled> {
         let data = self.data;
         let launch = data.launch;
         let width = data.width;
-        let stored = data.binding.as_ref().map(|b| b.tiling).unwrap_or_default();
+        let stored = data
+            .binding
+            .as_ref()
+            .map(|(b, _)| b.tiling)
+            .unwrap_or_default();
         let stated = data.projection.is_some() || stored.is_tiled();
         let (geometry, axes) =
             stride_ordered(data.geometry, data.axes, data.in_stride_order, stated)?;
@@ -272,7 +282,7 @@ impl<'a> Arg<'a, Labelled> {
         .delivery(data.delivery);
         let tensor = data
             .binding
-            .map(|binding| settled_tensor(binding, &geometry));
+            .map(|(binding, element)| (settled_tensor(binding, &geometry), element));
         let bound = Bound {
             tensor,
             vector_size: width,
@@ -282,9 +292,10 @@ impl<'a> Arg<'a, Labelled> {
     }
 }
 
-/// A bound operand: its tensor argument, comptime [`TileSpec`] and served width.
+/// A bound operand: its tensor argument and the element it is served at, comptime [`TileSpec`] and
+/// served width.
 pub struct Bound {
-    tensor: Option<TensorArg>,
+    tensor: Option<(TensorArg, ElemType)>,
     /// Served width (values per line); a packed binding is narrower by the packing factor.
     pub vector_size: usize,
     pub spec: TileSpec,
@@ -292,15 +303,15 @@ pub struct Bound {
 
 impl Bound {
     /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
-    pub fn arg<E: Numeric>(self) -> TileArgLaunch<'static, E> {
+    pub fn arg(self) -> TileArgLaunch {
         let (width, spec) = (self.bound_width(), self.spec.clone());
-        TileArgLaunch::new(self.tensor(), width, spec)
+        let (tensor, element) = self.tensor.expect(GEOMETRY_ALONE);
+        TileArgLaunch::new(tensor, element, width, spec)
     }
 
     /// The tensor argument itself; panics for an operand built over geometry alone.
     pub fn tensor(self) -> TensorArg {
-        self.tensor
-            .expect("Bound: this operand was built over geometry alone and has no tensor to bind")
+        self.tensor.expect(GEOMETRY_ALONE).0
     }
 
     /// The width the binding is declared at, narrower than `vector_size` when packed: a packed
@@ -309,6 +320,9 @@ impl Bound {
         self.spec.packing.physical(self.vector_size).max(1)
     }
 }
+
+const GEOMETRY_ALONE: &str =
+    "Bound: this operand was built over geometry alone and has no tensor to bind";
 
 /// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind.
 pub struct Unbound {

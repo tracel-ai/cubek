@@ -1,59 +1,43 @@
 //! An operand as a single launch argument: its values, a buffer or a TMA tensor map, its comptime
-//! [`TileSpec`], and the scales its values are read under, each a [`TileArg`] of its own.
+//! [`TileSpec`], the element it serves them at, and the scales its values are read under, each a
+//! [`TileArg`] of its own.
 
 use std::marker::PhantomData;
 
 use cubecl::frontend::{AsMutExpand, AsRefExpand, CubeDebug, ExpandTypeClone, IntoExpand, IntoMut};
 use cubecl::frontend::{buffer_len::expand_buffer_length_native, slice};
-use cubecl::ir::pliron::{r#type::TypeHandle, value::Value};
-use cubecl::ir::{Scope, interfaces::TypedExt, types::VectorType};
+use cubecl::ir::pliron::value::Value;
+use cubecl::ir::{ElemType, Scope, types::VectorType};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
-    ViewMut,
     layout::{CoordsDyn, VirtualLayout, VirtualLayoutExpand},
-    view::launch::ViewCompilationArg,
+    view::launch::{VirtualViewLayoutCompilationArg, VirtualViewLayoutLaunch},
 };
-use cubecl::unexpanded;
+use cubecl::{define_scalar, unexpanded};
 
 use crate::tile::packing::base::Packing;
 use crate::*;
 
-/// An operand as a single launch argument: its values ([`Values`]), its comptime [`TileSpec`],
-/// and the scales they are read under ([`ScaleArg`]).
+/// An operand as a single launch argument: its values, a buffer or a TMA tensor map, its comptime
+/// [`TileSpec`], the element it serves them at, and the scales they are read under.
 ///
-/// `E` is the element the values are read at. A buffer is declared at what it holds: `E` where
-/// the spec states no packing, the `u32` words it packs them in where it does, `width` of them a
-/// line. Neither is a type of the kernel's: a tile reads its buffer at `E` and its width from the
-/// buffer itself.
-pub struct TileArg<'a, E: Numeric> {
-    pub values: Values<'a, E>,
+/// The element is data the argument carries, stated where the operand is bound
+/// ([`TileArgLaunch::new`]), not a type of the kernel's: a tile reads the values at it. A buffer is
+/// declared at what it holds: the element where the spec states no packing, the `u32` words it
+/// packs them in where it does, `width` of them a line.
+///
+/// Scales are levels innermost first, so each covers more than the one inside it: NVFP4's values
+/// carry their block scales, which carry the per-tensor scale. A level served at `u32` is words of
+/// block scales, which only the block-scaled instruction reads; any other is scales read as
+/// numbers.
+pub struct TileArg<'a> {
     pub spec: TileSpec,
-    pub scale: ScaleArg,
+    /// The element the values are served at.
+    pub element: ElemType,
+    _values: PhantomData<&'a ()>,
 }
 
-/// Where a [`TileArg`]'s values are: a buffer, or a TMA tensor map, which a stage lands as it
-/// lies, and where a position in the operand's space lands in it.
-pub enum Values<'a, E: Numeric> {
-    Tensor(&'a Tensor<E>),
-    TensorMap {
-        map: TensorMap<E, Tiled>,
-        layout: VirtualLayout<CoordsDyn, Sequence<i32>>,
-    },
-}
-
-/// The scales a [`TileArg`]'s values are read under: none, or a coarser operand of its own, which
-/// may carry scales in turn. Levels are innermost first, so each covers more than the one inside
-/// it: NVFP4's values carry their block scales, which carry the per-tensor scale.
-///
-/// A level is read at one of two elements, a variant each, since an argument's element is a type:
-/// words of block scales, which only the block-scaled instruction reads, or scales read as numbers.
-pub enum ScaleArg {
-    None,
-    Words(Box<TileArg<'static, u32>>),
-    Scales(Box<TileArg<'static, f32>>),
-}
-
-impl<'a, E: Numeric> TileArg<'a, E> {
+impl TileArg<'_> {
     /// Serve the operand as a [`Tile`] over the kernel's one `partitioning`, under its scales.
     pub fn tile(&self, _partitioning: &Partitioning) -> Tile {
         unexpanded!()
@@ -84,9 +68,10 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         unexpanded!()
     }
 
-    /// The buffer as lines of `V`, which must be the width it is bound at: what a write that adds
-    /// into a line reads and writes it as.
-    pub fn lines<V: Size>(&self) -> &Tensor<Vector<E, V>> {
+    /// The buffer as lines of `V` of `E`, which must be the element it serves and the width it is
+    /// bound at: what a write that adds into a line reads and writes it as. A launch that bound
+    /// the buffer at another element is refused as the kernel expands.
+    pub fn lines<E: Numeric, V: Size>(&self) -> &Tensor<Vector<E, V>> {
         unexpanded!()
     }
 }
@@ -160,44 +145,41 @@ fn tensor_map_tile<E: Numeric>(
 }
 
 /// The device side of a [`TileArg`].
-pub struct TileArgExpand<'a, E: Numeric> {
-    pub values: ValuesExpand<'a, E>,
+#[derive(Clone)]
+pub struct TileArgExpand<'a> {
+    values: ValuesExpand<'a>,
     pub spec: TileSpec,
-    pub scale: ScaleArgExpand,
+    /// The element the values are served at.
+    pub element: ElemType,
+    /// The scales the values are read under: none, or a coarser operand carrying its own.
+    scale: Option<Box<TileArgExpand<'static>>>,
 }
 
-/// The device side of [`Values`]. A buffer keeps what it was declared as, for
-/// [`lines`](TileArg::lines).
-pub enum ValuesExpand<'a, E: Numeric> {
+/// The device side of the values: a buffer, kept also as it was declared for
+/// [`lines`](TileArg::lines), or a tensor map and the layout landing a position in it.
+#[derive(Clone)]
+enum ValuesExpand<'a> {
     Tensor {
-        tensor: &'a TensorExpand<E>,
+        /// The values, kept at [`Held`] and named at their element where a tile reads them.
+        tensor: &'a TensorExpand<Held>,
         buffer: Value,
         meta: TensorMetaExpand,
         width: usize,
     },
     TensorMap {
-        map: NativeExpand<TensorMap<E, Tiled>>,
+        map: Value,
         layout: VirtualLayoutExpand<CoordsDyn, Sequence<i32>>,
     },
 }
 
-/// The device side of a [`ScaleArg`].
-#[derive(Clone)]
-pub enum ScaleArgExpand {
-    None,
-    Words(Box<TileArgExpand<'static, u32>>),
-    Scales(Box<TileArgExpand<'static, f32>>),
-}
-
-impl<'a, E: Numeric> TileArgExpand<'a, E> {
+impl<'a> TileArgExpand<'a> {
     pub fn __expand_tile_method(
         &self,
         scope: &Scope,
         partitioning: &PartitioningExpand,
     ) -> TileExpand {
         let values = self.values_tile(scope, partitioning);
-        self.scale
-            .scaling(scope, &values, partitioning, self.is_tensor_map())
+        self.scaling(scope, values, partitioning)
     }
 
     pub fn __expand_tile_gathered_method(
@@ -207,10 +189,16 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
         coefficients: CoordsExpand<u32>,
         offsets: CoordsExpand<i32>,
     ) -> TileExpand {
-        let ValuesExpand::Tensor { tensor, .. } = &self.values else {
+        let ValuesExpand::Tensor { tensor, meta, .. } = &self.values else {
             panic!("TileArg::tile_gathered: a gather reads a buffer; a tensor map lands boxes")
         };
-        let values = gathered_tile::expand::<E>(
+        define_scalar!(Served);
+        let _served = scope.define_type::<Served>(self.element);
+        let tensor = scope.create_kernel_ref(TensorExpand::<Served>::__expand_from_parts(
+            *meta,
+            tensor.expand.into(),
+        ));
+        let values = gathered_tile::expand::<Served>(
             scope,
             tensor,
             partitioning,
@@ -218,7 +206,7 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
             offsets,
             self.spec.clone(),
         );
-        self.scale.scaling(scope, &values, partitioning, false)
+        self.scaling(scope, values, partitioning)
     }
 
     pub fn __expand_tile_paged_method(
@@ -230,14 +218,24 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
         let ComptimeOptionExpand::Some(table) = pages else {
             return self.__expand_tile_method(scope, partitioning);
         };
-        let ValuesExpand::Tensor { tensor, .. } = &self.values else {
+        let ValuesExpand::Tensor { tensor, meta, .. } = &self.values else {
             panic!("TileArg::tile_paged: a pool of pages is a buffer; a tensor map lands boxes")
         };
-        let values = paged_tile::expand::<E>(scope, tensor, table, partitioning, self.spec.clone());
-        self.scale.scaling(scope, &values, partitioning, false)
+        define_scalar!(Served);
+        let _served = scope.define_type::<Served>(self.element);
+        let tensor = scope.create_kernel_ref(TensorExpand::<Served>::__expand_from_parts(
+            *meta,
+            tensor.expand.into(),
+        ));
+        let values =
+            paged_tile::expand::<Served>(scope, tensor, table, partitioning, self.spec.clone());
+        self.scaling(scope, values, partitioning)
     }
 
-    pub fn __expand_lines_method<V: Size>(&self, scope: &Scope) -> &'a TensorExpand<Vector<E, V>> {
+    pub fn __expand_lines_method<E: Numeric, V: Size>(
+        &self,
+        scope: &Scope,
+    ) -> &'a TensorExpand<Vector<E, V>> {
         let ValuesExpand::Tensor {
             buffer,
             meta,
@@ -247,6 +245,12 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
         else {
             panic!("TileArg::lines: a tensor map has no lines to add into")
         };
+        let named = E::elem_type(scope);
+        assert_eq!(
+            named, self.element,
+            "TileArg::lines: the buffer is bound at {}, not {named}",
+            self.element
+        );
         let width = V::__expand_value(scope);
         assert_eq!(
             width, *bound,
@@ -264,13 +268,19 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
 
     /// The values alone, under none of their scales.
     fn values_tile(&self, scope: &Scope, partitioning: &PartitioningExpand) -> TileExpand {
+        define_scalar!(Served);
+        let _served = scope.define_type::<Served>(self.element);
         match &self.values {
-            ValuesExpand::Tensor { tensor, .. } => {
-                buffer_tile::expand::<E>(scope, tensor, partitioning, self.spec.clone())
+            ValuesExpand::Tensor { tensor, meta, .. } => {
+                let tensor = scope.create_kernel_ref(TensorExpand::<Served>::__expand_from_parts(
+                    *meta,
+                    tensor.expand.into(),
+                ));
+                buffer_tile::expand::<Served>(scope, tensor, partitioning, self.spec.clone())
             }
-            ValuesExpand::TensorMap { map, layout } => tensor_map_tile::expand::<E>(
+            ValuesExpand::TensorMap { map, layout } => tensor_map_tile::expand::<Served>(
                 scope,
-                *map,
+                (*map).into(),
                 layout.clone(),
                 partitioning,
                 self.spec.clone(),
@@ -278,12 +288,6 @@ impl<'a, E: Numeric> TileArgExpand<'a, E> {
         }
     }
 
-    fn is_tensor_map(&self) -> bool {
-        matches!(self.values, ValuesExpand::TensorMap { .. })
-    }
-}
-
-impl ScaleArgExpand {
     /// `values` under these scales, a tile carrying its own scales in turn. A tensor map's values
     /// land in a stage as they lie, so the scales on them are words of block scales, which a stage
     /// keeps beside them; a scale above the words leaves the operand for the sum (`Tile::factor`)
@@ -291,160 +295,128 @@ impl ScaleArgExpand {
     fn scaling(
         &self,
         scope: &Scope,
-        values: &TileExpand,
+        values: TileExpand,
         partitioning: &PartitioningExpand,
-        tensor_map: bool,
     ) -> TileExpand {
-        match self {
-            ScaleArgExpand::None => values.clone(),
-            ScaleArgExpand::Words(level) => {
-                values.__expand_mul_method(scope, &level.__expand_tile_method(scope, partitioning))
-            }
-            ScaleArgExpand::Scales(level) => {
-                assert!(
-                    !tensor_map,
-                    "TileArg: a tensor map lands its values as they lie, so it rides only scales \
-                     a stage keeps beside them: words of block scales"
-                );
-                values.__expand_mul_method(scope, &level.__expand_tile_method(scope, partitioning))
-            }
-        }
+        let Some(level) = &self.scale else {
+            return values;
+        };
+        assert!(
+            level.element == u32::elem_type_native()
+                || !matches!(self.values, ValuesExpand::TensorMap { .. }),
+            "TileArg: a tensor map lands its values as they lie, so it rides only scales a stage \
+             keeps beside them: words of block scales"
+        );
+        values.__expand_mul_method(scope, &level.__expand_tile_method(scope, partitioning))
     }
 }
 
-/// The host side of a [`TileArg`]: its values, its spec and its scales.
-pub struct TileArgLaunch<'a, E: Numeric> {
-    values: ValuesLaunch<E>,
+/// The host side of a [`TileArg`]: its values, its spec, the element it serves them at and its
+/// scales.
+pub struct TileArgLaunch {
+    values: ValuesLaunch,
     spec: TileSpec,
-    scale: ScaleArgLaunch,
-    _values: PhantomData<&'a E>,
+    element: ElemType,
+    scale: Option<Box<TileArgLaunch>>,
 }
 
-/// The host side of [`Values`]: a tensor and the width it is bound at, or a tensor map's view,
-/// boxed for being several times a tensor's size.
-enum ValuesLaunch<E: Numeric> {
-    Tensor { tensor: TensorArg, width: usize },
-    TensorMap(Box<<ViewMut<'static, E, CoordsDyn> as LaunchArg>::RuntimeArg>),
+/// The host side of the values: a tensor and the width it is bound at, or a tensor map, boxed for
+/// being several times a tensor's size, and its layout.
+enum ValuesLaunch {
+    Tensor {
+        tensor: TensorArg,
+        width: usize,
+    },
+    TensorMap {
+        map: Box<TensorMapArg<Tiled>>,
+        layout: VirtualViewLayoutLaunch<CoordsDyn, Sequence<i32>, TensorMapArg<Tiled>>,
+    },
 }
 
-/// The host side of a [`ScaleArg`].
-pub enum ScaleArgLaunch {
-    None,
-    Words(Box<TileArgLaunch<'static, u32>>),
-    Scales(Box<TileArgLaunch<'static, f32>>),
-}
-
-impl<'a, E: Numeric> TileArgLaunch<'a, E> {
-    /// `tensor`, bound `width` wide, as `spec` reads it, under no scales.
-    pub fn new(tensor: TensorArg, width: usize, spec: TileSpec) -> Self {
-        Self::of(ValuesLaunch::Tensor { tensor, width }, spec)
+impl TileArgLaunch {
+    /// `tensor`, served at `element`, bound `width` wide, as `spec` reads it, under no scales.
+    pub fn new(tensor: TensorArg, element: ElemType, width: usize, spec: TileSpec) -> Self {
+        Self::of(ValuesLaunch::Tensor { tensor, width }, element, spec)
     }
 
-    /// A tensor map's `view`, as `spec` reads it, under no scales.
-    pub(crate) fn of_view(
-        view: <ViewMut<'static, E, CoordsDyn> as LaunchArg>::RuntimeArg,
+    /// A tensor map landing through `layout`, served at `element`, as `spec` reads it, under no
+    /// scales.
+    pub(crate) fn of_tensor_map(
+        map: TensorMapArg<Tiled>,
+        layout: VirtualViewLayoutLaunch<CoordsDyn, Sequence<i32>, TensorMapArg<Tiled>>,
+        element: ElemType,
         spec: TileSpec,
     ) -> Self {
-        Self::of(ValuesLaunch::TensorMap(Box::new(view)), spec)
+        let map = Box::new(map);
+        Self::of(ValuesLaunch::TensorMap { map, layout }, element, spec)
     }
 
-    fn of(values: ValuesLaunch<E>, spec: TileSpec) -> Self {
+    fn of(values: ValuesLaunch, element: ElemType, spec: TileSpec) -> Self {
         Self {
             values,
             spec,
-            scale: ScaleArgLaunch::None,
-            _values: PhantomData,
+            element,
+            scale: None,
         }
     }
 
-    /// These values under `scale`'s words of block scales, outside the scales they carry already.
-    pub fn words(self, scale: TileArgLaunch<'static, u32>) -> Self {
-        self.under(|scales| ScaleArgLaunch::Words(Box::new(scales)), scale)
-    }
-
-    /// These values under `scale`'s scales, read as numbers, outside the scales they carry
-    /// already.
-    pub fn scales(self, scale: TileArgLaunch<'static, f32>) -> Self {
-        self.under(|scales| ScaleArgLaunch::Scales(Box::new(scales)), scale)
-    }
-
-    /// This chain with `level(scale)` as its new outermost level.
-    fn under<S: Numeric>(
-        mut self,
-        level: impl FnOnce(TileArgLaunch<'static, S>) -> ScaleArgLaunch,
-        scale: TileArgLaunch<'static, S>,
-    ) -> Self {
-        self.scale = match self.scale {
-            ScaleArgLaunch::None => level(scale),
-            ScaleArgLaunch::Words(inner) => {
-                ScaleArgLaunch::Words(Box::new(inner.under(level, scale)))
-            }
-            ScaleArgLaunch::Scales(inner) => {
-                ScaleArgLaunch::Scales(Box::new(inner.under(level, scale)))
-            }
-        };
+    /// These values under `scale`, outside the scales they carry already: words of block scales
+    /// where `scale` is served at `u32`, scales read as numbers otherwise.
+    pub fn scales(mut self, scale: TileArgLaunch) -> Self {
+        self.scale = Some(Box::new(match self.scale {
+            None => scale,
+            Some(inner) => inner.scales(scale),
+        }));
         self
     }
 }
 
-/// What a [`TileArg`] compiles to: its values', its spec, and its scales'.
+/// What a [`TileArg`] compiles to: its values', its spec, its element and its scales'.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileArgCompilationArg {
     values: ValuesCompilationArg,
     spec: TileSpec,
-    scale: ScaleArgCompilationArg,
+    element: ElemType,
+    scale: Option<Box<TileArgCompilationArg>>,
 }
 
-/// What [`Values`] compile to: a buffer's and the width it is bound at, or a view's.
+/// What the values compile to: a buffer's and the width it is bound at, or a tensor map's layout.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum ValuesCompilationArg {
     Tensor {
         tensor: TensorCompilationArg,
         width: usize,
     },
-    TensorMap(ViewCompilationArg<CoordsDyn>),
+    TensorMap(VirtualViewLayoutCompilationArg<CoordsDyn, Sequence<i32>>),
 }
 
-/// What a [`ScaleArg`] compiles to.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum ScaleArgCompilationArg {
-    None,
-    Words(Box<TileArgCompilationArg>),
-    Scales(Box<TileArgCompilationArg>),
-}
-
-/// The type a buffer holds: `E`, or the `u32` words a packed binding packs it in.
-fn stored<E: Numeric>(scope: &Scope, spec: &TileSpec) -> TypeHandle {
+/// What a buffer serving `element` holds: the element, or the `u32` words a packed binding packs
+/// it in.
+fn stored(element: ElemType, spec: &TileSpec) -> ElemType {
     match spec.packing {
-        Packing::Plain => E::__expand_as_type(scope),
-        Packing::Packed { .. } => u32::__expand_as_type(scope),
+        Packing::Plain => element,
+        Packing::Packed { .. } => u32::elem_type_native(),
     }
 }
 
-impl<'a, E: Numeric> CubeType for TileArg<'a, E> {
-    type ExpandType = TileArgExpand<'a, E>;
+impl<'a> CubeType for TileArg<'a> {
+    type ExpandType = TileArgExpand<'a>;
 }
 
-impl CubeType for ScaleArg {
-    type ExpandType = ScaleArgExpand;
-}
-
-impl<E: Numeric> LaunchArg for TileArg<'static, E> {
-    type RuntimeArg = TileArgLaunch<'static, E>;
+impl LaunchArg for TileArg<'static> {
+    type RuntimeArg = TileArgLaunch;
     type CompilationArg = TileArgCompilationArg;
 
     fn register(arg: Self::RuntimeArg, launcher: &mut KernelLauncher) -> Self::CompilationArg {
         let TileArgLaunch {
             values,
             spec,
+            element,
             scale,
-            ..
         } = arg;
         let values = match values {
             ValuesLaunch::Tensor { tensor, width } => {
-                let line_size = launcher
-                    .with_scope(|scope| stored::<E>(scope, &spec).size(scope.ctx()))
-                    * width;
+                let line_size = stored(element, &spec).size() * width;
                 let meta = TensorMetaLaunch::new(tensor.size() / width, tensor.shape().len());
                 let buffer = match &tensor {
                     TensorArg::Handle { .. } => BufferCompilationArg { inplace: None },
@@ -459,31 +431,29 @@ impl<E: Numeric> LaunchArg for TileArg<'static, E> {
                     width,
                 }
             }
-            ValuesLaunch::TensorMap(view) => {
-                ValuesCompilationArg::TensorMap(ViewMut::<'static, E, CoordsDyn>::register(
-                    *view, launcher,
-                ))
+            ValuesLaunch::TensorMap { map, layout } => {
+                let layout = layout.register(&map, Type::new(element), launcher);
+                launcher.register_tensor_map(*map, element.size());
+                ValuesCompilationArg::TensorMap(layout)
             }
         };
-        let scale = ScaleArg::register(scale, launcher);
+        let scale = scale.map(|level| Box::new(TileArg::register(*level, launcher)));
         TileArgCompilationArg {
             values,
             spec,
+            element,
             scale,
         }
     }
 
-    fn expand(
-        arg: &Self::CompilationArg,
-        builder: &mut KernelBuilder,
-    ) -> TileArgExpand<'static, E> {
+    fn expand(arg: &Self::CompilationArg, builder: &mut KernelBuilder) -> TileArgExpand<'static> {
         let values = match &arg.values {
             ValuesCompilationArg::Tensor { tensor, width } => {
                 let buffer = match tensor.buffer.inplace {
                     Some(id) => builder.inplace(id),
                     None => {
                         let scope = &builder.scope;
-                        let held = stored::<E>(scope, &arg.spec);
+                        let held = stored(arg.element, &arg.spec).to_type(scope.ctx());
                         let line = match *width {
                             1 => held,
                             width => VectorType::get(scope.ctx(), held, width).into(),
@@ -493,8 +463,9 @@ impl<E: Numeric> LaunchArg for TileArg<'static, E> {
                 };
                 let meta = TensorMeta::expand(&tensor.meta, builder);
                 let scope = &builder.scope;
+                let _held = scope.define_type::<Held>(arg.element);
                 let len = expand_buffer_length_native(scope, buffer);
-                let values = slice::from_raw_parts::<E>(
+                let values = slice::from_raw_parts::<Held>(
                     scope,
                     buffer,
                     0usize.into_expand(scope),
@@ -508,129 +479,104 @@ impl<E: Numeric> LaunchArg for TileArg<'static, E> {
                     width: *width,
                 }
             }
-            // The map and its layout, as `ViewMut`'s expand takes them apart, kept apart: a tile
-            // builds the view where a box moves, at the element it names.
-            ValuesCompilationArg::TensorMap(ViewCompilationArg::TensorMapTiled {
-                buffer,
-                layout,
-            }) => {
-                let scope = &builder.scope;
-                let ty =
-                    Type::new(E::elem_type(scope)).with_vector_size(E::__expand_vector_size(scope));
-                ValuesExpand::TensorMap {
-                    layout: layout.expand(ty, builder),
-                    map: <TensorMap<E, Tiled> as LaunchArg>::expand(buffer, builder),
-                }
-            }
-            ValuesCompilationArg::TensorMap(_) => {
-                panic!("TileArg: a tensor map's values are tiled boxes")
-            }
+            // The map and its layout kept apart: a tile builds the view where a box moves, at the
+            // element the map serves.
+            ValuesCompilationArg::TensorMap(layout) => ValuesExpand::TensorMap {
+                layout: layout.expand(Type::new(arg.element), builder),
+                map: builder.tensor_map(),
+            },
         };
-        let scale = ScaleArg::expand(&arg.scale, builder);
+        let scale = arg
+            .scale
+            .as_ref()
+            .map(|level| Box::new(TileArg::expand(level, builder)));
         TileArgExpand {
             values,
             spec: arg.spec.clone(),
+            element: arg.element,
             scale,
         }
     }
 }
 
-impl LaunchArg for ScaleArg {
-    type RuntimeArg = ScaleArgLaunch;
-    type CompilationArg = ScaleArgCompilationArg;
-
-    fn register(arg: ScaleArgLaunch, launcher: &mut KernelLauncher) -> ScaleArgCompilationArg {
-        match arg {
-            ScaleArgLaunch::None => ScaleArgCompilationArg::None,
-            ScaleArgLaunch::Words(level) => {
-                ScaleArgCompilationArg::Words(Box::new(TileArg::<'static, u32>::register(
-                    *level, launcher,
-                )))
-            }
-            ScaleArgLaunch::Scales(level) => {
-                ScaleArgCompilationArg::Scales(Box::new(TileArg::<'static, f32>::register(
-                    *level, launcher,
-                )))
-            }
-        }
-    }
-
-    fn expand(arg: &ScaleArgCompilationArg, builder: &mut KernelBuilder) -> ScaleArgExpand {
-        match arg {
-            ScaleArgCompilationArg::None => ScaleArgExpand::None,
-            ScaleArgCompilationArg::Words(level) => {
-                ScaleArgExpand::Words(Box::new(TileArg::<'static, u32>::expand(level, builder)))
-            }
-            ScaleArgCompilationArg::Scales(level) => {
-                ScaleArgExpand::Scales(Box::new(TileArg::<'static, f32>::expand(level, builder)))
-            }
-        }
+impl IntoExpand for TileArgExpand<'_> {
+    type Expand = Self;
+    fn into_expand(self, _: &Scope) -> Self {
+        self
     }
 }
 
-impl<'a, E: Numeric> Clone for TileArgExpand<'a, E> {
-    fn clone(&self) -> Self {
-        Self {
-            values: self.values.clone(),
-            spec: self.spec.clone(),
-            scale: self.scale.clone(),
-        }
+impl ExpandTypeClone for TileArgExpand<'_> {
+    fn clone_unchecked(&self) -> Self {
+        self.clone()
     }
 }
 
-impl<'a, E: Numeric> Clone for ValuesExpand<'a, E> {
-    fn clone(&self) -> Self {
-        match self {
-            ValuesExpand::Tensor {
-                tensor,
-                buffer,
-                meta,
-                width,
-            } => ValuesExpand::Tensor {
-                tensor: *tensor,
-                buffer: *buffer,
-                meta: *meta,
-                width: *width,
+impl IntoMut for TileArgExpand<'_> {
+    fn into_mut(self, _: &Scope) -> Self {
+        self
+    }
+}
+
+impl CubeDebug for TileArgExpand<'_> {}
+
+impl AsRefExpand for TileArgExpand<'_> {
+    fn __expand_ref_method(&self, _: &Scope) -> &Self {
+        self
+    }
+}
+
+impl AsMutExpand for TileArgExpand<'_> {
+    fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cubecl::ir::FloatKind;
+
+    use super::*;
+
+    /// A one-axis buffer of `f32`, expanded as a kernel argument outside any launch.
+    fn expanded_f32_buffer(builder: &mut KernelBuilder) -> TileArgExpand<'static> {
+        let mut launcher = KernelLauncher::new(builder_settings());
+        let meta = TensorMeta::register(TensorMetaLaunch::new(4, 1), &mut launcher);
+        let arg = TileArgCompilationArg {
+            values: ValuesCompilationArg::Tensor {
+                tensor: TensorCompilationArg {
+                    meta,
+                    buffer: BufferCompilationArg { inplace: None },
+                },
+                width: 1,
             },
-            ValuesExpand::TensorMap { map, layout } => ValuesExpand::TensorMap {
-                map: *map,
-                layout: layout.clone(),
-            },
-        }
+            spec: TileSpec::direct(&[Axis(0)]),
+            element: ElemType::Float(FloatKind::F32),
+            scale: None,
+        };
+        TileArg::expand(&arg, builder)
+    }
+
+    fn builder_settings() -> KernelSettings {
+        KernelSettings::new(
+            cubecl::ir::settings::Dim3::new_single(),
+            cubecl::ir::settings::ExecutionMode::Checked,
+            cubecl::ir::AddressType::U32,
+        )
+    }
+
+    #[test]
+    #[should_panic(expected = "TileArg::lines: the buffer is bound at f32, not i32")]
+    fn lines_refuse_a_buffer_bound_at_another_element() {
+        let mut builder = KernelBuilder::new(builder_settings());
+        let arg = expanded_f32_buffer(&mut builder);
+        arg.__expand_lines_method::<i32, Const<1>>(&builder.scope);
+    }
+
+    #[test]
+    fn lines_read_a_buffer_at_the_element_it_is_bound_at() {
+        let mut builder = KernelBuilder::new(builder_settings());
+        let arg = expanded_f32_buffer(&mut builder);
+        arg.__expand_lines_method::<f32, Const<1>>(&builder.scope);
     }
 }
-
-macro_rules! expand_value {
-    ($ty: ty $(, $lt: lifetime, $param: ident)?) => {
-        impl$(<$lt, $param: Numeric>)? IntoExpand for $ty {
-            type Expand = Self;
-            fn into_expand(self, _: &Scope) -> Self {
-                self
-            }
-        }
-        impl$(<$lt, $param: Numeric>)? ExpandTypeClone for $ty {
-            fn clone_unchecked(&self) -> Self {
-                self.clone()
-            }
-        }
-        impl$(<$lt, $param: Numeric>)? IntoMut for $ty {
-            fn into_mut(self, _: &Scope) -> Self {
-                self
-            }
-        }
-        impl$(<$lt, $param: Numeric>)? CubeDebug for $ty {}
-        impl$(<$lt, $param: Numeric>)? AsRefExpand for $ty {
-            fn __expand_ref_method(&self, _: &Scope) -> &Self {
-                self
-            }
-        }
-        impl$(<$lt, $param: Numeric>)? AsMutExpand for $ty {
-            fn __expand_ref_mut_method(&mut self, _: &Scope) -> &mut Self {
-                self
-            }
-        }
-    };
-}
-
-expand_value!(TileArgExpand<'a, E>, 'a, E);
-expand_value!(ScaleArgExpand);

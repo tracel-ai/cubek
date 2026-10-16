@@ -39,8 +39,8 @@ fn tap_distance<E: Float>(
 
 #[cube(launch)]
 pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] row_scale: u32,
     #[comptime] row_offset: i32,

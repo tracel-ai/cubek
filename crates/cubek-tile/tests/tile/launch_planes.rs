@@ -42,8 +42,8 @@ const UNITS: usize = 2;
 /// `c += a · b`, every plane of the launch its tile.
 #[cube(launch)]
 fn launch_plane_matmul<O: Destination>(
-    a: &TileArg<'_, f32>,
-    b: &TileArg<'_, f32>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     c: &O::Arg<f32>,
     space: Partitioning,
 ) {
@@ -57,8 +57,8 @@ fn launch_plane_matmul<O: Destination>(
 /// `c += a · b`, every plane of every cube its tile: the control.
 #[cube(launch)]
 fn cube_plane_matmul<O: Destination>(
-    a: &TileArg<'_, f32>,
-    b: &TileArg<'_, f32>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     c: &O::Arg<f32>,
     space: Partitioning,
 ) {
@@ -251,18 +251,20 @@ fn run(problem: Problem, planes: &Planes, dealt: Dealt<'_>) -> Option<HostData> 
     let launcher = Launcher::new(&client, kernel, &space, grid).unwrap();
     let policy = BoundaryPolicy::Every(Boundary::Zero);
     let bound = launcher
-        .arg(out.clone().binding())
+        .arg(out.clone().binding(), dtype)
         .axes(&[B, M, N])
         .build()
         .unwrap();
 
     let a_arg = TileArgLaunch::new(
         a_handle.binding().into_tensor_arg(),
+        dtype,
         1,
         TileSpec::direct(&[M, K]).boundary(policy),
     );
     let b_arg = TileArgLaunch::new(
         b_handle.binding().into_tensor_arg(),
+        dtype,
         1,
         TileSpec::direct(&[K, N]).boundary(policy),
     );

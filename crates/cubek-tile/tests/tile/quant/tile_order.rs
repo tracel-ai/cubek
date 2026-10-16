@@ -32,10 +32,10 @@ const TILE: usize = 16;
 /// drains once.
 #[cube(launch)]
 fn tile_order_gemv<E: Numeric>(
-    x: &TileArg<'_, E>,
-    w: &TileArg<'_, E>,
-    scale: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    x: &TileArg<'_>,
+    w: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -141,13 +141,20 @@ fn tile_order_reads_two_words_by_two_columns_a_load() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
+            dtype,
             BLOCK,
             TileSpec::direct(&[M, KB, KI]),
         ),
-        TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), load_words, w_spec),
-        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), 1, s_spec),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            dtype,
+            load_words,
+            w_spec,
+        ),
+        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), dtype, 1, s_spec),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
             1,
             TileSpec::direct(&[M, N]),
         ),

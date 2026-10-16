@@ -32,14 +32,13 @@ const KI: Axis = Axis(3);
 /// contraction, the leaf running under a block of `budget` scalars.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn decode_gemv<E: Numeric, S: Numeric>(
-    w: &TileArg<'_, E>,
-    x: &TileArg<'_, E>,
-    scale: &TileArg<'_, S>,
-    out: &TileArg<'_, E>,
+fn decode_gemv(
+    w: &TileArg<'_>,
+    x: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] budget: usize,
-    #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let w = w.tile(&space);
     let x = x.tile(&space);
@@ -82,14 +81,14 @@ fn decode_gemv<E: Numeric, S: Numeric>(
 /// `RegisterData::mma_scaled` refuses it; the shipping shape thus keeps its accumulator in memory.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn decode_gemv_promoted<E: Numeric, S: Numeric>(
-    w: &TileArg<'_, E>,
-    x: &TileArg<'_, E>,
-    scale: &TileArg<'_, S>,
-    out: &TileArg<'_, E>,
+fn decode_gemv_promoted<E: Numeric>(
+    w: &TileArg<'_>,
+    x: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] budget: usize,
-    #[define(E, S)] _dtypes: [ElemType; 2],
+    #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile(&space);
     let x = x.tile(&space);
@@ -248,7 +247,7 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
         .generate_without_host_data();
 
     let w_op = launcher
-        .arg(w_tensor.binding())
+        .arg(w_tensor.binding(), dtype)
         .gathered(Projection::new(
             &[M, KB, KI],
             &[
@@ -278,19 +277,19 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
         )
     };
     let x_op = launcher
-        .arg(x_tensor.binding())
+        .arg(x_tensor.binding(), dtype)
         .gathered(x_projection)
         .vectorize(if promoted { 1 } else { factor })
         .build()
         .unwrap();
     // One scale per `(row, block of K)`: `KI` is carried and addressed by nothing.
     let s_op = launcher
-        .arg(s_tensor.binding())
+        .arg(s_tensor.binding(), dtype)
         .axes(&[M, KB])
         .build()
         .unwrap();
     let out_op = launcher
-        .arg(out.clone().binding())
+        .arg(out.clone().binding(), dtype)
         .axes(&[M, N])
         .build()
         .unwrap();
@@ -307,7 +306,7 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
             out_op.arg(),
             launcher.partitioning_arg(),
             budget,
-            [dtype, dtype],
+            dtype,
         );
     } else {
         decode_gemv::launch(
@@ -320,7 +319,6 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
             out_op.arg(),
             launcher.partitioning_arg(),
             budget,
-            [dtype, dtype],
         );
     }
 

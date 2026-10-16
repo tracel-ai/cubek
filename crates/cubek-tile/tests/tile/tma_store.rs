@@ -8,7 +8,7 @@ use cubecl::features::Tma;
 use cubecl::prelude::*;
 use cubecl::zspace::shape;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::launch::{Destination, DestinationLaunch, TmaBox, TmaOperand, TmaStored};
+use cubek_tile::launch::{Destination, TmaBox, TmaOperand, TmaStored};
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -21,7 +21,7 @@ const BOX: (usize, usize) = (16, 16);
 
 #[cube(launch)]
 fn store_by_tma<E: Float, O: Destination>(
-    input: &TileArg<'_, E>,
+    input: &TileArg<'_>,
     out: &O::Arg<E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
@@ -67,7 +67,7 @@ fn a_box_stored_by_tma_lands_whole_and_clipped() {
     );
     // Bound through the launcher, which masks the reads of a box the edge cuts short.
     let src = launcher
-        .arg(input.binding())
+        .arg(input.binding(), dtype)
         .axes(&[ROW, COL])
         .vectorize(1)
         .build()
@@ -102,7 +102,7 @@ fn a_box_stored_by_tma_lands_whole_and_clipped() {
         launcher.cube_count(),
         launcher.cube_dim(),
         src.arg(),
-        TmaStored::arg(out),
+        out.arg(),
         launcher.partitioning_arg(),
         dtype,
     );

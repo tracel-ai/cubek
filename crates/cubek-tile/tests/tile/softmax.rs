@@ -23,11 +23,11 @@ const S: Axis = Axis(1);
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn softmax_walk_kernel(
-    score_in: &TileArg<'_, f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &TileArg<'_, u32>,     // {Q, S} boolean, nonzero = masked
-    values: &Tensor<f32>,        // [total_cols]
-    out: &mut Tensor<f32>,       // [rows]
-    lse: &mut Tensor<f32>,       // [rows]
+    score_in: &TileArg<'_>, // {Q: rows, S: total_cols} raw scores
+    mask: &TileArg<'_>,     // {Q, S} boolean, nonzero = masked
+    values: &Tensor<f32>,   // [total_cols]
+    out: &mut Tensor<f32>,  // [rows]
+    lse: &mut Tensor<f32>,  // [rows]
     scale: f32,
     bound_s: u32,
     space: Partitioning,
@@ -256,11 +256,13 @@ fn run_at(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[Q, S]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
+            u32_ty,
             1,
             TileSpec::direct(&[Q, S]),
         ),
@@ -358,11 +360,11 @@ const V: Axis = Axis(2);
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn softmax_smem_acc_kernel(
-    score_in: &TileArg<'_, f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &TileArg<'_, u32>,     // unused (materialized = false)
-    values: &Tensor<f32>,        // [total_cols, val_dim] row-major
-    out: &mut Tensor<f32>,       // [rows, val_dim] row-major
-    lse: &mut Tensor<f32>,       // [rows]
+    score_in: &TileArg<'_>, // {Q: rows, S: total_cols} raw scores
+    mask: &TileArg<'_>,     // unused (materialized = false)
+    values: &Tensor<f32>,   // [total_cols, val_dim] row-major
+    out: &mut Tensor<f32>,  // [rows, val_dim] row-major
+    lse: &mut Tensor<f32>,  // [rows]
     scale: f32,
     bound_s: u32,
     space: Partitioning,
@@ -533,11 +535,13 @@ fn run_smem_acc(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
             1,
             TileSpec::direct(&[Q, S]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
+            u32_ty,
             1,
             TileSpec::direct(&[Q, S]),
         ),

@@ -43,7 +43,7 @@ pub(crate) use {algebra::*, launch::*, layout::*, ops::*, space::*, stage::*, ti
 
 pub use algebra::monoid::{Carrier, Monoid};
 pub use algebra::semiring::Semiring;
-pub use launch::arg::tensor::{ScaleArg, TileArg, TileArgLaunch, Values};
+pub use launch::arg::tensor::{TileArg, TileArgLaunch};
 pub use launch::base::Launcher;
 pub use launch::spec::TileSpec;
 pub use layout::projection::Projection;

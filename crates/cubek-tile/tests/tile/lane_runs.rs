@@ -43,14 +43,13 @@ const BLOCK: usize = 16;
 /// where `staged`.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn lane_run_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, f32>,
+fn lane_run_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] staged: bool,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -172,17 +171,27 @@ fn check_plain(k: usize, width_a: usize, width_b: usize) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(a_handle, 16, k), width_a, TileSpec::direct(&[M, K])),
-        TileArgLaunch::new(tensor(b_handle, 8, k), width_b, TileSpec::direct(&[N, K])),
+        TileArgLaunch::new(
+            tensor(a_handle, 16, k),
+            f16::elem_type_native(),
+            width_a,
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            tensor(b_handle, 8, k),
+            f16::elem_type_native(),
+            width_b,
+            TileSpec::direct(&[N, K]),
+        ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            c.dtype,
             1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         false,
-        f16::elem_type_native(),
     );
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     assert_product(
@@ -271,11 +280,14 @@ fn check_nvfp4_rows(
         )
     };
     let a_op = launcher
-        .arg(tensor(
-            Bytes::from_elems(half),
-            vec![rows, blocks, BLOCK],
+        .arg(
+            tensor(
+                Bytes::from_elems(half),
+                vec![rows, blocks, BLOCK],
+                f16::elem_type_native(),
+            ),
             f16::elem_type_native(),
-        ))
+        )
         // A dim a digit, as a product restates its activation: every axis an identity, so a
         // fragment's rows past the product's are checked at the edge.
         .axes(&[M, KB, KI])
@@ -283,11 +295,14 @@ fn check_nvfp4_rows(
         .build()
         .unwrap();
     let b_op = launcher
-        .arg(tensor(
-            Bytes::from_elems(pack(codes.clone(), 8)),
-            vec![n, k],
-            u32::elem_type_native(),
-        ))
+        .arg(
+            tensor(
+                Bytes::from_elems(pack(codes.clone(), 8)),
+                vec![n, k],
+                u32::elem_type_native(),
+            ),
+            f16::elem_type_native(),
+        )
         .gathered(along_k(N))
         .packed(Field::Quant(QuantValue::E2M1).read_on(&client))
         .vectorize(words * 8)
@@ -295,11 +310,14 @@ fn check_nvfp4_rows(
         .unwrap();
     // One scale per `(column, block of K)`: `KI` is carried and addressed by nothing.
     let s_op = launcher
-        .arg(tensor(
-            Bytes::from_elems(pack(scale_bytes, 4)),
-            vec![n, blocks],
-            u32::elem_type_native(),
-        ))
+        .arg(
+            tensor(
+                Bytes::from_elems(pack(scale_bytes, 4)),
+                vec![n, blocks],
+                u32::elem_type_native(),
+            ),
+            f32::elem_type_native(),
+        )
         .axes(&[N, KB])
         .packed(Field::Fp8(Fp8Format::E4M3))
         .vectorize(4)
@@ -309,7 +327,7 @@ fn check_nvfp4_rows(
         .zeros()
         .generate_without_host_data();
     let c_op = launcher
-        .arg(c.clone().binding())
+        .arg(c.clone().binding(), c.dtype)
         .axes(&[M, N])
         .build()
         .unwrap();
@@ -323,7 +341,6 @@ fn check_nvfp4_rows(
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         staged,
-        f16::elem_type_native(),
     );
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     let decoded = |code: u8| e2m1::from_bits(code).to_f32();
@@ -386,13 +403,13 @@ fn check_plain_split(k: usize, width: usize) {
         )
     };
     let a_op = launcher
-        .arg(tensor(&a, 16))
+        .arg(tensor(&a, 16), f16::elem_type_native())
         .gathered(along_k(M))
         .vectorize(width)
         .build()
         .unwrap();
     let b_op = launcher
-        .arg(tensor(&b, 8))
+        .arg(tensor(&b, 8), f16::elem_type_native())
         .gathered(along_k(N))
         .vectorize(width)
         .build()
@@ -401,7 +418,7 @@ fn check_plain_split(k: usize, width: usize) {
         .zeros()
         .generate_without_host_data();
     let c_op = launcher
-        .arg(c.clone().binding())
+        .arg(c.clone().binding(), c.dtype)
         .axes(&[M, N])
         .build()
         .unwrap();
@@ -415,7 +432,6 @@ fn check_plain_split(k: usize, width: usize) {
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         false,
-        f16::elem_type_native(),
     );
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     assert_product(

@@ -287,14 +287,14 @@ fn launch_strided(
         ))));
     }
     let a = launch
-        .arg(lhs)
+        .arg(lhs, elems.lhs)
         .axes(&[M, K])
         .batches(out_batch_axes)
         .vectorize(v_a)
         .delivery(delivery)
         .build()?;
     let b = launch
-        .arg(rhs)
+        .arg(rhs, elems.rhs)
         .axes(&[K, N])
         .batches(out_batch_axes)
         .vectorize(v_b)
@@ -302,7 +302,7 @@ fn launch_strided(
         .build()?;
     let v_c = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
-        .arg(out)
+        .arg(out, elems.out)
         .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_c)
@@ -317,9 +317,6 @@ fn launch_strided(
         launch.partitioning_arg(),
         blueprint.clone(),
         batch_axes.to_vec(),
-        elems.lhs,
-        elems.rhs,
-        elems.out,
         elems.acc,
     );
     Ok(())
@@ -345,19 +342,17 @@ fn launch_tma(
 ) -> Result<(), MatmulSetupError> {
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
-    // A fn, not a closure: each operand instantiates its own erased element type.
-    //
     // A storage-tiled operand keeps its stored rank: its tile is the plan's stage (the setup
     // refused it otherwise), so the descriptor's box is one storage tile and each stage is one
     // contiguous run. A plain operand is collapsed to the descriptor's `(batch, row, col)` and
     // its box is the stage cut out of rows.
-    fn operand<E: Numeric>(
+    fn operand(
         axes: &[Axis],
         dtype: ElemType,
         binding: TensorBinding,
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
-    ) -> TileArgLaunch<'static, E> {
+    ) -> TileArgLaunch {
         if binding.tiling.is_tiled() {
             let landing = TmaLanding::Tiles;
             let map = tma_operand_tiled(binding, box_dims, landing, dtype, TensorMapSwizzle::None);
@@ -406,7 +401,7 @@ fn launch_tma(
     );
     let v_out = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
-        .arg(out)
+        .arg(out, elems.out)
         .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
@@ -421,9 +416,6 @@ fn launch_tma(
         launch.partitioning_arg(),
         blueprint.clone(),
         batch_axes.to_vec(),
-        elems.lhs,
-        elems.rhs,
-        elems.out,
         elems.acc,
     );
     Ok(())

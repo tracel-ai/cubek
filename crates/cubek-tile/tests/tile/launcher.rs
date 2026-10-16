@@ -135,7 +135,7 @@ fn arg_derives_check_from_subspace_overhang() {
     };
 
     let touches_k = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), f32::elem_type_native())
         .axes(&[M, K])
         .build()
         .unwrap();
@@ -148,7 +148,7 @@ fn arg_derives_check_from_subspace_overhang() {
     );
 
     let avoids_k = launch
-        .arg(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]), f32::elem_type_native())
         .axes(&[M, N])
         .build()
         .unwrap();
@@ -157,7 +157,7 @@ fn arg_derives_check_from_subspace_overhang() {
 
     // An explicit override still wins over the derivation.
     let forced = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), f32::elem_type_native())
         .axes(&[M, K])
         .boundary(BoundaryPolicy::Unchecked)
         .build()
@@ -183,7 +183,7 @@ fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
     let mut tiled = binding(&client, &[8, 5, 8, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
     let tiled = launch
-        .arg(tiled)
+        .arg(tiled, f32::elem_type_native())
         .axes(&[M, K])
         .boundary(BoundaryPolicy::Every(Boundary::Clamp))
         .build()
@@ -210,7 +210,11 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
     // The buffer says for itself that both its dims are stored two fragments deep.
     let mut tiled = binding(&client, &[8, 2, 8, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
-    let off_the_tensor = launch.arg(tiled).axes(&[M, K]).build().unwrap();
+    let off_the_tensor = launch
+        .arg(tiled, f32::elem_type_native())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
 
     assert_eq!(
         off_the_tensor.spec.projection,
@@ -232,7 +236,11 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     // Storage of (8, 4) are the leaf, the third level's tile.
     let mut leaf_tiles = binding(&client, &[8, 2, 8, 4]);
     leaf_tiles.tiling = Tiling::new(&[2, 2]).unwrap();
-    let leaf = launch.arg(leaf_tiles).axes(&[M, K]).build().unwrap();
+    let leaf = launch
+        .arg(leaf_tiles, f32::elem_type_native())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
     assert_eq!(leaf.spec.storage, Storage::Tiled(Some(2)));
 
     // Storage of (16, K whole) are the cube's tile, the first level's, where that level hands K
@@ -247,13 +255,21 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
         implied(&client, Partitioning::new(space, levels), Form::Static)
     };
-    let cube = fixed.arg(cube_tiles()).axes(&[M, K]).build().unwrap();
+    let cube = fixed
+        .arg(cube_tiles(), f32::elem_type_native())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
     assert_eq!(cube.spec.storage, Storage::Tiled(Some(0)));
-    let cube = launch.arg(cube_tiles()).axes(&[M, K]).build().unwrap();
+    let cube = launch
+        .arg(cube_tiles(), f32::elem_type_native())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
     assert_eq!(cube.spec.storage, Storage::Tiled(None));
 
     let plain = launch
-        .arg(binding(&client, &[64, 8]))
+        .arg(binding(&client, &[64, 8]), f32::elem_type_native())
         .axes(&[M, K])
         .build()
         .unwrap();
@@ -286,7 +302,7 @@ fn arg_binds_a_load_across_the_tiles_a_buffer_stores() {
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
     let arg = launch
-        .arg(nvfp4_shaped(&client))
+        .arg(nvfp4_shaped(&client), f32::elem_type_native())
         .axes(&[M, K])
         .vectorize(32)
         .build()
@@ -312,7 +328,7 @@ fn arg_refuses_a_load_that_cuts_a_stored_tile() {
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
     let refused = launch
-        .arg(nvfp4_shaped(&client))
+        .arg(nvfp4_shaped(&client), f32::elem_type_native())
         .axes(&[M, K])
         .vectorize(4)
         .build()
@@ -335,7 +351,11 @@ fn arg_reads_a_storage_tile_that_is_no_level_through_its_layout() {
     };
     let mut tiled = binding(&client, &[4, 2, 16, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
-    let arg = launch.arg(tiled).axes(&[M, K]).build().unwrap();
+    let arg = launch
+        .arg(tiled, f32::elem_type_native())
+        .axes(&[M, K])
+        .build()
+        .unwrap();
     assert_eq!(arg.spec.storage, Storage::Tiled(None));
 }
 
@@ -353,7 +373,7 @@ fn arg_reads_a_tiling_stated_over_batch_dims_too() {
     let mut tiled = binding(&client, &[3, 8, 5, 8, 4]);
     tiled.tiling = Tiling::new(&[1, 2, 2]).unwrap();
     let arg = launch
-        .arg(tiled)
+        .arg(tiled, f32::elem_type_native())
         .axes(&[M, K])
         .batches(&[B0, B1])
         .build()
@@ -374,7 +394,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
 
     // One leading dim: right-aligns to B1 (the trailing axis of the full list).
     let one_batch = launch
-        .arg(binding(&client, &[3, 64, 16]))
+        .arg(binding(&client, &[3, 64, 16]), f32::elem_type_native())
         .axes(&[M, K])
         .batches(&[B0, B1])
         .build()
@@ -384,7 +404,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
 
     // A size-1 dim drops out entirely (broadcast omission).
     let broadcast = launch
-        .arg(binding(&client, &[1, 64, 16]))
+        .arg(binding(&client, &[1, 64, 16]), f32::elem_type_native())
         .axes(&[M, K])
         .batches(&[B0, B1])
         .build()
@@ -409,7 +429,7 @@ fn spec_derives_what_a_bound_operand_derives() {
     let geometry = Geometry::new(&[(64, 18), (18, 1)]);
 
     let bound = launch
-        .arg(binding(&client, geometry.shape()))
+        .arg(binding(&client, geometry.shape()), f32::elem_type_native())
         .axes(&[M, K])
         .vectorize(1)
         .build()
@@ -596,7 +616,7 @@ fn arg_gathered_states_its_own_mapping() {
     };
 
     let input = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .build()
         .unwrap();
@@ -624,7 +644,7 @@ fn arg_gathered_derives_check_from_overhang() {
     };
 
     let input = launch
-        .arg(binding(&client, &[81, 64]))
+        .arg(binding(&client, &[81, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .build()
         .unwrap();
@@ -637,7 +657,7 @@ fn arg_gathered_derives_check_from_overhang() {
 
     // An explicit override still wins over the derivation.
     let forced = launch
-        .arg(binding(&client, &[81, 64]))
+        .arg(binding(&client, &[81, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .boundary(BoundaryPolicy::Unchecked)
         .build()
@@ -660,7 +680,7 @@ fn arg_gathered_derives_check_from_underflow() {
     };
 
     let padded = launch
-        .arg(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]), f32::elem_type_native())
         .gathered(window(1, 1, -1))
         .build()
         .unwrap();
@@ -671,7 +691,7 @@ fn arg_gathered_derives_check_from_underflow() {
 
     // A runtime offset's sign is unknown at launch, so it arms the guard conservatively.
     let dynamic = launch
-        .arg(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]), f32::elem_type_native())
         .gathered(window(1, 1, Offset::Dynamic))
         .build()
         .unwrap();
@@ -681,7 +701,7 @@ fn arg_gathered_derives_check_from_underflow() {
     );
 
     let shifted = launch
-        .arg(binding(&client, &[96, 64]))
+        .arg(binding(&client, &[96, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 1))
         .build()
         .unwrap();
@@ -702,7 +722,7 @@ fn arg_gathered_rank_mismatch_is_refused() {
         )
     };
     let refused = launch
-        .arg(binding(&client, &[4, 79, 64]))
+        .arg(binding(&client, &[4, 79, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .build()
         .err();
@@ -729,7 +749,7 @@ fn arg_gathered_validates_the_innermost_dim() {
         )
     };
     let refused = launch
-        .arg(binding(&client, &[64, 79]))
+        .arg(binding(&client, &[64, 79]), f32::elem_type_native())
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -763,7 +783,7 @@ fn arg_gathered_dynamic_axis_is_accepted() {
         )
     };
     let _ = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .build()
         .unwrap();
@@ -784,7 +804,7 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
     };
 
     let input = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .build()
         .unwrap();
@@ -809,7 +829,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         Form::DynamicAlong(&[N]),
     );
     let _ = staged
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -839,7 +859,7 @@ fn arg_gathered_rational_stages() {
         Form::DynamicAlong(&[N]),
     );
     let _ = staged
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -867,7 +887,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         Form::DynamicAlong(&[N]),
     );
     let _ = staged
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -913,7 +933,7 @@ fn arg_gathered_cancelling_divisor_stages() {
         )
     );
     let _ = staged
-        .arg(binding(&client, &[512, 64]))
+        .arg(binding(&client, &[512, 64]), f32::elem_type_native())
         .gathered(projection)
         .build()
         .unwrap();
@@ -999,7 +1019,7 @@ fn arg_checked_and_vectorized_is_refused() {
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
     let refused = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), f32::elem_type_native())
         .axes(&[M, K])
         .vectorize(2)
         .build()
@@ -1019,7 +1039,7 @@ fn arg_vectorized_with_outer_axis_overhang_succeeds() {
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
     let arg = launch
-        .arg(binding(&client, &[63, 64]))
+        .arg(binding(&client, &[63, 64]), f32::elem_type_native())
         .axes(&[M, N])
         .vectorize(4)
         .build()
@@ -1044,7 +1064,7 @@ fn arg_explicit_check_still_narrows_to_the_unsettled_axes() {
     };
 
     let forced = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), f32::elem_type_native())
         .axes(&[M, K])
         .boundary(BoundaryPolicy::Every(Boundary::Zero))
         .build()
@@ -1077,7 +1097,7 @@ fn arg_gathered_clamp_vectorized_exemption() {
     // 3 logical axes [M, K, N] mapped over 2 coordinate axes:
     // Spatial (M, K) on coordinate 0 (clamped), channel N on coordinate 1 (vectorized & in-bounds).
     let input = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), f32::elem_type_native())
         .gathered(window(1, 1, 0))
         .vectorize(4)
         .boundary(BoundaryPolicy::Every(Boundary::Clamp))
@@ -1111,7 +1131,7 @@ fn arg_more_batch_dims_than_axes_is_refused() {
         implied(&client, Partitioning::new(space, levels), Form::Dynamic)
     };
     let refused = launch
-        .arg(binding(&client, &[4, 3, 64, 16]))
+        .arg(binding(&client, &[4, 3, 64, 16]), f32::elem_type_native())
         .axes(&[M, K])
         .batches(&[B1])
         .build()

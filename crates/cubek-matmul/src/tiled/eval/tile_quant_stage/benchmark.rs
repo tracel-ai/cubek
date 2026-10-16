@@ -30,13 +30,12 @@ const NI: Axis = Axis(4);
 /// shared memory per cube region, and the plane's units read windows of the stage, each scaled
 /// where it is read (`b_s.at(&unit).mul(..)`), which is the decode this bench measures.
 #[cube(launch)]
-fn staged_matmul_quant_rhs<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    scales: &TileArg<'_, f32>,
-    c: &TileArg<'_, E>,
+fn staged_matmul_quant_rhs(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    scales: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -204,8 +203,9 @@ impl Benchmark for TileQuantStageBench {
             Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
                 .map_err(|refusal| refusal.to_string())?
         };
+        let element = f32::elem_type_native();
         let a = launcher
-            .arg(a.handle().binding())
+            .arg(a.handle().binding(), element)
             .axes(&[M, K])
             .build()
             .map_err(|refusal| refusal.to_string())?;
@@ -220,11 +220,10 @@ impl Benchmark for TileQuantStageBench {
             launcher.cube_count(),
             launcher.cube_dim(),
             a.arg(),
-            b.values_arg(1, TileSpec::new(b_projection.clone())),
+            b.values_arg(element, 1, TileSpec::new(b_projection.clone())),
             b.scales_arg(1, TileSpec::new(b_projection.scales_per(NB))),
-            TileArgLaunch::new(c.tensor_arg(self.pack), self.pack, c_spec),
+            TileArgLaunch::new(c.tensor_arg(self.pack), element, self.pack, c_spec),
             launcher.partitioning_arg(),
-            f32::elem_type_native(),
         );
         Ok(())
     }

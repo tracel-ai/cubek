@@ -42,13 +42,12 @@ const REGIONS: usize = (ROWS / TILE_ROWS) * (COLS / TILE_COLS);
 /// cubes)`. Written as two divisions rather than a per-cube share so the ragged case needs no
 /// branch: the runs abut, cover the grid once, and differ in length by at most one.
 #[cube(launch)]
-fn copy_run<E: Numeric>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+fn copy_run(
+    src: &TileArg<'_>,
+    dst: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] cubes: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
     let dst = dst.tile(&space);
@@ -67,14 +66,13 @@ fn copy_run<E: Numeric>(
 /// One cube copying the stated run and nothing else, so a `base` that is dropped copies the wrong
 /// regions rather than the same ones in another order.
 #[cube(launch)]
-fn copy_one_run<E: Numeric>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+fn copy_one_run(
+    src: &TileArg<'_>,
+    dst: &TileArg<'_>,
     #[comptime] start: usize,
     #[comptime] steps: usize,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
     let dst = dst.tile(&space);
@@ -128,25 +126,24 @@ impl Harness {
     fn read(&self, output: TensorHandle) -> HostData {
         HostData::from_tensor_handle(&self.client, output, HostDataType::F32)
     }
-}
 
-/// The launch arguments. Each kernel gets its own opaque element type, so this cannot be a
-/// function.
-macro_rules! tile_args {
-    ($h:expr, $src:expr, $dst:expr) => {
+    /// `src` and `dst` as the launch arguments, served at the harness's element.
+    fn tile_args(&self, src: &TensorHandle, dst: &TensorHandle) -> (TileArgLaunch, TileArgLaunch) {
         (
             TileArgLaunch::new(
-                $src.clone().binding().into_tensor_arg(),
+                src.clone().binding().into_tensor_arg(),
+                self.dtype,
                 1,
                 TileSpec::direct(&[ROW, COL]),
             ),
             TileArgLaunch::new(
-                $dst.clone().binding().into_tensor_arg(),
+                dst.clone().binding().into_tensor_arg(),
+                self.dtype,
                 1,
                 TileSpec::direct(&[ROW, COL]),
             ),
         )
-    };
+    }
 }
 
 /// `cubes` runs between them copy every cell exactly once. A run that overlapped its neighbour
@@ -156,7 +153,7 @@ fn runs_cover_the_grid(cubes: usize) {
     let h = Harness::new();
     let (src, want) = h.source();
     let dst = h.destination();
-    let (src_arg, dst_arg) = tile_args!(h, src, dst);
+    let (src_arg, dst_arg) = h.tile_args(&src, &dst);
 
     copy_run::launch(
         &h.client,
@@ -167,7 +164,6 @@ fn runs_cover_the_grid(cubes: usize) {
         h.launcher.partitioning_arg(),
         h.launcher.partitioning().level(0),
         cubes,
-        h.dtype,
     );
 
     let got = h.read(dst);
@@ -202,7 +198,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
     let h = Harness::new();
     let (src, want) = h.source();
     let dst = h.destination();
-    let (src_arg, dst_arg) = tile_args!(h, src, dst);
+    let (src_arg, dst_arg) = h.tile_args(&src, &dst);
 
     // Regions 3 and 4 of the row-major walk: the second half of row band 1, and the first half of
     // row band 2. A rectangle cannot name that pair either.
@@ -217,7 +213,6 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
         steps,
         h.launcher.partitioning_arg(),
         h.launcher.partitioning().level(0),
-        h.dtype,
     );
 
     let got = h.read(dst);
@@ -268,8 +263,8 @@ fn contract(acc: &Tile, a: &Tile, b: &Tile, region: &Region) {
 /// itself walked (a unit's run of `K`), or none where the step is the contraction's own.
 #[cube(launch)]
 fn stream_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] outer: Level,
@@ -314,8 +309,8 @@ fn stream_matmul<E: Numeric>(
 /// what any walk does.
 #[cube(launch)]
 fn stream_matmul_staged_rhs<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] outer: Level,
@@ -407,11 +402,13 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[MM, KK]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[KK, NN]),
             ),
@@ -432,11 +429,13 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[MM, KK]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[KK, NN]),
             ),
@@ -620,11 +619,13 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[MM, KK]),
             ),
             TileArgLaunch::new(
                 b_handle.clone().binding().into_tensor_arg(),
+                dtype,
                 1,
                 TileSpec::direct(&[KK, NN]),
             ),
@@ -665,15 +666,14 @@ fn cubes_take_shares_while_the_units_cut_k_between_them() {
 /// contracts its part of every tile its run touches into a register accumulator opened on its slot,
 /// then hands it on, cast to the output's element `O`.
 #[cube(launch)]
-fn merged_stream_matmul<O: Float>(
-    a: &TileArg<'_, f32>,
-    b: &TileArg<'_, f32>,
-    slots: &TileArg<'_, f32>,
-    out: &TileArg<'_, O>,
+fn merged_stream_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    slots: &TileArg<'_>,
+    out: &TileArg<'_>,
     arrivals: &[Atomic<u32>],
     space: Partitioning,
     #[comptime] steps: Level,
-    #[define(O)] _out_dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -782,7 +782,12 @@ fn run_merged_stream<O: Float + CubeElement>(
     let spec =
         |axes: &[Axis]| TileSpec::direct(axes).boundary(BoundaryPolicy::Every(Boundary::Zero));
     let arg = |handle: &TensorHandle, axes: &[Axis]| {
-        TileArgLaunch::new(handle.clone().binding().into_tensor_arg(), 1, spec(axes))
+        TileArgLaunch::new(
+            handle.clone().binding().into_tensor_arg(),
+            handle.dtype,
+            1,
+            spec(axes),
+        )
     };
     let mut outputs = Vec::with_capacity(launches);
     for _ in 0..launches {
@@ -793,15 +798,10 @@ fn run_merged_stream<O: Float + CubeElement>(
             arg(&a, &[BB, MM, KK]),
             arg(&b, &[KK, NN]),
             arg(&slots, &[BB, MM, NN]),
-            TileArgLaunch::new(
-                out.clone().binding().into_tensor_arg(),
-                1,
-                spec(&[BB, MM, NN]),
-            ),
+            arg(&out, &[BB, MM, NN]),
             unsafe { BufferArg::from_raw_parts(arrivals.clone(), counters) },
             launcher.partitioning_arg(),
             launcher.partitioning().level(1),
-            out_ty,
         );
         outputs.push(HostData::from_tensor_handle(
             &client,

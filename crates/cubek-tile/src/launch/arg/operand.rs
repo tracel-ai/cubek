@@ -8,7 +8,7 @@ use crate::{AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Tile, TileA
 /// added into and never read ([`AccumulateArg`]).
 #[derive(CubeType, CubeLaunch)]
 pub enum Output<'a, E: Numeric> {
-    Tensor(TileArg<'a, E>),
+    Tensor(TileArg<'a>),
     Atomic(AccumulateArg<'a, E>),
 }
 
