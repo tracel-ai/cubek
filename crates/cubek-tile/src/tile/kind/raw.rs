@@ -346,11 +346,7 @@ expand_value!(RawCallExpand<IO>, IO: 'static);
 
 #[cfg(test)]
 mod tests {
-    use cubecl::ir::{AddressType, Scope, settings};
-    use cubecl::prelude::*;
-    use cubecl::std::tensor::{
-        ErasedTensorExpand, ErasedTensorOperationsExpand, ReadsLines, WritesLines,
-    };
+    use cubecl::ir::{AddressType, settings};
     use half::f16;
 
     use super::*;
