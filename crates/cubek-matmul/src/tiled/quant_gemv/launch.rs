@@ -177,7 +177,7 @@ pub fn launch_ref(
         // field in it, which the plan distributed on the problem's own count of them.
         levels.push(
             launch
-                .arg(binding, f32::elem_type_native())
+                .arg(binding, u32::elem_type_native())
                 .gathered(projection)
                 .packed(field)
                 .build()?,
