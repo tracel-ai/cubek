@@ -269,9 +269,9 @@ fn launch_nvfp4(
     let values = |rows: Axis| {
         TileSpec::new(Projection::direct(&[rows, K])).packed(Field::Quant(QuantValue::E2M1))
     };
-    let (per, scale_elem) = match form {
-        ScaleForm::Floats => (BLOCK, f32::elem_type_native()),
-        ScaleForm::Words => (STEP, u32::elem_type_native()),
+    let per = match form {
+        ScaleForm::Floats => BLOCK,
+        ScaleForm::Words => STEP,
     };
     // Floats are bound as the words they are stored in, and served as `f32`; words as they are.
     let scales = |rows: Axis| {
@@ -300,27 +300,17 @@ fn launch_nvfp4(
             k,
         )
     };
-    // The values are served as stored, which is what the block-scaled instruction reads.
-    let stored = ElemType::Float(FloatKind::E2M1);
+    // Values and scales are bound at the words their buffers hold.
+    let words = u32::elem_type_native();
     let element = f32::elem_type_native();
     block_scaled_peak::launch(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(upload_codes(&operands.a_codes, m), stored, 1, values(M)),
-        TileArgLaunch::new(
-            upload_scales(&operands.a_scales, m),
-            scale_elem,
-            1,
-            scales(M),
-        ),
-        TileArgLaunch::new(upload_codes(&operands.b_codes, n), stored, 1, values(N)),
-        TileArgLaunch::new(
-            upload_scales(&operands.b_scales, n),
-            scale_elem,
-            1,
-            scales(N),
-        ),
+        TileArgLaunch::new(upload_codes(&operands.a_codes, m), words, 1, values(M)),
+        TileArgLaunch::new(upload_scales(&operands.a_scales, m), words, 1, scales(M)),
+        TileArgLaunch::new(upload_codes(&operands.b_codes, n), words, 1, values(N)),
+        TileArgLaunch::new(upload_scales(&operands.b_scales, n), words, 1, scales(N)),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             element,

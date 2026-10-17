@@ -228,7 +228,12 @@ fn gemv_against_the_reference(
                     PER_WORD,
                     TileSpec::direct(&[M, KB, KI]),
                 ),
-                TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), dtype, columns, w_spec),
+                TileArgLaunch::new(
+                    w_tensor.binding().into_tensor_arg(),
+                    u32::elem_type_native(),
+                    columns,
+                    w_spec,
+                ),
                 TileArgLaunch::new(
                     s_tensor.binding().into_tensor_arg(),
                     dtype,

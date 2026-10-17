@@ -146,8 +146,8 @@ impl Launcher {
             .unwrap_or_else(|| self.concrete.extent(axis))
     }
 
-    /// Bind `binding`, served at `element`, as an operand of this launch: what the buffer holds
-    /// where it is not [`packed`](Arg::packed), what its words' fields are served at where it is.
+    /// Bind `binding`, whose buffer holds `element`, as an operand of this launch: for a
+    /// [`packed`](Arg::packed) one, the words its fields are stored in.
     pub fn arg(&self, binding: TensorBinding, element: ElemType) -> Arg<'_, Unlabelled> {
         Arg::bound(self, binding, element)
     }

@@ -11,8 +11,8 @@ impl Tile {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
     pub fn product(&mut self, a: &Tile, b: &Tile) {
         let define!(Served) = self.element;
-        let define!(Lhs) = a.element;
-        let define!(Rhs) = b.element;
+        let define!(Lhs) = a.read_element();
+        let define!(Rhs) = b.read_element();
         self.mul_from::<Served, Lhs, Rhs>(a, b)
     }
 

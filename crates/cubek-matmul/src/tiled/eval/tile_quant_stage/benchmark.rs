@@ -220,7 +220,7 @@ impl Benchmark for TileQuantStageBench {
             launcher.cube_count(),
             launcher.cube_dim(),
             a.arg(),
-            b.values_arg(element, 1, TileSpec::new(b_projection.clone())),
+            b.values_arg(1, TileSpec::new(b_projection.clone())),
             b.scales_arg(1, TileSpec::new(b_projection.scales_per(NB))),
             TileArgLaunch::new(c.tensor_arg(self.pack), element, self.pack, c_spec),
             launcher.partitioning_arg(),

@@ -20,7 +20,7 @@ pub struct Labelled;
 /// What the builder accumulates.
 struct ArgData<'a> {
     launch: &'a Launcher,
-    /// The tensor this operand is served from and the element it is served at; `None` for a
+    /// The tensor this operand is read from and the element its buffer holds; `None` for a
     /// destination with no address.
     binding: Option<(TensorBinding, ElemType)>,
     geometry: Geometry,
@@ -292,7 +292,7 @@ impl<'a> Arg<'a, Labelled> {
     }
 }
 
-/// A bound operand: its tensor argument and the element it is served at, comptime [`TileSpec`] and
+/// A bound operand: its tensor argument and the element its buffer holds, comptime [`TileSpec`] and
 /// served width.
 pub struct Bound {
     tensor: Option<(TensorArg, ElemType)>,
@@ -305,13 +305,17 @@ impl Bound {
     /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
     pub fn arg(self) -> TileArgLaunch {
         let (width, spec) = (self.bound_width(), self.spec.clone());
-        let (tensor, element) = self.tensor.expect(GEOMETRY_ALONE);
+        let (tensor, element) = self
+            .tensor
+            .expect("Bound::arg: this operand was built over geometry alone and has no tensor");
         TileArgLaunch::new(tensor, element, width, spec)
     }
 
     /// The tensor argument itself; panics for an operand built over geometry alone.
     pub fn tensor(self) -> TensorArg {
-        self.tensor.expect(GEOMETRY_ALONE).0
+        self.tensor
+            .expect("Bound::tensor: this operand was built over geometry alone and has no tensor")
+            .0
     }
 
     /// The width the binding is declared at, narrower than `vector_size` when packed: a packed
@@ -320,9 +324,6 @@ impl Bound {
         self.spec.packing.physical(self.vector_size).max(1)
     }
 }
-
-const GEOMETRY_ALONE: &str =
-    "Bound: this operand was built over geometry alone and has no tensor to bind";
 
 /// What [`build_spec`](Arg::build_spec) settles for an operand with no tensor to bind.
 pub struct Unbound {

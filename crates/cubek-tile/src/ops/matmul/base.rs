@@ -1,9 +1,10 @@
 //! `c.mm(a, b)` and `c.mma(a, b)` at a final tile, each descending to its leaf through
 //! [`Descent::contract`].
 
-use cubecl::cmma::MatrixLayout;
+use cubecl::cmma::{MatrixIdent, MatrixLayout};
 use cubecl::prelude::*;
 
+use crate::ops::matmul::leaf::FragmentRead;
 use crate::*;
 
 #[cube]
@@ -41,12 +42,140 @@ impl Tile {
         }
     }
 
-    /// `c += a · b`, folding onto what the accumulator or memory window holds.
+    /// `operand` dequantized at `element` for this accumulator to contract: the plane-level
+    /// dequantize, called where the kernel wants it instead of left to the leaf, which loads it as
+    /// the multiply would. A grid loads it into its fragments (through a landing, or in lane runs);
+    /// one fragment into the fragment its leaf builds; a walk of steps into the landing the steps
+    /// read, where the tensor cores read through one. A plain operand is returned as it is: it
+    /// has nothing to decode.
+    pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
+        let (quantized, packing) = (operand.quantized(), operand.packing());
+        let decodes = comptime!(quantized || packing != Packing::Plain);
+        if comptime!(!decodes) {
+            operand.clone()
+        } else {
+            let out = comptime!(self.place.space.clone());
+            let own = comptime!(operand.place.space.clone());
+            let define!(Target) = element;
+            match &self.kind {
+                TileKind::PlanePartition(partition) => {
+                    let grid = partition.grid();
+                    match comptime!(Descent::of(grid, &self.place, &own, &own)) {
+                        Descent::Here => {
+                            operand.fragment_for::<Target>(&partition.at(0usize, 0usize), out)
+                        }
+                        Descent::Cells(instruction) => {
+                            PlanePartition::operand::<Target>(operand, self, instruction)
+                        }
+                        Descent::Steps(instruction) => match comptime!(instruction) {
+                            Instruction::Cmma => {
+                                let side = comptime!(Side::of(&own, &out));
+                                operand.landed::<Target>(side, out)
+                            }
+                            Instruction::Mma { .. }
+                            | Instruction::Registers { .. }
+                            | Instruction::Wgmma => panic!(
+                                "Tile::dequantized: a walk of manual-mma steps decodes its operand \
+                                 into each step's registers as it loads them; no tile carries that \
+                                 decode, so the leaf does it"
+                            ),
+                        },
+                    }
+                }
+                TileKind::PlaneTile(fragment) => operand.fragment_for::<Target>(fragment, out),
+                TileKind::Memory(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_)
+                | TileKind::Lines(_) => {
+                    panic!(
+                        "Tile::dequantized: an operand is dequantized for the fragments it meets"
+                    )
+                }
+            }
+        }
+    }
+
+    /// This operand as the fragment the one-fragment `acc`'s leaf loads it into, at `T`.
+    fn fragment_for<T: Numeric>(&self, acc: &PlaneTile, #[comptime] out: Space) -> Tile {
+        let own = comptime!(self.place.space.clone());
+        let side = comptime!(Side::of(&own, &out));
+        let ident = comptime!(match side {
+            Side::Lhs => MatrixIdent::A,
+            Side::Rhs => MatrixIdent::B,
+        });
+        let fragment = match acc {
+            PlaneTile::Cmma(_) => {
+                let read = comptime!(FragmentRead::new(side, &own, &out));
+                let fragment = self.cmma_fragment::<T>(ident, comptime!(read.clone()));
+                PlaneTile::new_Cmma(CmmaData {
+                    fragment: unsafe { fragment.downcast_unchecked::<Held>() },
+                    ident,
+                    layout: comptime!(read.layout),
+                    shape: comptime!((read.m, read.n)),
+                    scratch: ComptimeOption::new_None(),
+                })
+            }
+            PlaneTile::Mma(data) => {
+                // `A` row-major and `B` col-major where the window's trailing axis is contracted.
+                let contracted = comptime!(!out.contains(own.axis_at(own.rank() - 1)));
+                let layout = comptime!(match (side, contracted) {
+                    (Side::Lhs, true) | (Side::Rhs, false) => MatrixLayout::RowMajor,
+                    (Side::Lhs, false) | (Side::Rhs, true) => MatrixLayout::ColMajor,
+                });
+                PlaneTile::new_Mma(self.mma_operand::<T>(
+                    ident,
+                    comptime!(data.m),
+                    comptime!(data.n),
+                    comptime!(data.k),
+                    layout,
+                    comptime!(data.io),
+                    comptime!(data.operands),
+                ))
+            }
+            PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => panic!(
+                "Tile::dequantized: a register block and a warpgroup MMA read their operands where \
+                 they lie"
+            ),
+        };
+        Tile::new::<T>(
+            TileKind::new_PlaneTile(fragment),
+            comptime!(self.place.clone()),
+        )
+    }
+
+    /// `c += a · b`, folding onto what the accumulator or memory window holds. A packed factor is
+    /// decoded at its [`read_element`](Tile::read_element), but where the instruction reads its
+    /// codes as stored.
     pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
+        let stored = self.reads_codes_as_stored();
+        let (lhs_read, rhs_read) = (lhs.read_element(), rhs.read_element());
         let define!(Served) = self.element;
-        let define!(Lhs) = lhs.element;
-        let define!(Rhs) = rhs.element;
+        let define!(Lhs) = comptime!(if stored { lhs.element } else { lhs_read });
+        let define!(Rhs) = comptime!(if stored { rhs.element } else { rhs_read });
         Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
+    }
+
+    /// Whether this accumulator contracts through the block-scaled instruction, which reads its
+    /// factors' packed codes as they are stored.
+    fn reads_codes_as_stored(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    comptime!(false)
+                }
+            },
+            TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {
+                PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    comptime!(false)
+                }
+            },
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
     }
 
     /// This plane-resident accumulator back at its semiring's identity, as it was opened.

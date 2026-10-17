@@ -38,9 +38,9 @@ const WINDOW: usize = 128;
 /// Values one scale covers along `k`: NVFP4's block.
 const BLOCK: usize = 16;
 
-/// `c = a · b`, a leaf of `WINDOW` along `k` at a time, through the manual-mma instruction. An
-/// operand under block scales carries them. `a` read straight, or out of a stage in shared memory
-/// where `staged`.
+/// `c = a · b`, a leaf of `WINDOW` along `k` at a time, through the manual-mma instruction, `b`
+/// dequantized at `decoded` into the fragments it meets. An operand under block scales carries
+/// them. `a` read straight, or out of a stage in shared memory where `staged`.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn lane_run_matmul(
@@ -50,6 +50,7 @@ fn lane_run_matmul(
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] staged: bool,
+    #[comptime] decoded: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -68,7 +69,7 @@ fn lane_run_matmul(
         let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, 1usize);
         stages.pipelined(walk, |slot, region| {
             let mut acc_r = acc.at(region);
-            let b_r = b.at(region);
+            let b_r = acc_r.dequantized(&b.at(region), decoded);
             slot.consume(|a_r| {
                 acc_r.mma(a_r, &b_r);
             });
@@ -76,7 +77,8 @@ fn lane_run_matmul(
     } else {
         for region in space.over(&level) {
             let mut acc_r = acc.at(&region);
-            acc_r.mma(&a.at(&region), &b.at(&region));
+            let b_r = acc_r.dequantized(&b.at(&region), decoded);
+            acc_r.mma(&a.at(&region), &b_r);
         }
     }
     acc.drained_into(&c);
@@ -192,6 +194,7 @@ fn check_plain(k: usize, width_a: usize, width_b: usize) {
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         false,
+        f16::elem_type_native(),
     );
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     assert_product(
@@ -301,7 +304,7 @@ fn check_nvfp4_rows(
                 vec![n, k],
                 u32::elem_type_native(),
             ),
-            f16::elem_type_native(),
+            u32::elem_type_native(),
         )
         .gathered(along_k(N))
         .packed(Field::Quant(QuantValue::E2M1).read_on(&client))
@@ -341,6 +344,7 @@ fn check_nvfp4_rows(
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         staged,
+        f16::elem_type_native(),
     );
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     let decoded = |code: u8| e2m1::from_bits(code).to_f32();
@@ -432,6 +436,7 @@ fn check_plain_split(k: usize, width: usize) {
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         false,
+        f16::elem_type_native(),
     );
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
     assert_product(

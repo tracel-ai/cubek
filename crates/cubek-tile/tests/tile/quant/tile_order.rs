@@ -147,11 +147,16 @@ fn tile_order_reads_two_words_by_two_columns_a_load() {
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             load_words,
             w_spec,
         ),
-        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), dtype, 1, s_spec),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            u32::elem_type_native(),
+            1,
+            s_spec,
+        ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             dtype,

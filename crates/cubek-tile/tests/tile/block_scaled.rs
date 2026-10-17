@@ -171,15 +171,16 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
     let tensor = |handle, rows: usize, cols: usize| unsafe {
         TensorArg::from_raw_parts(handle, [cols, 1].into(), [rows, cols].into())
     };
-    // The values are served as stored, which is what the block-scaled instruction reads.
-    let stored = ElemType::Float(FloatKind::E2M1);
+    // The values are bound at the words their buffers hold, which the block-scaled instruction
+    // reads as they lie.
+    let stored = u32::elem_type_native();
     let element = f32::elem_type_native();
     // One `f32` over the whole operand, read as the word it is stored in.
     let global = |value: f32| {
         let word = client.create_from_slice(f32::as_bytes(&[value]));
         let spec = TileSpec::new(Projection::new(&[M, N, K], &[PhysicalAxisMap::broadcast()]))
             .packed(Field::Float(FloatKind::F32));
-        TileArgLaunch::new(tensor(word, 1, 1), element, 1, spec)
+        TileArgLaunch::new(tensor(word, 1, 1), u32::elem_type_native(), 1, spec)
     };
     let out = TileArgLaunch::new(
         c.clone().binding().into_tensor_arg(),
