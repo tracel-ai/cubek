@@ -13,7 +13,7 @@ use cubecl::std::tensor::{
     layout::{CoordsDyn, VirtualLayout, VirtualLayoutExpand},
     view::launch::{VirtualViewLayoutCompilationArg, VirtualViewLayoutLaunch},
 };
-use cubecl::{define_scalar, unexpanded};
+use cubecl::unexpanded;
 
 use crate::tile::packing::base::Packing;
 use crate::*;
@@ -28,9 +28,9 @@ use crate::*;
 /// none.
 ///
 /// Scales are levels innermost first, so each covers more than the one inside it: NVFP4's values
-/// carry their block scales, which carry the per-tensor scale. A level served at `u32` is words of
-/// block scales, which only the block-scaled instruction reads; any other is scales read as
-/// numbers.
+/// carry their block scales, which carry the per-tensor scale. A plain level holding `u32` is words
+/// of block scales, which only the block-scaled instruction reads; any other, a packed one
+/// included, is scales read as numbers.
 pub struct TileArg<'a> {
     pub spec: TileSpec,
     /// The element the buffer holds.
@@ -193,13 +193,12 @@ impl<'a> TileArgExpand<'a> {
         let ValuesExpand::Tensor { tensor, meta, .. } = &self.values else {
             panic!("TileArg::tile_gathered: a gather reads a buffer; a tensor map lands boxes")
         };
-        define_scalar!(Served);
-        let _served = scope.define_type::<Served>(self.element);
-        let tensor = scope.create_kernel_ref(TensorExpand::<Served>::__expand_from_parts(
+        let _held = scope.define_type::<Held>(self.element);
+        let tensor = scope.create_kernel_ref(TensorExpand::<Held>::__expand_from_parts(
             *meta,
             tensor.expand.into(),
         ));
-        let values = gathered_tile::expand::<Served>(
+        let values = gathered_tile::expand::<Held>(
             scope,
             tensor,
             partitioning,
@@ -222,14 +221,13 @@ impl<'a> TileArgExpand<'a> {
         let ValuesExpand::Tensor { tensor, meta, .. } = &self.values else {
             panic!("TileArg::tile_paged: a pool of pages is a buffer; a tensor map lands boxes")
         };
-        define_scalar!(Served);
-        let _served = scope.define_type::<Served>(self.element);
-        let tensor = scope.create_kernel_ref(TensorExpand::<Served>::__expand_from_parts(
+        let _held = scope.define_type::<Held>(self.element);
+        let tensor = scope.create_kernel_ref(TensorExpand::<Held>::__expand_from_parts(
             *meta,
             tensor.expand.into(),
         ));
         let values =
-            paged_tile::expand::<Served>(scope, tensor, table, partitioning, self.spec.clone());
+            paged_tile::expand::<Held>(scope, tensor, table, partitioning, self.spec.clone());
         self.scaling(scope, values, partitioning)
     }
 
@@ -269,17 +267,16 @@ impl<'a> TileArgExpand<'a> {
 
     /// The values alone, under none of their scales.
     fn values_tile(&self, scope: &Scope, partitioning: &PartitioningExpand) -> TileExpand {
-        define_scalar!(Served);
-        let _served = scope.define_type::<Served>(self.element);
+        let _held = scope.define_type::<Held>(self.element);
         match &self.values {
             ValuesExpand::Tensor { tensor, meta, .. } => {
-                let tensor = scope.create_kernel_ref(TensorExpand::<Served>::__expand_from_parts(
+                let tensor = scope.create_kernel_ref(TensorExpand::<Held>::__expand_from_parts(
                     *meta,
                     tensor.expand.into(),
                 ));
-                buffer_tile::expand::<Served>(scope, tensor, partitioning, self.spec.clone())
+                buffer_tile::expand::<Held>(scope, tensor, partitioning, self.spec.clone())
             }
-            ValuesExpand::TensorMap { map, layout } => tensor_map_tile::expand::<Served>(
+            ValuesExpand::TensorMap { map, layout } => tensor_map_tile::expand::<Held>(
                 scope,
                 (*map).into(),
                 layout.clone(),
@@ -363,7 +360,7 @@ impl TileArgLaunch {
     }
 
     /// These values under `scale`, outside the scales they carry already: words of block scales
-    /// where `scale` is served at `u32`, scales read as numbers otherwise.
+    /// where `scale` is a plain level holding `u32`, scales read as numbers otherwise.
     pub fn scales(mut self, scale: TileArgLaunch) -> Self {
         self.scale = Some(Box::new(match self.scale {
             None => scale,
