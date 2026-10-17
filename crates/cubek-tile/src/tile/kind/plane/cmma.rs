@@ -2,6 +2,7 @@
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
+    ir::{ElemType, FloatKind},
     prelude::*,
 };
 
@@ -274,11 +275,53 @@ pub(crate) fn casts_in_place<T: Numeric, Out: Numeric>(
                 .device_properties
                 .as_ref()
                 .is_none_or(|properties| {
-                    properties.features.matmul.cmma.iter().any(|offered| {
-                        offered.cd_type == to && offered.m as usize == m && offered.n as usize == n
-                    })
+                    cmma_cast_layout_is_compatible(&properties.identity.fingerprint, from, to)
+                        && properties.features.matmul.cmma.iter().any(|offered| {
+                            offered.cd_type == to
+                                && offered.m as usize == m
+                                && offered.n as usize == n
+                        })
                 })
     })
+}
+
+/// Volta uses different register layouts for f32 and f16 accumulator fragments, so cross-type
+/// casts must bounce through shared memory.
+fn cmma_cast_layout_is_compatible(fingerprint: &str, from: ElemType, to: ElemType) -> bool {
+    let f32 = ElemType::Float(FloatKind::F32);
+    let f16 = ElemType::Float(FloatKind::F16);
+    !(fingerprint == "ptx_sm70" && ((from == f32 && to == f16) || (from == f16 && to == f32)))
+}
+
+#[cfg(test)]
+mod accumulator_cast_layout_tests {
+    use super::*;
+
+    #[test]
+    fn volta_bounces_f32_f16_accumulator_casts() {
+        let (f32, f16) = (
+            ElemType::Float(FloatKind::F32),
+            ElemType::Float(FloatKind::F16),
+        );
+        assert!(!cmma_cast_layout_is_compatible("ptx_sm70", f32, f16));
+        assert!(!cmma_cast_layout_is_compatible("ptx_sm70", f16, f32));
+    }
+
+    #[test]
+    fn later_architectures_keep_the_in_place_cast_path() {
+        let (f32, f16) = (
+            ElemType::Float(FloatKind::F32),
+            ElemType::Float(FloatKind::F16),
+        );
+        assert!(cmma_cast_layout_is_compatible("ptx_sm75", f32, f16));
+        assert!(cmma_cast_layout_is_compatible("ptx_sm80", f32, f16));
+    }
+
+    #[test]
+    fn same_type_cast_does_not_depend_on_architecture() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        assert!(cmma_cast_layout_is_compatible("ptx_sm70", f16, f16));
+    }
 }
 
 /// How a cmma fragment reaches its destination.
