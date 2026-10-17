@@ -20,6 +20,7 @@ use cubek_tile::launch::{BoundaryPolicy, Buffered, Destination, DestinationLaunc
 use cubek_tile::space::UnitCube;
 use cubek_tile::*;
 
+use super::launch_planes::holds_a_cube;
 use super::{Form, kernel_form};
 
 const M: Axis = Axis(0);
@@ -146,7 +147,7 @@ fn adds_atomically(client: &cubecl::client::Client) -> bool {
 }
 
 /// `problem`'s product, every unit of the launch a block; `None` where the device cannot add into
-/// the output.
+/// the output or hold its cube.
 fn run(problem: Problem, cube: UnitCube, reversed: &[Axis], form: Form<'_>) -> Option<HostData> {
     let Problem { m, n, k, batches } = problem;
     let client = cubecl::test_device().client();
@@ -173,6 +174,9 @@ fn run(problem: Problem, cube: UnitCube, reversed: &[Axis], form: Form<'_>) -> O
         Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
         levels(cube, reversed),
     );
+    if !holds_a_cube(&client, &partitioning) {
+        return None;
+    }
     let grid = Grid::Stated {
         cube_count: partitioning.cube_count(),
         cube_dim: partitioning.cube_dim(32),
@@ -292,6 +296,9 @@ fn every_unit_of_the_launch_walks_one_tile() {
                 Space::new(&[(B, batches), (M, m), (N, n), (K, k)]),
                 levels(cube, &[]),
             );
+            if !holds_a_cube(&client, &partitioning) {
+                continue;
+            }
             let cube_count = partitioning.cube_count();
             let CubeCount::Static(x, y, z) = cube_count else {
                 panic!("a static space spawns a static grid");

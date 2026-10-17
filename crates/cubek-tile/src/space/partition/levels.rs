@@ -642,7 +642,7 @@ mod tests {
 
     /// The planes of one cube are not dealt in launch order, so there is nothing to reverse.
     #[test]
-    #[should_panic(expected = "only a cube level or a plane level spanning the launch")]
+    #[should_panic(expected = "only a cube level or a level spanning the launch")]
     fn only_a_launch_order_is_reversed() {
         let _ = Levels::leaf(&[(M, 16)])
             .planes(&[(M, 2)])

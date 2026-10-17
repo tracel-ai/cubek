@@ -198,7 +198,7 @@ impl Dealt<'_> {
 
 /// Whether the test device holds one cube of `partitioning`, which every case its cube outgrows
 /// skips.
-fn holds_a_cube(client: &cubecl::client::Client, partitioning: &Partitioning) -> bool {
+pub(super) fn holds_a_cube(client: &cubecl::client::Client, partitioning: &Partitioning) -> bool {
     let units = partitioning.cube_dim(UNITS as u32).num_elems();
     let most = client.properties().hardware.max_units_per_cube;
     let holds = units <= most;
