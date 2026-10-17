@@ -5,8 +5,11 @@
 //! point), and compares the GPU output against the CPU reference in
 //! [`cubek_attention::eval::backward::cpu_reference`].
 //!
-//! The kernels themselves are `todo!()` for now: these tests are the
-//! harness, expected to fail at runtime until the kernels land.
+//! The kernels are implemented (per-row loops, fp32 accumulation, generic
+//! over the f32/f16/bf16 I/O dtype) and these tests prove them on CUDA
+//! against the CPU reference: small shapes in f32, pythia-160m-like shapes
+//! (causal, head_dim 64, seq 128 and 1024) in f32 and bf16, and a
+//! finite-difference check of the CPU oracle itself.
 
 #![cfg(feature = "cpu-reference")]
 
@@ -30,9 +33,9 @@ use cubek_test_utils::{
     launch_and_capture_outcome,
 };
 
-/// Seeded inputs + their fp32 host-side mirrors. All tensors are fp32 in
-/// the scaffold so we don't have to thread mixed precision through every
-/// helper while the kernels are stubs.
+/// Seeded inputs + their fp32 host-side mirrors. The device tensors use the
+/// problem's dtype; the host mirrors are read back from them, so they hold the
+/// already-rounded values the kernels actually see (matters for bf16).
 struct BackwardInputs {
     q: cubecl::std::tensor::TensorHandle,
     q_data: HostData,
@@ -66,6 +69,16 @@ fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> Atte
         },
         address_type: Default::default(),
     }
+}
+
+/// Same problem with a different shared float dtype for q/k/v/out.
+fn with_dtype(mut p: AttentionProblem, dtype: cubecl::ir::ElemType) -> AttentionProblem {
+    let client = cubecl::test_device().client();
+    p.global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
+        dtype,
+        AttentionGlobalTypes::mask_dtype(&client),
+    );
+    p
 }
 
 fn problem_causal(
@@ -162,12 +175,65 @@ fn config(problem: &AttentionProblem) -> BackwardConfig {
     c
 }
 
-/// Loose epsilon for scaffold tests: the GPU side currently panics, so this
-/// only kicks in when the kernels start producing real results.
+/// Absolute epsilon for the small f32 shapes (gradients are O(1e-2..1e-1)).
 const EPS: f32 = 1e-3;
 
+/// Error budget for the large-shape tests, relative to `max |reference|` of the
+/// tensor being checked (gradient magnitudes differ a lot between dQ and dV).
+#[derive(Clone, Copy)]
+enum Tol {
+    /// Absolute, via `assert_equals_approx`.
+    Abs(f32),
+    /// Fraction of `max |expected|`, with the measured errors printed.
+    Rel(f32),
+}
+
+/// f32: sequential accumulation over <= 1024 terms is bounded by
+/// 1024 * 2^-24 = 6.1e-5 of the magnitude; 1e-4 leaves headroom for the GPU's
+/// approximate `exp` and different summation order.
+const F32_REL: f32 = 1e-4;
+
+/// bf16 has 8 significand bits, so the unit roundoff is u = 2^-8 (relative
+/// error of one rounding is up to u, not 2^-9). Two roundings reach the result:
+/// the bf16 output itself (<= u of the element, hence <= u of the max), and the
+/// bf16 `O` feeding `D = rowsum(dO * O)`, whose error propagates into `dS` at
+/// about the same relative size. All inner products accumulate in fp32, so the
+/// accumulation length adds nothing. Budget: 2u = 2^-7 of `max |ref|`.
+const BF16_REL: f32 = 1.0 / 128.0;
+
+/// Compare one gradient tensor and print max abs / relative errors.
+fn check(name: &str, actual: &HostData, expected: &HostData, tol: Tol) {
+    match tol {
+        Tol::Abs(eps) => assert_equals_approx(actual, expected, eps)
+            .as_test_outcome()
+            .enforce(),
+        Tol::Rel(rel) => {
+            assert_eq!(actual.shape, expected.shape, "{name}: shape mismatch");
+            let n: usize = expected.shape.iter().product();
+            let (mut max_abs, mut max_ref, mut sum_abs) = (0f32, 0f32, 0f64);
+            for i in 0..n {
+                let (a, e) = (actual.data.get_f32(i), expected.data.get_f32(i));
+                let err = (a - e).abs();
+                assert!(err.is_finite(), "{name}[{i}]: got {a}, expected {e}");
+                max_abs = max_abs.max(err);
+                max_ref = max_ref.max(e.abs());
+                sum_abs += err as f64;
+            }
+            println!(
+                "{name}: max_abs_err={max_abs:.3e} max_ref={max_ref:.3e} rel={:.3e} mean_abs_err={:.3e} (budget rel={rel:.3e})",
+                max_abs / max_ref,
+                sum_abs / n as f64
+            );
+            assert!(
+                max_abs <= rel * max_ref,
+                "{name}: max abs err {max_abs:.3e} exceeds {rel:.3e} * max|ref| {max_ref:.3e}"
+            );
+        }
+    }
+}
+
 /// Run the prepass kernel and compare its `D` output against the CPU
-/// reference. Expected to fail until the kernel lands.
+/// reference.
 fn run_prepass(problem: AttentionProblem) {
     let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
@@ -209,6 +275,7 @@ fn run_prepass(problem: AttentionProblem) {
             o.clone().binding(),
             inputs.do_.clone().binding(),
             d.clone().binding(),
+            &problem.global_dtypes,
         )
         .into()
     });
@@ -232,7 +299,7 @@ fn o_data_to_vec(dbg: &FlashAttentionBackwardDebug) -> Vec<f32> {
 }
 
 /// Run the dQ kernel with CPU-computed `lse` and `D`, compare its output
-/// against the CPU reference's dQ. Expected to fail until the kernel lands.
+/// against the CPU reference's dQ.
 fn run_dq(problem: AttentionProblem) {
     let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
@@ -380,6 +447,10 @@ fn run_dkdv(problem: AttentionProblem) {
 }
 
 fn run_end_to_end(problem: AttentionProblem) {
+    run_end_to_end_tol(problem, Tol::Abs(EPS));
+}
+
+fn run_end_to_end_tol(problem: AttentionProblem, tol: Tol) {
     let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
@@ -458,24 +529,11 @@ fn run_end_to_end(problem: AttentionProblem) {
             let actual_dq = HostData::from_tensor_handle(&client, dq_handle, HostDataType::F32);
             let actual_dk = HostData::from_tensor_handle(&client, dk_handle, HostDataType::F32);
             let actual_dv = HostData::from_tensor_handle(&client, dv_handle, HostDataType::F32);
-            let result = flash_attention_backward_reference(
-                &inputs.q_data,
-                &inputs.k_data,
-                &inputs.v_data,
-                &inputs.do_data,
-                &dbg.lse,
-                &dbg.d,
-                &problem,
-            );
-            assert_equals_approx(&actual_dq, &result.dq, EPS)
-                .as_test_outcome()
-                .enforce();
-            assert_equals_approx(&actual_dk, &result.dk, EPS)
-                .as_test_outcome()
-                .enforce();
-            assert_equals_approx(&actual_dv, &result.dv, EPS)
-                .as_test_outcome()
-                .enforce();
+            // The debug reference derives lse and D from its own forward, which
+            // is exactly what was uploaded above, so its gradients are the oracle.
+            check("dQ", &actual_dq, &dbg.dq, tol);
+            check("dK", &actual_dk, &dbg.dk, tol);
+            check("dV", &actual_dv, &dbg.dv, tol);
         }
     }
 }
@@ -495,10 +553,10 @@ fn upload_row(
         .generate_without_host_data()
 }
 
-/// Finite-difference check on Q, K, V for a small problem. The scaffold
-/// produces no GPU output yet, but the test exercises the wiring: when the
-/// kernels land it'll start checking. Tolerance is generous because finite
-/// differences in fp32 are noisy; bf16 will need looser bounds again.
+/// Finite-difference check of the CPU oracle on Q, K, V for a small problem,
+/// then the GPU end-to-end comparison. The analytic reference is only trusted as
+/// ground truth after agreeing with `(L(x + h) - L(x - h)) / 2h`, where
+/// `L = sum(dO * O)` so that `dL/dx` equals the backward output for `x`.
 fn run_gradcheck(problem: AttentionProblem) {
     let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
@@ -510,26 +568,74 @@ fn run_gradcheck(problem: AttentionProblem) {
         &inputs.do_data,
         &problem,
     );
+    finite_diff_check(&inputs, &problem, &dbg);
 
-    // The end-to-end harness already verifies that the GPU result matches
-    // the analytic CPU reference; gradcheck verifies that the analytic CPU
-    // reference itself agrees with finite differences. That second check
-    // happens entirely on the CPU and stays useful even while the GPU
-    // kernels are stubs.
-    let _ = dbg.dq; // touch the field so the variable is used
-    let _ = dbg.dk;
-    let _ = dbg.dv;
-    finite_diff_check(&inputs, &problem);
-
-    // And drive the harness end-to-end so the kernels are invoked too.
     run_end_to_end(problem);
 }
 
-fn finite_diff_check(_inputs: &BackwardInputs, _problem: &AttentionProblem) {
-    // Finite-difference perturbation of Q, K, V comparing analytic dQ/dK/dV
-    // against (loss(x + eps) - loss(x - eps)) / (2*eps). Left as scaffolding:
-    // the harness must compile and call into the CPU reference; the
-    // numerical FD walk lands with the kernel bodies.
+fn f32_vec(h: &HostData) -> Vec<f32> {
+    match &h.data {
+        cubek_test_utils::HostDataVec::F32(v) => v.clone(),
+        _ => unreachable!("host mirrors are fp32"),
+    }
+}
+
+/// `x` with element `i` shifted by `delta`.
+fn shifted(x: &HostData, i: usize, delta: f32) -> HostData {
+    let mut v = f32_vec(x);
+    v[i] += delta;
+    HostData {
+        data: cubek_test_utils::HostDataVec::F32(v),
+        shape: x.shape.clone(),
+        strides: x.strides.clone(),
+    }
+}
+
+/// `L = sum(dO * O(q, k, v))` through the CPU forward.
+fn loss(q: &HostData, k: &HostData, v: &HostData, do_: &HostData, p: &AttentionProblem) -> f64 {
+    let o = f32_vec(&flash_attention_backward_reference_debug(q, k, v, do_, p).o);
+    let g = f32_vec(do_);
+    o.iter().zip(&g).map(|(a, b)| *a as f64 * *b as f64).sum()
+}
+
+fn finite_diff_check(
+    inputs: &BackwardInputs,
+    problem: &AttentionProblem,
+    dbg: &FlashAttentionBackwardDebug,
+) {
+    // h = 1e-2: truncation error O(h^2 * third derivative) stays below the f32 rounding noise
+    // of L (~1e-7 * |L| / h) for these O(1) inputs.
+    const H: f32 = 1e-2;
+    const TOL: f64 = 2e-3;
+    let (q, k, v, g) = (
+        &inputs.q_data,
+        &inputs.k_data,
+        &inputs.v_data,
+        &inputs.do_data,
+    );
+    for (name, x, analytic) in [("q", q, &dbg.dq), ("k", k, &dbg.dk), ("v", v, &dbg.dv)] {
+        let n: usize = x.shape.iter().product();
+        let grads = f32_vec(analytic);
+        // Seven spread-out elements per tensor, including both ends.
+        for t in 0..7 {
+            let i = t * (n - 1) / 6;
+            let eval = |delta: f32| {
+                let xs = shifted(x, i, delta);
+                match name {
+                    "q" => loss(&xs, k, v, g, problem),
+                    "k" => loss(q, &xs, v, g, problem),
+                    _ => loss(q, k, &xs, g, problem),
+                }
+            };
+            let fd = (eval(H) - eval(-H)) / (2.0 * H as f64);
+            let err = (fd - grads[i] as f64).abs();
+            assert!(
+                err <= TOL,
+                "d{name}[{i}]: finite difference {fd:.6} vs analytic {:.6} (err {err:.2e})",
+                grads[i]
+            );
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -537,8 +643,7 @@ fn finite_diff_check(_inputs: &BackwardInputs, _problem: &AttentionProblem) {
 //
 // One per kernel for the small base shape; a causal variant; a shape sweep
 // that mirrors the brief (batches {1,2}, heads {1,4}, seq lens {16,64,128,257},
-// head dims {32,64,128}). Sweep tests are #[ignore]d by default to keep CI
-// fast: the kernels they exercise are stubs, so they'd all panic anyway.
+// head dims {32,64,128}), and the pythia-160m-like cases below.
 // -----------------------------------------------------------------------------
 
 #[test]
@@ -589,8 +694,7 @@ fn gradcheck_small() {
 // ---- shape sweep ----
 //
 // Mirrors the brief: batches in {1, 2}, heads in {1, 4}, seq lens in
-// {16, 64, 128, 257}, head dims in {32, 64, 128}. Each variant is
-// `#[ignore]`d so the default `cargo test` run doesn't fire every panic.
+// {16, 64, 128, 257}, head dims in {32, 64, 128}.
 
 fn sweep_problem(batch: usize, heads: usize, seq: usize, head_dim: usize) -> AttentionProblem {
     let mut p = problem(seq, seq, head_dim, head_dim);
@@ -617,4 +721,130 @@ fn sweep_b1_h4_n128_d128() {
 #[test]
 fn sweep_b1_h1_n257_d32() {
     run_end_to_end(sweep_problem(1, 1, 257, 32));
+}
+
+// ---- pythia-160m-like shapes: head_dim 64, multi-batch / multi-head, seq_q == seq_kv ----
+
+fn model_problem(seq: usize, causal: bool, dtype: cubecl::ir::ElemType) -> AttentionProblem {
+    let mut p = sweep_problem(2, 4, seq, 64);
+    p.options.causal = causal;
+    with_dtype(p, dtype)
+}
+
+#[test]
+fn f32_b2_h4_n128_d64() {
+    run_end_to_end_tol(
+        model_problem(128, false, f32::elem_type_native()),
+        Tol::Rel(F32_REL),
+    );
+}
+
+#[test]
+fn f32_causal_b2_h4_n128_d64() {
+    run_end_to_end_tol(
+        model_problem(128, true, f32::elem_type_native()),
+        Tol::Rel(F32_REL),
+    );
+}
+
+#[test]
+fn f32_causal_b2_h4_n1024_d64() {
+    run_end_to_end_tol(
+        model_problem(1024, true, f32::elem_type_native()),
+        Tol::Rel(F32_REL),
+    );
+}
+
+#[test]
+fn bf16_causal_b2_h4_n128_d64() {
+    run_end_to_end_tol(
+        model_problem(128, true, half::bf16::elem_type_native()),
+        Tol::Rel(BF16_REL),
+    );
+}
+
+#[test]
+fn bf16_causal_b2_h4_n1024_d64() {
+    run_end_to_end_tol(
+        model_problem(1024, true, half::bf16::elem_type_native()),
+        Tol::Rel(BF16_REL),
+    );
+}
+
+/// Mixed q/k/v/out dtypes must be a typed error, not a silent reinterpretation.
+#[test]
+fn mixed_dtypes_rejected() {
+    let client = cubecl::test_device().client();
+    let mut p = model_problem(16, true, half::bf16::elem_type_native());
+    p.global_dtypes.out = f32::elem_type_native();
+    let inputs = seed_inputs(&client, &p);
+    let row = zeros_row(&client, [2, 4, 16], f32::elem_type_native());
+    let r = flash_attention_backward_prepass(
+        &client,
+        inputs.q.clone().binding(),
+        inputs.do_.clone().binding(),
+        row.clone().binding(),
+        &p.global_dtypes,
+    );
+    assert!(r.is_err());
+}
+
+/// Wall time of the full backward at the pythia-160m training shape (b4, h12,
+/// seq 1024, d64, bf16, causal). Run with `-- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn bench_bf16_causal_b4_h12_n1024_d64() {
+    let client = cubecl::test_device().client();
+    let mut p = sweep_problem(4, 12, 1024, 64);
+    p.options.causal = true;
+    let p = with_dtype(p, half::bf16::elem_type_native());
+    let inputs = seed_inputs(&client, &p);
+    let row_shape = [4, 12, 1024];
+    let o_shape = [4, 12, 1024, 64];
+    let o = TestInput::builder(client.clone(), Shape::new(o_shape))
+        .dtype(p.global_dtypes.out)
+        .uniform(55, -1., 1.)
+        .generate_without_host_data();
+    let lse = TestInput::builder(client.clone(), Shape::new(row_shape))
+        .dtype(f32::elem_type_native())
+        .uniform(66, 4., 7.)
+        .generate_without_host_data();
+    let dq = zeros_like(&client, o_shape, p.global_dtypes.query);
+    let dk = zeros_like(&client, o_shape, p.global_dtypes.key);
+    let dv = zeros_like(&client, o_shape, p.global_dtypes.value);
+    let cfg = config(&p);
+
+    let run = || {
+        flash_attention_backward(
+            &client,
+            inputs.q.clone().binding(),
+            inputs.k.clone().binding(),
+            inputs.v.clone().binding(),
+            o.clone().binding(),
+            lse.clone().binding(),
+            inputs.do_.clone().binding(),
+            dq.clone().binding(),
+            dk.clone().binding(),
+            dv.clone().binding(),
+            &p.global_dtypes,
+            cfg.clone(),
+        )
+        .unwrap();
+        cubecl::future::block_on(client.sync()).unwrap();
+    };
+    for _ in 0..2 {
+        run();
+    }
+    let mut ms: Vec<f64> = (0..7)
+        .map(|_| {
+            let t = std::time::Instant::now();
+            run();
+            t.elapsed().as_secs_f64() * 1e3
+        })
+        .collect();
+    ms.sort_by(|a, b| a.total_cmp(b));
+    println!(
+        "flash_attention_backward b4 h12 n1024 d64 bf16 causal: median {:.2} ms, min {:.2} ms, max {:.2} ms",
+        ms[3], ms[0], ms[6]
+    );
 }

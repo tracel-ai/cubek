@@ -1,5 +1,5 @@
 //! Routine selection for the FlashAttention backward kernels.
 //!
-//! Placeholder: populated once the kernel bodies land alongside their
-//! routine families. For now the launch layer dispatches directly without a
-//! routine abstraction.
+//! Placeholder for tiled routine families. The per-row kernels in `launch`
+//! are dispatched directly without a routine abstraction; a tiled variant
+//! would be selected here.

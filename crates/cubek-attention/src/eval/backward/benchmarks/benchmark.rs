@@ -148,6 +148,7 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
                 input.o.binding(),
                 input.do_.binding(),
                 input.d.binding(),
+                &self.problem.global_dtypes,
             ),
             BackwardStrategy::Dq => flash_attention_backward_dq(
                 &self.client,

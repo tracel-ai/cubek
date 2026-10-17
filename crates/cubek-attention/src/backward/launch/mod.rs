@@ -19,6 +19,22 @@ use cubecl::{client::Client, prelude::*, std::tensor::TensorHandle};
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
 
+/// The single float dtype shared by q/k/v/o/dO and the gradients. The kernels
+/// are generic over it (f32, f16, bf16) and accumulate in fp32; mixed dtypes
+/// are rejected rather than silently reinterpreted.
+fn io_dtype(global_dtypes: &AttentionGlobalTypes) -> Result<ElemType, AttentionSetupError> {
+    let dtype = global_dtypes.query;
+    let uniform = [global_dtypes.key, global_dtypes.value, global_dtypes.out]
+        .iter()
+        .all(|t| *t == dtype);
+    if !uniform || !matches!(dtype, ElemType::Float(_)) {
+        return Err(AttentionSetupError::InvalidConfig(Box::new(format!(
+            "attention backward needs one shared float dtype for q/k/v/out, got {global_dtypes:?}"
+        ))));
+    }
+    Ok(dtype)
+}
+
 /// High-level FlashAttention backward.
 ///
 /// Allocates the `D` prepass tensor internally, then dispatches the three
@@ -26,10 +42,11 @@ use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
 /// concurrently; the scaffold sequences them for simplicity until autotuning
 /// lands.
 ///
-/// Inputs:
+/// Inputs (q/k/v/o/dO/dQ/dK/dV share one float dtype, `global_dtypes.query`;
+/// all reductions accumulate in fp32):
 /// - `q, k, v`: `[B, H, N, d]`.
 /// - `o`:       `[B, H, N, d]`: saved from forward.
-/// - `lse`:     `[B, H, N]` fp32: saved from forward.
+/// - `lse`:     `[B, H, N]` fp32 (always, whatever the q/k/v dtype): saved from forward.
 /// - `do_`:     `[B, H, N, d]` upstream gradient.
 ///
 /// Outputs (caller pre-allocates, matching the convention of `launch_ref`):
@@ -57,7 +74,13 @@ pub fn flash_attention_backward(
     let d_handle =
         TensorHandle::new_contiguous(d_shape, client.empty(d_elems * f32_dtype.size()), f32_dtype);
 
-    flash_attention_backward_prepass(client, o, do_.clone(), d_handle.clone().binding())?;
+    flash_attention_backward_prepass(
+        client,
+        o,
+        do_.clone(),
+        d_handle.clone().binding(),
+        global_dtypes,
+    )?;
 
     flash_attention_backward_dq(
         client,

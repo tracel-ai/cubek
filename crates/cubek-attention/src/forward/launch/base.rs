@@ -41,17 +41,60 @@ pub fn launch_ref(
     attention_options: AttentionOptions,
 ) -> Result<(), AttentionSetupError> {
     match strategy {
-        Strategy::BlackboxAccelerated(strategy) => launch_attention::<BlackboxAcceleratedRoutine>(
-            client,
-            query,
-            key,
-            value,
-            mask,
-            out,
-            attention_global_types,
-            strategy,
-            attention_options,
-        ),
+        Strategy::BlackboxAccelerated(strategy) => {
+            let unmasked_compatible = mask.is_none()
+                && query.shape.len() == 4
+                && key.shape.len() == 4
+                && value.shape.len() == 4
+                && query.shape[3] == key.shape[3]
+                && query.shape[3] == value.shape[3];
+            let fallback_inputs = unmasked_compatible.then(|| {
+                (
+                    query.clone(),
+                    key.clone(),
+                    value.clone(),
+                    out.clone(),
+                    attention_options.causal,
+                )
+            });
+            match launch_attention::<BlackboxAcceleratedRoutine>(
+                client,
+                query,
+                key,
+                value,
+                mask,
+                out,
+                attention_global_types,
+                strategy,
+                attention_options,
+            ) {
+                Ok(()) => Ok(()),
+                Err(AttentionSetupError::InvalidConfig(_)) if fallback_inputs.is_some() => {
+                    let (q, k, v, o, causal) = fallback_inputs.unwrap();
+                    let lse_shape = vec![q.shape[0], q.shape[1], q.shape[2]];
+                    let lse_elems: usize = lse_shape.iter().product();
+                    let f32_ty = <f32 as cubecl::prelude::Scalar>::elem_type_native();
+                    let lse_handle = cubecl::std::tensor::TensorHandle::new_contiguous(
+                        lse_shape,
+                        client.empty(lse_elems * f32_ty.size()),
+                        f32_ty,
+                    );
+                    let scale = (q.shape[3] as f32).sqrt().recip();
+                    super::lse::flash_attention_forward_lse(
+                        client,
+                        q,
+                        k,
+                        v,
+                        o,
+                        lse_handle.binding(),
+                        attention_global_types,
+                        causal,
+                        scale,
+                    )
+                }
+                Err(err) => Err(err),
+            }
+        }
         Strategy::Unit(strategy) => launch_attention::<UnitRoutine>(
             client,
             query,

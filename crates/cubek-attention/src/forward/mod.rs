@@ -4,3 +4,5 @@
 pub mod definition;
 pub mod launch;
 pub mod routines;
+
+pub use launch::flash_attention_forward_lse;
