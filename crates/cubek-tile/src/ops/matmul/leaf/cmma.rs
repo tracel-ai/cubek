@@ -45,7 +45,7 @@ impl Tile {
                     fragment.fragment.downcast::<E>()
                 }
                 PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
-                    panic!("cmma operands must be cmma fragments")
+                    panic!("Tile::cmma_fragment: a held operand must be a cmma fragment")
                 }
             },
             TileKind::Memory(_)

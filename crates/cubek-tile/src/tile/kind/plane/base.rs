@@ -40,6 +40,15 @@ impl PlaneTile {
         }
     }
 
+    /// Whether this tile contracts through the block-scaled instruction, which reads its factors'
+    /// packed codes as they are stored.
+    pub(crate) fn reads_codes_as_stored(&self) -> comptime_type!(bool) {
+        match self {
+            PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
+            PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => comptime!(false),
+        }
+    }
+
     /// An uninitialized accumulator tile over the whole `m × n` MMA tile, in `form`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc<T: Numeric>(

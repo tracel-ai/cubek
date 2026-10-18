@@ -2699,6 +2699,9 @@ fn e4m3_scales_reach_the_promoted_block() {
 /// **A packed rhs with byte scales reaches the tensor cores.** Eight activation rows against a
 /// `q8` weight packed along its columns, `e4m3` scales per `(K block, N block)` read one at a time,
 /// the weight unpacked and scaled into the `8x8x8` `B` fragment. Prefill: one fragment a region.
+///
+/// The kernel that dequantizes the weight itself before the multiply must match the leaf's decode
+/// bit for bit: the explicit call is the same decode, placed where the kernel can name its element.
 #[test]
 fn a_packed_rhs_reaches_the_tensor_cores() {
     let (field, rows, block_k, blocks_k) = (QuantValue::Q8S, 8, 8, 4);
@@ -2786,10 +2789,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         Form::Static,
     );
 
-    packed_cmma_rhs::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
+    let x_arg = || {
         TileArgLaunch::new(
             x_tensor.clone().binding().into_tensor_arg(),
             dtype,
@@ -2801,7 +2801,9 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                     PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
                 ],
             )),
-        ),
+        )
+    };
+    let w_arg = || {
         TileArgLaunch::new(
             w_tensor.clone().binding().into_tensor_arg(),
             u32::elem_type_native(),
@@ -2814,7 +2816,9 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 ],
             ))
             .packed(field),
-        ),
+        )
+    };
+    let s_arg = || {
         TileArgLaunch::new(
             s_tensor.clone().binding().into_tensor_arg(),
             u32::elem_type_native(),
@@ -2824,9 +2828,11 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             ))
             .packed(FloatKind::F16),
-        ),
+        )
+    };
+    let out_arg = |out: &TensorHandle| {
         TileArgLaunch::new(
-            c.clone().binding().into_tensor_arg(),
+            out.clone().binding().into_tensor_arg(),
             dtype,
             1,
             TileSpec::new(Projection::new(
@@ -2836,7 +2842,17 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                     PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
             )),
-        ),
+        )
+    };
+
+    packed_cmma_rhs::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        x_arg(),
+        w_arg(),
+        s_arg(),
+        out_arg(&c),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         dtype,
@@ -2866,63 +2882,20 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(
-            x_tensor.clone().binding().into_tensor_arg(),
-            dtype,
-            1,
-            TileSpec::new(Projection::new(
-                &[M, KB, KI],
-                &[
-                    PhysicalAxisMap::of(M),
-                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                ],
-            )),
-        ),
-        TileArgLaunch::new(
-            w_tensor.clone().binding().into_tensor_arg(),
-            u32::elem_type_native(),
-            1,
-            TileSpec::new(Projection::new(
-                &[KB, KI, NB, NI],
-                &[
-                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
-                ],
-            ))
-            .packed(field),
-        ),
-        TileArgLaunch::new(
-            s_tensor.clone().binding().into_tensor_arg(),
-            u32::elem_type_native(),
-            1,
-            TileSpec::new(Projection::new(
-                &[KB, KI, NB],
-                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
-            ))
-            .packed(FloatKind::F16),
-        ),
-        TileArgLaunch::new(
-            dequantized.clone().binding().into_tensor_arg(),
-            dtype,
-            1,
-            TileSpec::new(Projection::new(
-                &[M, NB, NI],
-                &[
-                    PhysicalAxisMap::of(M),
-                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
-                ],
-            )),
-        ),
+        x_arg(),
+        w_arg(),
+        s_arg(),
+        out_arg(&dequantized),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         dtype,
         dtype,
     );
-    let twin = HostData::from_tensor_handle(&client, dequantized, HostDataType::F32);
+    let explicit = HostData::from_tensor_handle(&client, dequantized, HostDataType::F32);
     for m in 0..rows {
         for n in 0..cols {
             assert_eq!(
-                twin.get_f32(&[m, n]),
+                explicit.get_f32(&[m, n]),
                 got.get_f32(&[m, n]),
                 "at ({m}, {n}): the explicit dequantize differs from the leaf's"
             );

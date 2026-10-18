@@ -143,9 +143,9 @@ impl Tile {
         )
     }
 
-    /// `c += a · b`, folding onto what the accumulator or memory window holds. A packed factor is
-    /// decoded at its [`read_element`](Tile::read_element), but where the instruction reads its
-    /// codes as stored.
+    /// `c += a · b`, added to what the accumulator or memory window holds. A packed factor is
+    /// decoded into `f32`, unless the kernel [`dequantized`](Tile::dequantized) it at another
+    /// element first, or the instruction reads its codes as stored.
     pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
         let stored = self.reads_codes_as_stored();
         let (lhs_read, rhs_read) = (lhs.read_element(), rhs.read_element());
@@ -155,22 +155,14 @@ impl Tile {
         Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
     }
 
-    /// Whether this accumulator contracts through the block-scaled instruction, which reads its
-    /// factors' packed codes as they are stored.
+    /// Whether this accumulator's fragments read their factors' packed codes as stored; a memory
+    /// window decodes them.
     fn reads_codes_as_stored(&self) -> comptime_type!(bool) {
         match &self.kind {
-            TileKind::PlaneTile(tile) => match tile {
-                PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
-                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
-                    comptime!(false)
-                }
-            },
-            TileKind::PlanePartition(partition) => match partition.at(0usize, 0usize) {
-                PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
-                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
-                    comptime!(false)
-                }
-            },
+            TileKind::PlaneTile(tile) => tile.reads_codes_as_stored(),
+            TileKind::PlanePartition(partition) => {
+                partition.at(0usize, 0usize).reads_codes_as_stored()
+            }
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)

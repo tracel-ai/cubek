@@ -76,7 +76,7 @@ impl Tile {
             TileKind::PlaneTile(tile) => match tile {
                 PlaneTile::Mma(data) => data.clone(),
                 PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
-                    panic!("MmaData::mma: operands must be mma fragments")
+                    panic!("Tile::mma_operand: a held operand must be an mma fragment")
                 }
             },
             TileKind::Memory(_) => {
@@ -88,7 +88,7 @@ impl Tile {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => {
-                panic!("MmaData::mma: operands must be fragments or memory windows")
+                panic!("Tile::mma_operand: an operand must be a fragment or a memory window")
             }
         }
     }
