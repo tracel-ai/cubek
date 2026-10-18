@@ -82,6 +82,9 @@ pub fn launch_attention<A: Routine>(
         dims: AttentionDims {
             batch: query.shape[0],
             num_heads: query.shape[1],
+            // The KV heads live on the key tensor's head axis; the query count
+            // is what queries them. Ratio validation happens in `prepare`.
+            num_kv_heads: key.shape[1],
             seq_q: query.shape[2],
             head_dim: query.shape[3],
             seq_kv: key.shape[2],

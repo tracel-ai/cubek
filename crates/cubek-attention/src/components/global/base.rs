@@ -12,7 +12,10 @@ use crate::{
 };
 use cubecl::std::tensor::r#virtual::VirtualTensor;
 
-use crate::components::{global::simple::QueryReader, stage::StageAttentionConfig};
+use crate::components::{
+    global::{GlobalHeads, simple::QueryReader},
+    stage::StageAttentionConfig,
+};
 use std::{fmt::Debug, hash::Hash};
 
 /// A family of [GlobalAttention] implementations that operate with any [precision](AttentionPrecision).
@@ -59,42 +62,37 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
         #[comptime] config: Self::Config,
     );
 
-    // `batch_index` flattens the query's `(batch, head)`; every reader resolves
-    // it with the query's `num_heads`, never its own tensor's head extent.
+    // Every reader takes the same resolved `GlobalHeads` and picks the head it
+    // indexes by: K and V use the kv head, Q / Mask / Out use the query head.
 
     fn init_query_reader(
-        batch_index: u32,
-        num_heads: u32,
+        heads: GlobalHeads,
         stage_q_offset: u32,
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<'static, AP>;
 
     fn init_key_reader(
-        batch_index: u32,
-        num_heads: u32,
+        heads: GlobalHeads,
         key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader;
 
     fn init_value_reader(
-        batch_index: u32,
-        num_heads: u32,
+        heads: GlobalHeads,
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader;
 
     fn init_mask_reader(
-        batch_index: u32,
-        num_heads: u32,
+        heads: GlobalHeads,
         stage_q_offset: u32,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader;
 
     fn init_writer(
-        batch_index: u32,
-        num_heads: u32,
+        heads: GlobalHeads,
         stage_q_offset: u32,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,

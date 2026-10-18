@@ -134,6 +134,8 @@ fn validate(
     problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
+    problem.dims.validate()?;
+
     if !(problem.dims.head_dim as u32).is_multiple_of(blueprint.tiling_scheme.tile_size.head_dim) {
         return Err(AttentionSetupError::InvalidConfig(Box::new(
             "Tile size head dim must divide problem head dim".to_string(),

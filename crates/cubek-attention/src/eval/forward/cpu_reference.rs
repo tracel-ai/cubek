@@ -264,6 +264,7 @@ pub fn flash_attention_v2_reference_with_lse(
     let seq_q = problem.dims.seq_q;
     let seq_kv = problem.dims.seq_kv;
     let num_heads = problem.dims.num_heads;
+    let num_kv_heads = problem.dims.num_kv_heads;
     let head_dim = problem.dims.head_dim;
     let val_dim = problem.dims.val_dim;
 
@@ -289,6 +290,11 @@ pub fn flash_attention_v2_reference_with_lse(
 
     for b in 0..batch {
         for h in 0..num_heads {
+            // Deliberately spelled out rather than calling `AttentionDims::kv_head`:
+            // this is the ground truth the kernel is judged against, so it must
+            // not share code with the implementation it checks. Query heads
+            // `[g * k, (g+1) * k)` read kv head `g` for a group of k.
+            let kv_h = h / (num_heads / num_kv_heads);
             for i in 0..seq_q {
                 let mut m = f32::NEG_INFINITY;
                 let mut l = 0.;
@@ -298,7 +304,7 @@ pub fn flash_attention_v2_reference_with_lse(
                     let mut dot = 0.;
                     for d in 0..head_dim {
                         q_index = [b, h, i, d];
-                        k_index = [b, h, j, d];
+                        k_index = [b, kv_h, j, d];
                         dot += query.get_f32(&q_index) * key.get_f32(&k_index);
                     }
                     dot *= scale;
@@ -309,6 +315,7 @@ pub fn flash_attention_v2_reference_with_lse(
                     let s_val = if problem.options.causal && j + seq_q > i + seq_kv {
                         f32::NEG_INFINITY
                     } else if let Some(mask) = mask {
+                        // The mask is indexed by query head, not kv head.
                         m_index = [b, h, i, j];
                         if mask.get_bool(&m_index) {
                             f32::NEG_INFINITY
@@ -330,7 +337,7 @@ pub fn flash_attention_v2_reference_with_lse(
                     let scale_old = f32::exp(m - m_new);
                     for d in 0..val_dim {
                         acc_row[d] *= scale_old;
-                        v_index = [b, h, j, d];
+                        v_index = [b, kv_h, j, d];
                         acc_row[d] += p_tilde * value.get_f32(&v_index);
                     }
 

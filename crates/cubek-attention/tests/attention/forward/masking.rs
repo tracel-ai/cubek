@@ -48,6 +48,7 @@ fn problem(
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim,
@@ -360,6 +361,7 @@ fn broadcast_mask(strategy: Strategy) {
         dims: AttentionDims {
             batch,
             num_heads,
+            num_kv_heads: num_heads,
             seq_q,
             seq_kv,
             head_dim,
@@ -484,6 +486,7 @@ fn padding_mask_broadcast_over_seq_q(strategy: Strategy) {
         dims: AttentionDims {
             batch,
             num_heads,
+            num_kv_heads: num_heads,
             seq_q,
             seq_kv,
             head_dim,
