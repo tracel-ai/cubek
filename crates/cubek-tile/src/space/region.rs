@@ -1,7 +1,10 @@
-//! Where a loop is: the box a kernel's loops reached ([`Region`]), and the leaves below it.
+//! Where a loop is: the box a kernel's loops reached ([`Region`]), and the leaves and planes below
+//! it.
 
 use super::{Level, Partitioning, Space};
-use crate::{Axis, Coords, Integer, IntegerExpand, MatrixAxes, Path, Step, Walk};
+use crate::{
+    Axis, ComputeScope, Coords, Coverage, Integer, IntegerExpand, MatrixAxes, Path, Step, Walk,
+};
 use cubecl::{prelude::*, unexpanded};
 
 /// The path a kernel's loops took to a box, with the coordinates each loop handed out.
@@ -65,6 +68,15 @@ impl Region {
     /// between: a kernel reads the same however many levels its partitioning stacks there.
     pub fn leaves(&self) -> Leaves {
         Leaves {
+            region: self.clone(),
+        }
+    }
+
+    /// The planes below this region, each once at its place in the walks between, which is the
+    /// same at every step: what a plane holds across a walk, such as its rows, whatever walks the
+    /// partitioning stacks above it.
+    pub fn planes(&self) -> Planes {
+        Planes {
             region: self.clone(),
         }
     }
@@ -254,6 +266,63 @@ impl Iterable for LeavesExpand {
 
     fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         each_leaf(scope, self.region, body, true);
+    }
+}
+
+/// The planes below one region, each once ([`Region::planes`]).
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct Planes {
+    #[allow(dead_code)] // Read at expansion, through `PlanesExpand`.
+    region: Region,
+}
+
+/// Host-side stand-in for `for plane in cube.planes()`; never runs.
+impl IntoIterator for Planes {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+/// A walk's first step per walk level, then a loop over the plane level.
+impl Iterable for PlanesExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        each_plane(scope, self.region, body, false);
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        each_plane(scope, self.region, body, true);
+    }
+}
+
+/// `body` over the planes below `region`. A plane's place is the same at every step of a walk, so
+/// each walk between is read at its first step.
+fn each_plane(
+    scope: &Scope,
+    region: RegionExpand,
+    body: &mut dyn FnMut(&Scope, RegionExpand),
+    unroll: bool,
+) {
+    match region.path.next().coverage() {
+        Coverage::Distribute(ComputeScope::Plane) => match unroll {
+            true => region.expand_unroll(scope, body),
+            false => region.expand(scope, body),
+        },
+        Coverage::Walk => {
+            let first = region
+                .__expand_walk_method(scope)
+                .__expand_region_method(scope, 0usize.into_expand(scope));
+            each_plane(scope, first, body, unroll)
+        }
+        coverage => panic!(
+            "Region::planes: a level distributed over {coverage:?} lies between this region and \
+             its planes, so it is not one plane's"
+        ),
     }
 }
 

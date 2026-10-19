@@ -70,3 +70,59 @@ fn leaves_walk_every_level_below() {
             .walk(&[(M, 3)]),
     );
 }
+
+/// `out[m] = m + 1` for every plane's origin `m`, reached from the cube through `planes`.
+#[cube(launch)]
+fn mark_planes(out: &mut Tensor<f32>, space: Partitioning) {
+    for cube in &space {
+        for plane in cube.planes() {
+            let m = plane.origin(M);
+            out[m] = f32::cast_from(m) + 1.0;
+        }
+    }
+}
+
+/// The cells `planes` reaches over `levels`, every other left at -1.
+fn planes_reached(levels: Levels) -> Vec<f32> {
+    let client = cubecl::test_device().client();
+    let launcher = implied(
+        &client,
+        Partitioning::new(Space::new(&[(M, CELLS)]), levels.build()),
+        Form::Static,
+    );
+    let out = TestInput::builder(client.clone(), Shape::new([CELLS]))
+        .dtype(f32::elem_type_native())
+        .custom(vec![-1.0; CELLS])
+        .generate_without_host_data();
+
+    mark_planes::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        out.clone().binding().into_tensor_arg(),
+        launcher.partitioning_arg(),
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    (0..CELLS).map(|m| got.get_f32(&[m])).collect()
+}
+
+/// A cube's planes are the same however many walks lie between: the walks' first steps. With no
+/// walk, each of the three cubes reaches both its planes.
+#[test]
+fn planes_reach_the_first_step_of_every_walk_above_them() {
+    let first_step = [1.0, 2.0, -1.0, -1.0, -1.0, -1.0];
+    let one_walk = Levels::leaf(&[(M, 1)])
+        .planes(&[(M, 2)])
+        .walk(&[(M, 3)])
+        .cubes(&[M]);
+    assert_eq!(planes_reached(one_walk), first_step);
+    let two_walks = Levels::leaf(&[(M, 1)])
+        .planes(&[(M, 2)])
+        .walk(&[(M, 1)])
+        .walk(&[(M, 3)])
+        .cubes(&[M]);
+    assert_eq!(planes_reached(two_walks), first_step);
+    let no_walk = Levels::leaf(&[(M, 1)]).planes(&[(M, 2)]).cubes(&[M]);
+    assert_eq!(planes_reached(no_walk), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+}
