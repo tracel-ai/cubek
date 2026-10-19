@@ -292,7 +292,8 @@ impl<'a> TileArgExpand<'a> {
     }
 
     /// `values` carrying the table that places their windows, where the operand has one: read at
-    /// the first level of `partitioning` that cuts the table's keys ([`Indexing::read_at`]).
+    /// the first level of `partitioning` that cuts the table's keys ([`Indexing::read_at`]), or
+    /// now, at its first entry, where none does.
     fn indexing(
         &self,
         scope: &Scope,
@@ -303,9 +304,9 @@ impl<'a> TileArgExpand<'a> {
             return values;
         };
         let keys = table.spec.axes().to_vec();
-        if let Err(refusal) = indexing.read_at(&keys, &partitioning.levels) {
-            panic!("{refusal}");
-        }
+        let read_at = indexing
+            .read_at(&keys, &partitioning.levels)
+            .unwrap_or_else(|refusal| panic!("{refusal}"));
         let ValuesExpand::Tensor { tensor, meta, .. } = &table.values else {
             panic!("{}", Refusal::IndexTableNotU32)
         };
@@ -314,7 +315,11 @@ impl<'a> TileArgExpand<'a> {
             tensor.expand.into(),
         ));
         let table = IndexTable::__expand_new(scope, entries, keys, indexing.clone());
-        values.__expand_with_index_method(scope, table)
+        let values = values.__expand_with_index_method(scope, table);
+        match read_at {
+            Some(_) => values,
+            None => values.__expand_indexed_whole_method(scope),
+        }
     }
 
     /// `values` under these scales, a tile carrying its own scales in turn. A tensor map's values
@@ -661,10 +666,10 @@ mod tests {
         arg.__expand_lines_method::<i32, Const<1>>(&builder.scope);
     }
 
-    /// A `[4]` `u32` table keyed by `key`, expanded as a kernel argument outside any launch.
-    fn expanded_table(builder: &mut KernelBuilder, key: Axis) -> TileArgExpand<'static> {
+    /// A `[4]` `u32` table keyed by `keys`, expanded as a kernel argument outside any launch.
+    fn expanded_table(builder: &mut KernelBuilder, keys: &[Axis]) -> TileArgExpand<'static> {
         let mut launcher = KernelLauncher::new(builder_settings());
-        let meta = TensorMeta::register(TensorMetaLaunch::new(4, 1), &mut launcher);
+        let meta = TensorMeta::register(TensorMetaLaunch::new(4, keys.len()), &mut launcher);
         let arg = TileArgCompilationArg {
             values: ValuesCompilationArg::Tensor {
                 tensor: TensorCompilationArg {
@@ -673,7 +678,7 @@ mod tests {
                 },
                 width: 1,
             },
-            spec: TileSpec::direct(&[key]),
+            spec: TileSpec::direct(keys),
             element: u32::elem_type_native(),
             scale: None,
             index: None,
@@ -681,24 +686,47 @@ mod tests {
         TileArg::expand(&arg, builder)
     }
 
-    /// The table's keys are read at the first level that cuts them; a nest that never cuts them
-    /// would read entry zero for every window, so the operand is refused as it is served.
-    #[test]
-    #[should_panic(expected = "no level of the nest cuts [Axis(1)]")]
-    fn a_table_no_level_reads_is_refused_as_the_tile_expands() {
+    /// The one-axis `f32` buffer as a run keyed by `keys`, served on a bare scope under `levels`
+    /// over `space`.
+    fn serve_indexed(keys: &[Axis], space: &[(Axis, usize)], levels: Vec<Level>) {
         let mut builder = KernelBuilder::new(builder_settings());
         let mut values = expanded_f32_buffer(&mut builder);
-        let table = expanded_table(&mut builder, Axis(1));
+        let table = expanded_table(&mut builder, keys);
         values.index = Some((Box::new(table), Indexing::Run(Axis(0))));
         let scope = &builder.scope;
         let partitioning = PartitioningExpand {
             space: SpaceExpand {
-                shape: Space::new(&[(Axis(0), 4), (Axis(1), 2)]).shape().clone(),
+                shape: Space::new(space).shape().clone(),
                 sizes: Sequence::<usize>::__expand_new(scope),
             },
-            levels: vec![Level::every(&[(Axis(0), 2)])],
+            levels,
         };
         values.__expand_tile_method(scope, &partitioning);
+    }
+
+    /// The table is read at one step, the one that cuts its keys; keys cut at two levels name no
+    /// such step, and the operand is refused as it is served.
+    #[test]
+    #[should_panic(
+        expected = "the first level cutting one of [Axis(1), Axis(2)] does not cut them all"
+    )]
+    fn keys_cut_at_two_levels_are_refused_as_the_tile_expands() {
+        serve_indexed(
+            &[Axis(1), Axis(2)],
+            &[(Axis(0), 4), (Axis(1), 2), (Axis(2), 2)],
+            vec![Level::every(&[(Axis(1), 1)]), Level::every(&[(Axis(2), 1)])],
+        );
+    }
+
+    /// No level cuts the key, so it is one tile, and the run is read at the table's first entry as
+    /// the operand is served: a grouped product of a single group.
+    #[test]
+    fn a_table_no_level_cuts_is_read_as_the_tile_expands() {
+        serve_indexed(
+            &[Axis(1)],
+            &[(Axis(0), 4), (Axis(1), 1)],
+            vec![Level::every(&[(Axis(0), 2)])],
+        );
     }
 
     #[test]

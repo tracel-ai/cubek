@@ -99,9 +99,6 @@ pub enum Refusal {
     /// [`Indexing::Run`](crate::Indexing::Run) keyed by this many axes: a run's end is the next
     /// entry along its one key.
     RunKeyedByMany(usize),
-    /// An indexed operand under a nest no level of which cuts these keys: its table would never be
-    /// read.
-    IndexNeverRead(Vec<Axis>),
     /// An indexed operand under a nest whose first level cutting one of these keys does not cut
     /// them all: the table is read at one step.
     IndexKeysCutApart(Vec<Axis>),
@@ -260,10 +257,6 @@ impl Display for Refusal {
                 f,
                 "Indexing::Run: a run ends at the next entry along its one key, and this table has \
                  {keys} keys"
-            ),
-            Refusal::IndexNeverRead(keys) => write!(
-                f,
-                "Indexing: no level of the nest cuts {keys:?}, so the table would never be read"
             ),
             Refusal::IndexKeysCutApart(keys) => write!(
                 f,

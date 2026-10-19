@@ -4,7 +4,8 @@
 //! The table's dims are its key axes, in order: it holds one entry per tile of the first level of
 //! the nest that cuts them, the same entry a kernel would read off `region.coord(key)` itself.
 //! The tile reads that entry once, in [`Tile::at`], at the step that cuts the keys, and places its
-//! window with it ([`Indexing`]); its reads never touch the table again. The scales it carries move
+//! window with it ([`Indexing`]); its reads never touch the table again. Where no level cuts the
+//! keys they are one tile, so the table's first entry is the one, read as the tile is served. The scales it carries move
 //! with it wherever they span the axis the entry places, so a routed operand may be quantized.
 
 use cubecl::prelude::*;
@@ -91,24 +92,31 @@ impl Indexing {
     }
 
     /// Where in `levels` the table is read: the first level that cuts a key, which must cut them
-    /// all, and below which (for a run, at or above which) no level cuts the placed axis.
+    /// all, and below which (for a run, at or above which) no level cuts the placed axis; `None`
+    /// where no level cuts the keys, which are then one tile, read as the tile is served.
     ///
     /// # Errors
     ///
     /// The [`Refusal`] naming the first rule the nest breaks.
-    pub(crate) fn read_at(&self, keys: &[Axis], levels: &[Level]) -> Result<usize, Refusal> {
+    pub(crate) fn read_at(
+        &self,
+        keys: &[Axis],
+        levels: &[Level],
+    ) -> Result<Option<usize>, Refusal> {
         let cuts = |level: &Level, axis: Axis| level.count(axis).is_some();
         let at = levels
             .iter()
-            .position(|level| keys.iter().any(|&key| cuts(level, key)))
-            .ok_or_else(|| Refusal::IndexNeverRead(keys.to_vec()))?;
-        if !keys.iter().all(|&key| cuts(&levels[at], key)) {
+            .position(|level| keys.iter().any(|&key| cuts(level, key)));
+        if let Some(at) = at
+            && !keys.iter().all(|&key| cuts(&levels[at], key))
+        {
             return Err(Refusal::IndexKeysCutApart(keys.to_vec()));
         }
         let axis = self.axis();
-        let placed_by_a_level = match self {
-            Indexing::Coordinate(_) => levels.iter().any(|level| cuts(level, axis)),
-            Indexing::Run(_) => levels[..=at].iter().any(|level| cuts(level, axis)),
+        let placed_by_a_level = match (self, at) {
+            (Indexing::Coordinate(_), _) => levels.iter().any(|level| cuts(level, axis)),
+            (Indexing::Run(_), Some(at)) => levels[..=at].iter().any(|level| cuts(level, axis)),
+            (Indexing::Run(_), None) => false,
         };
         match placed_by_a_level {
             true => Err(Refusal::IndexedAxisCut(axis)),
@@ -169,24 +177,18 @@ impl IndexTable {
         }
     }
 
-    /// The entry `step`'s tile of the keys names.
+    /// The run whose end is the entry at `at`, `(start, end)`: its start the entry before it
+    /// along the one key, or `0` for the first.
     #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
-    pub(crate) fn entry_at(&self, step: &Step) -> u32 {
-        self.entry(self.position(step))
-    }
-
-    /// The run `step`'s tile of the one key names, `(start, end)`: the end its entry holds, the
-    /// start the entry before it, or `0` for the first tile.
-    #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
-    pub(crate) fn run_at(&self, step: &Step) -> (u32, u32) {
-        let at = self.position(step);
+    pub(crate) fn run(&self, at: u32) -> (u32, u32) {
         let stride = self.strides.at(0usize);
         let previous = self.entry(at.max_with(stride).minus(stride));
         (select(at == 0u32, 0u32, previous), self.entry(at))
     }
 
     /// Where the entry of `step`'s tile of the keys lies in the table.
-    fn position(&self, step: &Step) -> u32 {
+    #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
+    pub(crate) fn position(&self, step: &Step) -> u32 {
         let mut at = 0u32;
         #[unroll]
         for i in 0..comptime!(self.keys.len()) {
@@ -198,7 +200,8 @@ impl IndexTable {
 
     /// The entry at `at`, or the table's last past it: the table is device data a launch sized,
     /// and a read past it would land outside the buffer.
-    fn entry(&self, at: u32) -> u32 {
+    #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
+    pub(crate) fn entry(&self, at: u32) -> u32 {
         let last = (self.entries.len() as u32).max_with(1u32).minus(1u32);
         self.entries[at.min_with(last).cast::<usize>()]
     }
@@ -230,6 +233,12 @@ fn no_table() -> bool {
     true
 }
 
+/// Where the first entry lies: the one a table no level's keys cut is read at.
+#[cube]
+fn first_entry() -> u32 {
+    0u32
+}
+
 impl Tile {
     /// Whether the entry this tile's table placed it with names a coordinate of the axis it
     /// places, or a run of at least one row: `false` for an entry past a stack of slabs, as a
@@ -249,6 +258,13 @@ impl Tile {
     /// This tile with `table` to read where a step cuts its keys.
     #[allow(dead_code)] // Reached through its expand, from `TileArg::tile`.
     pub(crate) fn with_index(self, _table: IndexTable) -> Tile {
+        cubecl::unexpanded!()
+    }
+
+    /// This tile with its table read at its first entry: what a table whose keys no level cuts
+    /// holds, the keys being one tile.
+    #[allow(dead_code)] // Reached through its expand, from `TileArg::tile`.
+    pub(crate) fn indexed_whole(self) -> Tile {
         cubecl::unexpanded!()
     }
 }
@@ -280,15 +296,34 @@ impl TileExpand {
             "{}",
             Refusal::IndexKeysCutApart(table.keys.clone())
         );
+        let at = table.__expand_position_method(scope, step);
+        self.read_index(scope, at)
+    }
+
+    pub(crate) fn __expand_indexed_whole_method(self, scope: &Scope) -> TileExpand {
+        let at = first_entry::expand(scope);
+        self.read_index(scope, at)
+    }
+
+    /// This tile placed by the entry at `at` of the table it holds, which is then read.
+    fn read_index(self, scope: &Scope, at: NativeExpand<u32>) -> TileExpand {
+        let TileKindExpand::Memory(MemoryExpand {
+            index: ComptimeOptionExpand::Some(table),
+            ..
+        }) = &self.kind
+        else {
+            unreachable!("only a tile holding a table reads it")
+        };
+        let table = table.clone();
         let (placed, in_range) = match table.indexing {
             Indexing::Coordinate(axis) => {
-                let entry = table.__expand_entry_at_method(scope, step);
+                let entry = table.__expand_entry_method(scope, at);
                 let in_range = self.__expand_names_coordinate_method(scope, axis, entry);
                 let entry = self.__expand_clamped_method(scope, axis, entry);
                 (self.__expand_placed_at_method(scope, axis, entry), in_range)
             }
             Indexing::Run(axis) => {
-                let (start, end) = table.__expand_run_at_method(scope, step);
+                let (start, end) = table.__expand_run_method(scope, at);
                 (
                     self.__expand_run_within_method(scope, axis, start, end),
                     nonempty::expand(scope, start, end),
@@ -489,14 +524,18 @@ mod tests {
     fn a_table_is_read_at_the_first_level_cutting_its_keys() {
         let levels = [Level::every(&[(N, 4)]), rows(2), rows(1)];
         let read = Indexing::Coordinate(EXPERT).read_at(&[M], &levels);
-        assert_eq!(read, Ok(1));
+        assert_eq!(read, Ok(Some(1)));
     }
 
+    /// No level cuts the keys, so they are one tile: the table's first entry is the one, read as
+    /// the tile is served, as a grouped product of a single group reads its one run.
     #[test]
-    fn a_table_no_level_reads_is_refused() {
+    fn a_table_no_level_cuts_is_read_as_the_tile_is_served() {
         let levels = [Level::every(&[(N, 4)])];
         let read = Indexing::Coordinate(EXPERT).read_at(&[M], &levels);
-        assert_eq!(read, Err(Refusal::IndexNeverRead(vec![M])));
+        assert_eq!(read, Ok(None));
+        let walked = [Level::every(&[(K, 4)])];
+        assert_eq!(Indexing::Run(K).read_at(&[M], &walked), Ok(None));
     }
 
     #[test]
@@ -525,7 +564,7 @@ mod tests {
             run.read_at(&[EXPERT], &above),
             Err(Refusal::IndexedAxisCut(M))
         );
-        assert_eq!(run.read_at(&[EXPERT], &below), Ok(0));
+        assert_eq!(run.read_at(&[EXPERT], &below), Ok(Some(0)));
     }
 
     #[test]

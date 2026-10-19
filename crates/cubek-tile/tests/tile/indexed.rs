@@ -611,6 +611,73 @@ fn a_run_that_ends_before_it_starts_is_empty() {
     }
 }
 
+/// `out = Σ packed[p]` over the one group's rows: no level cuts the group, so the rows hold one
+/// run, read as the tile is served, and the walk is that run's.
+#[cube(launch)]
+fn indexed_whole_sum_kernel<E: Numeric>(
+    packed: &TileArg<'_>,
+    out: &TileArg<'_>,
+    space: Partitioning,
+    #[comptime] block: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let rows = packed.tile(&space);
+    let mut total = out.tile(&space);
+    total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+    for blk in rows.over(&block) {
+        let mut cell = total.at(&blk);
+        cell.reduce_axis_accumulate(&rows.at(&blk), comptime!(Monoid::Sum));
+    }
+}
+
+/// A single group, which no level cuts: its run is the table's one entry, seven of the ten rows,
+/// so the three past it never reach the sum.
+#[test]
+fn a_table_no_level_cuts_places_its_one_run() {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(G, 1), (P, PACKED), (D, FEATURES)]),
+            Levels::leaf(&[(P, BLOCK)]).walk_every(&[P]).build(),
+        ),
+        Form::DynamicAlong(&[P]),
+    );
+    let (packed, _) = TestInput::builder(client.clone(), Shape::new([PACKED, FEATURES]))
+        .dtype(f32_ty)
+        .custom(packed_values())
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), Shape::new([1, FEATURES]))
+        .dtype(f32_ty)
+        .custom(vec![-1.0; FEATURES])
+        .generate_without_host_data();
+    let ends = [7u32];
+
+    indexed_whole_sum_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        f32_arg(packed, TileSpec::direct(&[P, D]))
+            .indexed(
+                table(&client, &ends, Shape::new([1]), &[G]),
+                Indexing::Run(P),
+            )
+            .unwrap(),
+        f32_arg(out.clone(), TileSpec::direct(&[G, D])),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    let values = packed_values();
+    for d in 0..FEATURES {
+        let want: f32 = (0..7).map(|p| values[p * FEATURES + d]).sum();
+        assert_eq!(got.get_f32(&[0, d]), want, "feature {d}");
+    }
+}
+
 /// The table's statement is checked where it is bound, on the caller's thread.
 mod refused {
     use super::*;
