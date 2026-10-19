@@ -482,7 +482,16 @@ fn packed_values() -> Vec<f32> {
         .collect()
 }
 
-fn run_ragged(ends: &[u32]) -> HostData {
+/// How the packed rows lie: each row's features together, or each feature's rows together, the
+/// rows along the innermost dim, as a transposed operand reads them.
+#[derive(Clone, Copy, Debug)]
+enum Rows {
+    Lined,
+    Transposed,
+}
+
+/// The fold over the groups `ends` cuts the rows into, `ends` each group's cumulative end row.
+fn run_ragged(ends: &[u32], rows: Rows) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let launcher = implied(
@@ -497,9 +506,19 @@ fn run_ragged(ends: &[u32]) -> HostData {
         // The rows a group walks are its run's: an extent read at runtime.
         Form::DynamicAlong(&[P]),
     );
-    let (packed, _) = TestInput::builder(client.clone(), Shape::new([PACKED, FEATURES]))
+    let values = packed_values();
+    let (shape, values, spec) = match rows {
+        Rows::Lined => ([PACKED, FEATURES], values, TileSpec::direct(&[P, D])),
+        Rows::Transposed => {
+            let transposed = (0..FEATURES * PACKED)
+                .map(|i| values[(i % PACKED) * FEATURES + i / PACKED])
+                .collect();
+            ([FEATURES, PACKED], transposed, TileSpec::direct(&[D, P]))
+        }
+    };
+    let (packed, _) = TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(f32_ty)
-        .custom(packed_values())
+        .custom(values)
         .generate_with_f32_host_data();
     // Poisoned, not zeroed: the kernel owes every cell a value, the empty group's included.
     let out = TestInput::builder(client.clone(), Shape::new([GROUPS, FEATURES]))
@@ -511,7 +530,7 @@ fn run_ragged(ends: &[u32]) -> HostData {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        f32_arg(packed, TileSpec::direct(&[P, D]))
+        f32_arg(packed, spec)
             .indexed(
                 table(&client, ends, Shape::new([ends.len()]), &[G]),
                 Indexing::Run(P),
@@ -527,15 +546,16 @@ fn run_ragged(ends: &[u32]) -> HostData {
     HostData::from_tensor_handle(&client, out, HostDataType::F32)
 }
 
-/// Group `g`'s rows `[ends[g], ends[g + 1])`, folded on the host; an end before its start folds
-/// nothing.
+/// Group `g`'s rows, from the end before it (`0` for the first) to its own, folded on the host;
+/// an end before its start folds nothing.
 fn expected_ragged(ends: &[u32]) -> Vec<Vec<f32>> {
     let values = packed_values();
     (0..GROUPS)
         .map(|g| {
+            let start = if g == 0 { 0 } else { ends[g - 1] as usize };
             (0..FEATURES)
                 .map(|d| {
-                    (ends[g] as usize..ends[g + 1] as usize)
+                    (start..ends[g] as usize)
                         .map(|p| values[p * FEATURES + d])
                         .sum()
                 })
@@ -544,34 +564,42 @@ fn expected_ragged(ends: &[u32]) -> Vec<Vec<f32>> {
         .collect()
 }
 
-/// Each group's start and length off its table: runs of 2, 0, 5 and 3 rows, then 3, 0, 3 and 4.
-/// The answer follows the table, which it could not if the run did nothing, since every group
-/// would fold from row zero under both.
-#[test]
-fn a_ragged_operand_folds_each_group_over_its_own_rows() {
-    for ends in [[0u32, 2, 2, 7, 10], [0, 3, 3, 6, 10]] {
-        let got = run_ragged(&ends);
-        let want = expected_ragged(&ends);
-        for (g, row) in want.iter().enumerate() {
-            for (d, cell) in row.iter().enumerate() {
-                assert_eq!(
-                    got.get_f32(&[g, d]),
-                    *cell,
-                    "group {g} feature {d}: rows {}..{}",
-                    ends[g],
-                    ends[g + 1]
-                );
-            }
+fn assert_ragged(got: &HostData, ends: &[u32], what: &str) {
+    for (g, row) in expected_ragged(ends).iter().enumerate() {
+        for (d, cell) in row.iter().enumerate() {
+            assert_eq!(
+                got.get_f32(&[g, d]),
+                *cell,
+                "{what}: group {g} feature {d} under ends {ends:?}"
+            );
         }
     }
+}
+
+/// Each group's run off its cumulative end: runs of 2, 0, 5 and 3 rows, then 3, 0, 3 and 4. The
+/// answer follows the table, which it could not if the run did nothing, since every group would
+/// fold from row zero under both.
+#[test]
+fn a_ragged_operand_folds_each_group_over_its_own_rows() {
+    for ends in [[2u32, 2, 7, 10], [3, 3, 6, 10]] {
+        assert_ragged(&run_ragged(&ends, Rows::Lined), &ends, "lined");
+    }
+}
+
+/// The rows along the innermost dim, read one value a line: a run placed there is an element
+/// offset like any other, as a transposed operand's rows are.
+#[test]
+fn a_ragged_operand_runs_along_its_innermost_dim() {
+    let ends = [2u32, 2, 7, 10];
+    assert_ragged(&run_ragged(&ends, Rows::Transposed), &ends, "transposed");
 }
 
 /// A table whose second group ends before it starts: that group is empty, not a run of some
 /// four billion rows, and its neighbours fold as stated.
 #[test]
 fn a_run_that_ends_before_it_starts_is_empty() {
-    let ends = [0u32, 4, 2, 7, 10];
-    let got = run_ragged(&ends);
+    let ends = [4u32, 2, 7, 10];
+    let got = run_ragged(&ends, Rows::Lined);
     for d in 0..FEATURES {
         assert_eq!(got.get_f32(&[1, d]), 0.0, "group 1 feature {d}");
     }
@@ -587,12 +615,18 @@ fn a_run_that_ends_before_it_starts_is_empty() {
 mod refused {
     use super::*;
 
+    /// The weights, read four values a line along `N`.
     fn weights(client: &Client) -> TileArgLaunch {
         let handle = TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, FEATURES]))
             .dtype(f32::elem_type_native())
             .zeros()
             .generate_without_host_data();
-        f32_arg(handle, TileSpec::direct(&[EXPERT, K, N]))
+        TileArgLaunch::new(
+            handle.binding().into_tensor_arg(),
+            f32::elem_type_native(),
+            FEATURES,
+            TileSpec::direct(&[EXPERT, K, N]),
+        )
     }
 
     fn refusal(table: TileArgLaunch, indexing: Indexing) -> Refusal {
@@ -627,8 +661,9 @@ mod refused {
         );
     }
 
+    /// The weights read four values a line along `N`: a coordinate there would split a line.
     #[test]
-    fn an_entry_placing_the_innermost_axis() {
+    fn an_entry_placing_the_innermost_axis_read_in_lines() {
         let client = cubecl::test_device().client();
         let routes = table(&client, &ROUTES, Shape::new([ROWS]), &[M]);
         assert_eq!(

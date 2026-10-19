@@ -90,8 +90,9 @@ pub enum Refusal {
     IndexOfAStatedLayout,
     /// [`indexed`](crate::TileArgLaunch::indexed) placing an axis the operand does not span.
     IndexOfAnAxisNotSpanned(Axis),
-    /// [`indexed`](crate::TileArgLaunch::indexed) placing the innermost axis, this one, which is
-    /// read in lines rather than elements.
+    /// [`indexed`](crate::TileArgLaunch::indexed) placing the innermost axis, this one, which the
+    /// operand reads more than one value a line along: an entry is an element, and a line would
+    /// straddle two of them.
     IndexAlongALine(Axis),
     /// [`indexed`](crate::TileArgLaunch::indexed) with no key, or keyed by the axis it places.
     IndexKeyedByItsAxis(Axis),
@@ -247,8 +248,8 @@ impl Display for Refusal {
             ),
             Refusal::IndexAlongALine(axis) => write!(
                 f,
-                "TileArgLaunch::indexed: the entry places {axis:?}, the innermost axis, which is \
-                 read in lines rather than elements"
+                "TileArgLaunch::indexed: the entry places {axis:?}, the innermost axis, which the \
+                 operand reads more than one value a line along; bind it one value a line"
             ),
             Refusal::IndexKeyedByItsAxis(axis) => write!(
                 f,

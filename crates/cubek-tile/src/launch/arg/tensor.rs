@@ -435,19 +435,25 @@ impl TileArgLaunch {
                 rank,
             });
         }
-        indexing.validate(&self.spec, keys)?;
-        let mut level = Some(&self);
-        while let Some(operand) = level {
-            if !matches!(operand.values, ValuesLaunch::Tensor { .. }) {
-                return Err(Refusal::IndexOfAStatedLayout);
+        indexing.validate(&self.spec, self.indexed_width()?, keys)?;
+        let mut level = self.scale.as_deref();
+        while let Some(scale) = level {
+            if scale.spec.axes().contains(&indexing.axis()) {
+                indexing.places(&scale.spec, scale.indexed_width()?)?;
             }
-            if operand.spec.axes().contains(&indexing.axis()) {
-                indexing.places(&operand.spec)?;
-            }
-            level = operand.scale.as_deref();
+            level = scale.scale.as_deref();
         }
         self.index = Some((Box::new(table), indexing));
         Ok(self)
+    }
+
+    /// The values a line of this buffer holds, where an entry may move its window: a tensor map
+    /// lands boxes where they lie, and is never indexed.
+    fn indexed_width(&self) -> Result<usize, Refusal> {
+        match &self.values {
+            ValuesLaunch::Tensor { width, .. } => Ok(*width),
+            ValuesLaunch::TensorMap { .. } => Err(Refusal::IndexOfAStatedLayout),
+        }
     }
 }
 

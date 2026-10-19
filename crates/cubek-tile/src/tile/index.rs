@@ -22,10 +22,11 @@ pub enum Indexing {
     /// the last coordinate, unless the operand checks the axis with [`Boundary::Zero`], where it
     /// reads zero.
     Coordinate(Axis),
-    /// The entry and the one after it along the key are where the operand's run along `axis`
-    /// starts and ends: each group's rows, packed end to end. The operand reads zero past the run,
-    /// and a walk over its window along `axis` steps the run alone where the axis is dynamic. A run
-    /// that ends before it starts is empty. No level at or above the key's may cut `axis`.
+    /// The entry is where the operand's run along `axis` ends, and the one before it along the
+    /// key where it starts (`0` for the first): each group's rows packed end to end, the table
+    /// their cumulative ends. The operand reads zero past the run, and a walk over its window
+    /// along `axis` steps the run alone where the axis is dynamic. A run that ends before it
+    /// starts is empty. No level at or above the key's may cut `axis`.
     Run(Axis),
 }
 
@@ -42,7 +43,12 @@ impl Indexing {
     /// # Errors
     ///
     /// The [`Refusal`] naming the first rule the statement breaks.
-    pub(crate) fn validate(&self, values: &TileSpec, keys: &[Axis]) -> Result<(), Refusal> {
+    pub(crate) fn validate(
+        &self,
+        values: &TileSpec,
+        width: usize,
+        keys: &[Axis],
+    ) -> Result<(), Refusal> {
         let axis = self.axis();
         if !values.axes().contains(&axis) {
             return Err(Refusal::IndexOfAnAxisNotSpanned(axis));
@@ -53,18 +59,19 @@ impl Indexing {
         if matches!(self, Indexing::Run(_)) && keys.len() != 1 {
             return Err(Refusal::RunKeyedByMany(keys.len()));
         }
-        self.places(values)
+        self.places(values, width)
     }
 
-    /// What an operand whose window an entry moves owes, the values' or a scale's spanning the
-    /// placed axis: a buffer neither storage-tiled nor paged, one dim of which is the axis alone,
-    /// and not the innermost, which is read in lines; under a run, a buffer over its labelled
-    /// dims, as [`Tile::within`] places.
+    /// What an operand bound `width` values a line owes where an entry moves its window, the
+    /// values' or a scale's spanning the placed axis: a buffer neither storage-tiled nor paged, one
+    /// dim of which is the axis alone, read one value a line where that dim is the innermost, since
+    /// an entry is an element and a line would straddle two; under a run, a buffer over its
+    /// labelled dims, as [`Tile::within`] places.
     ///
     /// # Errors
     ///
     /// The [`Refusal`] naming the first rule `spec` breaks.
-    pub(crate) fn places(&self, spec: &TileSpec) -> Result<(), Refusal> {
+    pub(crate) fn places(&self, spec: &TileSpec, width: usize) -> Result<(), Refusal> {
         let projection = &spec.projection;
         let stated =
             projection.is_tiled() || !spec.stored_tiles.is_empty() || spec.paging.is_some();
@@ -73,7 +80,10 @@ impl Indexing {
         match dim {
             _ if stated || gathered => Err(Refusal::IndexOfAStatedLayout),
             None => Err(Refusal::IndexOfAStatedLayout),
-            Some(dim) if dim + 1 == projection.physical_rank() => {
+            Some(dim)
+                if dim + 1 == projection.physical_rank()
+                    && (width > 1 || spec.packing != Packing::Plain) =>
+            {
                 Err(Refusal::IndexAlongALine(self.axis()))
             }
             Some(_) => Ok(()),
@@ -159,24 +169,38 @@ impl IndexTable {
         }
     }
 
-    /// The entry `step`'s tile of the keys names, and the one after it along the last key.
-    ///
-    /// A key past the table reads its last entry: the table is device data a launch sized, and a
-    /// read past it would land outside the buffer.
+    /// The entry `step`'s tile of the keys names.
     #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
-    pub(crate) fn entries_at(&self, step: &Step) -> (u32, u32) {
+    pub(crate) fn entry_at(&self, step: &Step) -> u32 {
+        self.entry(self.position(step))
+    }
+
+    /// The run `step`'s tile of the one key names, `(start, end)`: the end its entry holds, the
+    /// start the entry before it, or `0` for the first tile.
+    #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
+    pub(crate) fn run_at(&self, step: &Step) -> (u32, u32) {
+        let at = self.position(step);
+        let stride = self.strides.at(0usize);
+        let previous = self.entry(at.max_with(stride).minus(stride));
+        (select(at == 0u32, 0u32, previous), self.entry(at))
+    }
+
+    /// Where the entry of `step`'s tile of the keys lies in the table.
+    fn position(&self, step: &Step) -> u32 {
         let mut at = 0u32;
         #[unroll]
         for i in 0..comptime!(self.keys.len()) {
             let key = comptime!(self.keys[i]);
             at = at.plus(step.coord(key).cast::<u32>().times(self.strides.at(i)));
         }
+        at
+    }
+
+    /// The entry at `at`, or the table's last past it: the table is device data a launch sized,
+    /// and a read past it would land outside the buffer.
+    fn entry(&self, at: u32) -> u32 {
         let last = (self.entries.len() as u32).max_with(1u32).minus(1u32);
-        let next = at.plus(self.strides.at(comptime!(self.keys.len() - 1)));
-        (
-            self.entries[at.min_with(last).cast::<usize>()],
-            self.entries[next.min_with(last).cast::<usize>()],
-        )
+        self.entries[at.min_with(last).cast::<usize>()]
     }
 
     /// This table with its entry read and placed, `in_range` saying whether the entry named a
@@ -256,17 +280,20 @@ impl TileExpand {
             "{}",
             Refusal::IndexKeysCutApart(table.keys.clone())
         );
-        let (entry, next) = table.__expand_entries_at_method(scope, step);
         let (placed, in_range) = match table.indexing {
             Indexing::Coordinate(axis) => {
+                let entry = table.__expand_entry_at_method(scope, step);
                 let in_range = self.__expand_names_coordinate_method(scope, axis, entry);
                 let entry = self.__expand_clamped_method(scope, axis, entry);
                 (self.__expand_placed_at_method(scope, axis, entry), in_range)
             }
-            Indexing::Run(axis) => (
-                self.__expand_run_within_method(scope, axis, entry, next),
-                nonempty::expand(scope, entry, next),
-            ),
+            Indexing::Run(axis) => {
+                let (start, end) = table.__expand_run_at_method(scope, step);
+                (
+                    self.__expand_run_within_method(scope, axis, start, end),
+                    nonempty::expand(scope, start, end),
+                )
+            }
         };
         let read = table.__expand_read_method(scope, in_range);
         placed.__expand_with_index_method(scope, read)
@@ -504,9 +531,9 @@ mod tests {
     #[test]
     fn a_coordinate_keyed_by_itself_is_refused() {
         let spec = TileSpec::direct(&[EXPERT, K, N]);
-        let refused = Indexing::Coordinate(EXPERT).validate(&spec, &[EXPERT]);
+        let refused = Indexing::Coordinate(EXPERT).validate(&spec, 1, &[EXPERT]);
         assert_eq!(refused, Err(Refusal::IndexKeyedByItsAxis(EXPERT)));
-        let unkeyed = Indexing::Coordinate(EXPERT).validate(&spec, &[]);
+        let unkeyed = Indexing::Coordinate(EXPERT).validate(&spec, 1, &[]);
         assert_eq!(unkeyed, Err(Refusal::IndexKeyedByItsAxis(EXPERT)));
     }
 
@@ -518,8 +545,28 @@ mod tests {
             position: K,
             page_size: 4,
         });
-        let refused = Indexing::Coordinate(EXPERT).validate(&spec, &[M]);
+        let refused = Indexing::Coordinate(EXPERT).validate(&spec, 1, &[M]);
         assert_eq!(refused, Err(Refusal::IndexOfAStatedLayout));
+    }
+
+    /// The innermost dim may be placed where the operand reads it one value a line: a run along
+    /// the rows of a transposed operand. Read in wider lines, or packed, a line would straddle two
+    /// entries.
+    #[test]
+    fn the_innermost_dim_is_placed_only_one_value_a_line() {
+        let spec = TileSpec::direct(&[N, K]);
+        let run = Indexing::Run(K);
+        assert_eq!(run.validate(&spec, 1, &[M]), Ok(()));
+        assert_eq!(
+            run.validate(&spec, 4, &[M]),
+            Err(Refusal::IndexAlongALine(K))
+        );
+        let packed =
+            TileSpec::direct(&[N, K]).packed(Field::from(cubecl::quant::scheme::QuantValue::Q8S));
+        assert_eq!(
+            run.validate(&packed, 1, &[M]),
+            Err(Refusal::IndexAlongALine(K))
+        );
     }
 
     /// A packed weight blocks its columns over two axes, so its projection is not direct; the
@@ -535,9 +582,12 @@ mod tests {
                 PhysicalAxisMap::disjoint(&[(N, 4), (block, 1)]),
             ],
         ));
-        assert_eq!(Indexing::Coordinate(EXPERT).validate(&spec, &[M]), Ok(()));
         assert_eq!(
-            Indexing::Run(EXPERT).validate(&spec, &[M]),
+            Indexing::Coordinate(EXPERT).validate(&spec, 1, &[M]),
+            Ok(())
+        );
+        assert_eq!(
+            Indexing::Run(EXPERT).validate(&spec, 1, &[M]),
             Err(Refusal::IndexOfAStatedLayout)
         );
     }
