@@ -190,15 +190,18 @@ fn walk_stages(
 }
 
 /// The `m × n × k` shape this device offers `leaf` at in `input` summed in `f32`: `16×16×16` where
-/// it does, else the first other it lists (NVIDIA's manual mma is `16×8×16`), so the stages are
-/// read by the instruction each device has. Where `reads_ldmatrix`, the device must also load
-/// `input` through `ldmatrix`; a case the transport reads manually whatever it was asked needs only
-/// the mma. Reported rather than silently passed where the device has neither.
+/// it does, else the shallowest other at least `depth` deep, else the shallowest, so the stages are
+/// read by the instruction each device has. A case whose lines run along `K` asks for a line's
+/// depth: a step must start on a line, and NVIDIA lists its `16×8×8` mma before its `16×8×16` one.
+/// Where `reads_ldmatrix`, the device must also load `input` through `ldmatrix`; a case the
+/// transport reads manually whatever it was asked needs only the mma. Reported rather than silently
+/// passed where the device has neither.
 fn instruction_shape(
     client: &cubecl::client::Client,
     leaf: Leaf,
     input: ElemType,
     reads_ldmatrix: bool,
+    depth: usize,
 ) -> Option<(usize, usize, usize)> {
     let f32 = f32::elem_type_native();
     let matmul = &client.properties().features.matmul;
@@ -222,6 +225,7 @@ fn instruction_shape(
         .iter()
         .copied()
         .find(|&shape| shape == (16, 16, 16))
+        .or_else(|| shapes.iter().copied().find(|&(_, _, k)| k >= depth))
         .or_else(|| shapes.first().copied());
     if shape.is_none() {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -302,7 +306,11 @@ fn check(case: Case) {
     let reads_ldmatrix = leaf == Leaf::MmaLoadMatrix
         && staging != Staging::Global
         && (16 / input.size()).is_multiple_of(v);
-    let Some((edge_m, edge_n, edge_k)) = instruction_shape(&client, leaf, input, reads_ldmatrix)
+    // A `{m, k}` lhs or a `{n, k}` rhs runs its lines along `K`.
+    let lines_along_k = !lhs_transposed || transposed;
+    let depth = if lines_along_k { v } else { 1 };
+    let Some((edge_m, edge_n, edge_k)) =
+        instruction_shape(&client, leaf, input, reads_ldmatrix, depth)
     else {
         return;
     };
@@ -324,9 +332,9 @@ fn check(case: Case) {
         .enforce();
         return;
     }
-    // A `{m, k}` lhs or a `{n, k}` rhs runs its lines along `K`, and an instruction shallower than
-    // a line would start a step inside one, which the descent refuses: an `f16` mma 8 deep.
-    if (!lhs_transposed || transposed) && edge_k < v {
+    // Lines along `K` and no instruction as deep as one would start a step inside a line, which the
+    // descent refuses: an `f16` mma 8 deep and no deeper.
+    if lines_along_k && edge_k < v {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
             "a {v}-wide line runs past the {edge_k}-deep instruction along K"
         )))
