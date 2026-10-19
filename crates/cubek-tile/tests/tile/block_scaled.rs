@@ -82,18 +82,14 @@ fn block_scaled_matmul_under_words<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
+    let instruction = comptime!(Instruction::Mma {
+        io: MmaIo::manual(),
+        operands: MmaOperands::BlockScaled,
+    });
     let mut c = c.tile(&space);
-    let (a, a_factor) = a.tile(&space).factor(c.space());
-    let (b, b_factor) = b.tile(&space).factor(c.space());
-    let acc = c.accumulator::<E>(
-        &a,
-        &b,
-        comptime!(Instruction::Mma {
-            io: MmaIo::manual(),
-            operands: MmaOperands::BlockScaled,
-        }),
-        Semiring::SUM_PROD,
-    );
+    let (a, a_factor) = a.tile(&space).factor(c.space(), instruction);
+    let (b, b_factor) = b.tile(&space).factor(c.space(), instruction);
+    let acc = c.accumulator::<E>(&a, &b, instruction, Semiring::SUM_PROD);
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {

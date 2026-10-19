@@ -113,8 +113,8 @@ fn scaled_matmul_promoted<E: Numeric>(
 }
 
 /// `c = (a ⊗ blocks ⊗ global) · b`, written as a kernel writes any sum: what `factor` takes out of
-/// the operand, its global, multiplies the sum once, as it drains, in the form `instruction` sums
-/// in; the block scales ride the load.
+/// the operand for a sum in `instruction`'s form multiplies the sum once, as it drains; what it
+/// leaves rides the load.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn factored_matmul<E: Numeric>(
@@ -134,7 +134,7 @@ fn factored_matmul<E: Numeric>(
         .mul(&global.tile(&space));
     let b = b.tile(&space);
     let mut c = c.tile(&space);
-    let (a, a_factor) = a.factor(c.space());
+    let (a, a_factor) = a.factor(c.space(), instruction);
     let acc = c.accumulator::<E>(&a, &b, instruction, Semiring::SUM_PROD);
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
@@ -335,7 +335,8 @@ fn two_levels_fold_in_order() {
 }
 
 /// [`factored_matmul`] in registers: the operand is decoded as it is loaded under its block scales,
-/// and its global, which `factor` takes out, scales the sum; the result is the same product.
+/// and its global, which `factor` takes out for a sum scaled in its registers, scales the sum; the
+/// result is the same product.
 #[test]
 fn a_decoded_operands_global_scale_leaves_for_the_sum() {
     check_factored(
@@ -346,10 +347,10 @@ fn a_decoded_operands_global_scale_leaves_for_the_sum() {
     );
 }
 
-/// [`factored_matmul`] in cmma fragments: the operand lands decoded under its block scales, and
-/// the fragments drain scaled by its global.
+/// [`factored_matmul`] in cmma fragments: a cmma sum is scaled only through shared memory, so the
+/// operand keeps its global and lands decoded under every scale, and the fragments drain unscaled.
 #[test]
-fn a_decoded_operands_global_scale_leaves_for_the_sum_of_cmma_fragments() {
+fn a_decoded_operand_keeps_its_global_scale_on_the_load_into_cmma_fragments() {
     let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;

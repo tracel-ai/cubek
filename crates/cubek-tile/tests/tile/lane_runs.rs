@@ -67,18 +67,14 @@ fn lane_run_matmul(
     #[comptime] staged: Staged,
     #[comptime] decoded: ElemType,
 ) {
+    let instruction = comptime!(Instruction::Mma {
+        io: MmaIo::manual(),
+        operands: MmaOperands::Plain,
+    });
     let a = a.tile(&space);
     let mut c = c.tile(&space);
-    let (b, b_factor) = b.tile(&space).factor(c.space());
-    let acc = c.accumulator::<f32>(
-        &a,
-        &b,
-        comptime!(Instruction::Mma {
-            io: MmaIo::manual(),
-            operands: MmaOperands::Plain,
-        }),
-        Semiring::SUM_PROD,
-    );
+    let (b, b_factor) = b.tile(&space).factor(c.space(), instruction);
+    let acc = c.accumulator::<f32>(&a, &b, instruction, Semiring::SUM_PROD);
     match comptime!(staged) {
         Staged::Nothing => {
             for region in space.over(&level) {
