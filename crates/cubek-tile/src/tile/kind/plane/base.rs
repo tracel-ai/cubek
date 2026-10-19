@@ -40,6 +40,15 @@ impl PlaneTile {
         }
     }
 
+    /// Whether this tile contracts through the block-scaled instruction, which reads its factors'
+    /// packed codes as they are stored.
+    pub(crate) fn reads_codes_as_stored(&self) -> comptime_type!(bool) {
+        match self {
+            PlaneTile::Mma(data) => comptime!(data.operands == MmaOperands::BlockScaled),
+            PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => comptime!(false),
+        }
+    }
+
     /// An uninitialized accumulator tile over the whole `m × n` MMA tile, in `form`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc<T: Numeric>(
@@ -971,6 +980,21 @@ impl PlanePartition {
         }
         self.reduce_along(&mut sums, Monoid::Sum);
         sums
+    }
+
+    /// `values`, a slot for every row a unit holds cells of, written at the rows of `window`, one
+    /// cell a row, each row by one unit ([`MmaData::store_along`]).
+    pub(crate) fn store_along<E: Float>(&self, values: &Array<E>, window: &mut Memory) {
+        let rows = self.at(0usize, 0usize).rows_per_unit::<E>();
+        #[unroll]
+        for mi in 0..self.m_tiles {
+            self.at(mi, 0usize).manual_fragment().store_along::<E>(
+                values,
+                window,
+                comptime!(mi * rows),
+                comptime!(mi * self.rows),
+            );
+        }
     }
 
     /// `self[r, c] = exp(self[r, c] − slices[r])` over every fragment.

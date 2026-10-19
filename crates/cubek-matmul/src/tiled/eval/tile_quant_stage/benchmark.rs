@@ -47,7 +47,7 @@ fn staged_matmul_quant_rhs(
         let scales = scales.at(&cube);
         let c = c.at(&cube);
         let steps = cube.walk();
-        let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize);
+        let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize, None);
         stages.pipelined(steps, |slot, step| {
             let c_step = c.at(step);
             let scales_step = scales.at(step);
@@ -220,7 +220,7 @@ impl Benchmark for TileQuantStageBench {
             launcher.cube_count(),
             launcher.cube_dim(),
             a.arg(),
-            b.values_arg(element, 1, TileSpec::new(b_projection.clone())),
+            b.values_arg(1, TileSpec::new(b_projection.clone())),
             b.scales_arg(1, TileSpec::new(b_projection.scales_per(NB))),
             TileArgLaunch::new(c.tensor_arg(self.pack), element, self.pack, c_spec),
             launcher.partitioning_arg(),

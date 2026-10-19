@@ -107,7 +107,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         Form::Dynamic,
     );
     let w_op = launcher
-        .arg(w_tensor.clone().binding(), dtype)
+        .arg(w_tensor.clone().binding(), w_tensor.dtype)
         .gathered(split())
         .packed(field)
         .vectorize(factor)

@@ -78,6 +78,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
     /// Build the `depth` slots staging `sources` into shared memory laid out as `storage`.
     ///
     /// `width` overrides the stage's line width; the operand must then be scalar and unpacked.
+    /// `decoded` is the element a stage whose fill decodes its operand holds, `f32` where `None`.
     #[allow(dead_code)]
     pub(crate) fn new(
         walk: &Walk,
@@ -85,6 +86,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
         #[comptime] depth: usize,
+        #[comptime] decoded: Option<ElemType>,
     ) -> Stages<P> {
         let operands = sources.operands();
         let owner = walk.stage_owner();
@@ -94,6 +96,7 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
             depth: walk.depth(),
             storage,
             width,
+            decoded,
             owner: plan.owner(),
         });
 
@@ -153,18 +156,23 @@ impl<P: Payload<P> + Clone + CubeType<ExpandType: Clone>> Stages<P> {
 impl Stages<OperandPair> {
     /// The `depth` slots staging both operands of a contraction into shared memory laid out as
     /// `storage`.
+    ///
+    /// A stage whose fill decodes its operand, from scales, a codebook or fields as wide as their
+    /// word, holds the values at `decoded`, or at `f32` where `None`. An operand staged as it lies
+    /// keeps its own element.
     pub fn smem(
         walk: &Walk,
         lhs: &Tile,
         rhs: &Tile,
         #[comptime] storage: StageStorage,
         #[comptime] depth: usize,
+        #[comptime] decoded: Option<ElemType>,
     ) -> Stages<OperandPair> {
         let sources = OperandPair {
             lhs: lhs.clone(),
             rhs: rhs.clone(),
         };
-        Stages::new(walk, &sources, storage, comptime!(None), depth)
+        Stages::new(walk, &sources, storage, comptime!(None), depth, decoded)
     }
 }
 
@@ -176,8 +184,9 @@ impl Stages<Tile> {
         input: &Tile,
         #[comptime] storage: StageStorage,
         #[comptime] depth: usize,
+        #[comptime] decoded: Option<ElemType>,
     ) -> Stages<Tile> {
-        Stages::new(walk, input, storage, comptime!(None), depth)
+        Stages::new(walk, input, storage, comptime!(None), depth, decoded)
     }
 
     /// [`smem_single`](Stages::smem_single) with the stage served in `width`-wide lines.
@@ -187,8 +196,9 @@ impl Stages<Tile> {
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
         #[comptime] depth: usize,
+        #[comptime] decoded: Option<ElemType>,
     ) -> Stages<Tile> {
-        Stages::new(walk, input, storage, width, depth)
+        Stages::new(walk, input, storage, width, depth, decoded)
     }
 }
 

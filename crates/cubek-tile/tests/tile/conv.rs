@@ -85,7 +85,7 @@ fn conv_kernel_smem(
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region).accumulating(config, Semiring::SUM_PROD);
         slot.consume(|input, weight| {
@@ -117,6 +117,7 @@ fn conv_kernel_smem_padded(
         StageStorage::Strided,
         comptime!(Some(width)),
         depth,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region).accumulating(config, Semiring::SUM_PROD);
@@ -172,7 +173,7 @@ fn conv_kernel_two_levels_smem(
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&outer);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
@@ -1285,7 +1286,7 @@ fn conv_kernel_dynamic_padding_smem(
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out
             .at(region)
@@ -1349,7 +1350,7 @@ fn conv_kernel_all_dynamic_smem(
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out
             .at(region)
@@ -2140,7 +2141,7 @@ fn conv_mma_kernel<E: Numeric>(
     );
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_region = acc.at(region);
         slot.consume(|input, weight| {

@@ -371,6 +371,7 @@ fn fragment_matmul_into_a_short_window<E: Numeric>(
                 chunks: RowChunks::InOrder,
             }),
             1usize,
+            None,
         );
         stages.pipelined(walk, |slot, stage| {
             slot.consume(|a_stage, b_stage| {

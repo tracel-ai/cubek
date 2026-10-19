@@ -247,7 +247,7 @@ fn serving_geometry(promoted: bool, units_cut: bool) {
         .generate_without_host_data();
 
     let w_op = launcher
-        .arg(w_tensor.binding(), dtype)
+        .arg(w_tensor.binding(), u32::elem_type_native())
         .gathered(Projection::new(
             &[M, KB, KI],
             &[

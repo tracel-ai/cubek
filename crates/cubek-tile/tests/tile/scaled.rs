@@ -1976,7 +1976,7 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::new(Projection::new(
                 &[N, KB, KI],
@@ -2232,16 +2232,10 @@ impl TileOrdered {
             .unwrap()
     }
 
-    /// The weight as stored, served in `elem`, read `read` values a load where stated, a word
-    /// otherwise. A packed binding counts values, its words being the packing's business: the
-    /// shape and the strides are the tiles' in values.
-    fn b_op(
-        &self,
-        client: &Client,
-        launcher: &Launcher,
-        elem: ElemType,
-        read: Option<usize>,
-    ) -> Bound {
+    /// The weight as stored, read `read` values a load where stated, a word otherwise. A packed
+    /// binding counts values, its words being the packing's business: the shape and the strides
+    /// are the tiles' in values.
+    fn b_op(&self, client: &Client, launcher: &Launcher, read: Option<usize>) -> Bound {
         let shape = vec![self.n_tiles, self.k_tiles, self.tile, self.tile];
         let b_t = TensorHandle::new_contiguous(
             shape.clone(),
@@ -2252,7 +2246,7 @@ impl TileOrdered {
         binding.shape = shape.clone().into();
         binding.strides = contiguous_strides(&shape).into();
         let b = launcher
-            .arg(binding, elem)
+            .arg(binding, u32::elem_type_native())
             .gathered(Projection::dims().dim(NB).dim(KB).dim(NI).dim(KI).build())
             .packed(Self::FIELD);
         match read {
@@ -2315,7 +2309,7 @@ impl TileOrdered {
                 binding.shape = shape.clone().into();
                 binding.strides = contiguous_strides(&shape).into();
                 launcher
-                    .arg(binding, f32::elem_type_native())
+                    .arg(binding, u32::elem_type_native())
                     .gathered(axes)
                     .packed(Field::of_scale(ScaleDtype::UE4M3))
                     .vectorize(served)
@@ -2430,7 +2424,7 @@ fn check_chunked(arm: Arm, scales: TileScales, read: UnitRead) {
         launcher.cube_count(),
         launcher.cube_dim(),
         w.a_op(&client, &launcher).arg(),
-        w.b_op(&client, &launcher, dtype, None).arg(),
+        w.b_op(&client, &launcher, None).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
@@ -2567,7 +2561,7 @@ fn check_partitioned(scales: TileScales, read: UnitRead) {
         launcher.cube_count(),
         launcher.cube_dim(),
         w.a_op(&client, &launcher).arg(),
-        w.b_op(&client, &launcher, dtype, None).arg(),
+        w.b_op(&client, &launcher, None).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
@@ -2660,7 +2654,7 @@ fn check_stepped(scales: TileScales) {
         launcher.cube_count(),
         launcher.cube_dim(),
         w.a_op(&client, &launcher).arg(),
-        w.b_op(&client, &launcher, dtype, Some(w.tile)).arg(),
+        w.b_op(&client, &launcher, Some(w.tile)).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
@@ -2706,7 +2700,8 @@ fn decoded_tile_order_copy(
             }
             CopiedThrough::AStage => {
                 let run = cube.walk();
-                let mut stages = Stages::smem_single(&run, &decoded, StageStorage::Strided, 1usize);
+                let mut stages =
+                    Stages::smem_single(&run, &decoded, StageStorage::Strided, 1usize, None);
                 stages.pipelined(run, |slot, stage| {
                     let mut out_stage = out_cube.at(stage);
                     slot.consume(|b_stage| {
@@ -2756,7 +2751,7 @@ fn check_decoded_tile_order_copy(through: CopiedThrough) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        w.b_op(&client, &launcher, dtype, Some(w.tile)).arg(),
+        w.b_op(&client, &launcher, Some(w.tile)).arg(),
         s_op.arg(),
         launcher
             .arg(out.clone().binding(), dtype)
@@ -2796,8 +2791,11 @@ enum Unpacked {
 }
 
 /// [`stepped_scaled_matmul`] with each cube staging the activation and the weight a block at a
-/// time, held as `storage` says, the weight unpacked where `unpacked` says, summing in `A`.
+/// time, held as `storage` says, the weight unpacked where `unpacked` says and dequantized at
+/// `decoded` for the instruction, summing in `A`: a stage the fill decodes holds `decoded`, and
+/// words staged as they are stored are dequantized at it by each plane.
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 fn staged_stepped_scaled_matmul<A: Numeric>(
     a: &TileArg<'_>,
     b: &TileArg<'_>,
@@ -2806,6 +2804,7 @@ fn staged_stepped_scaled_matmul<A: Numeric>(
     space: Partitioning,
     #[comptime] unpacked: Unpacked,
     #[comptime] storage: StageStorage,
+    #[comptime] decoded: ElemType,
     #[define(A)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
@@ -2821,7 +2820,14 @@ fn staged_stepped_scaled_matmul<A: Numeric>(
             Unpacked::ByEachPlane => b_cube.clone(),
             Unpacked::ByTheFill => b_cube.mul(&scale_cube),
         };
-        let mut stages = Stages::smem(&run, &a_cube, &staged, comptime!(storage.clone()), 1usize);
+        let mut stages = Stages::smem(
+            &run,
+            &a_cube,
+            &staged,
+            comptime!(storage.clone()),
+            1usize,
+            comptime!(Some(decoded)),
+        );
         stages.walk(run, Prefetch::InSlots, |slot, stage| {
             let sum_stage = sum.at(stage);
             let scale_stage = scale_cube.at(stage);
@@ -2832,6 +2838,7 @@ fn staged_stepped_scaled_matmul<A: Numeric>(
                         Unpacked::ByEachPlane => b_stage.at(&plane).mul(&scale_stage.at(&plane)),
                         Unpacked::ByTheFill => b_stage.at(&plane),
                     };
+                    let b_plane = sum_plane.dequantized(&b_plane, decoded);
                     sum_plane.mma(&a_stage.at(&plane), &b_plane);
                 }
             });
@@ -2929,12 +2936,13 @@ fn check_staged_stepped(
         launcher.cube_count(),
         launcher.cube_dim(),
         w.a_op_blocked(&client, &launcher, elem).arg(),
-        w.b_op(&client, &launcher, elem, Some(w.tile)).arg(),
+        w.b_op(&client, &launcher, Some(w.tile)).arg(),
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
         unpacked,
         stages.storage(fragment),
+        elem,
         dtype,
     );
     w.check(
@@ -3013,7 +3021,8 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_a_window_a_p
 }
 
 /// The same weight decoded by the copy filling each stage instead: the stage holds the weight's
-/// values under their scales, and the planes contract the decoded stage as they would a float one.
+/// values under their scales at the activation's element, as the kernel names it, and the planes
+/// contract the decoded stage as they would a float one.
 #[test]
 fn a_tile_ordered_weight_decoded_by_the_stage_fill_contracts_as_its_values() {
     check_staged_stepped(
@@ -3207,7 +3216,14 @@ fn staged_scaled_matmul(
     let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a.mul(&scale), &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(
+        &walk,
+        &a.mul(&scale),
+        &b,
+        StageStorage::Strided,
+        depth,
+        None,
+    );
     stages.pipelined(walk, |slot, region| {
         let mut c_r = c
             .at(region)

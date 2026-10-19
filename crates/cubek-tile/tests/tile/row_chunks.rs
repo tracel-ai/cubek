@@ -162,7 +162,7 @@ fn walk_stages(
     #[comptime] depth: usize,
     #[comptime] schedule: Schedule,
 ) {
-    let mut stages = Stages::smem(&walk, a, b, storage, depth);
+    let mut stages = Stages::smem(&walk, a, b, storage, depth, None);
     match comptime!(schedule) {
         Schedule::AheadInSlots => {
             stages.pipelined(walk, |slot, region| {

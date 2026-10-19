@@ -113,6 +113,7 @@ pub fn cmma_kernel<EA: Numeric>(
                 chunks: RowChunks::InOrder,
             }),
             depth,
+            None,
         );
         stages.pipelined(steps, |slot, stage| {
             let acc_stage = acc.at(stage);

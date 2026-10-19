@@ -26,10 +26,12 @@ use crate::*;
 const SCALES_PER_WORD: usize = 4;
 
 /// Why `src`, a shared-memory window of an `m × n × k` fragment of `T` in role `ident`, cannot
-/// load a step at a time; `None` where it can: a fragment deeper than its 16-bit `m16n8k16`
-/// instruction, on a target that lays its registers out as [`lays_out_lane_runs`] reads them, over
-/// a plain window or a `B` of `e2m1` codes along `k` under one level of words of block scales, a
-/// whole number of words deep so every window starts on a word.
+/// load a step at a time; `None` where it can: a fragment deeper than its instruction over a plain
+/// window, each step read as a fragment of its own at its offset along `k`, whatever layout the
+/// target's registers take; or deeper than a 16-bit `m16n8k16` instruction, on a target that lays
+/// its registers out as [`lays_out_lane_runs`] reads them, over a `B` of `e2m1` codes along `k`
+/// under one level of words of block scales, a whole number of words deep so every window starts
+/// on a word.
 #[cube]
 pub(crate) fn steps_refusal<T: Numeric>(
     src: &Tile,
@@ -56,10 +58,10 @@ pub(crate) fn steps_refusal<T: Numeric>(
     );
     comptime!(if k <= depth {
         Some("the fragment is one instruction deep, which loads as one")
-    } else if (m, n, depth) != (16, 8, 16) || bytes != 2 || !laid_out {
-        Some("a step's registers are read off the 16-bit m16n8k16 layout, which this is not")
     } else if packing == Packing::Plain && levels == 0 {
         None
+    } else if (m, n, depth) != (16, 8, 16) || bytes != 2 || !laid_out {
+        Some("a step's registers are read off the 16-bit m16n8k16 layout, which this is not")
     } else if !e2m1_weight || levels != 1 || !words {
         Some(
             "a packed window loads a step at a time only as a B of e2m1 codes along `k` under \

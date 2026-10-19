@@ -299,10 +299,11 @@ impl FactorExpand {
 
 /// Whether `scale` holds words rather than scales: each `u32` the `e4m3` scales of the four blocks
 /// one block-scaled instruction step covers, the first block's in the low byte, as an NVFP4
-/// checkpoint packs them. Only that instruction reads such scales
-/// ([`FactorExpand::__expand_word_at_method`]); widened to a scale one means nothing.
+/// checkpoint packs them, bound plain. Only that instruction reads such scales
+/// ([`FactorExpand::__expand_word_at_method`]); widened to a scale one means nothing. A packed
+/// scale holds `u32` words too, of fields read as scales.
 fn holds_words(scope: &Scope, scale: &TileExpand) -> bool {
-    scale.element == u32::elem_type(scope)
+    scale.element == u32::elem_type(scope) && scale.__expand_packing_method(scope) == Packing::Plain
 }
 
 /// The scale of `scale` covering the value at `coords` of a tile spanning `values`, widened to

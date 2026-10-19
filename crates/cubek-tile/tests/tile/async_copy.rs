@@ -56,7 +56,7 @@ fn ring_matmul(
     c.zero();
 
     let walk = space.walk();
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
@@ -323,7 +323,7 @@ fn staged_packed_copy_with(
         launcher.cube_dim(),
         TileArgLaunch::new(
             input.binding().into_tensor_arg(),
-            dtype,
+            u32::elem_type_native(),
             1,
             TileSpec::direct(&[M, N]).packed(field).delivery(delivery),
         ),

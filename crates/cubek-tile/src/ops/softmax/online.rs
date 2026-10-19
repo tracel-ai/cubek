@@ -255,6 +255,26 @@ impl<E: Float> OnlineSoftmax<E> {
         OnlineSoftmaxState::<E> { max, sum }
     }
 
+    /// Every slice's running max and sum as they stand, written into `max` and `sum`, a plane's
+    /// windows of one cell a slice in slice order: what a holder leaves beside its undivided sum
+    /// where its slices merge with other holders' parts of them, and the one way to read out a
+    /// state taken in from a manual-mma grid, whose units each keep the rows they hold cells of.
+    ///
+    /// `score` is the tile the state was taken in from ([`along`](OnlineSoftmax::along)), which
+    /// says which unit holds which row: each writes its own, one cell a row. A state every unit
+    /// holds whole is written by the plane's first unit. Every unit of the plane calls it, and the
+    /// caller meets the plane before the windows are read.
+    pub fn store_rows(&self, score: &Tile, max: &mut Tile, sum: &mut Tile) {
+        if comptime!(self.slots == SliceSlots::Every) {
+            max.set_cells(&self.m, self.slices);
+            sum.set_cells(&self.l, self.slices);
+        } else {
+            let slices = score.along(self.axis);
+            slices.store_held::<E>(&self.m, max);
+            slices.store_held::<E>(&self.l, sum);
+        }
+    }
+
     /// Each slice's `1 / l`, what its sum of probabilities times values is normalized by; zero
     /// for a slice whose every cell was masked.
     pub fn recip_l(&self) -> Array<E> {
@@ -296,7 +316,7 @@ impl<E: Float> OnlineSoftmax<E> {
             self.slots == SliceSlots::Every,
             "{op}: this state was taken in from a manual-mma grid, each unit keeping the rows it \
              holds cells of; a state merged with another holder's is taken in from a window or a \
-             cmma grid"
+             cmma grid, or written out row by row first (OnlineSoftmax::store_rows)"
         ));
     }
 }

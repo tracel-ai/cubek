@@ -84,8 +84,14 @@ pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
         let blocks = cube.walk();
         match comptime!(stage) {
             InputStage::Smem => {
-                let mut stages =
-                    Stages::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
+                let mut stages = Stages::smem_single_at(
+                    &blocks,
+                    &input,
+                    StageStorage::Strided,
+                    padded,
+                    1usize,
+                    None,
+                );
                 stages.pipelined(blocks, |slot, block| {
                     let output_block = output.at(block);
                     let weights_block = weights.at(block);
