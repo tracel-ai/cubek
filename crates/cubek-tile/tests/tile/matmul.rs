@@ -1062,7 +1062,9 @@ fn matmul_m_across_cubes_that_do_not_divide() {
 
 #[test]
 fn matmul_m_three_each_across_cubes_leaves_a_short_run() {
-    check_matmul(
+    // A run stopping at the edge of a buffer stored in tiles: a layout the launcher does not bind
+    // yet.
+    check_matmul_bound(
         16,
         8,
         8,
@@ -1071,6 +1073,7 @@ fn matmul_m_three_each_across_cubes_leaves_a_short_run() {
             .walk(&[(M, 3)])
             .cubes(&[M]),
         1,
+        Binding::Stated,
     );
 }
 
@@ -1124,9 +1127,38 @@ fn assert_tiled_matmul(
         .enforce()
 }
 
+/// How a test binds an input stored in tiles of the leaf.
+#[derive(Clone, Copy)]
+enum Binding {
+    /// Through the launch, which derives the operand's spec.
+    Launch,
+    /// By the input's own statement: its stored tiles read through one projection, unchecked,
+    /// the launch's units stated on it. For the two layouts the launcher refuses although this
+    /// reads them in bounds: a run of tiles that stops at the edge of the buffer (the launcher
+    /// masks the axis, and nothing is masked inside a storage tile), and lines narrower than a
+    /// stored tile. Bind those through the launch once the launcher reads them.
+    Stated,
+}
+
+impl Binding {
+    /// `input`, stored in tiles once, as an operand of `launcher` bound `width` wide.
+    fn arg(self, input: &TileInput, launcher: &Launcher, width: usize) -> TileArgLaunch {
+        match self {
+            Binding::Launch => input.arg(launcher, width),
+            Binding::Stated => {
+                let space = input.space();
+                let axes: Vec<Axis> = (0..space.rank()).map(|i| space.axis_at(i)).collect();
+                let mut spec = TileSpec::new(Projection::tiled(&axes, &axes.repeat(2)));
+                spec.units = launcher.cube_dim().num_elems() as usize;
+                TileArgLaunch::new(input.tensor_arg(1), input.handle().dtype, width, spec)
+            }
+        }
+    }
+}
+
 /// Drives [`matmul_smem_ring_scheduled`] for `C = A @ B` over `tiling`, whose last level is the
 /// walk it stages, `depth` regions in flight under `schedule`, on a cube of `units` units reading
-/// every operand in lines `width` wide.
+/// every operand in lines `width` wide, bound as `binding` says.
 #[allow(clippy::too_many_arguments)]
 fn check_matmul_scheduled(
     m: usize,
@@ -1138,6 +1170,7 @@ fn check_matmul_scheduled(
     units: u32,
     width: usize,
     unrolled: bool,
+    binding: Binding,
 ) {
     let client = cubecl::test_device().client();
     let levels = tiling.build();
@@ -1158,9 +1191,9 @@ fn check_matmul_scheduled(
     let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
-    // Bound through the launch, which states the cube's units on each operand: a stage fetched
-    // into registers distributes its lines over them at expansion.
-    let bound = |input: &TileInput| input.arg(&launcher, width);
+    // Either binding states the cube's units on each operand: a stage fetched into registers
+    // distributes its lines over them at expansion.
+    let bound = |input: &TileInput| binding.arg(input, &launcher, width);
     matmul_smem_ring_scheduled::launch(
         &client,
         launcher.cube_count(),
@@ -1194,20 +1227,21 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
             .walk_every(&[K])
             .cubes(&[M, N])
     };
-    // (units, width, problem edge, leaf edge, the `K`s).
+    // (units, width, problem edge, leaf edge, the `K`s, binding): lines four wide in tiles
+    // sixteen wide are a layout the launcher does not bind yet.
     let cases = [
-        (1u32, 1, 8, 4, [16, 4]),
-        (3, 1, 8, 4, [16, 4]),
-        (1, 4, 8, 4, [16, 4]),
-        (70, 1, 32, 16, [64, 16]),
-        (70, 4, 32, 16, [64, 16]),
+        (1u32, 1, 8, 4, [16, 4], Binding::Launch),
+        (3, 1, 8, 4, [16, 4], Binding::Launch),
+        (1, 4, 8, 4, [16, 4], Binding::Launch),
+        (70, 1, 32, 16, [64, 16], Binding::Launch),
+        (70, 4, 32, 16, [64, 16], Binding::Stated),
     ];
     let max_units = cubecl::test_device()
         .client()
         .properties()
         .hardware
         .max_units_per_cube;
-    for (units, width, edge, leaf, ks) in cases {
+    for (units, width, edge, leaf, ks, binding) in cases {
         if units > max_units {
             continue;
         }
@@ -1224,6 +1258,7 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
                         units,
                         width,
                         false,
+                        binding,
                     );
                 }
             }
@@ -1260,6 +1295,7 @@ fn every_walk_length_matches_the_whole_under_both_schedules() {
                         3,
                         1,
                         unrolled,
+                        Binding::Launch,
                     );
                 }
             }
@@ -1270,6 +1306,18 @@ fn every_walk_length_matches_the_whole_under_both_schedules() {
 /// Drives [`matmul_smem_ring`] for `C = A @ B`: the cube level over the walk it stages, through
 /// a run of boxes where `tiling` states one, both inputs staged, `depth` regions in flight.
 fn check_matmul(m: usize, n: usize, k: usize, tiling: Levels, depth: usize) {
+    check_matmul_bound(m, n, k, tiling, depth, Binding::Launch)
+}
+
+/// [`check_matmul`] with every operand bound as `binding` says.
+fn check_matmul_bound(
+    m: usize,
+    n: usize,
+    k: usize,
+    tiling: Levels,
+    depth: usize,
+    binding: Binding,
+) {
     let client = cubecl::test_device().client();
     let levels = tiling.build();
     let tile_edge = leaf_edge(&levels, M);
@@ -1296,9 +1344,9 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Levels, depth: usize) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(&launcher, 1),
-        b.arg(&launcher, 1),
-        c.arg(&launcher, 1),
+        binding.arg(&a, &launcher, 1),
+        binding.arg(&b, &launcher, 1),
+        binding.arg(&c, &launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         runs,
@@ -1723,8 +1771,8 @@ fn matmul_cpu_dynamic_k() {
     );
     matmul_in_place::launch(
         &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
+        dynamic_k.cube_count(),
+        dynamic_k.cube_dim(),
         a.arg(&dynamic_k, 1),
         b.arg(&dynamic_k, 1),
         c.arg(&dynamic_k, 1),

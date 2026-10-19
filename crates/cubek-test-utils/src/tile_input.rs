@@ -11,8 +11,7 @@ use cubecl::{
     prelude::TensorArg,
     prelude::TensorBinding,
     quant::scheme::{QuantScheme, QuantValue},
-    zspace::Shape,
-    zspace::Tiling,
+    zspace::{Shape, Tiling},
 };
 use cubecl::{
     frontend::Scalar,

@@ -33,8 +33,8 @@ fn copy_non_quantized_matches_reference() {
     let launch = uncut(&client, &space, &space);
     plain_copy::launch(
         &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
+        launch.cube_count(),
+        launch.cube_dim(),
         input.arg(&launch, 1),
         output.arg(&launch, 1),
         launch.partitioning_arg(),

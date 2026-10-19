@@ -32,8 +32,8 @@ fn recursive_two_level_tiled_view() {
     let launch = uncut(&client, &space, &space);
     copy_logical::launch(
         &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
+        launch.cube_count(),
+        launch.cube_dim(),
         input.arg(&launch, 1),
         output.arg(&launch, 1),
         launch.partitioning_arg(),
