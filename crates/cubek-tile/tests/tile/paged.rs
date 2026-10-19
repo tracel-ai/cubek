@@ -250,13 +250,13 @@ fn paged_read_sum_kernel<E: Numeric>(
     }
 }
 
-/// Every pool cell distinct: `page·100 + row·10 + feature`.
-fn pool_values() -> Vec<f32> {
-    (0..POOL * PAGE_LEN * FEATURES_READ)
+/// Every pool cell distinct, pages of `page_len` positions: `page·100 + row·10 + feature`.
+fn pool_values(page_len: usize) -> Vec<f32> {
+    (0..POOL * page_len * FEATURES_READ)
         .map(|i| {
             let (page, row, f) = (
-                i / (PAGE_LEN * FEATURES_READ),
-                (i / FEATURES_READ) % PAGE_LEN,
+                i / (page_len * FEATURES_READ),
+                (i / FEATURES_READ) % page_len,
                 i % FEATURES_READ,
             );
             (page * 100 + row * 10 + f) as f32
@@ -338,7 +338,7 @@ fn run_paged_read_table(
     let (pool_handle, _) =
         TestInput::builder(client.clone(), Shape::new([POOL, PAGE_LEN, FEATURES_READ]))
             .dtype(f32_ty)
-            .custom(pool_values())
+            .custom(pool_values(PAGE_LEN))
             .generate_with_f32_host_data();
     let table_handle = TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
         .dtype(u32_ty)
@@ -385,6 +385,124 @@ fn run_paged_read_table(
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
 
+/// [`paged_read_sum_kernel`] walking each sequence a page at a time and the page's positions
+/// `step` at a time inside it: each page's window is held and its steps cut from it. A `from` of
+/// 0 keeps the alignment the levels prove; any other is a runtime shift that loses it.
+#[cube(launch)]
+fn paged_page_walk_sum_kernel<E: Numeric>(
+    pool: &TileArg<'_>,
+    pages: ComptimeOption<&Tensor<u32>>,
+    lens: &Tensor<u32>,
+    out: &TileArg<'_>,
+    from: u32,
+    space: Partitioning,
+    #[comptime] seq: Level,
+    #[comptime] page: Level,
+    #[comptime] page_len: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let pool = pool.tile_paged(&space, pages);
+    let out = out.tile(&space);
+
+    for sequence in space.over(&seq) {
+        let len = lens[sequence.coord(B)] as usize;
+
+        let mut total = out.at(&sequence);
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+
+        let from = from as usize;
+        let positions = pool.within(S, from, len);
+        for held in sequence
+            .over(&page)
+            .range(0, len.saturating_sub(from).div_ceil(page_len))
+        {
+            let page_window = positions.at(&held);
+            for step in held.walk() {
+                let mut cell = out.at(&step);
+                cell.reduce_axis_accumulate(&page_window.at(&step), comptime!(Monoid::Sum));
+            }
+        }
+    }
+}
+
+/// Positions a page holds in the page walk: several steps of more than one position fit in it.
+const WALK_PAGE_LEN: usize = 4;
+
+/// [`paged_page_walk_sum_kernel`] over [`PAGES`] of [`WALK_PAGE_LEN`] positions, `step` positions
+/// a step inside each page, from position `from` on.
+fn run_paged_page_walk(lens: &[u32; SEQUENCES], step: usize, from: u32) -> HostData {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
+
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[
+                (B, SEQUENCES),
+                (S, PAGES_EACH * WALK_PAGE_LEN),
+                (F, FEATURES_READ),
+            ]),
+            Levels::leaf(&[(B, 1), (S, step)])
+                .walk(&[(S, WALK_PAGE_LEN / step)])
+                .walk_every(&[S])
+                .walk_every(&[B])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    let (pool_handle, _) = TestInput::builder(
+        client.clone(),
+        Shape::new([POOL, WALK_PAGE_LEN, FEATURES_READ]),
+    )
+    .dtype(f32_ty)
+    .custom(pool_values(WALK_PAGE_LEN))
+    .generate_with_f32_host_data();
+    let table_handle = TestInput::builder(client.clone(), Shape::new([SEQUENCES, PAGES_EACH]))
+        .dtype(u32_ty)
+        .custom(PAGES.iter().flatten().map(|&p| p as f32).collect())
+        .generate_without_host_data();
+    let lens_handle = TestInput::builder(client.clone(), Shape::new([SEQUENCES]))
+        .dtype(u32_ty)
+        .custom(lens.iter().map(|&l| l as f32).collect())
+        .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([SEQUENCES, FEATURES_READ]))
+        .dtype(f32_ty)
+        .custom(vec![-1.0; SEQUENCES * FEATURES_READ])
+        .generate_without_host_data();
+
+    let pool = launcher
+        .arg(pool_handle.binding(), f32_ty)
+        .axes(&[B, S, F])
+        .paged_covering(B, S)
+        .build()
+        .unwrap();
+
+    paged_page_walk_sum_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        pool.arg(),
+        ComptimeOptionArgs::Some(table_handle.binding().into_tensor_arg()),
+        lens_handle.binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
+            TileSpec::direct(&[B, F]),
+        ),
+        from,
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
+        WALK_PAGE_LEN,
+        f32_ty,
+    );
+
+    HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
+}
+
 /// The reference: each sequence's positions looked up in its row of the table on the host.
 fn expected_paged_read(lens: &[u32; SEQUENCES]) -> Vec<Vec<f32>> {
     expected_paged_read_over(lens, &rows(&PAGES))
@@ -393,26 +511,27 @@ fn expected_paged_read(lens: &[u32; SEQUENCES]) -> Vec<Vec<f32>> {
 /// [`expected_paged_read`] through `pages`, an entry past the pool reading its last page and a
 /// position past the table reading zero.
 fn expected_paged_read_over(lens: &[u32; SEQUENCES], pages: &[Vec<u32>]) -> Vec<Vec<f32>> {
-    expected_paged_read_from(lens, pages, 0)
+    expected_paged_read_from(lens, pages, 0, PAGE_LEN)
 }
 
-/// [`expected_paged_read_over`] from position `from` on.
+/// [`expected_paged_read_over`] from position `from` on, over pages of `page_len` positions.
 fn expected_paged_read_from(
     lens: &[u32; SEQUENCES],
     pages: &[Vec<u32>],
     from: u32,
+    page_len: usize,
 ) -> Vec<Vec<f32>> {
-    let values = pool_values();
+    let values = pool_values(page_len);
     (0..SEQUENCES)
         .map(|b| {
             (0..FEATURES_READ)
                 .map(|f| {
                     (from as usize..lens[b] as usize)
                         .map(|s| {
-                            let page = pages.get(b).and_then(|row| row.get(s / PAGE_LEN));
+                            let page = pages.get(b).and_then(|row| row.get(s / page_len));
                             page.map_or(0.0, |&page| {
                                 let page = (page as usize).min(POOL - 1);
-                                values[(page * PAGE_LEN + s % PAGE_LEN) * FEATURES_READ + f]
+                                values[(page * page_len + s % page_len) * FEATURES_READ + f]
                             })
                         })
                         .sum()
@@ -466,7 +585,7 @@ fn a_paged_read_of_steps_within_a_page_reads_each_sequence_through_its_table() {
     let lens = [6, 5, 3];
     for (block, from) in [(1, 0), (2, 0), (2, 1), (1, 3)] {
         let got = run_paged_read_from(&lens, block, from);
-        let want = expected_paged_read_from(&lens, &rows(&PAGES), from);
+        let want = expected_paged_read_from(&lens, &rows(&PAGES), from, PAGE_LEN);
         for (b, row) in want.iter().enumerate() {
             for (f, cell) in row.iter().enumerate() {
                 assert_eq!(
@@ -474,6 +593,37 @@ fn a_paged_read_of_steps_within_a_page_reads_each_sequence_through_its_table() {
                     *cell,
                     "{block} a step from {from}: sequence {b} feature {f}"
                 );
+            }
+        }
+    }
+}
+
+/// A sequence walked a page at a time reads each page through the table once and every step
+/// inside it through that page: steps of one position, of two and of the whole page, lengths
+/// ending inside a page, over pages scattered and shared across sequences. Started past 0, each
+/// page's window straddles two pages, so its steps cannot keep its pin.
+#[test]
+fn a_sequence_walked_a_page_at_a_time_reads_each_sequence_through_its_table() {
+    for (step, from) in [
+        (1, 0),
+        (2, 0),
+        (WALK_PAGE_LEN, 0),
+        (2, 1),
+        (1, 3),
+        (WALK_PAGE_LEN, 3),
+    ] {
+        for lens in [[9, 12, 1], [12, 6, 7]] {
+            let got = run_paged_page_walk(&lens, step, from);
+            let want = expected_paged_read_from(&lens, &rows(&PAGES), from, WALK_PAGE_LEN);
+            for (b, row) in want.iter().enumerate() {
+                for (f, cell) in row.iter().enumerate() {
+                    assert_eq!(
+                        got.get_f32(&[b, f]),
+                        *cell,
+                        "steps of {step} from {from}: sequence {b} feature {f}, {} positions",
+                        lens[b]
+                    );
+                }
             }
         }
     }

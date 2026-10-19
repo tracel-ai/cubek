@@ -422,6 +422,22 @@ mod tests {
     const K: Axis = Axis(2);
     const B: Axis = Axis(3);
 
+    /// A level's tiles stay inside the box it is handed exactly where its tile divides that box,
+    /// which is what lets a window cut by it keep the page of the window it was cut from: pages of
+    /// 16 keys over 20 overhang, and steps of 4 inside a page's box of 16 do not.
+    #[test]
+    fn a_level_overhangs_only_a_box_its_tile_does_not_divide() {
+        let levels = Levels::leaf(&[(K, 4)])
+            .walk(&[(K, 4)])
+            .walk_every(&[K])
+            .build();
+        let keys = Space::new(&[(K, 20)]);
+        assert!(levels[0].overhangs(&keys, K));
+        let page = levels[0].child(&keys);
+        assert_eq!(page.extent(K), 16);
+        assert!(!levels[1].overhangs(&page, K));
+    }
+
     /// Every level's tile is the product of what was stated below it.
     #[test]
     fn every_level_is_a_count_of_the_level_before() {

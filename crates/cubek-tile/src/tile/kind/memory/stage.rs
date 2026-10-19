@@ -319,7 +319,14 @@ impl Memory {
                     paging: ComptimeOption::new_None(),
                 },
                 // Empty: a list over the buffer's own dims would misalign one level down.
-                window: Window::new(origin, extent, bound, false, comptime!(SmallVec::new())),
+                window: Window::new(
+                    origin,
+                    extent,
+                    bound,
+                    false,
+                    comptime!(SmallVec::new()),
+                    comptime!(OriginAlignment::default()),
+                ),
                 projection: comptime!(form.projection),
                 map,
                 offsets: Coords::<i32>::new(),

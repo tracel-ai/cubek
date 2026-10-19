@@ -9,7 +9,7 @@ pub(crate) mod row_arrangement;
 pub(crate) mod storage;
 
 pub(crate) use compaction::*;
-pub(crate) use paging::PageTable;
+pub(crate) use paging::{PageTable, WindowCut};
 pub(crate) use projection::*;
 pub(crate) use row_arrangement::*;
 

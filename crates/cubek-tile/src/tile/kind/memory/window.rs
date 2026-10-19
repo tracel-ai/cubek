@@ -22,6 +22,52 @@ pub(crate) struct Window {
     /// Per-axis boundary handling; `None` (or an empty list) means in bounds by construction.
     #[cube(comptime)]
     pub(crate) boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
+    /// What the origin is known to be aligned to on each axis.
+    #[cube(comptime)]
+    pub(crate) origin_alignment: OriginAlignment,
+}
+
+/// Per axis, what a window's origin is aligned to: 1 where nothing is known, 0 for an origin of 0
+/// (aligned to everything, so a move by multiples of `x` leaves `gcd(0, x) = x`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct OriginAlignment(SmallVec<[usize; Space::MAX_RANK]>);
+
+impl OriginAlignment {
+    /// An origin of 0 on each of `rank` axes.
+    pub(crate) fn zero_origin(rank: usize) -> Self {
+        Self((0..rank).map(|_| 0).collect())
+    }
+
+    /// What the origin is aligned to along `axis`.
+    pub(crate) fn at(&self, axis: usize) -> usize {
+        self.0.get(axis).copied().unwrap_or(1)
+    }
+
+    /// After the origin moved by multiples of `edges`, `None` on each axis it did not move along.
+    pub(crate) fn stepped(&self, edges: &[Option<usize>]) -> Self {
+        Self(
+            edges
+                .iter()
+                .enumerate()
+                .map(|(axis, edge)| match edge {
+                    Some(edge) => gcd(self.at(axis), *edge),
+                    None => self.at(axis),
+                })
+                .collect(),
+        )
+    }
+
+    /// After the origin moved along `axis` by a runtime amount, which aligns it to nothing.
+    pub(crate) fn shifted(&self, axis: usize) -> Self {
+        Self(
+            (0..self.0.len().max(axis + 1))
+                .map(|a| match a == axis {
+                    true => 1,
+                    false => self.at(a),
+                })
+                .collect(),
+        )
+    }
 }
 
 #[cube]
@@ -32,6 +78,7 @@ impl Window {
         bound: Coords<u32>,
         #[comptime] signed: bool,
         #[comptime] boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
+        #[comptime] origin_alignment: OriginAlignment,
     ) -> Self {
         // `bound` is left out: a sub-window inherits its parent's, which may differ in rank.
         let origin_rank = origin.len();
@@ -49,6 +96,7 @@ impl Window {
             bound,
             signed,
             boundaries,
+            origin_alignment,
         }
     }
 
@@ -91,6 +139,7 @@ impl Window {
                 Guard::Checked => self.boundaries.clone(),
                 Guard::Proved => SmallVec::new(),
             }),
+            origin_alignment: comptime!(self.origin_alignment.clone()),
         }
     }
 
@@ -112,6 +161,7 @@ impl Window {
                     .map(|boundary| boundary.map(|_| Boundary::Clamp))
                     .collect::<SmallVec<_>>()
             ),
+            origin_alignment: comptime!(self.origin_alignment.clone()),
         }
     }
 }
@@ -225,5 +275,24 @@ impl Layout for Window {
             &pos,
             comptime!((0..self.boundaries.len()).collect::<Vec<_>>()),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An origin of 0 moved by multiples of each level's edge stays aligned to every edge so far;
+    /// an axis no level moves keeps its alignment, and a runtime move loses it.
+    #[test]
+    fn an_origin_stays_aligned_to_the_edges_it_moved_by() {
+        let root = OriginAlignment::zero_origin(3);
+        let page = root.stepped(&[None, Some(16), Some(4)]);
+        assert_eq!((page.at(0), page.at(1), page.at(2)), (0, 16, 4));
+        let step = page.stepped(&[None, Some(6), None]);
+        assert_eq!((step.at(0), step.at(1), step.at(2)), (0, 2, 4));
+        let moved = step.shifted(1);
+        assert_eq!((moved.at(0), moved.at(1), moved.at(2)), (0, 1, 4));
+        assert_eq!(OriginAlignment::default().at(2), 1);
     }
 }
