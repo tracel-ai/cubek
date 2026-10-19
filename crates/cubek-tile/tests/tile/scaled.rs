@@ -113,8 +113,8 @@ fn scaled_matmul_promoted<E: Numeric>(
 }
 
 /// `c = (a ⊗ blocks ⊗ global) · b`, written as a kernel writes any sum: what `factor` takes out of
-/// the operand multiplies the sum once, as it drains, in the form `instruction` sums in. A decoded
-/// operand gives up nothing, so here every scale rides the load.
+/// the operand, its global, multiplies the sum once, as it drains, in the form `instruction` sums
+/// in; the block scales ride the load.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn factored_matmul<E: Numeric>(
@@ -334,10 +334,10 @@ fn two_levels_fold_in_order() {
     }
 }
 
-/// [`factored_matmul`] in registers: the operand is decoded as it is loaded, so its global rides
-/// the load with its block scales and `factor` takes nothing out; the result is the same product.
+/// [`factored_matmul`] in registers: the operand is decoded as it is loaded under its block scales,
+/// and its global, which `factor` takes out, scales the sum; the result is the same product.
 #[test]
-fn a_decoded_operand_keeps_its_global_scale_on_the_load() {
+fn a_decoded_operands_global_scale_leaves_for_the_sum() {
     check_factored(
         Instruction::Registers {
             config: REGISTER_BLOCK,
@@ -346,10 +346,10 @@ fn a_decoded_operand_keeps_its_global_scale_on_the_load() {
     );
 }
 
-/// [`factored_matmul`] in cmma fragments: the operand lands decoded, its global with it, so the
-/// fragments drain unscaled.
+/// [`factored_matmul`] in cmma fragments: the operand lands decoded under its block scales, and
+/// the fragments drain scaled by its global.
 #[test]
-fn a_decoded_operand_keeps_its_global_scale_on_the_load_into_cmma_fragments() {
+fn a_decoded_operands_global_scale_leaves_for_the_sum_of_cmma_fragments() {
     let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;

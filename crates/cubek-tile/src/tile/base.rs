@@ -1113,14 +1113,16 @@ impl Tile {
         unexpanded!()
     }
 
-    /// This tile without its outer scales that vary only along axes of `space` and that its load
-    /// does not apply, and those scales. With `space` the output's, they are the scales a sum over
-    /// the rest of the values' axes takes out of every term and applies once
-    /// ([`scaled`](Tile::scaled)), and the tile left carries the ones each term needs.
+    /// This tile without its outer scales that vary only along axes of `space`, and those scales.
+    /// With `space` the output's, they are the scales a sum over the rest of the values' axes
+    /// takes out of every term and applies once ([`scaled`](Tile::scaled)), and the tile left
+    /// carries the ones each term needs.
     ///
-    /// A tile decoded as it is loaded takes none out: its load multiplies every value by its
-    /// scales anyway, and an outer scale rides that multiply for nothing. Words of block scales are
-    /// read by the instruction, not decoded, so the scales above them leave for the sum.
+    /// Whoever reads the tile left: an instruction reading words of block scales, which hold no
+    /// scale above them, or a load decoding the values, which then multiplies each by the scales
+    /// it needs alone, so a load that converts codes under one level of scales (lane runs) still
+    /// takes a weight that carries a per-tensor scale above them. A tile indexing a table takes
+    /// none out: only its copy decodes it.
     pub fn factor(&self, _space: Space) -> (Tile, Factor) {
         unexpanded!()
     }
@@ -1287,7 +1289,7 @@ impl TileExpand {
         scope: &Scope,
         space: Space,
     ) -> (TileExpand, FactorExpand) {
-        if !self.factor.staged_beside(scope) {
+        if self.looks_up() {
             return (self.clone(), FactorExpand::default());
         }
         let (inner, outer) = self.factor.split_on(scope, &space);
