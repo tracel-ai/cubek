@@ -62,4 +62,5 @@ pub use stage::pipeline::base::Stages;
 pub use tile::accumulator::base::Scratch;
 pub use tile::base::{Tile, TileExpand};
 pub use tile::factor::{Factor, FactorExpand};
+pub use tile::index::Indexing;
 pub use tile::slices::{AxisSlices, AxisSlicesExpand};

@@ -842,6 +842,7 @@ impl Memory {
             init_from: comptime!(self.init_from),
             contraction: comptime!(self.contraction),
             codebook: self.codebook.clone(),
+            index: self.index.clone(),
         }
     }
 
@@ -856,6 +857,59 @@ impl Memory {
             self.map.clone(),
             comptime!(Access {
                 fill,
+                ..self.access
+            }),
+            comptime!(self.unit_share),
+            comptime!(self.split_share),
+        )
+    }
+
+    /// This window one wide at `coord` on `axis`, which is not the innermost: what a level cutting
+    /// the axis to one would hand out at that coordinate, read off data instead.
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::indexed_at`](crate::Tile::indexed_at).
+    pub(crate) fn placed_at(&self, #[comptime] axis: Axis, coord: u32) -> Memory {
+        let proj = comptime!(self.projection.clone());
+        let rank = comptime!(proj.physical_rank());
+        let at = comptime!(
+            placed_dim(&proj, axis)
+                .filter(|_| !self.layout.projection.is_tiled())
+                .unwrap_or_else(|| panic!("{}", Refusal::IndexOfAStatedLayout))
+        );
+
+        let mut origin = Coords::<i32>::new();
+        let mut extent = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            if comptime!(p == at) {
+                origin.push(self.window.origin.at(p).plus(coord.cast::<i32>()));
+                extent.push(1u32.runtime());
+            } else {
+                origin.push(self.window.origin.at(p));
+                extent.push(self.window.extent.at(p));
+            }
+        }
+
+        let start = self.window_start.plus(coord.times(axis_offset(
+            comptime!(self.layout.projection.clone()),
+            comptime!(Axis(at as u8)),
+            1u32.runtime(),
+            &self.layout.physical_shape,
+            &self.layout.physical_strides,
+        )));
+
+        self.moved_to(
+            Window::new(
+                origin,
+                extent,
+                self.window.bound.clone(),
+                comptime!(self.window.signed),
+                comptime!(self.window.boundaries.clone()),
+            ),
+            comptime!(None),
+            start,
+            self.map.clone(),
+            comptime!(Access {
+                whole: false,
                 ..self.access
             }),
             comptime!(self.unit_share),

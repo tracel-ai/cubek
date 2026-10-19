@@ -79,6 +79,34 @@ pub enum Refusal {
     /// [`paged`](super::Arg::paged) on a packed operand, or one moved by runs (a bulk copy, a
     /// tensor map): the table resolves one line at a time.
     PagingMovedByRuns,
+    /// [`indexed`](crate::TileArgLaunch::indexed) with a table that is not plain `u32` entries,
+    /// one a line: an entry is a coordinate.
+    IndexTableNotU32,
+    /// [`indexed`](crate::TileArgLaunch::indexed) with a table of `rank` dims keyed by `keys`
+    /// axes: a table holds one dim per key.
+    IndexTableRank { keys: usize, rank: usize },
+    /// [`indexed`](crate::TileArgLaunch::indexed) on a tensor map, or on a gathered, storage-tiled
+    /// or paged operand: an entry moves a window of a plain buffer's labelled dims.
+    IndexOfAStatedLayout,
+    /// [`indexed`](crate::TileArgLaunch::indexed) placing an axis the operand does not span.
+    IndexOfAnAxisNotSpanned(Axis),
+    /// [`indexed`](crate::TileArgLaunch::indexed) placing the innermost axis, this one, which is
+    /// read in lines rather than elements.
+    IndexAlongALine(Axis),
+    /// [`indexed`](crate::TileArgLaunch::indexed) with no key, or keyed by the axis it places.
+    IndexKeyedByItsAxis(Axis),
+    /// [`Indexing::Run`](crate::Indexing::Run) keyed by this many axes: a run's end is the next
+    /// entry along its one key.
+    RunKeyedByMany(usize),
+    /// An indexed operand under a nest no level of which cuts these keys: its table would never be
+    /// read.
+    IndexNeverRead(Vec<Axis>),
+    /// An indexed operand under a nest whose first level cutting one of these keys does not cut
+    /// them all: the table is read at one step.
+    IndexKeysCutApart(Vec<Axis>),
+    /// An indexed operand under a nest that cuts the axis its entry places: a coordinate is the
+    /// table's to state, and a run is placed whole before any level cuts it.
+    IndexedAxisCut(Axis),
 }
 
 impl Display for Refusal {
@@ -197,6 +225,54 @@ impl Display for Refusal {
                 f,
                 "Arg::paged: a page table is resolved a line at a time, so a packed operand or a \
                  delivery that moves runs has no reading through it"
+            ),
+            Refusal::IndexTableNotU32 => write!(
+                f,
+                "TileArgLaunch::indexed: a table holds plain u32 entries, one a line, each a \
+                 coordinate"
+            ),
+            Refusal::IndexTableRank { keys, rank } => write!(
+                f,
+                "TileArgLaunch::indexed: the table has {rank} dims and {keys} keys; it holds one dim \
+                 per key"
+            ),
+            Refusal::IndexOfAStatedLayout => write!(
+                f,
+                "TileArgLaunch::indexed: an entry moves the window of a plain buffer over its \
+                 labelled dims, which a tensor map, a gathered, storage-tiled or paged operand is not"
+            ),
+            Refusal::IndexOfAnAxisNotSpanned(axis) => write!(
+                f,
+                "TileArgLaunch::indexed: the entry places {axis:?}, which the operand does not span"
+            ),
+            Refusal::IndexAlongALine(axis) => write!(
+                f,
+                "TileArgLaunch::indexed: the entry places {axis:?}, the innermost axis, which is \
+                 read in lines rather than elements"
+            ),
+            Refusal::IndexKeyedByItsAxis(axis) => write!(
+                f,
+                "TileArgLaunch::indexed: the table is keyed by no axis, or by {axis:?}, the axis its \
+                 entry places"
+            ),
+            Refusal::RunKeyedByMany(keys) => write!(
+                f,
+                "Indexing::Run: a run ends at the next entry along its one key, and this table has \
+                 {keys} keys"
+            ),
+            Refusal::IndexNeverRead(keys) => write!(
+                f,
+                "Indexing: no level of the nest cuts {keys:?}, so the table would never be read"
+            ),
+            Refusal::IndexKeysCutApart(keys) => write!(
+                f,
+                "Indexing: the first level cutting one of {keys:?} does not cut them all; the \
+                 table is read at one step"
+            ),
+            Refusal::IndexedAxisCut(axis) => write!(
+                f,
+                "Indexing: a level cuts {axis:?}, the axis the entry places; a coordinate is the \
+                 table's to state, and a run is placed whole before any level cuts it"
             ),
         }
     }

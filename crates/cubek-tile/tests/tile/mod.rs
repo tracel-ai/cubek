@@ -13,6 +13,7 @@ mod distributed;
 mod dynamic_contraction;
 mod erased;
 mod imperative;
+mod indexed;
 mod lane_runs;
 mod launch_planes;
 mod launch_units;

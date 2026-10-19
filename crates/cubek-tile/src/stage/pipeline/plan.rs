@@ -58,7 +58,7 @@ impl StagePlan {
         let refills = operands
             .iter()
             .map(
-                |op| match can_fix_invariants && walk_invariant(level, op_space, &op.space) {
+                |op| match can_fix_invariants && walk_invariant(level, op_space, op) {
                     true => Refill::Once,
                     false => Refill::EveryRegion,
                 },
@@ -114,11 +114,13 @@ impl StagePlan {
     }
 }
 
-/// Whether a walk of `level` over `space` leaves `operand`'s window unchanged.
-fn walk_invariant(level: &Level, space: &Space, operand: &Space) -> bool {
-    space
-        .axes()
-        .all(|axis| level.tiles(space, axis) == 1 || !operand.contains(axis))
+/// Whether a walk of `level` over `space` leaves `operand`'s window unchanged: it spans no axis
+/// the walk steps, and has no table left to read keyed by one.
+fn walk_invariant(level: &Level, space: &Space, operand: &StageOperand) -> bool {
+    space.axes().all(|axis| {
+        level.tiles(space, axis) == 1
+            || !(operand.space.contains(axis) || operand.keys.contains(&axis))
+    })
 }
 
 #[cfg(test)]
@@ -141,7 +143,30 @@ mod tests {
         StageOperand {
             delivery,
             space: space.clone(),
+            keys: Vec::new(),
         }
+    }
+
+    /// A walk stepping `M` leaves `rhs` (over `K`, `N`) where it lies, unless `rhs` has a table
+    /// keyed by `M` still to read: then each region places it anew, so its stage is refilled.
+    #[test]
+    fn an_operand_with_a_table_to_read_is_refilled_along_its_keys() {
+        let (space, lhs, rhs) = spaces();
+        let level = Level::every(&[(M, 4), (N, 8), (K, 8)]);
+        let plan = |keys: Vec<Axis>| {
+            let rhs = StageOperand {
+                keys,
+                ..operand(Delivery::SyncPerUnit, &rhs)
+            };
+            StagePlan::new(
+                &[operand(Delivery::SyncPerUnit, &lhs), rhs],
+                &space,
+                &level,
+                StageOwner::CUBE,
+            )
+        };
+        assert_eq!(plan(Vec::new()).refills(0)[1], Refill::Once);
+        assert_eq!(plan(vec![M]).refills(0)[1], Refill::EveryRegion);
     }
 
     #[test]

@@ -11,6 +11,9 @@ pub(crate) struct StageOperand {
     pub(crate) delivery: Delivery,
     /// The axes the operand spans.
     pub(crate) space: Space,
+    /// The keys of a table the operand has yet to read ([`Indexing`]): its window moves along
+    /// them too, though it spans none of them.
+    pub(crate) keys: Vec<Axis>,
 }
 
 /// What shapes a slot's buffers: level, depth, storage, optional line width, and who holds them.
@@ -59,6 +62,9 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
 /// out of it takes a window for every plane the levels lay out.
 #[cube]
 pub(crate) fn stage_one(operand: &Tile, #[comptime] spec: StageSpec) -> Tile {
+    // An operand whose table this level reads stages one region of it: one slab, not the stack.
+    let shaped = operand.shaped_for(comptime!(spec.level.clone()));
+    let operand = &shaped;
     let define!(Staged) = operand.staged_element(comptime!(spec.decoded));
     let stage = Memory::stage::<Staged>(
         operand,

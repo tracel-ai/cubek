@@ -338,6 +338,7 @@ impl Memory {
                 init_from: comptime!(InitFrom::Cell),
                 contraction: comptime!(None),
                 codebook: Codebook::none(),
+                index: ComptimeOption::new_None(),
                 source_window: source,
             }),
             factor: Factor::none(),

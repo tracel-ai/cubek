@@ -9,17 +9,9 @@ use super::base::{Payload, PayloadExpand, StageOperand, StageSpec, stage_one};
 #[cube]
 impl Payload<Tile> for Tile {
     fn operands(&self) -> comptime_type!(Vec<StageOperand>) {
-        let delivery = self.delivery();
+        let operand = self.stage_operand();
         let scales = self.scale_operands();
-        comptime!(
-            [StageOperand {
-                delivery,
-                space: self.place.space.clone(),
-            }]
-            .into_iter()
-            .chain(scales)
-            .collect()
-        )
+        comptime!([operand].into_iter().chain(scales).collect())
     }
 
     fn staged(

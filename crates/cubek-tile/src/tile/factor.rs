@@ -37,6 +37,20 @@ impl Factor {
         unexpanded!()
     }
 
+    /// This factor with every scale that spans `axis` one wide at `coord` along it, as the values
+    /// it rides are ([`Tile::placed_at`](crate::Tile::placed_at)).
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::indexed_at`](crate::Tile::indexed_at).
+    pub(crate) fn placed_at(&self, _axis: Axis, _coord: u32) -> Factor {
+        unexpanded!()
+    }
+
+    /// This factor with every scale that spans `axis` reading the run `[from, until)` along it,
+    /// as the values it rides are ([`Tile::run_within`](crate::Tile::run_within)).
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::indexed_at`](crate::Tile::indexed_at).
+    pub(crate) fn run_within(&self, _axis: Axis, _from: u32, _until: u32) -> Factor {
+        unexpanded!()
+    }
+
     /// Whether the innermost scales vary along `axis`, so a run along it spans scales.
     pub(crate) fn varies_along(&self, _axis: Axis) -> bool {
         unexpanded!()
@@ -173,6 +187,47 @@ impl FactorExpand {
         }
     }
 
+    pub(crate) fn __expand_placed_at_method(
+        &self,
+        scope: &Scope,
+        axis: Axis,
+        coord: NativeExpand<u32>,
+    ) -> FactorExpand {
+        self.spanning(axis, |scale| {
+            scale.__expand_placed_at_method(scope, axis, coord.clone())
+        })
+    }
+
+    pub(crate) fn __expand_run_within_method(
+        &self,
+        scope: &Scope,
+        axis: Axis,
+        from: NativeExpand<u32>,
+        until: NativeExpand<u32>,
+    ) -> FactorExpand {
+        self.spanning(axis, |scale| {
+            scale.__expand_run_within_method(scope, axis, from.clone(), until.clone())
+        })
+    }
+
+    /// This factor with `place` applied to every scale that spans `axis`, which carries its own
+    /// scales along; the scales that do not span it, as they are.
+    pub(crate) fn spanning(
+        &self,
+        axis: Axis,
+        place: impl Fn(&TileExpand) -> TileExpand,
+    ) -> FactorExpand {
+        match self.scale.as_deref() {
+            None => FactorExpand::default(),
+            Some(scale) if scale.place.space.contains(axis) => FactorExpand::of(&place(scale)),
+            Some(scale) => {
+                let mut kept = scale.clone();
+                kept.factor = scale.factor.spanning(axis, place);
+                FactorExpand::of(&kept)
+            }
+        }
+    }
+
     pub(crate) fn __expand_at_coords_method(
         &self,
         scope: &Scope,
@@ -272,6 +327,7 @@ impl FactorExpand {
         vec![StageOperand {
             delivery: scale.clone().__expand_delivery_method(scope),
             space: scale.place.space.clone(),
+            keys: Vec::new(),
         }]
     }
 

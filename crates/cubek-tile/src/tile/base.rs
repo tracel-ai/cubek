@@ -513,12 +513,13 @@ impl Tile {
             }
             TileKind::PlanePartition(p) => p.at_step(step, comptime!(self.place.space.clone())),
         };
-        Tile {
+        let windowed = Tile {
             kind: tile_kind,
             factor: self.factor.at(step),
             place: comptime!(self.place.at_step(&step.level)),
             element: comptime!(self.element),
-        }
+        };
+        windowed.indexed_at(step)
     }
 
     /// Whether this tile has a buffer bound to read an extent off.
@@ -548,7 +549,7 @@ impl Tile {
                 .dim()
         );
         let raw = match &self.kind {
-            TileKind::Memory(g) => g.window.bound.at(p).cast::<usize>(),
+            TileKind::Memory(g) => g.walked_bound(p).cast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].cast::<usize>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::runtime_extent: a plane tile has no extent")
@@ -672,7 +673,7 @@ impl Tile {
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile {
         let define!(Staged) = self.staged_element(comptime!(None));
         Memory::stage::<Staged>(
-            self,
+            &self.shaped_for(comptime!(level.clone())),
             level,
             storage,
             comptime!(None),
@@ -1369,8 +1370,18 @@ impl TileExpand {
     }
 
     pub(crate) fn __expand_scale_operands_method(&self, scope: &Scope) -> Vec<StageOperand> {
+        // A table the values have yet to read places the scales beside them too.
+        let keys = self.pending_keys();
         match self.__expand_scales_beside_method(scope) {
-            true => self.factor.stage_operands(scope),
+            true => self
+                .factor
+                .stage_operands(scope)
+                .into_iter()
+                .map(|scale| StageOperand {
+                    keys: keys.clone(),
+                    ..scale
+                })
+                .collect(),
             false => Vec::new(),
         }
     }

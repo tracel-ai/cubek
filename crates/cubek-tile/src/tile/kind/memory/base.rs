@@ -48,6 +48,9 @@ pub(crate) struct Memory {
     pub(crate) source_window: ComptimeOption<SourceWindow>,
     /// The table these values index ([`Tile::lookup`](crate::Tile::lookup)); empty when none.
     pub(crate) codebook: Codebook,
+    /// The table that places this window ([`Indexing`]); `None` for an operand read where its
+    /// windows are cut.
+    pub(crate) index: ComptimeOption<IndexTable>,
 }
 
 /// How a contraction into a memory window runs: the register block a unit's share is tiled into,
