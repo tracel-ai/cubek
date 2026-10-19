@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@v6
       # --------------------------------------------------------------------------------
       - name: Install Rust
-        uses: tracel-ai/github-actions/install-rust@v11
+        uses: tracel-ai/github-actions/install-rust@v12
         with:
           rust-toolchain: ${{ matrix.toolchain }}
           cache-key: ${{ matrix.rust }}-linux
@@ -86,7 +86,7 @@ jobs:
         run: cargo clippy -p cubek-matmul --no-default-features --features std,multi-level,extended,cubecl/cpu --tests -- -D warnings
       # --------------------------------------------------------------------------------
       - name: Typos
-        uses: tracel-ai/github-actions/check-typos@v11
+        uses: tracel-ai/github-actions/check-typos@v12
 
   documentation:
     runs-on: ubuntu-24.04
@@ -102,7 +102,7 @@ jobs:
         uses: actions/checkout@v6
       # --------------------------------------------------------------------------------
       - name: Install Rust
-        uses: tracel-ai/github-actions/install-rust@v11
+        uses: tracel-ai/github-actions/install-rust@v12
         with:
           rust-toolchain: ${{ matrix.toolchain }}
           cache-key: ${{ matrix.rust }}-linux
@@ -129,17 +129,17 @@ jobs:
         uses: actions/checkout@v6
       # --------------------------------------------------------------------------------
       - name: Install Rust
-        uses: tracel-ai/github-actions/install-rust@v11
+        uses: tracel-ai/github-actions/install-rust@v12
         with:
           rust-toolchain: ${{ matrix.toolchain }}
           cache-key: ${{ matrix.rust }}-linux
           apt-packages: build-essential
       # --------------------------------------------------------------------------------
       - name: Install Mesa
-        uses: tracel-ai/github-actions/install-mesa@v11
+        uses: tracel-ai/github-actions/install-mesa@v12
       # --------------------------------------------------------------------------------
       - name: Install Vulkan SDK
-        uses: tracel-ai/github-actions/install-vulkan-sdk@v11
+        uses: tracel-ai/github-actions/install-vulkan-sdk@v12
       # --------------------------------------------------------------------------------
       - name: Tests
         run: cargo xtask test --ci
