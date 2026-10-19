@@ -72,9 +72,9 @@ impl Region {
         }
     }
 
-    /// The planes below this region, each once at its place in the walks between, which is the
-    /// same at every step: what a plane holds across a walk, such as its rows, whatever walks the
-    /// partitioning stacks above it.
+    /// The planes below this region, each once, at the first step of every walk between: what a
+    /// plane holds across a walk, such as its rows, is the same at every step, while its
+    /// coordinates along a walked axis are the first step's.
     pub fn planes(&self) -> Planes {
         Planes {
             region: self.clone(),
@@ -319,9 +319,9 @@ fn each_plane(
                 .__expand_region_method(scope, 0usize.into_expand(scope));
             each_plane(scope, first, body, unroll)
         }
-        coverage => panic!(
-            "Region::planes: a level distributed over {coverage:?} lies between this region and \
-             its planes, so it is not one plane's"
+        Coverage::Distribute(scope) => panic!(
+            "Region::planes: a level dealt to each {scope:?} lies below this region before any \
+             plane level, so this region has no planes of its own"
         ),
     }
 }

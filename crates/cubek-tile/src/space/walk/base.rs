@@ -294,9 +294,8 @@ impl Walk {
             .below(self.resolve(idx), comptime!(self.level.clone()))
     }
 
-    /// The planes below every region of this walk, each once: a plane's place is the same at
-    /// every step ([`Region::planes`]), so a walk without one region above it, such as a run of
-    /// interleaved steps, still reaches them.
+    /// The planes below this walk's regions, each once, at its first step ([`Region::planes`]):
+    /// for a walk with no single region above it, such as a run of interleaved steps.
     pub fn planes(&self) -> Planes {
         self.region(0).planes()
     }
