@@ -163,11 +163,38 @@ fn indexed_staged_matmul_kernel(
     });
 }
 
+/// [`indexed_matmul_kernel`] that skips a step whose entry names no slab: what a grouped product
+/// does with a padding tile, which it would otherwise contract against a clamped slab.
+#[cube(launch)]
+fn indexed_skipping_matmul_kernel(
+    x: &TileArg<'_>,
+    w: &TileArg<'_>,
+    out: &TileArg<'_>,
+    space: Partitioning,
+    #[comptime] rows: Level,
+) {
+    let x = x.tile(&space);
+    let w = w.tile(&space);
+    let out = out.tile(&space);
+
+    for tile in space.over(&rows) {
+        let w_t = w.at(&tile);
+        if w_t.entry_in_range() {
+            let mut o = out
+                .at(&tile)
+                .accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
+            o.mm(&x.at(&tile), &w_t);
+        }
+    }
+}
+
 /// How the weights are read: where they lie, or staged per step of rows.
 #[derive(Clone, Copy)]
 enum Reading {
     InPlace,
     Staged,
+    /// In place, skipping a step whose entry names no slab.
+    Skipping,
 }
 
 /// The rows in tiles of `tile`, the weights `[EXPERT, K, N]` keyed by the row tile: `entries`
@@ -222,6 +249,16 @@ fn run(entries: &[u32], tile: usize, weights_spec: TileSpec, reading: Reading) -
             launcher.partitioning_arg(),
             level,
         ),
+        Reading::Skipping => indexed_skipping_matmul_kernel::launch(
+            &client,
+            count,
+            dim,
+            x,
+            w,
+            o,
+            launcher.partitioning_arg(),
+            level,
+        ),
     }
 
     HostData::from_tensor_handle(&client, out, HostDataType::F32)
@@ -259,6 +296,17 @@ fn a_route_past_the_last_expert_reads_zero_where_the_operand_checks_it() {
     let got = run(&[99, 0, 2, 1], 1, checked, Reading::InPlace);
     let want = expected(|m| [99, 0, 2, 1][m], &weights());
     assert_cells(&got, &want, "checked");
+}
+
+/// A kernel asks the tile whether its entry named a slab, and skips the row that names none: the
+/// row keeps the value the output was filled with, every other row its product.
+#[test]
+fn a_kernel_skips_the_row_whose_route_names_no_expert() {
+    let routes = [99, 0, 2, 1];
+    let got = run(&routes, 1, weights_spec(), Reading::Skipping);
+    let mut want = expected(|m| routes[m] as usize, &weights());
+    want[0] = vec![-1.0; FEATURES];
+    assert_cells(&got, &want, "skipped");
 }
 
 /// One entry a tile of two rows: each tile's group, the same kernel as routed rows. Tile 0 reads
