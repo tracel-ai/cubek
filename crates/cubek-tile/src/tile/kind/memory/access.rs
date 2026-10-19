@@ -215,9 +215,11 @@ impl Memory {
                 let all = self.lines::<T, W>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            WindowStorage::Stored(_) => self
-                .read_view::<T, W>(self.base())
-                .view(self.window().with_guard(guard)),
+            WindowStorage::Stored(_) => WindowedView::new(
+                self.read_view::<T, W>(self.base()),
+                self.window().with_guard(guard),
+            )
+            .view(),
         }
     }
 
@@ -232,10 +234,11 @@ impl Memory {
                 let all = self.lines_storage::<I, WP>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            WindowStorage::Stored(_) => self
-                .lines_storage::<I, WP>()
-                .view(self.base())
-                .view(self.window().with_guard(guard)),
+            WindowStorage::Stored(_) => WindowedView::new(
+                self.lines_storage::<I, WP>().view(self.base()),
+                self.window().with_guard(guard),
+            )
+            .view(),
         }
     }
 
@@ -255,7 +258,7 @@ impl Memory {
             WindowStorage::Stored(_) => {
                 let base = self.base();
                 let window = self.window().with_guard(guard);
-                self.write_view::<T, W>(base).view_mut(window)
+                WindowedViewMut::new(self.write_view::<T, W>(base), window).view_mut()
             }
         }
     }
