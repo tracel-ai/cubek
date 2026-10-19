@@ -190,9 +190,10 @@ fn walk_stages(
 }
 
 /// The `m × n × k` shape this device offers `leaf` at in `input` summed in `f32`: `16×16×16` where
-/// it does, else the shallowest other at least `depth` deep, else the shallowest, so the stages are
-/// read by the instruction each device has. A case whose lines run along `K` asks for a line's
-/// depth: a step must start on a line, and NVIDIA lists its `16×8×8` mma before its `16×8×16` one.
+/// it does, else the shallowest other at least `line_depth` deep, else the shallowest, so the
+/// stages are read by the instruction each device has. A case whose lines run along `K` asks for a
+/// line's depth: a step must start on a line, and NVIDIA lists its `16×8×8` mma before its
+/// `16×8×16` one.
 /// Where `reads_ldmatrix`, the device must also load `input` through `ldmatrix`; a case the
 /// transport reads manually whatever it was asked needs only the mma. Reported rather than silently
 /// passed where the device has neither.
@@ -201,7 +202,7 @@ fn instruction_shape(
     leaf: Leaf,
     input: ElemType,
     reads_ldmatrix: bool,
-    depth: usize,
+    line_depth: usize,
 ) -> Option<(usize, usize, usize)> {
     let f32 = f32::elem_type_native();
     let matmul = &client.properties().features.matmul;
@@ -225,7 +226,7 @@ fn instruction_shape(
         .iter()
         .copied()
         .find(|&shape| shape == (16, 16, 16))
-        .or_else(|| shapes.iter().copied().find(|&(_, _, k)| k >= depth))
+        .or_else(|| shapes.iter().copied().find(|&(_, _, k)| k >= line_depth))
         .or_else(|| shapes.first().copied());
     if shape.is_none() {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -308,9 +309,9 @@ fn check(case: Case) {
         && (16 / input.size()).is_multiple_of(v);
     // A `{m, k}` lhs or a `{n, k}` rhs runs its lines along `K`.
     let lines_along_k = !lhs_transposed || transposed;
-    let depth = if lines_along_k { v } else { 1 };
+    let line_depth = if lines_along_k { v } else { 1 };
     let Some((edge_m, edge_n, edge_k)) =
-        instruction_shape(&client, leaf, input, reads_ldmatrix, depth)
+        instruction_shape(&client, leaf, input, reads_ldmatrix, line_depth)
     else {
         return;
     };
