@@ -130,6 +130,9 @@ pub(crate) struct IndexTable {
     /// Whether the entry is read and the window placed: a placed table is never read again.
     #[cube(comptime)]
     pub(crate) placed: bool,
+    /// Whether the entry read names a coordinate of the axis, or a run of at least one; `true`
+    /// until it is read ([`Tile::entry_in_range`]).
+    in_range: bool,
 }
 
 #[cube]
@@ -152,6 +155,7 @@ impl IndexTable {
             indexing,
             keys,
             placed: comptime!(false),
+            in_range: true,
         }
     }
 
@@ -175,20 +179,42 @@ impl IndexTable {
         )
     }
 
-    /// This table with its entry read and placed.
+    /// This table with its entry read and placed, `in_range` saying whether the entry named a
+    /// coordinate of the axis, or a run of at least one.
     #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
-    pub(crate) fn read(&self) -> IndexTable {
+    pub(crate) fn read(&self, in_range: bool) -> IndexTable {
         IndexTable {
             entries: self.entries.clone(),
             strides: self.strides.clone(),
             indexing: comptime!(self.indexing.clone()),
             keys: comptime!(self.keys.clone()),
             placed: comptime!(true),
+            in_range,
         }
     }
 }
 
+/// Whether the run `[from, until)` holds a position.
+#[cube]
+fn nonempty(from: u32, until: u32) -> bool {
+    from < until
+}
+
+/// What a tile with no table to read answers: its window is where it lies.
+#[cube]
+fn no_table() -> bool {
+    true
+}
+
 impl Tile {
+    /// Whether the entry this tile's table placed it with names a coordinate of the axis it
+    /// places, or a run of at least one row: `false` for an entry past a stack of slabs, as a
+    /// padding row's route or a padding tile's group names. A kernel skips such a tile's work
+    /// rather than read a clamped slab. `true` for a tile with no table, or none read yet.
+    pub fn entry_in_range(&self) -> bool {
+        cubecl::unexpanded!()
+    }
+
     /// This tile with its table read where `step` cuts the table's keys: its window, and the
     /// windows of the scales it carries that span the axis the entry places, placed by the entry.
     /// Any other tile, or step, as it is.
@@ -204,6 +230,16 @@ impl Tile {
 }
 
 impl TileExpand {
+    pub fn __expand_entry_in_range_method(&self, scope: &Scope) -> NativeExpand<bool> {
+        match &self.kind {
+            TileKindExpand::Memory(MemoryExpand {
+                index: ComptimeOptionExpand::Some(table),
+                ..
+            }) => table.in_range,
+            _ => no_table::expand(scope),
+        }
+    }
+
     pub(crate) fn __expand_indexed_at_method(self, scope: &Scope, step: &StepExpand) -> TileExpand {
         let TileKindExpand::Memory(memory) = &self.kind else {
             return self;
@@ -221,14 +257,18 @@ impl TileExpand {
             Refusal::IndexKeysCutApart(table.keys.clone())
         );
         let (entry, next) = table.__expand_entries_at_method(scope, step);
-        let read = table.__expand_read_method(scope);
-        let placed = match table.indexing {
+        let (placed, in_range) = match table.indexing {
             Indexing::Coordinate(axis) => {
+                let in_range = self.__expand_names_coordinate_method(scope, axis, entry);
                 let entry = self.__expand_clamped_method(scope, axis, entry);
-                self.__expand_placed_at_method(scope, axis, entry)
+                (self.__expand_placed_at_method(scope, axis, entry), in_range)
             }
-            Indexing::Run(axis) => self.__expand_run_within_method(scope, axis, entry, next),
+            Indexing::Run(axis) => (
+                self.__expand_run_within_method(scope, axis, entry, next),
+                nonempty::expand(scope, entry, next),
+            ),
         };
+        let read = table.__expand_read_method(scope, in_range);
         placed.__expand_with_index_method(scope, read)
     }
 
@@ -247,6 +287,14 @@ impl TileExpand {
 
 #[cube]
 impl Tile {
+    /// Whether `coord`, an entry naming a coordinate along `axis`, lies within the axis.
+    #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
+    fn names_coordinate(&self, #[comptime] axis: Axis, coord: u32) -> bool {
+        let memory = self.mem("indexed_at");
+        let p = comptime!(placed_dim(&memory.projection, axis).unwrap());
+        coord < memory.window.bound.at(p)
+    }
+
     /// `coord`, an entry naming a coordinate along `axis`, clamped to the axis unless the operand
     /// reads zero past it.
     #[allow(dead_code)] // Reached through its expand, from `Tile::indexed_at`.
