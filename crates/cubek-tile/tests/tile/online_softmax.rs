@@ -110,7 +110,7 @@ fn plane_attention<E: Float>(
                 .with_scratch(Scratch::OneTile);
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
-            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided, None);
             q_s.copy_from(&q_p);
             sync_plane();
             let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize, None);
@@ -198,7 +198,7 @@ fn register_plane_attention<E: Float>(
             let acc =
                 out.at(&plane)
                     .accumulator::<f32>(&bias_p, &v_p, instruction, Semiring::SUM_PROD);
-            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided, None);
             q_s.copy_from(&q_p);
             sync_plane();
             let logits =
@@ -402,7 +402,7 @@ fn relayed_attention<E: Float>(
     let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
     // The query spans no key: its box is the first block's, staged once before the walk.
     let q_c = q.at(&first);
-    let mut q_s = q_c.stage_for(&walk, StageStorage::Strided);
+    let mut q_s = q_c.stage_for(&walk, StageStorage::Strided, None);
     q_s.copy_from(&q_c);
     sync_cube();
     let mut stages = Stages::smem(&walk, &k, &v, StageStorage::Strided, 1usize, None);

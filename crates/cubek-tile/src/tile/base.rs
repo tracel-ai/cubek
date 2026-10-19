@@ -684,7 +684,15 @@ impl Tile {
     /// owned and placed as the walk's stages are, the cube's or each plane's own copy. What a
     /// kernel stages once before a walk that leaves the operand unchanged, as an attention's
     /// query beside the keys it walks.
-    pub fn stage_for(&self, walk: &Walk, #[comptime] storage: StageStorage) -> Tile {
+    ///
+    /// A stage whose fill decodes its operand holds the values at `decoded`, or at `f32` where
+    /// `None`, as [`Stages::smem`] does. An operand staged as it lies keeps its own element.
+    pub fn stage_for(
+        &self,
+        walk: &Walk,
+        #[comptime] storage: StageStorage,
+        #[comptime] decoded: Option<ElemType>,
+    ) -> Tile {
         let owner = walk.stage_owner();
         stage_one(
             self,
@@ -693,7 +701,7 @@ impl Tile {
                 depth: walk.depth(),
                 storage,
                 width: None,
-                decoded: None,
+                decoded,
                 owner,
             }),
         )

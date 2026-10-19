@@ -3169,3 +3169,92 @@ fn a_packed_operand_is_bound_at_its_words() {
         TileSpec::direct(&[M, N]).packed(Field::Quant(QuantValue::E2M1)),
     );
 }
+
+/// A word-wide float field staged once for a walk at `decoded`, as an attention stages its query,
+/// and the stage copied out as it holds it.
+#[cube(launch)]
+fn word_field_staged_for_a_walk(
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
+    space: Partitioning,
+    #[comptime] decoded: Option<cubecl::ir::ElemType>,
+) {
+    let input = input.tile(&space);
+    let output = output.tile(&space);
+    let walk = space.walk();
+    let first = walk.region(0);
+    let source = input.at(&first);
+    let mut staged = source.stage_for(&walk, StageStorage::Strided, decoded);
+    staged.copy_from(&source);
+    sync_cube();
+    let mut out = output.at(&first);
+    out.copy_cast_from(&staged);
+}
+
+/// `f32` values bound as their words, one a word, staged for a walk at `decoded` and copied out.
+fn staged_for_a_walk(values: &[f32], decoded: Option<cubecl::ir::ElemType>) -> Vec<f32> {
+    let (rows, cols) = (8, 16);
+    let client = cubecl::test_device().client();
+    let words: Vec<u32> = values.iter().map(|value| value.to_bits()).collect();
+    let input = TensorHandle::new_contiguous(
+        vec![rows, cols],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols)]),
+            Levels::leaf(&[(M, rows), (N, cols)])
+                .walk_every(&[M])
+                .build(),
+        ),
+        Form::Static,
+    );
+    word_field_staged_for_a_walk::launch(
+        &client,
+        CubeCount::new_single(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            u32::elem_type_native(),
+            1,
+            TileSpec::direct(&[M, N]).packed(Field::Float(FloatKind::F32)),
+        ),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        decoded,
+    );
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    (0..rows * cols)
+        .map(|i| got.get_f32(&[i / cols, i % cols]))
+        .collect()
+}
+
+/// **A stage for a walk holds a word-wide float field at the element its kernel names.** Values
+/// finer than `f16` keeps come back rounded to `f16` from a stage named `f16`, and exact from one
+/// named none, which holds `f32`.
+#[test]
+fn a_word_wide_field_staged_for_a_walk_holds_the_element_its_kernel_names() {
+    let values: Vec<f32> = (0..8 * 16)
+        .map(|i| 1.0 + i as f32 * 2f32.powi(-12))
+        .collect();
+    let rounded: Vec<f32> = values
+        .iter()
+        .map(|&value| f16::from_f32(value).to_f32())
+        .collect();
+    assert_ne!(rounded, values, "the values must be finer than f16 keeps");
+    let f16 = cubecl::ir::ElemType::Float(FloatKind::F16);
+    assert_eq!(staged_for_a_walk(&values, Some(f16)), rounded);
+    assert_eq!(staged_for_a_walk(&values, None), values);
+}
