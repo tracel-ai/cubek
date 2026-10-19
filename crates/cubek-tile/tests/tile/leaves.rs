@@ -71,19 +71,27 @@ fn leaves_walk_every_level_below() {
     );
 }
 
-/// `out[m] = m + 1` for every plane's origin `m`, reached from the cube through `planes`.
+/// `out[m] = m + 1` for every plane's origin `m`, reached from the cube through `planes`, or
+/// through its walk's when `through_walk`.
 #[cube(launch)]
-fn mark_planes(out: &mut Tensor<f32>, space: Partitioning) {
+fn mark_planes(out: &mut Tensor<f32>, space: Partitioning, #[comptime] through_walk: bool) {
     for cube in &space {
-        for plane in cube.planes() {
-            let m = plane.origin(M);
-            out[m] = f32::cast_from(m) + 1.0;
+        if through_walk {
+            for plane in cube.walk().planes() {
+                let m = plane.origin(M);
+                out[m] = f32::cast_from(m) + 1.0;
+            }
+        } else {
+            for plane in cube.planes() {
+                let m = plane.origin(M);
+                out[m] = f32::cast_from(m) + 1.0;
+            }
         }
     }
 }
 
 /// The cells `planes` reaches over `levels`, every other left at -1.
-fn planes_reached(levels: Levels) -> Vec<f32> {
+fn planes_reached(levels: Levels, through_walk: bool) -> Vec<f32> {
     let client = cubecl::test_device().client();
     let launcher = implied(
         &client,
@@ -101,6 +109,7 @@ fn planes_reached(levels: Levels) -> Vec<f32> {
         launcher.cube_dim(),
         out.clone().binding().into_tensor_arg(),
         launcher.partitioning_arg(),
+        through_walk,
     );
 
     let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
@@ -116,13 +125,29 @@ fn planes_reach_the_first_step_of_every_walk_above_them() {
         .planes(&[(M, 2)])
         .walk(&[(M, 3)])
         .cubes(&[M]);
-    assert_eq!(planes_reached(one_walk), first_step);
+    assert_eq!(planes_reached(one_walk, false), first_step);
     let two_walks = Levels::leaf(&[(M, 1)])
         .planes(&[(M, 2)])
         .walk(&[(M, 1)])
         .walk(&[(M, 3)])
         .cubes(&[M]);
-    assert_eq!(planes_reached(two_walks), first_step);
+    assert_eq!(planes_reached(two_walks, false), first_step);
     let no_walk = Levels::leaf(&[(M, 1)]).planes(&[(M, 2)]).cubes(&[M]);
-    assert_eq!(planes_reached(no_walk), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    assert_eq!(
+        planes_reached(no_walk, false),
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    );
+}
+
+/// A walk's planes are those of its first step, the same as the region above it reaches.
+#[test]
+fn a_walks_planes_are_those_of_its_first_step() {
+    let levels = Levels::leaf(&[(M, 1)])
+        .planes(&[(M, 2)])
+        .walk(&[(M, 3)])
+        .cubes(&[M]);
+    assert_eq!(
+        planes_reached(levels, true),
+        [1.0, 2.0, -1.0, -1.0, -1.0, -1.0]
+    );
 }

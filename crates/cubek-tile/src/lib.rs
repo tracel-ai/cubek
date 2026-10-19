@@ -55,7 +55,7 @@ pub use space::base::Space;
 pub use space::partition::base::Partitioning;
 pub use space::partition::level::Level;
 pub use space::partition::levels::Levels;
-pub use space::region::{Leaves, Region};
+pub use space::region::{Leaves, Planes, Region};
 pub use space::walk::base::Walk;
 pub use stage::base::StageStorage;
 pub use stage::pipeline::base::Stages;
