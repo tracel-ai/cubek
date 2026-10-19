@@ -405,6 +405,62 @@ impl Tile {
     }
 }
 
+impl Region {
+    /// The regions of the level below this one, over the runs `tile` holds: along a dynamic axis
+    /// an index placed a run of `tile` along ([`Indexing::Run`]), the run's tiles alone; along every
+    /// other, this region's box. What a cube walks its group's rows by, every operand it holds
+    /// windowed by the same regions.
+    pub fn walk_within(&self, _tile: &Tile) -> Walk {
+        cubecl::unexpanded!()
+    }
+}
+
+impl RegionExpand {
+    pub fn __expand_walk_within_method(&self, scope: &Scope, tile: &TileExpand) -> WalkExpand {
+        let child = self.__expand_child_method(scope);
+        let box_space = SpaceExpand::comptime(&child);
+        let sized = match tile.run_axis() {
+            Some(axis) if box_space.contains(axis) && box_space.is_dynamic(axis) => {
+                let extent = tile.clone().__expand_runtime_extent_method(scope, axis);
+                with_extent::expand(scope, &child, box_space.position(axis), extent)
+            }
+            _ => child,
+        };
+        Walk::__expand_of(scope, &sized, self.path.next(), self.clone())
+    }
+}
+
+/// `space` with the runtime size of its dynamic axis at `p` set to `extent`.
+#[cube]
+fn with_extent(space: &Space, #[comptime] p: usize, extent: usize) -> Space {
+    let mut sizes = Sequence::<usize>::new();
+    #[unroll]
+    for i in 0..comptime!(space.rank()) {
+        if comptime!(i == p) {
+            sizes.push(extent);
+        } else {
+            sizes.push(space.runtime_extent_at(i));
+        }
+    }
+    Space::with_sizes(comptime!(space.clone()), sizes)
+}
+
+impl TileExpand {
+    /// The axis an index placed a run of this tile along, where it holds one.
+    pub(crate) fn run_axis(&self) -> Option<Axis> {
+        match &self.kind {
+            TileKindExpand::Memory(MemoryExpand {
+                index: ComptimeOptionExpand::Some(table),
+                ..
+            }) if table.placed => match table.indexing {
+                Indexing::Run(axis) => Some(axis),
+                Indexing::Coordinate(_) => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 #[cube]
 impl Memory {
     /// The bound a walk reads off dim `p`: the window's, or its run's length where an index placed

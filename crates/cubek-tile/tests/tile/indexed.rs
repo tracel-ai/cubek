@@ -678,6 +678,86 @@ fn a_table_no_level_cuts_places_its_one_run() {
     }
 }
 
+/// Column tiles of the features: the walk below a group cuts them beside the rows.
+const COLUMN: usize = 2;
+
+/// Counts, for every group and column tile, the steps the walk over the group's run takes there.
+/// The rows (`x`, `[P]`) span no column, so a walk over their own box would step column tile `0`
+/// alone; the region's walk steps every column tile, each over the run the rows hold.
+#[cube(launch)]
+fn run_steps_kernel(
+    x: &TileArg<'_>,
+    steps: &mut Tensor<f32>,
+    space: Partitioning,
+    #[comptime] group: Level,
+    #[comptime] columns: usize,
+) {
+    let x = x.tile(&space);
+    for g in space.over(&group) {
+        let x_g = x.at(&g);
+        for blk in g.walk_within(&x_g) {
+            let at = g.coord(G) * columns + blk.coord(D);
+            steps[at] += 1.0;
+        }
+    }
+}
+
+/// Each group walks its own run's blocks in every column tile: 1, 0, 2 and 1 blocks of four rows
+/// for runs of 2, 0, 5 and 3 rows.
+#[test]
+fn a_regions_walk_steps_the_run_its_operand_holds_over_every_axis() {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+    let columns = FEATURES / COLUMN;
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(G, GROUPS), (P, PACKED), (D, FEATURES)]),
+            Levels::leaf(&[(G, 1), (P, BLOCK), (D, COLUMN)])
+                .walk_every(&[P, D])
+                .walk_every(&[G])
+                .build(),
+        ),
+        Form::DynamicAlong(&[P]),
+    );
+    let (x, _) = TestInput::builder(client.clone(), Shape::new([PACKED]))
+        .dtype(f32_ty)
+        .custom(vec![1.0; PACKED])
+        .generate_with_f32_host_data();
+    let counted = TestInput::builder(client.clone(), Shape::new([GROUPS * columns]))
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+    let ends = [2u32, 2, 7, 10];
+
+    run_steps_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        f32_arg(x, TileSpec::direct(&[P]))
+            .indexed(
+                table(&client, &ends, Shape::new([GROUPS]), &[G]),
+                Indexing::Run(P),
+            )
+            .unwrap(),
+        counted.clone().binding().into_tensor_arg(),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        columns,
+    );
+
+    let got = HostData::from_tensor_handle(&client, counted, HostDataType::F32);
+    for (g, blocks) in [1.0, 0.0, 2.0, 1.0].into_iter().enumerate() {
+        for c in 0..columns {
+            assert_eq!(
+                got.get_f32(&[g * columns + c]),
+                blocks,
+                "group {g} column tile {c}"
+            );
+        }
+    }
+}
+
 /// The table's statement is checked where it is bound, on the caller's thread.
 mod refused {
     use super::*;
