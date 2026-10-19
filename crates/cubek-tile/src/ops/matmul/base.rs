@@ -75,9 +75,10 @@ impl Tile {
                             Instruction::Mma { .. }
                             | Instruction::Registers { .. }
                             | Instruction::Wgmma => panic!(
-                                "Tile::dequantized: a walk of manual-mma steps decodes its operand \
-                                 into each step's registers as it loads them; no tile carries that \
-                                 decode, so the leaf does it"
+                                "Tile::dequantized: a grid that steps its contraction through \
+                                 manual-mma fragments holds each region's operand only while it \
+                                 contracts; walk the regions and dequantize each one into the \
+                                 accumulator's region"
                             ),
                         },
                     }
