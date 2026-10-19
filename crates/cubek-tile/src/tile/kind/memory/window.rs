@@ -93,27 +93,6 @@ impl Window {
             }),
         }
     }
-
-    /// This window addressing as a read that zeroes past the edge must: every checked axis
-    /// clamps onto the edge cell, so the address stays in the buffer whatever the read keeps.
-    #[allow(
-        dead_code,
-        reason = "called through its expansion, by `WindowedView`'s reads"
-    )]
-    pub(crate) fn edge_clamped(self) -> Window {
-        Window {
-            origin: self.origin,
-            extent: self.extent,
-            bound: self.bound,
-            signed: comptime!(self.signed),
-            boundaries: comptime!(
-                self.boundaries
-                    .iter()
-                    .map(|boundary| boundary.map(|_| Boundary::Clamp))
-                    .collect::<SmallVec<_>>()
-            ),
-        }
-    }
 }
 
 /// Where a gathered stage sits inside the buffer it was filled from; invariant under
