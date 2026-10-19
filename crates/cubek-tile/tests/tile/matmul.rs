@@ -1295,7 +1295,7 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Levels, depth: usize) {
     matmul_smem_ring::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         b.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -1339,7 +1339,7 @@ fn mma_folds_onto_what_c_holds() {
     matmul_smem_ring_accumulate::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         b.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -1420,7 +1420,7 @@ fn check_matmul_batched(
     matmul_smem_ring::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         rhs.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -1541,7 +1541,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
         .zeros();
 
     let cube_count = launcher.cube_count();
-    let cube_dim = CubeDim::new_single();
+    let cube_dim = launcher.cube_dim();
     match levels.len() {
         1 => matmul_smem_ring::launch(
             &client,
@@ -1987,7 +1987,7 @@ fn matmul_multilevel_staged_then_direct() {
     matmul_two_levels_smem_then_in_place::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         b.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -2090,7 +2090,7 @@ fn check_matmul_multilevel(
         Inner::Direct => matmul_two_levels_smem_then_in_place::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
+            launcher.cube_dim(),
             a.arg(&launcher, 1),
             b.arg(&launcher, 1),
             c.arg(&launcher, 1),
@@ -2103,7 +2103,7 @@ fn check_matmul_multilevel(
         Inner::Staged(depth_inner) => matmul_two_levels_smem_then_smem::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
+            launcher.cube_dim(),
             a.arg(&launcher, 1),
             b.arg(&launcher, 1),
             c.arg(&launcher, 1),
@@ -2149,7 +2149,7 @@ fn matmul_staged_invariant_lhs() {
     matmul_two_levels_smem_then_smem::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         b.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -2213,7 +2213,7 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
     matmul_two_levels_smem_then_in_place::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         b.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -2264,7 +2264,7 @@ fn matmul_direct_vectorized() {
     matmul_in_place::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 2),
         b.arg(&launcher, 2),
         c.arg(&launcher, 2),
@@ -2360,7 +2360,7 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
     matmul_lhs_smem_ring::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
+        launcher.cube_dim(),
         a.arg(&launcher, 1),
         b.arg(&launcher, 1),
         c.arg(&launcher, 1),
@@ -2406,7 +2406,7 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
         Staged::Both => matmul_smem_ring::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
+            launcher.cube_dim(),
             a.arg(&launcher, v),
             b.arg(&launcher, v),
             c.arg(&launcher, v),
@@ -2419,7 +2419,7 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
         Staged::LhsOnly => matmul_lhs_smem_ring::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
+            launcher.cube_dim(),
             a.arg(&launcher, v),
             b.arg(&launcher, v),
             c.arg(&launcher, v),
