@@ -194,7 +194,7 @@ impl FactorExpand {
         coord: NativeExpand<u32>,
     ) -> FactorExpand {
         self.spanning(axis, |scale| {
-            scale.__expand_placed_at_method(scope, axis, coord.clone())
+            scale.__expand_placed_at_method(scope, axis, coord)
         })
     }
 
@@ -206,7 +206,7 @@ impl FactorExpand {
         until: NativeExpand<u32>,
     ) -> FactorExpand {
         self.spanning(axis, |scale| {
-            scale.__expand_run_within_method(scope, axis, from.clone(), until.clone())
+            scale.__expand_run_within_method(scope, axis, from, until)
         })
     }
 

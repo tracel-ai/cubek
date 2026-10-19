@@ -283,8 +283,8 @@ fn a_grouped_operand_stages_the_slab_of_each_tile() {
 }
 
 /// `out[rows] = x[rows] · (W[e] ⊗ s[e])` with `W` packed eight bits a field, four to a word, and
-/// one scale per expert and column: the routed weights are quantized, and the scales they carry
-/// move to the same expert.
+/// one scale per expert and contracted feature: the routed weights are quantized, and the scales
+/// they carry move to the same expert.
 #[test]
 fn a_routed_packed_operand_reads_its_scales_at_the_same_expert() {
     let field = QuantValue::Q8S;
@@ -353,7 +353,7 @@ fn a_routed_packed_operand_reads_its_scales_at_the_same_expert() {
         1,
         TileSpec::direct(&[EXPERT, K, N]).packed(field),
     )
-    .scales(f32_arg(s, TileSpec::direct(&[EXPERT, N])))
+    .scales(f32_arg(s, TileSpec::direct(&[EXPERT, K])))
     .indexed(
         table(&client, &ROUTES, Shape::new([ROWS]), &[M]),
         Indexing::Coordinate(EXPERT),
@@ -380,8 +380,8 @@ fn a_routed_packed_operand_reads_its_scales_at_the_same_expert() {
         .iter()
         .enumerate()
         .map(|(i, &v)| {
-            let (e, n) = (i / (FEATURES * FEATURES), i % FEATURES);
-            v as f32 * scales[e * FEATURES + n]
+            let (e, k) = (i / (FEATURES * FEATURES), i / FEATURES % FEATURES);
+            v as f32 * scales[e * FEATURES + k]
         })
         .collect();
     let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
@@ -404,7 +404,7 @@ const BLOCK: usize = 4;
 /// `out[g] = Σ packed[p]` over group `g`'s rows: the plain blocked fold over the rows the
 /// activations place themselves at. The walk is the run's, so a group of no rows takes no step.
 #[cube(launch)]
-fn ragged_sum_kernel<E: Numeric>(
+fn indexed_ragged_sum_kernel<E: Numeric>(
     packed: &TileArg<'_>,
     out: &TileArg<'_>,
     space: Partitioning,
@@ -459,7 +459,7 @@ fn run_ragged(ends: &[u32]) -> HostData {
         .custom(vec![-1.0; GROUPS * FEATURES])
         .generate_without_host_data();
 
-    ragged_sum_kernel::launch(
+    indexed_ragged_sum_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -529,8 +529,8 @@ fn a_run_that_ends_before_it_starts_is_empty() {
     }
     let want = expected_ragged(&ends);
     for g in [0, 2, 3] {
-        for d in 0..FEATURES {
-            assert_eq!(got.get_f32(&[g, d]), want[g][d], "group {g} feature {d}");
+        for (d, cell) in want[g].iter().enumerate() {
+            assert_eq!(got.get_f32(&[g, d]), *cell, "group {g} feature {d}");
         }
     }
 }

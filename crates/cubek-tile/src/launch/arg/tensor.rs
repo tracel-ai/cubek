@@ -408,13 +408,13 @@ impl TileArgLaunch {
     }
 
     /// These values with their windows placed by `table`, whose dims are its keys, as `indexing`
-    /// says ([`Indexing`]). The scales they carry, before or after, move with them wherever they
-    /// span the placed axis.
+    /// says ([`Indexing`]). The scales they carry move with them wherever they span the placed
+    /// axis; state them first, so they are checked here.
     ///
     /// # Errors
     ///
-    /// A table that is not plain `u32` entries over one dim per key, or values (or a scale level
-    /// spanning the placed axis) whose windows an entry cannot place ([`Indexing::validate`]).
+    /// The [`Refusal`] for a table that is not plain `u32` entries over one dim per key, or for
+    /// values, or a scale level spanning the placed axis, whose windows an entry cannot place.
     pub fn indexed(mut self, table: TileArgLaunch, indexing: Indexing) -> Result<Self, Refusal> {
         let ValuesLaunch::Tensor { tensor, width } = &table.values else {
             return Err(Refusal::IndexTableNotU32);
