@@ -12,6 +12,7 @@ use cubecl::{
     prelude::TensorBinding,
     quant::scheme::{QuantScheme, QuantValue},
     zspace::Shape,
+    zspace::Tiling,
 };
 use cubecl::{
     frontend::Scalar,
@@ -20,7 +21,11 @@ use cubecl::{
         layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
     },
 };
-use cubek_tile::{Axis, Projection, Space, TileArgLaunch, TileSpec as CubekTileSpec, kind::Field};
+use cubek_tile::{
+    Axis, Launcher, Space, TileArgLaunch, TileSpec as CubekTileSpec,
+    kind::Field,
+    launch::{Arg, Labelled},
+};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -30,6 +35,8 @@ use crate::{TestInput, TestInputBuilder};
 pub struct TileInput {
     handle: TensorHandle,
     space: Space,
+    /// The axes the tile spans, in buffer order.
+    axes: Vec<Axis>,
     levels: usize,
 }
 
@@ -45,6 +52,17 @@ impl TileInput {
             client: client.clone(),
             space,
             levels: None,
+        }
+    }
+
+    /// The tile `handle` holds over `space`, stored `levels` levels deep.
+    fn new(handle: TensorHandle, space: Space, levels: usize) -> Self {
+        let axes = (0..space.rank()).map(|i| space.axis_at(i)).collect();
+        TileInput {
+            handle,
+            space,
+            axes,
+            levels,
         }
     }
 
@@ -129,21 +147,36 @@ impl TileInput {
         .into_tensor_arg()
     }
 
-    /// The tile as one launch argument, served at the element it holds, bound `width` wide: its
-    /// scalar-unit tensor paired with its [`spec`](Self::spec).
-    pub fn arg(&self, width: usize) -> TileArgLaunch {
-        TileArgLaunch::new(self.tensor_arg(1), self.handle.dtype, width, self.spec())
+    /// The tile as one operand of `launcher`, served at the element it holds, bound `width` wide.
+    /// The launch derives its spec: the axes its tiles reach past are masked, and a stored tiling
+    /// is read as the buffer lays it out.
+    ///
+    /// # Panics
+    ///
+    /// Where the launch refuses the binding.
+    pub fn arg(&self, launcher: &Launcher, width: usize) -> TileArgLaunch {
+        self.bind(launcher)
+            .vectorize(width)
+            .build()
+            .unwrap_or_else(|refusal| panic!("TileInput::arg: {refusal}"))
+            .arg()
     }
 
-    /// The comptime [`CubekTileSpec`] a kernel feeds `Tile::of`: the axes this tile spans
-    /// (its own space's, in buffer order) paired with its derived storage.
-    pub fn spec(&self) -> CubekTileSpec {
-        let axes: Vec<_> = (0..self.space.rank())
-            .map(|i| self.space.axis_at(i))
-            .collect();
-        let levels = self.handle.shape().len() / self.space.rank() - 1;
-        // Every axis is stored at every level, so the dims name the axes once per level.
-        CubekTileSpec::new(Projection::tiled(&axes, &axes.repeat(levels + 1)))
+    /// [`arg`](Self::arg) before it is built: the launch's binding of this tile, labelled with
+    /// its axes, for a caller that states more of it (a delivery, a boundary).
+    pub fn bind<'a>(&'a self, launcher: &'a Launcher) -> Arg<'a, Labelled> {
+        let mut binding = self.handle.clone().binding();
+        binding.tiling = self.tiling();
+        launcher.arg(binding, self.handle.dtype).axes(&self.axes)
+    }
+
+    /// How the buffer stores each axis: once untiled, else once per level and once for the grid.
+    fn tiling(&self) -> Tiling {
+        match self.levels {
+            0 => Tiling::UNTILED,
+            levels => Tiling::new(&vec![levels + 1; self.space.rank()])
+                .expect("TileInput: a tiling the buffer's dims hold"),
+        }
     }
 
     /// The semantic space the tile lives in.
@@ -298,11 +331,11 @@ impl TileInputBuilder {
             dims.extend_from_slice(block);
         }
         let builder = TestInput::builder(self.client, Shape::from(dims));
-        TileInput {
-            handle: fill(builder).generate_without_host_data(),
-            space: self.space,
-            levels: levels.len(),
-        }
+        TileInput::new(
+            fill(builder).generate_without_host_data(),
+            self.space,
+            levels.len(),
+        )
     }
 }
 
@@ -360,11 +393,11 @@ impl QuantizedTileInputBuilder {
             .generate_without_host_data();
 
         QuantizedTileInput {
-            tile: TileInput {
-                handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
-                space: self.space,
-                levels: 0,
-            },
+            tile: TileInput::new(
+                TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
+                self.space,
+                0,
+            ),
             scales,
             scheme: self.scheme,
             table: None,
@@ -417,11 +450,11 @@ impl QuantizedTileInputBuilder {
             .generate_without_host_data();
 
         QuantizedTileInput {
-            tile: TileInput {
-                handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
-                space: self.space,
-                levels: 0,
-            },
+            tile: TileInput::new(
+                TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
+                self.space,
+                0,
+            ),
             scales,
             scheme: self.scheme,
             table: Some(table_handle),

@@ -144,14 +144,13 @@ fn ring_matmul_with(
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
-    let dtype = f32::elem_type_native();
     ring_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(a.tensor_arg(1), dtype, 1, a.spec().delivery(delivery)),
-        TileArgLaunch::new(b.tensor_arg(1), dtype, 1, b.spec().delivery(delivery)),
-        c.arg(1),
+        a.bind(&launcher).delivery(delivery).build().unwrap().arg(),
+        b.bind(&launcher).delivery(delivery).build().unwrap().arg(),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         depth,
     );

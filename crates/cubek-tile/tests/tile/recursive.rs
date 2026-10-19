@@ -29,13 +29,14 @@ fn recursive_two_level_tiled_view() {
 
     // The copy kernel only reads/writes through the views: no partitioning, so the
     // spaces carry no partitioner.
+    let launch = uncut(&client, &space, &space);
     copy_logical::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        input.arg(1),
-        output.arg(1),
-        uncut(&client, &space, &space).partitioning_arg(),
+        input.arg(&launch, 1),
+        output.arg(&launch, 1),
+        launch.partitioning_arg(),
         f32::elem_type_native(),
     );
 

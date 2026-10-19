@@ -30,13 +30,14 @@ fn copy_non_quantized_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
+    let launch = uncut(&client, &space, &space);
     plain_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        input.arg(1),
-        output.arg(1),
-        uncut(&client, &space, &space).partitioning_arg(),
+        input.arg(&launch, 1),
+        output.arg(&launch, 1),
+        launch.partitioning_arg(),
     );
 
     let input_host = HostData::from_tensor_handle(&client, input.handle(), HostDataType::F32);
@@ -75,8 +76,8 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         &client,
         launch.cube_count(),
         launch.cube_dim(),
-        input.arg(1),
-        output.arg(1),
+        input.arg(&launch, 1),
+        output.arg(&launch, 1),
         launch.partitioning_arg(),
     );
 

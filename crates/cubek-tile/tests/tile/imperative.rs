@@ -117,9 +117,9 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),
-        a.arg(1),
-        b.arg(1),
-        c.arg(1),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         depth,
     );
@@ -196,9 +196,9 @@ fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),
-        a.arg(1),
-        b.arg(1),
-        c.arg(1),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
     );
 
