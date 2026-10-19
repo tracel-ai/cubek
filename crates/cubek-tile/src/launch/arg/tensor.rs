@@ -351,6 +351,11 @@ impl TileArgLaunch {
     }
 
     fn of(values: ValuesLaunch, element: ElemType, spec: TileSpec) -> Self {
+        assert!(
+            spec.packing == Packing::Plain || element == u32::elem_type_native(),
+            "TileArgLaunch: a packed operand is bound at the u32 words its buffer holds, not \
+             {element:?}"
+        );
         Self {
             values,
             spec,

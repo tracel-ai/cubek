@@ -365,7 +365,7 @@ fn check_nvfp4_rows(
         Staged::Nothing | Staged::Activation => launcher
             .arg(
                 tensor(scale_words, vec![n, blocks], u32::elem_type_native()),
-                f32::elem_type_native(),
+                u32::elem_type_native(),
             )
             .axes(&[N, KB])
             .packed(Field::Fp8(Fp8Format::E4M3))

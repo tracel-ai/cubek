@@ -3147,3 +3147,25 @@ fn check_looked_up_copy(bits: usize, width: usize) {
         }
     }
 }
+
+/// **A packed operand is bound at the words its buffer holds.** At any other element its buffer
+/// would be read as values it does not hold, so the binding refuses it.
+#[test]
+#[should_panic(
+    expected = "TileArgLaunch: a packed operand is bound at the u32 words its buffer \
+                           holds, not"
+)]
+fn a_packed_operand_is_bound_at_its_words() {
+    let client = cubecl::test_device().client();
+    let words = TensorHandle::new_contiguous(
+        vec![1, 1],
+        client.create_from_slice(u32::as_bytes(&[0])),
+        u32::elem_type_native(),
+    );
+    TileArgLaunch::new(
+        words.binding().into_tensor_arg(),
+        f16::elem_type_native(),
+        1,
+        TileSpec::direct(&[M, N]).packed(Field::Quant(QuantValue::E2M1)),
+    );
+}
