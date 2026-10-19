@@ -319,8 +319,8 @@ fn each_plane(
                 .__expand_region_method(scope, 0usize.into_expand(scope));
             each_plane(scope, first, body, unroll)
         }
-        Coverage::Distribute(scope) => panic!(
-            "Region::planes: a level dealt to each {scope:?} lies below this region before any \
+        Coverage::Distribute(other) => panic!(
+            "Region::planes: a level dealt to each {other:?} lies below this region before any \
              plane level, so this region has no planes of its own"
         ),
     }
