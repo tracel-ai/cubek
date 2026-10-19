@@ -54,7 +54,8 @@ enum Staged {
 
 /// `c = a · b`, a leaf of `WINDOW` along `k` at a time, through the manual-mma instruction, `b`
 /// dequantized at `decoded` into the fragments it meets. An operand under block scales carries
-/// them; a per-tensor scale above them leaves `b` for the sum (`Tile::factor`). Each operand read straight, or out of a stage in shared memory as `staged` says.
+/// them; a per-tensor scale above them leaves `b` for the sum (`Tile::factor`). Each operand read
+/// straight, or out of a stage in shared memory as `staged` says.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn lane_run_matmul(
@@ -68,7 +69,6 @@ fn lane_run_matmul(
 ) {
     let a = a.tile(&space);
     let mut c = c.tile(&space);
-    // What the sum takes out of the weight, a per-tensor scale above its blocks, it applies once.
     let (b, b_factor) = b.tile(&space).factor(c.space());
     let acc = c.accumulator::<f32>(
         &a,
@@ -432,18 +432,19 @@ fn check_nvfp4_rows(
                 .sum::<f32>()
                 * global.unwrap_or(1.0)
         },
-        &(format!(
+        &format!(
             "nvfp4, {rows} rows, k = {k}, a served {width_a} wide{}, codes {words} words a \
-             load, {columns} column fragments",
+             load, {columns} column fragments{}",
             match staged {
                 Staged::Nothing => "",
                 Staged::Activation => " out of a stage",
                 Staged::Both => ", both out of stages",
+            },
+            match global {
+                None => "",
+                Some(_) => ", under a per-tensor scale",
             }
-        ) + match global {
-            None => "",
-            Some(_) => ", under a per-tensor scale",
-        }),
+        ),
     );
 }
 

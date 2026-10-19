@@ -1127,11 +1127,10 @@ impl Tile {
     /// takes out of every term and applies once ([`scaled`](Tile::scaled)), and the tile left
     /// carries the ones each term needs.
     ///
-    /// Whoever reads the tile left: an instruction reading words of block scales, which hold no
-    /// scale above them, or a load decoding the values, which then multiplies each by the scales
-    /// it needs alone, so a load that converts codes under one level of scales (lane runs) still
-    /// takes a weight that carries a per-tensor scale above them. A tile indexing a table takes
-    /// none out: only its copy decodes it.
+    /// A decoded tile gives up its outer scales too, not only one under words of block scales: a
+    /// load that converts codes in lane runs takes one level of scales, so a per-tensor scale
+    /// above them has to leave for the sum. A tile indexing a table gives up none, since only its
+    /// copy decodes it.
     pub fn factor(&self, _space: Space) -> (Tile, Factor) {
         unexpanded!()
     }
