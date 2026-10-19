@@ -96,7 +96,10 @@ impl Window {
 
     /// This window addressing as a read that zeroes past the edge must: every checked axis
     /// clamps onto the edge cell, so the address stays in the buffer whatever the read keeps.
-    #[allow(dead_code, reason = "called through its expansion, by `WindowedView`'s reads")]
+    #[allow(
+        dead_code,
+        reason = "called through its expansion, by `WindowedView`'s reads"
+    )]
     pub(crate) fn edge_clamped(self) -> Window {
         Window {
             origin: self.origin,

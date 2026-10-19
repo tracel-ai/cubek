@@ -1716,19 +1716,19 @@ fn matmul_cpu_dynamic_k() {
         .tile(&[edge, edge])
         .uniform(4242, 10., 100.);
 
+    let dynamic_k = uncut(
+        &client,
+        &launcher.space().clone().with_dynamic(&[K]),
+        launcher.space(),
+    );
     matmul_in_place::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(&launcher, 1),
-        b.arg(&launcher, 1),
-        c.arg(&launcher, 1),
-        uncut(
-            &client,
-            &launcher.space().clone().with_dynamic(&[K]),
-            launcher.space(),
-        )
-        .partitioning_arg(),
+        a.arg(&dynamic_k, 1),
+        b.arg(&dynamic_k, 1),
+        c.arg(&dynamic_k, 1),
+        dynamic_k.partitioning_arg(),
         one_cube(),
         None,
         launcher.partitioning().level(0),
