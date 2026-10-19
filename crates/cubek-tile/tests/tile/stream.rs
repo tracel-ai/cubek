@@ -336,7 +336,8 @@ fn stream_matmul_staged_rhs<E: Numeric>(
             Semiring::SUM_PROD,
         );
         let cells = region.over(&inner).range(from, steps);
-        let mut stages = Stages::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
+        let mut stages =
+            Stages::smem_single(&cells, &b_region, StageStorage::Strided, 1usize, None);
         stages.pipelined(cells, |slot, cell| {
             let mut acc_cell = acc.at(cell);
             let a_cell = a_region.at(cell);

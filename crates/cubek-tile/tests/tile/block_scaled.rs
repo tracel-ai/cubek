@@ -57,7 +57,7 @@ fn block_scaled_matmul<E: Numeric>(
         Semiring::SUM_PROD,
     );
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_r = acc.at(region);
         let a_scales_r = a_scales.at(region);
@@ -95,7 +95,7 @@ fn block_scaled_matmul_under_words<E: Numeric>(
         Semiring::SUM_PROD,
     );
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {

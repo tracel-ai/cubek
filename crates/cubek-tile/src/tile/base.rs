@@ -244,13 +244,16 @@ impl Tile {
         })
     }
 
-    /// The element a stage of this tile holds: the values its fill decodes, at
+    /// The element a stage of this tile holds: the values its fill decodes, at `decoded` or
     /// [`read_element`](Tile::read_element), or what the tile holds.
-    pub(crate) fn staged_element(&self) -> comptime_type!(ElemType) {
+    pub(crate) fn staged_element(
+        &self,
+        #[comptime] decoded: Option<ElemType>,
+    ) -> comptime_type!(ElemType) {
         let staged = self.stage_element();
         let read = self.read_element();
         comptime!(match staged {
-            StageElement::Decoded => read,
+            StageElement::Decoded => decoded.unwrap_or(read),
             StageElement::Served | StageElement::Stored => self.element,
         })
     }
@@ -667,7 +670,7 @@ impl Tile {
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
     pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile {
-        let define!(Staged) = self.staged_element();
+        let define!(Staged) = self.staged_element(comptime!(None));
         Memory::stage::<Staged>(
             self,
             level,
@@ -690,6 +693,7 @@ impl Tile {
                 depth: walk.depth(),
                 storage,
                 width: None,
+                decoded: None,
                 owner,
             }),
         )

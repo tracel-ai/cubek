@@ -2700,7 +2700,8 @@ fn decoded_tile_order_copy(
             }
             CopiedThrough::AStage => {
                 let run = cube.walk();
-                let mut stages = Stages::smem_single(&run, &decoded, StageStorage::Strided, 1usize);
+                let mut stages =
+                    Stages::smem_single(&run, &decoded, StageStorage::Strided, 1usize, None);
                 stages.pipelined(run, |slot, stage| {
                     let mut out_stage = out_cube.at(stage);
                     slot.consume(|b_stage| {
@@ -2791,7 +2792,8 @@ enum Unpacked {
 
 /// [`stepped_scaled_matmul`] with each cube staging the activation and the weight a block at a
 /// time, held as `storage` says, the weight unpacked where `unpacked` says and dequantized at
-/// `decoded` for the instruction, summing in `A`.
+/// `decoded` for the instruction, summing in `A`: a stage the fill decodes holds `decoded`, and
+/// words staged as they are stored are dequantized at it by each plane.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn staged_stepped_scaled_matmul<A: Numeric>(
@@ -2818,7 +2820,14 @@ fn staged_stepped_scaled_matmul<A: Numeric>(
             Unpacked::ByEachPlane => b_cube.clone(),
             Unpacked::ByTheFill => b_cube.mul(&scale_cube),
         };
-        let mut stages = Stages::smem(&run, &a_cube, &staged, comptime!(storage.clone()), 1usize);
+        let mut stages = Stages::smem(
+            &run,
+            &a_cube,
+            &staged,
+            comptime!(storage.clone()),
+            1usize,
+            comptime!(Some(decoded)),
+        );
         stages.walk(run, Prefetch::InSlots, |slot, stage| {
             let sum_stage = sum.at(stage);
             let scale_stage = scale_cube.at(stage);
@@ -3012,7 +3021,8 @@ fn a_tile_ordered_weight_staged_as_its_words_lands_a_step_at_a_time_a_window_a_p
 }
 
 /// The same weight decoded by the copy filling each stage instead: the stage holds the weight's
-/// values under their scales, and the planes contract the decoded stage as they would a float one.
+/// values under their scales at the activation's element, as the kernel names it, and the planes
+/// contract the decoded stage as they would a float one.
 #[test]
 fn a_tile_ordered_weight_decoded_by_the_stage_fill_contracts_as_its_values() {
     check_staged_stepped(
@@ -3206,7 +3216,14 @@ fn staged_scaled_matmul(
     let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a.mul(&scale), &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(
+        &walk,
+        &a.mul(&scale),
+        &b,
+        StageStorage::Strided,
+        depth,
+        None,
+    );
     stages.pipelined(walk, |slot, region| {
         let mut c_r = c
             .at(region)

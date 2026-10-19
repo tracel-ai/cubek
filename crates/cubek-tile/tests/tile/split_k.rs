@@ -833,6 +833,7 @@ fn atomic_split_cmma<E: Numeric>(
             &b_cube,
             comptime!(StageStorage::Strided),
             1usize,
+            None,
         );
         stages.pipelined(walk, |slot, stage| {
             let mut acc_s = acc.at(stage);

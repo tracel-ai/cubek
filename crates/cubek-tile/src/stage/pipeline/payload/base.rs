@@ -20,6 +20,8 @@ pub(crate) struct StageSpec {
     pub(crate) depth: usize,
     pub(crate) storage: StageStorage,
     pub(crate) width: Option<usize>,
+    /// The element a stage that decodes its operand holds; `f32` where `None`.
+    pub(crate) decoded: Option<ElemType>,
     pub(crate) owner: StageOwner,
 }
 
@@ -57,7 +59,7 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
 /// out of it takes a window for every plane the levels lay out.
 #[cube]
 pub(crate) fn stage_one(operand: &Tile, #[comptime] spec: StageSpec) -> Tile {
-    let define!(Staged) = operand.staged_element();
+    let define!(Staged) = operand.staged_element(comptime!(spec.decoded));
     let stage = Memory::stage::<Staged>(
         operand,
         comptime!(spec.level.clone()),

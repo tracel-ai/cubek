@@ -113,7 +113,7 @@ fn plane_attention<E: Float>(
             let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
             q_s.copy_from(&q_p);
             sync_plane();
-            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize, None);
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
@@ -204,7 +204,7 @@ fn register_plane_attention<E: Float>(
             let logits =
                 Tile::stage_accumulator::<f32>(&walk, comptime!(vec![Q, S]), &q_s, instruction);
             let mut softmax = OnlineSoftmax::<f32>::along(&logits, S);
-            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize, None);
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
@@ -405,7 +405,7 @@ fn relayed_attention<E: Float>(
     let mut q_s = q_c.stage_for(&walk, StageStorage::Strided);
     q_s.copy_from(&q_c);
     sync_cube();
-    let mut stages = Stages::smem(&walk, &k, &v, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &k, &v, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, stage| {
         slot.consume(|k_s, v_s| {
             for plane in stage {

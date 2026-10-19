@@ -88,7 +88,7 @@ fn lane_run_matmul(
         }
         Staged::Activation => {
             let walk = space.over(&level);
-            let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, 1usize);
+            let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, 1usize, None);
             stages.pipelined(walk, |slot, region| {
                 let mut acc_r = acc.at(region);
                 let b_r = acc_r.dequantized(&b.at(region), decoded);
@@ -99,7 +99,7 @@ fn lane_run_matmul(
         }
         Staged::Both => {
             let walk = space.over(&level);
-            let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+            let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
             stages.pipelined(walk, |slot, region| {
                 let mut acc_r = acc.at(region);
                 slot.consume(|a_r, b_r| {

@@ -116,7 +116,7 @@ fn product_kernel_staged<E: Float>(
     .tile::<E>();
     let output = output.tile(&space);
     let walk = source.over(&level);
-    let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut output_region = output.at(region);
         slot.consume(|staged| {
