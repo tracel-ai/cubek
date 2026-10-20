@@ -536,7 +536,7 @@ fn smem_split_fragment_matmul<E: Numeric>(
                     turned += 1.0;
                 }
             }
-            touched[CUBE_POS as usize] = turned;
+            touched[CUBE_POS] = turned;
         }
     }
 }
