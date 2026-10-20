@@ -1,3 +1,4 @@
+mod bilinear_backward;
 mod nearest_backward;
 
 use cubecl::client::Client;
