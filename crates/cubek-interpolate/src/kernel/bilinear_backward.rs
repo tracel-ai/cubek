@@ -167,7 +167,7 @@ fn sample_weight<F: Float>(
     let fraction = F::cast_from(numerator % denominator) / F::cast_from(denominator);
     let mut weight = F::zero();
     if input == lower {
-        weight += F::new(1.0_f32) - fraction;
+        weight += F::new(1.0) - fraction;
     }
     if input == upper {
         weight += fraction;
