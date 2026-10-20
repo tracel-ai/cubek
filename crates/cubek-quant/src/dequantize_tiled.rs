@@ -1,3 +1,4 @@
+use crate::quantized_arg;
 use cubecl::{
     ir::ElemType,
     prelude::*,
@@ -88,18 +89,14 @@ pub fn launch_ref(
     .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
     // One scale for the whole tensor: a scale tile over no axis of the values.
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
-    let values = TileArgLaunch::new(
-        input.into_tensor_arg(),
-        u32::elem_type_native(),
-        1,
-        TileSpec::direct(&[M, N]).packed(field),
+    let values = quantized_arg(
+        scheme,
+        launch.arg(input, u32::elem_type_native()).axes(&[M, N]),
+        [launch
+            .arg(scales, u32::elem_type_native())
+            .gathered(per_tensor)],
     )
-    .scales(TileArgLaunch::new(
-        scales.into_tensor_arg(),
-        f32::elem_type_native(),
-        1,
-        TileSpec::new(per_tensor),
-    ));
+    .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
     dequantize::launch(
         client,
         cube_count,
