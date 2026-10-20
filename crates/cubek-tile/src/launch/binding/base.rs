@@ -306,11 +306,11 @@ pub struct Bound {
 impl Bound {
     /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
     pub fn arg(self) -> TileArgLaunch {
-        let (width, spec) = (self.bound_width(), self.spec.clone());
+        let width = self.bound_width();
         let (tensor, element) = self
             .tensor
             .expect("Bound::arg: this operand was built over geometry alone and has no tensor");
-        TileArgLaunch::new(tensor, element, width, spec)
+        TileArgLaunch::new(tensor, element, width, self.spec)
     }
 
     /// The tensor argument itself; panics for an operand built over geometry alone.
