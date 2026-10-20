@@ -1,11 +1,15 @@
+use std::fmt::Display;
+
 use crate::{components::global::args::RuntimeArgs, routines::unit::UnitMatmul};
 use cubecl::client::Client;
 use cubek_matmul::{
-    definition::{AccumulatorOperand, MatmulProblem},
+    definition::{MatmulElems, MatmulProblem},
     multi_level::{
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
-        definition::{BatchMatmulBlueprint, TilingScheme},
-        routines::{TileSizeSelection, batch::simple_unit::SimpleUnitSelectionArgs},
+        definition::BatchMatmulBlueprint,
+        routines::{
+            TileSizeSelection, UnitSmemBudget, batch::simple_unit::SimpleUnitSelectionArgs,
+        },
         stage::{SwizzleMode, SwizzleModes},
     },
     routine::BlueprintStrategy,
@@ -29,10 +33,9 @@ pub enum UnitStrategy {
 /// along `(M, N, K)`.
 ///
 /// The tile `(4, 4, 4)` and stage `(16, 8, 1)` are held constant, so the stage
-/// a preset asks for is `(64*m) x (32*n) x (4*k)` output/reduction elements:
-/// the partition is the one knob, and it is also the one [`UnitStrategy::blueprint`]
-/// shrinks when a stage overflows shared memory. Keeping the stage fixed is what
-/// lets the shared-memory estimate below stay a closed form.
+/// a preset asks for is `(64*m) x (32*n) x (4*k)` output/reduction elements.
+/// A preset that overflows shared memory is trimmed by [`UnitSmemBudget`], the
+/// same budget the matmul unit selector fits its tilings to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnitTiling {
     partition: (u32, u32, u32),
@@ -60,50 +63,39 @@ impl UnitTiling {
     }
 }
 
+impl Display for UnitStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Inferred(tile_size) => write!(f, "unit_{tile_size}"),
+            Self::Fixed(UnitTiling {
+                partition: (m, n, k),
+            }) => write!(f, "unit_{m}x{n}x{k}"),
+        }
+    }
+}
+
 impl UnitStrategy {
     pub(crate) fn blueprint(
         self,
         client: &Client,
         problem: &MatmulProblem,
+        dtypes: &MatmulElems,
     ) -> BlueprintStrategy<RuntimeArgs, UnitMatmul> {
-        let mut partition = match self {
+        let partition = match self {
             Self::Inferred(tile_size) => {
                 return BlueprintStrategy::Inferred(SimpleUnitSelectionArgs { tile_size });
             }
             Self::Fixed(tiling) => tiling.partition,
         };
-        let tiling = loop {
-            let tiling = TilingScheme::builder()
-                .with_tile_size((4, 4, 4).into())
-                .with_partition_size(partition.into())
-                .with_stage_size((16, 8, 1).into())
-                .build()
-                .unwrap();
-            let m = tiling.elements_per_stage_along_m() as usize;
-            let n = tiling.elements_per_stage_along_n() as usize;
-            let k = tiling.elements_per_stage_along_k() as usize;
-            let accumulator = if problem.accumulator == AccumulatorOperand::Present {
-                m * n
-            } else {
-                0
-            };
-            // Match the matmul validator: operand stages, one output tile per
-            // unit, and the full accumulator reader stage when bias is present.
-            let bytes = 4 * (m * k + k * n + 128 * 16 + accumulator);
-            if bytes <= client.properties().hardware.max_shared_memory_size {
-                break tiling;
-            }
-            if partition.0 > 1 {
-                partition.0 /= 2;
-            } else if partition.1 > 1 {
-                partition.1 /= 2;
-            } else if partition.2 > 1 {
-                partition.2 /= 2;
-            } else {
-                break tiling;
-            }
-        };
         let plane_dim = client.properties().hardware.plane_size_min.max(32);
+        let tiling = UnitSmemBudget {
+            dtypes,
+            stage_buffering: 1,
+            accumulator: problem.accumulator,
+            max_smem: client.properties().hardware.max_shared_memory_size,
+            plane_dim,
+        }
+        .fit((4, 4, 4), partition, (16, 8));
         let mut builder =
             BatchMatmulBlueprint::builder(TileMatmulKind::Register, tiling, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single);

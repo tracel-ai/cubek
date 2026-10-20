@@ -49,8 +49,17 @@ use crate::{
     },
 };
 
+/// Reduction rows one split should cover at least; fewer splits leave the
+/// device underused on large feature maps, more pay for the extra partials.
+const ROWS_PER_SPLIT: usize = 2048;
+const MAX_SPLITS: usize = 64;
+/// Bounds the partial matrices independently of the input's spatial extent.
+const MAX_PARTIAL_BYTES: usize = 128 * 1024 * 1024;
+
+/// How many disjoint reduction intervals a weight gradient over `rows`
+/// output positions is cut into: a power of two, one when splitting cannot pay.
 pub(crate) fn split_count(rows: usize) -> usize {
-    let by_rows = (rows / 2048).clamp(1, 64);
+    let by_rows = (rows / ROWS_PER_SPLIT).clamp(1, MAX_SPLITS);
     1 << by_rows.ilog2()
 }
 
@@ -85,8 +94,6 @@ pub(crate) fn launch_split<const N: usize>(
     let padded_channels = channels.next_multiple_of(client.properties().io_width() as usize / 32);
     let width = taps * padded_channels;
     let mut split = split_count(rows);
-    // Bound the partial matrices independently of the input's spatial extent.
-    const MAX_PARTIAL_BYTES: usize = 128 * 1024 * 1024;
     let Some(partial_bytes) = out_channels
         .checked_mul(width)
         .and_then(|n| n.checked_mul(4))
@@ -156,7 +163,7 @@ pub(crate) fn launch_split<const N: usize>(
 
     let settings =
         <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::device_settings(client, vector_sizes);
-    let strategy = strategy.blueprint(client, &matmul_problem);
+    let strategy = strategy.blueprint(client, &matmul_problem, &dtypes);
     let expand = UnitMatmul::expand_blueprint(&matmul_problem, &settings, &strategy)?;
     let launch = <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::prepare(
         &matmul_problem,

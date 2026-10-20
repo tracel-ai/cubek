@@ -2,7 +2,7 @@
 
 use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_convolution::{
-    ConvolutionArgs, ConvolutionInputs, UnitStrategy, UnitTiling, launch_unit,
+    ConvolutionArgs, ConvolutionInputs, Strategy, UnitStrategy, UnitTiling, launch_ref,
 };
 use cubek_matmul::{definition::MatmulElems, multi_level::routines::TileSizeSelection};
 use cubek_std::InputBinding;
@@ -163,8 +163,8 @@ fn check<const N: usize>(
         ] {
             for with_bias in [false, true] {
                 let out = upload(client, &out_shape, &vec![99.0; dy.len()], channel_first);
-                launch_unit(
-                    tile_size,
+                launch_ref(
+                    &Strategy::Unit(tile_size),
                     client,
                     ConvolutionInputs::Forward {
                         input: binding(&input),
@@ -201,8 +201,8 @@ fn check<const N: usize>(
                 );
             }
             let in_grad = upload(client, &shape, &vec![99.0; x.len()], channel_first);
-            launch_unit(
-                tile_size,
+            launch_ref(
+                &Strategy::Unit(tile_size),
                 client,
                 ConvolutionInputs::BackwardData {
                     out_grad: binding(&out_grad),
@@ -224,8 +224,8 @@ fn check<const N: usize>(
                 &format!("dgrad N={N} c={channels} co={out_channels} {tile_size:?}"),
             );
             let weight_grad = upload(client, &weight_shape, &vec![99.0; w.len()], channel_first);
-            launch_unit(
-                tile_size,
+            launch_ref(
+                &Strategy::Unit(tile_size),
                 client,
                 ConvolutionInputs::BackwardWeight {
                     input: binding(&input),

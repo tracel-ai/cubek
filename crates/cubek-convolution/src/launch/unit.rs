@@ -15,10 +15,9 @@ use crate::{
 
 /// Launch F32 register-tiled implicit convolution without accelerated matrix instructions.
 ///
-/// Supports forward (including bias), data gradients and weight gradients. The
-/// input and output bindings use the same channel-last semantics as [`super::launch_ref`].
+/// Supports forward (including bias), data gradients and weight gradients.
 #[allow(clippy::result_large_err)]
-pub fn launch_unit<const N: usize>(
+pub(crate) fn launch<const N: usize>(
     strategy: UnitStrategy,
     client: &Client,
     inputs: ConvolutionInputs,
@@ -138,7 +137,7 @@ pub fn launch_unit<const N: usize>(
     if matches!(&inputs, ConvolutionInputs::Forward { bias: Some(_), .. }) {
         problem.accumulator = AccumulatorOperand::Present;
     }
-    let blueprint_strategy = strategy.blueprint(client, &problem);
+    let blueprint_strategy = strategy.blueprint(client, &problem, &dtypes);
     match inputs {
         ConvolutionInputs::Forward {
             input,

@@ -28,6 +28,7 @@ use crate::{
     kernels::{backward_data, backward_weight, forward},
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
+        unit,
     },
     routines::{
         Routine,
@@ -81,6 +82,9 @@ pub fn launch_ref<const N_SPATIAL: usize>(
             // the explicit tile_kind here is unused; we pass Cmma as a benign
             // default (it gets overwritten by the forced blueprint).
             (*algorithm, AcceleratedTileKind::Cmma, Some(matmul))
+        }
+        Strategy::Unit(strategy) => {
+            return unit::launch(*strategy, client, inputs, args, dtypes);
         }
     };
 
