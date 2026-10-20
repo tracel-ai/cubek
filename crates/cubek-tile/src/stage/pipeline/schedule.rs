@@ -167,15 +167,14 @@ impl StagesExpand<OperandPair> {
         F: FnMut(&Scope, &mut SlotExpand<OperandPair>, &RegionExpand),
     {
         // The laps whose every region has a next one to fetch: no branch around the fetch, so what
-        // it computes that no lap changes (each unit's place in the stage) leaves the loop. A walk
-        // over a run proves every region but its last inside the run: these laps stop before
-        // fetching the last, and fetch unchecked.
+        // it computes that no lap changes (each unit's place in the stage) leaves the loop. Over a
+        // run ([`Walk::run`]) they leave its last region to the last laps and fetch unchecked.
         let depth = self.depth;
-        let (ahead, sources) = match walk.run {
-            None => (1, self.sources.clone()),
-            Some(_) => (2, self.sources.__expand_inside_runs_method(scope)),
+        let (held_back, sources) = match walk.run {
+            None => (0, self.sources.clone()),
+            Some(_) => (1, self.sources.__expand_inside_runs_method(scope)),
         };
-        let steady = steady_laps(scope, total, ahead, depth);
+        let steady = steady_laps(scope, total, 1 + held_back, depth);
         let mut steady_body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let target = (j + 1) % depth;
@@ -259,8 +258,8 @@ impl StagesExpand<OperandPair> {
         };
         // One lap is left whenever the walk holds a region (`ceil(t / d) - floor((t - 1) / d)`),
         // none when it holds nothing, and the body guards every region it names: it runs once,
-        // straight, rather than as a loop around a copy of the contraction. A walk over a run keeps
-        // one more region back, which may leave a second lap.
+        // straight, rather than as a loop around a copy of the contraction. The region a run's
+        // steady laps leave may make it two.
         match walk.run {
             None => body(scope, steady),
             Some(_) => {
@@ -373,24 +372,16 @@ mod shared {
         let laps = total
             .__expand_plus_method(scope, (depth - 1).into_expand(scope))
             .__expand_divided_by_method(scope, depth.into_expand(scope));
-        // A walk over a run proves every region but its last inside the run: its steady laps stop
-        // before filling the last, and fill unchecked.
+        // Over a run ([`Walk::run`]) the steady laps leave its last region to the last laps and fill
+        // unchecked.
         let steady = match walk.run {
-            None => steady_ahead_laps(
-                scope,
-                &walk,
-                stages,
-                total,
-                depth - 1,
-                &mut fill,
-                &mut compute,
-            ),
+            None => steady_ahead_laps(scope, &walk, stages, total, 0, &mut fill, &mut compute),
             Some(_) => steady_ahead_laps(
                 scope,
                 &walk,
                 stages,
                 total,
-                depth,
+                1,
                 &mut |scope, stages: &mut StagesExpand<T>, slot, region: &RegionExpand| {
                     stages.fill_inside_run(scope, slot, region)
                 },
@@ -435,17 +426,17 @@ mod shared {
         run_laps(scope, steady, laps, unroll, &mut body);
     }
 
-    /// The laps whose every region has the one `depth - 1` ahead to fill, and `ahead` regions
-    /// after it in the walk, run with no branch around the fill, so what it computes that no lap
-    /// changes (each unit's place in the stage) leaves the loop; the last laps keep the branches.
-    /// One slot fills the region it contracts, so it has none unless `ahead` keeps one region
-    /// back. How many ran.
+    /// The laps whose every region has the one `depth - 1` ahead to fill, `held_back` regions
+    /// short of the walk's end, run with no branch around the fill, so what it computes that no
+    /// lap changes (each unit's place in the stage) leaves the loop; the last laps keep the
+    /// branches and the regions held back. One slot fills the region it contracts, so it has
+    /// steady laps only where a region is held back. How many ran.
     fn steady_ahead_laps<T: CubeType, Fill, F>(
         scope: &Scope,
         walk: &WalkExpand,
         stages: &mut StagesExpand<T>,
         total: NativeExpand<usize>,
-        ahead: usize,
+        held_back: usize,
         fill: &mut Fill,
         compute: &mut F,
     ) -> NativeExpand<usize>
@@ -455,6 +446,7 @@ mod shared {
         F: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
     {
         let depth = stages.depth;
+        let ahead = depth - 1 + held_back;
         if ahead == 0 {
             return 0usize.into_expand(scope);
         }
