@@ -49,8 +49,7 @@ impl Tile {
     /// read, where the tensor cores read through one. A plain operand is returned as it is: it
     /// has nothing to decode. So is any operand of a manual-mma sum, whose contraction decodes
     /// it as it loads it, at its other factor's element ([`Tile::mma`]): loaded here, ahead of
-    /// that factor, its fragments could not hold `k` the way the other factor's do
-    /// ([`DeepLoad`]).
+    /// that factor, its fragments could not hold `k` in the order the other factor's do.
     pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
         let (quantized, packing) = (operand.quantized(), operand.packing());
         let decodes = comptime!(quantized || packing != Packing::Plain);
