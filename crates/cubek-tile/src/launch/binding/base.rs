@@ -2,14 +2,16 @@
 
 use core::marker::PhantomData;
 
+use cubecl::zspace::SmallVec;
+
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 
 use super::{boundaries::Boundaries, labels::Labels};
 use crate::BoundaryPolicy;
 use crate::{
-    Axis, Delivery, Field, Geometry, Launcher, LineMisfit, Packing, Paging, Projection, Refusal,
-    Storage, StoragePartitioning, TileArgLaunch, TileSpec, VectorTile,
+    Axis, Delivery, Extent, Field, Geometry, Launcher, LineMisfit, Packing, Paging, Projection,
+    Refusal, Space, Storage, StoragePartitioning, TileArgLaunch, TileSpec, VectorTile,
 };
 
 /// Typestate marker: the operand's axes are not yet stated.
@@ -367,26 +369,42 @@ fn storage_of(
     let tiles = partitioning
         .map(|storage| storage.contiguous_tiles(&geometry.extents(&labels)))
         .unwrap_or_default();
-    let (space, levels) = (launch.space(), launch.partitioning().levels());
-    let kernel = launch.partitioning().space();
-    let cuts_to = |level: usize, tile: &[(Axis, usize)]| {
-        let leaf = space.leaf(&levels[..=level]);
-        // A tile the kernel hands down dynamic is no window a storage tile can be, whatever
-        // this launch's extent makes it.
-        let fixed = kernel.leaf(&levels[..=level]);
-        axes.iter().all(|&axis| !fixed.is_dynamic(axis))
-            && axes.iter().all(|&axis| {
-                let stored = tile
-                    .iter()
-                    .find(|&&(a, _)| a == axis)
-                    .map_or(1, |&(_, e)| e);
-                leaf.extent(axis) == stored
-            })
+    // Each level's window along the operand's axes, outermost first: the extent this launch cuts
+    // it to, and whether the kernel hands it down dynamic. A level that cuts an axis gives it its
+    // tile; one that does not passes the window above it down.
+    let (space, kernel) = (launch.space(), launch.partitioning().space());
+    let mut window: SmallVec<[(Extent, bool); Space::MAX_RANK]> = axes
+        .iter()
+        .map(|&axis| (space.extent_raw(axis), kernel.is_dynamic(axis)))
+        .collect();
+    let windows: SmallVec<[SmallVec<[(Extent, bool); Space::MAX_RANK]>; 8]> = launch
+        .partitioning()
+        .levels()
+        .iter()
+        .map(|level| {
+            for (&axis, cut) in axes.iter().zip(window.iter_mut()) {
+                if let Some(tile) = level.tile(axis) {
+                    *cut = (Extent::Static(tile), false);
+                }
+            }
+            window.clone()
+        })
+        .collect();
+    // A tile the kernel hands down dynamic is no window a storage tile can be, whatever this
+    // launch's extent makes it.
+    let cuts_to = |window: &[(Extent, bool)], tile: &[(Axis, usize)]| {
+        axes.iter().zip(window).all(|(&axis, &(extent, dynamic))| {
+            let stored = tile
+                .iter()
+                .find(|&&(a, _)| a == axis)
+                .map_or(1, |&(_, e)| e);
+            !dynamic && extent == Extent::Static(stored)
+        })
     };
     let level = tiles
         .iter()
         .rev()
-        .find_map(|tile| (0..levels.len()).find(|&level| cuts_to(level, tile)));
+        .find_map(|tile| windows.iter().position(|window| cuts_to(window, tile)));
     (Storage::Tiled(level), stored_tiles)
 }
 
