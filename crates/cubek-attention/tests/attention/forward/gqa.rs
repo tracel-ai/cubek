@@ -23,7 +23,7 @@ use cubek_attention::{
     forward::launch::{BlueprintStrategy, Strategy, launch_ref},
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, TestInput, assert_equals_approx,
+    ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx,
     launch_and_capture_outcome,
 };
 
@@ -166,7 +166,7 @@ fn grouping_matches_expanded_mha() {
     let key_expanded = fill([batch, num_heads, seq_kv, head_dim], |h| h / group);
     let value_expanded = fill([batch, num_heads, seq_kv, val_dim], |h| h / group);
 
-    let gqa = run_once(
+    let Some(gqa) = run_once(
         &client,
         global_dtypes.clone(),
         (batch, num_heads, num_kv_heads),
@@ -174,8 +174,10 @@ fn grouping_matches_expanded_mha() {
         &query,
         &key,
         &value,
-    );
-    let mha = run_once(
+    ) else {
+        return;
+    };
+    let Some(mha) = run_once(
         &client,
         global_dtypes,
         (batch, num_heads, num_heads),
@@ -183,7 +185,9 @@ fn grouping_matches_expanded_mha() {
         &query,
         &key_expanded,
         &value_expanded,
-    );
+    ) else {
+        return;
+    };
 
     // Expanded K/V hold exactly `group` copies of each packed head, so the two
     // launches are the same computation; only the head arithmetic differs.
@@ -194,8 +198,8 @@ fn grouping_matches_expanded_mha() {
 
 /// Launch once on explicit host data and return the output as [`HostData`].
 ///
-/// Returns `None` when the strategy refuses to compile, so the caller reports
-/// it through the same `CompileError` policy as [`test_launch`].
+/// Returns `None` when the strategy refuses to compile, after routing the
+/// refusal through the same `CompileError` policy as [`test_launch`].
 fn run_once(
     client: &Client,
     global_dtypes: AttentionGlobalTypes,
@@ -204,7 +208,7 @@ fn run_once(
     query: &[f32],
     key: &[f32],
     value: &[f32],
-) -> HostData {
+) -> Option<HostData> {
     let problem = AttentionProblem {
         dims: AttentionDims {
             batch,
@@ -255,10 +259,15 @@ fn run_once(
     });
 
     match outcome {
-        ExecutionOutcome::CompileError(e) => panic!("{e}"),
-        ExecutionOutcome::Executed => {
-            HostData::from_tensor_handle(client, out_handle, HostDataType::F32)
+        ExecutionOutcome::CompileError(e) => {
+            TestOutcome::CompileError(e).enforce();
+            None
         }
+        ExecutionOutcome::Executed => Some(HostData::from_tensor_handle(
+            client,
+            out_handle,
+            HostDataType::F32,
+        )),
     }
 }
 
