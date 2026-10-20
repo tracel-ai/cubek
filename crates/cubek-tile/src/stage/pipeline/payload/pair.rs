@@ -56,6 +56,13 @@ impl Payload<OperandPair> for OperandPair {
         self.rhs.free_stage();
     }
 
+    fn inside_runs(&self) -> OperandPair {
+        OperandPair {
+            lhs: self.lhs.inside_run(),
+            rhs: self.rhs.inside_run(),
+        }
+    }
+
     fn bring(
         &mut self,
         src: &OperandPair,

@@ -445,7 +445,8 @@ const P: Axis = Axis(1);
 const D: Axis = Axis(2);
 
 const GROUPS: usize = 4;
-const PACKED: usize = 10;
+/// Rows of every group, end to end, and rows past the last group's end.
+const PACKED: usize = 16;
 /// Rows in blocks of four: groups start and end off a block's edge.
 const BLOCK: usize = 4;
 
@@ -475,14 +476,14 @@ fn indexed_ragged_sum_kernel<E: Numeric>(
 }
 
 /// [`indexed_ragged_sum_kernel`] with each block of a group's rows staged in shared memory before
-/// it is folded.
+/// it is folded, `depth` stages in flight. The blocks are the group's walk over its run.
 #[cube(launch)]
 fn indexed_staged_ragged_sum_kernel<E: Numeric>(
     packed: &TileArg<'_>,
     out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] group: Level,
-    #[comptime] block: Level,
+    #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     let packed = packed.tile(&space);
@@ -492,8 +493,8 @@ fn indexed_staged_ragged_sum_kernel<E: Numeric>(
         let rows = packed.at(&g);
         let mut total = out.at(&g);
         total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
-        let blocks = rows.over(&block);
-        let mut stages = Stages::smem_single(&blocks, &rows, StageStorage::Strided, 1usize, None);
+        let blocks = g.walk_within(&rows);
+        let mut stages = Stages::smem_single(&blocks, &rows, StageStorage::Strided, depth, None);
         stages.pipelined(blocks, |slot, blk| {
             let mut cell = total.at(blk);
             slot.consume(|rows_s| {
@@ -519,8 +520,15 @@ enum Rows {
     Transposed,
 }
 
+/// How the ragged fold reads each block: where it lies, or staged with this many stages in flight.
+#[derive(Clone, Copy, Debug)]
+enum Fold {
+    InPlace,
+    Staged(usize),
+}
+
 /// The fold over the groups `ends` cuts the rows into, `ends` each group's cumulative end row.
-fn run_ragged(ends: &[u32], rows: Rows, reading: Reading) -> HostData {
+fn run_ragged(ends: &[u32], rows: Rows, fold: Fold) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let launcher = implied(
@@ -567,8 +575,8 @@ fn run_ragged(ends: &[u32], rows: Rows, reading: Reading) -> HostData {
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
     );
-    match reading {
-        Reading::InPlace => indexed_ragged_sum_kernel::launch(
+    match fold {
+        Fold::InPlace => indexed_ragged_sum_kernel::launch(
             &client,
             count,
             dim,
@@ -579,7 +587,7 @@ fn run_ragged(ends: &[u32], rows: Rows, reading: Reading) -> HostData {
             block,
             f32_ty,
         ),
-        Reading::Staged => indexed_staged_ragged_sum_kernel::launch(
+        Fold::Staged(depth) => indexed_staged_ragged_sum_kernel::launch(
             &client,
             count,
             dim,
@@ -587,10 +595,9 @@ fn run_ragged(ends: &[u32], rows: Rows, reading: Reading) -> HostData {
             total,
             launcher.partitioning_arg(),
             group,
-            block,
+            depth,
             f32_ty,
         ),
-        Reading::Skipping => unreachable!("a ragged fold has no step to skip"),
     }
 
     HostData::from_tensor_handle(&client, out, HostDataType::F32)
@@ -633,7 +640,7 @@ fn assert_ragged(got: &HostData, ends: &[u32], what: &str) {
 fn a_ragged_operand_folds_each_group_over_its_own_rows() {
     for ends in [[2u32, 2, 7, 10], [3, 3, 6, 10]] {
         assert_ragged(
-            &run_ragged(&ends, Rows::Lined, Reading::InPlace),
+            &run_ragged(&ends, Rows::Lined, Fold::InPlace),
             &ends,
             "lined",
         );
@@ -646,22 +653,25 @@ fn a_ragged_operand_folds_each_group_over_its_own_rows() {
 fn a_ragged_operand_runs_along_its_innermost_dim() {
     let ends = [2u32, 2, 7, 10];
     assert_ragged(
-        &run_ragged(&ends, Rows::Transposed, Reading::InPlace),
+        &run_ragged(&ends, Rows::Transposed, Fold::InPlace),
         &ends,
         "transposed",
     );
 }
 
-/// The ragged fold with each block staged first: a block wholly inside its group's run is staged
-/// unchecked, and one that crosses the run's end reads zero past it. Under the first table the
-/// third group's first block is whole and every group's last block crosses its end; under the
-/// second the last group's one block is whole.
+/// The ragged fold with each block staged first, one or two stages in flight: the walk over a
+/// run proves every block but its last inside the run, which is staged unchecked, and the last
+/// reads zero past the run's end. Runs of 2, 0, 5 and 3 rows; 3, 0, 3 and 4, the last one whole
+/// block; and 2, 0, 13 and 1, the third four blocks long, enough for two stages to have laps
+/// with nothing to check.
 #[test]
 fn a_ragged_operand_stages_each_block_of_its_run() {
-    for ends in [[2u32, 2, 7, 10], [3, 3, 6, 10]] {
+    for ends in [[2u32, 2, 7, 10], [3, 3, 6, 10], [2, 2, 15, 16]] {
         for rows in [Rows::Lined, Rows::Transposed] {
-            let got = run_ragged(&ends, rows, Reading::Staged);
-            assert_ragged(&got, &ends, &format!("staged, {rows:?}"));
+            for depth in [1, 2] {
+                let got = run_ragged(&ends, rows, Fold::Staged(depth));
+                assert_ragged(&got, &ends, &format!("staged {depth} deep, {rows:?}"));
+            }
         }
     }
 }
@@ -671,7 +681,7 @@ fn a_ragged_operand_stages_each_block_of_its_run() {
 #[test]
 fn a_run_that_ends_before_it_starts_is_empty() {
     let ends = [4u32, 2, 7, 10];
-    let got = run_ragged(&ends, Rows::Lined, Reading::InPlace);
+    let got = run_ragged(&ends, Rows::Lined, Fold::InPlace);
     for d in 0..FEATURES {
         assert_eq!(got.get_f32(&[1, d]), 0.0, "group 1 feature {d}");
     }
@@ -702,8 +712,8 @@ fn indexed_whole_sum_kernel<E: Numeric>(
     }
 }
 
-/// A single group, which no level cuts: its run is the table's one entry, seven of the ten rows,
-/// so the three past it never reach the sum.
+/// A single group, which no level cuts: its run is the table's one entry, seven of the sixteen
+/// rows, so the nine past it never reach the sum.
 #[test]
 fn a_table_no_level_cuts_places_its_one_run() {
     let client = cubecl::test_device().client();

@@ -31,6 +31,10 @@ impl Payload<Tile> for Tile {
         self.free_stage();
     }
 
+    fn inside_runs(&self) -> Tile {
+        self.inside_run()
+    }
+
     fn bring(
         &mut self,
         src: &Tile,

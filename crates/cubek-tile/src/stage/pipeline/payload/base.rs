@@ -46,6 +46,11 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
     /// Free the shared memory this payload's stages hold, for what is declared after it to take.
     fn free(&self);
 
+    /// These operands read where a walk proved its region inside their runs
+    /// ([`Tile::inside_run`]).
+    #[allow(dead_code)] // Reached through its expand, from the schedules' steady laps.
+    fn inside_runs(&self) -> Me;
+
     /// Bring `src`'s window at `region` into this payload, for each operand whose refill is `only`.
     fn bring(
         &mut self,

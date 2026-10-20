@@ -240,24 +240,20 @@ impl Stages<OperandPair> {
         )
     }
 
-    /// Read this unit's share of filling slot `slot` for `region` into `lhs` and `rhs`.
+    /// Read this unit's share of filling slot `slot` with `sources` at `region` into `lhs` and
+    /// `rhs`.
     #[allow(dead_code)] // Reached through its expand, from `prefetched`.
     pub(crate) fn fetch<Lhs: Numeric, Rhs: Numeric>(
         &self,
         #[comptime] slot: usize,
+        sources: &OperandPair,
         region: &Region,
         lhs: &mut Array<Vector<Lhs, FL>>,
         rhs: &mut Array<Vector<Rhs, FR>>,
     ) {
         let staged = self.slots.index(slot);
-        staged
-            .data
-            .lhs
-            .fetch_from(&self.sources.lhs.at(region), lhs);
-        staged
-            .data
-            .rhs
-            .fetch_from(&self.sources.rhs.at(region), rhs);
+        staged.data.lhs.fetch_from(&sources.lhs.at(region), lhs);
+        staged.data.rhs.fetch_from(&sources.rhs.at(region), rhs);
     }
 
     /// Write what [`fetch`](Stages::fetch) read into slot `slot`; the caller owns the rendezvous.

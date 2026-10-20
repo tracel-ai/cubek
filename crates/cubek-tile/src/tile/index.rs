@@ -419,14 +419,20 @@ impl RegionExpand {
     pub fn __expand_walk_within_method(&self, scope: &Scope, tile: &TileExpand) -> WalkExpand {
         let child = self.__expand_child_method(scope);
         let box_space = SpaceExpand::comptime(&child);
-        let sized = match tile.run_axis() {
-            Some(axis) if box_space.contains(axis) && box_space.is_dynamic(axis) => {
+        let run = tile
+            .run_axis()
+            .filter(|&axis| box_space.contains(axis) && box_space.is_dynamic(axis));
+        let sized = match run {
+            Some(axis) => {
                 let extent = tile.clone().__expand_runtime_extent_method(scope, axis);
                 with_extent::expand(scope, &child, box_space.position(axis), extent)
             }
-            _ => child,
+            None => child,
         };
-        Walk::__expand_of(scope, &sized, self.path.next(), self.clone())
+        let level = self.path.next();
+        let mut walk = Walk::__expand_of(scope, &sized, level.clone(), self.clone());
+        walk.run = run.filter(|&axis| level.axes() == [axis] && !level.is_reversed(axis));
+        walk
     }
 }
 
@@ -458,6 +464,28 @@ impl TileExpand {
             },
             _ => None,
         }
+    }
+}
+
+impl Tile {
+    /// This tile read where a walk proved it inside its run: a window masked only past the run's
+    /// end ([`Overhang::Run`]) reads unchecked, any other tile as it is. Its scales are read as
+    /// they are.
+    #[allow(dead_code)] // Reached through its expand, from `Payload::inside_runs`.
+    pub(crate) fn inside_run(&self) -> Tile {
+        cubecl::unexpanded!()
+    }
+}
+
+impl TileExpand {
+    pub(crate) fn __expand_inside_run_method(&self, _scope: &Scope) -> TileExpand {
+        let mut tile = self.clone();
+        if let TileKindExpand::Memory(memory) = &mut tile.kind
+            && memory.access.overhang == Overhang::Run
+        {
+            memory.access.overhang = Overhang::Fits;
+        }
+        tile
     }
 }
 
