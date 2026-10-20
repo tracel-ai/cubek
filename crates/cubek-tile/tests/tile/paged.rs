@@ -296,6 +296,7 @@ fn run_paged_read_blocks(
         lens,
         &[pages.len(), columns],
         pages.iter().flatten().copied().collect(),
+        PAGE_LEN,
         block,
         from,
         |arg, s, p| arg.paged(s, p),
@@ -311,6 +312,7 @@ fn run_paged_read_table(
     lens: &[u32; SEQUENCES],
     shape: &[usize],
     entries: Vec<u32>,
+    page_len: usize,
     block: usize,
     from: u32,
     bind: Bind,
@@ -324,7 +326,7 @@ fn run_paged_read_table(
         Partitioning::new(
             Space::new(&[
                 (B, SEQUENCES),
-                (S, PAGES_EACH * PAGE_LEN),
+                (S, PAGES_EACH * page_len),
                 (F, FEATURES_READ),
             ]),
             Levels::leaf(&[(B, 1), (S, block)])
@@ -336,9 +338,9 @@ fn run_paged_read_table(
     );
 
     let (pool_handle, _) =
-        TestInput::builder(client.clone(), Shape::new([POOL, PAGE_LEN, FEATURES_READ]))
+        TestInput::builder(client.clone(), Shape::new([POOL, page_len, FEATURES_READ]))
             .dtype(f32_ty)
-            .custom(pool_values(PAGE_LEN))
+            .custom(pool_values(page_len))
             .generate_with_f32_host_data();
     let table_handle = TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
         .dtype(u32_ty)
@@ -598,6 +600,36 @@ fn a_paged_read_of_steps_within_a_page_reads_each_sequence_through_its_table() {
     }
 }
 
+/// Steps cut straight from the whole sequence, over pages of four positions: a step of 1, 2 or 4
+/// has an origin aligned to its own size, which proves it inside one page; a step of 3 proves
+/// nothing and may straddle two.
+#[test]
+fn a_flat_walk_over_larger_pages_reads_each_sequence_through_its_table() {
+    let entries = PAGES.iter().flatten().copied().collect::<Vec<_>>();
+    let lens = [9, 12, 7];
+    for (block, from) in [(1, 0), (2, 0), (3, 0), (4, 0), (2, 1), (4, 3)] {
+        let got = run_paged_read_table(
+            &lens,
+            &[SEQUENCES, PAGES_EACH],
+            entries.clone(),
+            WALK_PAGE_LEN,
+            block,
+            from,
+            |arg, s, p| arg.paged(s, p),
+        );
+        let want = expected_paged_read_from(&lens, &rows(&PAGES), from, WALK_PAGE_LEN);
+        for (b, row) in want.iter().enumerate() {
+            for (f, cell) in row.iter().enumerate() {
+                assert_eq!(
+                    got.get_f32(&[b, f]),
+                    *cell,
+                    "steps of {block} from {from}: sequence {b} feature {f}"
+                );
+            }
+        }
+    }
+}
+
 /// A sequence walked a page at a time reads each page through the table once and every step
 /// inside it through that page: steps of one position, of two and of the whole page, lengths
 /// ending inside a page, over pages scattered and shared across sequences. Started past 0, each
@@ -666,6 +698,7 @@ fn a_covering_table_reads_each_sequence_through_it() {
             &lens,
             &shape,
             entries.clone(),
+            PAGE_LEN,
             READ_BLOCK,
             0,
             |arg, s, p| arg.paged_covering(s, p),
@@ -688,6 +721,7 @@ fn a_paged_read_through_a_table_not_of_rank_two_reads_zero() {
         &lens,
         &[entries.len()],
         entries,
+        PAGE_LEN,
         READ_BLOCK,
         0,
         |arg, s, p| arg.paged(s, p),
