@@ -45,6 +45,7 @@ fn upload(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check<const N: usize>(
     client: &Client,
     batch: usize,

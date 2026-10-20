@@ -150,7 +150,7 @@ fn depthwise_weight_partials(
     dw: usize,
     #[comptime] channels_per_cube: usize,
 ) {
-    let block = CUBE_POS as usize;
+    let block = CUBE_POS;
     let split = block / weight_blocks;
     if split >= partials.shape(0) {
         terminate!();

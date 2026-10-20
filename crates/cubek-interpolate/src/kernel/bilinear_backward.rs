@@ -117,7 +117,7 @@ fn contributing_range(
             }
             if input + 1 < input_size {
                 let numerator = (input + 1) * (output_size - 1);
-                end = (numerator + denominator - 1) / denominator;
+                end = numerator.div_ceil(denominator);
             }
         } else {
             let denominator = 2 * input_size;
@@ -131,7 +131,7 @@ fn contributing_range(
                 let scaled = (2 * input + 3) * output_size;
                 end = 0;
                 if scaled > input_size {
-                    end = (scaled - input_size + denominator - 1) / denominator;
+                    end = (scaled - input_size).div_ceil(denominator);
                 }
             }
         }
