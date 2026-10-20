@@ -36,7 +36,7 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    Axis, Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
+    Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
     Space, TileArg, TileArgLaunch, TileSpec,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},
     layout::PhysicalAxisMap,

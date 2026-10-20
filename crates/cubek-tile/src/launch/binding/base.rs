@@ -349,6 +349,10 @@ fn stride_ordered(
     }
 }
 
+/// One level's window along an operand's axes, in their order: the extent the launch cuts each axis
+/// to, and whether the kernel hands it down dynamic.
+type LevelWindow = SmallVec<[(Extent, bool); Space::MAX_RANK]>;
+
 /// The coarsest level whose windows the operand's storage tiles address with one stride per axis
 /// (one contiguous run each), every other window walked through the layout; and the
 /// stored tiles themselves, finest first ([`TileSpec::stored_tiles`]).
@@ -373,11 +377,11 @@ fn storage_of(
     // it to, and whether the kernel hands it down dynamic. A level that cuts an axis gives it its
     // tile; one that does not passes the window above it down.
     let (space, kernel) = (launch.space(), launch.partitioning().space());
-    let mut window: SmallVec<[(Extent, bool); Space::MAX_RANK]> = axes
+    let mut window: LevelWindow = axes
         .iter()
         .map(|&axis| (space.extent_raw(axis), kernel.is_dynamic(axis)))
         .collect();
-    let windows: SmallVec<[SmallVec<[(Extent, bool); Space::MAX_RANK]>; 8]> = launch
+    let windows: SmallVec<[LevelWindow; 8]> = launch
         .partitioning()
         .levels()
         .iter()
