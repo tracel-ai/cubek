@@ -104,7 +104,7 @@ impl AttentionDims {
             ))));
         }
 
-        if self.num_heads % self.num_kv_heads != 0 {
+        if !self.num_heads.is_multiple_of(self.num_kv_heads) {
             return Err(AttentionSetupError::InvalidConfig(Box::new(format!(
                 "num_heads ({}) must be a multiple of num_kv_heads ({})",
                 self.num_heads, self.num_kv_heads

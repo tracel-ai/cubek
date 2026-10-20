@@ -276,7 +276,7 @@ mod tests {
         let kv_per_head = (16 * 4 + 16 * 4) * 4;
 
         assert_eq!(mha_read - gqa_read, 2 * 3 * kv_per_head);
-        assert_eq!(gqa.work().bytes < mha.work().bytes, true);
+        assert!(gqa.work().bytes < mha.work().bytes);
     }
 
     #[test]

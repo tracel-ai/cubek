@@ -66,33 +66,33 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
     // indexes by: K and V use the kv head, Q / Mask / Out use the query head.
 
     fn init_query_reader(
-        heads: GlobalHeads,
+        heads: &GlobalHeads,
         stage_q_offset: u32,
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<'static, AP>;
 
     fn init_key_reader(
-        heads: GlobalHeads,
+        heads: &GlobalHeads,
         key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader;
 
     fn init_value_reader(
-        heads: GlobalHeads,
+        heads: &GlobalHeads,
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader;
 
     fn init_mask_reader(
-        heads: GlobalHeads,
+        heads: &GlobalHeads,
         stage_q_offset: u32,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         #[comptime] config: Self::Config,
     ) -> Self::MaskReader;
 
     fn init_writer(
-        heads: GlobalHeads,
+        heads: &GlobalHeads,
         stage_q_offset: u32,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,

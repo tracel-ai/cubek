@@ -53,11 +53,11 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
         let heads = GlobalHeads::new(batch_index, num_heads, num_kv_heads);
 
         GA::execute(
-            GA::init_query_reader(heads.clone(), stage_q_offset, query, global_config),
-            GA::init_key_reader(heads.clone(), key, global_config),
-            GA::init_value_reader(heads.clone(), value, global_config),
-            GA::init_mask_reader(heads.clone(), stage_q_offset, mask, global_config),
-            GA::init_writer(heads.clone(), stage_q_offset, out, global_config),
+            GA::init_query_reader(&heads, stage_q_offset, query, global_config),
+            GA::init_key_reader(&heads, key, global_config),
+            GA::init_value_reader(&heads, value, global_config),
+            GA::init_mask_reader(&heads, stage_q_offset, mask, global_config),
+            GA::init_writer(&heads, stage_q_offset, out, global_config),
             seq_q,
             seq_kv,
             config.global_config(),
