@@ -15,11 +15,12 @@ use super::super::Window;
 
 /// A buffer addressed through `window`, which alone checks bounds.
 ///
-/// The window's boundaries name every axis that can leave the buffer; the others are in it by
-/// construction. So a checked read compares those axes once, reads the buffer unchecked at the
-/// position clamped onto its edge, and zeroes what lies past it. Read as a window layered over
-/// the buffer, each layer below would check again, the buffer's every axis and its length, and
-/// select the value once per layer.
+/// A checked read compares every axis against the buffer once ([`Window::holds`]), reads the
+/// buffer unchecked at the position clamped onto its edge, and zeroes what lies past it. Every
+/// axis, not only those the window names a boundary on: a window opened at a box larger than its
+/// buffer leaves it along an axis that names none. Read as a window layered over the buffer, each
+/// layer below would check again, the buffer's every axis and its length, and select the value
+/// once per layer.
 #[expect(dead_code, reason = "read through the expand impls below")]
 #[derive(CubeType, Clone)]
 pub(crate) struct WindowedView<'a, T: CubePrimitive> {
@@ -84,26 +85,22 @@ impl<'a, T: CubePrimitive> WindowedViewMut<'a, T> {
 }
 
 impl<'a, T: CubePrimitive> WindowedViewMutExpand<'a, T> {
-    pub(crate) fn __expand_view_mut_method(
-        self,
-        scope: &Scope,
-    ) -> ViewMutExpand<'a, T, CoordsDyn> {
+    pub(crate) fn __expand_view_mut_method(self, scope: &Scope) -> ViewMutExpand<'a, T, CoordsDyn> {
         ViewMutExpand::new(scope, self)
     }
 }
 
 /// The position `pos` of `window` lands on in its buffer, and the position a checked read
-/// addresses instead: clamped onto the edge on every axis the window checks, so it never leaves
-/// the buffer, whatever the read then keeps.
+/// addresses instead: clamped onto the edge on every axis, so it never leaves the buffer,
+/// whatever the read then keeps.
 fn addressed(
     scope: &Scope,
     window: &<Window as CubeType>::ExpandType,
     pos: <CoordsDyn as CubeType>::ExpandType,
-) -> (
-    <CoordsDyn as CubeType>::ExpandType,
-    NativeExpand<bool>,
-) {
-    let in_bounds = window.clone().__expand_is_in_bounds_method(scope, pos.clone());
+) -> (<CoordsDyn as CubeType>::ExpandType, NativeExpand<bool>) {
+    let in_bounds = window
+        .clone()
+        .__expand_is_in_bounds_method(scope, pos.clone());
     let clamped = window.clone().__expand_edge_clamped_method(scope);
     (clamped.__expand_to_source_pos_method(scope, pos), in_bounds)
 }
@@ -116,7 +113,10 @@ macro_rules! windowed_reads {
                 scope: &Scope,
                 pos: <CoordsDyn as CubeType>::ExpandType,
             ) -> T::ExpandType {
-                let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
+                let pos = self
+                    .window
+                    .clone()
+                    .__expand_to_source_pos_method(scope, pos);
                 self.$buffer.__expand_read_method(scope, pos)
             }
 
@@ -145,7 +145,10 @@ macro_rules! windowed_reads {
                 scope: &Scope,
                 pos: <CoordsDyn as CubeType>::ExpandType,
             ) -> T::ExpandType {
-                let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
+                let pos = self
+                    .window
+                    .clone()
+                    .__expand_to_source_pos_method(scope, pos);
                 self.$buffer.__expand_read_unchecked_method(scope, pos)
             }
 
@@ -155,8 +158,14 @@ macro_rules! windowed_reads {
                 pos: <CoordsDyn as CubeType>::ExpandType,
                 end: <CoordsDyn as CubeType>::ExpandType,
             ) -> &SliceExpand<T> {
-                let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
-                let end = self.window.clone().__expand_to_source_pos_method(scope, end);
+                let pos = self
+                    .window
+                    .clone()
+                    .__expand_to_source_pos_method(scope, pos);
+                let end = self
+                    .window
+                    .clone()
+                    .__expand_to_source_pos_method(scope, end);
                 ViewOperationsExpand::<T, CoordsDyn>::__expand_as_linear_slice_method(
                     &self.$buffer,
                     scope,
@@ -172,7 +181,10 @@ macro_rules! windowed_reads {
                 shared_memory: &mut SliceExpand<T>,
                 pos: <CoordsDyn as CubeType>::ExpandType,
             ) {
-                let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
+                let pos = self
+                    .window
+                    .clone()
+                    .__expand_to_source_pos_method(scope, pos);
                 self.$buffer
                     .__expand_tensor_map_load_method(scope, barrier, shared_memory, pos)
             }
@@ -214,7 +226,10 @@ impl<'a, T: CubePrimitive> ViewOperationsMutExpand<T, CoordsDyn> for WindowedVie
         pos: <CoordsDyn as CubeType>::ExpandType,
         value: T::ExpandType,
     ) {
-        let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
+        let pos = self
+            .window
+            .clone()
+            .__expand_to_source_pos_method(scope, pos);
         self.buffer.__expand_write_method(scope, pos, value);
     }
 
@@ -228,7 +243,10 @@ impl<'a, T: CubePrimitive> ViewOperationsMutExpand<T, CoordsDyn> for WindowedVie
             .window
             .clone()
             .__expand_is_in_bounds_method(scope, pos.clone());
-        let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
+        let pos = self
+            .window
+            .clone()
+            .__expand_to_source_pos_method(scope, pos);
         if_expand(scope, in_bounds, |scope| {
             self.buffer.__expand_write_method(scope, pos, value);
         });
@@ -240,8 +258,14 @@ impl<'a, T: CubePrimitive> ViewOperationsMutExpand<T, CoordsDyn> for WindowedVie
         pos: <CoordsDyn as CubeType>::ExpandType,
         end: <CoordsDyn as CubeType>::ExpandType,
     ) -> &mut SliceExpand<T> {
-        let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
-        let end = self.window.clone().__expand_to_source_pos_method(scope, end);
+        let pos = self
+            .window
+            .clone()
+            .__expand_to_source_pos_method(scope, pos);
+        let end = self
+            .window
+            .clone()
+            .__expand_to_source_pos_method(scope, end);
         ViewOperationsMutExpand::<T, CoordsDyn>::__expand_as_linear_slice_mut_method(
             &self.buffer,
             scope,
@@ -256,7 +280,10 @@ impl<'a, T: CubePrimitive> ViewOperationsMutExpand<T, CoordsDyn> for WindowedVie
         shared_memory: &SliceExpand<T>,
         pos: <CoordsDyn as CubeType>::ExpandType,
     ) -> PendingExpand<()> {
-        let pos = self.window.clone().__expand_to_source_pos_method(scope, pos);
+        let pos = self
+            .window
+            .clone()
+            .__expand_to_source_pos_method(scope, pos);
         self.buffer
             .__expand_tensor_map_store_method(scope, shared_memory, pos)
     }
