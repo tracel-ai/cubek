@@ -6,6 +6,7 @@ pub mod selector;
 
 mod blueprint_strategy;
 mod error;
+mod hardware;
 mod input_binding;
 mod matrix_layout;
 mod size;
@@ -13,6 +14,7 @@ mod stage_ident;
 
 pub use blueprint_strategy::*;
 pub use error::*;
+pub use hardware::*;
 pub use input_binding::*;
 pub use matrix_layout::*;
 pub use size::*;
