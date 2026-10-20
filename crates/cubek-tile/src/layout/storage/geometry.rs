@@ -28,6 +28,20 @@ impl Geometry {
         }
     }
 
+    /// A dense row-major buffer of `shape`, coarsest first: what an output with no tensor behind it
+    /// is counted in.
+    pub fn row_major(shape: &[usize]) -> Self {
+        let mut strides = vec![1; shape.len()];
+        for dim in (0..shape.len().saturating_sub(1)).rev() {
+            strides[dim] = strides[dim + 1] * shape[dim + 1];
+        }
+        Self {
+            shape: shape.to_vec(),
+            strides,
+            tiling: Tiling::UNTILED,
+        }
+    }
+
     /// This geometry with its dims stated as pieces of logical dims, as `tiling` says.
     pub(crate) fn with_tiling(mut self, tiling: Tiling) -> Self {
         self.tiling = tiling;

@@ -40,6 +40,31 @@ pub enum Refusal {
     GridNotReadOffLevels { units: u32, plane: u32 },
     /// A cube of `units` units, past the `most` the device holds.
     CubePastDevice { units: u32, most: u32 },
+    /// The kernel works in planes, and the device runs no plane operations.
+    PlanesUnavailable,
+    /// The kernel needs one plane width, and the device's varies between `min` and `max`.
+    ImprecisePlaneDim { min: u32, max: u32 },
+    /// A routine declines a problem it does not serve, for the reason `why`.
+    Declined { why: &'static str },
+    /// A cube shaped `shape` along x, y and z, past the `most` the device spawns along one of them:
+    /// a cube legal in units can still be too long on an axis.
+    CubeShapePastDevice {
+        shape: (u32, u32, u32),
+        most: (u32, u32, u32),
+    },
+    /// A cube with a zero axis, which spawns no units.
+    NoUnits,
+    /// A grid with a zero axis, which spawns no cubes: the runtime returns without dispatching
+    /// anything, and the outputs keep whatever they held.
+    NoCubes,
+    /// A grid of `count` cubes along x, y and z, past the `most` the device launches along one of
+    /// them.
+    GridPastDevice {
+        count: (u32, u32, u32),
+        most: (u32, u32, u32),
+    },
+    /// A cube holding `bytes` of shared memory, past the `most` the device gives one.
+    SharedMemoryPastDevice { bytes: usize, most: usize },
     /// `fillers` planes are set aside to fill a walk's stages, and the device has no barrier type
     /// for the two roles to meet on.
     FillersWithoutBarriers { fillers: u32 },
@@ -175,6 +200,32 @@ impl Display for Refusal {
             Refusal::CubePastDevice { units, most } => write!(
                 f,
                 "Launcher: a cube of {units} units, but the device holds at most {most}"
+            ),
+            Refusal::PlanesUnavailable => {
+                write!(
+                    f,
+                    "the kernel works in planes, and the device runs no plane operations"
+                )
+            }
+            Refusal::ImprecisePlaneDim { min, max } => write!(
+                f,
+                "the kernel needs one plane width, and the device's varies from {min} to {max}"
+            ),
+            Refusal::Declined { why } => f.write_str(why),
+            Refusal::CubeShapePastDevice { shape, most } => write!(
+                f,
+                "Launcher: a cube shaped {shape:?}, but the device spawns at most {most:?}"
+            ),
+            Refusal::NoUnits => write!(f, "Launcher: the cube has a zero axis and spawns no units"),
+            Refusal::NoCubes => write!(f, "Launcher: the grid has a zero axis and spawns no cubes"),
+            Refusal::GridPastDevice { count, most } => write!(
+                f,
+                "Launcher: a grid of {count:?} cubes, but the device launches at most {most:?}"
+            ),
+            Refusal::SharedMemoryPastDevice { bytes, most } => write!(
+                f,
+                "Launcher: a cube holding {bytes} bytes of shared memory, but the device gives \
+                 one at most {most}"
             ),
             Refusal::FillersWithoutBarriers { fillers } => write!(
                 f,

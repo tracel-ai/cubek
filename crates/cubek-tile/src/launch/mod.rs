@@ -8,7 +8,9 @@ pub(crate) mod refusal;
 pub(crate) mod spec;
 
 pub use arg::accumulate::{AccumulateArg, AccumulateArgLaunch};
-pub use arg::destination::{Buffered, Destination, DestinationLaunch, TmaStored};
+pub use arg::destination::{
+    Buffered, Destination, DestinationLaunch, SinkLaunch, SinkLaunchVisitor, TmaStored,
+};
 pub use arg::last_arrival::LastArrival;
 pub use arg::operand::{Output, OutputArgs};
 pub use arg::relay::Relay;

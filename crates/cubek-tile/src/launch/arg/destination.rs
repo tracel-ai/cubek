@@ -4,7 +4,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Bound, Output, OutputArgs, Partitioning, Tile, TileArg, TileArgLaunch, TmaOperand, kind::Write,
+    Bound, Output, OutputArgs, Partitioning, Refusal, Tile, TileArg, TileArgLaunch, TmaOperand,
+    kind::Write, launch::Unbound,
 };
 
 /// Which launch argument carries a kernel's output and how the kernel serves it as a [`Tile`].
@@ -24,6 +25,29 @@ pub trait DestinationLaunch: Destination {
     type Operand;
 
     fn arg<E: Numeric>(operand: Self::Operand) -> <Self::Arg<E> as LaunchArg>::RuntimeArg;
+}
+
+/// A kernel prepared to store through a [`Destination`] the caller builds afterwards, at
+/// [`width`](Self::width): the caller binds the output only once it knows the kernel's spec.
+pub trait SinkLaunch {
+    /// The width the kernel hands the destination its lines in.
+    fn width(&self) -> usize;
+
+    /// The dense output's element count, which a destination standing for it must cover exactly.
+    fn elements(&self) -> usize;
+
+    /// Launch through the destination `O`, `sink` building the output's argument from its derived
+    /// spec and geometry.
+    fn launch<O: DestinationLaunch>(self, sink: impl FnOnce(Unbound) -> O::Operand);
+}
+
+/// What a kernel named by a value rather than a type is handed to, once prepared for a sink: each
+/// value prepares a launch of its own type, so what receives it takes any [`SinkLaunch`].
+pub trait SinkLaunchVisitor {
+    type Output;
+
+    /// Receive the launch the value named, or why it could not be prepared.
+    fn visit<L: SinkLaunch>(self, prepared: Result<L, Refusal>) -> Self::Output;
 }
 
 /// The default [`Destination`]: an [`Output`] buffer.
