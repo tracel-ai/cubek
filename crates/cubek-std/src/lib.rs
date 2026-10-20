@@ -1,6 +1,7 @@
 pub mod cube_count;
 pub mod launch;
 pub mod layout;
+pub mod selector;
 
 mod error;
 mod input_binding;

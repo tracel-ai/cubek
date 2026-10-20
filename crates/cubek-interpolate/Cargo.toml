@@ -28,6 +28,7 @@ cpu-reference = ["dep:cubek-test-utils"]
 benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
+cubek-std = { workspace = true }
 cubek-tile = { workspace = true }
 cubek-test-utils = { workspace = true, optional = true }
 

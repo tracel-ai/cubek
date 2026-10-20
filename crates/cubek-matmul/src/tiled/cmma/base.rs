@@ -15,6 +15,7 @@
 //! - A storage-tiled input whose storage tile is not this plan's stage on its axes: the storage
 //!   tile names the stage, the plan cannot disagree. Which delivery moves it is unrelated.
 
+use cubek_std::selector::divisor_at_most;
 use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
@@ -284,12 +285,6 @@ pub struct CmmaRoutine;
 impl Routine<()> for CmmaRoutine {
     type Strategy = CmmaStrategy;
     type Blueprint = CmmaBlueprint;
-}
-
-/// The largest divisor of `g` not exceeding `cap` (≥1).
-fn divisor_at_most(g: usize, cap: usize) -> usize {
-    let cap = cap.clamp(1, g.max(1));
-    (1..=cap).rev().find(|d| g.is_multiple_of(*d)).unwrap_or(1)
 }
 
 /// What the device has to keep busy: the cubes one launch of this problem runs, over the
