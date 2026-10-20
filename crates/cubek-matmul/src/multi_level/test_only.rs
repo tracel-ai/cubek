@@ -36,18 +36,18 @@ use crate::{
 #[derive(Clone)]
 pub enum TestStrategy {
     SimpleBarrierCooperativeCmma(
-        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCooperativeLoading>>,
+        BlueprintStrategy<SimpleBarrierAlgorithm<AsyncFullCooperativeLoading>>,
     ),
     SimpleBarrierCooperativeMma(
-        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCooperativeLoading>>,
+        BlueprintStrategy<SimpleBarrierAlgorithm<AsyncFullCooperativeLoading>>,
     ),
     SimpleBarrierCyclicCmma(
-        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCyclicLoading<ColMajorTilingOrder>>>,
+        BlueprintStrategy<SimpleBarrierAlgorithm<AsyncFullCyclicLoading<ColMajorTilingOrder>>>,
     ),
     SimpleBarrierCyclicMma(
-        BlueprintStrategy<(), SimpleBarrierAlgorithm<AsyncFullCyclicLoading<ColMajorTilingOrder>>>,
+        BlueprintStrategy<SimpleBarrierAlgorithm<AsyncFullCyclicLoading<ColMajorTilingOrder>>>,
     ),
-    Interleaved(BlueprintStrategy<(), InterleavedAlgorithm>),
+    Interleaved(BlueprintStrategy<InterleavedAlgorithm>),
 }
 
 impl Display for TestStrategy {
@@ -70,10 +70,7 @@ impl Display for TestStrategy {
     }
 }
 
-fn with_kind<RC, A>(
-    sel: &BlueprintStrategy<RC, A>,
-    kind: TileMatmulKind,
-) -> BlueprintStrategy<RC, A>
+fn with_kind<RC, A>(sel: &BlueprintStrategy<A>, kind: TileMatmulKind) -> BlueprintStrategy<A>
 where
     RC: crate::multi_level::args::RuntimeConfig,
     A: Routine<RC>,

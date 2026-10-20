@@ -282,10 +282,12 @@ impl Display for CmmaStrategy {
 /// Pairs the [`CmmaStrategy`] knob with the [`CmmaBlueprint`] plan.
 pub struct CmmaRoutine;
 
-impl Routine<()> for CmmaRoutine {
+impl cubek_std::Routine for CmmaRoutine {
     type Strategy = CmmaStrategy;
     type Blueprint = CmmaBlueprint;
 }
+
+impl Routine<()> for CmmaRoutine {}
 
 /// What the device has to keep busy: the cubes one launch of this problem runs, over the
 /// places it has to run them. `None` where the runtime reports no SM count, which is every
@@ -425,7 +427,7 @@ impl CmmaRoutine {
     /// `stored` is what the operands' storage tiles fix: an inferred plan stages to them; a
     /// forced plan is checked against them at the launch.
     pub fn blueprint(
-        strategy: &BlueprintStrategy<(), CmmaRoutine>,
+        strategy: &BlueprintStrategy<CmmaRoutine>,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
         acc: ElemType,

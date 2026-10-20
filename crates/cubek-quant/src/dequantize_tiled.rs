@@ -3,14 +3,11 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
 };
+use cubek_std::matmul_axes::{M, N};
 use cubek_tile::{
-    Axis, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
+    Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
     launch::Grid, layout::PhysicalAxisMap,
 };
-
-// Input axes
-const M: Axis = Axis(0);
-const N: Axis = Axis(1);
 
 /// Convert the tensor back to a higher precision data type.
 /// Uses the tile-based implementation for dequantization.

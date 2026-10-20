@@ -42,10 +42,12 @@ impl From<()> for NaiveStrategy {
     }
 }
 
-impl Routine<()> for NaiveRoutine {
+impl cubek_std::Routine for NaiveRoutine {
     type Strategy = NaiveStrategy;
     type Blueprint = NaiveBlueprint;
 }
+
+impl Routine<()> for NaiveRoutine {}
 
 impl BatchMatmulRoutine<()> for NaiveRoutine {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
@@ -106,7 +108,7 @@ impl BatchMatmulRoutine<()> for NaiveRoutine {
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        _strategy: &BlueprintStrategy<(), Self>,
+        _strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let blueprint = NaiveBlueprint {

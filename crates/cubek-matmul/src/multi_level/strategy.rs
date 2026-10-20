@@ -45,20 +45,19 @@ use crate::{
         },
         tile::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
-    routine::{BlueprintStrategy, Routine},
+    routine::BlueprintStrategy,
 };
 
 /// Returns a clone of `sel` with `args.tile_matmul` overridden to `kind` when
 /// in Inferred mode. Forced mode is left untouched since the user-supplied
 /// blueprint already carries a `tile_matmul`.
-fn stamp_kind<RC, A>(
-    sel: &BlueprintStrategy<RC, A>,
+fn stamp_kind<A>(
+    sel: &BlueprintStrategy<A>,
     kind: TileMatmulKind,
     set: impl FnOnce(&mut A::Strategy, TileMatmulKind),
-) -> BlueprintStrategy<RC, A>
+) -> BlueprintStrategy<A>
 where
-    RC: crate::multi_level::args::RuntimeConfig,
-    A: Routine<RC>,
+    A: cubek_std::Routine<Strategy: Clone, Blueprint: Clone>,
 {
     let mut sel = sel.clone();
     if let BlueprintStrategy::Inferred(args) = &mut sel {
@@ -83,11 +82,10 @@ fn set_specialized(args: &mut SpecializedStrategy, kind: TileMatmulKind) {
 #[allow(clippy::type_complexity)]
 #[derive(Clone)]
 pub enum Strategy {
-    SimpleCyclicCmma(BlueprintStrategy<(), SimpleAlgorithm>),
-    SimpleCyclicMma(BlueprintStrategy<(), SimpleAlgorithm>),
+    SimpleCyclicCmma(BlueprintStrategy<SimpleAlgorithm>),
+    SimpleCyclicMma(BlueprintStrategy<SimpleAlgorithm>),
     SimpleStridedCmma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 sync_full_strided::SyncFullStridedLoading,
                 sync_full_strided::SyncFullStridedLoading,
@@ -96,7 +94,6 @@ pub enum Strategy {
     ),
     SimpleStridedMma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 sync_full_strided::SyncFullStridedLoading,
                 sync_full_strided::SyncFullStridedLoading,
@@ -105,7 +102,6 @@ pub enum Strategy {
     ),
     SimpleTilewiseCmma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 sync_full_tilewise::SyncFullTilewiseLoading<ColMajorTilingOrder>,
                 sync_full_tilewise::SyncFullTilewiseLoading<RowMajorTilingOrder>,
@@ -114,7 +110,6 @@ pub enum Strategy {
     ),
     SimpleTilewiseMma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 sync_full_tilewise::SyncFullTilewiseLoading<ColMajorTilingOrder>,
                 sync_full_tilewise::SyncFullTilewiseLoading<RowMajorTilingOrder>,
@@ -123,7 +118,6 @@ pub enum Strategy {
     ),
     SimpleAsyncStridedCmma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 async_full_strided::AsyncFullStridedLoading,
                 async_full_strided::AsyncFullStridedLoading,
@@ -133,7 +127,6 @@ pub enum Strategy {
     ),
     SimpleAsyncStridedMma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 async_full_strided::AsyncFullStridedLoading,
                 async_full_strided::AsyncFullStridedLoading,
@@ -143,7 +136,6 @@ pub enum Strategy {
     ),
     SimpleAsyncCyclicCmma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
                 async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
@@ -153,7 +145,6 @@ pub enum Strategy {
     ),
     SimpleAsyncCyclicMma(
         BlueprintStrategy<
-            (),
             SimpleAlgorithm<
                 async_full_cyclic::AsyncFullCyclicLoading<ColMajorTilingOrder>,
                 async_full_cyclic::AsyncFullCyclicLoading<RowMajorTilingOrder>,
@@ -161,40 +152,40 @@ pub enum Strategy {
             >,
         >,
     ),
-    SimpleTmaCmma(BlueprintStrategy<(), SimpleTmaAlgorithm>),
-    SimpleTmaMma(BlueprintStrategy<(), SimpleTmaAlgorithm>),
-    DoubleCyclicCmma(BlueprintStrategy<(), CyclicDoubleBufferingAlgorithm>),
-    DoubleCyclicMma(BlueprintStrategy<(), CyclicDoubleBufferingAlgorithm>),
-    DoubleTilewiseCmma(BlueprintStrategy<(), TilewiseDoubleBufferingAlgorithm>),
-    DoubleTilewiseMma(BlueprintStrategy<(), TilewiseDoubleBufferingAlgorithm>),
-    DoubleHybridCmma(BlueprintStrategy<(), HybridDoubleBufferingAlgorithm>),
-    DoubleHybridMma(BlueprintStrategy<(), HybridDoubleBufferingAlgorithm>),
-    DoubleAsyncCyclicCmma(BlueprintStrategy<(), AsyncCyclicDoubleBufferingAlgorithm>),
-    DoubleAsyncCyclicMma(BlueprintStrategy<(), AsyncCyclicDoubleBufferingAlgorithm>),
-    DoubleAsyncStridedCmma(BlueprintStrategy<(), AsyncStridedDoubleBufferingAlgorithm>),
-    DoubleAsyncStridedMma(BlueprintStrategy<(), AsyncStridedDoubleBufferingAlgorithm>),
-    DoubleTmaCmma(BlueprintStrategy<(), TmaDoubleBufferingAlgorithm>),
-    DoubleTmaMma(BlueprintStrategy<(), TmaDoubleBufferingAlgorithm>),
+    SimpleTmaCmma(BlueprintStrategy<SimpleTmaAlgorithm>),
+    SimpleTmaMma(BlueprintStrategy<SimpleTmaAlgorithm>),
+    DoubleCyclicCmma(BlueprintStrategy<CyclicDoubleBufferingAlgorithm>),
+    DoubleCyclicMma(BlueprintStrategy<CyclicDoubleBufferingAlgorithm>),
+    DoubleTilewiseCmma(BlueprintStrategy<TilewiseDoubleBufferingAlgorithm>),
+    DoubleTilewiseMma(BlueprintStrategy<TilewiseDoubleBufferingAlgorithm>),
+    DoubleHybridCmma(BlueprintStrategy<HybridDoubleBufferingAlgorithm>),
+    DoubleHybridMma(BlueprintStrategy<HybridDoubleBufferingAlgorithm>),
+    DoubleAsyncCyclicCmma(BlueprintStrategy<AsyncCyclicDoubleBufferingAlgorithm>),
+    DoubleAsyncCyclicMma(BlueprintStrategy<AsyncCyclicDoubleBufferingAlgorithm>),
+    DoubleAsyncStridedCmma(BlueprintStrategy<AsyncStridedDoubleBufferingAlgorithm>),
+    DoubleAsyncStridedMma(BlueprintStrategy<AsyncStridedDoubleBufferingAlgorithm>),
+    DoubleTmaCmma(BlueprintStrategy<TmaDoubleBufferingAlgorithm>),
+    DoubleTmaMma(BlueprintStrategy<TmaDoubleBufferingAlgorithm>),
     SpecializedCyclicCmma(
-        BlueprintStrategy<(), SpecializedAlgorithm<AsyncPartialCyclicLoading<ColMajorTilingOrder>>>,
+        BlueprintStrategy<SpecializedAlgorithm<AsyncPartialCyclicLoading<ColMajorTilingOrder>>>,
     ),
     SpecializedCyclicMma(
-        BlueprintStrategy<(), SpecializedAlgorithm<AsyncPartialCyclicLoading<ColMajorTilingOrder>>>,
+        BlueprintStrategy<SpecializedAlgorithm<AsyncPartialCyclicLoading<ColMajorTilingOrder>>>,
     ),
-    SpecializedStridedCmma(BlueprintStrategy<(), SpecializedAlgorithm<AsyncPartialStridedLoading>>),
-    SpecializedStridedMma(BlueprintStrategy<(), SpecializedAlgorithm<AsyncPartialStridedLoading>>),
-    SpecializedTmaCmma(BlueprintStrategy<(), SpecializedAlgorithm>),
-    SpecializedTmaMma(BlueprintStrategy<(), SpecializedAlgorithm>),
+    SpecializedStridedCmma(BlueprintStrategy<SpecializedAlgorithm<AsyncPartialStridedLoading>>),
+    SpecializedStridedMma(BlueprintStrategy<SpecializedAlgorithm<AsyncPartialStridedLoading>>),
+    SpecializedTmaCmma(BlueprintStrategy<SpecializedAlgorithm>),
+    SpecializedTmaMma(BlueprintStrategy<SpecializedAlgorithm>),
     /// [`Strategy::SpecializedTmaMma`], writing the output with TMA stores.
-    SpecializedTmaMmaTmaStore(BlueprintStrategy<(), SpecializedTmaStoreAlgorithm>),
-    OrderedDoubleCmma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm>),
-    OrderedDoubleMma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm>),
-    SimpleUnit(BlueprintStrategy<(), SimpleUnitAlgorithm>),
-    DoubleUnit(BlueprintStrategy<(), DoubleUnitAlgorithm>),
-    SimpleVecMat(BlueprintStrategy<(), VecMatInnerProductAlgorithm>),
-    DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
-    GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
-    Gemm(BlueprintStrategy<(), GemmRoutine>),
+    SpecializedTmaMmaTmaStore(BlueprintStrategy<SpecializedTmaStoreAlgorithm>),
+    OrderedDoubleCmma(BlueprintStrategy<OrderedDoubleBufferingAlgorithm>),
+    OrderedDoubleMma(BlueprintStrategy<OrderedDoubleBufferingAlgorithm>),
+    SimpleUnit(BlueprintStrategy<SimpleUnitAlgorithm>),
+    DoubleUnit(BlueprintStrategy<DoubleUnitAlgorithm>),
+    SimpleVecMat(BlueprintStrategy<VecMatInnerProductAlgorithm>),
+    DoubleVecMat(BlueprintStrategy<DoubleVecMatInnerProductAlgorithm>),
+    GemvUnitPerpendicular(BlueprintStrategy<GemvUnitPerpendicularRoutine>),
+    Gemm(BlueprintStrategy<GemmRoutine>),
     Naive,
 }
 

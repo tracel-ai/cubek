@@ -154,16 +154,18 @@ impl Display for CpuGemmStrategy {
 /// Pairs the [`CpuGemmStrategy`] knob with the [`CpuGemmBlueprint`] plan.
 pub struct CpuGemmRoutine;
 
-impl Routine<()> for CpuGemmRoutine {
+impl cubek_std::Routine for CpuGemmRoutine {
     type Strategy = CpuGemmStrategy;
     type Blueprint = CpuGemmBlueprint;
 }
+
+impl Routine<()> for CpuGemmRoutine {}
 
 impl CpuGemmRoutine {
     /// Resolve `strategy` into a validated cuboid for `problem` on this device.
     #[allow(clippy::result_large_err)]
     pub fn blueprint(
-        strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
+        strategy: &BlueprintStrategy<CpuGemmRoutine>,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
     ) -> Result<CpuGemmBlueprint, MatmulSetupError> {

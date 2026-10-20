@@ -59,6 +59,11 @@ type InterleavedBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
     RowMajorGlobalPartitionMatmul,
 >;
 
+impl<LL, RL, AL> cubek_std::Routine for InterleavedAlgorithm<LL, RL, AL> {
+    type Strategy = InterleavedArgs;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
 impl<LL, RL, AL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
@@ -66,8 +71,6 @@ where
     RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
-    type Strategy = InterleavedArgs;
-    type Blueprint = BatchMatmulBlueprint;
 }
 
 impl<LL, RL, AL, RC> BatchMatmulRoutine<RC> for InterleavedAlgorithm<LL, RL, AL>
@@ -135,7 +138,7 @@ where
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let tile_matmul = TileMatmulKind::Interleaved;

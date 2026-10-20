@@ -88,13 +88,12 @@ impl Display for DoubleBufferingArgs {
 
 macro_rules! double_buffering_impl {
     ($algo:ident, $batch:ty) => {
-        impl<RC> Routine<RC> for $algo
-        where
-            RC: RuntimeConfig,
-        {
+        impl cubek_std::Routine for $algo {
             type Strategy = DoubleBufferingArgs;
             type Blueprint = BatchMatmulBlueprint;
         }
+
+        impl<RC> Routine<RC> for $algo where RC: RuntimeConfig {}
 
         impl<RC> BatchMatmulRoutine<RC> for $algo
         where
@@ -158,7 +157,7 @@ macro_rules! double_buffering_impl {
             fn expand_blueprint(
                 problem: &MatmulProblem,
                 device_settings: &DeviceSettings,
-                strategy: &BlueprintStrategy<RC, Self>,
+                strategy: &BlueprintStrategy<Self>,
             ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
                 let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

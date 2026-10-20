@@ -1,9 +1,6 @@
 use crate::{
     backward_data::args::ConcreteArgs,
-    components::{
-        ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality,
-        global::args::RuntimeArgs,
-    },
+    components::{ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality},
     kernels::backward_data::selector::launch_kernel_concrete,
     launch::ConvolutionArgs,
     routines::Routine,
@@ -27,7 +24,7 @@ pub(crate) fn launch_internal<const N_SPATIAL: usize, Rt: Routine>(
     weights: InputBinding,
     in_grad: TensorBinding,
     args: ConvolutionArgs<N_SPATIAL>,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
+    blueprint_strategy: &BlueprintStrategy<Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
@@ -66,7 +63,7 @@ fn launch_with_routine<Rt: Routine>(
     in_grad: TensorBinding,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
+    blueprint_strategy: &BlueprintStrategy<Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
@@ -150,7 +147,7 @@ pub fn launch_kernel<Rt: Routine>(
     weights: InputBinding,
     in_grad: TensorBinding,
     problem: ConvolutionProblem,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
+    blueprint_strategy: &BlueprintStrategy<Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where

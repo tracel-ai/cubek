@@ -25,7 +25,7 @@ pub fn launch_kernel_concrete<Args: ConcreteArgs<A>, A: BatchMatmulRoutine<Runti
     out: TensorBinding,
     problem: ConvolutionProblem,
     vector_sizes: MatmulVectorSizes,
-    blueprint_strategy: &BlueprintStrategy<Args::Config, A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError> {
     // The bias is read into the accumulator through a stage of its own, which the

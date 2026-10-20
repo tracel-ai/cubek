@@ -7,6 +7,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
+use cubek_std::matmul_axes::{K, M, N, NB, NI};
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
 use cubek_tile::launch::Grid;
 use cubek_tile::layout::PhysicalAxisMap;
@@ -19,12 +20,6 @@ use super::strategy::StageDepth;
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
 /// fan-out, so the numbers measure the staging, not the instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
-
-const M: Axis = Axis(0);
-const K: Axis = Axis(2);
-/// `N` as the scale blocks make it: which block, and where inside it.
-const NB: Axis = Axis(3);
-const NI: Axis = Axis(4);
 
 /// `C = A · (B ⊗ S)`, `B` the packed weight staged in its stored form: both inputs stage into
 /// shared memory per cube region, and the plane's units read windows of the stage, each scaled
@@ -180,7 +175,6 @@ impl Benchmark for TileQuantStageBench {
 
     fn prepare(&self) -> Self::Input {
         // The buffers are the plain matrices; only the kernel's view splits `N`.
-        const N: Axis = Axis(1);
         let space = Space::new(&[(M, self.m), (N, self.n), (K, self.k)]);
         let a = TileInput::builder(&self.client, space.subspace(&[M, K]))
             .untiled()
