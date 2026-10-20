@@ -44,6 +44,10 @@ where
     let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;
     let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
+    // Argument factories (notably TMA descriptors) must use the same resolved
+    // types as the kernel, including automatic F32-to-TF32 selection.
+    *dtypes = launch_info.dtypes.clone();
+
     let input = <InputArg<MA> as ConcreteInputsFactory<A>>::create(
         lhs,
         rhs,

@@ -169,7 +169,8 @@ fn parse_cubek_toml(text: &str) -> Result<CubekConfig, String> {
     }
 
     for sec in sections.keys() {
-        if sec != "test" && sec != "print" {
+        // Runtime settings are read by cubek-std. Both readers share cubek.toml.
+        if sec != "test" && sec != "print" && sec != "matmul" {
             return Err(format!("unknown section [{}]", sec));
         }
     }
@@ -295,6 +296,16 @@ fn reject_unknown_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_settings_can_coexist_with_test_settings() {
+        let cfg = parse_cubek_toml(
+            "[matmul]\nallow_tf32 = false\n[test]\npolicy = \"strict\"\n[print]\nenabled = true\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.test.policy, TestPolicy::Strict);
+        assert!(cfg.print.enabled);
+    }
 
     #[test]
     fn parses_full_example() {
