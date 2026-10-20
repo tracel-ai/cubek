@@ -222,7 +222,7 @@ fn paged_read_sum_kernel<E: Numeric>(
     pages: ComptimeOption<&Tensor<u32>>,
     lens: &Tensor<u32>,
     out: &TileArg<'_>,
-    from: u32,
+    #[comptime] from: usize,
     space: Partitioning,
     #[comptime] seq: Level,
     #[comptime] block: Level,
@@ -238,7 +238,6 @@ fn paged_read_sum_kernel<E: Numeric>(
         let mut total = out.at(&sequence);
         total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
-        let from = from as usize;
         let positions = pool.within(S, from, len);
         for blk in sequence
             .over(&block)
@@ -376,7 +375,7 @@ fn run_paged_read_table(
             1,
             TileSpec::direct(&[B, F]),
         ),
-        from,
+        from as usize,
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -396,7 +395,7 @@ fn paged_page_walk_sum_kernel<E: Numeric>(
     pages: ComptimeOption<&Tensor<u32>>,
     lens: &Tensor<u32>,
     out: &TileArg<'_>,
-    from: u32,
+    #[comptime] from: usize,
     space: Partitioning,
     #[comptime] seq: Level,
     #[comptime] page: Level,
@@ -412,7 +411,6 @@ fn paged_page_walk_sum_kernel<E: Numeric>(
         let mut total = out.at(&sequence);
         total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
-        let from = from as usize;
         let positions = pool.within(S, from, len);
         for held in sequence
             .over(&page)
@@ -494,7 +492,7 @@ fn run_paged_page_walk(lens: &[u32; SEQUENCES], step: usize, from: u32) -> HostD
             1,
             TileSpec::direct(&[B, F]),
         ),
-        from,
+        from as usize,
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
