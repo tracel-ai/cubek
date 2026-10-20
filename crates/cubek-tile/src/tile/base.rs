@@ -461,25 +461,27 @@ impl Tile {
         }
     }
 
-    /// The page entry `region`'s window is cut with, [`PagePin::unpinned`] for a tile not read
-    /// through a page table.
-    pub fn page_pin(&self, region: &Region) -> PagePin {
+    /// Cuts `region` and returns the page table entry that window was cut with, loaded from the
+    /// table unless an entry handed to this tile already named it. It is [`PageEntry::unlisted`]
+    /// for a tile not read through a page table.
+    pub fn read_page_entry(&self, region: &Region) -> PageEntry {
         let cut = self.at(region);
         match &cut.kind {
-            TileKind::Memory(g) => g.layout.page_pin(),
+            TileKind::Memory(g) => g.layout.pinned_entry(),
             TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_)
             | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_) => PagePin::unpinned(),
+            | TileKind::PlanePartition(_) => PageEntry::unlisted(),
         }
     }
 
-    /// This tile, its windows taking their page from `pin` where they name its entry. `pin` must
-    /// come from a tile reading the same table. A tile not read through a page table is unchanged.
-    pub fn with_page_pin(&self, pin: &PagePin) -> Tile {
+    /// This tile, its cuts taking their page from `entry` where they name its sequence and column,
+    /// and from the table otherwise. `entry` must come from a tile reading the same table, since
+    /// the table is not checked. A tile not read through a page table is unchanged.
+    pub fn with_page_entry(&self, entry: &PageEntry) -> Tile {
         let kind = match &self.kind {
-            TileKind::Memory(g) => TileKind::new_Memory(g.with_page_pin(pin)),
+            TileKind::Memory(g) => TileKind::new_Memory(g.with_page_entry(entry)),
             TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_)

@@ -871,12 +871,12 @@ impl Memory {
     }
 
     /// This store, its windows taking their page from `pin` where a cut names its entry
-    /// ([`Tile::with_page_pin`]).
-    pub(crate) fn with_page_pin(&self, pin: &PagePin) -> Memory {
+    /// ([`Tile::with_page_entry`]).
+    pub(crate) fn with_page_entry(&self, entry: &PageEntry) -> Memory {
         Memory {
             address: comptime!(self.address),
             store: self.store.clone(),
-            layout: self.layout.with_page_pin(pin),
+            layout: self.layout.with_page_entry(entry),
             window: self.window.clone(),
             projection: comptime!(self.projection.clone()),
             source_window: self.source_window.clone(),

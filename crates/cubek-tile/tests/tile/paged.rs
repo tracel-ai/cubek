@@ -16,7 +16,7 @@ use super::{Form, implied};
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::launch::{Arg, Delivery, Labelled, Refusal};
-use cubek_tile::layout::{PagePin, PhysicalAxisMap};
+use cubek_tile::layout::{PageEntry, PhysicalAxisMap};
 use cubek_tile::*;
 
 /// Which sequence.
@@ -213,13 +213,31 @@ const READ_BLOCK: usize = 4;
 /// held by two sequences.
 const PAGES: [[u32; PAGES_EACH]; SEQUENCES] = [[5, 0, 3], [1, 6, 2], [4, 4, 0]];
 
-/// Which entry the read hands its cuts ([`Tile::with_page_pin`]): none, the one of the step it is
-/// about to cut, the one of the next step, one of a step past the table, or a pin of no entry.
-const NO_PIN: u32 = 0;
-const OWN_PIN: u32 = 1;
-const NEXT_PIN: u32 = 2;
-const PAST_PIN: u32 = 3;
-const UNPINNED: u32 = 4;
+/// Which entry a read hands its cuts ([`Tile::with_page_entry`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Handing {
+    /// None: the cuts read the table.
+    Nothing,
+    /// The entry of the step about to be cut.
+    Own,
+    /// The entry of the step after.
+    Next,
+    /// The entry of a step past the table.
+    PastTable,
+    /// An entry no table lists.
+    Unlisted,
+}
+
+impl Handing {
+    /// Steps past the one being cut that the entry is read at, where one is read.
+    fn steps_ahead(self) -> usize {
+        match self {
+            Handing::Nothing | Handing::Own | Handing::Unlisted => 0,
+            Handing::Next => 1,
+            Handing::PastTable => PAGES_EACH * PAGE_LEN,
+        }
+    }
+}
 
 /// `out[b] = Σ pool[b's page of s, s % PAGE_LEN]` over positions `from..lens[b]` of sequence `b`,
 /// read through [`TileArg::tile_paged`]: the kernel walks logical positions, `read_block` of them
@@ -235,7 +253,7 @@ fn paged_read_sum_kernel<E: Numeric>(
     #[comptime] seq: Level,
     #[comptime] block: Level,
     #[comptime] read_block: usize,
-    #[comptime] pin: u32,
+    #[comptime] handing: Handing,
     #[define(E)] _dtype: ElemType,
 ) {
     let pool = pool.tile_paged(&space, pages);
@@ -252,22 +270,16 @@ fn paged_read_sum_kernel<E: Numeric>(
         for i in 0..len.saturating_sub(from).div_ceil(read_block) {
             let blk = steps.region(i);
             let mut cell = out.at(&blk);
-            if comptime!(pin == NO_PIN) {
+            if comptime!(handing == Handing::Nothing) {
                 cell.reduce_axis_accumulate(&positions.at(&blk), comptime!(Monoid::Sum));
             } else {
-                let mut held = PagePin::unpinned();
-                if comptime!(pin != UNPINNED) {
-                    let source = steps.region(
-                        i + comptime!(match pin {
-                            NEXT_PIN => 1usize,
-                            PAST_PIN => 64usize,
-                            _ => 0usize,
-                        }),
-                    );
-                    held = positions.page_pin(&source);
+                let mut entry = PageEntry::unlisted();
+                if comptime!(handing != Handing::Unlisted) {
+                    let source = steps.region(i + comptime!(handing.steps_ahead()));
+                    entry = positions.read_page_entry(&source);
                 }
-                let pinned = positions.with_page_pin(&held);
-                cell.reduce_axis_accumulate(&pinned.at(&blk), comptime!(Monoid::Sum));
+                let handed = positions.with_page_entry(&entry);
+                cell.reduce_axis_accumulate(&handed.at(&blk), comptime!(Monoid::Sum));
             }
         }
     }
@@ -322,7 +334,7 @@ fn run_paged_read_blocks(
         PAGE_LEN,
         block,
         from,
-        NO_PIN,
+        Handing::Nothing,
         |arg, s, p| arg.paged(s, p),
     )
 }
@@ -339,7 +351,7 @@ fn run_paged_read_table(
     page_len: usize,
     block: usize,
     from: u32,
-    pin: u32,
+    handing: Handing,
     bind: Bind,
 ) -> HostData {
     let client = cubecl::test_device().client();
@@ -406,7 +418,7 @@ fn run_paged_read_table(
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         block,
-        pin,
+        handing,
         f32_ty,
     );
 
@@ -640,7 +652,7 @@ fn a_flat_walk_over_larger_pages_reads_each_sequence_through_its_table() {
             WALK_PAGE_LEN,
             block,
             from,
-            NO_PIN,
+            Handing::Nothing,
             |arg, s, p| arg.paged(s, p),
         );
         let want = expected_paged_read_from(&lens, &rows(&PAGES), from, WALK_PAGE_LEN);
@@ -656,14 +668,18 @@ fn a_flat_walk_over_larger_pages_reads_each_sequence_through_its_table() {
     }
 }
 
-/// A cut handed a page entry reads what it reads without one, whichever entry that is: the one of
-/// the step it cuts, of the step after, of a step past the table, or none. Steps of one position,
-/// of a page and of two pages, so the cut is inside a page and across two.
+/// A cut handed a page entry reads what it reads without one, whichever entry that is. Steps of
+/// one position, of a page and of two pages, so the cut is inside a page and across two.
 #[test]
-fn a_cut_handed_a_page_pin_reads_each_sequence_through_its_table() {
+fn a_cut_handed_a_page_entry_reads_each_sequence_through_its_table() {
     let entries = PAGES.iter().flatten().copied().collect::<Vec<_>>();
     let lens = [6, 5, 3];
-    for pin in [OWN_PIN, NEXT_PIN, PAST_PIN, UNPINNED] {
+    for handing in [
+        Handing::Own,
+        Handing::Next,
+        Handing::PastTable,
+        Handing::Unlisted,
+    ] {
         for block in [1, PAGE_LEN, READ_BLOCK] {
             let got = run_paged_read_table(
                 &lens,
@@ -672,7 +688,7 @@ fn a_cut_handed_a_page_pin_reads_each_sequence_through_its_table() {
                 PAGE_LEN,
                 block,
                 0,
-                pin,
+                handing,
                 |arg, s, p| arg.paged(s, p),
             );
             let want = expected_paged_read_from(&lens, &rows(&PAGES), 0, PAGE_LEN);
@@ -681,7 +697,7 @@ fn a_cut_handed_a_page_pin_reads_each_sequence_through_its_table() {
                     assert_eq!(
                         got.get_f32(&[b, f]),
                         *cell,
-                        "pin {pin}, steps of {block}: sequence {b} feature {f}"
+                        "{handing:?}, steps of {block}: sequence {b} feature {f}"
                     );
                 }
             }
@@ -760,7 +776,7 @@ fn a_covering_table_reads_each_sequence_through_it() {
             PAGE_LEN,
             READ_BLOCK,
             0,
-            NO_PIN,
+            Handing::Nothing,
             |arg, s, p| arg.paged_covering(s, p),
         );
         for (b, row) in expected_paged_read(&lens).iter().enumerate() {
@@ -784,7 +800,7 @@ fn a_paged_read_through_a_table_not_of_rank_two_reads_zero() {
         PAGE_LEN,
         READ_BLOCK,
         0,
-        NO_PIN,
+        Handing::Nothing,
         |arg, s, p| arg.paged(s, p),
     );
     for b in 0..SEQUENCES {

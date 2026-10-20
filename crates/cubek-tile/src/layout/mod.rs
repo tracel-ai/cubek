@@ -14,7 +14,7 @@ pub(crate) use projection::*;
 pub(crate) use row_arrangement::*;
 
 pub use compaction::Compaction;
-pub use paging::{PagePin, Paging};
+pub use paging::{PageEntry, Paging};
 pub use projection::{DimsBuilder, Divisor, Offset, PhysicalAxisMap, Scale, split};
 pub use storage::{
     LineMisfit, RuntimeGeometry, StorageLevels, StorageMisfit, StoragePartitioning, TileMisfit,
