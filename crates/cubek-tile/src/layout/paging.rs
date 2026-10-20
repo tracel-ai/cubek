@@ -181,11 +181,6 @@ impl PageEntry {
             page: 0u32,
         }
     }
-
-    /// Whether this entry is the one of column `column` of sequence `sequence`.
-    fn names(&self, sequence: u32, column: u32) -> bool {
-        sequence == self.sequence && column == self.column
-    }
 }
 
 /// A page table as a kernel reads it: `u32`, `[sequences, pages_per_sequence]`, read by stride.
@@ -214,11 +209,10 @@ pub(crate) struct PageTable {
     /// ([`pinned_at`](Self::pinned_at)): a line in the same sequence and column reads its page from
     /// here without loading the table. Replaced at each cut that resolves a new page.
     pin: PageEntry,
-    /// The page of the column after the pin's, where the window [`Spans::TwoPages`].
-    next_page: u32,
     /// Where the pin's column starts, in positions.
     pin_start: u32,
-    /// What a line of the pinned page, or the next, adds to its offset as one sequence's.
+    /// What a line of the pinned page, or the next where the window [`Spans::TwoPages`], adds to
+    /// its offset as one sequence's.
     pin_base: u32,
     next_base: u32,
     /// What the window's extent proves of the pages its lines lie in.
@@ -284,7 +278,6 @@ impl PageTable {
             // A bound pool holds a page at least; one stated by hand is kept off underflow.
             last_page: pool_pages.max_with(1u32).minus(1u32),
             pin: PageEntry::unlisted(),
-            next_page: 0u32,
             pin_start: 0u32,
             pin_base: 0u32,
             next_base: 0u32,
@@ -296,7 +289,14 @@ impl PageTable {
             position_dim,
             unit,
         };
-        unpinned.pinned(0u32, 0u32, comptime!(Spans::Any), comptime!(0usize))
+        unpinned.pinned(
+            0u32,
+            0u32,
+            comptime!(Spans::Any),
+            comptime!(0usize),
+            0u32,
+            0u32,
+        )
     }
 
     /// This table for the window whose origin is `origin`, cut from the one this table was pinned
@@ -351,46 +351,43 @@ impl PageTable {
         sequence_stride: u32,
         position_stride: u32,
     ) -> PageTable {
-        let page_size = comptime!(self.page_size as u32);
-        let unit = comptime!(self.unit as u32);
         let sequence = origin.at(comptime!(self.sequence_dim)).cast::<u32>();
         let position = origin
             .at(comptime!(self.position_dim))
             .cast::<u32>()
-            .times(unit);
-        let mut table = self.pinned(
+            .times(comptime!(self.unit as u32));
+        self.pinned(
             sequence,
-            position.divided_by(page_size),
+            position.divided_by(comptime!(self.page_size as u32)),
             spans,
             origin_alignment,
-        );
-        // Wrapping: a base is only ever added to the offset of a line past its column's start.
-        let start = table.pin_start.divided_by(unit);
-        let page_digits = comptime!((self.page_size / self.unit) as u32);
-        table.pin_base = table
-            .pin
-            .page
-            .times(sequence_stride)
-            .minus(start.times(position_stride));
-        table.next_base = table
-            .next_page
-            .times(sequence_stride)
-            .minus(start.plus(page_digits).times(position_stride));
-        table
+            sequence_stride,
+            position_stride,
+        )
     }
 
-    /// This table pinned at the page column `column` of sequence `sequence` lists.
+    /// This table pinned at the page column `column` of sequence `sequence` lists, with the bases
+    /// its lines add to their offsets.
     fn pinned(
         &self,
         sequence: u32,
         column: u32,
         #[comptime] spans: Spans,
         #[comptime] origin_alignment: usize,
+        sequence_stride: u32,
+        position_stride: u32,
     ) -> PageTable {
+        let unit = comptime!(self.unit as u32);
+        let page = self.cut_page(sequence, column);
+        // The page after the column is the table's: an entry handed in names one page.
         let next_page = match comptime!(spans) {
-            Spans::TwoPages => self.cut_page(sequence, column.plus(1u32)),
+            Spans::TwoPages => self.lookup(sequence, column.plus(1u32)),
             Spans::Any | Spans::OnePage => 0u32,
         };
+        let pin_start = column.times(comptime!(self.page_size as u32));
+        // Wrapping: a base is only ever added to the offset of a line past its column's start.
+        let start = pin_start.divided_by(unit);
+        let page_digits = comptime!((self.page_size / self.unit) as u32);
         PageTable {
             entries: self.entries.clone(),
             sequence_stride: self.sequence_stride,
@@ -401,12 +398,15 @@ impl PageTable {
             pin: PageEntry {
                 sequence,
                 column,
-                page: self.cut_page(sequence, column),
+                page,
             },
-            next_page,
-            pin_start: column.times(comptime!(self.page_size as u32)),
-            pin_base: 0u32,
-            next_base: 0u32,
+            pin_start,
+            pin_base: page
+                .times(sequence_stride)
+                .minus(start.times(position_stride)),
+            next_base: next_page
+                .times(sequence_stride)
+                .minus(start.plus(page_digits).times(position_stride)),
             handed: self.handed.clone(),
             spans,
             origin_alignment,
@@ -431,7 +431,7 @@ impl PageTable {
     /// the table's.
     fn page_from(&self, entry: &PageEntry, sequence: u32, column: u32) -> u32 {
         let mut page = entry.page;
-        if !entry.names(sequence, column) {
+        if sequence != entry.sequence || column != entry.column {
             page = self.lookup(sequence, column);
         }
         page
@@ -464,7 +464,6 @@ impl PageTable {
             pages_per_sequence: self.pages_per_sequence,
             last_page: self.last_page,
             pin: self.pin.clone(),
-            next_page: self.next_page,
             pin_start: self.pin_start,
             pin_base: self.pin_base,
             next_base: self.next_base,
