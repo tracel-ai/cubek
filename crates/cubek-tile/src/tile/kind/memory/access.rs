@@ -1000,9 +1000,9 @@ impl Memory {
             // nothing before, only the run's end needs it.
             comptime!(Access {
                 whole: false,
-                overhang: match self.access.overhang.masks() {
-                    true => Overhang::Masked,
-                    false => Overhang::Run,
+                overhang: match self.access.overhang {
+                    Overhang::Never | Overhang::Fits => Overhang::Run,
+                    overhang => overhang,
                 },
                 write: self.access.write,
                 fill: self.access.fill,
