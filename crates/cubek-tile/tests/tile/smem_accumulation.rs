@@ -16,6 +16,7 @@ use cubecl::{
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use super::{Form, implied};
+use cubek_tile::ops::matmul::MmaIo;
 use cubek_tile::stage::RowChunks;
 use cubek_tile::*;
 
@@ -474,4 +475,167 @@ fn short_window_matmul(copies: bool) {
 
     let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
     assert_matches(&got, m, n, k);
+}
+
+// -- A fragment taller than its box -------------------------------------------------------------
+//
+// A decode's few rows under a manual-mma fragment of sixteen: each plane's fragment holds more rows
+// than the cube's accumulator, which is sized to the box, and only the box's rows may land.
+
+/// [`smem_split_matmul`] through manual-mma fragments: each plane contracts its slice of `K` in a
+/// fragment the box's rows do not fill, and adds it into the cube's accumulator.
+///
+/// `canary` is shared memory declared after the accumulator, every cell the bits of `-0.0`: adding
+/// anything into it as a float, even the fragment's zero rows, turns a cell `+0.0`. `touched`
+/// counts, per cube, the cells that turned.
+#[cube(launch)]
+fn smem_split_fragment_matmul<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
+    touched: &mut Tensor<f32>,
+    space: Partitioning,
+    #[define(E)] _sum: ElemType,
+) {
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    for cube in &space {
+        let mut c_cube = c.at(&cube);
+        let sum = c_cube.smem_accumulation::<E>();
+        let mut canary = Shared::<[u32]>::new_slice(CANARY);
+        let mut cell = UNIT_POS as usize;
+        while cell < CANARY {
+            canary[cell] = NEGATIVE_ZERO;
+            cell += CUBE_DIM as usize;
+        }
+        sync_cube();
+        for plane in cube {
+            let a_plane = a.at(&plane);
+            let b_plane = b.at(&plane);
+            let sink_plane = sum.sink.at(&plane);
+            let mut partial = sink_plane.accumulator::<E>(
+                &a_plane,
+                &b_plane,
+                comptime!(Instruction::Mma {
+                    io: MmaIo::manual(),
+                    operands: MmaOperands::Plain,
+                }),
+                Semiring::SUM_PROD,
+            );
+            partial.zero();
+            partial.mma(&a_plane, &b_plane);
+            partial.drained_into(&sink_plane);
+        }
+        sync_cube();
+        c_cube.copy_from(&sum.source);
+        if UNIT_POS == 0 {
+            let mut turned = 0.0f32;
+            for cell in 0..CANARY {
+                if canary[cell] != NEGATIVE_ZERO {
+                    turned += 1.0;
+                }
+            }
+            touched[CUBE_POS as usize] = turned;
+        }
+    }
+}
+
+/// Cells of the canary: past every row a sixteen-row fragment over one-row boxes reaches.
+const CANARY: usize = 1024;
+
+/// The bits of `-0.0`, held as an integer: a float literal of it is not kept by every backend.
+const NEGATIVE_ZERO: u32 = 0x8000_0000;
+
+/// Whether this device runs a `16×8×16` `f16` manual mma summed in `f32`; reported rather than
+/// silently passed where it cannot.
+fn runs_f16_manual_mma(client: &cubecl::client::Client) -> bool {
+    let f16 = half::f16::elem_type_native();
+    let f32 = f32::elem_type_native();
+    let offered = client.properties().features.matmul.mma.iter().any(|cfg| {
+        cfg.a_type == f16
+            && cfg.b_type == f16
+            && cfg.cd_type == f32
+            && (cfg.m, cfg.n, cfg.k) == (16, 8, 16)
+    });
+    if !offered {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no 16x8x16 f16 manual mma summed in f32".to_string(),
+        ))
+        .enforce();
+    }
+    offered
+}
+
+/// Four rows under sixteen-row fragments, four planes splitting `K`: the fragments' twelve rows
+/// past the box add into nothing. The accumulator holds the box's rows alone, so a row past them
+/// landing would add past its end, out of the cube's shared memory.
+#[test]
+fn a_fragment_taller_than_its_box_adds_only_the_boxs_rows() {
+    let client = cubecl::test_device().client();
+    if !adds_atomically_in_shared_memory(&client) || !runs_f16_manual_mma(&client) {
+        return;
+    }
+    let (m, n, k, planes) = (1usize, 8usize, 512usize, 4usize);
+    let input = half::f16::elem_type_native();
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Stored `N`-major, as a lane run reads `B`: cell `(p, j)` at `j * k + p`.
+    let b: Vec<f32> = (0..n * k)
+        .map(|i| ((i % k * n + i / k) % 5) as f32 - 2.0)
+        .collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(input)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![n, k])
+        .dtype(input)
+        .custom(b)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(f32::elem_type_native())
+        .zeros()
+        .generate_without_host_data();
+    let cubes = n / 8;
+    let touched = TestInput::builder(client.clone(), shape![cubes])
+        .dtype(f32::elem_type_native())
+        .zeros()
+        .generate_without_host_data();
+
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, 16), (N, 8), (K, k / planes)])
+                .walk_every(&[M])
+                .planes(&[(K, planes)])
+                .cubes(&[N])
+                .build(),
+        ),
+        Form::Static,
+    );
+    let bind = |binding, element, axes: &'static [Axis]| {
+        launcher.arg(binding, element).axes(axes).build().unwrap()
+    };
+    smem_split_fragment_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        bind(a_handle.clone().binding(), input, &[M, K]).arg(),
+        bind(b_handle.clone().binding(), input, &[N, K]).arg(),
+        bind(out.clone().binding(), out.dtype, &[M, N]).arg(),
+        touched.clone().binding().into_tensor_arg(),
+        launcher.partitioning_arg(),
+        f32::elem_type_native(),
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    assert_matches(&got, m, n, k);
+    let touched = HostData::from_tensor_handle(&client, touched, HostDataType::F32);
+    for cube in 0..cubes {
+        assert_eq!(
+            touched.get_f32(&[cube]),
+            0.0,
+            "cube {cube}: rows past the box landed past the accumulator"
+        );
+    }
 }
