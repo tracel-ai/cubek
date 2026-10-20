@@ -34,7 +34,7 @@ pub(crate) fn into_contiguous_if_highly_permuted(
 
 /// The contract to solve a matmul
 pub trait Routine<RC: RuntimeConfig>:
-    cubek_std::Routine<Strategy: Default + Display + Clone, Blueprint: Debug + Clone> + Sized
+    cubek_std::legacy::Routine<Strategy: Default + Display + Clone, Blueprint: Debug + Clone> + Sized
 {
 }
 
@@ -46,4 +46,4 @@ pub struct DeviceSettings {
     pub max_cube_count: (u32, u32, u32),
 }
 
-pub use cubek_std::BlueprintStrategy;
+pub use cubek_std::legacy::BlueprintStrategy;

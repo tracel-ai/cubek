@@ -41,11 +41,11 @@ pub struct ReduceProblem {
     pub address_type: AddressType,
 }
 
-pub use cubek_std::BlueprintStrategy;
+pub use cubek_std::legacy::BlueprintStrategy;
 
 /// A reduce routine. A forced blueprint comes with the cube it runs on.
 pub trait Routine:
-    cubek_std::Routine<
+    cubek_std::legacy::Routine<
         Strategy: core::fmt::Debug + Clone + Send + 'static,
         Blueprint: core::fmt::Debug + Clone + Send + 'static,
     > + core::fmt::Debug

@@ -59,7 +59,7 @@ type InterleavedBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
     RowMajorGlobalPartitionMatmul,
 >;
 
-impl<LL, RL, AL> cubek_std::Routine for InterleavedAlgorithm<LL, RL, AL> {
+impl<LL, RL, AL> cubek_std::legacy::Routine for InterleavedAlgorithm<LL, RL, AL> {
     type Strategy = InterleavedArgs;
     type Blueprint = BatchMatmulBlueprint;
 }

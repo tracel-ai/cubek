@@ -57,7 +57,7 @@ fn stamp_kind<A>(
     set: impl FnOnce(&mut A::Strategy, TileMatmulKind),
 ) -> BlueprintStrategy<A>
 where
-    A: cubek_std::Routine<Strategy: Clone, Blueprint: Clone>,
+    A: cubek_std::legacy::Routine<Strategy: Clone, Blueprint: Clone>,
 {
     let mut sel = sel.clone();
     if let BlueprintStrategy::Inferred(args) = &mut sel {

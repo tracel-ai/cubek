@@ -42,7 +42,7 @@ impl Display for GemvUnitPerpendicularStrategy {
     }
 }
 
-impl cubek_std::Routine for GemvUnitPerpendicularRoutine {
+impl cubek_std::legacy::Routine for GemvUnitPerpendicularRoutine {
     type Strategy = GemvUnitPerpendicularStrategy;
     type Blueprint = VecMatUnitPerpendicularBlueprint;
 }

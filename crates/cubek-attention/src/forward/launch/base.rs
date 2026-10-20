@@ -14,7 +14,7 @@ use crate::{
 
 use crate::components::batch::BatchAttentionFamily;
 
-pub use cubek_std::BlueprintStrategy;
+pub use cubek_std::legacy::BlueprintStrategy;
 
 #[derive(Debug, Clone)]
 pub enum Strategy {

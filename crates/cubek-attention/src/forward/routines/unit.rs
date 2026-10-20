@@ -24,7 +24,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct UnitRoutine {}
 
-impl cubek_std::Routine for UnitRoutine {
+impl cubek_std::legacy::Routine for UnitRoutine {
     type Strategy = ();
     type Blueprint = AttentionBlueprint;
 }

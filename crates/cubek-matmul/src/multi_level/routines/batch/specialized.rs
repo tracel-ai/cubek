@@ -91,7 +91,7 @@ impl From<()> for SpecializedStrategy {
     }
 }
 
-impl<L, AL, GW> cubek_std::Routine for SpecializedAlgorithm<L, AL, GW> {
+impl<L, AL, GW> cubek_std::legacy::Routine for SpecializedAlgorithm<L, AL, GW> {
     type Strategy = SpecializedStrategy;
     type Blueprint = BatchMatmulBlueprint;
 }

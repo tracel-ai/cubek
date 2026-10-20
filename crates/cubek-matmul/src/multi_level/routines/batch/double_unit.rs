@@ -58,7 +58,7 @@ impl Display for DoubleUnitSelectionArgs {
     }
 }
 
-impl cubek_std::Routine for DoubleUnitAlgorithm {
+impl cubek_std::legacy::Routine for DoubleUnitAlgorithm {
     type Strategy = DoubleUnitSelectionArgs;
     type Blueprint = BatchMatmulBlueprint;
 }

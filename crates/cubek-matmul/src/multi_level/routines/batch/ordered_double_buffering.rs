@@ -90,7 +90,7 @@ impl Display for OrderedSelectionArgs {
     }
 }
 
-impl cubek_std::Routine for OrderedDoubleBufferingAlgorithm {
+impl cubek_std::legacy::Routine for OrderedDoubleBufferingAlgorithm {
     type Strategy = OrderedSelectionArgs;
     type Blueprint = BatchMatmulBlueprint;
 }

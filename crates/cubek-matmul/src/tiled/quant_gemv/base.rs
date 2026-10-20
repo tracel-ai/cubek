@@ -159,7 +159,7 @@ impl Display for QuantGemvStrategy {
 /// Pairs the [`QuantGemvStrategy`] knobs with the [`QuantGemvBlueprint`] plan.
 pub struct QuantGemvRoutine;
 
-impl cubek_std::Routine for QuantGemvRoutine {
+impl cubek_std::legacy::Routine for QuantGemvRoutine {
     type Strategy = QuantGemvStrategy;
     type Blueprint = QuantGemvBlueprint;
 }

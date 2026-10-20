@@ -89,7 +89,7 @@ type SimpleBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
     RowMajorGlobalPartitionMatmul,
 >;
 
-impl<LL, RL, AL> cubek_std::Routine for SimpleAlgorithm<LL, RL, AL> {
+impl<LL, RL, AL> cubek_std::legacy::Routine for SimpleAlgorithm<LL, RL, AL> {
     type Strategy = SimpleArgs;
     type Blueprint = BatchMatmulBlueprint;
 }

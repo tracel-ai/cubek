@@ -279,7 +279,7 @@ where
     match forced_matmul {
         Some(matmul) => BlueprintStrategy::Forced(matmul),
         None => {
-            let mut s = <Rt::MatmulRoutine as cubek_std::Routine>::Strategy::default();
+            let mut s = <Rt::MatmulRoutine as cubek_std::legacy::Routine>::Strategy::default();
             s.set_tile_matmul(tile_matmul);
             BlueprintStrategy::Inferred(s)
         }

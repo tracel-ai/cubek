@@ -59,7 +59,7 @@ impl Display for SimpleUnitSelectionArgs {
     }
 }
 
-impl<LL, RL, AL> cubek_std::Routine for SimpleUnitAlgorithm<LL, RL, AL> {
+impl<LL, RL, AL> cubek_std::legacy::Routine for SimpleUnitAlgorithm<LL, RL, AL> {
     type Strategy = SimpleUnitSelectionArgs;
     type Blueprint = BatchMatmulBlueprint;
 }

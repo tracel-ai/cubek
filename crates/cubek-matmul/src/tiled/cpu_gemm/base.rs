@@ -154,7 +154,7 @@ impl Display for CpuGemmStrategy {
 /// Pairs the [`CpuGemmStrategy`] knob with the [`CpuGemmBlueprint`] plan.
 pub struct CpuGemmRoutine;
 
-impl cubek_std::Routine for CpuGemmRoutine {
+impl cubek_std::legacy::Routine for CpuGemmRoutine {
     type Strategy = CpuGemmStrategy;
     type Blueprint = CpuGemmBlueprint;
 }

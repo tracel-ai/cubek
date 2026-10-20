@@ -16,7 +16,7 @@ pub struct UnitRoutine;
 #[derive(Debug, Clone)]
 pub struct UnitStrategy;
 
-impl cubek_std::Routine for UnitRoutine {
+impl cubek_std::legacy::Routine for UnitRoutine {
     type Strategy = UnitStrategy;
     type Blueprint = (UnitReduceBlueprint, CubeDim);
 }

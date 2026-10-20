@@ -19,7 +19,7 @@ pub struct PlaneStrategy {
     pub independent: bool,
 }
 
-impl cubek_std::Routine for PlaneRoutine {
+impl cubek_std::legacy::Routine for PlaneRoutine {
     type Strategy = PlaneStrategy;
     type Blueprint = (PlaneReduceBlueprint, CubeDim);
 }

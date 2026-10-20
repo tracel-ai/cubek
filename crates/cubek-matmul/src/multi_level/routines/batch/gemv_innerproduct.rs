@@ -76,7 +76,7 @@ impl From<()> for VecMatInnerProductStrategy {
     }
 }
 
-impl cubek_std::Routine for VecMatInnerProductAlgorithm {
+impl cubek_std::legacy::Routine for VecMatInnerProductAlgorithm {
     type Strategy = VecMatInnerProductStrategy;
     type Blueprint = BatchMatmulBlueprint;
 }
@@ -205,7 +205,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
 
 pub struct DoubleVecMatInnerProductAlgorithm {}
 
-impl cubek_std::Routine for DoubleVecMatInnerProductAlgorithm {
+impl cubek_std::legacy::Routine for DoubleVecMatInnerProductAlgorithm {
     type Strategy = VecMatInnerProductStrategy;
     type Blueprint = BatchMatmulBlueprint;
 }

@@ -14,7 +14,7 @@ use crate::forward::definition::{
 };
 use crate::forward::launch::BlueprintStrategy;
 
-pub trait Routine: cubek_std::Routine<Blueprint: Clone> + Debug + Clone {
+pub trait Routine: cubek_std::legacy::Routine<Blueprint: Clone> + Debug + Clone {
     /// Tile-level strategy this routine selects.
     const TILE_KIND: TileAttentionKind;
 

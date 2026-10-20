@@ -51,7 +51,7 @@ fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -
     }
 }
 
-impl cubek_std::Routine for GemmRoutine {
+impl cubek_std::legacy::Routine for GemmRoutine {
     type Strategy = GemmStrategy;
     type Blueprint = GemmBlueprint;
 }

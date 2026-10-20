@@ -19,7 +19,7 @@ pub struct CubeStrategy {
     pub use_planes: bool,
 }
 
-impl cubek_std::Routine for CubeRoutine {
+impl cubek_std::legacy::Routine for CubeRoutine {
     type Strategy = CubeStrategy;
     type Blueprint = (CubeBlueprint, CubeDim);
 }

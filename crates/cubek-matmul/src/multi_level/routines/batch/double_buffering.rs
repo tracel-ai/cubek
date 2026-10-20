@@ -88,7 +88,7 @@ impl Display for DoubleBufferingArgs {
 
 macro_rules! double_buffering_impl {
     ($algo:ident, $batch:ty) => {
-        impl cubek_std::Routine for $algo {
+        impl cubek_std::legacy::Routine for $algo {
             type Strategy = DoubleBufferingArgs;
             type Blueprint = BatchMatmulBlueprint;
         }

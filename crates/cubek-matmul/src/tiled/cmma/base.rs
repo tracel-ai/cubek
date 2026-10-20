@@ -282,7 +282,7 @@ impl Display for CmmaStrategy {
 /// Pairs the [`CmmaStrategy`] knob with the [`CmmaBlueprint`] plan.
 pub struct CmmaRoutine;
 
-impl cubek_std::Routine for CmmaRoutine {
+impl cubek_std::legacy::Routine for CmmaRoutine {
     type Strategy = CmmaStrategy;
     type Blueprint = CmmaBlueprint;
 }

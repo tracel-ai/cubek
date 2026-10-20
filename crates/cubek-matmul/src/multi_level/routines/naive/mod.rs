@@ -42,7 +42,7 @@ impl From<()> for NaiveStrategy {
     }
 }
 
-impl cubek_std::Routine for NaiveRoutine {
+impl cubek_std::legacy::Routine for NaiveRoutine {
     type Strategy = NaiveStrategy;
     type Blueprint = NaiveBlueprint;
 }

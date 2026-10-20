@@ -31,7 +31,7 @@ pub struct BlackboxAcceleratedStrategy {
     pub seq_kv: u8,
 }
 
-impl cubek_std::Routine for BlackboxAcceleratedRoutine {
+impl cubek_std::legacy::Routine for BlackboxAcceleratedRoutine {
     type Strategy = BlackboxAcceleratedStrategy;
     type Blueprint = AttentionBlueprint;
 }
