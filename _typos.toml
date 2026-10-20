@@ -1,6 +1,8 @@
 [default.extend-words]
 arange = "arange"
 Cpy = "Cpy"
+# Input coordinates beside `ix`: `iy` in the convolution kernels.
+iy = "iy"
 # N-dimensional: `Tile::nd`, `nd_transparent`.
 nd = "nd"
 # Partition counts along m and n: `(pm, pn, gm, gn)` in the tiled cmma
