@@ -164,7 +164,11 @@ pub(crate) fn launch_split<const N: usize>(
     let settings =
         <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::device_settings(client, vector_sizes);
     let strategy = strategy.blueprint(client, &matmul_problem, &dtypes);
-    let expand = UnitMatmul::expand_blueprint(&matmul_problem, &settings, &strategy)?;
+    let expand = <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::expand_blueprint(
+        &matmul_problem,
+        &settings,
+        &strategy,
+    )?;
     let launch = <UnitMatmul as BatchMatmulRoutine<RuntimeArgs>>::prepare(
         &matmul_problem,
         &settings,

@@ -159,10 +159,12 @@ impl Display for QuantGemvStrategy {
 /// Pairs the [`QuantGemvStrategy`] knobs with the [`QuantGemvBlueprint`] plan.
 pub struct QuantGemvRoutine;
 
-impl crate::routine::Routine<()> for QuantGemvRoutine {
+impl cubek_std::Routine for QuantGemvRoutine {
     type Strategy = QuantGemvStrategy;
     type Blueprint = QuantGemvBlueprint;
 }
+
+impl crate::routine::Routine<()> for QuantGemvRoutine {}
 
 /// Output rows one unit may own, widest first. A preference the search narrows rather than a
 /// constant: a `d_out` the four-row strip misses is served two rows wide instead of dropping to
@@ -186,7 +188,7 @@ impl QuantGemvRoutine {
     /// Resolve `strategy` into a validated plan for `problem` on a `plane_dim`-unit plane.
     #[allow(clippy::result_large_err)]
     pub fn blueprint(
-        strategy: &crate::routine::BlueprintStrategy<(), QuantGemvRoutine>,
+        strategy: &crate::routine::BlueprintStrategy<QuantGemvRoutine>,
         problem: &QuantGemvProblem,
         plane_dim: usize,
     ) -> Result<QuantGemvBlueprint, MatmulSetupError> {

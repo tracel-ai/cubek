@@ -18,9 +18,9 @@ use crate::{
 pub enum Strategy {
     /// Plane-level tensor cores over a cyclic stage. The strategy's `delivery` picks
     /// strided or TMA operands (`Unavailable` without TMA).
-    Cmma(BlueprintStrategy<(), CmmaRoutine>),
+    Cmma(BlueprintStrategy<CmmaRoutine>),
     /// Register-leaf contraction sized to fit a register block. Needs no accelerator.
-    CpuGemm(BlueprintStrategy<(), CpuGemmRoutine>),
+    CpuGemm(BlueprintStrategy<CpuGemmRoutine>),
 }
 
 impl Display for Strategy {

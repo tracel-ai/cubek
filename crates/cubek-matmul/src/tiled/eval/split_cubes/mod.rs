@@ -31,6 +31,7 @@ use cubecl::{
     ir::{ElemType, FloatKind, Type},
     prelude::*,
 };
+use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
@@ -43,13 +44,6 @@ use cubek_tile::{
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
-
-const M: Axis = Axis(0);
-const N: Axis = Axis(1);
-const K: Axis = Axis(2);
-/// `K` as two axes, for the mapping that binds the split into the output's own shape.
-const KB: Axis = Axis(3);
-const KI: Axis = Axis(4);
 
 /// Columns each cube owns. Held at one so the mappings differ only in what they do with `K`.
 const COLS: usize = 1;

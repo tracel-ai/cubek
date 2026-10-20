@@ -26,6 +26,7 @@
 //! - **A plane grid larger than a cube**: a forced blueprint with more planes than the device
 //!   launches in one cube.
 
+use cubek_std::selector::divisor_at_most;
 use std::fmt::Display;
 
 use cubecl::ir::HardwareProperties;
@@ -43,18 +44,6 @@ const L1_BYTES: usize = 32 * 1024;
 /// registers across the `K` loop; overflowing spills every accumulator to the stack (~2×).
 /// ~24 of 32 NEON q-registers (~12 of 16 AVX2 ymm), leaving room for the A/B operands.
 const ACC_REG_BYTES: usize = 384;
-
-/// The largest divisor of `k` not exceeding `cap` (≥1).
-fn divisor_at_most(k: usize, cap: usize) -> usize {
-    let cap = cap.clamp(1, k.max(1));
-    let mut best = 1;
-    for d in 1..=cap {
-        if k.is_multiple_of(d) {
-            best = d;
-        }
-    }
-    best
-}
 
 /// The divisor of `g` nearest `target`, ties going to the larger
 fn nearest_divisor(g: usize, target: usize) -> usize {
@@ -165,16 +154,18 @@ impl Display for CpuGemmStrategy {
 /// Pairs the [`CpuGemmStrategy`] knob with the [`CpuGemmBlueprint`] plan.
 pub struct CpuGemmRoutine;
 
-impl Routine<()> for CpuGemmRoutine {
+impl cubek_std::Routine for CpuGemmRoutine {
     type Strategy = CpuGemmStrategy;
     type Blueprint = CpuGemmBlueprint;
 }
+
+impl Routine<()> for CpuGemmRoutine {}
 
 impl CpuGemmRoutine {
     /// Resolve `strategy` into a validated cuboid for `problem` on this device.
     #[allow(clippy::result_large_err)]
     pub fn blueprint(
-        strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
+        strategy: &BlueprintStrategy<CpuGemmRoutine>,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
     ) -> Result<CpuGemmBlueprint, MatmulSetupError> {

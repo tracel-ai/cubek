@@ -76,10 +76,12 @@ impl From<()> for VecMatInnerProductStrategy {
     }
 }
 
-impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
+impl cubek_std::Routine for VecMatInnerProductAlgorithm {
     type Strategy = VecMatInnerProductStrategy;
     type Blueprint = BatchMatmulBlueprint;
 }
+
+impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {}
 
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
@@ -140,7 +142,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
@@ -203,10 +205,12 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
 
 pub struct DoubleVecMatInnerProductAlgorithm {}
 
-impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
+impl cubek_std::Routine for DoubleVecMatInnerProductAlgorithm {
     type Strategy = VecMatInnerProductStrategy;
     type Blueprint = BatchMatmulBlueprint;
 }
+
+impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {}
 
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleVecMatInnerProductAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
@@ -267,7 +271,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleVecMatInnerProductAlgor
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

@@ -1404,6 +1404,7 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubek-interpolate",
+ "cubek-std",
  "cubek-test-utils",
  "cubek-tile",
  "half",
@@ -1445,6 +1446,7 @@ version = "0.3.0"
 dependencies = [
  "cubecl",
  "cubecl-common",
+ "cubek-std",
  "cubek-test-utils",
  "cubek-tile",
  "half",

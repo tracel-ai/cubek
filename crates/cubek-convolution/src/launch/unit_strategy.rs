@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{components::global::args::RuntimeArgs, routines::unit::UnitMatmul};
+use crate::routines::unit::UnitMatmul;
 use cubecl::client::Client;
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
@@ -80,7 +80,7 @@ impl UnitStrategy {
         client: &Client,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
-    ) -> BlueprintStrategy<RuntimeArgs, UnitMatmul> {
+    ) -> BlueprintStrategy<UnitMatmul> {
         let partition = match self {
             Self::Inferred(tile_size) => {
                 return BlueprintStrategy::Inferred(SimpleUnitSelectionArgs { tile_size });

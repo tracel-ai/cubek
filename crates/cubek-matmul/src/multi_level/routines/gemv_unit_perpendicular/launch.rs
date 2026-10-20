@@ -41,7 +41,7 @@ pub fn launch_ref(
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    strategy: &BlueprintStrategy<(), GemvUnitPerpendicularRoutine>,
+    strategy: &BlueprintStrategy<GemvUnitPerpendicularRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = rhs.shape().len();
