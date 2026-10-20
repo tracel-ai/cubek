@@ -156,6 +156,32 @@ impl BufferLayout {
         }
     }
 
+    /// The entry this layout's window was cut with, [`PagePin::unpinned`] where the buffer is not a
+    /// pool of pages.
+    pub(crate) fn page_pin(&self) -> PagePin {
+        #[comptime]
+        match &self.paging {
+            ComptimeOption::Some(table) => table.pin(),
+            ComptimeOption::None => PagePin::unpinned(),
+        }
+    }
+
+    /// This layout taking its pages from `pin` where a cut names its entry; unchanged where the
+    /// buffer is not a pool of pages.
+    pub(crate) fn with_page_pin(&self, pin: &PagePin) -> BufferLayout {
+        #[comptime]
+        match &self.paging {
+            ComptimeOption::Some(table) => BufferLayout {
+                physical_shape: self.physical_shape.clone(),
+                physical_strides: self.physical_strides.clone(),
+                projection: comptime!(self.projection.clone()),
+                rows: comptime!(self.rows),
+                paging: ComptimeOption::new_Some(table.with_page_pin(pin)),
+            },
+            ComptimeOption::None => self.clone(),
+        }
+    }
+
     /// `digits` located through the page table where the buffer is a pool of pages
     /// ([`PageTable::located`]), with the base the line's offset adds past them.
     fn paged(&self, digits: Coords<u32>) -> (Coords<u32>, u32) {

@@ -870,6 +870,29 @@ impl Memory {
         }
     }
 
+    /// This store, its windows taking their page from `pin` where a cut names its entry
+    /// ([`Tile::with_page_pin`]).
+    pub(crate) fn with_page_pin(&self, pin: &PagePin) -> Memory {
+        Memory {
+            address: comptime!(self.address),
+            store: self.store.clone(),
+            layout: self.layout.with_page_pin(pin),
+            window: self.window.clone(),
+            projection: comptime!(self.projection.clone()),
+            source_window: self.source_window.clone(),
+            map: self.map.clone(),
+            offsets: self.offsets.clone(),
+            window_start: self.window_start,
+            access: comptime!(self.access.clone()),
+            unit_share: comptime!(self.unit_share),
+            split_share: comptime!(self.split_share),
+            init_from: comptime!(self.init_from),
+            contraction: comptime!(self.contraction),
+            codebook: self.codebook.clone(),
+            index: self.index.clone(),
+        }
+    }
+
     /// This window filled by the units of `holder` where they are fewer than the ones that fill
     /// its buffer: a plane's window of a buffer the cube fills is the plane's to fill.
     pub(crate) fn filled_by(&self, #[comptime] holder: ComputeScope) -> Memory {

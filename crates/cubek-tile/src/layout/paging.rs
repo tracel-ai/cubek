@@ -159,6 +159,27 @@ pub(crate) enum WindowCut {
     Shifted,
 }
 
+/// The page that column `column` of sequence `sequence` lists, as a window's cut read it.
+#[derive(CubeType, CubeTypeMut, Clone)]
+#[expand(derive(Clone))]
+pub struct PagePin {
+    sequence: u32,
+    column: u32,
+    page: u32,
+}
+
+#[cube]
+impl PagePin {
+    /// The pin of a buffer that is not a pool of pages, which no cut of a pool matches.
+    pub fn unpinned() -> PagePin {
+        PagePin {
+            sequence: 0xFFFF_FFFFu32,
+            column: 0xFFFF_FFFFu32,
+            page: 0u32,
+        }
+    }
+}
+
 /// A page table as a kernel reads it: `u32`, `[sequences, pages_per_sequence]`, read by stride.
 /// Its shape is the operand's: the sequences it lists and their positions, `page_size` a column.
 /// It holds at least one entry, which [`lookup`](Self::lookup) reads for every window.
@@ -179,9 +200,7 @@ pub(crate) struct PageTable {
     /// The page a window's origin lies in, resolved once as the window is cut
     /// ([`pinned_at`](Self::pinned_at)): a line in the same sequence and the same column of the
     /// table reads it without loading from the table.
-    pin_sequence: u32,
-    pin_column: u32,
-    pin_page: u32,
+    pin: PagePin,
     /// The page of the column after the pin's, where the window [`Spans::TwoPages`].
     next_page: u32,
     /// Where the pin's column starts, in positions.
@@ -189,6 +208,10 @@ pub(crate) struct PageTable {
     /// What a line of the pinned page, or the next, adds to its offset as one sequence's.
     pin_base: u32,
     next_base: u32,
+    /// An entry handed in with [`Tile::with_page_pin`](crate::Tile::with_page_pin), which a cut
+    /// naming the same sequence and column takes instead of loading it. It carries one page, so
+    /// the page after it, which a [`Spans::TwoPages`] window also needs, is still loaded.
+    held: ComptimeOption<PagePin>,
     /// What the window's extent proves of the pages its lines lie in.
     #[cube(comptime)]
     spans: Spans,
@@ -251,13 +274,12 @@ impl PageTable {
             pages_per_sequence,
             // A bound pool holds a page at least; one stated by hand is kept off underflow.
             last_page: pool_pages.max_with(1u32).minus(1u32),
-            pin_sequence: 0u32,
-            pin_column: 0u32,
-            pin_page: 0u32,
+            pin: PagePin::unpinned(),
             next_page: 0u32,
             pin_start: 0u32,
             pin_base: 0u32,
             next_base: 0u32,
+            held: ComptimeOption::new_None(),
             spans: comptime!(Spans::Any),
             origin_alignment: comptime!(0usize),
             page_size: comptime!(paging.page_size),
@@ -337,7 +359,8 @@ impl PageTable {
         let start = table.pin_start.divided_by(unit);
         let page_digits = comptime!((self.page_size / self.unit) as u32);
         table.pin_base = table
-            .pin_page
+            .pin
+            .page
             .times(sequence_stride)
             .minus(start.times(position_stride));
         table.next_base = table
@@ -356,7 +379,7 @@ impl PageTable {
         #[comptime] origin_alignment: usize,
     ) -> PageTable {
         let next_page = match comptime!(spans) {
-            Spans::TwoPages => self.lookup(sequence, column.plus(1u32)),
+            Spans::TwoPages => self.entry(sequence, column.plus(1u32)),
             Spans::Any | Spans::OnePage => 0u32,
         };
         PageTable {
@@ -366,13 +389,16 @@ impl PageTable {
             sequences: self.sequences,
             pages_per_sequence: self.pages_per_sequence,
             last_page: self.last_page,
-            pin_sequence: sequence,
-            pin_column: column,
-            pin_page: self.lookup(sequence, column),
+            pin: PagePin {
+                sequence,
+                column,
+                page: self.entry(sequence, column),
+            },
             next_page,
             pin_start: column.times(comptime!(self.page_size as u32)),
             pin_base: 0u32,
             next_base: 0u32,
+            held: self.held.clone(),
             spans,
             origin_alignment,
             page_size: comptime!(self.page_size),
@@ -382,8 +408,46 @@ impl PageTable {
         }
     }
 
+    /// The page `column` of sequence `sequence` lists: the held entry where it is that one, else
+    /// the table's.
+    fn entry(&self, sequence: u32, column: u32) -> u32 {
+        #[comptime]
+        match &self.held {
+            ComptimeOption::Some(held) => {
+                let mut page = held.page;
+                if sequence != held.sequence || column != held.column {
+                    page = self.lookup(sequence, column);
+                }
+                page
+            }
+            ComptimeOption::None => self.lookup(sequence, column),
+        }
+    }
+
+    /// The entry this table's window was cut with.
+    pub(crate) fn pin(&self) -> PagePin {
+        self.pin.clone()
+    }
+
     /// This table, its pin unchanged, for a window whose origin is aligned to `origin_alignment`.
     fn aligned(&self, #[comptime] origin_alignment: usize) -> PageTable {
+        self.carrying(origin_alignment, self.held.clone())
+    }
+
+    /// This table taking its pages from `pin` where a cut names its entry.
+    pub(crate) fn with_page_pin(&self, pin: &PagePin) -> PageTable {
+        self.carrying(
+            comptime!(self.origin_alignment),
+            ComptimeOption::new_Some(pin.clone()),
+        )
+    }
+
+    /// This table, its window unchanged, with the alignment and the held entry given.
+    fn carrying(
+        &self,
+        #[comptime] origin_alignment: usize,
+        held: ComptimeOption<PagePin>,
+    ) -> PageTable {
         PageTable {
             entries: self.entries.clone(),
             sequence_stride: self.sequence_stride,
@@ -391,13 +455,12 @@ impl PageTable {
             sequences: self.sequences,
             pages_per_sequence: self.pages_per_sequence,
             last_page: self.last_page,
-            pin_sequence: self.pin_sequence,
-            pin_column: self.pin_column,
-            pin_page: self.pin_page,
+            pin: self.pin.clone(),
             next_page: self.next_page,
             pin_start: self.pin_start,
             pin_base: self.pin_base,
             next_base: self.next_base,
+            held,
             spans: comptime!(self.spans),
             origin_alignment,
             page_size: comptime!(self.page_size),
@@ -494,8 +557,8 @@ impl PageTable {
         let sequence = digits.at(comptime!(self.sequence_dim));
         let position = digits.at(comptime!(self.position_dim)).times(unit);
         let column = position.divided_by(page_size);
-        let mut page = self.pin_page;
-        if sequence != self.pin_sequence || column != self.pin_column {
+        let mut page = self.pin.page;
+        if sequence != self.pin.sequence || column != self.pin.column {
             page = self.lookup(sequence, column);
         }
         let mut resolved = Coords::<u32>::new();

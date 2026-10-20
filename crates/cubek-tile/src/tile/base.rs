@@ -461,6 +461,39 @@ impl Tile {
         }
     }
 
+    /// The page entry `region`'s window is cut with, [`PagePin::unpinned`] for a tile not read
+    /// through a page table.
+    pub fn page_pin(&self, region: &Region) -> PagePin {
+        let cut = self.at(region);
+        match &cut.kind {
+            TileKind::Memory(g) => g.layout.page_pin(),
+            TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_) => PagePin::unpinned(),
+        }
+    }
+
+    /// This tile, its windows taking their page from `pin` where they name its entry. `pin` must
+    /// come from a tile reading the same table. A tile not read through a page table is unchanged.
+    pub fn with_page_pin(&self, pin: &PagePin) -> Tile {
+        let kind = match &self.kind {
+            TileKind::Memory(g) => TileKind::new_Memory(g.with_page_pin(pin)),
+            TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_) => self.kind.clone(),
+        };
+        Tile {
+            kind,
+            factor: self.factor.clone(),
+            place: comptime!(self.place.clone()),
+            element: comptime!(self.element),
+        }
+    }
+
     /// Window this tile down to `region`, no copy.
     pub fn at(&self, region: &Region) -> Tile {
         let skip = comptime!({
