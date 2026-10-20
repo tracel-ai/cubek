@@ -694,17 +694,16 @@ impl Memory {
             }
             false => None,
         });
-        let (cut, origin_alignment) = comptime!(match edges {
+        let cut = comptime!(match edges {
             None => {
                 assert!(
                     self.layout.paging.is_none(),
                     "Memory::at: a pool of pages is read through a direct mapping only"
                 );
                 // A gathered origin moves by runtime amounts.
-                (WindowCut::Shifted, OriginAlignment::default())
+                WindowCut::Shifted
             }
             Some(edges) => {
-                let origin_alignment = self.window.origin_alignment.stepped(&edges);
                 // `space` is the box being cut: a level that does not overhang it keeps its tiles
                 // inside it.
                 let nested = self.layout.paging.is_some()
@@ -714,12 +713,7 @@ impl Memory {
                             || (matches!(space.extent_raw(axis), Extent::Static(_))
                                 && !step.level.overhangs(&space, axis))
                     });
-                let cut = WindowCut::Level {
-                    edges,
-                    origin_alignment: origin_alignment.clone(),
-                    nested,
-                };
-                (cut, origin_alignment)
+                WindowCut::Level { edges, nested }
             }
         });
 
@@ -730,7 +724,6 @@ impl Memory {
                 self.window.bound.clone(),
                 comptime!(self.window.signed),
                 comptime!(self.window.boundaries.clone()),
-                comptime!(origin_alignment),
             ),
             comptime!(cut),
             start,
@@ -935,7 +928,6 @@ impl Memory {
                 self.window.bound.clone(),
                 comptime!(self.window.signed),
                 comptime!(self.window.boundaries.clone()),
-                comptime!(self.window.origin_alignment.shifted(at)),
             ),
             comptime!(WindowCut::Shifted),
             start,
@@ -950,7 +942,7 @@ impl Memory {
     }
 
     /// This window placed at element `from` on `axis`, reading up to `until` (zero past it). A
-    /// `from` known at expansion to be 0 keeps the window's alignment.
+    /// `from` known at expansion to be 0 keeps the window's pages.
     pub(crate) fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Memory {
         let first = from.constant();
         let moved = comptime!(first != Some(0));
@@ -996,10 +988,6 @@ impl Memory {
                     }
                     boundaries[at] = Some(Boundary::Zero);
                     boundaries
-                }),
-                comptime!(match moved {
-                    true => self.window.origin_alignment.shifted(at),
-                    false => self.window.origin_alignment.clone(),
                 }),
             ),
             comptime!(match moved {

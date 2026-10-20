@@ -330,11 +330,6 @@ impl Memory {
                 bound,
                 comptime!(coords.may_underflow()),
                 comptime!(spec.boundaries.clone()),
-                // A direct mapping's top window starts at 0; a gathered one where its offsets say.
-                comptime!(match coords.is_direct() {
-                    true => OriginAlignment::zero_origin(coords.physical_rank()),
-                    false => OriginAlignment::default(),
-                }),
             ),
             source_window: ComptimeOption::new_None(),
             projection: comptime!(coords),
