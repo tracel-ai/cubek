@@ -48,10 +48,10 @@ cubek-tile = { path = "crates/cubek-tile", version = "0.3.1", default-features =
 # cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "eb98a977d3c509a228dfefc46c3e40bbba44ef50", default-features = false }
 # cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "eb98a977d3c509a228dfefc46c3e40bbba44ef50", default-features = false }
 ### For releases ###
-cubecl = { version = "0.11.0", default-features = false }
-cubecl-common = { version = "0.11.0", default-features = false }
-cubecl-environment = { version = "0.11.0", default-features = false }
-cubecl-ir = { version = "0.11.0", default-features = false }
+cubecl = { version = "0.11.1", default-features = false }
+cubecl-common = { version = "0.11.1", default-features = false }
+cubecl-environment = { version = "0.11.1", default-features = false }
+cubecl-ir = { version = "0.11.1", default-features = false }
 
 
 log = { default-features = false, version = "0.4.22" }
