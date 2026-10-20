@@ -3,7 +3,7 @@
 
 use crate::*;
 
-/// How a plane-resident accumulator's tiles reach memory, per its [`Scratch`].
+/// How a plane-resident accumulator's tiles reach memory, per its [`Scratch`] and its destination.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum DrainPlan {
     /// No scratch: each tile stores through its own intrinsic.
@@ -15,11 +15,15 @@ pub(crate) enum DrainPlan {
 }
 
 impl DrainPlan {
-    pub(crate) fn new(scratch: Scratch) -> Self {
-        match scratch {
-            Scratch::None => DrainPlan::Straight,
-            Scratch::OneTile => DrainPlan::BounceEach,
-            Scratch::WholeGrid => DrainPlan::BounceTogether,
+    /// The plan for a grid holding `scratch`, into a destination its fragments must bounce to
+    /// reach where `bounces`. A destination they store to whole takes them straight whatever the
+    /// grid holds: the scratch is for the destinations that need it, and a grid draining into
+    /// several pays its barriers only where one does.
+    pub(crate) fn new(scratch: Scratch, bounces: bool) -> Self {
+        match (scratch, bounces) {
+            (Scratch::None, _) | (_, false) => DrainPlan::Straight,
+            (Scratch::OneTile, true) => DrainPlan::BounceEach,
+            (Scratch::WholeGrid, true) => DrainPlan::BounceTogether,
         }
     }
 }
@@ -59,5 +63,32 @@ impl Drain {
             (UnitShare::Repeated, Write::Accumulate | Write::Exclusive(_)) => Drain::UnitZero,
             (UnitShare::Repeated, Write::Replace) | (UnitShare::Whole, _) => Drain::EachUnit,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A destination the fragments store to whole takes a grid straight, whatever scratch it
+    /// holds: a grid opened with one for a sink pays no barrier on its way into a plain buffer.
+    #[test]
+    fn a_destination_stored_whole_takes_any_grid_straight() {
+        for scratch in [Scratch::None, Scratch::OneTile, Scratch::WholeGrid] {
+            assert_eq!(DrainPlan::new(scratch, false), DrainPlan::Straight);
+        }
+    }
+
+    /// A destination the fragments bounce to reach takes them through the scratch the grid holds.
+    #[test]
+    fn a_bouncing_destination_takes_the_grid_through_its_scratch() {
+        assert_eq!(
+            DrainPlan::new(Scratch::OneTile, true),
+            DrainPlan::BounceEach
+        );
+        assert_eq!(
+            DrainPlan::new(Scratch::WholeGrid, true),
+            DrainPlan::BounceTogether
+        );
     }
 }

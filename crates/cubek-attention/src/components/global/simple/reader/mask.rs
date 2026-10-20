@@ -46,8 +46,10 @@ impl LogicalIterator {
 pub struct MaterializedMaskReader<'a, M: Numeric, N: Size> {
     global_iter: GlobalIterator<'a, Vector<M, N>>,
     logical_iter: LogicalIterator,
-    // TODO not sure if mandatory, but i need for the stride when reading in global memory
-    seq_kv_shape: u32,
+    /// The mask's row stride in global memory (`stride(2)` of the tensor):
+    /// `seq_kv` for a contiguous mask, 0 for a `[b, 1, 1, seq_kv]` mask
+    /// broadcast over `seq_q`.
+    stride_row: u32,
     #[cube(comptime)]
     gmem_config: GlobalMemoryConfig,
 }
@@ -69,7 +71,7 @@ impl<'a, AP: AttentionPrecision> MaskReader<'a, AP> {
         partition_q_offset: u32,
         mask: View<'a, Vector<MSK<AP>, MSKS<AP>>, Coords2d>,
         step: u32,
-        seq_kv_shape: u32,
+        stride_row: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         let mask = mask.slice((stage_q_offset, 0), mask.shape());
@@ -78,7 +80,7 @@ impl<'a, AP: AttentionPrecision> MaskReader<'a, AP> {
         MaskReader::<AP>::new_Materialized(MaterializedMaskReader::new(
             global_iter,
             LogicalIterator::init(stage_q_offset + partition_q_offset, step),
-            seq_kv_shape,
+            stride_row,
             gmem_config,
         ))
     }
@@ -125,13 +127,13 @@ impl<'a, M: Numeric, N: Size> MaterializedMaskReader<'a, M, N> {
     fn new(
         global_iter: GlobalIterator<'a, Vector<M, N>>,
         logical_iter: LogicalIterator,
-        seq_kv_shape: u32,
+        stride_row: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         MaterializedMaskReader::<'a, M, N> {
             global_iter,
             logical_iter,
-            seq_kv_shape,
+            stride_row,
             gmem_config,
         }
     }
@@ -156,7 +158,7 @@ impl<'a, M: Numeric, N: Size> MaterializedMaskReader<'a, M, N> {
         let start = 0;
         let length = attention_tile_size.seq_q * attention_tile_size.seq_kv / vector_size;
         let end = start + length;
-        let stride = self.seq_kv_shape / vector_size;
+        let stride = self.stride_row / vector_size;
 
         StridedTile::<M, N>::new_strided(
             slice,

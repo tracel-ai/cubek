@@ -7,6 +7,8 @@ use crate::{
     Walk,
 };
 
+use super::UnitCube;
+
 /// A space with the levels that partition it, outermost first: what a kernel's loops iterate.
 #[derive(CubeType, CubeLaunch, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Partitioning {
@@ -118,6 +120,30 @@ impl Partitioning {
                     "Partitioning::new: two levels distribute over {scope:?}"
                 );
             }
+            if level.spans_launch() {
+                assert!(
+                    i == 0,
+                    "Partitioning::new: a level spanning the launch is the outermost level, and \
+                     this one sits {i} levels down"
+                );
+                assert!(
+                    levels.iter().all(|other| other.coverage()
+                        != Coverage::Distribute(ComputeScope::Cube)
+                        && other.fillers() == 0),
+                    "Partitioning::new: the launch's planes or units take the outermost level, so \
+                     no cube level groups them and no plane only fills a cube's stages"
+                );
+            }
+            if level.unit_cube().is_some() {
+                assert!(
+                    levels.iter().all(|other| !matches!(
+                        other.coverage(),
+                        Coverage::Distribute(ComputeScope::Plane | ComputeScope::PlaneGroup { .. })
+                    )),
+                    "Partitioning::new: the launch's units take the outermost level, so no plane \
+                     level holds them"
+                );
+            }
         }
         Self { space, levels }
     }
@@ -161,11 +187,31 @@ impl Partitioning {
         false
     }
 
-    /// Every axis some tile reaches past the end of, whose accesses are masked.
+    /// Every axis some tile reaches past the end of, whose accesses are masked, in the space's
+    /// order.
+    ///
+    /// One walk down the levels, every axis asked at each: [`overhangs`](Self::overhangs) asked
+    /// axis by axis would cut the space down through every level once per axis, and a launch asks
+    /// this of every operand it binds, on every call.
     pub(crate) fn overhanging(&self) -> Vec<Axis> {
-        self.space
-            .axes()
-            .filter(|&axis| self.overhangs(axis))
+        let axes: Vec<Axis> = self.space.axes().collect();
+        for &axis in &axes {
+            assert!(
+                !self.space.is_dynamic(axis),
+                "Partitioning::overhanging: axis {axis:?} is Dynamic; ask the concrete space"
+            );
+        }
+        let mut overhanging = vec![false; axes.len()];
+        let mut space = self.space.clone();
+        for level in &self.levels {
+            for (hangs, &axis) in overhanging.iter_mut().zip(&axes) {
+                *hangs |= level.overhangs(&space, axis);
+            }
+            space = level.child(&space);
+        }
+        axes.into_iter()
+            .zip(overhanging)
+            .filter_map(|(axis, hangs)| hangs.then_some(axis))
             .collect()
     }
 
@@ -206,6 +252,7 @@ impl Partitioning {
                 .map(|dim| self.cube_instances(dim))
                 .product(),
             Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::PlaneGroup { .. })
             | Coverage::Distribute(ComputeScope::Unit) => {
                 self.count_instances(|level| level.coverage() == coverage, |_, _| true)
             }
@@ -233,7 +280,8 @@ impl Partitioning {
         let mut total = 1u32;
         let mut space = self.space.clone();
         for level in &self.levels {
-            if levels(level) {
+            // A unit of a level spanning the launch takes one tile, and asks for no units of its own.
+            if levels(level) && level.unit_cube().is_none() {
                 match level.shared_by() {
                     Some(workers) => total *= workers as u32,
                     None => {
@@ -257,6 +305,10 @@ impl Partitioning {
 
     /// The cube grid these levels distribute to.
     pub fn cube_count(&self) -> CubeCount {
+        if let Some(order) = self.levels.first().and_then(Level::launch_order) {
+            let (x, y) = order.grid(&self.levels[0], &self.space);
+            return CubeCount::Static(x as u32, y as u32, 1);
+        }
         CubeCount::Static(
             self.cube_instances(CubeAxis::X),
             self.cube_instances(CubeAxis::Y),
@@ -264,9 +316,23 @@ impl Partitioning {
         )
     }
 
-    /// Planes one cube holds: the levels' plane cuts, plus any that only fill.
+    /// Planes one cube holds: the levels' plane cuts, each plane group's planes, plus any that
+    /// only fill; where the planes or units span the launch, the cubes their order groups them in.
     pub fn planes_per_cube(&self) -> u32 {
-        self.instances(Coverage::Distribute(ComputeScope::Plane)) + self.fillers()
+        if let Some(order) = self.levels.first().and_then(Level::plane_order) {
+            return order.planes_per_cube() as u32;
+        }
+        if let Some(cube) = self.unit_cube() {
+            return cube.planes as u32;
+        }
+        // `Levels` deals plane groups by one level, beside no plane level.
+        let grouped = self.levels.iter().find_map(|level| {
+            let scope = level.coverage().scope()?;
+            let planes = scope.planes().filter(|_| scope != ComputeScope::Plane)?;
+            Some(self.instances(level.coverage()) * planes as u32)
+        });
+        grouped.unwrap_or_else(|| self.instances(Coverage::Distribute(ComputeScope::Plane)))
+            + self.fillers()
     }
 
     /// Planes the cube holds that fill a walk's stages and take no tile
@@ -280,9 +346,18 @@ impl Partitioning {
         self.instances(Coverage::Distribute(ComputeScope::Unit))
     }
 
-    /// The cube this partitioning asks for at `plane_size`.
+    /// The cube this partitioning asks for at `plane_size`; where the units span the launch, the
+    /// cube they are grouped in, whatever `plane_size`.
     pub fn cube_dim(&self, plane_size: u32) -> CubeDim {
-        CubeDim::new_2d(plane_size, self.planes_per_cube())
+        match self.unit_cube() {
+            Some(cube) => CubeDim::new_2d(cube.plane_width as u32, cube.planes as u32),
+            None => CubeDim::new_2d(plane_size, self.planes_per_cube()),
+        }
+    }
+
+    /// The cubes the launch's units are grouped in, where a unit level spans the launch.
+    pub fn unit_cube(&self) -> Option<UnitCube> {
+        self.levels.first().and_then(Level::unit_cube)
     }
 }
 
@@ -362,6 +437,27 @@ mod tests {
                 .planes(&[(N, 2)])
                 .build(),
         );
+    }
+
+    /// The overhanging axes are the ones some level's tile fails to divide, asked axis by axis,
+    /// in the space's order: an edge at the cube level, one only a plane's box meets, and none.
+    #[test]
+    fn the_overhanging_axes_are_the_ones_some_level_overhangs() {
+        let partitioning = Partitioning::new(
+            Space::new(&[(M, 200), (N, 256), (K, 96)]),
+            Levels::leaf(&[(M, 64), (N, 48), (K, 32)])
+                .planes(&[(M, 2), (N, 2)])
+                .walk_every(&[K])
+                .cubes(&[M, N])
+                .build(),
+        );
+        let asked: Vec<Axis> = [M, N, K]
+            .into_iter()
+            .filter(|&axis| partitioning.overhangs(axis))
+            .collect();
+        assert_eq!(partitioning.overhanging(), asked);
+        assert_eq!(asked, vec![M, N]);
+        assert!(staged(0).overhanging().is_empty());
     }
 
     /// A scope's box is the space cut down through its level, whatever walks inside it.

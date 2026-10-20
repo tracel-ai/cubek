@@ -7,21 +7,19 @@ use crate::*;
 use super::base::{Payload, PayloadExpand, StageOperand, StageSpec, stage_one};
 
 #[cube]
-impl<T: Numeric> Payload<Tile<T>> for Tile<T> {
+impl Payload<Tile> for Tile {
     fn operands(&self) -> comptime_type!(Vec<StageOperand>) {
-        let delivery = self.delivery();
-        comptime!(vec![StageOperand {
-            delivery,
-            space: self.place.space.clone(),
-        }])
+        let operand = self.stage_operand();
+        let scales = self.scale_operands();
+        comptime!([operand].into_iter().chain(scales).collect())
     }
 
     fn staged(
         &self,
-        first: &Tile<T>,
+        first: &Tile,
         #[comptime] spec: StageSpec,
         #[comptime] refills: Vec<Refill>,
-    ) -> Tile<T> {
+    ) -> Tile {
         if comptime!(refills[0] == Refill::Shared) {
             first.clone()
         } else {
@@ -35,7 +33,7 @@ impl<T: Numeric> Payload<Tile<T>> for Tile<T> {
 
     fn bring(
         &mut self,
-        src: &Tile<T>,
+        src: &Tile,
         meeting: &Meeting,
         region: &Region,
         #[comptime] refills: Vec<Refill>,

@@ -152,7 +152,9 @@ impl AxisDistribution {
             ComputeScope::Cube => CubeAxis::position(comptime!(
                 dim.expect("a cube level's distributed axis rides a grid dimension")
             )),
-            ComputeScope::Plane | ComputeScope::Unit => ComputeScope::position(compute_scope),
+            ComputeScope::Plane | ComputeScope::PlaneGroup { .. } | ComputeScope::Unit => {
+                ComputeScope::position(compute_scope)
+            }
         }
     }
 }

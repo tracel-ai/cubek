@@ -21,27 +21,27 @@ const KI: Axis = Axis(3);
 const BLOCK: usize = 16;
 const PER_WORD: usize = 8;
 
-/// `c = x · (W ⊗ s)`, the weight read `VW` words a load and the scales `VS` a load, into a register block that lives across
-/// the walk over `K` and drains once.
+/// `c = x · (W ⊗ s)`, the weight and the scales each read as many as they are bound wide a load,
+/// into a register block that lives across the walk over `K` and drains once.
 #[cube(launch)]
-fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
-    x: &TileArg<'_, E, VX>,
-    w: &TileArg<'_, u32, VW>,
-    scale: &TileArg<'_, E, VS>,
-    c: &TileArg<'_, E, Const<1>>,
+fn column_gemv<E: Numeric>(
+    x: &TileArg<'_>,
+    w: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.mul(&scale.tile(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let values = w.tile(&space);
+    let w = values.mul(&scale.tile(&space));
+    let c = c.tile(&space);
     for cube in space {
         let x = x.at(&cube);
         let values = values.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &x,
             &values,
             comptime!(Instruction::Registers {
@@ -60,19 +60,16 @@ fn column_gemv<E: Numeric, VX: Size, VW: Size, VS: Size>(
 /// [`column_gemv`] with the accumulator in memory: the output zeroed once, and every step's
 /// block seeded from it and committed back ([`Tile::mma`]).
 #[cube(launch)]
-fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
-    x: &TileArg<'_, E, VX>,
-    w: &TileArg<'_, u32, VW>,
-    scale: &TileArg<'_, E, VS>,
-    c: &TileArg<'_, E, Const<1>>,
+fn column_gemv_in_memory(
+    x: &TileArg<'_>,
+    w: &TileArg<'_>,
+    scale: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w
-        .tile_as::<E>(comptime!(space.clone()))
-        .mul(&scale.tile(comptime!(space.clone())));
-    let c = c.tile(comptime!(space.clone()));
+    let x = x.tile(&space);
+    let w = w.tile(&space).mul(&scale.tile(&space));
+    let c = c.tile(&space);
     for cube in &c {
         let mut c_w = c.at(&cube);
         c_w.zero();
@@ -92,7 +89,7 @@ fn column_gemv_in_memory<E: Numeric, VX: Size, VW: Size, VS: Size>(
 
 /// Where the value at `coords` (along `axes`) sits in a buffer of `geometry`, its dims named
 /// `labels`, outermost first: each coordinate spread over the dims its axis names, finest last.
-pub(super) fn offset(
+pub(crate) fn offset(
     geometry: &Geometry,
     labels: &[Axis],
     axes: &[Axis],
@@ -220,32 +217,43 @@ fn gemv_against_the_reference(
     w_spec.stored_tiles = storage.tiles().to_vec();
     // One statement of the arguments, for either kernel.
     macro_rules! launch {
-        ($kernel:ident) => {
+        ($kernel:ident $(, $dtype:expr)?) => {
             $kernel::launch(
                 &client,
                 launcher.cube_count(),
                 launcher.cube_dim(),
-                PER_WORD,
-                columns,
-                scale_width,
                 TileArgLaunch::new(
                     x_tensor.binding().into_tensor_arg(),
+                    dtype,
+                    PER_WORD,
                     TileSpec::direct(&[M, KB, KI]),
                 ),
-                TileArgLaunch::new(w_tensor.binding().into_tensor_arg(), w_spec),
-                TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), s_spec),
+                TileArgLaunch::new(
+                    w_tensor.binding().into_tensor_arg(),
+                    u32::elem_type_native(),
+                    columns,
+                    w_spec,
+                ),
+                TileArgLaunch::new(
+                    s_tensor.binding().into_tensor_arg(),
+                    dtype,
+                    scale_width,
+                    s_spec,
+                ),
                 TileArgLaunch::new(
                     c.clone().binding().into_tensor_arg(),
+                    dtype,
+                    1,
                     TileSpec::direct(&[M, N]),
                 ),
                 launcher.partitioning_arg(),
-                dtype,
+                $($dtype,)?
             )
         };
     }
     match in_memory {
         true => launch!(column_gemv_in_memory),
-        false => launch!(column_gemv),
+        false => launch!(column_gemv, dtype),
     }
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);

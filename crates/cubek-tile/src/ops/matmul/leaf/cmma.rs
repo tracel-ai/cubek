@@ -10,57 +10,60 @@ use crate::ops::matmul::leaf::Side;
 use crate::*;
 
 #[cube]
-impl<A: Numeric> CmmaData<A> {
+impl CmmaData {
     /// Tensor-core contraction `self += lhs · rhs`, each factor times its scales.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub(crate) fn mma<A: Numeric, EL: Numeric, ER: Numeric>(
         &self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
-        match (&lhs.kind, &rhs.kind) {
-            (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
-                (PlaneTile::Cmma(a), PlaneTile::Cmma(b)) => {
-                    lhs.refuse_factor("PlaneTile::Mma");
-                    rhs.refuse_factor("PlaneTile::Mma");
-                    cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
+        let a_read = comptime!(FragmentRead::new(Side::Lhs, &lhs.place.space, &out));
+        let b_read = comptime!(FragmentRead::new(Side::Rhs, &rhs.place.space, &out));
+        cmma::execute(
+            &lhs.cmma_fragment::<EL>(MatrixIdent::A, a_read),
+            &rhs.cmma_fragment::<ER>(MatrixIdent::B, b_read),
+            &self.fragment.downcast::<A>(),
+            &self.fragment.downcast::<A>(),
+        );
+    }
+}
+
+#[cube]
+impl Tile {
+    /// This factor as the `ident` fragment of a tensor-core contraction: the one it holds, or its
+    /// window loaded as `read` says.
+    pub(crate) fn cmma_fragment<E: Numeric>(
+        &self,
+        #[comptime] ident: MatrixIdent,
+        #[comptime] read: FragmentRead,
+    ) -> Matrix<E> {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Cmma(fragment) => {
+                    self.refuse_factor("PlaneTile::Mma");
+                    fragment.fragment.downcast::<E>()
                 }
-                _ => panic!("cmma operands must be cmma fragments"),
+                PlaneTile::Mma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    panic!("Tile::cmma_fragment: a held operand must be a cmma fragment")
+                }
             },
-            _ => {
-                let a_read = comptime!(FragmentRead::new(
-                    Side::Lhs,
-                    &lhs.place.space,
-                    &rhs.place.space,
-                    &out
-                ));
-                let b_read = comptime!(FragmentRead::new(
-                    Side::Rhs,
-                    &lhs.place.space,
-                    &rhs.place.space,
-                    &out
-                ));
-                let mut a_frag = unsafe {
-                    Matrix::<EL>::uninitialized(
-                        MatrixIdent::A,
-                        a_read.m,
-                        a_read.n,
-                        a_read.k,
-                        MatrixLayout::RowMajor,
+            TileKind::Memory(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                let mut fragment = unsafe {
+                    Matrix::<E>::uninitialized(
+                        ident,
+                        read.m,
+                        read.n,
+                        read.k,
+                        comptime!(read.layout),
                     )
                 };
-                let mut b_frag = unsafe {
-                    Matrix::<ER>::uninitialized(
-                        MatrixIdent::B,
-                        b_read.m,
-                        b_read.n,
-                        b_read.k,
-                        b_read.layout,
-                    )
-                };
-                lhs.load(&mut a_frag, comptime!(a_read));
-                rhs.load(&mut b_frag, comptime!(b_read));
-                cmma::execute(&a_frag, &b_frag, &self.matrix, &self.matrix);
+                self.load(&mut fragment, comptime!(read));
+                fragment
             }
         }
     }
@@ -89,14 +92,19 @@ pub(crate) struct FragmentRead {
 }
 
 impl FragmentRead {
-    pub(crate) fn new(side: Side, lhs: &Space, rhs: &Space, out: &Space) -> Self {
-        // A split contraction is one `k` edge.
-        let acc_axes = MatrixAxes::accumulator(out, lhs);
+    /// How the `side` factor spanning `own` is read for a contraction into `out`, from it alone.
+    pub(crate) fn new(side: Side, own: &Space, out: &Space) -> Self {
+        let acc_axes = accumulator_axes(side, out, own);
         let m = acc_axes.rows(out);
         let n = acc_axes.cols(out);
-        let operands = Space::merge(&[lhs, rhs]);
-        let k = operands.contracted_extent(out);
-        let layout = rhs_layout(rhs, lhs.axis_at(lhs.rank() - 1));
+        // A split contraction is one `k` edge.
+        let k = own.contracted_extent(out);
+        // The lhs is row-major; the rhs col-major where its trailing axis is contracted.
+        let layout = match side {
+            Side::Lhs => MatrixLayout::RowMajor,
+            Side::Rhs if out.contains(own.axis_at(own.rank() - 1)) => MatrixLayout::RowMajor,
+            Side::Rhs => MatrixLayout::ColMajor,
+        };
         FragmentRead {
             m,
             n,
@@ -109,22 +117,35 @@ impl FragmentRead {
 }
 
 #[cube]
-impl<E: Numeric> Tile<E> {
+impl Tile {
     /// This factor read into `frag`. A fragment loads a shared, plain window as it lies; a scaled
     /// or packed factor, or a global one whose layout the load cannot check, goes through its
     /// landing.
-    pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
-        let scaled = self.scaled();
+    pub(crate) fn load<E: Numeric>(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
+        let scaled = self.quantized();
         let packing = self.packing();
         let shared = self.is_shared();
         if comptime!(scaled || packing != Packing::Plain || !shared) {
-            let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
+            let landing = self.landed::<E>(comptime!(read.side), comptime!(read.out.clone()));
             landing.load_into(frag, comptime!(read.out.clone()));
             // The landing is this region's until every unit's load has read it.
             sync_plane();
         } else {
+            // A row is every axis past the last one on the other side of the output, which a
+            // window of several axes a side holds as one run: its stride is that axis's.
+            let row = comptime!({
+                let space = &self.place.space;
+                let rank = space.rank();
+                let innermost = read.out.contains(space.axis_at(rank - 1));
+                (0..rank)
+                    .rev()
+                    .find(|&p| read.out.contains(space.axis_at(p)) != innermost)
+                    .unwrap_or(rank - 2)
+            });
             match &self.kind {
-                TileKind::Memory(m) => cmma::load(frag, m.window_slice(), m.row_stride()),
+                TileKind::Memory(m) => {
+                    cmma::load(frag, m.window_slice::<E>(), m.row_stride_at(row))
+                }
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -136,18 +157,43 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
+    /// This factor as `instruction` reads it over its whole window: in its plane's landing where
+    /// the tensor cores read it through one, scaled or packed, and as it is otherwise.
+    pub(crate) fn landed_for<S: Numeric>(
+        &self,
+        #[comptime] side: Side,
+        #[comptime] out: Space,
+        #[comptime] instruction: Instruction,
+    ) -> Tile {
+        let scaled = self.quantized();
+        let packing = self.packing();
+        if comptime!(instruction == Instruction::Cmma && (scaled || packing != Packing::Plain)) {
+            self.landed::<S>(side, out)
+        } else {
+            self.clone()
+        }
+    }
+
     /// This factor in its plane's landing: a dense shared-memory stage holding `values ⊗ scales`
     /// that fragments load from.
-    pub(crate) fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
+    pub(crate) fn landed<S: Numeric>(
+        &self,
+        #[comptime] side: Side,
+        #[comptime] out: Space,
+    ) -> Tile {
         let space = comptime!(self.place.space.clone());
         let units = self.units();
         let planes = comptime!(plane_windows(&space, &self.place.levels));
-        let (stage, mut window) = Memory::<E>::landing(comptime!(space.clone()), units, planes);
-        let landing = Tile::new(stage.kind, comptime!(self.place.clone()));
+        let (stage, mut window) = Memory::landing::<S>(comptime!(space.clone()), units, planes);
+        let landing = Tile::new::<S>(stage.kind, comptime!(self.place.clone()));
 
-        let vw = self.vector_size();
-        let size!(VW) = vw;
-        let view = self.nd_packed::<VW>(comptime!(Guard::Checked));
+        // A load is read whole, a tile of several axes included, and landed a run of its finest
+        // axis at a time, each run under the scale at its own coordinates.
+        let load = self.vector_tile();
+        let (sw, (finest, run)) = comptime!((load.values(), load.extents()[0]));
+        let size!(SW) = sw;
+        let size!(RUN) = run;
+        let view = self.nd_packed::<S, SW>(comptime!(Guard::Checked));
         let acc_axes = comptime!(accumulator_axes(side, &out, &space));
         let scales = self.reader(
             comptime!(MatrixAxes::trailing(&space)),
@@ -156,38 +202,40 @@ impl<E: Numeric> Tile<E> {
             comptime!(out.clone()),
             acc_axes,
         );
-        let load = self.vector_tile();
         let lines = load.count(&space);
+        let rank = comptime!(space.rank());
         let strides = comptime!(dense_strides(&space));
-        let by_shuffle = scales.by_shuffle();
-        if comptime!(by_shuffle) {
-            // The whole plane must join every shuffle; units past the lines reread the last one and
-            // write nothing.
-            #[allow(clippy::manual_div_ceil)]
-            let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
-            for turn in 0..turns {
-                let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
-                let line = min(mine, lines - 1);
-                let coords = load.start(line, &space);
-                let landed =
-                    scales.apply_at::<E, VW>(view.read(load.index(&coords, &space)), &coords);
-                if mine < lines {
-                    let base = offset_of(&coords, comptime!(strides.clone()));
-                    #[unroll]
-                    for j in 0..vw {
-                        window[base + j] = landed.extract(j);
-                    }
-                }
-            }
-        } else {
-            for line in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
-                let coords = load.start(line, &space);
-                let landed =
-                    scales.apply_at::<E, VW>(view.read(load.index(&coords, &space)), &coords);
-                let base = offset_of(&coords, comptime!(strides.clone()));
+        let run_stride = comptime!(strides[space.position(finest)]);
+        // Every unit joins every turn, so a scale read by shuffle has the whole plane; units past
+        // the lines reread the last one and write nothing.
+        #[allow(clippy::manual_div_ceil)]
+        let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
+        for turn in 0..turns {
+            let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
+            let start = load.start(min(mine, lines - 1), &space);
+            let held = view.read(load.index(&start, &space));
+            #[unroll]
+            for r in 0..comptime!(sw / run) {
+                let offset = comptime!(r * run);
+                let mut at = Coords::<u32>::new();
                 #[unroll]
-                for j in 0..vw {
-                    window[base + j] = landed.extract(j);
+                for p in 0..rank {
+                    at.push(
+                        start.at(p) + comptime!(load.offset_along(offset, space.axis_at(p)) as u32),
+                    );
+                }
+                let mut values = Vector::<S, RUN>::empty();
+                #[unroll]
+                for v in 0..run {
+                    values.insert(v, held.extract(offset + v));
+                }
+                let landed = scales.apply_at::<S, RUN>(values, &at);
+                if mine < lines {
+                    let base = offset_of(&at, comptime!(strides.clone()));
+                    #[unroll]
+                    for v in 0..run {
+                        window[base + v * run_stride] = landed.extract(v);
+                    }
                 }
             }
         }
@@ -197,9 +245,9 @@ impl<E: Numeric> Tile<E> {
 }
 
 #[cube]
-impl<E: Numeric> Tile<E> {
+impl Tile {
     /// This landing loaded into `frag`, dense over the window's axes.
-    pub(crate) fn load_into(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
+    pub(crate) fn load_into<E: Numeric>(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
         let cols = comptime!(landed_cols(&self.place.space, &out) as u32);
         match &self.kind {
             TileKind::Memory(m) => {
@@ -207,7 +255,7 @@ impl<E: Numeric> Tile<E> {
                     m.address == AddressSpace::Shared,
                     "mma: a fragment loads from a shared window"
                 ));
-                cmma::load(frag, m.window_slice(), cols)
+                cmma::load(frag, m.window_slice::<E>(), cols)
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)

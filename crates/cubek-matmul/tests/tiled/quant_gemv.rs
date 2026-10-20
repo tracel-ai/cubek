@@ -89,7 +89,6 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
         &problem,
         &BlueprintStrategy::default(),
         QuantGemvElems {
-            served: f32::elem_type_native(),
             x: f16::elem_type_native(),
             tensor_scale: f32::elem_type_native(),
             out: f32::elem_type_native(),
@@ -195,7 +194,6 @@ fn a_second_scale_level_is_one_more_binding() {
         &problem,
         &BlueprintStrategy::default(),
         QuantGemvElems {
-            served: f32::elem_type_native(),
             x: f16::elem_type_native(),
             tensor_scale: f32::elem_type_native(),
             out: f32::elem_type_native(),

@@ -6,28 +6,27 @@ use super::leaf as reduce;
 use crate::*;
 
 #[cube]
-impl<Acc: Numeric> Tile<Acc> {
+impl Tile {
     /// `c = fold(input)`: reduce `input` into `self` across the contracted axes.
-    pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
-        self.init_identity(monoid);
+    pub fn reduce_axis(&mut self, input: &Tile, #[comptime] monoid: Monoid) {
+        let define!(Served) = self.element;
+        self.init_identity::<Served>(monoid);
         self.reduce_axis_accumulate(input, monoid);
     }
 
     /// `c = fold(c, input)`: fold `input` into what `self` holds, which must be seeded.
-    pub fn reduce_axis_accumulate<In: Numeric>(
-        &mut self,
-        input: &Tile<In>,
-        #[comptime] monoid: Monoid,
-    ) {
-        reduce_leaf(self, input, monoid)
+    pub fn reduce_axis_accumulate(&mut self, input: &Tile, #[comptime] monoid: Monoid) {
+        let define!(Served) = self.element;
+        let define!(Source) = input.read_element();
+        reduce_leaf::<Served, Source>(self, input, monoid)
     }
 }
 
 /// Dispatches to the register nest by the accumulator's form.
 #[cube]
 pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
-    acc: &mut Tile<Acc>,
-    input: &Tile<In>,
+    acc: &mut Tile,
+    input: &Tile,
     #[comptime] monoid: Monoid,
 ) {
     let input_space = comptime!(input.place.space.clone());
@@ -42,10 +41,10 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
     let space = comptime!(acc.place.space.clone());
     match &mut acc.kind {
         TileKind::Memory(g) => {
-            reduce::memory(g, input, space, monoid);
+            reduce::memory::<Acc, In>(g, input, space, monoid);
         }
         TileKind::PlaneTile(t) => {
-            reduce_plane_tile(t, input, space, monoid);
+            reduce_plane_tile::<Acc, In>(t, input, space, monoid);
         }
         TileKind::PlanePartition(p) => {
             comptime!(assert!(
@@ -53,7 +52,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
                 "reduce_leaf: a multi-tile partition must be contracted at its partition level"
             ));
             let mut t = p.at(0usize, 0usize);
-            reduce_plane_tile(&mut t, input, space, monoid);
+            reduce_plane_tile::<Acc, In>(&mut t, input, space, monoid);
         }
         TileKind::TmaGmem(_) => panic!("reduce: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) | TileKind::Lines(_) => {
@@ -64,16 +63,16 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
 
 #[cube]
 fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
-    tile: &mut PlaneTile<Acc>,
-    input: &Tile<In>,
+    tile: &mut PlaneTile,
+    input: &Tile,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
 ) {
     match tile {
         PlaneTile::Registers(d) => {
-            reduce::register_data(d, input, acc_space, monoid);
+            reduce::register_data::<Acc, In>(d, input, acc_space, monoid);
         }
-        PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
+        PlaneTile::Cmma(_) | PlaneTile::Mma(_) | PlaneTile::Wgmma(_) => {
             panic!(
                 "reduce: a hardware mma fragment scatters its rows across units in a \
                  layout the elementwise walk cannot address; reduce into a register, \

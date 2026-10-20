@@ -1,50 +1,94 @@
 //! The manual-mma leaf: `acc += lhs · rhs` via
 //! [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition).
 
-use cubecl::cmma::MatrixLayout;
+use cubecl::cmma::{MatrixIdent, MatrixLayout};
 use cubecl::prelude::*;
 
 use crate::*;
 
 #[cube]
-impl<A: Numeric> MmaData<A> {
-    /// `self += lhs · rhs`; memory-window operands are loaded into transient fragments each call.
-    pub(crate) fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
+impl MmaData {
+    pub(crate) fn mma<A: Numeric, L: Numeric, R: Numeric>(&mut self, lhs: &Tile, rhs: &Tile) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
         let io = comptime!(self.io);
+        let operands = comptime!(self.operands);
+        let (lhs_layout, rhs_layout) =
+            comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
+        let a = lhs.mma_operand::<L>(MatrixIdent::A, m, n, k, lhs_layout, io, operands);
+        let b = rhs.mma_operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, operands);
 
         match &mut self.fragment {
-            MmaFragment::Acc(acc) => match (&lhs.kind, &rhs.kind) {
-                (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
-                    (PlaneTile::Mma(a), PlaneTile::Mma(b)) => match (&a.fragment, &b.fragment) {
-                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                        }
-                        _ => panic!("MmaData::mma: operands must carry the Lhs/Rhs roles"),
-                    },
-                    _ => panic!("MmaData::mma: operands must be mma fragments"),
-                },
-                (TileKind::Memory(_), TileKind::Memory(_)) => {
-                    // Read each window in its stored order (`{n, k}` reads transposed).
-                    let (lhs_layout, rhs_layout) =
-                        comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let mut la = MmaData::<L>::lhs(m, n, k, lhs_layout, io);
-                    la.load_window(lhs);
-                    let mut rb = MmaData::<R>::rhs(m, n, k, rhs_layout, io);
-                    rb.load_window(rhs);
-                    match (&la.fragment, &rb.fragment) {
-                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                        }
-                        _ => panic!("MmaData::mma: transient operand fragments in the wrong roles"),
-                    }
+            MmaFragment::Acc(acc) => match (&a.fragment, &b.fragment) {
+                (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
+                    mma_execute::<L, R, A>(af.at::<L>(), bf.at::<R>(), acc.at_mut::<A>(), m, n, k)
                 }
-                _ => panic!("MmaData::mma: operands must be fragments or memory windows"),
+                // A left factor held as an accumulator, reread as the `A` it contracts as.
+                (MmaFragment::Acc(af), MmaFragment::Rhs(bf)) => {
+                    let af = accumulator_as_a::<L>(af.at::<L>(), m, n, k);
+                    mma_execute::<L, R, A>(&af, bf.at::<R>(), acc.at_mut::<A>(), m, n, k)
+                }
+                (
+                    MmaFragment::LhsBlockScaled(af, a_scales),
+                    MmaFragment::RhsBlockScaled(bf, b_scales),
+                ) => mma_execute_block_scaled::<A>(
+                    af,
+                    a_scales,
+                    bf,
+                    b_scales,
+                    acc.at_mut::<A>(),
+                    m,
+                    n,
+                    k,
+                ),
+                _ => panic!(
+                    "MmaData::mma: operands must carry the Lhs/Rhs roles, both block-scaled or \
+                     neither"
+                ),
             },
-            MmaFragment::Lhs(_) | MmaFragment::Rhs(_) => {
+            MmaFragment::Lhs(_)
+            | MmaFragment::Rhs(_)
+            | MmaFragment::LhsBlockScaled(..)
+            | MmaFragment::RhsBlockScaled(..) => {
                 panic!("MmaData::mma: the accumulator must carry the Acc role")
+            }
+        }
+    }
+}
+
+#[cube]
+impl Tile {
+    /// This factor as the `ident` operand of a manual-mma contraction: the fragment it holds, or
+    /// its window loaded in `layout`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn mma_operand<T: Numeric>(
+        &self,
+        #[comptime] ident: MatrixIdent,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] k: usize,
+        #[comptime] layout: MatrixLayout,
+        #[comptime] io: MmaIo,
+        #[comptime] operands: MmaOperands,
+    ) -> MmaData {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Mma(data) => data.clone(),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    panic!("Tile::mma_operand: a held operand must be an mma fragment")
+                }
+            },
+            TileKind::Memory(_) => {
+                let mut data = MmaData::operand::<T>(ident, m, n, k, layout, io, operands);
+                data.load_window::<T>(self);
+                data
+            }
+            TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!("Tile::mma_operand: an operand must be a fragment or a memory window")
             }
         }
     }
@@ -52,7 +96,7 @@ impl<A: Numeric> MmaData<A> {
 
 /// Each factor's window layout: `A` row-major and `B` col-major when its trailing axis is
 /// contracted, the opposite otherwise.
-fn window_layouts(lhs: &Space, rhs: &Space) -> (MatrixLayout, MatrixLayout) {
+pub(crate) fn window_layouts(lhs: &Space, rhs: &Space) -> (MatrixLayout, MatrixLayout) {
     let trailing = |space: &Space| space.axis_at(space.rank() - 1);
     let lhs_layout = match rhs.contains(trailing(lhs)) {
         true => MatrixLayout::RowMajor,

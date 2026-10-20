@@ -32,14 +32,23 @@ impl<ES: Numeric, NS: Size> PartitionedStage<ES, NS> {
         unit_pos: Coords2d,
         #[comptime] config: StageMemoryConfig,
     ) -> PartitionedStage<ES, NS> {
+        // Needs to be 16-byte aligned for `stmatrix`
+        PartitionedStage::new_aligned(unit_pos, 16usize, config)
+    }
+
+    /// [`Self::new`], with the stage memory aligned to `alignment` bytes.
+    pub fn new_aligned(
+        unit_pos: Coords2d,
+        #[comptime] alignment: usize,
+        #[comptime] config: StageMemoryConfig,
+    ) -> PartitionedStage<ES, NS> {
         let config = comptime![StageMemoryConfig {
             tiles_per_partition_along_row: 1,
             tiles_per_partition_along_col: 1,
             ..config
         }];
 
-        // Needs to be 16-byte aligned for `stmatrix`
-        let inner = StridedStageMemory::<ES, NS, WriteTiling>::new_aligned(16usize, config);
+        let inner = StridedStageMemory::<ES, NS, WriteTiling>::new_aligned(alignment, config);
 
         let tile = inner.get_tile(unit_pos);
 

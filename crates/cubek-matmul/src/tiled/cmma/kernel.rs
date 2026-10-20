@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Semiring, Space,
-    StageStorage, Stages, TileArg, launch::Input, stage::RowChunks,
+    Axis, Instruction, Level, Levels, Partitioning, Semiring, Space, StageStorage, Stages, TileArg,
+    stage::RowChunks,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -68,27 +68,16 @@ impl CmmaBlueprint {
 /// one's contraction. Inside a stage each plane takes its box, loads the instruction's operands
 /// into fragments one `K` step at a time, and contracts every fragment of its partition. The
 /// accumulator is resident in `EA` (typically `f32`) for the whole walk and cast down to the
-/// output `E` on drain.
+/// output's element on drain.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn cmma_kernel<
-    E: Numeric,
-    EA: Numeric,
-    EL: Numeric,
-    ER: Numeric,
-    VA: Size,
-    VB: Size,
-    VC: Size,
->(
-    a: &Input<'_, EL, VA>,
-    b: &Input<'_, ER, VB>,
-    c: &TileArg<'_, E, VC>,
+pub fn cmma_kernel<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] bp: CmmaBlueprint,
     #[comptime] batch: Vec<Axis>,
-    #[define(EL)] _lhs_dtype: ElemType,
-    #[define(ER)] _rhs_dtype: ElemType,
-    #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
     let depth = comptime!(bp.buffering);
@@ -101,9 +90,9 @@ pub fn cmma_kernel<
             .chain([(M, i.m), (N, i.n), (K, i.k)])
             .collect::<Vec<_>>()
     );
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
 
     for cube in space {
         let a = a.at(&cube);
@@ -111,7 +100,7 @@ pub fn cmma_kernel<
         let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
         // The accumulator's grid is the partition's, read off the levels below the cube.
-        let acc = c.accumulator::<EA, EL, ER>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+        let acc = c.accumulator::<EA>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
 
         // One stage of K per region, both inputs staged for it.
         let steps = cube.walk();
@@ -124,6 +113,7 @@ pub fn cmma_kernel<
                 chunks: RowChunks::InOrder,
             }),
             depth,
+            None,
         );
         stages.pipelined(steps, |slot, stage| {
             let acc_stage = acc.at(stage);

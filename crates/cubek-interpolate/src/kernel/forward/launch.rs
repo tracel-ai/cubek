@@ -213,7 +213,7 @@ fn dispatch<F: SeparableFilterFamily>(
     }
 
     let input_arg = launch
-        .arg(input)
+        .arg(input, dtype)
         .gathered(space::input_projection(row, col, F::radius()))
         .boundary(match checked {
             true => BoundaryPolicy::Every(properties.boundary),
@@ -222,7 +222,7 @@ fn dispatch<F: SeparableFilterFamily>(
         .vectorize(vector_size)
         .build()?;
     let output_arg = launch
-        .arg(output)
+        .arg(output, dtype)
         .axes(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
         .build()?;
@@ -230,7 +230,6 @@ fn dispatch<F: SeparableFilterFamily>(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        vector_size,
         input_arg.arg(),
         output_arg.arg(),
         launch.partitioning_arg(),

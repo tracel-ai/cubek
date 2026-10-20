@@ -106,6 +106,11 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             MultiLevel::SpecializedTmaMma(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
+            "specialized_tma_mma_tma_store",
+            "Specialized TMA (mma, TMA store)",
+            MultiLevel::SpecializedTmaMmaTmaStore(BlueprintStrategy::Inferred(().into())).into(),
+        ),
+        CatalogEntry::new(
             "specialized_cyclic_mma",
             "Specialized Cyclic (mma)",
             MultiLevel::SpecializedCyclicMma(BlueprintStrategy::Inferred(().into())).into(),

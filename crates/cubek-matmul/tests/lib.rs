@@ -1,5 +1,7 @@
 #![allow(unused, clippy::upper_case_acronyms)]
 
+#[cfg(feature = "multi-level")]
+mod complex;
 mod harness;
 
 mod auto;

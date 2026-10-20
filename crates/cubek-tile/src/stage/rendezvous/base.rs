@@ -141,12 +141,13 @@ impl Meeting {
         }
     }
 
-    /// Units that arrive on `full`.
+    /// Units that arrive on `full`: the filling planes' where the cube sets planes aside, since
+    /// they alone fill, whatever share of the fill is cooperative.
     pub(crate) fn producers(#[comptime] collective_full: bool, #[comptime] fillers: usize) -> u32 {
-        if comptime!(collective_full) {
-            CUBE_DIM
-        } else if comptime!(fillers > 0) {
+        if comptime!(fillers > 0) {
             comptime!(fillers as u32) * CUBE_DIM_X
+        } else if comptime!(collective_full) {
+            CUBE_DIM
         } else {
             1u32.runtime()
         }
@@ -171,35 +172,34 @@ impl Meeting {
     }
 
     /// Fill staged `dst` from `src`, spread over the units `dst` names ([`FillUnits`]).
-    pub(crate) fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
+    pub(crate) fn fill(&self, dst: &mut Tile, src: &Tile) {
         // Bound before the match, which borrows the kind.
         let space = comptime!(dst.place.space.clone());
-        let decodes = src.scaled();
-        if comptime!(decodes) {
-            dst.copy_from(src);
+        let element = src.stage_element();
+        if comptime!(element == StageElement::Decoded) {
+            dst.dequantize_from(src);
         } else {
             self.fill_as_it_lies(dst, src, space);
+            dst.fill_scales_from(src, self);
         }
     }
 
     /// [`fill`](Meeting::fill) a source that decodes nothing.
-    fn fill_as_it_lies<E: Numeric>(
-        &self,
-        dst: &mut Tile<E>,
-        src: &Tile<E>,
-        #[comptime] space: Space,
-    ) {
+    fn fill_as_it_lies(&self, dst: &mut Tile, src: &Tile, #[comptime] space: Space) {
+        let define!(Served) = dst.element;
         match self {
             Meeting::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
                     // Single issuer: the transaction count is the elected unit's alone.
                     if UNIT_POS == *elected {
-                        full.expect_tx(d.size_bytes());
-                        s.stage_into(d, full);
+                        full.expect_tx(d.size_bytes::<Served>());
+                        s.stage_into::<Served>(d, full);
                     }
                 }
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
-                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from::<Served>(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => {
+                    d.fill_procedural::<Served>(s, space)
+                }
                 _ => panic!("Meeting::fill: unsupported kind pairing"),
             },
             Meeting::Cube | Meeting::Plane => dst.copy_from(src),
@@ -217,7 +217,7 @@ mod tests {
             Rendezvous::for_deliveries(
                 &[Delivery::Procedural, Delivery::SyncPerUnit],
                 0,
-                StageOwner::Cube
+                StageOwner::CUBE
             ),
             Rendezvous::Cube
         );
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn procedural_and_tma_share_a_barrier_pipeline() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0, StageOwner::Cube),
+            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0, StageOwner::CUBE),
             Rendezvous::Barrier
         );
         assert!(Rendezvous::collective_full(&[
@@ -241,7 +241,7 @@ mod tests {
     fn an_async_copy_rendezvouses_on_a_barrier_every_unit_commits_to() {
         let deliveries = [Delivery::AsyncPerUnit];
         assert_eq!(
-            Rendezvous::for_deliveries(&deliveries, 0, StageOwner::Cube),
+            Rendezvous::for_deliveries(&deliveries, 0, StageOwner::CUBE),
             Rendezvous::Barrier
         );
         assert!(Rendezvous::collective_full(&deliveries));
@@ -258,7 +258,7 @@ mod tests {
     fn a_bulk_copy_keeps_its_single_producer_arrival() {
         let deliveries = [Delivery::AsyncBulk];
         assert_eq!(
-            Rendezvous::for_deliveries(&deliveries, 0, StageOwner::Cube),
+            Rendezvous::for_deliveries(&deliveries, 0, StageOwner::CUBE),
             Rendezvous::Barrier
         );
         assert!(!Rendezvous::collective_full(&deliveries));
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
         assert_eq!(
-            Rendezvous::for_deliveries(&[Delivery::SyncPerUnit], 1, StageOwner::Cube),
+            Rendezvous::for_deliveries(&[Delivery::SyncPerUnit], 1, StageOwner::CUBE),
             Rendezvous::Barrier
         );
     }

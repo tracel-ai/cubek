@@ -38,8 +38,8 @@ struct Doubled;
 /// [`Doubled`]'s launch argument: where the doubled values land, and the output's geometry and
 /// spec, which a sink has no address to answer for.
 #[derive(CubeType, CubeLaunch)]
-struct DoubledArg<'a, E: Numeric, V: Size> {
-    values: &'a Tensor<Vector<E, V>>,
+struct DoubledArg<'a, E: Numeric> {
+    values: &'a Tensor<E>,
     shape: Sequence<u32>,
     strides: Sequence<u32>,
     #[cube(comptime)]
@@ -50,12 +50,9 @@ struct DoubledArg<'a, E: Numeric, V: Size> {
 
 #[cube]
 impl Destination for Doubled {
-    type Arg<E: Numeric, V: Size> = DoubledArg<'static, E, V>;
+    type Arg<E: Numeric> = DoubledArg<'static, E>;
 
-    fn tile<E: Numeric, V: Size>(
-        arg: &Self::Arg<E, V>,
-        #[comptime] partitioning: Partitioning,
-    ) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E>, partitioning: &Partitioning) -> Tile {
         let mut geometry = RuntimeGeometry::new();
         #[unroll]
         for axis in 0..comptime!(arg.rank) {
@@ -65,7 +62,7 @@ impl Destination for Doubled {
         // Read at expansion, not as a Rust constant: a launch-time `Size` has no `value()` until
         // the kernel is being defined.
         let width = V::value();
-        GlobalOperand::<E>::sink(
+        GlobalOperand::sink::<E>(
             sink,
             geometry,
             width,
@@ -73,7 +70,7 @@ impl Destination for Doubled {
             comptime!(arg.spec.clone()),
             Write::Replace,
         )
-        .tile(comptime!(partitioning.levels().to_vec()))
+        .tile::<E>(comptime!(partitioning.levels().to_vec()))
     }
 }
 
@@ -87,7 +84,7 @@ struct DoubledOperand {
 impl DestinationLaunch for Doubled {
     type Operand = DoubledOperand;
 
-    fn arg<E: Numeric, V: Size>(operand: DoubledOperand) -> DoubledArgLaunch<'static, E, V> {
+    fn arg<E: Numeric>(operand: DoubledOperand) -> DoubledArgLaunch<'static, E> {
         let Unbound { spec, geometry, .. } = operand.sink;
         DoubledArgLaunch::new(
             operand.values,
@@ -101,9 +98,7 @@ impl DestinationLaunch for Doubled {
 
 /// The write-only erased tensor over `values`, doubling each line of `N` it is handed.
 #[allow(clippy::extra_unused_type_parameters)]
-fn doubling_sink<E: Numeric, N: Size>(
-    _values: &Tensor<Vector<E, N>>,
-) -> ErasedTensor<E, WriteOnly> {
+fn doubling_sink<E: Numeric, N: Size>(_values: &Tensor<E>) -> ErasedTensor<E, WriteOnly> {
     unexpanded!()
 }
 
@@ -112,7 +107,7 @@ mod doubling_sink {
 
     pub fn expand<E: Numeric, N: Size>(
         _scope: &Scope,
-        values: &<Tensor<Vector<E, N>> as CubeType>::ExpandType,
+        values: &<Tensor<E> as CubeType>::ExpandType,
     ) -> ErasedTensorExpand<E, WriteOnly> {
         ErasedTensorExpand::new(Doubling::<E, N> {
             values: ExpandTypeClone::clone_unchecked(values),
@@ -124,7 +119,7 @@ mod doubling_sink {
 /// The backing: writes, never reads. Only [`WritesLines`] is declared, so the read half is the
 /// trait's default, which panics at expansion.
 struct Doubling<E: Numeric, N: Size> {
-    values: <Tensor<Vector<E, N>> as CubeType>::ExpandType,
+    values: <Tensor<E> as CubeType>::ExpandType,
     _n: PhantomData<N>,
 }
 
@@ -134,7 +129,9 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for Doubling<E, N> {
     }
 
     fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
-        self.values.__expand_len_method(scope)
+        let scalars = self.values.__expand_len_method(scope);
+        let width = <N as Size>::__expand_value(scope).__expand_runtime_method(scope);
+        scalars.__expand_div_method(scope, width)
     }
 
     fn __expand_write_line_method(
@@ -149,13 +146,15 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for Doubling<E, N> {
 
 impl<E: Numeric, N: Size> WritesLines<E> for Doubling<E, N> {}
 
+/// One line, doubled, at the line's own offset: `N` scalars.
 #[cube]
-fn store_doubled<E: Numeric, N: Size>(
-    values: &mut Tensor<Vector<E, N>>,
-    index: usize,
-    value: Vector<E, N>,
-) {
-    values[index] = value + value;
+fn store_doubled<E: Numeric, N: Size>(values: &mut Tensor<E>, index: usize, value: Vector<E, N>) {
+    let doubled = value + value;
+    let base = index * N::value();
+    #[unroll]
+    for lane in 0..N::value() {
+        values[base + lane] = doubled.extract(lane);
+    }
 }
 
 // ===========================================================================
@@ -175,13 +174,13 @@ const WIDTH: usize = 2;
 /// width of two both values of a line would be one, and a store a line off would go unseen.
 #[cube(launch)]
 fn store<E: Float, V: Size, O: Destination>(
-    input: &TileArg<'_, E, V>,
-    out: &O::Arg<E, V>,
+    input: &TileArg<'_>,
+    out: &O::Arg<E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = O::tile::<E, V>(out, comptime!(space.clone()));
+    let src = input.tile(&space);
+    let mut dst = O::tile::<E, V>(out, &space);
     dst.copy_from(&src);
 }
 
@@ -209,7 +208,7 @@ fn run_store(sink: bool) -> HostData {
         .arange()
         .generate_without_host_data();
     let src = launcher
-        .arg(input.binding())
+        .arg(input.binding(), dtype)
         .axes(&[ROW, COL])
         .vectorize(WIDTH)
         .build()
@@ -244,7 +243,7 @@ fn run_store(sink: bool) -> HostData {
         }
         false => {
             let bound = launcher
-                .arg(output.clone().binding())
+                .arg(output.clone().binding(), dtype)
                 .axes(&[ROW, COL])
                 .vectorize(WIDTH)
                 .build()
@@ -300,18 +299,18 @@ const BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// touch of the output, which is the shape of a kernel a fused epilogue is handed to.
 #[cube(launch)]
 fn contract<E: Numeric, EA: Numeric, O: Destination>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &O::Arg<E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &O::Arg<E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = O::tile::<E, Const<1>>(c, comptime!(space.clone()));
-    let acc = c.accumulator::<EA, E, E>(
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = O::tile::<E, Const<1>>(c, &space);
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config: BLOCK }),
@@ -366,8 +365,8 @@ fn run_contract(sink: bool) -> HostData {
                 &client,
                 count,
                 dim,
-                a.arg(),
-                b.arg(),
+                a.arg(&launcher, 1),
+                b.arg(&launcher, 1),
                 Doubled::arg(operand),
                 launcher.partitioning_arg(),
                 level,
@@ -377,7 +376,7 @@ fn run_contract(sink: bool) -> HostData {
         }
         false => {
             let bound = launcher
-                .arg(c.handle().binding())
+                .arg(c.handle().binding(), dtype)
                 .axes(&[M, N])
                 .build()
                 .unwrap();
@@ -385,8 +384,8 @@ fn run_contract(sink: bool) -> HostData {
                 &client,
                 count,
                 dim,
-                a.arg(),
-                b.arg(),
+                a.arg(&launcher, 1),
+                b.arg(&launcher, 1),
                 Buffered::arg((bound, Write::Replace)),
                 launcher.partitioning_arg(),
                 level,

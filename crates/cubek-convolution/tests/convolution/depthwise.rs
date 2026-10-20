@@ -296,6 +296,49 @@ fn depthwise_3x3_end_padding() {
     .check_every_tiling();
 }
 
+/// Batch-one weight gradients use the output gradient as the filter. This 20x20 filter used to
+/// expand all 400 taps into the kernel, making SPIR-V compilation stall in Mem2Reg.
+#[test]
+fn depthwise_large_filter_weight_gradient() {
+    Case {
+        b: 1,
+        c: 184,
+        size: 20,
+        k: 20,
+        stride: 1,
+        dilation: 1,
+        padding: (1, 1),
+    }
+    .check(DepthwiseTiling {
+        rows: 4,
+        cols: 2,
+        chans: 1,
+        lines: 1,
+    })
+    .unwrap();
+}
+
+/// Cover an unpadded large filter with vectorized channels.
+#[test]
+fn depthwise_large_filter_unpadded() {
+    Case {
+        b: 1,
+        c: 256,
+        size: 23,
+        k: 20,
+        stride: 1,
+        dilation: 1,
+        padding: (0, 0),
+    }
+    .check(DepthwiseTiling {
+        rows: 4,
+        cols: 4,
+        chans: 1,
+        lines: 4,
+    })
+    .unwrap();
+}
+
 /// The filter must carry exactly one channel's filter for every input/output channel. Reject the
 /// mismatch before re-laying the binding under a larger logical shape.
 #[test]

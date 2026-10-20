@@ -6,6 +6,9 @@ use crate::{
     strategy::Strategy,
 };
 
+mod complex;
+pub use complex::{ComplexMatmulOptions, launch_c32_ref};
+
 #[allow(clippy::result_large_err)]
 /// Launches a matrix multiplication kernel..
 ///

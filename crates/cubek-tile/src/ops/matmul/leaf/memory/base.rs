@@ -11,15 +11,15 @@ use crate::*;
 /// Run the register instruction over each batch matrix. A scaled factor requires the 2-D nest.
 #[cube]
 pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Memory<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    acc: &mut Memory,
+    lhs: &Tile,
+    rhs: &Tile,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let lhs_scaled = lhs.scaled();
-    let rhs_scaled = rhs.scaled();
+    let lhs_scaled = lhs.quantized();
+    let rhs_scaled = rhs.quantized();
     let scaled = comptime!(lhs_scaled || rhs_scaled);
 
     let lhs_gathered = lhs.gathered();
@@ -31,6 +31,13 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let rhs_load = rhs.vector_tile();
     let rw = comptime!(rhs_load.run_length());
     let aw = comptime!(acc.store.vector_size);
+    // One value at a time along the contraction, the rhs reads as no matrix: the N-D nest
+    // addresses it at the cell.
+    let rhs_along_k = comptime!(
+        lhs.place
+            .space
+            .contains(rhs.place.space.axis_at(rhs.place.space.rank() - 1))
+    );
     let contracted_per_step = comptime!(contracted_per_step(
         &lhs.place.space,
         &rhs.place.space,
@@ -61,6 +68,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
             || lhs_procedural
             || rhs_procedural
             || (contracted_per_step == 1 && rw != aw)
+            || (contracted_per_step == 1 && rhs_along_k)
     );
     comptime!(assert!(
         !(nd && scaled),
@@ -97,11 +105,12 @@ pub(crate) fn contracted_per_step(
         );
         return 1;
     }
+    // A one-wide line has no direction: it is a step of one contracted value.
     let contracted_per_step = rhs.contracted_per_step(&contracted, rw);
     assert!(
-        contracted_per_step > 1,
+        contracted_per_step > 1 || rw == 1,
         "contract: the rhs lines along the contracted axis {k:?}, which is served in whole lines; \
-         its width {rw} must exceed 1 and divide the axis's extent {:?}",
+         its width {rw} must divide the axis's extent {:?}",
         rhs.extent_raw(k)
     );
     assert_eq!(

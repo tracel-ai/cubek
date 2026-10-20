@@ -19,9 +19,9 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Levels, Partitioning, RegisterBlock, Scratch,
-    Semiring, Space, StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
-    ops::softmax::OnlineSoftmax,
+    Axis, Instruction, Levels, MmaOperands, Partitioning, RegisterBlock, Scratch, Semiring, Space,
+    StageStorage, Stages, Tile, TileArg, TileArgLaunch, TileSpec,
+    ops::{matmul::MmaIo, softmax::OnlineSoftmax},
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 
@@ -64,10 +64,10 @@ impl Reads for AttendedExpand {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn plane_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_>,
+    k: &TileArg<'_>,
+    v: &TileArg<'_>,
+    out: &TileArg<'_>,
     keys: u32,
     queries: u32,
     scale: f32,
@@ -76,12 +76,12 @@ fn plane_attention<E: Float>(
     #[comptime] block_keys: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(space.clone()));
+    let q = q.tile(&space);
     // Past the attended keys a read is zero: a masked probability never meets a stale value.
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let out = out.tile(comptime!(space.clone()));
-    let bias = Procedural::<f32>::new::<Attended>(
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let out = out.tile(&space);
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -89,7 +89,7 @@ fn plane_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     for cube in space {
         let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
         for plane in cube {
@@ -102,27 +102,23 @@ fn plane_attention<E: Float>(
             let keys_walk = plane.walk();
             let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
             let walk = keys_walk.range(0, blocks);
-            let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-            let mut p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let score = Tile::scratch::<f32>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+            let mut p = Tile::scratch::<E>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
             let acc = out
                 .at(&plane)
-                .accumulator::<f32, f32, E>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
+                .accumulator::<f32>(&bias_p, &v_p, Instruction::Cmma, Semiring::SUM_PROD)
                 .with_scratch(Scratch::OneTile);
             let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
             // The query spans no key: staged once, before the walk, where the keys are staged.
-            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided);
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided, None);
             q_s.copy_from(&q_p);
             sync_plane();
-            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize);
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize, None);
             stages.pipelined(walk, |slot, stage| {
                 let bias_s = bias_p.at(stage);
                 slot.consume(|k_s, v_s| {
-                    let logits = score.accumulator::<f32, E, E>(
-                        &q_s,
-                        k_s,
-                        Instruction::Cmma,
-                        Semiring::SUM_PROD,
-                    );
+                    let logits =
+                        score.accumulator::<f32>(&q_s, k_s, Instruction::Cmma, Semiring::SUM_PROD);
                     for fragment in stage.walk().routed(V, 0).unrolled() {
                         let mut cell = logits.at(&fragment);
                         cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
@@ -149,27 +145,38 @@ fn plane_attention<E: Float>(
     }
 }
 
+/// [`plane_attention`] with the score held in manual-mma registers from the score's contraction to
+/// the value's: the softmax reads the accumulator where its units hold it, and the probabilities,
+/// cast in the same registers ([`Tile::cast`]), are the value's left factor. The leaf is one
+/// instruction `m × n` along the queries and keys, so the value contracts the keys `n` deep.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn unit_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
+fn register_plane_attention<E: Float>(
+    q: &TileArg<'_>,
+    k: &TileArg<'_>,
+    v: &TileArg<'_>,
+    out: &TileArg<'_>,
+    max: &mut Tensor<f32>,
+    sum: &mut Tensor<f32>,
     keys: u32,
     queries: u32,
     scale: f32,
     space: Partitioning,
     #[comptime] causal: bool,
     #[comptime] block_keys: usize,
-    #[comptime] rows: usize,
+    #[comptime] plane_rows: usize,
+    #[comptime] ending: Ending,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let out = out.tile(comptime!(space.clone()));
-    let bias = Procedural::<f32>::new::<Attended>(
+    let instruction = comptime!(Instruction::Mma {
+        io: MmaIo::default(),
+        operands: MmaOperands::Plain,
+    });
+    let q = q.tile(&space);
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let out = out.tile(&space);
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -177,7 +184,107 @@ fn unit_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
+    for cube in space {
+        let mut out_cube = out.at(&cube).planes_output::<f32>(&cube);
+        for plane in cube {
+            let (q_p, k_p, v_p) = (q.at(&plane), k.at(&plane), v.at(&plane));
+            let bias_p = bias.at(&plane);
+            let origin = plane.origin(S);
+            let reach = select(keys as usize > origin, keys as usize - origin, 0usize);
+            let keys_walk = plane.walk();
+            let blocks = reach.div_ceil(block_keys).min(keys_walk.total());
+            let walk = keys_walk.range(0, blocks);
+            let acc =
+                out.at(&plane)
+                    .accumulator::<f32>(&bias_p, &v_p, instruction, Semiring::SUM_PROD);
+            let mut q_s = q_p.stage_for(&walk, StageStorage::Strided, None);
+            q_s.copy_from(&q_p);
+            sync_plane();
+            let logits =
+                Tile::stage_accumulator::<f32>(&walk, comptime!(vec![Q, S]), &q_s, instruction);
+            let mut softmax = OnlineSoftmax::<f32>::along(&logits, S);
+            let mut stages = Stages::smem(&walk, &k_p, &v_p, StageStorage::Strided, 1usize, None);
+            stages.pipelined(walk, |slot, stage| {
+                let bias_s = bias_p.at(stage);
+                slot.consume(|k_s, v_s| {
+                    let mut logits = logits.clone();
+                    logits.reset();
+                    for fragment in stage.walk().routed(V, 0).unrolled() {
+                        let mut cell = logits.at(&fragment);
+                        cell.mma(&q_s.at(&fragment), &k_s.at(&fragment));
+                    }
+                    let correction = softmax.step(&logits, &bias_s, scale);
+                    let p = logits.cast::<E>();
+                    acc.along(V).mul(&correction);
+                    for fragment in stage.walk().routed(D, 0).unrolled() {
+                        let mut cell = acc.at(&fragment);
+                        cell.mma(&p.at(&fragment), &v_s.at(&fragment));
+                    }
+                });
+            });
+            match comptime!(ending) {
+                Ending::Normalized => acc.along(V).mul(&softmax.recip_l()),
+                Ending::Undivided => {
+                    // Each unit holds its own rows' state: written out row by row, then read by
+                    // any unit.
+                    let rows_walk = plane.walk().range(0, blocks);
+                    let mut max_w =
+                        Tile::scratch::<f32>(&rows_walk, comptime!(vec![Q]), StageStorage::Strided);
+                    let mut sum_w =
+                        Tile::scratch::<f32>(&rows_walk, comptime!(vec![Q]), StageStorage::Strided);
+                    softmax.store_rows(&logits, &mut max_w, &mut sum_w);
+                    sync_plane();
+                    let (max_r, sum_r) =
+                        (max_w.flat::<f32, Const<1>>(), sum_w.flat::<f32, Const<1>>());
+                    let first = plane.origin(Q);
+                    let mut r = UNIT_POS_PLANE as usize;
+                    while r < plane_rows {
+                        if first + r < queries as usize {
+                            max[first + r] = max_r.read(r).extract(0usize);
+                            sum[first + r] = sum_r.read(r).extract(0usize);
+                        }
+                        r += PLANE_DIM as usize;
+                    }
+                }
+            }
+            out_cube.drain(&acc, &plane);
+        }
+        out_cube.write();
+    }
+}
+
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn unit_attention(
+    q: &TileArg<'_>,
+    k: &TileArg<'_>,
+    v: &TileArg<'_>,
+    out: &TileArg<'_>,
+    max: &mut Tensor<f32>,
+    sum: &mut Tensor<f32>,
+    keys: u32,
+    queries: u32,
+    scale: f32,
+    space: Partitioning,
+    #[comptime] causal: bool,
+    #[comptime] block_keys: usize,
+    #[comptime] rows: usize,
+    #[comptime] ending: Ending,
+) {
+    let q = q.tile(&space);
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let out = out.tile(&space);
+    let bias = Procedural::new::<f32, Attended>(
+        comptime!(space.space().subspace(&[Q, S])),
+        Attended {
+            keys,
+            queries,
+            causal,
+        },
+    )
+    .tile_in::<f32>(&space);
     let value = comptime!(space.space().extent(V));
     for cube in space {
         for unit in cube {
@@ -188,7 +295,7 @@ fn unit_attention<E: Float>(
                 out.at(&unit),
                 bias.at(&unit),
             );
-            let mut acc = out_u.accumulator::<f32, f32, E>(
+            let mut acc = out_u.accumulator::<f32>(
                 &bias_u,
                 &v_u,
                 comptime!(Instruction::Registers {
@@ -204,7 +311,7 @@ fn unit_attention<E: Float>(
                     v_u.at(&step),
                     bias_u.at(&step),
                 );
-                let mut score = bias_s.accumulator::<f32, E, E>(
+                let mut score = bias_s.accumulator::<f32>(
                     &q_s,
                     &k_s,
                     comptime!(Instruction::Registers {
@@ -217,7 +324,20 @@ fn unit_attention<E: Float>(
                 acc.along(V).mul(&correction);
                 acc.mma(&score, &v_s);
             }
-            acc.along(V).mul(&softmax.recip_l());
+            match comptime!(ending) {
+                Ending::Normalized => acc.along(V).mul(&softmax.recip_l()),
+                Ending::Undivided => {
+                    let state = softmax.state();
+                    let first = unit.origin(Q);
+                    #[unroll]
+                    for r in 0..rows {
+                        if first + r < queries as usize {
+                            max[first + r] = state.max[r];
+                            sum[first + r] = state.sum[r];
+                        }
+                    }
+                }
+            }
             acc.drained_into(&out_u);
         }
     }
@@ -230,13 +350,13 @@ fn unit_attention<E: Float>(
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn relayed_attention<E: Float>(
-    q: &TileArg<'_, E, Const<1>>,
-    k: &TileArg<'_, E, Const<1>>,
-    v: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, f32, Const<1>>,
-    carry: &TileArg<'_, f32, Const<1>>,
-    carried_max: &TileArg<'_, f32, Const<1>>,
-    carried_sum: &TileArg<'_, f32, Const<1>>,
+    q: &TileArg<'_>,
+    k: &TileArg<'_>,
+    v: &TileArg<'_>,
+    out: &TileArg<'_>,
+    carry: &TileArg<'_>,
+    carried_max: &TileArg<'_>,
+    carried_sum: &TileArg<'_>,
     turns: &[Atomic<u32>],
     keys: u32,
     queries: u32,
@@ -246,18 +366,18 @@ fn relayed_attention<E: Float>(
     #[comptime] block_keys: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let relay = carry.relay(&space, turns);
+    let relay = carry.relay::<Const<1>>(&space, turns);
     // Uniform across the cube, so it leaves before any barrier.
     if !relay.has_turn() {
         terminate!();
     }
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let v = v.tile(comptime!(space.clone())).within(S, 0, keys as usize);
-    let mut out = out.tile(comptime!(space.clone()));
-    let state_max = carried_max.tile(comptime!(space.clone()));
-    let state_sum = carried_sum.tile(comptime!(space.clone()));
-    let bias = Procedural::<f32>::new::<Attended>(
+    let q = q.tile(&space);
+    let k = k.tile(&space).within(S, 0, keys as usize);
+    let v = v.tile(&space).within(S, 0, keys as usize);
+    let mut out = out.tile(&space);
+    let state_max = carried_max.tile(&space);
+    let state_sum = carried_sum.tile(&space);
+    let bias = Procedural::new::<f32, Attended>(
         comptime!(space.space().subspace(&[Q, S])),
         Attended {
             keys,
@@ -265,7 +385,7 @@ fn relayed_attention<E: Float>(
             causal,
         },
     )
-    .tile_in(&space);
+    .tile_in::<f32>(&space);
     // The cube level's walk is this cube's run of blocks, its planes directly below each block.
     let run = space.walk();
     let first = run.region(0);
@@ -274,23 +394,23 @@ fn relayed_attention<E: Float>(
     let blocks = reach.div_ceil(block_keys).min(run.total());
     let walk = run.range(0, blocks);
     let sum = relay.tile();
-    let score = Tile::<f32>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
-    let p = Tile::<E>::scratch(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+    let score = Tile::scratch::<f32>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
+    let p = Tile::scratch::<E>(&walk, comptime!(vec![Q, S]), StageStorage::Strided);
     let acc = sum
-        .accumulator::<f32, f32, E>(&bias, &v, Instruction::Cmma, Semiring::SUM_PROD)
+        .accumulator::<f32>(&bias, &v, Instruction::Cmma, Semiring::SUM_PROD)
         .with_scratch(Scratch::OneTile);
     let mut softmax = OnlineSoftmax::<f32>::along(&score, S);
     // The query spans no key: its box is the first block's, staged once before the walk.
     let q_c = q.at(&first);
-    let mut q_s = q_c.stage_for(&walk, StageStorage::Strided);
+    let mut q_s = q_c.stage_for(&walk, StageStorage::Strided, None);
     q_s.copy_from(&q_c);
     sync_cube();
-    let mut stages = Stages::smem(&walk, &k, &v, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &k, &v, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, stage| {
         slot.consume(|k_s, v_s| {
             for plane in stage {
                 let score_p = score.at(&plane);
-                let logits = score_p.accumulator::<f32, E, E>(
+                let logits = score_p.accumulator::<f32>(
                     &q_s.at(&plane),
                     &k_s.at(&plane),
                     Instruction::Cmma,
@@ -438,10 +558,10 @@ fn run<E: Float + CubeElement>(case: Case) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(q_tensor, TileSpec::direct(&[Q, D])),
-        TileArgLaunch::new(k_tensor, TileSpec::direct(&[S, D])),
-        TileArgLaunch::new(v_tensor, TileSpec::direct(&[S, V])),
-        TileArgLaunch::new(out_tensor, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(q_tensor, e_ty, 1, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(k_tensor, e_ty, 1, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(v_tensor, e_ty, 1, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(out_tensor, f32_ty, 1, TileSpec::direct(&[Q, V])),
         attended as u32,
         queries as u32,
         scale,
@@ -454,6 +574,132 @@ fn run<E: Float + CubeElement>(case: Case) {
     check(
         &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, false,
     );
+}
+
+/// A case through [`register_plane_attention`]: the leaf one `16 × 8` instruction along the
+/// queries and keys, `16` deep along the head and `8` wide along the values, so the score
+/// contracts `m16n8k16` and the value `m16n8k8`.
+fn run_registers<E: Float + CubeElement>(case: Case, ending: Ending) {
+    let client: Client = cubecl::test_device().client();
+    let e_ty = E::elem_type_native();
+    let f32_ty = f32::elem_type_native();
+    let offered = |k: u32| {
+        client.properties().features.matmul.mma.iter().any(|cfg| {
+            cfg.a_type == e_ty
+                && cfg.b_type == e_ty
+                && cfg.cd_type == f32_ty
+                && [cfg.m, cfg.n, cfg.k] == [16, 8, k]
+        })
+    };
+    if !(offered(16) && offered(8)) {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "no m16n8k16 and m16n8k8 {e_ty:?} instructions summing in f32"
+        )))
+        .enforce();
+        return;
+    }
+    let Case {
+        queries,
+        keys,
+        attended,
+        head,
+        value,
+        rows,
+        block,
+        planes,
+        causal,
+        ..
+    } = case;
+    let (m, n, depth) = (16, 8, 16);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(Q, queries), (S, keys), (D, head), (V, value)]),
+            planes_over(
+                Levels::leaf(&[(Q, m), (S, n), (D, depth), (V, n)]).walk(&[
+                    (Q, rows),
+                    (S, block),
+                    (D, head / depth),
+                    (V, value / n),
+                ]),
+                PlanesAlong::Queries,
+                planes,
+                keys / (n * block),
+            )
+            .cubes(&[Q])
+            .build(),
+        ),
+        Form::Static,
+    );
+    let (q_data, k_data, v_data, q_handle, k_handle, v_handle) =
+        inputs::<E>(&client, queries, keys, attended, head, value, false);
+    let out_handle = TestInput::builder(client.clone(), Shape::new([queries, value]))
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+    let state = || {
+        TestInput::builder(client.clone(), Shape::new([queries]))
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data()
+    };
+    let (max_handle, sum_handle) = (state(), state());
+    let scale = 1. / (head as f32).sqrt();
+    register_plane_attention::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            q_handle.binding().into_tensor_arg(),
+            e_ty,
+            1,
+            TileSpec::direct(&[Q, D]),
+        ),
+        TileArgLaunch::new(
+            k_handle.binding().into_tensor_arg(),
+            e_ty,
+            1,
+            TileSpec::direct(&[S, D]),
+        ),
+        TileArgLaunch::new(
+            v_handle.binding().into_tensor_arg(),
+            e_ty,
+            1,
+            TileSpec::direct(&[S, V]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
+            TileSpec::direct(&[Q, V]),
+        ),
+        max_handle.clone().binding().into_tensor_arg(),
+        sum_handle.clone().binding().into_tensor_arg(),
+        attended as u32,
+        queries as u32,
+        scale,
+        launcher.partitioning_arg(),
+        causal,
+        n * block,
+        m * rows,
+        ending,
+        e_ty,
+    );
+    let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    match ending {
+        Ending::Normalized => check(
+            &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, false,
+        ),
+        Ending::Undivided => {
+            let max = HostData::from_tensor_handle(&client, max_handle, HostDataType::F32);
+            let sum = HostData::from_tensor_handle(&client, sum_handle, HostDataType::F32);
+            // f16 operands and probabilities: a few ulps of each through two contractions.
+            check_undivided(
+                &out, &max, &sum, &q_data, &k_data, &v_data, queries, keys, attended, head, value,
+                causal, false, 2e-2,
+            );
+        }
+    }
 }
 
 /// A case whose keys `cubes` cubes split, each walking its run of blocks with one plane.
@@ -524,13 +770,18 @@ fn run_relayed<E: Float + CubeElement>(case: Case, cubes: usize) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(q_handle), TileSpec::direct(&[Q, D])),
-        TileArgLaunch::new(tensor(k_handle), TileSpec::direct(&[S, D])),
-        TileArgLaunch::new(tensor(v_handle), TileSpec::direct(&[S, V])),
-        TileArgLaunch::new(tensor(out_handle.clone()), TileSpec::direct(&[Q, V])),
-        TileArgLaunch::new(tensor(carry), TileSpec::direct(&[Q, V])),
-        TileArgLaunch::new(tensor(carried_max), TileSpec::direct(&[Q])),
-        TileArgLaunch::new(tensor(carried_sum), TileSpec::direct(&[Q])),
+        TileArgLaunch::new(tensor(q_handle), e_ty, 1, TileSpec::direct(&[Q, D])),
+        TileArgLaunch::new(tensor(k_handle), e_ty, 1, TileSpec::direct(&[S, D])),
+        TileArgLaunch::new(tensor(v_handle), e_ty, 1, TileSpec::direct(&[S, V])),
+        TileArgLaunch::new(
+            tensor(out_handle.clone()),
+            f32_ty,
+            1,
+            TileSpec::direct(&[Q, V]),
+        ),
+        TileArgLaunch::new(tensor(carry), f32_ty, 1, TileSpec::direct(&[Q, V])),
+        TileArgLaunch::new(tensor(carried_max), f32_ty, 1, TileSpec::direct(&[Q])),
+        TileArgLaunch::new(tensor(carried_sum), f32_ty, 1, TileSpec::direct(&[Q])),
         unsafe { BufferArg::from_raw_parts(turns, counters) },
         attended as u32,
         queries as u32,
@@ -606,8 +857,57 @@ fn inputs<E: Float + CubeElement>(
     (q_data, k_data, v_data, q_handle, k_handle, v_handle)
 }
 
-/// `out` against the attention computed on the host in `f64`: a query sees the attended keys,
-/// and under `causal` none past its own position aligned at the bottom right.
+/// Row `i` of the attention computed on the host in `f64`: the max of its scaled logits, the
+/// sum of their `exp(logit − max)`, and its output, normalized. A query sees the attended keys,
+/// and under `causal` none past its own position aligned at the bottom right; a row that sees
+/// none has a zero sum and a zero output.
+#[allow(clippy::too_many_arguments)]
+fn reference_row(
+    i: usize,
+    q_data: &HostData,
+    k_data: &HostData,
+    v_data: &HostData,
+    queries: usize,
+    keys: usize,
+    attended: usize,
+    head: usize,
+    value: usize,
+    causal: bool,
+    transposed_keys: bool,
+) -> (f64, f64, Vec<f64>) {
+    let scale = 1. / (head as f64).sqrt();
+    let key = |j: usize, d: usize| match transposed_keys {
+        true => k_data.get_f32(&[d, j]),
+        false => k_data.get_f32(&[j, d]),
+    };
+    let seen = |j: usize| j < attended && (!causal || j + queries <= i + attended);
+    let logits: Vec<(usize, f64)> = (0..keys)
+        .filter(|&j| seen(j))
+        .map(|j| {
+            let dot: f64 = (0..head)
+                .map(|d| q_data.get_f32(&[i, d]) as f64 * key(j, d) as f64)
+                .sum();
+            (j, dot * scale)
+        })
+        .collect();
+    let max = logits.iter().fold(f64::NEG_INFINITY, |m, &(_, s)| m.max(s));
+    let sum: f64 = logits.iter().map(|&(_, s)| (s - max).exp()).sum();
+    let out = (0..value)
+        .map(|c| match logits.is_empty() {
+            true => 0.,
+            false => {
+                logits
+                    .iter()
+                    .map(|&(j, s)| (s - max).exp() * v_data.get_f32(&[j, c]) as f64)
+                    .sum::<f64>()
+                    / sum
+            }
+        })
+        .collect();
+    (max, sum, out)
+}
+
+/// `out` against the attention computed on the host ([`reference_row`]).
 #[allow(clippy::too_many_arguments)]
 fn check(
     out: &HostData,
@@ -622,35 +922,21 @@ fn check(
     causal: bool,
     transposed_keys: bool,
 ) {
-    let scale = 1. / (head as f64).sqrt();
-    let key = |j: usize, d: usize| match transposed_keys {
-        true => k_data.get_f32(&[d, j]),
-        false => k_data.get_f32(&[j, d]),
-    };
     for i in 0..queries {
-        let seen = |j: usize| j < attended && (!causal || j + queries <= i + attended);
-        let logits: Vec<(usize, f64)> = (0..keys)
-            .filter(|&j| seen(j))
-            .map(|j| {
-                let dot: f64 = (0..head)
-                    .map(|d| q_data.get_f32(&[i, d]) as f64 * key(j, d) as f64)
-                    .sum();
-                (j, dot * scale)
-            })
-            .collect();
-        let max = logits.iter().fold(f64::NEG_INFINITY, |m, &(_, s)| m.max(s));
-        let sum: f64 = logits.iter().map(|&(_, s)| (s - max).exp()).sum();
-        for c in 0..value {
-            let expected = match logits.is_empty() {
-                true => 0.,
-                false => {
-                    logits
-                        .iter()
-                        .map(|&(j, s)| (s - max).exp() * v_data.get_f32(&[j, c]) as f64)
-                        .sum::<f64>()
-                        / sum
-                }
-            };
+        let (_, _, row) = reference_row(
+            i,
+            q_data,
+            k_data,
+            v_data,
+            queries,
+            keys,
+            attended,
+            head,
+            value,
+            causal,
+            transposed_keys,
+        );
+        for (c, &expected) in row.iter().enumerate() {
             let actual = out.get_f32(&[i, c]) as f64;
             // f16 operands and probabilities: a few ulps of each through two contractions.
             let tolerance = 2e-2 * (1. + expected.abs());
@@ -662,7 +948,74 @@ fn check(
     }
 }
 
-/// A unit-owned case: `rows` queries a unit, `units` units a cube, `block` keys a step.
+/// An undivided ending against the host's rows ([`reference_row`]): each row's `max` and `sum` as
+/// the state held them, and its `out` the normalized output times that sum, each within
+/// `tolerance` of it relative to one plus its size. A row that saw no key holds a zero sum and a
+/// zero output.
+#[allow(clippy::too_many_arguments)]
+fn check_undivided(
+    out: &HostData,
+    max: &HostData,
+    sum: &HostData,
+    q_data: &HostData,
+    k_data: &HostData,
+    v_data: &HostData,
+    queries: usize,
+    keys: usize,
+    attended: usize,
+    head: usize,
+    value: usize,
+    causal: bool,
+    transposed_keys: bool,
+    tolerance: f64,
+) {
+    let close =
+        |actual: f64, expected: f64| (actual - expected).abs() <= tolerance * (1. + expected.abs());
+    for i in 0..queries {
+        let (row_max, row_sum, row) = reference_row(
+            i,
+            q_data,
+            k_data,
+            v_data,
+            queries,
+            keys,
+            attended,
+            head,
+            value,
+            causal,
+            transposed_keys,
+        );
+        let (held_max, held_sum) = (max.get_f32(&[i]) as f64, sum.get_f32(&[i]) as f64);
+        assert!(
+            close(held_sum, row_sum),
+            "sum[{i}] = {held_sum}, expected {row_sum}"
+        );
+        if row_sum > 0. {
+            assert!(
+                close(held_max, row_max),
+                "max[{i}] = {held_max}, expected {row_max}"
+            );
+        }
+        for (c, &normalized) in row.iter().enumerate() {
+            let (actual, expected) = (out.get_f32(&[i, c]) as f64, normalized * row_sum);
+            assert!(
+                close(actual, expected),
+                "out[{i}, {c}] = {actual}, expected {expected}"
+            );
+        }
+    }
+}
+
+/// How a holder leaves its rows: normalized, or undivided beside the softmax state it read,
+/// which the host divides by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Ending {
+    Normalized,
+    Undivided,
+}
+
+/// A unit-owned case: `rows` queries a unit, `units` units a cube, `block` keys a step, and how
+/// each unit ends.
 #[derive(Clone, Copy)]
 struct UnitCase {
     queries: usize,
@@ -674,6 +1027,7 @@ struct UnitCase {
     units: usize,
     block: usize,
     causal: bool,
+    ending: Ending,
 }
 
 fn run_units<E: Float + CubeElement>(case: UnitCase) {
@@ -690,6 +1044,7 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         units,
         block,
         causal,
+        ending,
     } = case;
     let launcher = implied(
         &client,
@@ -709,6 +1064,13 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         .dtype(f32_ty)
         .zeros()
         .generate_without_host_data();
+    let state = || {
+        TestInput::builder(client.clone(), Shape::new([queries]))
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data()
+    };
+    let (max_handle, sum_handle) = (state(), state());
     let scale = 1. / (head as f32).sqrt();
     unit_attention::launch(
         &client,
@@ -716,21 +1078,31 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             q_handle.binding().into_tensor_arg(),
+            e_ty,
+            1,
             TileSpec::direct(&[Q, D]),
         ),
         // The keys are stored transposed, so a step's rhs runs along the keys it scores.
         TileArgLaunch::new(
             k_handle.binding().into_tensor_arg(),
+            e_ty,
+            1,
             TileSpec::direct(&[D, S]),
         ),
         TileArgLaunch::new(
             v_handle.binding().into_tensor_arg(),
+            e_ty,
+            1,
             TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[Q, V]),
         ),
+        max_handle.clone().binding().into_tensor_arg(),
+        sum_handle.clone().binding().into_tensor_arg(),
         attended as u32,
         queries as u32,
         scale,
@@ -738,12 +1110,24 @@ fn run_units<E: Float + CubeElement>(case: UnitCase) {
         causal,
         block,
         rows,
-        e_ty,
+        ending,
     );
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    check(
-        &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, true,
-    );
+    match ending {
+        Ending::Normalized => check(
+            &out, &q_data, &k_data, &v_data, queries, keys, attended, head, value, causal, true,
+        ),
+        Ending::Undivided => {
+            let max = HostData::from_tensor_handle(&client, max_handle, HostDataType::F32);
+            let sum = HostData::from_tensor_handle(&client, sum_handle, HostDataType::F32);
+            // f32 operands summed in f32: a few ulps through one contraction and the
+            // exponentials. The keys are stored transposed.
+            check_undivided(
+                &out, &max, &sum, &q_data, &k_data, &v_data, queries, keys, attended, head, value,
+                causal, true, 1e-4,
+            );
+        }
+    }
 }
 
 const PREFILL: Case = Case {
@@ -788,6 +1172,65 @@ fn plane_attention_in_f32() {
         value: 24,
         ..PREFILL
     });
+}
+
+/// A plane's rows of a prefill held in manual-mma registers: two fragments along the queries, a
+/// stage of four along the keys.
+const REGISTER_PREFILL: Case = Case {
+    queries: 64,
+    keys: 128,
+    attended: 128,
+    head: 32,
+    value: 32,
+    edge: 0,
+    rows: 2,
+    block: 4,
+    planes: 2,
+    along: PlanesAlong::Queries,
+    causal: false,
+};
+
+#[test]
+fn register_plane_attention_matches_the_reference() {
+    run_registers::<half::f16>(REGISTER_PREFILL, Ending::Normalized);
+}
+
+#[test]
+fn register_plane_attention_reads_nothing_past_the_attended_keys() {
+    run_registers::<half::f16>(
+        Case {
+            attended: 90,
+            ..REGISTER_PREFILL
+        },
+        Ending::Normalized,
+    );
+}
+
+#[test]
+fn register_plane_attention_masks_causally_from_the_bottom_right() {
+    run_registers::<half::f16>(
+        Case {
+            attended: 100,
+            causal: true,
+            ..REGISTER_PREFILL
+        },
+        Ending::Normalized,
+    );
+}
+
+/// Each unit holding only its own rows' state, written out row by row
+/// ([`OnlineSoftmax::store_rows`]) beside the undivided sum: past the attended keys and causally,
+/// so a masked cell weighs nothing in either.
+#[test]
+fn register_plane_attention_hands_its_undivided_state_by_rows() {
+    run_registers::<half::f16>(
+        Case {
+            attended: 100,
+            causal: true,
+            ..REGISTER_PREFILL
+        },
+        Ending::Undivided,
+    );
 }
 
 /// Planes splitting the keys of the same queries: two, then four, each walking a share.
@@ -872,6 +1315,7 @@ const UNIT: UnitCase = UnitCase {
     units: 4,
     block: 4,
     causal: false,
+    ending: Ending::Normalized,
 };
 
 #[test]
@@ -899,4 +1343,16 @@ fn unit_attention_masks_causally_from_the_bottom_right() {
 #[test]
 fn unit_attention_in_f16() {
     run_units::<half::f16>(UNIT);
+}
+
+/// The state read off as it stands, its sum left undivided: past the attended keys and
+/// causally, so a masked cell weighs nothing in either.
+#[test]
+fn unit_attention_hands_its_undivided_state() {
+    run_units::<f32>(UnitCase {
+        attended: 30,
+        causal: true,
+        ending: Ending::Undivided,
+        ..UNIT
+    });
 }

@@ -72,17 +72,17 @@ impl Prefetch {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+impl Stages<OperandPair> {
     /// Walk `walk`'s stages with the schedule `prefetch` selects.
     pub fn walk<F>(&mut self, _walk: Walk, _prefetch: Prefetch, _compute: F)
     where
-        F: FnMut(&mut Slot<OperandPair<Lhs, Rhs>>, &Region),
+        F: FnMut(&mut Slot<OperandPair>, &Region),
     {
         unexpanded!()
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
+impl StagesExpand<OperandPair> {
     pub fn __expand_walk_method<F>(
         &mut self,
         scope: &Scope,
@@ -90,7 +90,7 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
         prefetch: Prefetch,
         compute: F,
     ) where
-        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair>, &RegionExpand),
     {
         match prefetch {
             Prefetch::InSlots => self.__expand_pipelined_method(scope, walk, compute),
@@ -99,27 +99,31 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+impl Stages<OperandPair> {
     /// [`pipelined`](Stages::pipelined) with the next region's loads held in registers across the
     /// current contraction.
     ///
     /// Requires depth 1 or 2, every unit copying straight from a plain operand, and loads within
-    /// [`Prefetch::fits`]; otherwise refused at expansion. Fixed operands fall back to
-    /// [`pipelined`](Stages::pipelined).
+    /// [`Prefetch::fits`]; otherwise refused at expansion. Fixed operands, and operands whose
+    /// stages keep their scales beside them, fall back to [`pipelined`](Stages::pipelined).
     pub fn prefetched<F>(&mut self, _walk: Walk, _compute: F)
     where
-        F: FnMut(&mut Slot<OperandPair<Lhs, Rhs>>, &Region),
+        F: FnMut(&mut Slot<OperandPair>, &Region),
     {
         unexpanded!()
     }
 }
 
-impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
+impl StagesExpand<OperandPair> {
     pub fn __expand_prefetched_method<F>(&mut self, scope: &Scope, walk: WalkExpand, compute: F)
     where
-        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair>, &RegionExpand),
     {
-        if self.has_fixed(scope) {
+        // Registers hold the values alone, so scales a stage keeps beside them are brought by the
+        // slots.
+        let scales_beside = self.sources.lhs.__expand_scales_beside_method(scope)
+            || self.sources.rhs.__expand_scales_beside_method(scope);
+        if self.has_fixed(scope) || scales_beside {
             return self.__expand_pipelined_method(scope, walk, compute);
         }
         self.__expand_assert_copied_by_every_unit_method(scope);
@@ -147,7 +151,7 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
     /// The laps whose every region has a next one to fetch, run with no branch around the fetch,
     /// so what it computes that no lap changes (each unit's place in the stage) leaves the loop.
     /// How many ran.
-    fn steady_prefetching_laps<F>(
+    fn steady_prefetching_laps<Lhs: Numeric, Rhs: Numeric, F>(
         &mut self,
         scope: &Scope,
         walk: &WalkExpand,
@@ -157,7 +161,7 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
         compute: &mut F,
     ) -> NativeExpand<usize>
     where
-        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair>, &RegionExpand),
     {
         // The laps whose every region has a next one to fetch: no branch around the fetch, so what
         // it computes that no lap changes (each unit's place in the stage) leaves the loop.
@@ -201,10 +205,15 @@ impl<Lhs: Numeric, Rhs: Numeric> StagesExpand<OperandPair<Lhs, Rhs>> {
         total: NativeExpand<usize>,
         mut compute: F,
     ) where
-        F: FnMut(&Scope, &mut SlotExpand<OperandPair<Lhs, Rhs>>, &RegionExpand),
+        F: FnMut(&Scope, &mut SlotExpand<OperandPair>, &RegionExpand),
     {
         let depth = self.depth;
-        let (mut lhs, mut rhs) = self.__expand_fetch_buffers_method(scope);
+        // The registers a fetch holds a region in are at the elements the sources hold.
+        define_scalar!(Lhs);
+        define_scalar!(Rhs);
+        let _lhs = scope.define_type::<Lhs>(self.sources.lhs.element);
+        let _rhs = scope.define_type::<Rhs>(self.sources.rhs.element);
+        let (mut lhs, mut rhs) = self.__expand_fetch_buffers_method::<Lhs, Rhs>(scope);
         let steady =
             self.steady_prefetching_laps(scope, &walk, total, &mut lhs, &mut rhs, &mut compute);
         // The last laps, where the walk runs out under them.

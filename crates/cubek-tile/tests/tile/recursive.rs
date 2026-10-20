@@ -29,13 +29,14 @@ fn recursive_two_level_tiled_view() {
 
     // The copy kernel only reads/writes through the views: no partitioning, so the
     // spaces carry no partitioner.
+    let launch = uncut(&client, &space, &space);
     copy_logical::launch(
         &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
-        input.arg(),
-        output.arg(),
-        uncut(&client, &space, &space).partitioning_arg(),
+        launch.cube_count(),
+        launch.cube_dim(),
+        input.arg(&launch, 1),
+        output.arg(&launch, 1),
+        launch.partitioning_arg(),
         f32::elem_type_native(),
     );
 
@@ -59,15 +60,15 @@ fn recursive_two_level_tiled_view() {
 /// Copy every logical element of `input` into `output` through their views.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
-    let r = input.view::<Const<1>>();
-    let mut w = output.view_mut::<Const<1>>();
+    let input = input.tile(&space);
+    let mut output = output.tile(&space);
+    let r = input.view::<E, Const<1>>();
+    let mut w = output.view_mut::<E, Const<1>>();
     let shape = r.shape();
     let rows = shape[0];
     let cols = shape[1];

@@ -35,8 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Launcher, Levels, Monoid, Partitioning,
-    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    Axis, Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
+    Space, TileArg, TileArgLaunch, TileSpec,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},
     layout::PhysicalAxisMap,
 };
@@ -57,16 +57,10 @@ const COLS: usize = 1;
 const FOLD_COLS: usize = 32;
 
 #[cube(launch)]
-fn plain_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+fn plain_matmul(a: &TileArg<'_>, b: &TileArg<'_>, c: &TileArg<'_>, space: Partitioning) {
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for region in space {
         let mut c_cube = c
             .at(&region)
@@ -78,20 +72,20 @@ fn plain_matmul<E: Numeric>(
 /// This cube's slice of `K` contracted into a register block, drained through the atomic fold.
 #[cube(launch)]
 fn atomic_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile(&space);
     for region in space {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc = c_cube.accumulator::<E, E, E>(
+        let mut acc = c_cube.accumulator::<E>(
             &a_cube,
             &b_cube,
             comptime!(Instruction::Registers {
@@ -108,20 +102,20 @@ fn atomic_matmul<E: Numeric>(
 /// contracts its own slice into the block, the plane combines in registers at the drain.
 #[cube(launch)]
 fn atomic_matmul_units<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile(&space);
     for cube in space {
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let acc = c_cube.accumulator::<E, E, E>(
+        let acc = c_cube.accumulator::<E>(
             &a_cube,
             &b_cube,
             comptime!(Instruction::Registers {
@@ -138,14 +132,9 @@ fn atomic_matmul_units<E: Numeric>(
 }
 
 #[cube(launch)]
-fn fold_splits<E: Numeric>(
-    partials: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
-    let partials = partials.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+fn fold_splits(partials: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
+    let partials = partials.tile(&space);
+    let out = out.tile(&space);
     for region in space {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
@@ -407,9 +396,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
+                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), 1, self.out_spec.clone()),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -419,9 +408,9 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
+                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), 1, self.out_spec.clone()),
                     self.launcher.partitioning_arg(),
                     dtype,
                 );
@@ -431,11 +420,10 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[M, N])),
+                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    TileArgLaunch::new(self.c.tensor_arg(1), dtype, 1, TileSpec::direct(&[M, N])),
                     self.launcher.partitioning_arg(),
-                    dtype,
                 );
             }
             Mapping::Workspace { .. } => {
@@ -443,20 +431,33 @@ impl Bound {
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
-                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
-                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
+                    TileArgLaunch::new(self.a.tensor_arg(1), dtype, 1, self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), dtype, 1, self.rhs_spec.clone()),
+                    TileArgLaunch::new(
+                        self.c.tensor_arg(1),
+                        dtype,
+                        1,
+                        TileSpec::direct(&[KB, M, N]),
+                    ),
                     self.launcher.partitioning_arg(),
-                    dtype,
                 );
                 fold_splits::launch(
                     &self.client,
                     self.fold_cube_count.clone(),
                     self.fold_cube_dim,
-                    TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
-                    TileArgLaunch::new(self.folded.tensor_arg(1), TileSpec::direct(&[M, N])),
+                    TileArgLaunch::new(
+                        self.c.tensor_arg(1),
+                        dtype,
+                        1,
+                        TileSpec::direct(&[KB, M, N]),
+                    ),
+                    TileArgLaunch::new(
+                        self.folded.tensor_arg(1),
+                        dtype,
+                        1,
+                        TileSpec::direct(&[M, N]),
+                    ),
                     self.fold_space.partitioning_arg(),
-                    dtype,
                 );
             }
         }

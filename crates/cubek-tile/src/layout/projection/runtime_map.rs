@@ -56,12 +56,15 @@ pub(crate) fn logical_extent(
     bound
 }
 
-/// The line offset one `edge`-sized tile step along `axis` moves under `projection`.
+/// The line offset of coordinate `at` along `axis` under `projection`: each physical axis carrying
+/// `axis` takes its digit of `at`, weighed by its stride. Over a storage-tiled axis the offset is
+/// not linear in `at`: a coordinate that crosses into the next stored tile jumps to that tile's
+/// stride, so a move from one coordinate to another is the difference of their offsets.
 #[cube]
-pub(crate) fn step_offset(
+pub(crate) fn axis_offset(
     #[comptime] projection: Projection,
     #[comptime] axis: Axis,
-    #[comptime] edge: usize,
+    at: u32,
     physical_shape: &Coords<u32>,
     strides: &Coords<u32>,
 ) -> u32 {
@@ -73,9 +76,7 @@ pub(crate) fn step_offset(
         let pa = comptime!(carriers[k]);
         let (finer, modulo) = comptime!(projection.digit(pa, axis));
         let scale = comptime!(projection.scale(pa, axis) as u32);
-        let quot = comptime!(edge as u32)
-            .runtime()
-            .divided_by(physical_shape.product(comptime!(finer.to_vec())));
+        let quot = at.divided_by(physical_shape.product(comptime!(finer.to_vec())));
         let digit = match comptime!(modulo) {
             Some(m) => quot.remainder(physical_shape.at(m)),
             None => quot,

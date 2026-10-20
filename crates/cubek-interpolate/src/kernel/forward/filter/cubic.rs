@@ -40,15 +40,11 @@ pub struct Cubic<C: CubeType> {
 #[cube]
 impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
-        let a = comptime!(self.a.as_f32());
+        let a = comptime!(self.a.as_f64());
         let x = self.coordinate.evaluate(coordinates).abs();
         let x2 = x * x;
         // (a + 2)x^3 - (a + 3)x^2 + 1, the x^2 factored out so the constant term costs no step.
-        let first = fma(
-            fma(T::new(a + 2.0), x, T::new(-(a + 3.0))),
-            x2,
-            T::new(1.0_f32),
-        );
+        let first = fma(fma(T::new(a + 2.0), x, T::new(-(a + 3.0))), x2, T::new(1.0));
         // a*x^3 - 5a*x^2 + 8a*x - 4a
         let second = fma(
             fma(fma(T::new(a), x, T::new(-5.0 * a)), x, T::new(8.0 * a)),
@@ -56,9 +52,9 @@ impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
             T::new(-4.0 * a),
         );
         select(
-            x <= T::new(1.0_f32),
+            x <= T::new(1.0),
             first,
-            select(x <= T::new(2.0_f32), second, T::new(0.0_f32)),
+            select(x <= T::new(2.0), second, T::new(0.0)),
         )
     }
 }

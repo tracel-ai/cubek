@@ -132,7 +132,7 @@ fn start_index<F: Float>(
         NearestMode::Exact => {
             let num = F::cast_from(input_index * output_size);
             let den = F::cast_from(input_size);
-            let div = num / den - F::new(0.5_f32);
+            let div = num / den - F::new(0.5);
 
             let mask = F::cast_from((div >= F::zero()) as usize);
             usize::cast_from(div.ceil() * mask)

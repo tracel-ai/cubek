@@ -1,9 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{
-    Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::scale_tile,
-};
+use cubek_tile::{Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg};
 
 use crate::tiled::{
     M, N,
@@ -91,45 +89,34 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 
 /// `y = (W ⊗ s) · x`.
 ///
-/// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_as`]); each
-/// scale level arrives as its own tensor and folds in at the contraction
-/// ([`cubek_tile::Scaled::scaled`]), written on the weight. A scheme always has the block
-/// level and may have the factor over the whole tensor; unbound, that one scales by one. Nothing
-/// here mentions a quantization scheme, a block size or a scale binding riding the weight: which
-/// values one scale covers is the scales operand's own axes, stated in the space.
+/// The weight arrives as `u32` words, unpacked at the read, under its scales: the block level,
+/// and the level over the whole tensor where the scheme has one, each bound as an operand of its
+/// own inside the weight's [`TileArg`]. Nothing here mentions a quantization scheme, a block size
+/// or a scale binding: which values one scale covers is the scales operand's own axes, stated in
+/// the space.
 ///
-/// Every operand keeps its own element: `EC` is what the words decode to, `EX` what the
-/// activation buffer holds, `ES` the scales', `EO` the output's, and the leaf casts each into
-/// the accumulator as it always does. The activation is served in `VX`-wide lines along the
-/// contraction, one stored word's worth a step, and the output scalar, because each unit holds
-/// a partial of its group's cell.
+/// Every operand keeps its own element: the weight's words decode to `f32`, the activation is
+/// what its buffer holds, the output its own, and the leaf casts each into the accumulator as it
+/// always does. The activation is served in lines along the contraction, one
+/// stored word's worth a step, and the output scalar, because each unit holds a partial of its
+/// group's cell.
 ///
 /// Four levels, each one region per instance: the cube's strip of rows, the plane's group of
 /// rows, the plane's walk over the blocks, and the unit's rows against its turn at them, which
 /// the leaf folds across the plane's units as it writes.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
-pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
-    w: &TileArg<'_, u32, Const<1>>,
-    x: &TileArg<'_, EX, VX>,
-    block_scale: &TileArg<'_, u32, Const<1>>,
-    global_scale: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-    out: &TileArg<'_, EO, VO>,
+pub fn quant_gemv_kernel(
+    w: &TileArg<'_>,
+    x: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] bp: QuantGemvBlueprint,
     #[comptime] problem: QuantGemvProblem,
-    #[define(EC)] _served_dtype: ElemType,
-    #[define(EX)] _x_dtype: ElemType,
-    #[define(ES)] _scale_dtype: ElemType,
-    #[define(EO)] _out_dtype: ElemType,
 ) {
     let config = comptime!(register_block(&bp, &problem));
-    let w = w
-        .tile_as::<EC>(comptime!(space.clone()))
-        .mul(&block_scale.tile_as::<ES>(comptime!(space.clone())))
-        .mul_bound(&scale_tile::<ES>(global_scale, comptime!(space.clone())));
-    let x = x.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let w = w.tile(&space);
+    let x = x.tile(&space);
+    let out = out.tile(&space);
     // Each unit zeroes the window it owns: the output folds every step into what it holds.
     // The output spans no contraction, so the units level is named rather than descended to.
     let plane_units = comptime!(bp.units(&problem));

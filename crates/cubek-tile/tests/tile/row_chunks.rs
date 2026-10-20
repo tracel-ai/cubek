@@ -50,10 +50,10 @@ enum Leaf {
 /// `c = a · b` over a walk along `K` whose every region is one stage of `outer`'s tile, read a
 /// fragment of `inner` at a time through `leaf`, the stage laid out as `storage`.
 #[cube(launch)]
-fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
-    a: &TileArg<'_, EI, V>,
-    b: &TileArg<'_, EI, V>,
-    c: &TileArg<'_, EA, Const<1>>,
+fn staged_k_walk<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
@@ -62,22 +62,22 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
     #[comptime] schedule: Schedule,
     #[comptime] leaf: Leaf,
     #[comptime] staging: Staging,
-    #[define(EI)] _input: ElemType,
     #[define(EA)] _sum: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let mut acc = match comptime!(leaf) {
-        Leaf::Mma => c.accumulator::<EA, EI, EI>(
+        Leaf::Mma => c.accumulator::<EA>(
             &a,
             &b,
             comptime!(Instruction::Mma {
-                io: MmaIo::manual()
+                io: MmaIo::manual(),
+                operands: MmaOperands::Plain,
             }),
             Semiring::SUM_PROD,
         ),
-        Leaf::MmaLoadMatrix => c.accumulator::<EA, EI, EI>(
+        Leaf::MmaLoadMatrix => c.accumulator::<EA>(
             &a,
             &b,
             comptime!(Instruction::Mma {
@@ -85,11 +85,12 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
                     lhs_load_method: LoadMethod::LoadMatrix,
                     rhs_load_method: LoadMethod::LoadMatrix,
                     ..MmaIo::manual()
-                }
+                },
+                operands: MmaOperands::Plain,
             }),
             Semiring::SUM_PROD,
         ),
-        Leaf::Cmma => c.accumulator::<EA, EI, EI>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD),
+        Leaf::Cmma => c.accumulator::<EA>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD),
     };
     let walk = space.over(&outer);
     if comptime!(staging == Staging::Global) {
@@ -101,7 +102,7 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
             }
         }
     } else {
-        staged::<EI, EA>(
+        staged(
             &a,
             &b,
             &mut acc,
@@ -119,10 +120,10 @@ fn staged_k_walk<EI: Numeric, EA: Numeric, V: Size>(
 /// The walk through a shared-memory stage, `staging` saying what is declared before it.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn staged<EI: Numeric, EA: Numeric>(
-    a: &Tile<EI>,
-    b: &Tile<EI>,
-    acc: &mut Tile<EA>,
+fn staged(
+    a: &Tile,
+    b: &Tile,
+    acc: &mut Tile,
     walk: Walk,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
@@ -138,30 +139,30 @@ fn staged<EI: Numeric, EA: Numeric>(
             small[0] = 1u32;
         }
         sync_cube();
-        walk_stages::<EI, EA>(a, b, acc, walk, inner, storage, depth, schedule);
+        walk_stages(a, b, acc, walk, inner, storage, depth, schedule);
         sync_cube();
         if small[0] != 1u32 {
             acc.zero();
         }
     } else {
-        walk_stages::<EI, EA>(a, b, acc, walk, inner, storage, depth, schedule);
+        walk_stages(a, b, acc, walk, inner, storage, depth, schedule);
     }
 }
 
 /// `a · b` into `acc`, a stage of `storage` at a time.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn walk_stages<EI: Numeric, EA: Numeric>(
-    a: &Tile<EI>,
-    b: &Tile<EI>,
-    acc: &mut Tile<EA>,
+fn walk_stages(
+    a: &Tile,
+    b: &Tile,
+    acc: &mut Tile,
     walk: Walk,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
     #[comptime] depth: usize,
     #[comptime] schedule: Schedule,
 ) {
-    let mut stages = Stages::smem(&walk, a, b, storage, depth);
+    let mut stages = Stages::smem(&walk, a, b, storage, depth, None);
     match comptime!(schedule) {
         Schedule::AheadInSlots => {
             stages.pipelined(walk, |slot, region| {
@@ -189,15 +190,19 @@ fn walk_stages<EI: Numeric, EA: Numeric>(
 }
 
 /// The `m × n × k` shape this device offers `leaf` at in `input` summed in `f32`: `16×16×16` where
-/// it does, else the first other it lists (NVIDIA's manual mma is `16×8×16`), so the stages are
-/// read by the instruction each device has. Where `reads_ldmatrix`, the device must also load
-/// `input` through `ldmatrix`; a case the transport reads manually whatever it was asked needs only
-/// the mma. Reported rather than silently passed where the device has neither.
+/// it does, else the shallowest other at least `line_depth` deep, else the shallowest, so the
+/// stages are read by the instruction each device has. A case whose lines run along `K` asks for a
+/// line's depth: a step must start on a line, and NVIDIA lists its `16×8×8` mma before its
+/// `16×8×16` one.
+/// Where `reads_ldmatrix`, the device must also load `input` through `ldmatrix`; a case the
+/// transport reads manually whatever it was asked needs only the mma. Reported rather than silently
+/// passed where the device has neither.
 fn instruction_shape(
     client: &cubecl::client::Client,
     leaf: Leaf,
     input: ElemType,
     reads_ldmatrix: bool,
+    line_depth: usize,
 ) -> Option<(usize, usize, usize)> {
     let f32 = f32::elem_type_native();
     let matmul = &client.properties().features.matmul;
@@ -221,6 +226,7 @@ fn instruction_shape(
         .iter()
         .copied()
         .find(|&shape| shape == (16, 16, 16))
+        .or_else(|| shapes.iter().copied().find(|&(_, _, k)| k >= line_depth))
         .or_else(|| shapes.first().copied());
     if shape.is_none() {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -301,7 +307,11 @@ fn check(case: Case) {
     let reads_ldmatrix = leaf == Leaf::MmaLoadMatrix
         && staging != Staging::Global
         && (16 / input.size()).is_multiple_of(v);
-    let Some((edge_m, edge_n, edge_k)) = instruction_shape(&client, leaf, input, reads_ldmatrix)
+    // A `{m, k}` lhs or a `{n, k}` rhs runs its lines along `K`.
+    let lines_along_k = !lhs_transposed || transposed;
+    let line_depth = if lines_along_k { v } else { 1 };
+    let Some((edge_m, edge_n, edge_k)) =
+        instruction_shape(&client, leaf, input, reads_ldmatrix, line_depth)
     else {
         return;
     };
@@ -319,6 +329,15 @@ fn check(case: Case) {
     if leaf != Leaf::Cmma && lhs_transposed && edge_m < v {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
             "a {v}-wide line runs past the {edge_m}-wide mma fragment along M"
+        )))
+        .enforce();
+        return;
+    }
+    // Lines along `K` and no instruction as deep as one would start a step inside a line, which the
+    // descent refuses: an `f16` mma 8 deep and no deeper.
+    if lines_along_k && edge_k < v {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "a {v}-wide line runs past the {edge_k}-deep instruction along K"
         )))
         .enforce();
         return;
@@ -385,9 +404,9 @@ fn check(case: Case) {
     };
     let a_axes: &'static [Axis] = if lhs_transposed { &[K, M] } else { &[M, K] };
     let b_axes: &'static [Axis] = if transposed { &[N, K] } else { &[K, N] };
-    let bind = |binding, axes: &'static [Axis], width| {
+    let bind = |binding, element, axes: &'static [Axis], width| {
         launcher
-            .arg(binding)
+            .arg(binding, element)
             .axes(axes)
             .vectorize(width)
             .build()
@@ -397,10 +416,9 @@ fn check(case: Case) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        v,
-        bind(a_handle.clone().binding(), a_axes, v).arg(),
-        bind(b_handle.clone().binding(), b_axes, v).arg(),
-        bind(out.clone().binding(), &[M, N], 1).arg(),
+        bind(a_handle.clone().binding(), input, a_axes, v).arg(),
+        bind(b_handle.clone().binding(), input, b_axes, v).arg(),
+        bind(out.clone().binding(), f32::elem_type_native(), &[M, N], 1).arg(),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -409,7 +427,6 @@ fn check(case: Case) {
         schedule,
         leaf,
         staging,
-        input,
         f32::elem_type_native(),
     );
 

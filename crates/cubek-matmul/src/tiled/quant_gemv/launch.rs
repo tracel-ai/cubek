@@ -11,7 +11,6 @@
 //! buffer. A wide read wants a unit owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
-use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::{client::Client, prelude::*};
 use cubek_tile::{Launcher, Projection, kind::Field, launch::Grid, layout::PhysicalAxisMap};
 
@@ -27,15 +26,11 @@ use crate::{
     },
 };
 
-/// The element each of the four operands is read at.
-///
-/// Off the bindings rather than on them, because one of them is not a binding's to answer: the
-/// weight's buffer holds `u32` words and `served` is what they decode to, which is also the
-/// element the contraction runs in. At `f32` the partials never round-trip through a narrower
-/// element between `K` steps, which is what a long walk needs.
+/// The elements the activation, the per-tensor scale and the output hold. The weight holds `u32`
+/// words, which the contraction decodes to `f32`: its partials never round-trip through a
+/// narrower element between `K` steps, which is what a long walk needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QuantGemvElems {
-    pub served: ElemType,
     pub x: ElemType,
     /// The per-tensor level's stored element, where the scheme has one. One number, read as
     /// the word it fills: a width that does not fill one is refused.
@@ -100,7 +95,7 @@ pub fn launch_ref(
     // the scales span `KB` alone and address it as it stands.
     let split = || PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
     let w_op = launch
-        .arg(weights)
+        .arg(weights, u32::elem_type_native())
         .gathered(Projection::new(
             &[M, KB, KI],
             &[PhysicalAxisMap::of(M), split()],
@@ -110,7 +105,7 @@ pub fn launch_ref(
         .vectorize(factor)
         .build()?;
     let x_op = launch
-        .arg(x)
+        .arg(x, dtypes.x)
         .gathered(Projection::new(
             &[N, KB, KI],
             &[PhysicalAxisMap::of(N), split()],
@@ -182,40 +177,30 @@ pub fn launch_ref(
         // field in it, which the plan distributed on the problem's own count of them.
         levels.push(
             launch
-                .arg(binding)
+                .arg(binding, u32::elem_type_native())
                 .gathered(projection)
                 .packed(field)
                 .build()?,
         );
     }
-    let mut levels = levels.into_iter();
-    let block_scale = levels.next().expect("a block level, checked above").arg();
-    let global_scale = match levels.next() {
-        Some(global) => ComptimeOptionArgs::Some(global.arg()),
-        None => ComptimeOptionArgs::None,
-    };
+    // Innermost first: the block level, then the one over the whole tensor where there is one.
+    let w = levels
+        .into_iter()
+        .fold(w_op.arg(), |w, level| w.scales(level.arg()));
     // Each unit holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
-    let out_op = launch.arg(out).axes(&[M, N]).build()?;
+    let out_op = launch.arg(out, dtypes.out).axes(&[M, N]).build()?;
 
     quant_gemv_kernel::launch(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        x_op.vector_size,
-        out_op.vector_size,
-        w_op.arg(),
+        w,
         x_op.arg(),
-        block_scale,
-        global_scale,
         out_op.arg(),
         launch.partitioning_arg(),
         blueprint,
         *problem,
-        dtypes.served,
-        dtypes.x,
-        ElemType::from_scale_dtype(problem.scales),
-        dtypes.out,
     );
     Ok(())
 }

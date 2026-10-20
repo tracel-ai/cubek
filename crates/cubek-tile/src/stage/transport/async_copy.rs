@@ -94,14 +94,14 @@ fn copy_line_async<I2: Numeric, W: Size>(
 }
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// Fill `self` from `src` and wait for it: [`fill_from`](Memory::fill_from), plus the barrier
     /// an async copy needs before its bytes can be read. What a blocking
     /// [`copy_from`](Tile::copy_from) runs; a pipelined fill leaves the wait to its slot.
     ///
     /// The contract is `fill_from`'s either way: a `sync_cube` must still separate the fill from
     /// its readers.
-    pub(crate) fn load_from(&mut self, src: &Memory<T>, #[comptime] space: Space) {
+    pub(crate) fn load_from<T: Numeric>(&mut self, src: &Memory, #[comptime] space: Space) {
         if comptime!(src.access.delivery == Delivery::AsyncPerUnit) {
             // The wait is the cube's: a stage one plane fills on its own would leave the others'
             // arrivals missing.
@@ -111,11 +111,11 @@ impl<T: Numeric> Memory<T> {
                  arrives at, and this stage is filled by one plane"
             ));
             let landed = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
-            self.fill_from(src, space);
+            self.fill_from::<T>(src, space);
             landed.commit_copy_async();
             landed.arrive_and_wait();
         } else {
-            self.fill_from(src, space);
+            self.fill_from::<T>(src, space);
         }
     }
 }

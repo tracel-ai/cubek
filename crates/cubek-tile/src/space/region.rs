@@ -1,7 +1,10 @@
-//! Where a loop is: the box a kernel's loops reached ([`Region`]), and the leaves below it.
+//! Where a loop is: the box a kernel's loops reached ([`Region`]), and the leaves and planes below
+//! it.
 
 use super::{Level, Partitioning, Space};
-use crate::{Axis, Coords, Integer, IntegerExpand, MatrixAxes, Path, Step, Walk};
+use crate::{
+    Axis, ComputeScope, Coords, Coverage, Integer, IntegerExpand, MatrixAxes, Path, Step, Walk,
+};
 use cubecl::{prelude::*, unexpanded};
 
 /// The path a kernel's loops took to a box, with the coordinates each loop handed out.
@@ -69,6 +72,15 @@ impl Region {
         }
     }
 
+    /// The planes below this region, each once, at the first step of every walk between: what a
+    /// plane holds across a walk, such as its rows, is the same at every step, while its
+    /// coordinates along a walked axis are the first step's.
+    pub fn planes(&self) -> Planes {
+        Planes {
+            region: self.clone(),
+        }
+    }
+
     /// The region one level below the root at trailing-two coordinates `(c0, c1)` under `level`,
     /// `0` elsewhere, for a tile at `depth`. Comptime coordinates stay constant.
     pub fn trailing(
@@ -78,8 +90,21 @@ impl Region {
         c0: usize,
         c1: usize,
     ) -> Region {
-        let rank = comptime!(space.rank());
         let edges = comptime!(MatrixAxes::edges(&space));
+        Region::cell(depth, space, level, edges, c0, c1)
+    }
+
+    /// The region one level below the root at coordinates `(c0, c1)` along the first axis of
+    /// each of `edges`' two groups under `level`, `0` elsewhere, for a tile at `depth`.
+    pub(crate) fn cell(
+        #[comptime] depth: usize,
+        #[comptime] space: Space,
+        #[comptime] level: Level,
+        #[comptime] edges: MatrixAxes,
+        c0: usize,
+        c1: usize,
+    ) -> Region {
+        let rank = comptime!(space.rank());
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
@@ -241,6 +266,63 @@ impl Iterable for LeavesExpand {
 
     fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         each_leaf(scope, self.region, body, true);
+    }
+}
+
+/// The planes below one region, each once ([`Region::planes`]).
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct Planes {
+    #[allow(dead_code)] // Read at expansion, through `PlanesExpand`.
+    region: Region,
+}
+
+/// Host-side stand-in for `for plane in cube.planes()`; never runs.
+impl IntoIterator for Planes {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+/// A walk's first step per walk level, then a loop over the plane level.
+impl Iterable for PlanesExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        each_plane(scope, self.region, body, false);
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        each_plane(scope, self.region, body, true);
+    }
+}
+
+/// `body` over the planes below `region`. A plane's place is the same at every step of a walk, so
+/// each walk between is read at its first step.
+fn each_plane(
+    scope: &Scope,
+    region: RegionExpand,
+    body: &mut dyn FnMut(&Scope, RegionExpand),
+    unroll: bool,
+) {
+    match region.path.next().coverage() {
+        Coverage::Distribute(ComputeScope::Plane) => match unroll {
+            true => region.expand_unroll(scope, body),
+            false => region.expand(scope, body),
+        },
+        Coverage::Walk => {
+            let first = region
+                .__expand_walk_method(scope)
+                .__expand_region_method(scope, 0usize.into_expand(scope));
+            each_plane(scope, first, body, unroll)
+        }
+        Coverage::Distribute(other) => panic!(
+            "Region::planes: a level dealt to each {other:?} lies below this region before any \
+             plane level, so this region has no planes of its own"
+        ),
     }
 }
 

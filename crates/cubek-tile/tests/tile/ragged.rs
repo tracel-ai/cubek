@@ -24,16 +24,16 @@ const D: Axis = Axis(2);
 /// lengths give as `[ends[b], ends[b + 1])`.
 #[cube(launch)]
 fn ragged_sum_kernel<E: Numeric>(
-    packed: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    packed: &TileArg<'_>,
+    out: &TileArg<'_>,
     ends: &Tensor<u32>,
     space: Partitioning,
     #[comptime] seq: Level,
     #[comptime] token: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let packed = packed.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let packed = packed.tile(&space);
+    let out = out.tile(&space);
 
     for sequence in space.over(&seq) {
         let b = sequence.coord(B);
@@ -41,7 +41,7 @@ fn ragged_sum_kernel<E: Numeric>(
         let end = ends[b + 1] as usize;
 
         let mut total = out.at(&sequence);
-        total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
         // The whole of it: the walk over the packed axis takes `end - start` steps from `start`,
         // so an empty sequence takes none and a short one never reads its neighbour's tokens.
@@ -110,10 +110,14 @@ fn run() -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             packed_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[P, D]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[B, D]),
         ),
         ends_handle.binding().into_tensor_arg(),
@@ -169,16 +173,16 @@ const BLOCK: usize = 4;
 /// overruns reads zero instead of the next sequence.
 #[cube(launch)]
 fn blocked_ragged_sum_kernel<E: Numeric>(
-    packed: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    packed: &TileArg<'_>,
+    out: &TileArg<'_>,
     ends: &Tensor<u32>,
     space: Partitioning,
     #[comptime] seq: Level,
     #[comptime] token: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let packed = packed.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let packed = packed.tile(&space);
+    let out = out.tile(&space);
 
     for sequence in space.over(&seq) {
         let b = sequence.coord(B);
@@ -186,7 +190,7 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
         let end = ends[b + 1] as usize;
 
         let mut total = out.at(&sequence);
-        total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
         let seq_view = packed.within(P, start, end);
 
@@ -236,10 +240,14 @@ fn run_blocked(ends: &[u32]) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             packed_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[P, D]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[B, D]),
         ),
         ends_handle.binding().into_tensor_arg(),

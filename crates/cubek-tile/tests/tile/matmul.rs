@@ -25,18 +25,24 @@ use super::{Form, implied, uncut};
 /// advertise, so *some* config is not enough; returns `false` (after enforcing a skip) if absent.
 pub(crate) fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
+    require_cmma_8x8x8(client, f32_ty, f32_ty)
+}
+
+/// Whether the device runs an 8x8x8 cmma fragment over `operands`, summing in `sum`; a skip where
+/// it does not.
+pub(crate) fn require_cmma_8x8x8(client: &Client, operands: ElemType, sum: ElemType) -> bool {
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
-        cfg.a_type == f32_ty
-            && cfg.b_type == f32_ty
-            && cfg.cd_type == f32_ty
+        cfg.a_type == operands
+            && cfg.b_type == operands
+            && cfg.cd_type == sum
             && cfg.m == 8
             && cfg.n == 8
             && cfg.k == 8
     });
     if !supported {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "device has no 8x8x8 f32 cmma (tensor-core) fragment support".to_string(),
-        ))
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device has no 8x8x8 cmma (tensor-core) fragment over {operands:?} summing in {sum:?}"
+        )))
         .enforce();
     }
     supported
@@ -135,10 +141,10 @@ fn assert_matmul_arange(client: &Client, handle: TensorHandle, m: usize, n: usiz
 /// it (through `runs` of boxes where the tiling states that level) and the leaf runs the software
 /// instruction under `config` on each `inner` region, folding under `semiring` from its identity.
 #[cube(launch)]
-fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
-    a: &TileArg<'_, E, AV>,
-    b: &TileArg<'_, E, BV>,
-    c: &TileArg<'_, E, CV>,
+fn matmul_in_place<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] runs: Option<Level>,
@@ -147,9 +153,9 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     #[comptime] semiring: Semiring,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for outer in space.over(&outer) {
         match comptime!(runs.clone()) {
             Some(runs) => {
@@ -182,9 +188,9 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
 /// `inner` contracted where the operands lie.
 #[cube]
 fn contract_in_place<E: Numeric>(
-    a: &Tile<E>,
-    b: &Tile<E>,
-    c: &Tile<E>,
+    a: &Tile,
+    b: &Tile,
+    c: &Tile,
     owned: &Region,
     #[comptime] inner: Level,
     #[comptime] config: RegisterBlock,
@@ -195,7 +201,7 @@ fn contract_in_place<E: Numeric>(
     let c_o = c.at(owned);
     for region in c_o.over(&inner) {
         let mut c_w = c_o.at(&region);
-        c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
+        c_w.init::<E>(Monoid::identity::<E>(comptime!(semiring.add())));
     }
     for region in owned.over(&inner) {
         let mut c_r = c.at(&region).accumulating(config, semiring);
@@ -207,28 +213,27 @@ fn contract_in_place<E: Numeric>(
 /// level: both operands staged in shared memory per region of the walk under the cube, `depth`
 /// regions in flight through the stages.
 #[cube(launch)]
-fn matmul_smem_ring<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn matmul_smem_ring(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] runs: Option<Level>,
     #[comptime] steps: Level,
     #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         match comptime!(runs.clone()) {
             Some(runs) => {
                 for run in cube.over(&runs) {
-                    contract_staged::<E>(&a, &b, &c, &run, comptime!(steps.clone()), depth);
+                    contract_staged(&a, &b, &c, &run, comptime!(steps.clone()), depth);
                 }
             }
-            None => contract_staged::<E>(&a, &b, &c, &cube, comptime!(steps.clone()), depth),
+            None => contract_staged(&a, &b, &c, &cube, comptime!(steps.clone()), depth),
         }
     }
 }
@@ -236,10 +241,10 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
 /// One cube's box of `c = a · b`, zeroed once, then contracted through stages staging each
 /// region of `steps`.
 #[cube]
-fn contract_staged<E: Numeric>(
-    a: &Tile<E>,
-    b: &Tile<E>,
-    c: &Tile<E>,
+fn contract_staged(
+    a: &Tile,
+    b: &Tile,
+    c: &Tile,
     owned: &Region,
     #[comptime] steps: Level,
     #[comptime] depth: usize,
@@ -252,7 +257,7 @@ fn contract_staged<E: Numeric>(
         c_w.zero();
     }
     let walk = owned.over(&steps);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut c_r = c
             .at(region)
@@ -266,30 +271,29 @@ fn contract_staged<E: Numeric>(
 /// Which of the ring's schedules a staged test kernel drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Schedule {
-    /// [`pipelined`]: the next region's slot filled ahead of the contraction.
+    /// [`Stages::pipelined`]: the next region's slot filled ahead of the contraction.
     AheadInSlots,
-    /// [`pipelined_through_registers`]: the next region read into registers across the
+    /// [`Stages::prefetched`]: the next region read into registers across the
     /// contraction and written after it.
     ThroughRegisters,
 }
 
 /// [`matmul_smem_ring`] under either of the ring's schedules.
 #[cube(launch)]
-fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn matmul_smem_ring_scheduled(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] depth: usize,
     #[comptime] schedule: Schedule,
     #[comptime] unrolled: bool,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let a = a.at(&cube);
         let b = b.at(&cube);
@@ -302,13 +306,13 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
             true => cube.over(&steps).unrolled(),
             false => cube.over(&steps),
         };
-        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth, None);
         match comptime!(schedule) {
             Schedule::AheadInSlots => {
                 stages.pipelined(walk, |slot, region| {
                     let c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
+                        contract_on_the_last_unit(&c_r, a_s, b_s);
                     });
                 });
             }
@@ -316,7 +320,7 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
                 stages.prefetched(walk, |slot, region| {
                     let c_r = c.at(region);
                     slot.consume(|a_s, b_s| {
-                        contract_on_the_last_unit::<E>(&c_r, a_s, b_s);
+                        contract_on_the_last_unit(&c_r, a_s, b_s);
                     });
                 });
             }
@@ -329,7 +333,7 @@ fn matmul_smem_ring_scheduled<E: Numeric, V: Size>(
 /// units that wrote the slot sit in other planes, where only a barrier orders their writes before
 /// this read.
 #[cube]
-fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) {
+fn contract_on_the_last_unit(c: &Tile, a: &Tile, b: &Tile) {
     if UNIT_POS == CUBE_DIM - 1 {
         let mut c = c.clone().accumulating(REGISTER_BLOCK, Semiring::SUM_PROD);
         c.mma(a, b);
@@ -339,20 +343,19 @@ fn contract_on_the_last_unit<E: Numeric>(c: &Tile<E>, a: &Tile<E>, b: &Tile<E>) 
 /// `c += a · b`: [`matmul_smem_ring`] folding onto what `c` holds, for the caller that owns the
 /// init.
 #[cube(launch)]
-fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn matmul_smem_ring_accumulate(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut c_r = c
             .at(region)
@@ -365,21 +368,20 @@ fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
 
 /// `c = a · b` with the lhs alone staged, the rhs read where it lies, `depth` regions in flight.
 #[cube(launch)]
-fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn matmul_lhs_smem_ring(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&level);
-    let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, depth);
+    let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut c_r = c
             .at(region)
@@ -394,18 +396,17 @@ fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
 /// `c = a · b` with the scalar rhs staged into `width`-wide shared-memory lines: the stage pads
 /// its innermost axis out to whole lines an unvectorized global read could not give.
 #[cube(launch)]
-fn matmul_padded_rhs_stage<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn matmul_padded_rhs_stage(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] width: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
     for region in c.over(&level) {
@@ -419,6 +420,7 @@ fn matmul_padded_rhs_stage<E: Numeric>(
         StageStorage::Strided,
         comptime!(Some(width)),
         1usize,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let mut c_r = c
@@ -434,19 +436,18 @@ fn matmul_padded_rhs_stage<E: Numeric>(
 /// [`matmul_padded_rhs_stage`]'s lhs twin, the padded stage one level down: the outer level reads
 /// the lhs where it lies, the inner one stages it `width` wide.
 #[cube(launch)]
-fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn matmul_padded_lhs_stage_two_levels(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] width: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
     for region in c.over(&outer) {
@@ -464,6 +465,7 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
             StageStorage::Strided,
             comptime!(Some(width)),
             1usize,
+            None,
         );
         stages.pipelined(walk, |slot, region| {
             let mut c_r = c_o
@@ -480,23 +482,22 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
 /// Two levels: the outer stages both operands (laid out as `storage`, `depth` regions in flight),
 /// the inner walks the stage's final tiles where they lie.
 #[cube(launch)]
-fn matmul_two_levels_smem_then_in_place<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn matmul_two_levels_smem_then_in_place(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
     #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     let walk = space.over(&outer);
-    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth, None);
     stages.pipelined(walk, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
@@ -512,21 +513,20 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
 
 /// Two levels, both staging: the inner stages restages each final tile out of the outer stage.
 #[cube(launch)]
-fn matmul_two_levels_smem_then_smem<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn matmul_two_levels_smem_then_smem(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
     #[comptime] depth_outer: usize,
     #[comptime] depth_inner: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
     for region in c.over(&outer) {
@@ -534,13 +534,19 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
         c_w.zero();
     }
     let walk = space.over(&outer);
-    let mut stages = Stages::smem(&walk, &a, &b, comptime!(storage.clone()), depth_outer);
+    let mut stages = Stages::smem(&walk, &a, &b, comptime!(storage.clone()), depth_outer, None);
     stages.pipelined(walk, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             let cells = region.over(&inner);
-            let mut inner_ring =
-                Stages::smem(&cells, a_s, b_s, comptime!(storage.clone()), depth_inner);
+            let mut inner_ring = Stages::smem(
+                &cells,
+                a_s,
+                b_s,
+                comptime!(storage.clone()),
+                depth_inner,
+                None,
+            );
             inner_ring.pipelined(cells, |slot, cell| {
                 let mut c_r = c_o
                     .at(cell)
@@ -557,21 +563,20 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
 /// seeded with the semiring's identity, every region's contraction folded into it, cast back down
 /// on drain.
 #[cube(launch)]
-fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Size>(
-    a: &TileArg<'_, E, AV>,
-    b: &TileArg<'_, E, BV>,
-    c: &TileArg<'_, E, CV>,
+fn promoted_matmul_in_place<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
-    #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<EA, E, E>(
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<EA>(
         &a,
         &b,
         comptime!(Instruction::Registers { config }),
@@ -587,24 +592,23 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
 /// [`promoted_matmul_in_place`] over the two-level cube/plane nest a real gemm composes: the
 /// block is opened per plane region and contracted along the inner K walk.
 #[cube(launch)]
-fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn promoted_matmul_two_levels_in_place<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] config: RegisterBlock,
-    #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         for plane in cube {
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let acc = c_p.accumulator::<EA, E, E>(
+            let acc = c_p.accumulator::<EA>(
                 &a_p,
                 &b_p,
                 comptime!(Instruction::Registers { config }),
@@ -624,18 +628,18 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
 /// and hands every region comptime coordinates.
 #[cube(launch)]
 fn block_matmul_two_levels_smem_below<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -648,7 +652,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
         let walk = outer.over(&inner).unrolled();
-        let mut stages = Stages::smem(&walk, &a_o, &b_o, StageStorage::Strided, 1usize);
+        let mut stages = Stages::smem(&walk, &a_o, &b_o, StageStorage::Strided, 1usize, None);
         stages.pipelined(walk, |slot, cell| {
             let mut acc_r = acc_o.at(cell);
             slot.consume(|a_s, b_s| {
@@ -665,22 +669,22 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
 /// walk, both operands staged per region (laid out as `storage`, `depth` in flight), the drain to
 /// global memory the epilogue.
 #[cube(launch)]
-fn cmma_matmul_k_walk<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn cmma_matmul_k_walk<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] storage: StageStorage,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -694,25 +698,28 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
 /// `io`'s.
 #[cube(launch)]
 fn mma_matmul_k_walk<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] io: MmaIo,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(
         &a,
         &b,
-        comptime!(Instruction::Mma { io }),
+        comptime!(Instruction::Mma {
+            io,
+            operands: MmaOperands::Plain,
+        }),
         Semiring::SUM_PROD,
     );
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -727,19 +734,19 @@ fn mma_matmul_k_walk<E: Numeric>(
 /// every K step.
 #[cube(launch)]
 fn cmma_matmul_two_levels_planes<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&outer);
     let mut stages = Stages::smem(
         &walk,
@@ -755,6 +762,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
             chunks: RowChunks::InOrder,
         }),
         depth,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let acc_o = acc.at(region);
@@ -773,9 +781,9 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
 /// execute out of the stage.
 #[cube(launch)]
 fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] stage: Level,
     #[comptime] plane: Level,
@@ -783,10 +791,10 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
         &walk,
@@ -802,6 +810,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
             chunks: RowChunks::InOrder,
         }),
         depth,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let acc_o = acc.at(region);
@@ -824,9 +833,9 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
 /// call: the grid walks its fragment level itself.
 #[cube(launch)]
 fn cmma_matmul_partition_in_one_call<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] stage: Level,
     #[comptime] plane: Level,
@@ -834,10 +843,10 @@ fn cmma_matmul_partition_in_one_call<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
         &walk,
@@ -853,6 +862,7 @@ fn cmma_matmul_partition_in_one_call<E: Numeric>(
             chunks: RowChunks::InOrder,
         }),
         depth,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let acc_o = acc.at(region);
@@ -871,9 +881,9 @@ fn cmma_matmul_partition_in_one_call<E: Numeric>(
 /// column loaded once above, and an M-only fragment walk; both fragment walks unroll (they select).
 #[cube(launch)]
 fn cmma_matmul_five_levels<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] stage: Level,
     #[comptime] plane: Level,
@@ -883,10 +893,10 @@ fn cmma_matmul_five_levels<E: Numeric>(
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&a, &b, Instruction::Cmma, Semiring::SUM_PROD);
     let walk = space.over(&stage);
     let mut stages = Stages::smem(
         &walk,
@@ -908,6 +918,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
             chunks: RowChunks::InOrder,
         }),
         depth,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let acc_o = acc.at(region);
@@ -1051,7 +1062,9 @@ fn matmul_m_across_cubes_that_do_not_divide() {
 
 #[test]
 fn matmul_m_three_each_across_cubes_leaves_a_short_run() {
-    check_matmul(
+    // A run stopping at the edge of a buffer stored in tiles: a layout the launcher does not bind
+    // yet.
+    check_matmul_bound(
         16,
         8,
         8,
@@ -1060,6 +1073,7 @@ fn matmul_m_three_each_across_cubes_leaves_a_short_run() {
             .walk(&[(M, 3)])
             .cubes(&[M]),
         1,
+        Binding::Stated,
     );
 }
 
@@ -1113,9 +1127,38 @@ fn assert_tiled_matmul(
         .enforce()
 }
 
+/// How a test binds an input stored in tiles of the leaf.
+#[derive(Clone, Copy)]
+enum Binding {
+    /// Through the launch, which derives the operand's spec.
+    Launch,
+    /// By the input's own statement: its stored tiles read through one projection, unchecked,
+    /// the launch's units stated on it. For the two layouts the launcher refuses although this
+    /// reads them in bounds: a run of tiles that stops at the edge of the buffer (the launcher
+    /// masks the axis, and nothing is masked inside a storage tile), and lines narrower than a
+    /// stored tile. Bind those through the launch once the launcher reads them.
+    Stated,
+}
+
+impl Binding {
+    /// `input`, stored in tiles once, as an operand of `launcher` bound `width` wide.
+    fn arg(self, input: &TileInput, launcher: &Launcher, width: usize) -> TileArgLaunch {
+        match self {
+            Binding::Launch => input.arg(launcher, width),
+            Binding::Stated => {
+                let space = input.space();
+                let axes: Vec<Axis> = (0..space.rank()).map(|i| space.axis_at(i)).collect();
+                let mut spec = TileSpec::new(Projection::tiled(&axes, &axes.repeat(2)));
+                spec.units = launcher.cube_dim().num_elems() as usize;
+                TileArgLaunch::new(input.tensor_arg(1), input.handle().dtype, width, spec)
+            }
+        }
+    }
+}
+
 /// Drives [`matmul_smem_ring_scheduled`] for `C = A @ B` over `tiling`, whose last level is the
 /// walk it stages, `depth` regions in flight under `schedule`, on a cube of `units` units reading
-/// every operand in lines `width` wide.
+/// every operand in lines `width` wide, bound as `binding` says.
 #[allow(clippy::too_many_arguments)]
 fn check_matmul_scheduled(
     m: usize,
@@ -1127,6 +1170,7 @@ fn check_matmul_scheduled(
     units: u32,
     width: usize,
     unrolled: bool,
+    binding: Binding,
 ) {
     let client = cubecl::test_device().client();
     let levels = tiling.build();
@@ -1147,19 +1191,13 @@ fn check_matmul_scheduled(
     let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
-    // The cube's units, stated on each operand as `Launcher::arg` states them: a stage fetched
-    // into registers distributes its lines over them at expansion. The buffer is bound scalar: the
-    // kernel's line type carries the width, and the metadata stays in elements.
-    let bound = |input: &TileInput| {
-        let mut spec = input.spec();
-        spec.units = units as usize;
-        TileArgLaunch::new(input.tensor_arg(1), spec)
-    };
+    // Either binding states the cube's units on each operand: a stage fetched into registers
+    // distributes its lines over them at expansion.
+    let bound = |input: &TileInput| binding.arg(input, &launcher, width);
     matmul_smem_ring_scheduled::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        width,
         bound(&a),
         bound(&b),
         bound(&c),
@@ -1169,7 +1207,6 @@ fn check_matmul_scheduled(
         depth,
         schedule,
         unrolled,
-        f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
@@ -1190,20 +1227,21 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
             .walk_every(&[K])
             .cubes(&[M, N])
     };
-    // (units, width, problem edge, leaf edge, the `K`s).
+    // (units, width, problem edge, leaf edge, the `K`s, binding): lines four wide in tiles
+    // sixteen wide are a layout the launcher does not bind yet.
     let cases = [
-        (1u32, 1, 8, 4, [16, 4]),
-        (3, 1, 8, 4, [16, 4]),
-        (1, 4, 8, 4, [16, 4]),
-        (70, 1, 32, 16, [64, 16]),
-        (70, 4, 32, 16, [64, 16]),
+        (1u32, 1, 8, 4, [16, 4], Binding::Launch),
+        (3, 1, 8, 4, [16, 4], Binding::Launch),
+        (1, 4, 8, 4, [16, 4], Binding::Launch),
+        (70, 1, 32, 16, [64, 16], Binding::Launch),
+        (70, 4, 32, 16, [64, 16], Binding::Stated),
     ];
     let max_units = cubecl::test_device()
         .client()
         .properties()
         .hardware
         .max_units_per_cube;
-    for (units, width, edge, leaf, ks) in cases {
+    for (units, width, edge, leaf, ks, binding) in cases {
         if units > max_units {
             continue;
         }
@@ -1220,6 +1258,7 @@ fn a_register_staged_ring_matches_a_slot_ahead_ring() {
                         units,
                         width,
                         false,
+                        binding,
                     );
                 }
             }
@@ -1256,6 +1295,7 @@ fn every_walk_length_matches_the_whole_under_both_schedules() {
                         3,
                         1,
                         unrolled,
+                        Binding::Launch,
                     );
                 }
             }
@@ -1266,6 +1306,18 @@ fn every_walk_length_matches_the_whole_under_both_schedules() {
 /// Drives [`matmul_smem_ring`] for `C = A @ B`: the cube level over the walk it stages, through
 /// a run of boxes where `tiling` states one, both inputs staged, `depth` regions in flight.
 fn check_matmul(m: usize, n: usize, k: usize, tiling: Levels, depth: usize) {
+    check_matmul_bound(m, n, k, tiling, depth, Binding::Launch)
+}
+
+/// [`check_matmul`] with every operand bound as `binding` says.
+fn check_matmul_bound(
+    m: usize,
+    n: usize,
+    k: usize,
+    tiling: Levels,
+    depth: usize,
+    binding: Binding,
+) {
     let client = cubecl::test_device().client();
     let levels = tiling.build();
     let tile_edge = leaf_edge(&levels, M);
@@ -1291,17 +1343,15 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Levels, depth: usize) {
     matmul_smem_ring::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        binding.arg(&a, &launcher, 1),
+        binding.arg(&b, &launcher, 1),
+        binding.arg(&c, &launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         runs,
         steps,
         depth,
-        f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
@@ -1337,15 +1387,13 @@ fn mma_folds_onto_what_c_holds() {
     matmul_smem_ring_accumulate::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         1,
-        f32::elem_type_native(),
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
@@ -1420,17 +1468,15 @@ fn check_matmul_batched(
     matmul_smem_ring::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        1,
-        a.arg(),
-        rhs.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        rhs.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
         launcher.partitioning().level(0),
         1,
-        f32::elem_type_native(),
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
@@ -1522,7 +1568,6 @@ fn matmul_broadcast_multilevel() {
 /// walk point. Every level stages, whatever the caller stacked.
 fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
     let client = cubecl::test_device().client();
-    let dtype = f32::elem_type_native();
 
     let launcher = implied(
         &client,
@@ -1544,37 +1589,34 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
         .zeros();
 
     let cube_count = launcher.cube_count();
-    let cube_dim = CubeDim::new_single();
+    let cube_dim = launcher.cube_dim();
     match levels.len() {
         1 => matmul_smem_ring::launch(
             &client,
             cube_count,
             cube_dim,
-            1,
-            lhs.arg(),
-            rhs.arg(),
-            acc.arg(),
+            lhs.arg(&launcher, 1),
+            rhs.arg(&launcher, 1),
+            acc.arg(&launcher, 1),
             launcher.partitioning_arg(),
             one_cube(),
             None,
             launcher.partitioning().level(0),
             1,
-            dtype,
         ),
         2 => matmul_two_levels_smem_then_smem::launch(
             &client,
             cube_count,
             cube_dim,
-            lhs.arg(),
-            rhs.arg(),
-            acc.arg(),
+            lhs.arg(&launcher, 1),
+            rhs.arg(&launcher, 1),
+            acc.arg(&launcher, 1),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             launcher.partitioning().level(1),
             StageStorage::Strided,
             1,
             1,
-            dtype,
         ),
         depth => panic!("check_matmul_broadcast: no kernel walks {depth} levels"),
     }
@@ -1679,12 +1721,9 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, levels: Vec<Level>) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         runs,
@@ -1725,22 +1764,19 @@ fn matmul_cpu_dynamic_k() {
         .tile(&[edge, edge])
         .uniform(4242, 10., 100.);
 
+    let dynamic_k = uncut(
+        &client,
+        &launcher.space().clone().with_dynamic(&[K]),
+        launcher.space(),
+    );
     matmul_in_place::launch(
         &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
-        uncut(
-            &client,
-            &launcher.space().clone().with_dynamic(&[K]),
-            launcher.space(),
-        )
-        .partitioning_arg(),
+        dynamic_k.cube_count(),
+        dynamic_k.cube_dim(),
+        a.arg(&dynamic_k, 1),
+        b.arg(&dynamic_k, 1),
+        c.arg(&dynamic_k, 1),
+        dynamic_k.partitioning_arg(),
         one_cube(),
         None,
         launcher.partitioning().level(0),
@@ -1788,12 +1824,9 @@ fn register_matmul_unit_spread_n() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -1862,17 +1895,17 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         Form::Dynamic,
     );
     let a_op = launcher
-        .arg(a.handle().binding())
+        .arg(a.handle().binding(), f32::elem_type_native())
         .axes(&[M, K])
         .build()
         .unwrap();
     let b_op = launcher
-        .arg(b.handle().binding())
+        .arg(b.handle().binding(), f32::elem_type_native())
         .axes(&[K, N])
         .build()
         .unwrap();
     let c_op = launcher
-        .arg(c.handle().binding())
+        .arg(c.handle().binding(), f32::elem_type_native())
         .axes(&[M, N])
         .build()
         .unwrap();
@@ -1887,7 +1920,6 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         4,
-        f32::elem_type_native(),
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
@@ -1935,17 +1967,17 @@ fn matmul_padded_lhs_stage_direct_tail() {
         Form::Dynamic,
     );
     let a_op = launcher
-        .arg(a.handle().binding())
+        .arg(a.handle().binding(), f32::elem_type_native())
         .axes(&[M, K])
         .build()
         .unwrap();
     let b_op = launcher
-        .arg(b.handle().binding())
+        .arg(b.handle().binding(), f32::elem_type_native())
         .axes(&[K, N])
         .build()
         .unwrap();
     let c_op = launcher
-        .arg(c.handle().binding())
+        .arg(c.handle().binding(), f32::elem_type_native())
         .axes(&[M, N])
         .build()
         .unwrap();
@@ -1961,7 +1993,6 @@ fn matmul_padded_lhs_stage_direct_tail() {
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         4,
-        f32::elem_type_native(),
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
@@ -2004,16 +2035,15 @@ fn matmul_multilevel_staged_then_direct() {
     matmul_two_levels_smem_then_in_place::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         StageStorage::Strided,
         1,
-        f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, final_edge);
 }
@@ -2081,7 +2111,6 @@ fn check_matmul_multilevel(
 ) {
     let client = cubecl::test_device().client();
     let final_edge = 2usize;
-    let dtype = f32::elem_type_native();
     let launcher = implied(
         &client,
         Partitioning::new(
@@ -2109,31 +2138,29 @@ fn check_matmul_multilevel(
         Inner::Direct => matmul_two_levels_smem_then_in_place::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            launcher.cube_dim(),
+            a.arg(&launcher, 1),
+            b.arg(&launcher, 1),
+            c.arg(&launcher, 1),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             launcher.partitioning().level(1),
             storage,
             depth_outer,
-            dtype,
         ),
         Inner::Staged(depth_inner) => matmul_two_levels_smem_then_smem::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            launcher.cube_dim(),
+            a.arg(&launcher, 1),
+            b.arg(&launcher, 1),
+            c.arg(&launcher, 1),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             launcher.partitioning().level(1),
             storage,
             depth_outer,
             depth_inner,
-            dtype,
         ),
     }
     assert_tiled_matmul(&client, c.handle(), m, n, k, final_edge);
@@ -2170,17 +2197,16 @@ fn matmul_staged_invariant_lhs() {
     matmul_two_levels_smem_then_smem::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         StageStorage::Strided,
         1,
         1,
-        f32::elem_type_native(),
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
@@ -2235,16 +2261,15 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
     matmul_two_levels_smem_then_in_place::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         StageStorage::Strided,
         1,
-        f32::elem_type_native(),
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
@@ -2287,13 +2312,10 @@ fn matmul_direct_vectorized() {
     matmul_in_place::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        2,
-        2,
-        2,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 2),
+        b.arg(&launcher, 2),
+        c.arg(&launcher, 2),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -2386,15 +2408,13 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
     matmul_lhs_smem_ring::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         2,
-        f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
@@ -2420,7 +2440,6 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
         Form::Static,
     );
 
-    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .untiled()
         .arange();
@@ -2435,30 +2454,26 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
         Staged::Both => matmul_smem_ring::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
-            v,
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            launcher.cube_dim(),
+            a.arg(&launcher, v),
+            b.arg(&launcher, v),
+            c.arg(&launcher, v),
             launcher.partitioning_arg(),
             one_cube(),
             None,
             launcher.partitioning().level(0),
             depth,
-            dtype,
         ),
         Staged::LhsOnly => matmul_lhs_smem_ring::launch(
             &client,
             launcher.cube_count(),
-            CubeDim::new_single(),
-            v,
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            launcher.cube_dim(),
+            a.arg(&launcher, v),
+            b.arg(&launcher, v),
+            c.arg(&launcher, v),
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             depth,
-            dtype,
         ),
     }
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -2502,17 +2517,13 @@ fn register_matmul_promoted_accumulator() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
-        dtype,
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -2551,12 +2562,9 @@ fn tropical_matmul_in_place() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -2617,17 +2625,13 @@ fn tropical_matmul_promoted() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         REGISTER_BLOCK,
         Semiring::MAX_SUM,
-        dtype,
         dtype,
     );
 
@@ -2690,14 +2694,12 @@ fn register_matmul_promoted_cube_plane() {
         launcher.cube_count(),
         launcher.cube_dim(),
         // Rhs and output vectorized along N, as a real launch does: the tensor args stay
-        // scalar-unit and the kernel's `Vector<E, V>` element carries the width.
-        2,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        // scalar-unit and each arg states the width its buffer is bound at.
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 2),
+        c.arg(&launcher, 2),
         launcher.partitioning_arg(),
         REGISTER_BLOCK,
-        dtype,
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -2738,9 +2740,9 @@ fn a_plane_stages_its_own_walk() {
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            a.arg(),
-            b.arg(),
-            c.arg(),
+            a.arg(&launcher, 1),
+            b.arg(&launcher, 1),
+            c.arg(&launcher, 1),
             launcher.partitioning_arg(),
             depth,
             dtype,
@@ -2754,22 +2756,22 @@ fn a_plane_stages_its_own_walk() {
 /// plane's own copy, filled by its units and met on `sync_plane`, and no other plane waits on them.
 #[cube(launch)]
 fn plane_staged_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         for plane in cube {
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let acc = c_p.accumulator::<E, E, E>(
+            let acc = c_p.accumulator::<E>(
                 &a_p,
                 &b_p,
                 comptime!(Instruction::Registers {
@@ -2778,7 +2780,7 @@ fn plane_staged_matmul<E: Numeric>(
                 Semiring::SUM_PROD,
             );
             let walk = plane.walk();
-            let mut stages = Stages::smem(&walk, &a_p, &b_p, StageStorage::Strided, depth);
+            let mut stages = Stages::smem(&walk, &a_p, &b_p, StageStorage::Strided, depth, None);
             stages.pipelined(walk, |slot, step| {
                 let mut acc_s = acc.at(step);
                 slot.consume(|a_s, b_s| {
@@ -2797,24 +2799,23 @@ fn plane_staged_matmul<E: Numeric>(
 /// on nothing: the register form reads its operands out of the tiles it was handed and the
 /// matrix forms load fragments, and that difference is the engine's.
 #[cube(launch)]
-fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn matmul_on_a_stated_instruction<EA: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] instruction: Instruction,
-    #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
     for cube in space {
         for plane in cube {
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let acc = c_p.accumulator::<EA, E, E>(&a_p, &b_p, instruction, Semiring::SUM_PROD);
+            let acc = c_p.accumulator::<EA>(&a_p, &b_p, instruction, Semiring::SUM_PROD);
             for step in plane {
                 let mut acc_s = acc.at(&step);
                 acc_s.mma(&a_p.at(&step), &b_p.at(&step));
@@ -2862,14 +2863,13 @@ fn instruction_stated_once_runs_in_registers() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         Instruction::Registers {
             config: REGISTER_BLOCK,
         },
-        dtype,
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -2915,9 +2915,9 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -2966,12 +2966,9 @@ fn register_matmul_lined_lhs() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        2,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 2),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -3008,17 +3005,13 @@ fn register_matmul_promoted_lined_lhs() {
         launcher.cube_dim(),
         // Lhs 2-wide along K, rhs and output 2-wide along N: both the unit fan-out and the
         // block's own line width are off their scalar case at once.
-        2,
-        2,
-        2,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 2),
+        b.arg(&launcher, 2),
+        c.arg(&launcher, 2),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
-        dtype,
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -3059,12 +3052,9 @@ fn check_folded_step(launcher: Launcher, (m, n, k): (usize, usize, usize), budge
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        4,
-        4,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 4),
+        b.arg(&launcher, 4),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -3120,17 +3110,13 @@ fn register_matmul_promoted_folded_step() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        4,
-        4,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 4),
+        b.arg(&launcher, 4),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         RegisterBlock::new(64),
         Semiring::SUM_PROD,
-        dtype,
         dtype,
     );
 
@@ -3175,20 +3161,28 @@ fn a_promoted_folded_step_sums_wider_than_its_output() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        4,
-        4,
-        1,
-        TileArgLaunch::new(a.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
-        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[N, K])),
+        TileArgLaunch::new(
+            a.binding().into_tensor_arg(),
+            out,
+            4,
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            b.binding().into_tensor_arg(),
+            out,
+            4,
+            TileSpec::direct(&[N, K]),
+        ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            out,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         RegisterBlock::new(64),
         Semiring::SUM_PROD,
-        out,
         acc,
     );
 
@@ -3232,12 +3226,9 @@ fn register_matmul_folded_step_two_contracted_axes() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        4,
-        4,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 4),
+        b.arg(&launcher, 4),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -3309,12 +3300,9 @@ fn register_matmul_unit_group_fold() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         one_cube(),
         None,
@@ -3361,17 +3349,13 @@ fn register_matmul_promoted_unit_group_fold() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        1,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
-        dtype,
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -3410,17 +3394,13 @@ fn register_matmul_promoted_folded_step_unit_group_fold() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        edge,
-        edge,
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, edge),
+        b.arg(&launcher, edge),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
-        dtype,
         dtype,
     );
 
@@ -3528,10 +3508,9 @@ fn check_cmma_matmul_k_walk_with(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        v,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, v),
+        b.arg(&launcher, v),
+        c.arg(&launcher, v),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         storage,
@@ -3558,10 +3537,10 @@ fn check_cmma_matmul_k_walk_with(
 /// [`Tile::accumulator`] opens what the plane sums into, and `mma` reads the staged operands the
 /// way that accumulator wants them.
 #[cube(launch)]
-fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
+fn staged_matmul_on_a_stated_instruction<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] storage: StageStorage,
@@ -3569,12 +3548,12 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
     #[comptime] instruction: Instruction,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(comptime!(space.clone()));
-    let acc = c.accumulator::<E, E, E>(&a, &b, instruction, Semiring::SUM_PROD);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = c.tile(&space);
+    let acc = c.accumulator::<E>(&a, &b, instruction, Semiring::SUM_PROD);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -3634,10 +3613,9 @@ fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         StageLayout::Tiled.storage(&launcher),
@@ -3689,9 +3667,57 @@ fn mma_matmul_8x8x8() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        MmaIo::manual(),
+        f32::elem_type_native(),
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// [`mma_matmul_8x8x8`] with a stage four instructions deep: the fragment is read off the shared
+/// stage one instruction's `k` at a time, whatever layout the target's registers take, and the
+/// steps sum into one accumulator.
+#[test]
+fn mma_matmul_8x8x8_four_instructions_deep() {
+    let client = cubecl::test_device().client();
+    if !require_mma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let (m, n, k) = (8usize, 8usize, 32usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, m), (N, n), (K, k)])
+                .walk_every(&[M, N, K])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel zeroes the accumulator fragment.
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    mma_matmul_k_walk::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         MmaIo::manual(),
@@ -3738,9 +3764,9 @@ fn cmma_matmul_plane_partitioned_stage() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -3748,6 +3774,157 @@ fn cmma_matmul_plane_partitioned_stage() {
         f32::elem_type_native(),
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// [`cmma_matmul_plane_partitioned_stage`] over a `12×12` output its four `8×8` fragments overhang,
+/// every operand bound through the launch, which masks the axes its tiles reach past: each
+/// plane's fragment bounces through the plane's own window of scratch to land masked, the plane
+/// meeting only itself at the bounce's barriers. Tensor-core only.
+#[test]
+fn cmma_matmul_plane_partitioned_stage_bounces_where_it_overhangs() {
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let (m, n, k, edge) = (12usize, 12usize, 32usize, 8usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .planes(&[(M, m.div_ceil(edge)), (N, n.div_ceil(edge))])
+                .walk_every(&[M, N, K])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel zeroes the accumulator fragment, and a cell past the edge
+    // written through would land on a cell of the next row.
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+    let bind = |input: &TileInput, axes: &[Axis]| {
+        launcher
+            .arg(input.handle().binding(), f32::elem_type_native())
+            .axes(axes)
+            .build()
+            .unwrap()
+    };
+    let (a_op, b_op, c_op) = (bind(&a, &[M, K]), bind(&b, &[K, N]), bind(&c, &[M, N]));
+
+    cmma_matmul_two_levels_planes::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
+        2,
+        f32::elem_type_native(),
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// [`cmma_matmul_plane_partitioned_stage_bounces_where_it_overhangs`] at `16×16×16` `f16`
+/// fragments summed in `f32`, the shape CUDA's tensor cores offer: a `24×24` output its four
+/// planes' fragments overhang along `M`, `N` or both. Tensor-core only.
+#[test]
+fn cmma_matmul_plane_partitioned_stage_overhangs_at_f16_fragments() {
+    let client = cubecl::test_device().client();
+    let (operands, sum) = (f16::elem_type_native(), f32::elem_type_native());
+    let offered = client.properties().features.matmul.cmma.iter().any(|cfg| {
+        cfg.a_type == operands
+            && cfg.b_type == operands
+            && cfg.cd_type == sum
+            && (cfg.m, cfg.n, cfg.k) == (16, 16, 16)
+    });
+    if !offered {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no 16x16x16 f16 cmma fragment summed in f32".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge) = (24usize, 24usize, 32usize, 16usize);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .planes(&[(M, m.div_ceil(edge)), (N, n.div_ceil(edge))])
+                .walk_every(&[M, N, K])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    // Small integers, exact in `f16`.
+    let lhs: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let rhs: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| lhs[i * k + p] * rhs[p * n + j]).sum()
+        })
+        .collect();
+    let (a, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(operands)
+        .custom(lhs)
+        .generate_with_f32_host_data();
+    let (b, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(operands)
+        .custom(rhs)
+        .generate_with_f32_host_data();
+    // Poisoned, not zeroed: the kernel zeroes the accumulator fragment, and a cell past the edge
+    // written through would land on a cell of the next row.
+    let (c, _) = TestInput::builder(client.clone(), shape![m, n])
+        .uniform(4242, 10., 100.)
+        .generate_with_f32_host_data();
+    let bind = |handle: &TensorHandle, element, axes: &[Axis]| {
+        launcher
+            .arg(handle.clone().binding(), element)
+            .axes(axes)
+            .build()
+            .unwrap()
+    };
+    let (a_op, b_op, c_op) = (
+        bind(&a, operands, &[M, K]),
+        bind(&b, operands, &[K, N]),
+        bind(&c, sum, &[M, N]),
+    );
+
+    cmma_matmul_two_levels_planes::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
+        2,
+        sum,
+    );
+    let output = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
 }
 
 /// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³ fragments,
@@ -3790,9 +3967,9 @@ fn cmma_matmul_multi_fragment_partition() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -3842,9 +4019,9 @@ fn cmma_matmul_partition_contracts_in_one_call() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
@@ -3897,9 +4074,9 @@ fn cmma_matmul_staged_n_walk_partition() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),

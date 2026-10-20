@@ -29,16 +29,17 @@ use crate::*;
 ///
 /// [`source`]: SmemSlotsAccumulation::source
 #[derive(CubeType)]
-pub struct SmemSlotsAccumulation<A: Numeric, T: Numeric> {
+pub struct SmemSlotsAccumulation<A: Numeric> {
     values: Shared<[A]>,
     /// The box the accumulator was opened over, which every writer's sink is shaped like.
-    like: Tile<T>,
-    /// Reads the sum of the slots back as `T`; valid only once every writer has drained.
-    pub source: Tile<T>,
+    like: Tile,
+    /// Reads the sum of the slots back at the opened tile's element; valid only once every
+    /// writer has drained.
+    pub source: Tile,
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// A shared-memory accumulator over this tile's box, summing in `A`, with a slot for each of
     /// `writers` writers. Nothing is zeroed: every writer replaces its whole slot. It is served in
     /// lines as wide as this tile's, so a partial drains into it and its sum lands in this tile
@@ -46,7 +47,8 @@ impl<T: Numeric> Tile<T> {
     pub fn smem_slots_accumulation<A: Numeric>(
         &self,
         #[comptime] writers: usize,
-    ) -> SmemSlotsAccumulation<A, T> {
+    ) -> SmemSlotsAccumulation<A> {
+        let define!(Served) = self.element;
         let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let size!(W) = width;
@@ -61,31 +63,32 @@ impl<T: Numeric> Tile<T> {
         sync_cube();
 
         let units = self.units();
-        let source = Memory::<T>::smem_backed(
+        let source = Memory::smem_backed::<Served>(
             space,
             width,
             comptime!(FillUnits::cube(units)),
-            Backing::<T>::new_ReadCall(ErasedTensor::<T, ReadOnly>::of_smem_slots_sum::<A, W>(
-                &values, writers,
+            Backing::new_ReadCall(RawCall::of::<Served>(
+                ErasedTensor::<Served, ReadOnly>::of_smem_slots_sum::<A, W>(&values, writers),
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Never),
         );
-        SmemSlotsAccumulation::<A, T> {
+        SmemSlotsAccumulation::<A> {
             values,
             like: self.clone(),
-            source: source.nested_like::<T>(self),
+            source: source.nested_like(self),
         }
     }
 }
 
 #[cube]
-impl<A: Numeric, T: Numeric> SmemSlotsAccumulation<A, T> {
+impl<A: Numeric> SmemSlotsAccumulation<A> {
     /// The sink `writer` drains into: its own slot, each cell it is handed replaced.
-    fn sink(&self, writer: usize) -> Tile<A> {
+    fn sink(&self, writer: usize) -> Tile {
         let space = comptime!(self.like.place.space.clone());
         let width = self.like.vector_size();
         let size!(W) = width;
@@ -97,28 +100,27 @@ impl<A: Numeric, T: Numeric> SmemSlotsAccumulation<A, T> {
         ));
         let slot = comptime!(form.cells() * width);
         let units = self.like.units();
-        let sink = Memory::<A>::smem_backed(
+        let sink = Memory::smem_backed::<A>(
             space,
             width,
             comptime!(FillUnits::cube(units)),
-            Backing::<A>::new_WriteCall(ErasedTensor::<A, WriteOnly>::of_smem_slot::<W>(
-                &self.values,
-                writer * slot,
-                slot,
+            Backing::new_WriteCall(RawCall::of::<A>(
+                ErasedTensor::<A, WriteOnly>::of_smem_slot::<W>(&self.values, writer * slot, slot),
             )),
             comptime!(Packing::Plain),
             comptime!(form.clone()),
             RuntimeMap::integral(comptime!(form.physical_rank())),
             ComptimeOption::new_None(),
             comptime!(Write::Replace),
+            comptime!(Overhang::Masked),
         );
-        sink.nested_like::<T>(&self.like)
+        sink.nested_like(&self.like)
     }
 
     /// Drain `partial`, an accumulator over the whole box, into `writer`'s slot, the cube
     /// synchronized after. Once every writer of the cube has, the sum is in
     /// [`source`](SmemSlotsAccumulation::source).
-    pub fn drain<P: Numeric>(&self, partial: &Tile<P>, writer: usize) {
+    pub fn drain(&self, partial: &Tile, writer: usize) {
         partial.drained_into(&self.sink(writer));
         sync_cube();
     }
@@ -139,7 +141,7 @@ impl<A: Numeric, T: Numeric> SmemSlotsAccumulation<A, T> {
 
     /// Line `index` summed over the `writers` slots, in writer order, cast to `T`.
     #[allow(dead_code)] // Reached through its expand, from [`SmemSlotsSum`].
-    fn sum_line<W: Size>(
+    fn sum_line<T: Numeric, W: Size>(
         values: &Shared<[A]>,
         #[comptime] writers: usize,
         index: usize,
@@ -239,7 +241,7 @@ impl<E: Numeric, W: Size> ErasedTensorOperationsExpand<E> for SmemSlot<E, W> {
         index: NativeExpand<usize>,
         value: ExpandValue,
     ) {
-        SmemSlotsAccumulation::<E, E>::__expand_store_line::<W>(
+        SmemSlotsAccumulation::<E>::__expand_store_line::<W>(
             scope,
             &mut self.values,
             self.start,
@@ -271,7 +273,7 @@ impl<A: Numeric, T: Numeric, W: Size> ErasedTensorOperationsExpand<T> for SmemSl
     }
 
     fn __expand_read_line_method(&self, scope: &Scope, index: NativeExpand<usize>) -> ExpandValue {
-        SmemSlotsAccumulation::<A, T>::__expand_sum_line::<W>(
+        SmemSlotsAccumulation::<A>::__expand_sum_line::<T, W>(
             scope,
             &self.values,
             self.writers,

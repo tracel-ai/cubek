@@ -4,24 +4,36 @@ use cubecl::{prelude::*, std::tensor::layout::CoordsDyn, unexpanded};
 
 use cubecl::zspace::SmallVec;
 
-use crate::stage::pipeline::payload::base::{StageSpec, stage_one};
+use crate::stage::pipeline::payload::base::{StageOperand, StageSpec, stage_one};
 use crate::*;
 
 /// One operand's data: a runtime backing store and the comptime [`Space`] it projects.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Tile<T: Numeric> {
-    pub(crate) kind: TileKind<T>,
+pub struct Tile {
+    pub(crate) kind: TileKind,
+    /// The scales these values carry, innermost first: none until [`mul`](Tile::mul). A tile
+    /// knows them whatever its kind and never applies them by itself.
+    pub(crate) factor: Factor,
     /// Where this tile sits in its partitioning.
     #[cube(comptime)]
     pub(crate) place: Placement,
+    /// The element it holds: its values', or the `u32` words a packed tile stores its fields in
+    /// ([`read_element`](Tile::read_element) is what a reader takes them at).
+    #[cube(comptime)]
+    pub(crate) element: ElemType,
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
-    /// Pairs `kind` with its `place`.
-    pub(crate) fn new(kind: TileKind<T>, #[comptime] place: Placement) -> Tile<T> {
-        Tile::<T> { kind, place }
+impl Tile {
+    /// Pairs `kind` with its `place`, carrying no scales.
+    pub(crate) fn new<T: Numeric>(kind: TileKind, #[comptime] place: Placement) -> Tile {
+        Tile {
+            kind,
+            factor: Factor::none(),
+            place,
+            element: elem_type_of::<T>(),
+        }
     }
 
     /// This tile's own box at this depth.
@@ -30,15 +42,17 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// These cells placed at `depth` of `levels`: a tile whose grid the caller states.
-    pub fn with_levels(&self, #[comptime] depth: usize, #[comptime] levels: Vec<Level>) -> Tile<T> {
-        Tile::new(
-            self.kind.clone(),
-            comptime!(Placement::new(self.place.space.clone(), depth, levels)),
-        )
+    pub fn with_levels(&self, #[comptime] depth: usize, #[comptime] levels: Vec<Level>) -> Tile {
+        Tile {
+            kind: self.kind.clone(),
+            factor: self.factor.clone(),
+            place: comptime!(Placement::new(self.place.space.clone(), depth, levels)),
+            element: comptime!(self.element),
+        }
     }
 
     /// This tile's memory store; panics for kinds with none, naming `site`.
-    pub(crate) fn mem(&self, #[comptime] site: &str) -> &Memory<T> {
+    pub(crate) fn mem(&self, #[comptime] site: &str) -> &Memory {
         match &self.kind {
             TileKind::Memory(g) => g,
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -52,7 +66,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The recipe this procedural tile evaluates; panics for every other kind.
-    pub(crate) fn recipe(&self) -> &Procedural<T> {
+    pub(crate) fn recipe(&self) -> &Procedural {
         match &self.kind {
             TileKind::Procedural(recipe) => recipe,
             TileKind::Memory(_)
@@ -63,7 +77,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    pub(crate) fn mem_mut(&mut self, #[comptime] site: &str) -> &mut Memory<T> {
+    pub(crate) fn mem_mut(&mut self, #[comptime] site: &str) -> &mut Memory {
         match &mut self.kind {
             TileKind::Memory(g) => g,
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -89,12 +103,15 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Whether a cmma fragment draining into this tile goes through a scratch
-    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address.
-    pub(crate) fn fragments_bounce(&self) -> comptime_type!(bool) {
+    /// ([`FragmentDrain::Bounce`]): a destination that adds, overhangs, or has no address, or one
+    /// whose element the fragment cannot be cast to in place (`in_place`, [`casts_in_place`]).
+    pub(crate) fn fragments_bounce(&self, #[comptime] in_place: bool) -> comptime_type!(bool) {
         match &self.kind {
             TileKind::Memory(m) => {
                 let addressed = m.store.addressed();
-                comptime!(FragmentDrain::of(&m.access, addressed) == FragmentDrain::Bounce)
+                comptime!(
+                    FragmentDrain::of(&m.access, addressed, in_place) == FragmentDrain::Bounce
+                )
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -143,10 +160,9 @@ impl<T: Numeric> Tile<T> {
                 comptime!(load.along_one_axis("a reader asking Tile::vector_size").1)
             }
             TileKind::Lines(c) => c.line(),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
+            // One cell the descriptor moves a line: a word of a packed field's values.
+            TileKind::TmaGmem(t) => comptime!(t.packing.served(1)),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::Procedural(_) => {
                 comptime!(1usize)
             }
         }
@@ -194,18 +210,52 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// What a stage of this operand holds ([`StageElement`]).
+    /// What a stage of this operand holds ([`StageElement`]): the values its fill decodes
+    /// ([`decodes`](Tile::decodes)), or what its kind stages.
     pub(crate) fn stage_element(&self) -> comptime_type!(StageElement) {
-        match &self.kind {
+        let decodes = self.decodes();
+        let staged = match &self.kind {
             TileKind::Memory(d) => d.stage_element(),
-            TileKind::TmaGmem(_)
-            | TileKind::PlaneTile(_)
+            TileKind::TmaGmem(t) => comptime!(match t.packing {
+                Packing::Plain => StageElement::Served,
+                Packing::Packed { .. } => StageElement::Stored,
+            }),
+            TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => {
                 comptime!(StageElement::Served)
             }
-        }
+        };
+        comptime!(match decodes {
+            true => StageElement::Decoded,
+            false => staged,
+        })
+    }
+
+    /// The element a reader takes these values at where it names none: what the tile holds, or
+    /// `f32` for the fields a packed tile decodes ([`dequantized`](Tile::dequantized) names
+    /// another).
+    pub(crate) fn read_element(&self) -> comptime_type!(ElemType) {
+        let packing = self.packing();
+        comptime!(match packing {
+            Packing::Plain => self.element,
+            Packing::Packed { .. } => f32::elem_type_native(),
+        })
+    }
+
+    /// The element a stage of this tile holds: the values its fill decodes, at `decoded` or
+    /// [`read_element`](Tile::read_element), or what the tile holds.
+    pub(crate) fn staged_element(
+        &self,
+        #[comptime] decoded: Option<ElemType>,
+    ) -> comptime_type!(ElemType) {
+        let staged = self.stage_element();
+        let read = self.read_element();
+        comptime!(match staged {
+            StageElement::Decoded => decoded.unwrap_or(read),
+            StageElement::Served | StageElement::Stored => self.element,
+        })
     }
 
     /// How this tile's values sit in memory; see [`Memory::packing`].
@@ -213,10 +263,8 @@ impl<T: Numeric> Tile<T> {
         match &self.kind {
             TileKind::Memory(d) => d.packing(),
             TileKind::Lines(c) => c.packing(),
-            TileKind::TmaGmem(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::Procedural(_) => {
+            TileKind::TmaGmem(t) => comptime!(t.packing),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::Procedural(_) => {
                 comptime!(Packing::Plain)
             }
         }
@@ -330,10 +378,14 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// One factor of a separable recipe at `pos`; requires [`factors`](Tile::factors) to be `Some`.
-    pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
+    pub(crate) fn separable_factor<T: Numeric>(
+        &self,
+        pos: CoordsDyn,
+        #[comptime] factor: usize,
+    ) -> T {
         match &self.kind {
             TileKind::Procedural(data) => {
-                data.read_factor_at(&pos, factor, comptime!(self.place.space.clone()))
+                data.read_factor_at::<T>(&pos, factor, comptime!(self.place.space.clone()))
             }
             TileKind::Memory(_)
             | TileKind::PlaneTile(_)
@@ -375,19 +427,21 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This tile at `like`'s place in its nest.
-    pub(crate) fn nested_like<U: Numeric>(self, like: &Tile<U>) -> Tile<T> {
-        Tile::<T> {
+    pub(crate) fn nested_like(self, like: &Tile) -> Tile {
+        Tile {
             kind: self.kind,
+            factor: self.factor,
             place: comptime!(Placement::new(
                 self.place.space.clone(),
                 like.place.depth,
                 like.place.levels.clone()
             )),
+            element: comptime!(self.element),
         }
     }
 
     /// This operand's window at `from` on `axis`, reading zero past `until` (both in elements).
-    pub fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Tile<T> {
+    pub fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Tile {
         let tile_kind = match &self.kind {
             TileKind::Memory(g) => TileKind::new_Memory(g.within(axis, from, until)),
             TileKind::TmaGmem(_)
@@ -399,11 +453,16 @@ impl<T: Numeric> Tile<T> {
                  tensor-map source and a recipe have none"
             ),
         };
-        Tile::new(tile_kind, comptime!(self.place.clone()))
+        Tile {
+            kind: tile_kind,
+            factor: self.factor.clone(),
+            place: comptime!(self.place.clone()),
+            element: comptime!(self.element),
+        }
     }
 
     /// Window this tile down to `region`, no copy.
-    pub fn at(&self, region: &Region) -> Tile<T> {
+    pub fn at(&self, region: &Region) -> Tile {
         let skip = comptime!({
             let path = &region.path;
             assert!(
@@ -419,7 +478,7 @@ impl<T: Numeric> Tile<T> {
         self.at_from(region, skip)
     }
 
-    fn at_from(&self, region: &Region, #[comptime] i: usize) -> Tile<T> {
+    fn at_from(&self, region: &Region, #[comptime] i: usize) -> Tile {
         let sub = self.at_step(&region.step(i));
         if comptime!(i + 1 == region.path.len()) {
             sub
@@ -429,7 +488,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// One level down: window this tile to `step`'s box.
-    pub(crate) fn at_step(&self, step: &Step) -> Tile<T> {
+    pub(crate) fn at_step(&self, step: &Step) -> Tile {
         let tile_kind = match &self.kind {
             TileKind::Memory(g) => {
                 TileKind::new_Memory(g.at(step, comptime!(self.place.space.clone())))
@@ -454,10 +513,13 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::PlanePartition(p) => p.at_step(step, comptime!(self.place.space.clone())),
         };
-        Tile::<T> {
+        let windowed = Tile {
             kind: tile_kind,
+            factor: self.factor.at(step),
             place: comptime!(self.place.at_step(&step.level)),
-        }
+            element: comptime!(self.element),
+        };
+        windowed.indexed_at(step)
     }
 
     /// Whether this tile has a buffer bound to read an extent off.
@@ -487,7 +549,7 @@ impl<T: Numeric> Tile<T> {
                 .dim()
         );
         let raw = match &self.kind {
-            TileKind::Memory(g) => g.window.bound.at(p).cast::<usize>(),
+            TileKind::Memory(g) => g.walked_bound(p).cast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].cast::<usize>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::runtime_extent: a plane tile has no extent")
@@ -536,10 +598,11 @@ impl<T: Numeric> Tile<T> {
 
     /// Zero this whole tile.
     pub fn zero(&mut self) {
+        let define!(Served) = self.element;
         match &mut self.kind {
-            TileKind::Memory(d) => d.zero(),
-            TileKind::PlaneTile(t) => t.zero(),
-            TileKind::PlanePartition(p) => p.zero(),
+            TileKind::Memory(d) => d.zero::<Served>(),
+            TileKind::PlaneTile(t) => t.zero::<Served>(),
+            TileKind::PlanePartition(p) => p.zero::<Served>(),
             TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::zero: a procedural tile and the plane's units are not writable")
@@ -548,39 +611,28 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Seed this tile with `monoid`'s identity.
-    pub(crate) fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+    pub(crate) fn init_identity<S: Numeric>(&mut self, #[comptime] monoid: Monoid) {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
-            Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
+            Monoid::Prod | Monoid::Max | Monoid::Min => {
+                self.init::<S>(Monoid::identity::<S>(monoid))
+            }
         }
     }
 
-    /// The one value this tile holds.
-    pub(crate) fn only(&self) -> T {
-        let axes = comptime!(MatrixAxes::trailing(&self.place.space));
-        let matrix = self.matrix_packed::<Const<1>>(axes, 0usize);
-        let origin = 0u32.runtime();
-        matrix.read((origin, origin)).extract(0usize)
-    }
-
-    /// Multiply every partial this accumulator holds by `factor`'s one value, if bound.
-    pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
-        #[comptime]
-        match factor {
-            ComptimeOption::Some(factor) => {
-                let value = T::cast_from(factor.only());
-                match &mut self.kind {
-                    TileKind::PlaneTile(t) => t.scale(value),
-                    TileKind::PlanePartition(p) => p.scale(value),
-                    TileKind::Memory(_) => panic!(
-                        "Tile::scale: a memory tile is scaled by the cube, not by one unit (Tile::mul)"
-                    ),
-                    TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => {
-                        panic!("Tile::scale: not writable")
-                    }
-                }
+    /// Multiply every partial this accumulator holds by `factor`, cast to its element.
+    pub fn scale_by<E: Numeric>(&mut self, factor: E) {
+        let define!(Served) = self.element;
+        let factor = Served::cast_from(factor);
+        match &mut self.kind {
+            TileKind::PlaneTile(t) => t.scale::<Served>(factor),
+            TileKind::PlanePartition(p) => p.scale::<Served>(factor),
+            TileKind::Memory(_) => panic!(
+                "Tile::scale_by: a memory tile is scaled by the cube, not by one unit (Tile::mul)"
+            ),
+            TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => {
+                panic!("Tile::scale_by: not writable")
             }
-            ComptimeOption::None => {}
         }
     }
 
@@ -590,9 +642,8 @@ impl<T: Numeric> Tile<T> {
         let rows = comptime!(self.place.space.extent_at(edges.row_split));
         let cols = comptime!(self.place.space.extent_at(edges.col_split));
         match &self.kind {
-            TileKind::PlanePartition(p) => {
-                comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
-            }
+            // A grid's own fragments, which a window shorter than them overhangs.
+            TileKind::PlanePartition(p) => comptime!(((p.m_tiles, p.n_tiles), p.rows, p.cols)),
             TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
@@ -603,12 +654,14 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Initialize this tile with `val`.
-    pub fn init(&mut self, val: T) {
+    /// Initialize this tile with `val`, cast to its element.
+    pub fn init<E: Numeric>(&mut self, val: E) {
+        let define!(Served) = self.element;
+        let val = Served::cast_from(val);
         match &mut self.kind {
-            TileKind::Memory(d) => d.init(val),
-            TileKind::PlaneTile(t) => t.init(val),
-            TileKind::PlanePartition(p) => p.init(val),
+            TileKind::Memory(d) => d.init::<Served>(val),
+            TileKind::PlaneTile(t) => t.init::<Served>(val),
+            TileKind::PlanePartition(p) => p.init::<Served>(val),
             TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
             TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!("Tile::init: a procedural tile and the plane's units are not writable")
@@ -617,13 +670,14 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// A fresh tile shaped to stage one region of `level` of this operand, laid out as `storage`.
-    pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile<T> {
-        Memory::<T>::stage(
-            self,
+    pub fn stage(&self, #[comptime] level: Level, #[comptime] storage: StageStorage) -> Tile {
+        let define!(Staged) = self.staged_element(comptime!(None));
+        Memory::stage::<Staged>(
+            &self.shaped_for(comptime!(level.clone())),
             level,
             storage,
             comptime!(None),
-            comptime!(StageOwner::Cube),
+            comptime!(StageOwner::CUBE),
         )
     }
 
@@ -631,7 +685,15 @@ impl<T: Numeric> Tile<T> {
     /// owned and placed as the walk's stages are, the cube's or each plane's own copy. What a
     /// kernel stages once before a walk that leaves the operand unchanged, as an attention's
     /// query beside the keys it walks.
-    pub fn stage_for(&self, walk: &Walk, #[comptime] storage: StageStorage) -> Tile<T> {
+    ///
+    /// A stage whose fill decodes its operand holds the values at `decoded`, or at `f32` where
+    /// `None`, as [`Stages::smem`] does. An operand staged as it lies keeps its own element.
+    pub fn stage_for(
+        &self,
+        walk: &Walk,
+        #[comptime] storage: StageStorage,
+        #[comptime] decoded: Option<ElemType>,
+    ) -> Tile {
         let owner = walk.stage_owner();
         stage_one(
             self,
@@ -640,6 +702,7 @@ impl<T: Numeric> Tile<T> {
                 depth: walk.depth(),
                 storage,
                 width: None,
+                decoded,
                 owner,
             }),
         )
@@ -652,11 +715,11 @@ impl<T: Numeric> Tile<T> {
     /// What a kernel holds between two steps of its walk that no operand is: an attention's
     /// scores between its two contractions. Placed in the partitioning, it opens an accumulator
     /// and is windowed by the walk's regions like an operand.
-    pub fn scratch(
+    pub fn scratch<T: Numeric>(
         walk: &Walk,
         #[comptime] axes: Vec<Axis>,
         #[comptime] storage: StageStorage,
-    ) -> Tile<T> {
+    ) -> Tile {
         let owner = walk.stage_owner();
         let place = comptime!(Placement::new(
             walk.level.child(&walk.space).subspace(&axes),
@@ -664,47 +727,109 @@ impl<T: Numeric> Tile<T> {
             walk.parent.path.root_levels(),
         ));
         let tile =
-            Memory::<T>::smem_owned(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
-        Tile::new(tile.kind, place)
+            Memory::smem_owned::<T>(place.space.clone(), 1usize, storage, 0usize, 0usize, owner);
+        Tile::new::<T>(tile.kind, place)
     }
 
     /// A fresh shared-memory tile over `space`, laid out as `storage`, serving one value a line.
-    pub fn shared(#[comptime] space: Space, #[comptime] storage: StageStorage) -> Tile<T> {
-        Memory::<T>::smem(space, comptime!(1usize), storage, comptime!(0usize))
+    pub fn shared<T: Numeric>(#[comptime] space: Space, #[comptime] storage: StageStorage) -> Tile {
+        Memory::smem::<T>(space, comptime!(1usize), storage, comptime!(0usize))
     }
 
     /// A fresh shared-memory tile over `space`, served `vector_size` wide and filled by `units`
     /// units (`0`: the whole cube).
-    pub fn smem(
+    pub fn smem<T: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
-    ) -> Tile<T> {
-        Memory::<T>::smem(space, vector_size, storage, units)
+    ) -> Tile {
+        Memory::smem::<T>(space, vector_size, storage, units)
+    }
+
+    /// A shared-memory tile over this tile's box, one element a line, its rows dense and in order,
+    /// at this tile's place in its nest: what a bulk store moves out whole
+    /// ([`copy_from`](Tile::copy_from) into a tile a tensor map backs), and what an accumulator
+    /// drains into first, as it would into this tile. It starts on
+    /// [`Delivery::TMA_STAGE_ALIGNMENT`], which a launch sizing its shared memory counts.
+    pub fn smem_box(&self) -> Tile {
+        let define!(Served) = self.element;
+        let units = self.units();
+        Memory::smem_owned::<Served>(
+            comptime!(self.place.space.clone()),
+            1usize,
+            comptime!(StageStorage::Strided),
+            units,
+            comptime!(Delivery::TMA_STAGE_ALIGNMENT),
+            comptime!(StageOwner::CUBE),
+        )
+        .nested_like(self)
     }
 
     /// Move `src` into `self`, the kind pairing picking the instruction.
-    pub fn copy_from(&mut self, src: &Tile<T>) {
-        let (scaled, into_memory) = (src.scaled(), self.is_memory());
+    ///
+    /// Into a tile a tensor map backs, from a shared-memory box ([`smem_box`](Tile::smem_box)),
+    /// it is a bulk store that every unit of the cube reaches: each fences the writes it made to
+    /// the box, the cube synchronizes, one unit stores it and waits for the engine to have read
+    /// it, and the cube synchronizes again before anything writes the box.
+    ///
+    /// A source whose scales a stage keeps beside it copies its values as they are stored, into a
+    /// stage that keeps them too; the stage's fill brings the scales. Any other scaled source is
+    /// written with its scales applied, which only [`dequantize_from`](Tile::dequantize_from) does.
+    pub fn copy_from(&mut self, src: &Tile) {
+        let decodes = src.decodes();
         comptime!(assert!(
-            !scaled || into_memory,
-            "Tile::copy_from: a scaled source decodes into memory only; to load it into \
-             fragments, contract it: the fragment lands it"
+            !decodes,
+            "Tile::copy_from: this source carries scales or a table that a copy as stored cannot \
+             keep; write it with them applied (`Tile::dequantize_from`)"
         ));
-        if comptime!(scaled) {
-            self.copy_scaled_from(src);
-        } else {
-            self.copy_unscaled_from(src);
+        let (beside, kept) = (src.scales_beside(), self.scales_beside());
+        comptime!(assert!(
+            !beside || kept,
+            "Tile::copy_from: this source's scales are kept beside its values, which only a stage \
+             that keeps them too takes as they are stored"
+        ));
+        let define!(Served) = self.element;
+        let define!(Source) = src.element;
+        self.copy_unscaled_from::<Served, Source>(src);
+    }
+
+    /// Writes `src`'s numbers into this tile, every scale it carries applied and its table looked
+    /// up: the one copy that applies a tile's scales.
+    ///
+    /// From memory, each load is decoded once, in the unit that reads it, its scales multiplied
+    /// together in `f32` and the value rounded once. From an accumulator, it is the sum's drain,
+    /// which multiplies the sum by the scale it carries; the sum is spent by its write.
+    pub fn dequantize_from(&mut self, src: &Tile) {
+        match &src.kind {
+            TileKind::Memory(_) => {
+                let into_memory = self.is_memory();
+                comptime!(assert!(
+                    into_memory,
+                    "Tile::dequantize_from: values are decoded into memory; to load them into \
+                     fragments, contract them: the fragment lands them"
+                ));
+                let define!(Served) = self.element;
+                let define!(Source) = src.read_element();
+                self.copy_scaled_from::<Served, Source>(src);
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                let dest = self.clone();
+                src.drained_into(&dest);
+            }
+            TileKind::TmaGmem(_) | TileKind::Procedural(_) | TileKind::Lines(_) => panic!(
+                "Tile::dequantize_from: values are decoded from memory, and a sum from its \
+                 fragments; a tensor-map source lands bytes as they lie, so stage it first"
+            ),
         }
     }
 
-    fn copy_unscaled_from(&mut self, src: &Tile<T>) {
+    fn copy_unscaled_from<S: Numeric, R: Numeric>(&mut self, src: &Tile) {
         // Bound before the match, which borrows the kind.
         let space = comptime!(self.place.space.clone());
         match &src.kind {
             TileKind::PlanePartition(s) => match &mut self.kind {
-                TileKind::Memory(d) => s.fragment().store_window(d, space),
+                TileKind::Memory(d) => s.fragment().store_window::<S>(d, space),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -718,13 +843,14 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => match (&mut self.kind, &src.kind) {
-                (TileKind::Lines(d), TileKind::Memory(_)) => d.load(src),
-                (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from(src),
-                (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window(src),
-                (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window(d, space),
-                (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into(d),
-                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from(s, space),
-                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Lines(d), TileKind::Memory(_)) => d.load::<R>(src),
+                (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from::<S>(src),
+                (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window::<S>(src),
+                (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window::<S>(d, space),
+                (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into::<S>(d),
+                (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from::<S>(s),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.load_from::<S>(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural::<S>(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
                 }
@@ -734,13 +860,17 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Add a resident block `src` into this one, casting up to `T`, without touching memory.
-    pub fn add_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
+    pub fn add_cast_from(&mut self, src: &Tile) {
+        let define!(Served) = self.element;
+        let define!(Source) = src.element;
         match (&mut self.kind, &src.kind) {
-            (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => d.add_cast_from(s),
+            (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => {
+                d.add_cast_from::<Served, Source>(s)
+            }
             (TileKind::PlanePartition(d), TileKind::PlanePartition(s)) => {
                 // The fragment clones the block's array reference, so this promotes the block itself.
                 let mut fragment = d.fragment();
-                fragment.add_cast_from(&s.fragment())
+                fragment.add_cast_from::<Served, Source>(&s.fragment())
             }
             _ => panic!(
                 "Tile::add_cast_from: a resident block promotes into a resident block; memory \
@@ -751,19 +881,23 @@ impl<T: Numeric> Tile<T> {
 
     /// [`copy_from`](Tile::copy_from) with a cast: stores a wider resident fragment down to `T`,
     /// or copies a memory window of the same box, the units sharing it a line at a time.
-    pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
+    pub fn copy_cast_from(&mut self, src: &Tile) {
+        let define!(Served) = self.element;
+        let define!(Source) = src.element;
         let space = comptime!(self.place.space.clone());
         let holder = comptime!(self.place.holder());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_cast_window(d, space),
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => {
+                s.store_cast_window::<Source, Served>(d, space)
+            }
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().store_cast_window(d, space)
+                s.fragment().store_cast_window::<Source, Served>(d, space)
             }
             // A window its holder shares is filled by the holder's units, whoever filled the
             // buffer it windows: a plane's window of the cube's scratch is the plane's.
-            (TileKind::Memory(d), TileKind::Memory(s)) => {
-                d.filled_by(holder).fill_cast_from(s, space)
-            }
+            (TileKind::Memory(d), TileKind::Memory(s)) => d
+                .filled_by(holder)
+                .fill_cast_from::<Served, Source>(s, space),
             _ => panic!(
                 "Tile::copy_cast_from: a fragment or a memory window stores into memory; nothing \
                  else casts"
@@ -772,10 +906,10 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Spill this plane-resident tile into its slot of the plane's scratch.
-    pub(crate) fn spill_to_scratch(&self) {
+    pub(crate) fn spill_to_scratch<S: Numeric>(&self) {
         match &self.kind {
-            TileKind::PlaneTile(t) => t.spill_to_scratch(),
-            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch(),
+            TileKind::PlaneTile(t) => t.spill_to_scratch::<S>(),
+            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch::<S>(),
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -786,12 +920,12 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Add `src`'s spilled cells into this memory window.
-    pub(crate) fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
+    pub(crate) fn add_from_scratch<S: Numeric, R: Numeric>(&mut self, src: &Tile) {
         let space = comptime!(self.place.space.clone());
         match (&mut self.kind, &src.kind) {
-            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch(d, space),
+            (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.add_from_scratch::<R, S>(d, space),
             (TileKind::Memory(d), TileKind::PlanePartition(s)) => {
-                s.fragment().add_from_scratch(d, space)
+                s.fragment().add_from_scratch::<R, S>(d, space)
             }
             _ => panic!("Tile::add_from_scratch: a spilled plane tile adds into memory"),
         }
@@ -839,7 +973,7 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-impl<T: Numeric> Tile<T> {
+impl Tile {
     pub(crate) fn factor_dependencies(
         &self,
         _factors: Option<usize>,
@@ -850,7 +984,7 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-impl<T: Numeric> TileExpand<T> {
+impl TileExpand {
     /// This tile's own box, readable inside `comptime!`.
     pub fn space(&self) -> Space {
         self.place.space.clone()
@@ -884,12 +1018,7 @@ impl<T: Numeric> TileExpand<T> {
 /// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
 /// [`witnesses`](Tile::witnesses) it.
 #[cube]
-pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
-    #[comptime] space: Space,
-    a: &Tile<A>,
-    b: &Tile<B>,
-    c: &Tile<C>,
-) -> Space {
+pub(crate) fn witnessed_space(#[comptime] space: Space, a: &Tile, b: &Tile, c: &Tile) -> Space {
     let mut sizes = Sequence::<usize>::new();
     if comptime!(!space.is_static()) {
         #[unroll]
@@ -925,7 +1054,7 @@ pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
 }
 
 /// Host-side stub of `for plane in tile`; never runs.
-impl<T: Numeric> IntoIterator for Tile<T> {
+impl IntoIterator for Tile {
     type Item = Region;
     type IntoIter = std::vec::IntoIter<Region>;
 
@@ -934,7 +1063,7 @@ impl<T: Numeric> IntoIterator for Tile<T> {
     }
 }
 
-impl<T: Numeric> IntoIterator for &Tile<T> {
+impl IntoIterator for &Tile {
     type Item = Region;
     type IntoIter = std::vec::IntoIter<Region>;
 
@@ -944,7 +1073,7 @@ impl<T: Numeric> IntoIterator for &Tile<T> {
 }
 
 /// `for plane in tile` iterates the level below the tile over its own box.
-impl<T: Numeric> Iterable for TileExpand<T> {
+impl Iterable for TileExpand {
     type Item = RegionExpand;
 
     fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
@@ -962,7 +1091,7 @@ impl<T: Numeric> Iterable for TileExpand<T> {
 }
 
 /// `for plane in &tile`.
-impl<T: Numeric> Iterable for &TileExpand<T> {
+impl Iterable for &TileExpand {
     type Item = RegionExpand;
 
     fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
@@ -974,10 +1103,10 @@ impl<T: Numeric> Iterable for &TileExpand<T> {
     }
 }
 
-impl<E: Numeric> Tile<E> {
-    /// These values under `scale`, multiplied in where they are read. Every axis of `scale` must
-    /// be one of the values'.
-    pub fn mul<S: Numeric>(&self, _scale: &Tile<S>) -> Tile<E> {
+impl Tile {
+    /// These values under `scale`, multiplied in where they are read. Every axis `scale` varies
+    /// along must be one of the values'; one it spans without varying along is read at its origin.
+    pub fn mul(&self, _scale: &Tile) -> Tile {
         unexpanded!()
     }
 
@@ -993,8 +1122,23 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
-    /// [`mul`](Tile::mul) by an optional level; absent, it scales by one.
-    pub fn mul_bound<S: Numeric>(&self, _level: &ComptimeOption<Tile<S>>) -> Tile<E> {
+    /// This tile without its outer scales that vary only along axes of `space`, and those scales,
+    /// for a sum `instruction` contracts. With `space` the output's, they are the scales the sum
+    /// takes out of every term and applies once ([`scaled`](Tile::scaled)), and the tile left
+    /// carries the ones each term needs.
+    ///
+    /// Words of block scales always give up the scales above them: the instruction reads the
+    /// words undecoded, and holds no other scale. A decoded tile gives them up where the sum is
+    /// scaled in place ([`Instruction::scales_its_sum_in_place`]), since a load converting codes
+    /// in lane runs takes one level of scales; under any other sum they ride the load, which
+    /// multiplies by them as it decodes, rather than send the sum through shared memory.
+    /// A tile indexing a table gives up none: only its copy decodes it.
+    pub fn factor(&self, _space: Space, _instruction: Instruction) -> (Tile, Factor) {
+        unexpanded!()
+    }
+
+    /// This tile under `factor`'s scales, outside its own.
+    pub fn scaled(&self, _factor: &Factor) -> Tile {
         unexpanded!()
     }
 
@@ -1002,12 +1146,12 @@ impl<E: Numeric> Tile<E> {
     /// which the factor this tile is read under carries instead ([`reader`](Tile::reader)), one
     /// multiply a reader rather than one a value. What a leaf that applies the factor to every
     /// value it reads takes; any other tile as it is.
-    pub(crate) fn placed(&self) -> Tile<E> {
+    pub(crate) fn placed(&self) -> Tile {
         unexpanded!()
     }
 
     /// These values as indices into `table`, decoded only by [`copy_from`](Tile::copy_from).
-    pub fn lookup<S: Numeric>(&self, _table: &Tile<S>) -> Tile<E> {
+    pub fn lookup(&self, _table: &Tile) -> Tile {
         unexpanded!()
     }
 
@@ -1015,43 +1159,88 @@ impl<E: Numeric> Tile<E> {
         unexpanded!()
     }
 
-    /// Whether these values carry scales ([`mul`](Tile::mul)).
-    pub(crate) fn scaled(&self) -> comptime_type!(bool) {
+    /// Whether these values carry scales ([`mul`](Tile::mul)) or index a table
+    /// ([`lookup`](Tile::lookup)).
+    pub(crate) fn quantized(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// How many scales these values carry ([`mul`](Tile::mul)), down the chain.
+    pub(crate) fn factor_levels(&self) -> comptime_type!(usize) {
+        unexpanded!()
+    }
+
+    /// This tile without the scales it carries.
+    pub(crate) fn unscaled(&self) -> Tile {
+        unexpanded!()
+    }
+
+    /// The innermost level of the scales these values carry, alone: what a block-scaled
+    /// instruction reads a scale of per block.
+    pub(crate) fn innermost_factor(&self) -> Factor {
+        unexpanded!()
+    }
+
+    /// Whether filling a stage from these values decodes them: they carry scales or a table, and
+    /// not scales a stage keeps beside them.
+    ///
+    /// A stage keeps beside the values the words of block scales they carry: only the
+    /// block-scaled instruction reads those, so the values are staged as they are stored and the
+    /// scales staged with them.
+    pub(crate) fn decodes(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// Whether these values carry scales a stage keeps beside them ([`decodes`](Tile::decodes)).
+    pub(crate) fn scales_beside(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
+
+    /// This stage of `operand` with `operand`'s scales staged beside it as `spec` shapes it,
+    /// where a stage keeps them beside it ([`decodes`](Tile::decodes)); itself otherwise.
+    pub(crate) fn with_scales_staged(&self, _operand: &Tile, _spec: StageSpec) -> Tile {
+        unexpanded!()
+    }
+
+    /// Fill the scales this stage keeps beside its values from `src`'s, under `meeting`; nothing
+    /// where it keeps none.
+    pub(crate) fn fill_scales_from(&self, _src: &Tile, _meeting: &Meeting) {
+        unexpanded!()
+    }
+
+    /// Free the shared memory of the scales this stage keeps beside its values.
+    pub(crate) fn free_scales(&self) {
+        unexpanded!()
+    }
+
+    /// The scales a stage of these values keeps beside them, as a slot plans them; none where
+    /// it keeps none.
+    pub(crate) fn scale_operands(&self) -> comptime_type!(Vec<StageOperand>) {
         unexpanded!()
     }
 }
 
-impl<E: Numeric> TileExpand<E> {
-    pub fn __expand_mul_method<S: Numeric>(
-        &self,
-        scope: &Scope,
-        scale: &TileExpand<S>,
-    ) -> TileExpand<E> {
+impl TileExpand {
+    pub fn __expand_mul_method(&self, scope: &Scope, scale: &TileExpand) -> TileExpand {
         let values = self.place.space.clone();
-        let scales = scale.place.space.clone();
+        let projection = scale.clone().__expand_projection_method(scope);
+        // An axis the scales span without varying along it is read at its origin
+        // ([`scale_for`](Tile::scale_for)): a scale broadcasts by omission.
+        let varied: Vec<Axis> = scale
+            .place
+            .space
+            .axes()
+            .filter(|&axis| projection.addresses(axis))
+            .collect();
         assert!(
-            scales.axes().all(|axis| values.contains(axis)),
-            "Tile::mul: the scales span {:?} where the values span {:?}; a scale is looked up at \
-             the value's coordinates, so every axis of the scales is one of the values'",
-            scales.axes().collect::<Vec<_>>(),
+            varied.iter().all(|&axis| values.contains(axis)),
+            "Tile::mul: the scales vary along {varied:?} where the values span {:?}; a scale is \
+             looked up at the value's coordinates, so every axis the scales vary along is one of \
+             the values'",
             values.axes().collect::<Vec<_>>()
         );
         let mut out = self.clone();
-        match &mut out.kind {
-            TileKindExpand::Memory(memory) => {
-                memory.factor = memory.factor.and(FactorExpand::of(scope, scale));
-            }
-            TileKindExpand::PlaneTile(_)
-            | TileKindExpand::PlanePartition(_)
-            | TileKindExpand::TmaGmem(_)
-            | TileKindExpand::Procedural(_)
-            | TileKindExpand::Lines(_) => {
-                panic!(
-                    "Tile::mul: a factor rides values read from memory; a fragment is scaled \
-                     once it holds them and a tma source is not read here at all"
-                )
-            }
-        }
+        out.factor = out.factor.and(FactorExpand::of(scale));
         out
     }
 
@@ -1069,16 +1258,14 @@ impl<E: Numeric> TileExpand<E> {
         // A line is the run of a load along the innermost axis; a load stored across several
         // columns is read as their runs, each placed at its own column.
         let vector_size = self.clone().__expand_vector_tile_method(scope).extents()[0].1;
-        let factor = match &self.kind {
-            TileKindExpand::Memory(memory) => memory.factor.clone(),
-            _ => FactorExpand::default(),
-        };
-        if let Some(inner) = factor.inner() {
-            check_scales_omit_rather_than_divide(&inner.projection);
-            check_scales_ride(side, &inner.space, &out, acc_axes);
+        let factor = self.factor.clone();
+        if let Some(inner) = factor.innermost_tile() {
+            let projection = inner.clone().__expand_projection_method(scope);
+            check_scales_omit_rather_than_divide(&projection);
+            check_scales_ride(side, &inner.place.space, &out, acc_axes);
             let innermost = values.axis_at(values.rank() - 1);
             assert!(
-                vector_size == 1 || !inner.projection.addresses(innermost),
+                vector_size == 1 || !projection.addresses(innermost),
                 "Tile::mul: a line runs {vector_size} values along {innermost:?}, which its \
                  scales address, so one line lies under several scales; serve the factor one \
                  value a line, or omit {innermost:?} from the scales"
@@ -1107,18 +1294,30 @@ impl<E: Numeric> TileExpand<E> {
         }
     }
 
-    pub fn __expand_mul_bound_method<S: Numeric>(
+    pub fn __expand_factor_method(
         &self,
         scope: &Scope,
-        level: &ComptimeOptionExpand<Tile<S>>,
-    ) -> TileExpand<E> {
-        match level {
-            ComptimeOptionExpand::Some(level) => self.__expand_mul_method(scope, level),
-            ComptimeOptionExpand::None => self.clone(),
+        space: Space,
+        instruction: Instruction,
+    ) -> (TileExpand, FactorExpand) {
+        let gives_up = !self.looks_up()
+            && (self.factor.staged_beside(scope) || instruction.scales_its_sum_in_place());
+        if !gives_up {
+            return (self.clone(), FactorExpand::default());
         }
+        let (inner, outer) = self.factor.split_on(scope, &space);
+        let mut values = self.clone();
+        values.factor = inner;
+        (values, outer)
     }
 
-    pub(crate) fn __expand_placed_method(&self, _scope: &Scope) -> TileExpand<E> {
+    pub fn __expand_scaled_method(&self, _scope: &Scope, factor: &FactorExpand) -> TileExpand {
+        let mut out = self.clone();
+        out.factor = out.factor.and(factor.clone());
+        out
+    }
+
+    pub(crate) fn __expand_placed_method(&self, _scope: &Scope) -> TileExpand {
         let mut out = self.clone();
         if let TileKindExpand::Memory(memory) = &mut out.kind {
             memory.store.packing = memory.store.packing.placed();
@@ -1126,18 +1325,88 @@ impl<E: Numeric> TileExpand<E> {
         out
     }
 
-    pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
+    /// Whether these values index a table ([`Tile::lookup`]).
+    fn looks_up(&self) -> bool {
         match &self.kind {
-            TileKindExpand::Memory(memory) => memory.factor.scaled() || memory.codebook.present(),
+            TileKindExpand::Memory(memory) => memory.codebook.present(),
             _ => false,
         }
     }
 
-    pub fn __expand_lookup_method<S: Numeric>(
+    pub(crate) fn __expand_quantized_method(&self, _scope: &Scope) -> bool {
+        self.looks_up() || self.factor.scaled()
+    }
+
+    pub(crate) fn __expand_factor_levels_method(&self, _scope: &Scope) -> usize {
+        self.factor.depth()
+    }
+
+    pub(crate) fn __expand_unscaled_method(&self, _scope: &Scope) -> TileExpand {
+        let mut out = self.clone();
+        out.factor = FactorExpand::default();
+        out
+    }
+
+    pub(crate) fn __expand_innermost_factor_method(&self, _scope: &Scope) -> FactorExpand {
+        self.factor.innermost()
+    }
+
+    pub(crate) fn __expand_decodes_method(&self, scope: &Scope) -> bool {
+        self.__expand_quantized_method(scope) && !self.__expand_scales_beside_method(scope)
+    }
+
+    pub(crate) fn __expand_scales_beside_method(&self, scope: &Scope) -> bool {
+        !self.looks_up() && self.factor.staged_beside(scope)
+    }
+
+    pub(crate) fn __expand_with_scales_staged_method(
         &self,
-        _scope: &Scope,
-        table: &TileExpand<S>,
-    ) -> TileExpand<E> {
+        scope: &Scope,
+        operand: &TileExpand,
+        spec: StageSpec,
+    ) -> TileExpand {
+        let mut stage = self.clone();
+        if operand.__expand_scales_beside_method(scope) {
+            stage.factor = operand.factor.staged(scope, &spec);
+        }
+        stage
+    }
+
+    pub(crate) fn __expand_fill_scales_from_method(
+        &self,
+        scope: &Scope,
+        src: &TileExpand,
+        meeting: &MeetingExpand,
+    ) {
+        if self.factor.staged_beside(scope) {
+            self.factor.fill_from(scope, &src.factor, meeting);
+        }
+    }
+
+    pub(crate) fn __expand_scale_operands_method(&self, scope: &Scope) -> Vec<StageOperand> {
+        // A table the values have yet to read places the scales beside them too.
+        let keys = self.pending_keys();
+        match self.__expand_scales_beside_method(scope) {
+            true => self
+                .factor
+                .stage_operands(scope)
+                .into_iter()
+                .map(|scale| StageOperand {
+                    keys: keys.clone(),
+                    ..scale
+                })
+                .collect(),
+            false => Vec::new(),
+        }
+    }
+
+    pub(crate) fn __expand_free_scales_method(&self, scope: &Scope) {
+        if self.factor.staged_beside(scope) {
+            self.factor.free_stage(scope);
+        }
+    }
+
+    pub fn __expand_lookup_method(&self, _scope: &Scope, table: &TileExpand) -> TileExpand {
         assert!(
             table.place.space.rank() == 1,
             "Tile::lookup: a table is a tile of one axis, its positions; this one spans {:?}",
@@ -1181,9 +1450,9 @@ impl<E: Numeric> TileExpand<E> {
 
     pub(crate) fn __expand_refuse_factor_method(&self, _scope: &Scope, site: &str) {
         self.refuse_codebook(site);
-        if let TileKindExpand::Memory(memory) = &self.kind {
+        if let TileKindExpand::Memory(_) = &self.kind {
             assert!(
-                !memory.factor.scaled(),
+                !self.factor.scaled(),
                 "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; contract through a fragment or in memory"
             );
         }
@@ -1202,26 +1471,13 @@ impl<E: Numeric> TileExpand<E> {
 }
 
 #[cube]
-impl<S: Numeric> Tile<S> {
-    /// Whether a read of this tile is a plane shuffle, so readers must keep units converged.
-    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
-    pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
-        match &self.kind {
-            TileKind::Lines(_) => comptime!(true),
-            TileKind::Memory(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
-        }
-    }
-
+impl Tile {
     /// The one scale at `coords`, one entry per axis of this tile's space.
-    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
-    pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
+    #[allow(dead_code)] // Reached through its expand, from [`Factor`].
+    pub(crate) fn scale_at<S: Numeric>(&self, coords: &Coords<u32>) -> S {
         match &self.kind {
-            TileKind::Lines(lines) => lines.read(coords),
-            TileKind::Memory(_) => self.value_in_line(coords),
+            TileKind::Lines(lines) => lines.read::<S>(coords),
+            TileKind::Memory(_) => self.value_in_line::<S>(coords),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -1231,54 +1487,94 @@ impl<S: Numeric> Tile<S> {
         }
     }
 
-    /// The one scale covering the value at `coords` of a tile spanning `values`.
-    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
-    pub(crate) fn scale_for(&self, coords: &Coords<u32>, #[comptime] values: Space) -> S {
+    /// The one scale covering the value at `coords` of a tile spanning `values`. An axis of the
+    /// scales the values do not span is one the scales do not vary along: a sum's scale names the
+    /// operand's axes, and is read at the origin of the ones the sum has summed away.
+    #[allow(dead_code)] // Reached through its expand, from [`Factor`].
+    pub(crate) fn scale_for<S: Numeric>(
+        &self,
+        coords: &Coords<u32>,
+        #[comptime] values: Space,
+    ) -> S {
         let rank = comptime!(self.place.space.rank());
+        let projection = self.projection();
         let mut own = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
             let axis = comptime!(self.place.space.axis_at(p));
-            own.push(coords.at(comptime!(values.position(axis))));
+            if comptime!(values.contains(axis)) {
+                own.push(coords.at(comptime!(values.position(axis))));
+            } else {
+                comptime!(assert!(
+                    !projection.addresses(axis),
+                    "Tile::scale_for: these scales vary along {axis:?}, which the values they \
+                     scale do not span"
+                ));
+                own.push(0u32);
+            }
         }
-        self.scale_at(&own)
+        self.scale_at::<S>(&own)
     }
 
     /// The one value at `coords` of a tile that serves lines: the load holding it, read whole,
-    /// and the value's place in it, whatever axes the load spans.
+    /// and the value's place in it, whatever axes the load spans. A packed load decodes only the
+    /// field that value is, not the whole line.
     #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
-    fn value_in_line(&self, coords: &Coords<u32>) -> S {
+    fn value_in_line<S: Numeric>(&self, coords: &Coords<u32>) -> S {
+        let define!(Served) = self.element;
         let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
         let load = self.vector_tile();
         let width = comptime!(load.values());
-        let size!(W) = width;
-        let line = self
-            .nd_packed::<W>(comptime!(Guard::Checked))
-            .read(load.index(coords, &space));
-        if comptime!(width > 1) {
-            let mut field = 0u32.runtime();
-            #[unroll]
-            for p in 0..rank {
-                let axis = comptime!(space.axis_at(p));
-                let extent = comptime!(load.extent_along(axis) as u32);
-                if comptime!(extent > 1) {
-                    let step = comptime!(load.step_along(axis) as u32);
-                    field += coords.at(p).remainder(extent).times(step);
-                }
+        let packing = self.packing();
+        let mut position = 0u32.runtime();
+        #[unroll]
+        for p in 0..rank {
+            let axis = comptime!(space.axis_at(p));
+            let extent = comptime!(load.extent_along(axis) as u32);
+            if comptime!(extent > 1) {
+                let step = comptime!(load.step_along(axis) as u32);
+                position += coords.at(p).remainder(extent).times(step);
             }
-            line.extract_dynamic(field.cast::<usize>())
-        } else {
-            line.extract(0usize)
+        }
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(W) = width;
+                let line = self
+                    .nd_packed::<Served, W>(comptime!(Guard::Checked))
+                    .read(load.index(coords, &space));
+                let value = if comptime!(width > 1) {
+                    line.extract_dynamic(position.cast::<usize>())
+                } else {
+                    line.extract(0usize)
+                };
+                S::cast_from(value)
+            }
+            Packing::Packed { field } => {
+                let (bits, per_word) =
+                    comptime!((field.size_bits() as u32, field.per_word() as u32));
+                let words_wide = comptime!(packing.physical(width));
+                let size!(WP) = words_wide;
+                let words = self
+                    .nd_words::<WP>(comptime!(Guard::Checked))
+                    .read(load.index(coords, &space));
+                let word = if comptime!(words_wide > 1) {
+                    words.extract_dynamic((position / per_word).cast::<usize>())
+                } else {
+                    words.extract(0usize)
+                };
+                let shifted = word >> ((position % per_word) * bits);
+                unpack_line::<S, Const<1>, Const<1>>(Vector::new(shifted), field).extract(0usize)
+            }
         }
     }
 }
 
 #[cube]
-impl<E: Float> Tile<E> {
+impl Tile {
     /// This tile's cells in order, one value a slice of something else, as the rows of a softmax:
     /// a window of memory a plane holds, `count` cells, every unit of the plane reading them all.
-    pub(crate) fn cells(&self, #[comptime] count: usize) -> Array<E> {
+    pub(crate) fn cells<E: Float>(&self, #[comptime] count: usize) -> Array<E> {
         comptime!(assert!(
             self.place.holder() == ComputeScope::Plane && self.place.space.cells() == count,
             "Tile::cells: a plane's window of {count} cells, not {:?} held by {:?}",
@@ -1291,13 +1587,13 @@ impl<E: Float> Tile<E> {
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lines(_) => Tile::<E>::refuse_cells(),
+            | TileKind::Lines(_) => Tile::refuse_cells(),
         }
     }
 
     /// Write `values` over this tile's `count` cells ([`cells`](Tile::cells)), from the plane's
     /// first unit.
-    pub(crate) fn set_cells(&mut self, values: &Array<E>, #[comptime] count: usize) {
+    pub(crate) fn set_cells<E: Float>(&mut self, values: &Array<E>, #[comptime] count: usize) {
         comptime!(assert!(
             self.place.holder() == ComputeScope::Plane && self.place.space.cells() == count,
             "Tile::cells: a plane's window of {count} cells, not {:?} held by {:?}",
@@ -1310,7 +1606,7 @@ impl<E: Float> Tile<E> {
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lines(_) => Tile::<E>::refuse_cells(),
+            | TileKind::Lines(_) => Tile::refuse_cells(),
         }
     }
 

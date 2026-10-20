@@ -24,6 +24,10 @@ impl UnitShare {
         if level.coverage() != Coverage::Distribute(ComputeScope::Unit) {
             return UnitShare::Repeated;
         }
+        // A unit of the whole launch holds its tile's cells alone.
+        if level.unit_cube().is_some() {
+            return UnitShare::Whole;
+        }
         // Innermost first, so `weight` is the axis's stride in the unit index.
         let (mut weight, mut unit_bits) = (1usize, 0usize);
         for axis in level.axes().into_iter().rev() {
@@ -165,6 +169,7 @@ impl SplitShare {
         match level.coverage() {
             Coverage::Walk | Coverage::Distribute(ComputeScope::Unit) => return SplitShare::Whole,
             Coverage::Distribute(ComputeScope::Plane)
+            | Coverage::Distribute(ComputeScope::PlaneGroup { .. })
             | Coverage::Distribute(ComputeScope::Cube) => {}
         }
         // A shared flat index over an unspanned axis may cover part of a cell.
@@ -176,7 +181,9 @@ impl SplitShare {
         };
         match (split, level.coverage()) {
             (false, _) => SplitShare::Whole,
-            (true, Coverage::Distribute(ComputeScope::Plane)) => SplitShare::PartialAcrossPlanes,
+            (true, Coverage::Distribute(ComputeScope::Plane | ComputeScope::PlaneGroup { .. })) => {
+                SplitShare::PartialAcrossPlanes
+            }
             (true, _) => SplitShare::PartialAcrossCubes,
         }
     }

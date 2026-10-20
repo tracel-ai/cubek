@@ -44,16 +44,15 @@ const RW: Axis = Axis(4);
 /// channel of it, contracted whole at the leaf. `C` being in the accumulator's own axes is what
 /// makes it a batch axis rather than a contracted one; the leaf reads that off the spaces.
 #[cube(launch)]
-fn depthwise_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn depthwise_kernel(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let input = input.tile(&space);
+    let weight = weight.tile(&space);
+    let out = out.tile(&space);
     for cube in space {
         let out = out.at(&cube);
         let input = input.at(&cube);
@@ -216,11 +215,15 @@ impl Depthwise {
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
-            TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
-            TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), f32_ty, 1, in_spec),
+            TileArgLaunch::new(w_handle.binding().into_tensor_arg(), f32_ty, 1, w_spec),
+            TileArgLaunch::new(
+                out_handle.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
+                out_spec,
+            ),
             launcher.partitioning_arg(),
-            f32_ty,
         );
 
         let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);

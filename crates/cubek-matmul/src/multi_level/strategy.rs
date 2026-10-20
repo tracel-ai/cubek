@@ -33,7 +33,9 @@ use crate::{
                 ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
                 simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
                 simple_unit::SimpleUnitAlgorithm,
-                specialized::{SpecializedAlgorithm, SpecializedStrategy},
+                specialized::{
+                    SpecializedAlgorithm, SpecializedStrategy, SpecializedTmaStoreAlgorithm,
+                },
             },
             gemm::{GemmRoutine, launch as launch_gemm},
             gemv_unit_perpendicular::{
@@ -183,6 +185,8 @@ pub enum Strategy {
     SpecializedStridedMma(BlueprintStrategy<(), SpecializedAlgorithm<AsyncPartialStridedLoading>>),
     SpecializedTmaCmma(BlueprintStrategy<(), SpecializedAlgorithm>),
     SpecializedTmaMma(BlueprintStrategy<(), SpecializedAlgorithm>),
+    /// [`Strategy::SpecializedTmaMma`], writing the output with TMA stores.
+    SpecializedTmaMmaTmaStore(BlueprintStrategy<(), SpecializedTmaStoreAlgorithm>),
     OrderedDoubleCmma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm>),
     OrderedDoubleMma(BlueprintStrategy<(), OrderedDoubleBufferingAlgorithm>),
     SimpleUnit(BlueprintStrategy<(), SimpleUnitAlgorithm>),
@@ -235,6 +239,9 @@ impl Display for Strategy {
             Strategy::SpecializedStridedMma(s) => write!(f, "matmul_specialized_strided_mma{}", s),
             Strategy::SpecializedTmaCmma(s) => write!(f, "matmul_specialized_tma_cmma{}", s),
             Strategy::SpecializedTmaMma(s) => write!(f, "matmul_specialized_tma_mma{}", s),
+            Strategy::SpecializedTmaMmaTmaStore(s) => {
+                write!(f, "matmul_specialized_tma_mma_tma_store{}", s)
+            }
             Strategy::OrderedDoubleCmma(s) => write!(f, "matmul_ordered_double_cmma{}", s),
             Strategy::OrderedDoubleMma(s) => write!(f, "matmul_ordered_double_mma{}", s),
             Strategy::SimpleUnit(s) => write!(f, "matmul_simple_unit{}", s),
@@ -503,6 +510,14 @@ impl Strategy {
                 dtypes,
             ),
             Strategy::SpecializedTmaMma(s) => launch_tiling::launch_ref_tma(
+                client,
+                lhs,
+                rhs,
+                out,
+                &stamp_kind(s, Mma, set_specialized),
+                dtypes,
+            ),
+            Strategy::SpecializedTmaMmaTmaStore(s) => launch_tiling::launch_ref_tma_store(
                 client,
                 lhs,
                 rhs,

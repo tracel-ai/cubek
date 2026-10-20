@@ -207,6 +207,7 @@ where
     ) -> Result<(), MatmulSetupError> {
         LL::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         RL::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
+        GW::validate_with_problem(problem, dtypes)?;
 
         if blueprint.tiling_scheme.partitions_per_stage_along_n() > 1 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(

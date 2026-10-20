@@ -5,10 +5,10 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// Logits at or below this are treated as masked (effectively -inf). Fits f16.
-pub const LOGIT_MASKED: f32 = -6e4;
+pub const LOGIT_MASKED: f64 = -6e4;
 
 /// Below this an `l` row sum is numerically zero (fully-masked row).
-pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
+pub(crate) const FULLY_MASKED_ROW_THRESHOLD: f64 = 1e-4;
 
 /// `1/l`, exactly zero when `l` is numerically zero.
 #[cube]
@@ -172,7 +172,7 @@ pub struct MaskProbe {
 #[cube]
 impl MaskProbe {
     /// Bound, causal, and materialized predicates at global position (q, s).
-    pub fn masked(&self, q: usize, s: usize, mask: &Tile<u32>) -> bool {
+    pub fn masked(&self, q: usize, s: usize, mask: &Tile) -> bool {
         let mut masked = q >= self.bound_q || s >= self.bound_s;
         if comptime!(self.causal) {
             masked = masked || s > q;
@@ -181,7 +181,7 @@ impl MaskProbe {
             let size!(W) = mask.vector_size();
             let rank = comptime!(mask.place.space.rank());
             let cols = mask.runtime_extent(comptime!(mask.place.space.axis_at(rank - 1)));
-            masked = masked || mask.flat::<W>().read(q * cols + s).extract(0usize) != 0;
+            masked = masked || mask.flat::<u32, W>().read(q * cols + s).extract(0usize) != 0;
         }
         masked
     }

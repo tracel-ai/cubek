@@ -13,16 +13,17 @@ pub(crate) trait CodebookRead {
     fn entry(&self, scope: &Scope, index: NativeExpand<u32>) -> NativeExpand<f32>;
 }
 
-impl<S: Numeric> CodebookRead for TileExpand<S> {
+impl CodebookRead for TileExpand {
     fn entry(&self, scope: &Scope, index: NativeExpand<u32>) -> NativeExpand<f32> {
-        table_entry::expand::<S>(scope, self, index)
+        table_entry::expand(scope, self, index)
     }
 }
 
 /// `table[index]`, the table read as the one-axis tile it is.
 #[cube]
-fn table_entry<S: Numeric>(table: &Tile<S>, index: u32) -> f32 {
-    let entries = table.nd_packed::<Const<1>>(comptime!(Guard::Checked));
+fn table_entry(table: &Tile, index: u32) -> f32 {
+    let define!(Served) = table.read_element();
+    let entries = table.nd_packed::<Served, Const<1>>(comptime!(Guard::Checked));
     let mut at = CoordsDyn::new();
     at.push(index);
     f32::cast_from(entries.read(at).extract(0usize))
@@ -72,7 +73,9 @@ impl Codebook {
 
 impl CodebookExpand {
     /// A codebook reading `table`.
-    pub(crate) fn of<S: Numeric>(table: &TileExpand<S>) -> Self {
+    // Expand-time data, held by one thread: `Arc` as the erased tensors hold theirs.
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub(crate) fn of(table: &TileExpand) -> Self {
         CodebookExpand {
             table: Some(Arc::new(table.clone())),
         }

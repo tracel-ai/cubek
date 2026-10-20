@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use super::CubeOrder;
+use super::{CubeOrder, PlaneOrder, UnitCube};
 use crate::{Axis, AxisMap, Extent, Space};
 
 /// One decomposition level of a space: who takes its tiles and how it cuts each axis it names.
@@ -16,6 +16,14 @@ pub struct Level {
     shared_by: Option<usize>,
     fillers: usize,
     order: CubeOrder,
+    /// The order the launch's planes take this level's tiles in, where it is a plane level
+    /// spanning the launch rather than one cube ([`spanning_launch`](Level::spanning_launch)).
+    plane_order: Option<PlaneOrder>,
+    /// The cubes the launch's units are grouped in, where it is a unit level spanning the launch
+    /// ([`units_spanning_launch`](Level::units_spanning_launch)).
+    unit_cube: Option<UnitCube>,
+    /// Axes whose tiles go out last first ([`Levels::reversed`](crate::Levels::reversed)).
+    reversed: Vec<Axis>,
 }
 
 /// One axis of a level: the tile it steps in, how many, and how its instances spread them.
@@ -51,22 +59,60 @@ pub(crate) enum GridCount {
 pub enum ComputeScope {
     Unit,
     Plane,
+    /// `planes` consecutive planes, the first a multiple of `planes`, issuing one instruction
+    /// together: a warpgroup MMA's four.
+    PlaneGroup {
+        planes: usize,
+    },
     Cube,
+}
+
+impl ComputeScope {
+    /// The four planes of a warpgroup, which issue each warpgroup MMA together
+    /// ([`Instruction::Wgmma`](crate::Instruction::Wgmma)).
+    pub const WARPGROUP: Self = Self::PlaneGroup { planes: 4 };
+
+    /// The planes one instance of this scope spans, where it spans whole planes.
+    pub fn planes(self) -> Option<usize> {
+        match self {
+            ComputeScope::Plane => Some(1),
+            ComputeScope::PlaneGroup { planes } => Some(planes),
+            ComputeScope::Unit | ComputeScope::Cube => None,
+        }
+    }
 }
 
 #[cube]
 impl ComputeScope {
-    /// This instance's position within `compute_scope`: which plane of the cube, or which unit of
-    /// the plane.
+    /// This instance's position within `compute_scope`: which plane or plane group of the cube,
+    /// or which unit of the plane.
     pub fn position(#[comptime] compute_scope: ComputeScope) -> usize {
         match comptime!(compute_scope) {
             ComputeScope::Plane => UNIT_POS_Y as usize,
+            ComputeScope::PlaneGroup { planes } => UNIT_POS_Y as usize / planes,
             ComputeScope::Unit => UNIT_POS_X as usize,
             ComputeScope::Cube => {
                 panic!(
                     "ComputeScope::position: a cube has one position per grid dimension; say which"
                 )
             }
+        }
+    }
+
+    /// This unit's position among the units of its instance of `compute_scope`: in the cube,
+    /// in its plane group, or in its plane. A plane is the launch's `x`
+    /// ([`Partitioning::cube_dim`](crate::Partitioning::cube_dim)), so a unit's position in it is
+    /// `UNIT_POS_X`, and a group's planes are consecutive `y`s.
+    pub fn unit(#[comptime] compute_scope: ComputeScope) -> usize {
+        match comptime!(compute_scope) {
+            ComputeScope::Cube => UNIT_POS as usize,
+            ComputeScope::PlaneGroup { planes } => {
+                (UNIT_POS_Y as usize % planes) * CUBE_DIM_X as usize + UNIT_POS_X as usize
+            }
+            ComputeScope::Plane => UNIT_POS_X as usize,
+            ComputeScope::Unit => comptime!(panic!(
+                "ComputeScope::unit: a unit is the only unit of its own scope"
+            )),
         }
     }
 }
@@ -190,7 +236,8 @@ impl Level {
                 }
                 (
                     Coverage::Distribute(ComputeScope::Unit)
-                    | Coverage::Distribute(ComputeScope::Plane),
+                    | Coverage::Distribute(ComputeScope::Plane)
+                    | Coverage::Distribute(ComputeScope::PlaneGroup { .. }),
                     Count::All,
                 ) => panic!(
                     "Level: {axis:?} takes every tile on a plane's workers, whose count is the \
@@ -241,7 +288,98 @@ impl Level {
             shared_by: None,
             fillers: 0,
             order: CubeOrder::RowMajor,
+            plane_order: None,
+            unit_cube: None,
+            reversed: Vec::new(),
         }
+    }
+
+    /// The plane level over every tile of `tile`'s axes, each `(axis, tile)`, dealt to the planes
+    /// of the whole launch in `order` rather than to the planes of one cube: the outermost level
+    /// of a partitioning with no cube level, whose cubes are only how the launch groups its planes.
+    pub(crate) fn spanning_launch(tile: &[(Axis, usize)], order: PlaneOrder) -> Level {
+        assert!(
+            !tile.is_empty(),
+            "Level::spanning_launch: the launch's planes take the tiles of at least one axis"
+        );
+        for axis in order.block_axes() {
+            assert!(
+                tile.iter().any(|&(a, _)| a == axis),
+                "Level::spanning_launch: the order's block names {axis:?}, which the level does not"
+            );
+        }
+        assert!(
+            tile.len() > 1 || !order.block_order().swizzles(),
+            "Level::spanning_launch: the blocks of one axis have one order; a swizzle takes two"
+        );
+        let cuts: Vec<_> = tile
+            .iter()
+            .map(|&(axis, tile)| {
+                assert!(tile > 0, "Level: {axis:?} has a tile of nothing");
+                (
+                    axis,
+                    Cut {
+                        tile,
+                        count: Count::All,
+                        spread: Spread::Contiguous,
+                    },
+                )
+            })
+            .collect();
+        Level {
+            coverage: Coverage::Distribute(ComputeScope::Plane),
+            cuts: AxisMap::new(&cuts),
+            batches: Vec::new(),
+            shared_by: None,
+            fillers: 0,
+            order: CubeOrder::RowMajor,
+            plane_order: Some(order),
+            unit_cube: None,
+            reversed: Vec::new(),
+        }
+    }
+
+    /// The unit level over every tile of `tile`'s axes, each `(axis, tile)`, one tile to each
+    /// unit of the whole launch, the units grouped in cubes of `cube`: the outermost level of a
+    /// partitioning with no cube or plane level.
+    pub(crate) fn units_spanning_launch(tile: &[(Axis, usize)], cube: UnitCube) -> Level {
+        assert!(
+            cube.units() > 0,
+            "Level::units_spanning_launch: a cube holds at least one unit"
+        );
+        let order = cube.order();
+        Level {
+            coverage: Coverage::Distribute(ComputeScope::Unit),
+            plane_order: None,
+            unit_cube: Some(cube),
+            ..Level::spanning_launch(tile, order)
+        }
+    }
+
+    /// The order the launch's planes take this level's tiles in, where it is a plane level
+    /// spanning the launch.
+    pub fn plane_order(&self) -> Option<&PlaneOrder> {
+        self.plane_order.as_ref()
+    }
+
+    /// The cubes the launch's units are grouped in, where it is a unit level spanning the launch.
+    pub fn unit_cube(&self) -> Option<UnitCube> {
+        self.unit_cube
+    }
+
+    /// The order the launch's planes or units take this level's tiles in, where it spans the
+    /// launch: one tile a unit, in row order, for units.
+    pub(crate) fn launch_order(&self) -> Option<PlaneOrder> {
+        match (&self.plane_order, self.unit_cube) {
+            (Some(order), _) => Some(order.clone()),
+            (None, Some(cube)) => Some(cube.order()),
+            (None, None) => None,
+        }
+    }
+
+    /// Whether this level hands its tiles to the planes or units of the whole launch.
+    pub fn spans_launch(&self) -> bool {
+        self.plane_order.is_some() || self.unit_cube.is_some()
     }
 
     /// One tile of each of `axes` per cube, on the grid's `Z` dimension.
@@ -270,6 +408,10 @@ impl Level {
         match self.coverage {
             Coverage::Distribute(ComputeScope::Cube)
             | Coverage::Distribute(ComputeScope::Plane) => {}
+            Coverage::Distribute(ComputeScope::PlaneGroup { .. }) => panic!(
+                "Level::sharing: a plane group's partials of one box are not merged yet; deal \
+                 each group a box of its own"
+            ),
             Coverage::Distribute(ComputeScope::Unit) => panic!(
                 "Level::sharing: the plane's units combine in registers, which needs them in \
                  lockstep, and units holding different shares never are"
@@ -313,6 +455,33 @@ impl Level {
             self.coverage
         );
         self.order = order.canonicalize();
+        self
+    }
+
+    /// This level handing out the tiles of each of `axes` from the last to the first, on top of
+    /// whatever order it deals them in: the first workers launched take the last tiles.
+    pub(crate) fn reversed(mut self, axes: &[Axis]) -> Level {
+        assert!(
+            self.coverage == Coverage::Distribute(ComputeScope::Cube) || self.spans_launch(),
+            "Level::reversed: only a cube level or a level spanning the launch hands its tiles out \
+             in a launch order, and this level's tiles are taken by {:?}",
+            self.coverage
+        );
+        assert!(
+            self.shared_by.is_none(),
+            "Level::reversed: this level cuts its tiles as one index, which has no axis to reverse"
+        );
+        for &axis in axes {
+            assert!(
+                self.cuts.contains(axis),
+                "Level::reversed: {axis:?} is not an axis of this level"
+            );
+            assert!(
+                !self.reversed.contains(&axis),
+                "Level::reversed: {axis:?} is reversed twice"
+            );
+            self.reversed.push(axis);
+        }
         self
     }
 
@@ -398,6 +567,11 @@ impl Level {
         self.order
     }
 
+    /// Whether this level hands out `axis`'s tiles from the last to the first.
+    pub fn is_reversed(&self, axis: Axis) -> bool {
+        self.reversed.contains(&axis)
+    }
+
     /// The extent one region of this level covers along `axis` of `space`.
     pub(crate) fn extent_in(&self, space: &Space, axis: Axis) -> Extent {
         match self.tile(axis) {
@@ -419,9 +593,13 @@ impl Level {
     /// Whether this level's tile on `axis` fails to divide the extent `space` hands it.
     /// Static extents only.
     pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
-        match self.tile(axis) {
-            Some(tile) => !space.extent(axis).is_multiple_of(tile),
-            None => false,
+        let Some(tile) = self.tile(axis) else {
+            return false;
+        };
+        let cut = !space.extent(axis).is_multiple_of(tile);
+        match self.launch_order() {
+            None => cut,
+            Some(order) => cut || order.overruns(self, space, axis),
         }
     }
 

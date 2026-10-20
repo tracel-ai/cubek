@@ -1,5 +1,7 @@
 mod async_copy;
 mod attention;
+mod block_scaled;
+mod block_scaled_peak;
 mod blocked;
 mod coarse;
 mod conv;
@@ -11,6 +13,10 @@ mod distributed;
 mod dynamic_contraction;
 mod erased;
 mod imperative;
+mod indexed;
+mod lane_runs;
+mod launch_planes;
+mod launch_units;
 mod launcher;
 mod leaf;
 mod leaves;
@@ -19,11 +25,12 @@ mod online_softmax;
 mod packed;
 mod paged;
 mod procedural;
-mod quant;
+pub(crate) mod quant;
 mod ragged;
 mod recursive;
 mod reduce;
 mod references;
+mod register_attention;
 mod relay;
 mod routed;
 mod row_chunks;
@@ -33,8 +40,11 @@ mod smem_accumulation;
 mod softmax;
 mod space;
 mod split_k;
+mod stored_window;
 mod stream;
+mod tma_store;
 mod vector_tile;
+mod wgmma;
 
 use cubecl::prelude::*;
 use cubek_tile::{Axis, Launcher, Partitioning, Space, launch::Grid};
@@ -48,7 +58,7 @@ pub(crate) enum Form<'a> {
     DynamicAlong(&'a [Axis]),
 }
 
-fn kernel_form(partitioning: &Partitioning, form: Form<'_>) -> Partitioning {
+pub(crate) fn kernel_form(partitioning: &Partitioning, form: Form<'_>) -> Partitioning {
     let space = partitioning.space().clone();
     let kernel = match form {
         Form::Static => space,

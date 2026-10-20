@@ -11,7 +11,10 @@ pub fn calculate_plane_count_per_cube(
     properties: &HardwareProperties,
 ) -> u32 {
     let plane_count = match properties.num_cpu_cores {
-        Some(num_cores) => core::cmp::min(num_cores, working_units as u32),
+        // A floor of one, like the branch below: an output with no element leaves no
+        // working unit, and a cube holding zero units is what the routines divide the
+        // work by.
+        Some(num_cores) => core::cmp::max(1, core::cmp::min(num_cores, working_units as u32)),
         None => {
             let plane_count_max = core::cmp::max(1, working_units / plane_dim as usize);
 

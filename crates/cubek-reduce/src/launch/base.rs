@@ -71,10 +71,18 @@ fn prepare_reduce_launch(
     address_type: AddressType,
     second_output: Option<ElemType>,
 ) -> Result<(ReduceBlueprint, ReduceLaunchSettings, usize), ReduceError> {
-    // Number of distinct reductions = product of non-reduce input dims.
+    // Number of distinct reductions = product of non-reduce input dims. Taken as that
+    // product rather than `input_elems / reduce_len`, which divides by zero on a reduce
+    // axis of length zero. `validate_shapes` rejects such an axis before any caller
+    // reaches here, so this only keeps the arithmetic sound on its own.
     let reduce_len = input.shape[reduce_axis];
-    let input_elems: usize = input.shape.iter().copied().product();
-    let reduce_count = input_elems / reduce_len;
+    let reduce_count: usize = input
+        .shape
+        .iter()
+        .enumerate()
+        .filter(|(axis, _)| *axis != reduce_axis)
+        .map(|(_, len)| len)
+        .product();
 
     let problem = ReduceProblem {
         reduce_len,

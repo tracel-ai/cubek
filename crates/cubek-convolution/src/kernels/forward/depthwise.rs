@@ -172,22 +172,21 @@ impl DepthwiseSpace {
 /// The filter is the *lhs* and the map the rhs, which is not arbitrary: the leaf serves the rhs in
 /// lines along the accumulator's innermost axis, and that axis is the channel. The filter follows
 /// it there (one filter value per channel of the cell), which is what a batched contraction
-/// needs and what `V > 1` is.
+/// needs and what a width over one is.
 ///
 /// Three levels: this cube's box of the output with the taps whole, this plane's row of it, then
 /// this unit's channel lines, whose column block the leaf walks with the whole tap window at
 /// each cell.
 #[cube(launch)]
-fn depthwise_kernel<E: Numeric, V: Size>(
-    weight: &TileArg<'_, E, V>,
-    input: &TileArg<'_, E, V>,
-    out: &TileArg<'_, E, V>,
+fn depthwise_kernel(
+    weight: &TileArg<'_>,
+    input: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let weight = weight.tile(comptime!(space.clone()));
-    let input = input.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let weight = weight.tile(&space);
+    let input = input.tile(&space);
+    let out = out.tile(&space);
 
     for cube in space {
         let out = out.at(&cube);
@@ -482,12 +481,10 @@ pub fn launch_depthwise(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        width,
-        TileArgLaunch::new(weight.into_tensor_arg(), w_spec),
-        TileArgLaunch::new(input.into_tensor_arg(), in_spec),
-        TileArgLaunch::new(out.into_tensor_arg(), out_spec),
+        TileArgLaunch::new(weight.into_tensor_arg(), dtype, width, w_spec),
+        TileArgLaunch::new(input.into_tensor_arg(), dtype, width, in_spec),
+        TileArgLaunch::new(out.into_tensor_arg(), dtype, width, out_spec),
         launch.partitioning_arg(),
-        dtype,
     );
 
     Ok(())

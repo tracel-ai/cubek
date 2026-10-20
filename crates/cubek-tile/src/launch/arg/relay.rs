@@ -26,15 +26,16 @@ use crate::*;
 /// they add, as an online softmax's are, reads and rescales what the turns before it left
 /// ([`carried`](Relay::carried)) in its turn, then drains as any other. The relay publishes a turn's lines at device scope before passing the
 /// box on and acquires them after taking it, so it runs only where the runtime hands one cube's
-/// writes to another within a dispatch (`device_memory_scope`). A waiting cube holds its place on
+/// writes to another within a dispatch (`device_memory_scope`), and reads its turn with a `u32`
+/// atomic add, which every GPU runtime offers. A waiting cube holds its place on
 /// the device: the relay rests on a box's earlier runs having started by the time a later one
 /// waits, which a grid whose runs are neighbours gives.
 #[derive(CubeType)]
-pub struct Relay<'a, E: Numeric> {
+pub struct Relay<'a> {
     /// The carry, read by the last turn and by a turn that rescales it.
-    carry: Tile<E>,
+    carry: Tile,
     /// The carry written in turns: replaced by the first, added into by the rest.
-    sink: Tile<E>,
+    sink: Tile,
     turns: &'a [Atomic<u32>],
     /// The cube level's walk, whose first region is this cube's box.
     walk: Walk,
@@ -47,35 +48,27 @@ pub struct Relay<'a, E: Numeric> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+impl<'a> TileArg<'a> {
     /// This operand as the carry of a [`Relay`]: the box the cubes splitting the contraction
     /// along its [`across`](Levels::across) axis take their turns at, under `partitioning`, whose
     /// first level is the cube level. `turns` arrives holding zero and is left holding zero.
-    pub fn relay<'t>(&self, partitioning: &Partitioning, turns: &'t [Atomic<u32>]) -> Relay<'t, E> {
+    pub fn relay<'t, V: Size>(
+        &self,
+        partitioning: &Partitioning,
+        turns: &'t [Atomic<u32>],
+    ) -> Relay<'t> {
         let space = comptime!(partitioning.clone());
-        let split = comptime!(Relay::<'t, E>::split(&space, &self.spec));
+        let split = comptime!(Relay::split(&space, &self.spec));
         let walk = partitioning.walk();
-        let counter = Relay::<'t, E>::counter(partitioning, &walk, split);
+        let counter = Relay::counter(partitioning, &walk, split);
         let turn = walk.position_at(split);
-        let holders = Relay::<'t, E>::holders(partitioning, split);
+        let holders = Relay::holders(partitioning, split);
 
-        let carry = self.tile(comptime!(space.clone()));
-        let first = turn == 0usize;
-        let geometry = RuntimeGeometry::of_tensor::<Vector<E, V>>(
-            self.tensor,
-            comptime!(self.spec.projection.physical_rank()),
-        );
-        let sink = GlobalOperand::<E>::sink(
-            relay_sink::<E, V>(self.tensor, first),
-            geometry,
-            V::value(),
-            comptime!(space.space().clone()),
-            comptime!(self.spec.clone()),
-            comptime!(Write::Exclusive(Schedule::Sequential)),
-        )
-        .tile(comptime!(space.levels().to_vec()));
+        let carry = self.tile(partitioning);
+        let define!(Served) = self.element;
+        let sink = adding_tile::<Served, V>(self, partitioning, turn == 0usize);
 
-        Relay::<'t, E> {
+        Relay::<'t> {
             carry,
             sink,
             turns,
@@ -88,7 +81,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 }
 
 #[cube]
-impl<'a, E: Numeric> Relay<'a, E> {
+impl<'a> Relay<'a> {
     /// Whether this cube's run holds a tile, and so takes a turn: a cube past the last such run
     /// holds nothing and never meets the box. Uniform across the cube.
     pub fn has_turn(&self) -> bool {
@@ -98,14 +91,14 @@ impl<'a, E: Numeric> Relay<'a, E> {
     /// This cube's box of the carry, relayed: what its accumulator opens on, starting from the
     /// monoid's identity, and what it drains into once it has [`take`](Relay::take)n its turn. The
     /// first turn replaces what the box held; every later one adds into it.
-    pub fn tile(&self) -> Tile<E> {
+    pub fn tile(&self) -> Tile {
         self.sink.at(&self.walk.region(0usize))
     }
 
     /// This cube's box of the carry as the turns before this one left it, to read and to rescale
     /// in place once this cube has [`take`](Relay::take)n its turn and before it drains. It holds
     /// nothing on the [first](Relay::is_first) turn, whose drain replaces it.
-    pub fn carried(&self) -> Tile<E> {
+    pub fn carried(&self) -> Tile {
         self.carry.at(&self.walk.region(0usize))
     }
 
@@ -123,10 +116,15 @@ impl<'a, E: Numeric> Relay<'a, E> {
 
     /// Wait for this cube's turn at its box, and acquire what the turns before it wrote. Every
     /// unit of the cube reaches it.
+    ///
+    /// The counter is read with `fetch_add(0)`. On Metal, an atomic load spinning on the counter
+    /// can keep returning the value it first read long after the previous turn's store has
+    /// landed, and the cube then never leaves the loop. A plain `load` serves once the Metal
+    /// backend's atomic load reads the counter coherently on every spin.
     pub fn take(&self) {
         if UNIT_POS == 0 {
             loop {
-                if self.turns[self.counter].load() == self.turn as u32 {
+                if self.turns[self.counter].fetch_add(0u32) == self.turn as u32 {
                     break;
                 }
             }
@@ -136,7 +134,7 @@ impl<'a, E: Numeric> Relay<'a, E> {
 
     /// Hand the box on: to the next turn, or, on the last, into `out` with a cast, once every
     /// plane's lines of the carry are in. Every unit of the cube reaches it.
-    pub fn pass<O: Numeric>(&self, out: &mut Tile<O>) {
+    pub fn pass(&self, out: &mut Tile) {
         let last = self.is_last();
         // Publishes this turn's lines before the next turn, or the last's copy, reads them.
         sync_storage();
@@ -219,7 +217,7 @@ impl<'a, E: Numeric> Relay<'a, E> {
     }
 }
 
-impl<E: Numeric> Relay<'_, E> {
+impl Relay<'_> {
     /// The position in `space` of the one axis a relay splits: spread across cubes by the first level,
     /// the cube level, and not spanned by the carry. Refuses any other partitioning.
     fn split(space: &Partitioning, spec: &TileSpec) -> usize {
@@ -253,6 +251,33 @@ impl Partitioning {
     pub fn relay_counters(&self) -> usize {
         self.instances(Coverage::Distribute(ComputeScope::Cube)) as usize
     }
+}
+
+/// `arg` under `partitioning` as a tile whose writes replace each line where `first` and add into
+/// it otherwise: a relay's carry, which its first turn replaces and every later one adds into, and
+/// a [`LastArrival`](crate::launch::LastArrival)'s slot, which the last run to arrive adds the
+/// others' parts into.
+#[cube]
+pub(crate) fn adding_tile<E: Numeric, V: Size>(
+    arg: &TileArg<'_>,
+    partitioning: &Partitioning,
+    first: bool,
+) -> Tile {
+    let space = comptime!(partitioning.clone());
+    let lines = arg.lines::<E, V>();
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, V>>(
+        lines,
+        comptime!(arg.spec.projection.physical_rank()),
+    );
+    GlobalOperand::sink(
+        relay_sink::<E, V>(lines, first),
+        geometry,
+        V::value(),
+        comptime!(space.space().clone()),
+        comptime!(arg.spec.clone()),
+        comptime!(Write::Exclusive(Schedule::Sequential)),
+    )
+    .tile::<E>(comptime!(space.levels().to_vec()))
 }
 
 /// The erased tensor over the carry that replaces each line written on the `first` turn and adds

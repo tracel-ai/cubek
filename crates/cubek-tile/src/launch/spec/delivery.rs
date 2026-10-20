@@ -29,6 +29,12 @@ pub enum Delivery {
 const TMA_MAX_BOX_DIM: usize = 256;
 
 impl Delivery {
+    /// The byte alignment a stage a [`Tma`](Delivery::Tma) box lands in starts on: the span a
+    /// 128-byte swizzle repeats over, which the engine keys off the address, so a stage's first
+    /// row takes the first key as the fragment reading it does. A launch sizing its shared memory
+    /// counts what aligning a stage to it can cost.
+    pub const TMA_STAGE_ALIGNMENT: usize = 1024;
+
     /// Whether this delivery moves `stage` in one transfer, and why not where it cannot.
     pub fn moves(self, stage: &Space) -> Result<(), Refusal> {
         match self {

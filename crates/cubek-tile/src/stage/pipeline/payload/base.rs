@@ -11,6 +11,9 @@ pub(crate) struct StageOperand {
     pub(crate) delivery: Delivery,
     /// The axes the operand spans.
     pub(crate) space: Space,
+    /// The keys of a table the operand has yet to read ([`Indexing`]): its window moves along
+    /// them too, though it spans none of them.
+    pub(crate) keys: Vec<Axis>,
 }
 
 /// What shapes a slot's buffers: level, depth, storage, optional line width, and who holds them.
@@ -20,6 +23,8 @@ pub(crate) struct StageSpec {
     pub(crate) depth: usize,
     pub(crate) storage: StageStorage,
     pub(crate) width: Option<usize>,
+    /// The element a stage that decodes its operand holds; `f32` where `None`.
+    pub(crate) decoded: Option<ElemType>,
     pub(crate) owner: StageOwner,
 }
 
@@ -52,15 +57,29 @@ pub(crate) trait Payload<Me: CubeType>: CubeType {
     );
 }
 
-/// One operand's stage, placed at the depth the walk's regions sit below.
+/// One operand's stage, placed in the operand's nest at the depth the walk's regions sit below.
+/// The nest's levels come with it: a plane's window of the stage is the plane's, and a landing
+/// out of it takes a window for every plane the levels lay out.
 #[cube]
-pub(crate) fn stage_one<T: Numeric>(operand: &Tile<T>, #[comptime] spec: StageSpec) -> Tile<T> {
-    let stage = Memory::stage(
+pub(crate) fn stage_one(operand: &Tile, #[comptime] spec: StageSpec) -> Tile {
+    // An operand whose table this level reads stages one region of it: one slab, not the stack.
+    let shaped = operand.shaped_for(comptime!(spec.level.clone()));
+    let operand = &shaped;
+    let define!(Staged) = operand.staged_element(comptime!(spec.decoded));
+    let stage = Memory::stage::<Staged>(
         operand,
-        comptime!(spec.level),
-        comptime!(spec.storage),
+        comptime!(spec.level.clone()),
+        comptime!(spec.storage.clone()),
         comptime!(spec.width),
         comptime!(spec.owner),
     );
-    Tile::new(stage.kind, comptime!(stage.place.at_depth(spec.depth)))
+    let stage = Tile::new::<Staged>(
+        stage.kind,
+        comptime!(Placement::new(
+            stage.place.space.clone(),
+            spec.depth,
+            operand.place.levels.clone()
+        )),
+    );
+    stage.with_scales_staged(operand, comptime!(spec))
 }

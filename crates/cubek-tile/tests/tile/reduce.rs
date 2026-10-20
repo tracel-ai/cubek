@@ -31,17 +31,16 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// `c.zero(); c.mma(a, b)` region by region over whatever one-level space it is handed: the
 /// same body serves the one-axis and the two-axis contraction, which is the point.
 #[cube(launch)]
-fn reduce_matmul_kernel<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn reduce_matmul_kernel(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     c.zero();
     for region in space.over(&level) {
         let mut c_region = c
@@ -64,14 +63,14 @@ enum Read {
 /// this seed and the `Monoid` passed to `reduce_axis`.
 #[cube]
 fn reduce_body<E: Numeric>(
-    input: &Tile<E>,
-    output: &mut Tile<E>,
+    input: &Tile,
+    output: &mut Tile,
     space: &Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
 ) {
-    output.init(Monoid::identity::<E>(monoid));
+    output.init::<E>(Monoid::identity::<E>(monoid));
     let walk = space.over(&level);
     match comptime!(read) {
         Read::InPlace => {
@@ -81,7 +80,7 @@ fn reduce_body<E: Numeric>(
             }
         }
         Read::Smem { depth } => {
-            let mut stages = Stages::smem_single(&walk, input, StageStorage::Strided, depth);
+            let mut stages = Stages::smem_single(&walk, input, StageStorage::Strided, depth, None);
             stages.pipelined(walk, |slot, region| {
                 let mut out_region = output.at(region);
                 slot.consume(|input_s| {
@@ -94,39 +93,17 @@ fn reduce_body<E: Numeric>(
 
 #[cube(launch)]
 fn reduce_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
-    reduce_body(
-        &input,
-        &mut output,
-        &space,
-        comptime!(level.clone()),
-        read,
-        monoid,
-    );
-}
-
-#[cube(launch)]
-fn reduce_kernel_v4<E: Numeric>(
-    input: &TileArg<'_, E, Const<4>>,
-    output: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[comptime] level: Level,
-    #[comptime] read: Read,
-    #[comptime] monoid: Monoid,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(comptime!(space.clone()));
-    reduce_body(
+    let input = input.tile(&space);
+    let mut output = output.tile(&space);
+    reduce_body::<E>(
         &input,
         &mut output,
         &space,
@@ -141,23 +118,23 @@ fn reduce_kernel_v4<E: Numeric>(
 /// memory; either way the partial-tile mask must survive rather than folding the padded overhang.
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = Procedural::<E>::new::<AffineCoordinate<E>>(
+    let input = Procedural::new::<E, AffineCoordinate<E>>(
         comptime!(space.space().clone()),
         AffineCoordinate::<E> {
-            offset: E::new(0.0_f32),
-            coefficient: E::new(1.0_f32),
+            offset: E::new(0.0),
+            coefficient: E::new(1.0),
             axis: K,
         },
     )
-    .tile();
-    let mut output = output.tile(comptime!(space.clone()));
-    reduce_body(
+    .tile::<E>();
+    let mut output = output.tile(&space);
+    reduce_body::<E>(
         &input,
         &mut output,
         &space,
@@ -209,19 +186,24 @@ fn run(
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(a_axes),
         ),
         TileArgLaunch::new(
             b_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(b_axes),
         ),
         TileArgLaunch::new(
             c_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(c_axes),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        f32_ty,
     );
 
     HostData::from_tensor_handle(&client, c_handle, HostDataType::F32)
@@ -490,37 +472,28 @@ fn run_reduce_with_vw(
     let in_binding = in_handle.binding();
     let out_binding = out_handle.clone().binding();
 
-    match in_vw {
-        1 => {
-            reduce_kernel::launch(
-                &client,
-                launcher.cube_count(),
-                launcher.cube_dim(),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                launcher.partitioning_arg(),
-                launcher.partitioning().level(0),
-                read,
-                monoid,
-                f32_ty,
-            );
-        }
-        4 => {
-            reduce_kernel_v4::launch(
-                &client,
-                launcher.cube_count(),
-                launcher.cube_dim(),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                launcher.partitioning_arg(),
-                launcher.partitioning().level(0),
-                read,
-                monoid,
-                f32_ty,
-            );
-        }
-        _ => unimplemented!("unsupported in_vw"),
-    }
+    reduce_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            in_binding.into_tensor_arg(),
+            f32_ty,
+            in_vw,
+            TileSpec::direct(in_axes),
+        ),
+        TileArgLaunch::new(
+            out_binding.into_tensor_arg(),
+            f32_ty,
+            1,
+            TileSpec::direct(out_axes),
+        ),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        read,
+        monoid,
+        f32_ty,
+    );
 
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
@@ -853,9 +826,16 @@ fn run_reduce_checked(
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(in_axes).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
-        TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
+        TileArgLaunch::new(
+            out_binding.into_tensor_arg(),
+            f32_ty,
+            1,
+            TileSpec::direct(out_axes),
+        ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         read,
@@ -990,6 +970,8 @@ fn check_procedural_reduce(read: Read) {
         launcher.cube_dim(),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M]),
         ),
         launcher.partitioning_arg(),
@@ -1345,17 +1327,17 @@ fn test_reduce_axis_min_spatial_unit_units() {
 /// from an out-of-bounds read) wins the maximum and the assert catches it.
 #[cube(launch)]
 fn resident_fold_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let out = output.tile(comptime!(space.clone()));
-    let mut acc = out.block_reducer::<E, E>(&input, REGISTER_BLOCK, monoid);
-    acc.init(Monoid::identity::<E>(monoid));
+    let input = input.tile(&space);
+    let out = output.tile(&space);
+    let mut acc = out.block_reducer::<E>(&input, REGISTER_BLOCK, monoid);
+    acc.init::<E>(Monoid::identity::<E>(monoid));
     for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
@@ -1399,10 +1381,14 @@ fn resident_max_over_unit_split_k() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[M, N, K]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -1472,10 +1458,14 @@ fn resident_max_over_unit_group_k() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[M, N, K]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),

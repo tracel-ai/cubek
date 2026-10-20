@@ -1,6 +1,6 @@
 //! The comptime shape of a region's path: the levels taken from a root space ([`Path`]).
 
-use super::{ComputeScope, Coverage, Level, Partitioning, Space};
+use super::{ComputeScope, Level, Partitioning, Space};
 use crate::Axis;
 
 /// The comptime shape of a [`Region`](crate::Region)'s path: the levels taken from a root space,
@@ -87,19 +87,26 @@ impl Path {
         let mut handed = self.root.space().clone();
         let mut planes = Vec::new();
         for level in self.root.levels() {
+            let scope = level.coverage().scope();
             for axis in level.axes() {
-                if level.coverage() == Coverage::Distribute(ComputeScope::Plane)
+                if !(scope.and_then(ComputeScope::planes).is_some()
                     && level.distributes(axis)
-                    && along(axis)
+                    && along(axis))
                 {
-                    let count = level.instances_along(&handed, axis).unwrap_or_else(|| {
-                        panic!(
-                            "{axis:?} is split across the cube's planes at a count only the launch \
-                             knows, so the planes holding the same box cannot be counted"
-                        )
-                    });
-                    planes.push((axis, count));
+                    continue;
                 }
+                assert!(
+                    scope == Some(ComputeScope::Plane),
+                    "{axis:?} is split across the cube's plane groups, and nothing merges what \
+                     plane groups hold of the same box yet; deal each group a box of its own"
+                );
+                let count = level.instances_along(&handed, axis).unwrap_or_else(|| {
+                    panic!(
+                        "{axis:?} is split across the cube's planes at a count only the launch \
+                         knows, so the planes holding the same box cannot be counted"
+                    )
+                });
+                planes.push((axis, count));
             }
             handed = level.child(&handed);
         }

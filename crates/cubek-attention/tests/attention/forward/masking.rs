@@ -15,7 +15,8 @@ use cubek_attention::forward::definition::{
 use cubek_attention::forward::launch::{BlueprintStrategy, Strategy, launch_ref};
 use cubek_attention::forward::routines::blackbox_accelerated::BlackboxAcceleratedStrategy;
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, StridedLayout, TestInput, TestOutcome,
+    launch_and_capture_outcome,
 };
 
 fn f16_dtypes(client: &Client) -> AttentionGlobalTypes {
@@ -467,6 +468,149 @@ fn broadcast_mask(strategy: Strategy) {
         .as_test_outcome()
         .enforce(),
     }
+}
+
+/// A padding mask: one `[seq_kv]` row per batch, broadcast over heads *and over
+/// `seq_q`* — a `[batch, heads, seq_q, seq_kv]` handle with strides
+/// `[seq_kv, 0, 0, 1]`, which is what `mask.expand(...)` yields for a
+/// `[batch, 1, 1, seq_kv]` mask. The reference gets the materialized full mask.
+/// Each batch masks a different number of trailing keys, so reading a row from
+/// the wrong place shows.
+fn padding_mask_broadcast_over_seq_q(strategy: Strategy) {
+    let (batch, num_heads) = (2usize, 2usize);
+    let (seq_q, seq_kv, head_dim, val_dim) = (32usize, 32usize, 16usize, 16usize);
+    let client = cubecl::test_device().client();
+    let problem = AttentionProblem {
+        dims: AttentionDims {
+            batch,
+            num_heads,
+            seq_q,
+            seq_kv,
+            head_dim,
+            val_dim,
+        },
+        masked: true,
+        global_dtypes: f16_dtypes(&client),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+        address_type: AddressType::default(),
+    };
+
+    // One row per batch: batch `b` masks its last `5 + 9 * b` keys.
+    let mut rows = vec![0.0f32; batch * seq_kv];
+    for b in 0..batch {
+        for j in (seq_kv - (5 + 9 * b))..seq_kv {
+            rows[b * seq_kv + j] = 1.0;
+        }
+    }
+
+    let (query_handle, query_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Query)),
+    )
+    .dtype(problem.global_dtypes.query)
+    .uniform(12, -1., 1.)
+    .generate_with_f32_host_data();
+
+    let (key_handle, key_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Key)),
+    )
+    .dtype(problem.global_dtypes.key)
+    .uniform(34, -1., 1.)
+    .generate_with_f32_host_data();
+
+    let (value_handle, value_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Value)),
+    )
+    .dtype(problem.global_dtypes.value)
+    .uniform(56, -1., 1.)
+    .generate_with_f32_host_data();
+
+    // The logical mask: every row of a batch is that batch's row.
+    let mut full = Vec::with_capacity(batch * num_heads * seq_q * seq_kv);
+    for b in 0..batch {
+        for _ in 0..num_heads * seq_q {
+            full.extend_from_slice(&rows[b * seq_kv..(b + 1) * seq_kv]);
+        }
+    }
+
+    // Kernel sees the full shape, backed by `batch * seq_kv` elements only.
+    let (mask_handle, _) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Mask)),
+    )
+    .dtype(problem.global_dtypes.mask)
+    .layout(StridedLayout::Explicit(vec![seq_kv, 0, 0, 1]))
+    .custom(full.clone())
+    .generate_with_bool_host_data();
+
+    // Reference sees every row materialized.
+    let (_, mask_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Mask)),
+    )
+    .dtype(problem.global_dtypes.mask)
+    .custom(full)
+    .generate_with_bool_host_data();
+
+    let out_handle = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Out)),
+    )
+    .dtype(problem.global_dtypes.out)
+    .zeros()
+    .generate_without_host_data();
+
+    let problem_for_launch = problem.clone();
+    let out_binding = out_handle.clone().binding();
+    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
+        launch_ref(
+            strategy.clone(),
+            c,
+            query_handle.clone().binding(),
+            key_handle.clone().binding(),
+            value_handle.clone().binding(),
+            Some(mask_handle.clone().binding()),
+            out_binding.clone(),
+            &problem_for_launch.global_dtypes,
+            problem_for_launch.options,
+        )
+        .into()
+    });
+
+    match outcome {
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e).enforce(),
+        ExecutionOutcome::Executed => assert_result(
+            &query_data,
+            &key_data,
+            &value_data,
+            Some(&mask_data),
+            &problem,
+            &client,
+            out_handle,
+            AttentionElems::from_global_types(
+                &problem.global_dtypes,
+                half::f16::elem_type_native(),
+                &problem.options.accumulator_precision,
+            ),
+        )
+        .as_test_outcome()
+        .enforce(),
+    }
+}
+
+#[test]
+fn padding_mask_broadcast_over_seq_q_unit() {
+    padding_mask_broadcast_over_seq_q(unit_inferred())
+}
+
+#[test]
+fn padding_mask_broadcast_over_seq_q_blackbox() {
+    padding_mask_broadcast_over_seq_q(blackbox_accelerated_inferred())
 }
 
 #[test]

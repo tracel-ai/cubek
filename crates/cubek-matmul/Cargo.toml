@@ -49,5 +49,6 @@ serde = { workspace = true }
 cubek-matmul = { path = ".", default-features = false, features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }
 cubek-quant = { workspace = true, features = ["kernels"] }
+num-complex = { workspace = true }
 
 cubecl = { workspace = true, features = ["test-runtime"] }

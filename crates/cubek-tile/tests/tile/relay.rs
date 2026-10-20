@@ -38,26 +38,21 @@ const PITCH: usize = 32;
 /// `out` written with `input`, as the destination's write says: replaced or added atomically.
 #[cube(launch)]
 fn store<E: Float, V: Size, O: Destination>(
-    input: &TileArg<'_, E, V>,
-    out: &O::Arg<E, V>,
+    input: &TileArg<'_>,
+    out: &O::Arg<E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = O::tile::<E, V>(out, comptime!(space.clone()));
+    let src = input.tile(&space);
+    let mut dst = O::tile::<E, V>(out, &space);
     dst.copy_from(&src);
 }
 
 /// `out` written with `input` cast to the output's element.
 #[cube(launch)]
-fn store_cast<E: Float, F: Float>(
-    input: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, F, Const<1>>,
-    space: Partitioning,
-    #[define(E, F)] _dtypes: [ElemType; 2],
-) {
-    let src = input.tile(comptime!(space.clone()));
-    let mut dst = out.tile(comptime!(space.clone()));
+fn store_cast(input: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
+    let src = input.tile(&space);
+    let mut dst = out.tile(&space);
     dst.copy_cast_from(&src);
 }
 
@@ -100,12 +95,12 @@ fn add_launches(write: Write, layout: StridedLayout, launches: usize) -> HostDat
         .generate_without_host_data();
     for _ in 0..launches {
         let src = launcher
-            .arg(input.clone().binding())
+            .arg(input.clone().binding(), dtype)
             .axes(&[ROW, COL])
             .build()
             .unwrap();
         let bound = launcher
-            .arg(output.clone().binding())
+            .arg(output.clone().binding(), dtype)
             .axes(&[ROW, COL])
             .build()
             .unwrap();
@@ -172,12 +167,12 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
         .zeros()
         .generate_without_host_data();
     let src = launcher
-        .arg(input.binding())
+        .arg(input.binding(), wide)
         .axes(&[ROW, COL])
         .build()
         .unwrap();
     let dst = launcher
-        .arg(output.clone().binding())
+        .arg(output.clone().binding(), narrow)
         .axes(&[ROW, COL])
         .build()
         .unwrap();
@@ -188,7 +183,6 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
         src.arg(),
         dst.arg(),
         launcher.partitioning_arg(),
-        [wide, narrow],
     );
     let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
     for row in 0..ROWS {
@@ -210,23 +204,23 @@ fn a_memory_window_lands_in_a_narrower_output_through_a_cast() {
 /// casts the sum into the `f16` output.
 #[cube(launch)]
 fn relayed_split_matmul(
-    a: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, f32, Const<1>>,
-    carry: &TileArg<'_, f32, Const<1>>,
-    out: &TileArg<'_, half::f16, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    carry: &TileArg<'_>,
+    out: &TileArg<'_>,
     turns: &[Atomic<u32>],
     space: Partitioning,
 ) {
-    let relay = carry.relay(&space, turns);
+    let relay = carry.relay::<Const<1>>(&space, turns);
     // Uniform across the cube, so it leaves before any barrier.
     if !relay.has_turn() {
         terminate!();
     }
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut out = out.tile(&space);
     let c = relay.tile();
-    let acc = c.accumulator::<f32, f32, f32>(
+    let acc = c.accumulator::<f32>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -245,17 +239,17 @@ fn relayed_split_matmul(
     relay.pass(&mut out);
 }
 
-/// Whether this device hands one cube's writes to another within a dispatch and loads and stores
-/// `u32` atomically, the two things the relay needs; reported rather than silently passed.
+/// Whether this device hands one cube's writes to another within a dispatch and stores and adds
+/// `u32`s atomically, the two things the relay needs; reported rather than silently passed.
 pub(super) fn relays(client: &cubecl::client::Client) -> bool {
     let hands_off = client.properties().features.device_memory_scope;
-    let counts = client
+    let usage = client
         .properties()
-        .atomic_type_usage(Type::atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)))
-        .contains(AtomicUsage::LoadStore);
+        .atomic_type_usage(Type::atomic(ElemType::UInt(cubecl::ir::UIntKind::U32)));
+    let counts = usage.contains(AtomicUsage::LoadStore) && usage.contains(AtomicUsage::Add);
     if !(hands_off && counts) {
         TestOutcome::Validated(ValidationResult::Skipped(
-            "device has no device-scope storage sync or no u32 atomic load and store".to_string(),
+            "device has no device-scope storage sync or no u32 atomic store and add".to_string(),
         ))
         .enforce();
     }
@@ -316,18 +310,26 @@ fn run_relayed_split(
             launcher.cube_dim(),
             TileArgLaunch::new(
                 a.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[M, K]),
             ),
             TileArgLaunch::new(
                 b.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[K, N]),
             ),
             TileArgLaunch::new(
                 carry.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[M, N]),
             ),
             TileArgLaunch::new(
                 out.clone().binding().into_tensor_arg(),
+                f16_ty,
+                1,
                 TileSpec::direct(&[M, N]),
             ),
             unsafe { BufferArg::from_raw_parts(turns.clone(), counters) },

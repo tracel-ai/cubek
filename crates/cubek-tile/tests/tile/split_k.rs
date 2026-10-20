@@ -45,17 +45,16 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// per split. One region per cube, contracted whole at the leaf, so `mm` owns the init and
 /// the partials buffer needs no zeroing.
 #[cube(launch)]
-fn split_partials<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    partials: &TileArg<'_, E, Const<1>>,
+fn split_partials(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    partials: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let partials = partials.tile(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let partials = partials.tile(&space);
     for region in space.over(&level) {
         let mut partials_cube = partials
             .at(&region)
@@ -66,15 +65,14 @@ fn split_partials<E: Numeric>(
 
 /// The second pass: fold the split axis away.
 #[cube(launch)]
-fn reduce_splits<E: Numeric>(
-    partials: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn reduce_splits(
+    partials: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
-    let partials = partials.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
+    let partials = partials.tile(&space);
+    let out = out.tile(&space);
     for region in space.over(&level) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
@@ -127,6 +125,8 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         split_space.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::new(Projection::new(
                 &[M, KB, KI],
                 &[
@@ -137,6 +137,8 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::new(Projection::new(
                 &[KB, KI, N],
                 &[
@@ -147,11 +149,12 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         ),
         TileArgLaunch::new(
             partials.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[KB, M, N]),
         ),
         split_space.partitioning_arg(),
         split_space.partitioning().level(0),
-        dtype,
     );
 
     let fold_space = implied(
@@ -169,15 +172,18 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         fold_space.cube_dim(),
         TileArgLaunch::new(
             partials.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[KB, M, N]),
         ),
         TileArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         fold_space.partitioning_arg(),
         fold_space.partitioning().level(0),
-        dtype,
     );
 
     (
@@ -313,19 +319,19 @@ const K: Axis = Axis(4);
 /// the destination, which is the one shape a write-only fold admits.
 #[cube(launch)]
 fn atomic_split_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile(&space);
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -347,20 +353,20 @@ fn atomic_split_matmul<E: Numeric>(
 /// every unit a writer on the drain.
 #[cube(launch)]
 fn atomic_split_matmul_by_unit<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] plane_units: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile(&space);
     // Opened above both walks, so it holds what one unit of one cube sums: its own columns
     // against that cube's slice of the contraction.
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -414,14 +420,19 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[K, N]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -556,14 +567,19 @@ fn an_atomic_drain_with_units_of_their_own() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[K, N]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -641,14 +657,19 @@ fn an_atomic_drain_folds_across_planes() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[K, N]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -680,16 +701,16 @@ fn an_atomic_drain_folds_across_planes() {
 /// nothing is ever read back, because folding is itself the read-modify-write.
 #[cube(launch)]
 fn atomic_split_matmul_in_place<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile(&space);
     for region in space.over(&level) {
         let mut c_region = c
             .at(&region)
@@ -745,14 +766,19 @@ fn a_folding_output_contracts_in_place() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[K, N]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -784,21 +810,21 @@ fn a_folding_output_contracts_in_place() {
 /// fragments, the accumulator opened with a scratch and drained through the folding sink.
 #[cube(launch)]
 fn atomic_split_cmma<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let c = out.tile(&space);
     for cube in space {
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
         let c_cube = c.at(&cube);
         let acc = c_cube
-            .accumulator::<E, E, E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD)
+            .accumulator::<E>(&a_cube, &b_cube, Instruction::Cmma, Semiring::SUM_PROD)
             .with_scratch(Scratch::OneTile);
         let walk = cube.walk();
         let mut stages = Stages::smem(
@@ -807,6 +833,7 @@ fn atomic_split_cmma<E: Numeric>(
             &b_cube,
             comptime!(StageStorage::Strided),
             1usize,
+            None,
         );
         stages.pipelined(walk, |slot, stage| {
             let mut acc_s = acc.at(stage);
@@ -885,14 +912,19 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, K]),
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[K, N]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
@@ -952,13 +984,13 @@ fn adds_atomically(client: &cubecl::client::Client) -> bool {
 /// layout walk either way and prove nothing about the condition.
 #[cube(launch)]
 fn copy_into_folding<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_>,
     out: &AccumulateArg<'_, E>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let mut out = out.tile::<Const<1>>(comptime!(space.clone()));
+    let src = src.tile(&space);
+    let mut out = out.tile(&space);
     out.copy_from(&src);
 }
 
@@ -1000,10 +1032,13 @@ fn a_copy_into_a_folding_output_adds() {
         launcher.cube_dim(),
         TileArgLaunch::new(
             src.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
