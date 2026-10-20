@@ -32,6 +32,21 @@ pub(crate) struct MmaData {
     pub operands: MmaOperands,
 }
 
+/// How a fragment deeper than its instruction loads, which sets the order its registers hold `k`
+/// in. A contraction pairs the registers of its two factors, so both load the same way: lane runs
+/// where the contraction loads both out of memory and one out of global memory, a step at a time
+/// everywhere else ([`MmaData::mma`]).
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) enum DeepLoad {
+    /// A step at a time, each in the instruction's own order: what `ldmatrix` reads out of shared
+    /// memory, and what a fragment loaded on its own, or an accumulator reread, holds
+    /// ([`load_in_steps`]).
+    Steps,
+    /// Each unit's slots one contiguous run of `k`, which it reads in whole loads
+    /// ([`load_lane_runs`]).
+    LaneRuns,
+}
+
 /// One role's register array, each role at its own width (`NL`/`NR`/`NA`), at the element the
 /// fragment holds.
 #[expect(
@@ -226,8 +241,9 @@ impl MmaData {
         }
     }
 
-    /// Fill this fragment from `src`'s window by the role's transport.
-    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile) {
+    /// Fill this fragment from `src`'s window by the role's transport, a fragment deeper than its
+    /// instruction as `load` says.
+    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile, #[comptime] load: DeepLoad) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -237,7 +253,15 @@ impl MmaData {
         let steps = lane_run_steps::<T>(m, n, k);
         match &mut self.fragment {
             MmaFragment::Lhs(f) => match comptime!(steps > 1) {
-                true => load_deep(src, f.at_mut::<T>(), MatrixIdent::A, layout, io, (m, n, k)),
+                true => load_deep(
+                    src,
+                    f.at_mut::<T>(),
+                    MatrixIdent::A,
+                    layout,
+                    io,
+                    (m, n, k),
+                    load,
+                ),
                 false => load_fragment(
                     src,
                     f.at_mut::<T>(),
@@ -250,7 +274,15 @@ impl MmaData {
                 ),
             },
             MmaFragment::Rhs(f) => match comptime!(steps > 1) {
-                true => load_deep(src, f.at_mut::<T>(), MatrixIdent::B, layout, io, (m, n, k)),
+                true => load_deep(
+                    src,
+                    f.at_mut::<T>(),
+                    MatrixIdent::B,
+                    layout,
+                    io,
+                    (m, n, k),
+                    load,
+                ),
                 false => load_fragment(
                     src,
                     f.at_mut::<T>(),
@@ -619,6 +651,8 @@ pub(crate) fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Num
     // `comptime!` the call would size the generic placeholder instead.
     let elem_size = T::size().comptime();
     let row_cells = comptime!(LDMATRIX_ROW_BYTES / elem_size);
+    // `ldmatrix` reads every row of its matrices: a window covering fewer has none to give it.
+    let whole = comptime!(covered_edges(&src.place.space, ident, edges) == edges);
     let ldmatrix_serves = comptime!(
         offered
             && shared
@@ -627,6 +661,7 @@ pub(crate) fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Num
             && elem_size == 2
             && ident != MatrixIdent::Accumulator
             && row_cells.is_multiple_of(served)
+            && whole
     );
     let method = comptime!(match ldmatrix_serves {
         true => io.load_method(ident),
@@ -659,9 +694,8 @@ fn loads_matrix<T: Numeric>() -> comptime_type!(bool) {
     })
 }
 
-/// A fragment deeper than its instruction, out of `src`: a step at a time in the instruction's own
-/// order out of shared memory, where `ldmatrix` reads each step, in lane runs out of global memory,
-/// where a unit's whole loads pay ([`load_in_steps`], [`load_lane_runs`]).
+/// A fragment deeper than its instruction, out of `src`, as `load` says ([`load_in_steps`],
+/// [`load_lane_runs`]).
 #[cube]
 fn load_deep<T: Numeric, N: Size>(
     src: &Tile,
@@ -670,11 +704,11 @@ fn load_deep<T: Numeric, N: Size>(
     #[comptime] layout: MatrixLayout,
     #[comptime] io: MmaIo,
     #[comptime] shape: (usize, usize, usize),
+    #[comptime] load: DeepLoad,
 ) {
-    let shared = src.is_shared();
-    match comptime!(shared) {
-        true => load_in_steps(src, fragment, ident, layout, io, shape),
-        false => load_lane_runs(src, fragment, ident, layout, shape),
+    match comptime!(load) {
+        DeepLoad::Steps => load_in_steps(src, fragment, ident, layout, io, shape),
+        DeepLoad::LaneRuns => load_lane_runs(src, fragment, ident, layout, shape),
     }
 }
 
@@ -696,7 +730,11 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
     let unit_id = UNIT_POS_PLANE;
     let served = src.vector_size();
     let width = comptime!(served);
-    let (rows, cols) = comptime!(edges);
+    // A window may cover fewer of the fragment's rows (an `A`) or columns (a `B`) than the
+    // fragment does, a decode's rows staged as they are: the units on cells past it read zeros
+    // rather than past its buffer.
+    let (rows, cols) = comptime!(covered_edges(&src.place.space, ident, edges));
+    let short = comptime!((rows, cols) != edges);
     let transposed = comptime!(match layout {
         MatrixLayout::RowMajor => false,
         MatrixLayout::ColMajor => true,
@@ -735,7 +773,15 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
             } else {
                 (row, col)
             };
-            if comptime!(width >= vector_size) {
+            // A register vector lies along the lines, so its cells share the row or column a
+            // short window cuts.
+            let covered = !short || (row < comptime!(rows as u32) && col < comptime!(cols as u32));
+            if !covered {
+                #[unroll]
+                for e in 0..vector_size {
+                    vector.insert(e, T::from_int(0));
+                }
+            } else if comptime!(width >= vector_size) {
                 // A register vector starts at a multiple of its size, so it stays within `width`.
                 let line = view.read((line_row, cell / comptime!(width as u32)));
                 let start = cell % comptime!(width as u32);
@@ -767,14 +813,30 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
                 } else {
                     (row, col)
                 };
-                let line = view.read((line_row, cell / comptime!(width as u32)));
-                vector.insert(
-                    e,
-                    line.extract_dynamic((cell % comptime!(width as u32)).cast::<usize>()),
-                );
+                vector.insert(e, T::from_int(0));
+                if !short || (row < comptime!(rows as u32) && col < comptime!(cols as u32)) {
+                    let line = view.read((line_row, cell / comptime!(width as u32)));
+                    vector.insert(
+                        e,
+                        line.extract_dynamic((cell % comptime!(width as u32)).cast::<usize>()),
+                    );
+                }
             }
         }
         fragment[i] = vector;
+    }
+}
+
+/// The `rows x cols` of a fragment's `edges` that `space`, the window it loads from, covers: all
+/// of them, or, where the window is shorter than the fragment off `k`, the rows of an `A` or the
+/// columns of a `B` it has.
+fn covered_edges(space: &Space, ident: MatrixIdent, edges: (usize, usize)) -> (usize, usize) {
+    let cells: usize = space.axes().map(|axis| space.extent(axis)).product();
+    let (rows, cols) = edges;
+    match ident {
+        MatrixIdent::A if cells.is_multiple_of(cols) && cells / cols < rows => (cells / cols, cols),
+        MatrixIdent::B if cells.is_multiple_of(rows) && cells / rows < cols => (rows, cells / rows),
+        MatrixIdent::A | MatrixIdent::B | MatrixIdent::Accumulator => edges,
     }
 }
 

@@ -5,8 +5,9 @@
 //! one there. So such a fragment lays `k` out in **lane runs**: each unit's slots, across all of
 //! the fragment's instructions, hold one contiguous run of `k`. A unit then reads its share in
 //! whole served loads rather than a pair of cells an instruction, and a packed operand decodes
-//! and scales a whole word in registers. Both factors of a contraction are the same depth, so
-//! they agree on the order; a fragment one instruction deep keeps the instruction's own.
+//! and scales a whole word in registers. A contraction loads both its factors in lane runs or
+//! both a step at a time ([`DeepLoad`]); a fragment one instruction deep keeps the instruction's
+//! own order.
 //!
 //! The map is read off the 16-bit `m16n8k16` layout: unit `u` holds the cells of quad `u % 4`
 //! along `k`, a pair of adjacent cells a register, its first pair from the instruction's first
