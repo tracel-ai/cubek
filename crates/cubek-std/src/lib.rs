@@ -1,8 +1,11 @@
+pub mod autotune;
 pub mod cube_count;
 pub mod launch;
 pub mod layout;
 pub mod legacy;
 pub mod matmul_axes;
+pub mod microkernel;
+pub mod routine;
 pub mod selector;
 
 mod error;
