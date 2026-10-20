@@ -876,7 +876,7 @@ impl Memory {
         )
     }
 
-    /// This store over `layout` and `window`, the rest of the buffer unchanged.
+    /// This store over `layout`, `window` and the rest given, the buffer unchanged.
     #[allow(clippy::too_many_arguments)]
     fn relaid(
         &self,

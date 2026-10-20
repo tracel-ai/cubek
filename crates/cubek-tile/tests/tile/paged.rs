@@ -224,6 +224,10 @@ enum Handing {
     Next,
     /// The entry of a step past the table.
     PastTable,
+    /// The entry of the same step of the next sequence: the same column, another sequence.
+    OtherSequence,
+    /// The entry of the step being cut, read one step earlier and carried through the loop.
+    Carried,
     /// An entry no table lists.
     Unlisted,
 }
@@ -232,7 +236,11 @@ impl Handing {
     /// Steps past the one being cut that the entry is read at, where one is read.
     fn steps_ahead(self) -> usize {
         match self {
-            Handing::Nothing | Handing::Own | Handing::Unlisted => 0,
+            Handing::Nothing
+            | Handing::Own
+            | Handing::Unlisted
+            | Handing::OtherSequence
+            | Handing::Carried => 0,
             Handing::Next => 1,
             Handing::PastTable => PAGES_EACH * PAGE_LEN,
         }
@@ -267,6 +275,10 @@ fn paged_read_sum_kernel<E: Numeric>(
 
         let positions = pool.within(S, from, len);
         let steps = sequence.over(&block);
+        let mut carried = PageEntry::unlisted();
+        if comptime!(handing == Handing::Carried) {
+            carried = positions.read_page_entry(&steps.region(0));
+        }
         for i in 0..len.saturating_sub(from).div_ceil(read_block) {
             let blk = steps.region(i);
             let mut cell = out.at(&blk);
@@ -274,7 +286,13 @@ fn paged_read_sum_kernel<E: Numeric>(
                 cell.reduce_axis_accumulate(&positions.at(&blk), comptime!(Monoid::Sum));
             } else {
                 let mut entry = PageEntry::unlisted();
-                if comptime!(handing != Handing::Unlisted) {
+                if comptime!(handing == Handing::Carried) {
+                    entry = carried.clone();
+                    carried = positions.read_page_entry(&steps.region(i + 1));
+                } else if comptime!(handing == Handing::OtherSequence) {
+                    let next = space.over(&seq).region((sequence.coord(B) + 1) % SEQUENCES);
+                    entry = positions.read_page_entry(&next.over(&block).region(i));
+                } else if comptime!(handing != Handing::Unlisted) {
                     let source = steps.region(i + comptime!(handing.steps_ahead()));
                     entry = positions.read_page_entry(&source);
                 }
@@ -668,8 +686,10 @@ fn a_flat_walk_over_larger_pages_reads_each_sequence_through_its_table() {
     }
 }
 
-/// A cut handed a page entry reads what it reads without one, whichever entry that is. Steps of
-/// one position, of a page and of two pages, so the cut is inside a page and across two.
+/// A cut handed a page entry reads what it reads without one, whichever entry that is, including
+/// one of another sequence and one carried from the step before. Steps of one position, of a page
+/// and of two pages, so the cut is inside a page and across two, and a page-sized step from an odd
+/// start, whose window straddles two pages.
 #[test]
 fn a_cut_handed_a_page_entry_reads_each_sequence_through_its_table() {
     let entries = PAGES.iter().flatten().copied().collect::<Vec<_>>();
@@ -679,25 +699,27 @@ fn a_cut_handed_a_page_entry_reads_each_sequence_through_its_table() {
         Handing::Next,
         Handing::PastTable,
         Handing::Unlisted,
+        Handing::OtherSequence,
+        Handing::Carried,
     ] {
-        for block in [1, PAGE_LEN, READ_BLOCK] {
+        for (block, from) in [(1, 0), (PAGE_LEN, 0), (READ_BLOCK, 0), (PAGE_LEN, 1)] {
             let got = run_paged_read_table(
                 &lens,
                 &[SEQUENCES, PAGES_EACH],
                 entries.clone(),
                 PAGE_LEN,
                 block,
-                0,
+                from,
                 handing,
                 |arg, s, p| arg.paged(s, p),
             );
-            let want = expected_paged_read_from(&lens, &rows(&PAGES), 0, PAGE_LEN);
+            let want = expected_paged_read_from(&lens, &rows(&PAGES), from, PAGE_LEN);
             for (b, row) in want.iter().enumerate() {
                 for (f, cell) in row.iter().enumerate() {
                     assert_eq!(
                         got.get_f32(&[b, f]),
                         *cell,
-                        "{handing:?}, steps of {block}: sequence {b} feature {f}"
+                        "{handing:?}, steps of {block} from {from}: sequence {b} feature {f}"
                     );
                 }
             }

@@ -172,8 +172,8 @@ pub struct PageEntry {
 
 #[cube]
 impl PageEntry {
-    /// The entry no table lists, which no cut matches: what a buffer that is not a pool of pages
-    /// has.
+    /// The entry no table lists, what a buffer that is not a pool of pages has. A cut that names
+    /// it reads page 0, which is what the table gives outside itself.
     pub fn unlisted() -> PageEntry {
         PageEntry {
             sequence: 0xFFFF_FFFFu32,
@@ -289,13 +289,14 @@ impl PageTable {
             position_dim,
             unit,
         };
+        let (first, no_stride) = (0u32, 0u32);
         unpinned.pinned(
-            0u32,
-            0u32,
+            first,
+            first,
             comptime!(Spans::Any),
             comptime!(0usize),
-            0u32,
-            0u32,
+            no_stride,
+            no_stride,
         )
     }
 
@@ -331,7 +332,7 @@ impl PageTable {
             ),
         });
         match comptime!(pin) {
-            Pin::Kept => self.rebuilt(origin_alignment, self.handed.clone()),
+            Pin::Kept => self.with_alignment_and_entry(origin_alignment, self.handed.clone()),
             Pin::Resolved(spans) => self.repinned(
                 origin,
                 spans,
@@ -444,14 +445,14 @@ impl PageTable {
 
     /// This table taking its pages from `entry` where a cut names its cell.
     pub(crate) fn with_page_entry(&self, entry: &PageEntry) -> PageTable {
-        self.rebuilt(
+        self.with_alignment_and_entry(
             comptime!(self.origin_alignment),
             ComptimeOption::new_Some(entry.clone()),
         )
     }
 
-    /// This table, its window unchanged, with the alignment and the handed entry given.
-    fn rebuilt(
+    /// This table, its window unchanged, with the origin alignment and the handed entry given.
+    fn with_alignment_and_entry(
         &self,
         #[comptime] origin_alignment: usize,
         handed: ComptimeOption<PageEntry>,
