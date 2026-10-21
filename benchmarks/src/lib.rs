@@ -11,8 +11,6 @@ pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
 pub use cubek_matmul::multi_level::eval::gemv;
 pub use cubek_matmul::multi_level::eval::quantized_matmul;
-pub use cubek_matmul::tiled::eval::gemm_cpu_tiled;
-pub use cubek_matmul::tiled::eval::gemm_storage;
 pub use cubek_matmul::tiled::eval::split_cubes;
 pub use cubek_matmul::tiled::eval::split_k;
 pub use cubek_matmul::tiled::eval::tile_quant_stage;
@@ -38,9 +36,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::depthwise::Category,
         &crate::fft::Category,
         &crate::gemm::Category,
-        &crate::gemm_storage::Category,
         &crate::gemm_cpu::Category,
-        &crate::gemm_cpu_tiled::Category,
         &crate::gemv::Category,
         &crate::interpolate::Category,
         &crate::interpolate::CpuCategory,

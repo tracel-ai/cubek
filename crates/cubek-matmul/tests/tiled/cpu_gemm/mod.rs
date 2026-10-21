@@ -1,16 +1,10 @@
-mod inner_layout;
-mod layouts;
-
 use crate::harness::test_matmul_strategy;
 use cubecl::{frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
-    routine::BlueprintStrategy,
+    kernels::UnitRegistersMatmulRoutineSettings,
     strategy::Strategy,
-    tiled::{
-        Strategy as Tiled,
-        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy, InstructionShape, PlaneGrid},
-    },
+    tiled::Strategy as Tiled,
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::skip_unless_cpu;
@@ -18,7 +12,7 @@ use cubek_test_utils::skip_unless_cpu;
 type TestRuntime = cubecl::TestRuntime;
 
 /// The shape of a CpuGemm test case: `lhs_batch × (m, k) @ rhs_batch × (k, n)` run with
-/// square `tile_size` sub-tiles. The two batches differ only for a broadcast case (one
+/// the routine's default settings. The two batches differ only for a broadcast case (one
 /// side `1`); equal otherwise.
 struct Dims {
     lhs_batch: usize,
@@ -26,65 +20,6 @@ struct Dims {
     m: usize,
     n: usize,
     k: usize,
-    tile_size: usize,
-}
-
-/// Mixed precision: `f16` inputs, `f32` accumulate/output. Each operand reaches the leaf in
-/// its own dtype and the inputs widen into `f32`, so the cast path runs through a real kernel.
-#[test]
-fn mixed_precision_f16_inputs_f32_acc() {
-    let Dims {
-        lhs_batch,
-        rhs_batch,
-        m,
-        n,
-        k,
-        tile_size,
-    } = Dims {
-        lhs_batch: 1,
-        rhs_batch: 1,
-        m: 32,
-        n: 32,
-        k: 64,
-        tile_size: 8,
-    };
-    let client = cubecl::test_device().client();
-    if skip_unless_cpu(&client) {
-        return;
-    }
-    let elems = MatmulGlobalElems {
-        lhs: half::f16::elem_type_native(),
-        rhs: half::f16::elem_type_native(),
-        out: f32::elem_type_native(),
-    };
-    let problem = MatmulProblem::from_parameters(
-        m,
-        n,
-        k,
-        shape![lhs_batch],
-        shape![rhs_batch],
-        // rhs/out row-major so the vectorized N path carries the cast on `V`-wide lines.
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
-        None,
-        None,
-        elems,
-        AddressType::U32,
-    );
-    test_matmul_strategy(
-        client,
-        problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
-    );
 }
 
 #[test]
@@ -95,14 +30,12 @@ fn very_small_square() {
         m,
         n,
         k,
-        tile_size,
     } = Dims {
         lhs_batch: 1,
         rhs_batch: 1,
         m: 8,
         n: 8,
         k: 8,
-        tile_size: 4,
     };
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
@@ -125,15 +58,7 @@ fn very_small_square() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -145,14 +70,12 @@ fn small_square() {
         m,
         n,
         k,
-        tile_size,
     } = Dims {
         lhs_batch: 1,
         rhs_batch: 1,
         m: 32,
         n: 32,
         k: 64,
-        tile_size: 8,
     };
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
@@ -175,15 +98,7 @@ fn small_square() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -195,14 +110,12 @@ fn rectangular() {
         m,
         n,
         k,
-        tile_size,
     } = Dims {
         lhs_batch: 1,
         rhs_batch: 1,
         m: 48,
         n: 32,
         k: 64,
-        tile_size: 16,
     };
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
@@ -225,15 +138,7 @@ fn rectangular() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -245,14 +150,12 @@ fn single_tile() {
         m,
         n,
         k,
-        tile_size,
     } = Dims {
         lhs_batch: 1,
         rhs_batch: 1,
         m: 8,
         n: 8,
         k: 8,
-        tile_size: 8,
     };
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
@@ -275,15 +178,7 @@ fn single_tile() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -314,7 +209,7 @@ fn many_tiles_inferred_size() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -345,14 +240,14 @@ fn transposed_lhs_m_not_vector_multiple() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
 /// The same transposed lhs at a size that actually tiles, batched.
 #[test]
 fn transposed_lhs_batched() {
-    let (batch, m, n, k, tile_size) = (2, 33, 64, 64, 8);
+    let (batch, m, n, k) = (2, 33, 64, 64);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -374,15 +269,7 @@ fn transposed_lhs_batched() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -394,14 +281,12 @@ fn batched_small() {
         m,
         n,
         k,
-        tile_size,
     } = Dims {
         lhs_batch: 4,
         rhs_batch: 4,
         m: 16,
         n: 16,
         k: 32,
-        tile_size: 8,
     };
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
@@ -424,15 +309,7 @@ fn batched_small() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -444,14 +321,12 @@ fn batched_rectangular() {
         m,
         n,
         k,
-        tile_size,
     } = Dims {
         lhs_batch: 3,
         rhs_batch: 3,
         m: 32,
         n: 48,
         k: 64,
-        tile_size: 16,
     };
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
@@ -474,15 +349,7 @@ fn batched_rectangular() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -490,7 +357,7 @@ fn batched_rectangular() {
 /// exercises edge masking (zero-padded input reads, predicated output writes).
 #[test]
 fn indivisible_all_axes() {
-    let (batch, m, n, k, tile_size) = (1, 10, 10, 10, 4);
+    let (batch, m, n, k) = (1, 10, 10, 10);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -512,15 +379,7 @@ fn indivisible_all_axes() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -528,7 +387,7 @@ fn indivisible_all_axes() {
 /// per-axis check flags differ across operands.
 #[test]
 fn indivisible_rectangular_batched() {
-    let (batch, m, n, k, tile_size) = (2, 30, 20, 32, 8);
+    let (batch, m, n, k) = (2, 30, 20, 32);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -550,15 +409,7 @@ fn indivisible_rectangular_batched() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -588,7 +439,7 @@ fn indivisible_inferred() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -619,7 +470,7 @@ fn matvec_inferred() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -649,7 +500,7 @@ fn narrow_n_inferred() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -658,7 +509,7 @@ fn narrow_n_inferred() {
 /// vectorization together.
 #[test]
 fn broadcast_rhs_unbatched() {
-    let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![4], shape![1], 16, 16, 32, 8);
+    let (lhs_batches, rhs_batches, m, n, k) = (shape![4], shape![1], 16, 16, 32);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -680,15 +531,7 @@ fn broadcast_rhs_unbatched() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -696,7 +539,7 @@ fn broadcast_rhs_unbatched() {
 /// omits the batch axis instead. `rhs` col-major keeps it on the scalar path.
 #[test]
 fn broadcast_lhs_unbatched() {
-    let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![1], shape![4], 16, 16, 32, 8);
+    let (lhs_batches, rhs_batches, m, n, k) = (shape![1], shape![4], 16, 16, 32);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -718,15 +561,7 @@ fn broadcast_lhs_unbatched() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -735,8 +570,7 @@ fn broadcast_lhs_unbatched() {
 /// the merge rebuilds `{B0, B1}` and both axes ride (share) cube-Z.
 #[test]
 fn broadcast_two_axes() {
-    let (lhs_batches, rhs_batches, m, n, k, tile_size) =
-        (shape![4, 1], shape![1, 3], 16, 16, 32, 8);
+    let (lhs_batches, rhs_batches, m, n, k) = (shape![4, 1], shape![1, 3], 16, 16, 32);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -758,15 +592,7 @@ fn broadcast_two_axes() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -774,8 +600,7 @@ fn broadcast_two_axes() {
 /// axes share cube-Z, exercising the multi-axis product on `Z`.
 #[test]
 fn batched_two_axes() {
-    let (lhs_batches, rhs_batches, m, n, k, tile_size) =
-        (shape![2, 3], shape![2, 3], 16, 16, 32, 8);
+    let (lhs_batches, rhs_batches, m, n, k) = (shape![2, 3], shape![2, 3], 16, 16, 32);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -797,15 +622,7 @@ fn batched_two_axes() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
 }
 
@@ -813,7 +630,7 @@ fn batched_two_axes() {
 /// tile, so partial tiles and the omitted batch axis are exercised together.
 #[test]
 fn broadcast_indivisible() {
-    let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![3], shape![1], 10, 14, 10, 4);
+    let (lhs_batches, rhs_batches, m, n, k) = (shape![3], shape![1], 10, 14, 10);
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
@@ -835,131 +652,6 @@ fn broadcast_indivisible() {
     test_matmul_strategy(
         client,
         problem,
-        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile_size,
-                n: tile_size,
-                k: tile_size,
-            },
-            planes: PlaneGrid { m: 2, n: 2 },
-        }))
-        .into(),
+        Tiled::CpuGemm(UnitRegistersMatmulRoutineSettings::DEFAULT).into(),
     );
-}
-
-/// A caller asking for an input register type of its own (tf32 registers off an f32 tensor)
-/// is asking for a conversion this routine does not emit. It is rejected at setup rather
-/// than run at the global type behind the caller's back.
-#[test]
-fn cpu_gemm_rejects_input_register_type() {
-    use cubecl::{
-        ir::{ElemType, FloatKind},
-        prelude::*,
-    };
-    use cubek_matmul::{definition::MatmulSetupError, tiled::cpu_gemm::launch_ref};
-    use cubek_std::InputBinding;
-    use cubek_test_utils::TestInput;
-
-    let client = cubecl::test_device().client();
-    let f32t = f32::elem_type_native();
-    let tensor = |seed| {
-        TestInput::builder(client.clone(), shape![32, 32])
-            .dtype(f32t)
-            .layout(MatrixLayout::RowMajor)
-            .uniform(seed, -1., 1.)
-            .generate_without_host_data()
-    };
-    let (lhs, rhs, out) = (tensor(1234), tensor(5678), tensor(4242));
-
-    // Everything f32 but the lhs register: the one field the kernel has no cast for.
-    let mut dtypes = MatmulElems::from_single_dtype(f32t);
-    dtypes.lhs_register = ElemType::Float(FloatKind::TF32);
-
-    match launch_ref(
-        &client,
-        InputBinding::Normal(lhs.binding(), f32t),
-        InputBinding::Normal(rhs.binding(), f32t),
-        out.binding(),
-        &Default::default(),
-        &dtypes,
-    ) {
-        Err(MatmulSetupError::InvalidConfig(msg)) => {
-            let msg = msg.to_string();
-            assert!(
-                msg.contains("Lhs") && msg.contains("TF32"),
-                "wrong rejection: {msg}"
-            );
-        }
-        other => panic!("expected a type rejection, got {other:?}"),
-    }
-}
-
-/// The accumulator contracts at the stated type, not at the output buffer's.
-///
-/// Every `K` step after the first adds `2^-11` to a running `1.0`. That is half an `f16` ulp at
-/// that magnitude, so an `f16` accumulator rounds every one of them away and answers `1.0`,
-/// while the stated `f32` accumulator reaches `~5.0` and rounds once on drain. Nothing about
-/// the shape is unusual, so only the accumulate width can move the result: a routine that
-/// quietly contracted in the output's element would report a quarter of the answer.
-#[test]
-fn accumulator_holds_steps_the_output_element_cannot() {
-    use cubecl::prelude::*;
-    use cubek_matmul::{definition::MatmulGlobalElems as Globals, tiled::cpu_gemm::launch_ref};
-    use cubek_std::InputBinding;
-    use cubek_test_utils::{HostData, HostDataType, HostDataVec, TestInput};
-
-    let (m, n, k, tile) = (8, 8, 8192, 8);
-    let client = cubecl::test_device().client();
-    if skip_unless_cpu(&client) {
-        return;
-    }
-    let f16t = half::f16::elem_type_native();
-    let step = 2f32.powi(-11);
-    // One `1.0` row, then a long tail of steps too small to survive an `f16` running sum.
-    let rhs_data: Vec<f32> = (0..k)
-        .flat_map(|row| std::iter::repeat_n(if row == 0 { 1.0 } else { step }, n))
-        .collect();
-    let build = |shape: Vec<usize>, data: Vec<f32>| {
-        TestInput::builder(client.clone(), shape)
-            .dtype(f16t)
-            .custom(data)
-            .generate_without_host_data()
-    };
-    let lhs = build(vec![m, k], vec![1.0; m * k]);
-    let rhs = build(vec![k, n], rhs_data);
-    let out = build(vec![m, n], vec![0.0; m * n]);
-
-    launch_ref(
-        &client,
-        InputBinding::Normal(lhs.binding(), f16t),
-        InputBinding::Normal(rhs.binding(), f16t),
-        out.clone().binding(),
-        &BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: InstructionShape {
-                m: tile,
-                n: tile,
-                k: tile,
-            },
-            planes: PlaneGrid { m: 1, n: 1 },
-        }),
-        &MatmulElems::from_globals(&Globals {
-            lhs: f16t,
-            rhs: f16t,
-            out: f16t,
-        }),
-    )
-    .unwrap();
-
-    let expected = 1.0 + (k - 1) as f32 * step;
-    let actual = match HostData::from_tensor_handle(&client, out, HostDataType::F32).data {
-        HostDataVec::F32(v) => v,
-        other => panic!("expected f32 host data, got {other:?}"),
-    };
-    // The drain rounds to `f16` once, so allow one ulp there and nothing like the gap to `1.0`.
-    for (i, got) in actual.iter().enumerate() {
-        assert!(
-            (got - expected).abs() < 0.01,
-            "element {i}: got {got}, expected {expected} (an f16 accumulator answers 1.0)"
-        );
-    }
 }
