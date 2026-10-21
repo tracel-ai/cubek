@@ -6,7 +6,7 @@ use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use super::payload::base::Payload;
+use super::payload::base::{Payload, PayloadExpand};
 use crate::*;
 
 /// How stages fill their slots from their own sources, at expand level.
@@ -17,6 +17,9 @@ pub trait StagesFill {
     fn fill_fixed(&mut self, scope: &Scope, slot: usize, region: &RegionExpand);
     /// Fill slot `slot`'s streamed operands from `region`'s window.
     fn fill_streamed(&mut self, scope: &Scope, slot: usize, region: &RegionExpand);
+    /// [`fill_streamed`](StagesFill::fill_streamed) for a region the walk proves inside the runs
+    /// its operands hold ([`Payload::inside_runs`]).
+    fn fill_inside_run(&mut self, scope: &Scope, slot: usize, region: &RegionExpand);
     /// Publish slot `slot`'s last fill where no later fill will (see [`Slot::publish`]).
     fn publish(&mut self, scope: &Scope, slot: usize);
 }
@@ -164,9 +167,14 @@ impl StagesExpand<OperandPair> {
         F: FnMut(&Scope, &mut SlotExpand<OperandPair>, &RegionExpand),
     {
         // The laps whose every region has a next one to fetch: no branch around the fetch, so what
-        // it computes that no lap changes (each unit's place in the stage) leaves the loop.
+        // it computes that no lap changes (each unit's place in the stage) leaves the loop. Over a
+        // run ([`Walk::run`]) they leave its last region to the last laps and fetch unchecked.
         let depth = self.depth;
-        let steady = steady_laps(scope, total, 1, depth);
+        let (held_back, sources) = match walk.run {
+            None => (0, self.sources.clone()),
+            Some(_) => (1, self.sources.__expand_inside_runs_method(scope)),
+        };
+        let steady = steady_laps(scope, total, 1 + held_back, depth);
         let mut steady_body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let target = (j + 1) % depth;
@@ -175,7 +183,7 @@ impl StagesExpand<OperandPair> {
                     .__expand_plus_method(scope, j.into_expand(scope));
                 let next = region_idx.__expand_plus_method(scope, 1usize.into_expand(scope));
                 let upcoming = walk.__expand_region_method(scope, next);
-                self.__expand_fetch_method(scope, target, &upcoming, lhs, rhs);
+                self.__expand_fetch_method(scope, target, &sources, &upcoming, lhs, rhs);
                 let region = walk.__expand_region_method(scope, region_idx);
                 let slot = self.__expand_slot_mut_method(scope, j);
                 compute(scope, slot, &region);
@@ -229,7 +237,10 @@ impl StagesExpand<OperandPair> {
                     let prefetching = next.__expand_lt_method(scope, &total);
                     if_expand(scope, prefetching, |scope| {
                         let upcoming = walk.__expand_region_method(scope, next);
-                        self.__expand_fetch_method(scope, target, &upcoming, &mut lhs, &mut rhs);
+                        let sources = self.sources.clone();
+                        self.__expand_fetch_method(
+                            scope, target, &sources, &upcoming, &mut lhs, &mut rhs,
+                        );
                     });
                     let region = walk.__expand_region_method(scope, region_idx);
                     let slot = self.__expand_slot_mut_method(scope, j);
@@ -247,8 +258,17 @@ impl StagesExpand<OperandPair> {
         };
         // One lap is left whenever the walk holds a region (`ceil(t / d) - floor((t - 1) / d)`),
         // none when it holds nothing, and the body guards every region it names: it runs once,
-        // straight, rather than as a loop around a copy of the contraction.
-        body(scope, steady);
+        // straight, rather than as a loop around a copy of the contraction. The region a run's
+        // steady laps leave may make it two.
+        match walk.run {
+            None => body(scope, steady),
+            Some(_) => {
+                let laps = total
+                    .__expand_plus_method(scope, (depth - 1).into_expand(scope))
+                    .__expand_divided_by_method(scope, depth.into_expand(scope));
+                run_laps(scope, steady, laps, walk.unroll, &mut body);
+            }
+        }
     }
 }
 
@@ -302,6 +322,12 @@ impl<P: Payload<P> + CubeType<ExpandType: Clone>> StagesFill for StagesExpand<P>
             .__expand_refill_method(scope, &sources, region, Refill::EveryRegion);
     }
 
+    fn fill_inside_run(&mut self, scope: &Scope, slot: usize, region: &RegionExpand) {
+        let sources = self.sources.__expand_inside_runs_method(scope);
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_refill_method(scope, &sources, region, Refill::EveryRegion);
+    }
+
     fn publish(&mut self, scope: &Scope, slot: usize) {
         self.__expand_slot_mut_method(scope, slot)
             .__expand_publish_method(scope);
@@ -346,7 +372,22 @@ mod shared {
         let laps = total
             .__expand_plus_method(scope, (depth - 1).into_expand(scope))
             .__expand_divided_by_method(scope, depth.into_expand(scope));
-        let steady = steady_ahead_laps(scope, &walk, stages, total, &mut fill, &mut compute);
+        // Over a run ([`Walk::run`]) the steady laps leave its last region to the last laps and fill
+        // unchecked.
+        let steady = match walk.run {
+            None => steady_ahead_laps(scope, &walk, stages, total, 0, &mut fill, &mut compute),
+            Some(_) => steady_ahead_laps(
+                scope,
+                &walk,
+                stages,
+                total,
+                1,
+                &mut |scope, stages: &mut StagesExpand<T>, slot, region: &RegionExpand| {
+                    stages.fill_inside_run(scope, slot, region)
+                },
+                &mut compute,
+            ),
+        };
         let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let region_idx = lap
@@ -385,26 +426,31 @@ mod shared {
         run_laps(scope, steady, laps, unroll, &mut body);
     }
 
-    /// Deeper than one slot, the laps whose every region has the one `depth - 1` ahead to fill,
-    /// run with no branch around the fill, so what it computes that no lap changes (each unit's
-    /// place in the stage) leaves the loop; the last laps keep the branches. How many ran.
+    /// The laps whose every region has the one `depth - 1` ahead to fill, `held_back` regions
+    /// short of the walk's end, run with no branch around the fill, so what it computes that no
+    /// lap changes (each unit's place in the stage) leaves the loop; the last laps keep the
+    /// branches and the regions held back. One slot fills the region it contracts, so it has
+    /// steady laps only where a region is held back. How many ran.
     fn steady_ahead_laps<T: CubeType, Fill, F>(
         scope: &Scope,
         walk: &WalkExpand,
         stages: &mut StagesExpand<T>,
         total: NativeExpand<usize>,
+        held_back: usize,
         fill: &mut Fill,
         compute: &mut F,
     ) -> NativeExpand<usize>
     where
+        StagesExpand<T>: StagesFill,
         Fill: FnMut(&Scope, &mut StagesExpand<T>, usize, &RegionExpand),
         F: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
     {
         let depth = stages.depth;
-        if depth == 1 {
+        let ahead = depth - 1 + held_back;
+        if ahead == 0 {
             return 0usize.into_expand(scope);
         }
-        let steady = steady_laps(scope, total, depth - 1, depth);
+        let steady = steady_laps(scope, total, ahead, depth);
         let mut steady_body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let region_idx = lap
@@ -413,6 +459,10 @@ mod shared {
                 let ahead = region_idx.__expand_plus_method(scope, (depth - 1).into_expand(scope));
                 let prefetch = walk.__expand_region_method(scope, ahead);
                 fill(scope, stages, (j + depth - 1) % depth, &prefetch);
+                // One slot: the fill is the region contracted next, published before it is read.
+                if depth == 1 {
+                    stages.publish(scope, FIRST_SLOT);
+                }
                 let region = walk.__expand_region_method(scope, region_idx);
                 let slot = stages.__expand_slot_mut_method(scope, j);
                 compute(scope, slot, &region);

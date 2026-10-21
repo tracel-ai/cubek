@@ -2,6 +2,7 @@
 
 use cubecl::zspace::SmallVec;
 
+use crate::space::extent::Extent;
 use crate::{Axis, Space, algebra::gcd};
 
 /// How far one unit of a logical axis moves along one physical axis.
@@ -352,6 +353,41 @@ impl PhysicalAxisMap {
         }
     }
 
+    /// The axes this buffer dim is made of, when it is one index over several axes laid end to
+    /// end, like `K = KB·16 + KI` over `KI` and `KB`. Listed finest first: the finest at scale
+    /// `1`, each next one at the product of the extents before it, no offset, no division. Such a
+    /// dim stays in the buffer whenever each of its axes stays in its extent. A single axis at
+    /// scale `1` is the simplest case ([`identity_axis`](Self::identity_axis)). `None` for any
+    /// other map, or when an axis other than the last has no comptime extent in `space`.
+    pub(crate) fn flattened_axes(
+        &self,
+        space: &Space,
+    ) -> Option<SmallVec<[Axis; Space::MAX_RANK]>> {
+        if self.terms.is_empty() || self.offset != Offset::Static(0) || !self.divisor.is_unit() {
+            return None;
+        }
+        let mut terms = self
+            .terms
+            .iter()
+            .map(|term| match term.scale {
+                Scale::Static(scale) => Some((term.axis, scale)),
+                Scale::Dynamic { .. } => None,
+            })
+            .collect::<Option<SmallVec<[(Axis, usize); Space::MAX_RANK]>>>()?;
+        terms.sort_by_key(|&(_, scale)| scale);
+        let mut next_scale = Some(1);
+        for &(axis, scale) in &terms {
+            if next_scale != Some(scale) || !space.contains(axis) {
+                return None;
+            }
+            next_scale = match space.extent_raw(axis) {
+                Extent::Static(extent) => Some(scale * extent),
+                Extent::Dynamic => None,
+            };
+        }
+        Some(terms.iter().map(|&(axis, _)| axis).collect())
+    }
+
     /// Whether this physical axis is exactly `axis` at coefficient `1`, offset `0`, no division.
     pub(crate) fn is_identity(&self, axis: Axis) -> bool {
         self.identity_axis() == Some(axis)
@@ -393,6 +429,48 @@ mod tests {
         assert!(with_dynamic_offset.offset().is_dynamic());
         assert!(!with_dynamic_offset.has_dynamic_scale());
         assert_eq!(with_dynamic_offset.dynamic_scale_count(), 0);
+    }
+
+    /// The axes come back finest first, whatever order the terms are written in. A gap or
+    /// overlap between them, an offset, a division, a dynamic scale, or a finer axis with no
+    /// comptime extent gives `None`.
+    #[test]
+    fn flattened_axes_come_finest_first() {
+        const C: Axis = Axis(2);
+        let space = Space::new(&[(A, 4), (B, 16), (C, 3)]);
+        let axes = |map: &PhysicalAxisMap| map.flattened_axes(&space).map(|axes| axes.to_vec());
+
+        assert_eq!(axes(&PhysicalAxisMap::of(A)), Some(vec![A]));
+        assert_eq!(
+            axes(&PhysicalAxisMap::affine(&[(A, 16), (B, 1)])),
+            Some(vec![B, A])
+        );
+        assert_eq!(
+            axes(&PhysicalAxisMap::affine(&[(C, 64), (A, 16), (B, 1)])),
+            Some(vec![B, A, C])
+        );
+
+        assert_eq!(axes(&PhysicalAxisMap::affine(&[(A, 32), (B, 1)])), None);
+        assert_eq!(axes(&PhysicalAxisMap::affine(&[(A, 8), (B, 1)])), None);
+        assert_eq!(axes(&PhysicalAxisMap::affine(&[(A, 16), (B, 2)])), None);
+        assert_eq!(axes(&PhysicalAxisMap::of(A).shifted(1)), None);
+        assert_eq!(axes(&PhysicalAxisMap::of(A).over(2)), None);
+        assert_eq!(
+            axes(&PhysicalAxisMap::scaled(&[(A, Scale::Dynamic { max: 4 })])),
+            None
+        );
+        assert_eq!(axes(&PhysicalAxisMap::of(Axis(7))), None);
+
+        let finer_dynamic = Space::new(&[(A, 4), (B, 16)]).with_dynamic(&[B]);
+        let blocked = PhysicalAxisMap::affine(&[(A, 16), (B, 1)]);
+        assert_eq!(blocked.flattened_axes(&finer_dynamic), None);
+        let coarser_dynamic = Space::new(&[(A, 4), (B, 16)]).with_dynamic(&[A]);
+        assert_eq!(
+            blocked
+                .flattened_axes(&coarser_dynamic)
+                .map(|axes| axes.to_vec()),
+            Some(vec![B, A])
+        );
     }
 
     #[test]

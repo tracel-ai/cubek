@@ -38,6 +38,10 @@ pub struct Walk {
     /// Whether iterating this walk unrolls.
     #[cube(comptime)]
     pub(crate) unroll: bool,
+    /// The axis this walk steps a run along ([`Region::walk_within`]), where it steps nothing
+    /// else and in order: every region but the last then lies inside the run.
+    #[cube(comptime)]
+    pub(crate) run: Option<Axis>,
 }
 
 #[cube]
@@ -96,6 +100,7 @@ impl Walk {
             space: host,
             level,
             unroll: comptime!(false),
+            run: comptime!(None),
         }
     }
 
@@ -252,6 +257,7 @@ impl Walk {
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
+            run: comptime!(self.run),
         }
     }
 

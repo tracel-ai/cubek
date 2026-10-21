@@ -996,10 +996,14 @@ impl Memory {
             }),
             start,
             self.map.clone(),
-            // `until` is a runtime bound, so the window masks from here down.
+            // `until` is a runtime bound, so the window masks from here down; where it masked
+            // nothing before, only the run's end needs it.
             comptime!(Access {
                 whole: false,
-                overhang: Overhang::Masked,
+                overhang: match self.access.overhang {
+                    Overhang::Never | Overhang::Fits => Overhang::Run,
+                    overhang => overhang,
+                },
                 write: self.access.write,
                 fill: self.access.fill,
                 storage: self.access.storage,
