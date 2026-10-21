@@ -1,4 +1,4 @@
-use crate::microkernel::MatmulPartitioning;
+use crate::microkernel::{MatmulPartitioning, MatmulSpace};
 use crate::microkernel::staged_walk::{MatmulCubeWrite, MatmulStage};
 use crate::microkernel::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
@@ -42,6 +42,9 @@ pub enum CubeStagedTmaStoreRefusal {
     UnalignedStart,
     /// The box's edge is past what one descriptor's box holds.
     BoxPastDescriptor,
+    /// The product is a packed one's, its box stated in the blocks the weight's scales cut and
+    /// the positions inside one, where a descriptor's box is the output's rows and columns.
+    BlockSplit,
 }
 
 impl CubeStagedTmaStoreRefusal {
@@ -68,6 +71,8 @@ impl CubeStagedTmaStoreRefusal {
             Some(Self::SplitAlongK)
         } else if !partitioning.batch_axes().is_empty() {
             Some(Self::Batched)
+        } else if partitioning.space() == MatmulSpace::BlockSplit {
+            Some(Self::BlockSplit)
         } else if buffers.alignments.get(out).is_stored_piece()
             || !buffers
                 .alignments
