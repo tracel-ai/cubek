@@ -11,8 +11,8 @@
 //! buffer. A wide read wants a unit owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
-use cubecl::{client::Client, prelude::*};
 use cubecl::tile::{Launcher, Projection, kind::Field, launch::Grid, layout::PhysicalAxisMap};
+use cubecl::{client::Client, prelude::*};
 
 use crate::{
     definition::MatmulSetupError,

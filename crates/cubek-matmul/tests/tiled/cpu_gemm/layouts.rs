@@ -2,6 +2,10 @@
 
 use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
+use cubecl::tile::{
+    Axis, Geometry, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
+    launch::Grid,
+};
 use cubecl::{
     CubeCount, CubeDim, client::Client, frontend::Scalar, ir::AddressType, prelude::*,
     zspace::Shape, zspace::Tiling, zspace::shape,
@@ -13,10 +17,6 @@ use cubek_matmul::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubecl::tile::{
-    Axis, Geometry, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
-    launch::Grid,
-};
 
 use super::Dims;
 use crate::harness::assert_result;

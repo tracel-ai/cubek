@@ -34,6 +34,9 @@
 //!
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
+use cubecl::tile::{
+    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::Grid,
+};
 use cubecl::{
     CubeCount, CubeDim,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -44,9 +47,6 @@ use cubecl::{
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
-};
-use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::Grid,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit

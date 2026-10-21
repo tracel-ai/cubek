@@ -323,6 +323,7 @@ enum TileOrder {
 
 fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrder) {
     use cubecl::ir::FloatKind;
+    use cubecl::tile::Axis;
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
@@ -335,7 +336,6 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
     use cubek_test_utils::{
         ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
     };
-    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 
@@ -473,6 +473,7 @@ fn cmma_never_refuses_a_tiled_weight_under_tma() {
 /// plan stages to it, whatever this `m` would have chosen, and moves it under the Tiled delivery.
 #[test]
 fn cmma_tiled_weight_names_the_stage_across_m() {
+    use cubecl::tile::Axis;
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
@@ -485,7 +486,6 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     use cubek_test_utils::{
         ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
     };
-    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 
@@ -646,6 +646,7 @@ fn cmma_refuses_stored_operands_that_disagree_on_k() {
 /// A strip of no boxes is refused as a plan, where the kernel would only assert it at expansion.
 #[test]
 fn cmma_rejects_a_strip_of_no_boxes() {
+    use cubecl::tile::space::CubeOrder;
     use cubek_matmul::{
         definition::MatmulSetupError,
         tiled::{
@@ -653,7 +654,6 @@ fn cmma_rejects_a_strip_of_no_boxes() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
-    use cubecl::tile::space::CubeOrder;
 
     for order in [CubeOrder::SwizzleRow(0), CubeOrder::SwizzleCol(0)] {
         let blueprint = CmmaBlueprint {
@@ -687,11 +687,11 @@ fn cmma_rejects_a_strip_of_no_boxes() {
 /// pins a stated width against the grid's own order rather than whatever the selector picked.
 #[test]
 fn cmma_swizzled_cube_order_f32() {
+    use cubecl::tile::space::CubeOrder;
     use cubek_matmul::tiled::{
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
-    use cubecl::tile::space::CubeOrder;
 
     for order in [
         CubeOrder::RowMajor,
@@ -720,11 +720,11 @@ fn cmma_swizzled_cube_order_f32() {
 /// what is judged and a device without the instruction turns down every blueprint whatever it is.
 #[test]
 fn cmma_takes_a_strip_the_grid_does_not_divide() {
+    use cubecl::tile::space::CubeOrder;
     use cubek_matmul::tiled::{
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
-    use cubecl::tile::space::CubeOrder;
 
     // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
     // leaves ragged.
@@ -752,6 +752,7 @@ fn cmma_takes_a_strip_the_grid_does_not_divide() {
 /// no row of the tile is one run.
 #[test]
 fn cmma_refuses_the_storage_it_cannot_read() {
+    use cubecl::tile::Axis;
     use cubek_matmul::{
         definition::{MatmulElems, MatmulSetupError},
         tiled::{
@@ -761,7 +762,6 @@ fn cmma_refuses_the_storage_it_cannot_read() {
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::TestInput;
-    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 

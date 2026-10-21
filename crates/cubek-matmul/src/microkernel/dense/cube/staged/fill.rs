@@ -6,11 +6,11 @@ use crate::microkernel::{
     MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Scratch, StageStorage, launch::Delivery};
+use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who fills the cube microkernel's stages: the cube's units, the copy engine their lines are
 /// handed to, or the TMA engine, and how many of the cube's planes do nothing but fill them. A

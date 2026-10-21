@@ -1,10 +1,10 @@
 //! [`MatrixBinding`]: a matrix operand's binding, asked how it is stored.
 
+use cubecl::tile::{Axis, Geometry, Level, Partitioning, Space};
 use cubecl::{
     prelude::TensorBinding,
     zspace::{Tiling, metadata::Metadata},
 };
-use cubecl::tile::{Axis, Geometry, Level, Partitioning, Space};
 
 use crate::{definition::MatmulSetupError, tiled::labels};
 

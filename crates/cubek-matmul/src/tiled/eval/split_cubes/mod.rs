@@ -22,6 +22,12 @@
 //! wins at `splits = 1` is not a split at all, which is the control.
 
 use crate::definition::{MatmulCost, MatmulGlobalElems};
+use cubecl::tile::{
+    Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
+    Space, TileArg, TileArgLaunch, TileSpec,
+    launch::{AccumulateArg, AccumulateArgLaunch, Grid},
+    layout::PhysicalAxisMap,
+};
 use cubecl::{
     CubeCount, CubeDim,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -34,12 +40,6 @@ use cubecl::{
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
-};
-use cubecl::tile::{
-    Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
-    Space, TileArg, TileArgLaunch, TileSpec,
-    launch::{AccumulateArg, AccumulateArgLaunch, Grid},
-    layout::PhysicalAxisMap,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.

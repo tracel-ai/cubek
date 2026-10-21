@@ -5,14 +5,14 @@ use crate::microkernel::{
 };
 use crate::stored::{Spread, Walked};
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 
 /// Bytes one stored word of a packed weight holds: it binds one `u32` per line whatever it packs.
 const WORD_BYTES: usize = core::mem::size_of::<u32>();

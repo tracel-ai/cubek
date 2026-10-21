@@ -1,6 +1,7 @@
 //! Storing a tensor in storage tiles and back: the tiled buffer holds the tiles it states,
 //! the round trip is the identity, and what cannot be tiled is refused on the host.
 
+use cubecl::tile::{Axis, Geometry, kind::Field};
 use cubecl::{
     bytes::Bytes, ir::ElemType, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
     zspace::Shape,
@@ -10,7 +11,6 @@ use cubek_matmul::{
     tiled::storage::{StorageLevels, StoragePartitioning, tile, untile},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
-use cubecl::tile::{Axis, Geometry, kind::Field};
 
 const ROWS: Axis = Axis(0);
 const COLS: Axis = Axis(1);

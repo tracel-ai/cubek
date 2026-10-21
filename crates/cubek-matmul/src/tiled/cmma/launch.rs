@@ -1,14 +1,14 @@
 //! Launch wiring for the Cmma routine: one entry ([`launch_ref`]) serving both
 //! deliveries; the blueprint decides, and only the operand construction differs.
 
+use cubecl::tile::{
+    Axis, Geometry, Launcher, Space, TileArgLaunch,
+    launch::{Delivery, Grid, TmaBox, TmaLanding, TmaTiles},
+};
 use cubecl::{client::Client, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand_tiled_typed, tma_operand_typed},
-};
-use cubecl::tile::{
-    Axis, Geometry, Launcher, Space, TileArgLaunch,
-    launch::{Delivery, Grid, TmaBox, TmaLanding, TmaTiles},
 };
 
 use crate::{

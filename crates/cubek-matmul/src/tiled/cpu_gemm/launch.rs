@@ -1,8 +1,8 @@
 //! Launch wiring for the CpuGemm routine.
 
+use cubecl::tile::{Axis, Geometry, Launcher, Space, launch::Grid};
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubecl::tile::{Axis, Geometry, Launcher, Space, launch::Grid};
 
 use crate::{
     definition::{

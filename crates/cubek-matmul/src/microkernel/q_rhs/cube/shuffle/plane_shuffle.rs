@@ -6,12 +6,12 @@ use crate::microkernel::MatmulPartitioning;
 use crate::microkernel::dense::cube::{CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings};
 use crate::microkernel::dense::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use crate::microkernel::{MatmulOperand, MatmulOperands, MatmulRead, MatmulWorkItem};
-use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, blocked};
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Axis, Instruction, Levels, Space};
+use cubek_std::Hardware;
+use cubek_std::matmul_axes::{K, blocked};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// The software plane: its units take `K`'s scale blocks in turns, each summing its share in
 /// registers, the float product's cube shuffle ([`CubeShuffleMicrokernel`]) over a packed weight.

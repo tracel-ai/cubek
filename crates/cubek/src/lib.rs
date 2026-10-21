@@ -28,7 +28,6 @@ pub use cubek_std as std;
 #[cfg(feature = "stdlib")]
 pub use cubek_std::config;
 
-
 #[cfg(feature = "fft")]
 pub use cubek_fft as fft;
 

@@ -4,13 +4,13 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
+use cubecl::tile::launch::Refusal;
 use cubecl::{
     CubeDim,
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
 };
-use cubecl::tile::launch::Refusal;
 
 /// The device, as the routines see it.
 ///

@@ -19,11 +19,11 @@
 
 use crate::tiled::storage::{StorageLevels, StoragePartitioning};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::tile::Axis;
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 use cubek_std::layout::{Fragments, assemble, fragments_of};
 use cubek_std::matmul_axes::{KB, KI, NI};
-use cubecl::tile::Axis;
 
 /// NVFP4's block: sixteen values along `k` under one scale.
 pub const BLOCK: usize = 16;

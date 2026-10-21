@@ -1,8 +1,8 @@
 use crate::microkernel::dense::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
 use crate::microkernel::staging::StageRing;
 use crate::microkernel::{MatmulOperands, MatmulRead};
-use cubecl::{self as cubecl, cube, prelude::*};
 use cubecl::tile::{Axis, Instruction, Region, Semiring, StageStorage, Stages, Tile};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell
 /// of the operands' element for every cell the accumulator holds. None for a wide step.

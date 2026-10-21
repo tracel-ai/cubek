@@ -54,6 +54,7 @@ fn selector_vs_multi_level() {
 #[test]
 #[ignore = "timing probe, run manually"]
 fn swizzle_width_probe() {
+    use cubecl::tile::space::CubeOrder;
     use cubek_matmul::{
         routine::BlueprintStrategy,
         tiled::{
@@ -62,7 +63,6 @@ fn swizzle_width_probe() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
-    use cubecl::tile::space::CubeOrder;
 
     for id in [
         "square_1x8192_rr_f16",

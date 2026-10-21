@@ -1,17 +1,17 @@
 use crate::microkernel::{
     MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulOrder, MatmulWorkItem,
 };
-use cubek_std::Hardware;
 use cubecl::tile::launch::Refusal;
+use cubek_std::Hardware;
 
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::wgmma::WARPGROUP_UNITS;
-use cubek_std::microkernel::ArithmeticInstruction;
 use cubecl::tile::{
     Axis, Instruction, MmaOperands, RegisterBlock, StageStorage, ops::matmul::MmaIo,
     stage::RowChunks,
 };
+use cubecl::wgmma::WARPGROUP_UNITS;
+use cubek_std::microkernel::ArithmeticInstruction;
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
 /// by either transport, or the software instruction every device runs.

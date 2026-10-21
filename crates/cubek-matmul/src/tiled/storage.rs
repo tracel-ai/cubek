@@ -8,16 +8,16 @@
 //! outermost stored tile, one cube per tile. Whichever side is storage-tiled is read or written
 //! through its layout, however many levels lie inside that tile.
 
+use cubecl::tile::{
+    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
+    layout::StorageMisfit,
+};
 use cubecl::{
     client::Client,
     ir::ElemType,
     prelude::*,
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
-};
-use cubecl::tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
-    layout::StorageMisfit,
 };
 
 use crate::definition::MatmulSetupError;

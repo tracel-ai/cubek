@@ -8,13 +8,13 @@ use crate::microkernel::staging::StageRing;
 use crate::microkernel::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
-use cubek_std::Hardware;
-use cubek_std::matmul_axes::{M, N};
-use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 use cubecl::tile::Scratch;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
+use cubek_std::Hardware;
+use cubek_std::matmul_axes::{M, N};
+use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 
 /// A box of the output several cubes own together: each cube runs a [`CubeStagedMicrokernel`]
 /// over its own run of `K`, and the parts reach the output once, as the routine's

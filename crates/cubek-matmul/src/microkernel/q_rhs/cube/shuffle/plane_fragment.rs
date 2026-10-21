@@ -10,11 +10,11 @@ use crate::microkernel::{
     MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulRead, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubek_std::Hardware;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Axis, Instruction, Levels, Space};
+use cubek_std::Hardware;
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// Steps of `K` the tensor-core plane's window holds: eight of the decoding instruction's, so
 /// each unit's run of it is thirty-two values, sixteen bytes of codes, and a tile of tile order's

@@ -19,8 +19,8 @@ use cubek_std::selector::divisor_at_most;
 use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
-use cubecl::{features::Tma as TmaFeature, ir::ElemType};
 use cubecl::tile::{Space, launch::Delivery, space::CubeOrder};
+use cubecl::{features::Tma as TmaFeature, ir::ElemType};
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},

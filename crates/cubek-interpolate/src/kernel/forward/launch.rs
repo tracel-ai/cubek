@@ -10,11 +10,11 @@ use crate::{
     InterpolateError, InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
-use cubecl::{client::Client, ir::ElemType, prelude::*};
 use cubecl::tile::{
     Geometry, Launcher,
     launch::{BoundaryPolicy, Grid},
 };
+use cubecl::{client::Client, ir::ElemType, prelude::*};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///

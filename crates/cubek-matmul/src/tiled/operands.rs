@@ -1,7 +1,7 @@
 //! The axes every tiled routine builds its space over.
 
-pub(crate) use cubek_std::matmul_axes::{K, M, N, batch_axis};
 use cubecl::tile::{Axis, Space};
+pub(crate) use cubek_std::matmul_axes::{K, M, N, batch_axis};
 
 /// The space a routine's levels are stated over before any problem: every axis dynamic, so the
 /// counts a shape decides print as unknown and the tiling itself still reads. The axis order is

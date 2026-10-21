@@ -1,11 +1,11 @@
 use crate::microkernel::MatmulDim;
 use crate::microkernel::MatmulOperand;
 use crate::stored::Packing;
-use cubecl::zspace::metadata::Metadata;
-use cubek_std::layout::contiguous;
 use cubecl::tile::launch::{Arg, Labelled};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Geometry, Projection};
+use cubecl::zspace::metadata::Metadata;
+use cubek_std::layout::contiguous;
 
 /// The order an operand is bound in: the axes the product names, or the order its buffer steps.
 ///

@@ -1,6 +1,6 @@
 use core::num::NonZeroUsize;
-use cubek_std::matmul_axes::{M, N};
 use cubecl::tile::Axis;
+use cubek_std::matmul_axes::{M, N};
 
 /// How a cube's planes are laid out over its box of the output: `along_m` planes along `m` by
 /// `along_n` along `n`, each plane owning its own share.

@@ -1,11 +1,11 @@
 //! A quantized operand as the one tile a kernel reads.
 
-use cubecl_common::quant::scheme::QuantScheme;
 use cubecl::tile::{
     TileArgLaunch,
     kind::Field,
     launch::{Arg, Labelled, Refusal},
 };
+use cubecl_common::quant::scheme::QuantScheme;
 
 /// `values` under their `scales`, finest level first, as the one tile a kernel reads: the values
 /// packed as `scheme` stores them, each scale level packed as the scheme's field for it and

@@ -2,8 +2,8 @@ use crate::microkernel::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
     MatmulOperands, MatmulOrder, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
-use cubek_std::{Hardware, Instructions, manual_mma};
 use cubecl::tile::launch::Refusal;
+use cubek_std::{Hardware, Instructions, manual_mma};
 
 use crate::microkernel::dense::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
@@ -14,10 +14,10 @@ use crate::stored::Operand;
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
-use cubek_std::matmul_axes::{K, M, N, blocked};
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
+use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The

@@ -5,11 +5,11 @@ use crate::microkernel::dense::plane::{
 };
 use crate::microkernel::staging::StageRing;
 use crate::microkernel::{MatmulOperands, MatmulRead};
-use cubecl::{self as cubecl, cube, prelude::*};
 use cubecl::tile::{
     Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
     stage::{AsyncStage, AsyncStageExpand, Role},
 };
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The comptime decisions a cube's walk reads, kept apart from the microkernel's layout and output
 /// so the walk runs from these alone.

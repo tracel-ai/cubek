@@ -1,6 +1,6 @@
 use crate::Hardware;
-use cubecl::{CubeCount, CubeDim};
 use cubecl::tile::launch::{Refusal, spawnable};
+use cubecl::{CubeCount, CubeDim};
 
 /// The half of a routine's `prepare` the blueprint does not hold as a field:
 /// the cube the levels imply on this device, the grid the extents imply, and
