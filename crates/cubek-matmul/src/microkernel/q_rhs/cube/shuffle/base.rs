@@ -91,7 +91,7 @@ pub trait CubeShuffleQRhsPlane:
     /// The instruction the plane contracts through.
     fn tile_instruction(&self) -> Instruction;
 
-    /// How the plane's units read the weight.
+    /// How the plane's units read each input.
     fn reads(&self, item: &MatmulWorkItem) -> MatmulOperands<MatmulRead>;
 
     /// What the plane's accesses require of the widths, inside a cube placed by `partitioning`.

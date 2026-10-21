@@ -102,12 +102,10 @@ impl CubeShuffleQRhsPlane for PlaneFragmentMicrokernel {
         PlaneFragmentMicrokernel::tile_instruction(self)
     }
 
-    /// Dequantized at the activation's element, a fragment's two operands being one element.
+    /// Every packed input dequantized at the element they decode into, a fragment's two operands
+    /// being one element ([`MatmulWorkItem::decoding_reads`]).
     fn reads(&self, item: &MatmulWorkItem) -> MatmulOperands<MatmulRead> {
-        MatmulOperands {
-            rhs: MatmulRead::Dequantized(item.elements.lhs),
-            ..MatmulOperands::all(MatmulRead::AsBound)
-        }
+        item.decoding_reads()
     }
 
     fn vectorize_in_cube(
