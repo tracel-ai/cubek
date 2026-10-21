@@ -40,7 +40,7 @@ impl MatrixAxes {
     }
 
     /// An operand's matrix against the output `out` it contracts into: the axes `out` lacks as
-    /// one edge, however many digits spell the contraction, and the free axis beside them as the
+    /// one edge, however many axes make up the contraction, and the free axis beside them as the
     /// other. The contraction is the window's trailing run of axes `out` lacks, or the run below
     /// its free trailing axis.
     pub(crate) fn operand(window: &Space, out: &Space) -> Self {

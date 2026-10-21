@@ -22,7 +22,7 @@ use super::{Form, implied};
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
-/// `k` as the two digits a scale block makes of it: the block, and the value inside it.
+/// `k` as the two axes a scale block makes of it: the block, and the value inside it.
 const KB: Axis = Axis(3);
 const KI: Axis = Axis(4);
 
@@ -276,9 +276,9 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
 }
 
 /// [`check_block_scaled`] under per-tensor factors, `k` split into its blocks and the value inside
-/// one (`KB·KI`), as a packed product states it: the values over both digits, their block scales a
-/// packed tile of `e4m3` fields, four a word along `KB`, which the block-scaled instruction reads
-/// as stored once `factor` names it, and each step of the instruction four blocks deep.
+/// one (`KB·KI`), as a packed product states it: the values over both axes, their block scales
+/// words of four `e4m3` scales, one a word of `KB` (`KB` divided by four), as the block-scaled
+/// instruction reads them, and each step of the instruction four blocks deep, one word.
 fn check_block_scaled_in_blocks(k: usize, (a_global, b_global): (f32, f32)) {
     let client = cubecl::test_device().client();
     if !offers_nvfp4(&client) {
@@ -318,7 +318,7 @@ fn check_block_scaled_in_blocks(k: usize, (a_global, b_global): (f32, f32)) {
             .collect()
     };
     let codes = |codes: &[u8]| pack(&codes.iter().map(|&c| c as u32).collect::<Vec<_>>(), 4);
-    let scale_fields = |values: &[f32]| {
+    let scale_words = |values: &[f32]| {
         let fields: Vec<u32> = values
             .iter()
             .map(|&v| e4m3::from_f32(v).to_bits() as u32)
@@ -354,11 +354,17 @@ fn check_block_scaled_in_blocks(k: usize, (a_global, b_global): (f32, f32)) {
             tensor(
                 client.create_from_slice(u32::as_bytes(&scales)),
                 rows,
-                blocks,
+                k / STEP,
             ),
             words,
             1,
-            TileSpec::new(along_k(axis).scales_per(KB)).packed(Field::of_float(FloatKind::E4M3)),
+            TileSpec::new(Projection::new(
+                &[axis, KB],
+                &[
+                    PhysicalAxisMap::of(axis),
+                    PhysicalAxisMap::of(KB).over(STEP / BLOCK),
+                ],
+            )),
         );
         let global = TileArgLaunch::new(
             tensor(client.create_from_slice(f32::as_bytes(&[global])), 1, 1),
@@ -378,14 +384,14 @@ fn check_block_scaled_in_blocks(k: usize, (a_global, b_global): (f32, f32)) {
         launcher.cube_dim(),
         operand(
             codes(&a_codes),
-            scale_fields(&a_scale_values),
+            scale_words(&a_scale_values),
             m,
             M,
             a_global,
         ),
         operand(
             codes(&b_codes),
-            scale_fields(&b_scale_values),
+            scale_words(&b_scale_values),
             n,
             N,
             b_global,

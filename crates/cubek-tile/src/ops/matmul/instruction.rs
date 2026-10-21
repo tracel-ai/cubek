@@ -28,19 +28,6 @@ impl Instruction {
             Self::Cmma | Self::Wgmma => false,
         }
     }
-
-    /// Whether this instruction reads the innermost scales of the values it meets as they are
-    /// stored: the block-scaled one takes a word of packed `e4m3` block scales as its scale
-    /// register, where every other takes scales as numbers.
-    pub fn reads_scales_as_stored(self) -> bool {
-        matches!(
-            self,
-            Self::Mma {
-                operands: MmaOperands::BlockScaled,
-                ..
-            }
-        )
-    }
 }
 
 /// What a manual-mma instruction's operands are: the blueprint's choice, which every leaf reads, so
