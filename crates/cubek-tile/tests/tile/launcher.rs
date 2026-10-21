@@ -1030,6 +1030,45 @@ fn arg_checked_and_vectorized_is_refused() {
     );
 }
 
+/// A contiguous dim the launch counts in blocks and a position inside one is in bounds as a single
+/// axis would be: where only the rows overhang, it takes lines wider than one and no mask, and
+/// the rows take the mask.
+#[test]
+fn arg_vectorized_along_a_blocked_dim_with_overhanging_rows_succeeds() {
+    let client = cubecl::test_device().client();
+    const KB: Axis = Axis(3);
+    const KI: Axis = Axis(4);
+    // M = 3 overhangs its leaf (8); K = 4 blocks of 16, whole.
+    let launch = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, 3), (KB, 4), (KI, 16)]),
+            cubek_tile::Levels::leaf(&[(M, 8), (KB, 1), (KI, 16)])
+                .walk_every(&[KB])
+                .cubes(&[M])
+                .build(),
+        ),
+        Form::Dynamic,
+    );
+    let blocked = Projection::new(
+        &[M, KB, KI],
+        &[
+            PhysicalAxisMap::of(M),
+            PhysicalAxisMap::disjoint(&[(KB, 16), (KI, 1)]),
+        ],
+    );
+    let arg = launch
+        .arg(binding(&client, &[3, 64]), f32::elem_type_native())
+        .gathered(blocked)
+        .vectorize(4)
+        .build()
+        .unwrap();
+    assert_eq!(
+        arg.spec.boundaries.as_slice(),
+        &[Some(Boundary::Zero), None]
+    );
+}
+
 #[test]
 fn arg_vectorized_with_outer_axis_overhang_succeeds() {
     let client = cubecl::test_device().client();
