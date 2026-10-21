@@ -72,9 +72,29 @@ fn values(size: usize, seed: usize) -> Vec<f32> {
         .collect()
 }
 
+/// The selector's own tilings, run on every case.
+const INFERRED: [UnitStrategy; 2] = [
+    UnitStrategy::Inferred(TileSizeSelection::MinTileSize),
+    UnitStrategy::Inferred(TileSizeSelection::MaxTileSize),
+];
+
+/// Every tiling, presets included. A preset only changes the matmul partition,
+/// and each one is a set of kernels the cpu runtime compiles slowly in debug,
+/// so the presets run on the small cases only.
+const ALL: [UnitStrategy; 7] = [
+    UnitStrategy::Inferred(TileSizeSelection::MinTileSize),
+    UnitStrategy::Inferred(TileSizeSelection::MaxTileSize),
+    UnitStrategy::Fixed(UnitTiling::NARROW),
+    UnitStrategy::Fixed(UnitTiling::BALANCED),
+    UnitStrategy::Fixed(UnitTiling::WIDE),
+    UnitStrategy::Fixed(UnitTiling::DEEP),
+    UnitStrategy::Fixed(UnitTiling::TALL),
+];
+
 #[allow(clippy::too_many_arguments)]
 fn check<const N: usize>(
     client: &Client,
+    strategies: &[UnitStrategy],
     batch: usize,
     spatial: [usize; N],
     channels: usize,
@@ -152,15 +172,7 @@ fn check<const N: usize>(
         } else {
             upload(client, &[out_channels], &bias, false)
         };
-        for tile_size in [
-            UnitStrategy::Inferred(TileSizeSelection::MinTileSize),
-            UnitStrategy::Inferred(TileSizeSelection::MaxTileSize),
-            UnitStrategy::Fixed(UnitTiling::NARROW),
-            UnitStrategy::Fixed(UnitTiling::BALANCED),
-            UnitStrategy::Fixed(UnitTiling::WIDE),
-            UnitStrategy::Fixed(UnitTiling::DEEP),
-            UnitStrategy::Fixed(UnitTiling::TALL),
-        ] {
+        for &tile_size in strategies {
             for with_bias in [false, true] {
                 let out = upload(client, &out_shape, &vec![99.0; dy.len()], channel_first);
                 launch_ref(
@@ -252,9 +264,10 @@ fn check<const N: usize>(
 
 pub fn check_unit_reference(client: &Client) {
     check_unit_channel_padding(client);
-    check(client, 2, [13], 3, 7, [3], [2], [2], [(1, 2)]);
+    check(client, &INFERRED, 2, [13], 3, 7, [3], [2], [2], [(1, 2)]);
     check(
         client,
+        &INFERRED,
         2,
         [7, 9],
         4,
@@ -266,6 +279,7 @@ pub fn check_unit_reference(client: &Client) {
     );
     check(
         client,
+        &INFERRED,
         2,
         [9, 11],
         17,
@@ -277,6 +291,7 @@ pub fn check_unit_reference(client: &Client) {
     );
     check(
         client,
+        &INFERRED,
         2,
         [5, 7],
         32,
@@ -288,6 +303,7 @@ pub fn check_unit_reference(client: &Client) {
     );
     check(
         client,
+        &INFERRED,
         1,
         [4, 5, 7],
         4,
@@ -300,6 +316,7 @@ pub fn check_unit_reference(client: &Client) {
     // Cross the split-K threshold with an uneven final interval and tail channels.
     check(
         client,
+        &INFERRED,
         2,
         [37, 61],
         3,
@@ -309,9 +326,10 @@ pub fn check_unit_reference(client: &Client) {
         [1, 1],
         [(1, 1), (1, 1)],
     );
-    check(client, 1, [5003], 4, 8, [3], [1], [1], [(1, 1)]);
+    check(client, &INFERRED, 1, [5003], 4, 8, [3], [1], [1], [(1, 1)]);
     check(
         client,
+        &INFERRED,
         1,
         [2, 17, 137],
         3,
@@ -324,6 +342,7 @@ pub fn check_unit_reference(client: &Client) {
     // Many partials and a short final split, as in large feature maps.
     check(
         client,
+        &INFERRED,
         4,
         [161, 163],
         4,
@@ -340,6 +359,7 @@ pub fn check_unit_channel_padding(client: &Client) {
     // equals the padded C_out. Comparing C_in to the padding misses this tail.
     check(
         client,
+        &ALL,
         2,
         [5, 7],
         8,
@@ -349,7 +369,7 @@ pub fn check_unit_channel_padding(client: &Client) {
         [1, 1],
         [(1, 1), (1, 1)],
     );
-    check(client, 1, [9], 4, 3, [3], [2], [1], [(1, 1)]);
+    check(client, &ALL, 1, [9], 4, 3, [3], [2], [1], [(1, 1)]);
 }
 
 #[test]

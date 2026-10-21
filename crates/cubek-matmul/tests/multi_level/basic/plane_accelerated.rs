@@ -6,14 +6,61 @@
 
 use cubecl::prelude::*;
 use cubek_matmul::{
-    definition::MatmulElems,
+    definition::{MatmulElems, MatmulProblem},
+    launch::launch_ref,
     multi_level::{Strategy as MultiLevel, definition::adjust_dtypes},
 };
-use cubek_test_utils::{TestOutcome, ValidationResult};
+use cubek_std::InputBinding;
+use cubek_test_utils::{
+    ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
+};
 
 use crate::harness::{
-    client, f16_elems, f32_elems, rect, run_with_strides, square, test_matmul_strategy,
+    assert_result, client, f16_elems, f32_elems, rect, square, test_matmul_strategy,
 };
+
+/// Binary fractions survive TF32 conversion, so these layout tests keep the f32 tolerance.
+fn run_exact_f32(client: Client, problem: MatmulProblem) -> TestOutcome {
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+        .dtype(problem.global_dtypes.lhs)
+        .custom(
+            (0..problem.lhs_shape.num_elements())
+                .map(|index| ((index % 17) as f32 - 8.) / 8.)
+                .collect(),
+        )
+        .generate_with_f32_host_data();
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .dtype(problem.global_dtypes.rhs)
+        .custom(
+            (0..problem.rhs_shape.num_elements())
+                .map(|index| (((index * 3 + 1) % 17) as f32 - 8.) / 8.)
+                .collect(),
+        )
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(problem.global_dtypes.out)
+        .uniform(4242, 10., 100.)
+        .generate_without_host_data();
+    let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
+    let strategy = MultiLevel::SimpleCyclicCmma(Default::default()).into();
+    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
+        launch_ref(
+            &strategy,
+            c,
+            InputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs),
+            InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs),
+            out.clone().binding(),
+            &mut dtypes,
+        )
+        .into()
+    });
+    match outcome {
+        ExecutionOutcome::Executed => {
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
+        }
+        ExecutionOutcome::CompileError(error) => TestOutcome::CompileError(error),
+    }
+}
 
 #[test]
 fn simple_cyclic_cmma() {
@@ -45,11 +92,7 @@ fn simple_cyclic_cmma_runs_a_small_f32_problem() {
         .enforce();
         return;
     }
-    let outcome = run_with_strides(
-        client,
-        rect(32, 32, 64, f32_elems()),
-        MultiLevel::SimpleCyclicCmma(Default::default()).into(),
-    );
+    let outcome = run_exact_f32(client, rect(32, 32, 64, f32_elems()));
     assert!(
         matches!(outcome, TestOutcome::Validated(ValidationResult::Pass)),
         "expected the matmul to execute and validate, got {outcome:?}"
@@ -286,11 +329,7 @@ fn simple_cyclic_cmma_small_k_and_partial_line_width_rows_stay_correct() {
     use crate::harness::{f32_elems, rect};
     for _ in 0..20 {
         for (m, n, k) in [(382, 10, 1), (382, 10, 3), (4096, 14, 5)] {
-            test_matmul_strategy(
-                client(),
-                rect(m, n, k, f32_elems()),
-                MultiLevel::SimpleCyclicCmma(Default::default()).into(),
-            );
+            run_exact_f32(client(), rect(m, n, k, f32_elems())).enforce();
         }
     }
 }

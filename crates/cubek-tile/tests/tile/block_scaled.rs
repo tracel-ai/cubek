@@ -22,6 +22,9 @@ use super::{Form, implied};
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
+/// `k` as the two axes a scale block makes of it: the block, and the value inside it.
+const KB: Axis = Axis(3);
+const KI: Axis = Axis(4);
 
 /// Values one scale covers along `k`: NVFP4's block.
 const BLOCK: usize = 16;
@@ -272,6 +275,161 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
     }
 }
 
+/// [`check_block_scaled`] under per-tensor factors, `k` split into its blocks and the value inside
+/// one (`KB·KI`), as a packed product states it: the values over both axes, their block scales
+/// words of four `e4m3` scales, one a word of `KB` (`KB` divided by four), as the block-scaled
+/// instruction reads them, and each step of the instruction four blocks deep, one word.
+fn check_block_scaled_in_blocks(k: usize, (a_global, b_global): (f32, f32)) {
+    let client = cubecl::test_device().client();
+    if !offers_nvfp4(&client) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device offers no block-scaled e2m1 instruction under e4m3 scales".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    let (m, n, blocks) = (16, 8, k / BLOCK);
+    let launcher = implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (KB, blocks), (KI, BLOCK)]),
+            Levels::leaf(&[(M, m), (N, n), (KB, STEP / BLOCK), (KI, BLOCK)])
+                .walk_every(&[M, N, KB, KI])
+                .build(),
+        ),
+        Form::Static,
+    );
+
+    let a_codes: Vec<u8> = (0..m * k).map(|i| ((i * 7 + i / k) % 16) as u8).collect();
+    let b_codes: Vec<u8> = (0..n * k)
+        .map(|i| ((i * 5 + 3 * (i / k)) % 16) as u8)
+        .collect();
+    let scale = |i: usize| (1 + i % 8) as f32 * 2f32.powi((i % 5) as i32 - 3);
+    let a_scale_values: Vec<f32> = (0..m * blocks).map(scale).collect();
+    let b_scale_values: Vec<f32> = (0..n * blocks).map(|i| scale(i + 3)).collect();
+    let pack = |fields: &[u32], bits: usize| -> Vec<u32> {
+        fields
+            .chunks(32 / bits)
+            .map(|word| {
+                word.iter()
+                    .enumerate()
+                    .fold(0u32, |acc, (j, &field)| acc | field << (bits * j))
+            })
+            .collect()
+    };
+    let codes = |codes: &[u8]| pack(&codes.iter().map(|&c| c as u32).collect::<Vec<_>>(), 4);
+    let scale_words = |values: &[f32]| {
+        let fields: Vec<u32> = values
+            .iter()
+            .map(|&v| e4m3::from_f32(v).to_bits() as u32)
+            .collect();
+        pack(&fields, 8)
+    };
+    let c = TestInput::builder(client.clone(), Shape::from(vec![m, n]))
+        .zeros()
+        .generate_without_host_data();
+
+    let tensor = |handle, rows: usize, cols: usize| unsafe {
+        TensorArg::from_raw_parts(handle, [cols, 1].into(), [rows, cols].into())
+    };
+    let along_k = |rows: Axis| {
+        Projection::new(
+            &[rows, KB, KI],
+            &[
+                PhysicalAxisMap::of(rows),
+                PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)]),
+            ],
+        )
+    };
+    let words = u32::elem_type_native();
+    let element = f32::elem_type_native();
+    let operand = |codes: Vec<u32>, scales: Vec<u32>, rows: usize, axis: Axis, global: f32| {
+        let values = TileArgLaunch::new(
+            tensor(client.create_from_slice(u32::as_bytes(&codes)), rows, k),
+            words,
+            1,
+            TileSpec::new(along_k(axis)).packed(Field::Quant(QuantValue::E2M1)),
+        );
+        let block_scales = TileArgLaunch::new(
+            tensor(
+                client.create_from_slice(u32::as_bytes(&scales)),
+                rows,
+                k / STEP,
+            ),
+            words,
+            1,
+            TileSpec::new(Projection::new(
+                &[axis, KB],
+                &[
+                    PhysicalAxisMap::of(axis),
+                    PhysicalAxisMap::of(KB).over(STEP / BLOCK),
+                ],
+            )),
+        );
+        let global = TileArgLaunch::new(
+            tensor(client.create_from_slice(f32::as_bytes(&[global])), 1, 1),
+            words,
+            1,
+            TileSpec::new(Projection::new(
+                &[M, N, KB],
+                &[PhysicalAxisMap::broadcast()],
+            ))
+            .packed(Field::Float(FloatKind::F32)),
+        );
+        values.scales(block_scales).scales(global)
+    };
+    block_scaled_matmul_under_words::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        operand(
+            codes(&a_codes),
+            scale_words(&a_scale_values),
+            m,
+            M,
+            a_global,
+        ),
+        operand(
+            codes(&b_codes),
+            scale_words(&b_scale_values),
+            n,
+            N,
+            b_global,
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            element,
+            1,
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.partitioning().level(0),
+        element,
+    );
+
+    let decoded = |code: u8| e2m1::from_bits(code).to_f32();
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for i in 0..m {
+        for j in 0..n {
+            let want: f32 = (0..k)
+                .map(|l| {
+                    decoded(a_codes[i * k + l])
+                        * a_scale_values[i * blocks + l / BLOCK]
+                        * decoded(b_codes[j * k + l])
+                        * b_scale_values[j * blocks + l / BLOCK]
+                })
+                .sum::<f32>()
+                * a_global
+                * b_global;
+            let have = got.get_f32(&[i, j]);
+            assert!(
+                (have - want).abs() <= 1e-3 * want.abs().max(1.0),
+                "k = {k} in blocks, element ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
 /// Whether `client`'s device offers the block-scaled `16 × 8 × 64` instruction over `e2m1`
 /// operands under `e4m3` scales.
 pub(crate) fn offers_nvfp4(client: &Client) -> bool {
@@ -307,4 +465,11 @@ fn a_walk_of_block_scaled_steps_matches_the_reference() {
 #[test]
 fn per_tensor_factors_scale_the_block_scaled_sum() {
     check_block_scaled(128, Some((0.375, 1.0 / 448.0)));
+}
+
+/// The product stated in `k`'s blocks, its block scales packed `e4m3` fields: each instruction
+/// step spans four blocks and reads their four scales as one stored word.
+#[test]
+fn block_scaled_steps_read_packed_scales_in_blocks() {
+    check_block_scaled_in_blocks(256, (0.375, 1.0 / 448.0));
 }

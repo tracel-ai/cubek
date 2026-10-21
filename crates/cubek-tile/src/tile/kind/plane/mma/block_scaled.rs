@@ -212,7 +212,18 @@ pub(crate) fn load_block_scaled<NV: Size, NS: Size>(
     let (m, n, k) = comptime!(shape);
     let def = block_scaled_definition::<f32>(m, n, k);
     let space = comptime!(src.place.space.clone());
-    let axes = comptime!(MatrixAxes::edges(&space));
+    // The window's rows are the served axis, its columns the contraction, however many axes
+    // make it up: a block-split space states `k` as its blocks and the position inside one.
+    let rows = comptime!(match ident {
+        MatrixIdent::A => m,
+        MatrixIdent::B => n,
+        MatrixIdent::Accumulator => {
+            panic!("MmaData::load_block_scaled: an accumulator carries no scales")
+        }
+    });
+    let axes = comptime!(MatrixAxes::new(&space, rows, k).unwrap_or_else(|no| {
+        panic!("MmaData::load_block_scaled: a block-scaled window is its rows by `k`: {no}")
+    }));
     // The window's own `(row, col)` of the matrix's `(row, col)`: a col-major window is the
     // operand's matrix transposed.
     let transposed = comptime!(match layout {
@@ -251,7 +262,9 @@ pub(crate) fn load_block_scaled<NV: Size, NS: Size>(
     });
     match method {
         LoadMethod::LoadMatrix => {
-            load_block_scaled_ldmatrix(src, &words, values, &def, ident, transposed, line_words);
+            load_block_scaled_ldmatrix(
+                src, &words, values, &def, ident, axes, transposed, line_words,
+            );
         }
         LoadMethod::Manual => {
             // An `e2m1x2` holds two values.
@@ -325,11 +338,11 @@ fn load_block_scaled_ldmatrix<WP: Size, NV: Size>(
     values: &mut Array<Vector<e2m1x2, NV>>,
     def: &MmaDefinition<e2m1x2, e2m1x2, f32>,
     #[comptime] ident: MatrixIdent,
+    #[comptime] axes: MatrixAxes,
     #[comptime] transposed: bool,
     #[comptime] line_words: usize,
 ) {
     let space = comptime!(src.place.space.clone());
-    let axes = comptime!(MatrixAxes::edges(&space));
     let load = src.vector_tile();
     let rank = comptime!(space.rank());
     // An `e2m1x2` holds two values; a register is one word.
@@ -347,13 +360,16 @@ fn load_block_scaled_ldmatrix<WP: Size, NV: Size>(
         (row + row_in_matrix, col)
     };
     let at = TileMatrix::value_coords(window_row, window_col, 0usize, &space, axes, 1usize);
-    // One row of a matrix: sixteen bytes along the window's innermost axis, in its lines.
     let mut run = CoordsDyn::new();
     #[unroll]
     for p in 0..rank {
-        let extent = comptime!(match p == rank - 1 {
-            true => (LDMATRIX_ROW_WORDS / line_words) as u32,
-            false => 1u32,
+        // One row of a matrix: sixteen bytes of words along `k`, the innermost axis in its lines.
+        let extent = comptime!({
+            let values = axes.col_run(&space, LDMATRIX_ROW_WORDS * E2M1_PER_WORD)[p];
+            match p == rank - 1 {
+                true => (values / (line_words * E2M1_PER_WORD)) as u32,
+                false => values as u32,
+            }
         });
         run.push(extent.runtime());
     }

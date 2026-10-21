@@ -541,14 +541,17 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
 
     for m in [64, 512] {
         let problem = rect(m, n, k, dtypes.as_global_elems());
-        let free = CmmaRoutine::blueprint(
+        let free = match CmmaRoutine::blueprint(
             &BlueprintStrategy::Inferred(CmmaStrategy::default()),
             &problem,
             &device_settings,
             dtype,
             StoredTiles::default(),
-        )
-        .unwrap();
+        ) {
+            Ok(blueprint) => blueprint,
+            Err(MatmulSetupError::Unavailable(_)) => return,
+            Err(error) => panic!("an untiled weight was refused as a config error: {error:?}"),
+        };
         let held = CmmaRoutine::blueprint(
             &BlueprintStrategy::Inferred(CmmaStrategy::default()),
             &problem,
