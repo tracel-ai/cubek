@@ -38,13 +38,15 @@ fn flash_attention_backward_dv_kernel<E: Float>(
     }
 
     let j = row_idx % seq_kv;
-    let bh = row_idx / seq_kv;
+    // `row_idx` walks K's `[batch * num_kv_heads, seq_kv]` rows. Q, dO, lse and
+    // D have one row per *query* head, so a KV head's row is swept over the
+    // whole group of query heads that attend it and their dV is summed. That is
+    // the GQA gradient: `group` query rows collapse into one packed KV row.
+    let group = q.shape(1) / k.shape(1);
+    let kv_bh = row_idx / seq_kv;
 
     let k_base = row_idx * head_dim;
     let dv_base = row_idx * val_dim;
-    let q_row_base = bh * seq_q * head_dim;
-    let do_row_base = bh * seq_q * val_dim;
-    let row_idx_base = bh * seq_q;
 
     let scale_e = E::cast_from(scale);
 
@@ -53,21 +55,28 @@ fn flash_attention_backward_dv_kernel<E: Float>(
         dv_acc[dd] = E::new(0.0);
     }
 
-    for i in 0..seq_q {
-        let masked = causal && j + seq_q > i + seq_kv;
-        if !masked {
-            let q_base = q_row_base + i * head_dim;
-            let do_base = do_row_base + i * val_dim;
-            let lse_i = lse[row_idx_base + i];
+    for qh in 0..group {
+        let q_bh = kv_bh * group + qh;
+        let q_row_base = q_bh * seq_q * head_dim;
+        let do_row_base = q_bh * seq_q * val_dim;
+        let row_idx_base = q_bh * seq_q;
 
-            let mut dot = E::new(0.0);
-            for dd in 0..head_dim {
-                dot += q[q_base + dd] * k[k_base + dd];
-            }
-            let p_ij = (dot * scale_e - lse_i).exp();
+        for i in 0..seq_q {
+            let masked = causal && j + seq_q > i + seq_kv;
+            if !masked {
+                let q_base = q_row_base + i * head_dim;
+                let do_base = do_row_base + i * val_dim;
+                let lse_i = lse[row_idx_base + i];
 
-            for dd in 0..val_dim {
-                dv_acc[dd] += p_ij * do_[do_base + dd];
+                let mut dot = E::new(0.0);
+                for dd in 0..head_dim {
+                    dot += q[q_base + dd] * k[k_base + dd];
+                }
+                let p_ij = (dot * scale_e - lse_i).exp();
+
+                for dd in 0..val_dim {
+                    dv_acc[dd] += p_ij * do_[do_base + dd];
+                }
             }
         }
     }
@@ -102,14 +111,14 @@ fn flash_attention_backward_dk_kernel<E: Float>(
     }
 
     let j = row_idx % seq_kv;
-    let bh = row_idx / seq_kv;
+    // Same fold as the dV kernel: one packed KV row, summed over the query
+    // heads that share it.
+    let group = q.shape(1) / k.shape(1);
+    let kv_bh = row_idx / seq_kv;
 
     let k_base = row_idx * head_dim;
     let v_base = row_idx * val_dim;
     let dk_base = row_idx * head_dim;
-    let q_row_base = bh * seq_q * head_dim;
-    let do_row_base = bh * seq_q * val_dim;
-    let row_idx_base = bh * seq_q;
 
     let scale_e = E::cast_from(scale);
 
@@ -118,28 +127,35 @@ fn flash_attention_backward_dk_kernel<E: Float>(
         dk_acc[dd] = E::new(0.0);
     }
 
-    for i in 0..seq_q {
-        let masked = causal && j + seq_q > i + seq_kv;
-        if !masked {
-            let q_base = q_row_base + i * head_dim;
-            let do_base = do_row_base + i * val_dim;
-            let lse_i = lse[row_idx_base + i];
-            let d_i = d[row_idx_base + i];
+    for qh in 0..group {
+        let q_bh = kv_bh * group + qh;
+        let q_row_base = q_bh * seq_q * head_dim;
+        let do_row_base = q_bh * seq_q * val_dim;
+        let row_idx_base = q_bh * seq_q;
 
-            let mut dot = E::new(0.0);
-            for dd in 0..head_dim {
-                dot += q[q_base + dd] * k[k_base + dd];
-            }
-            let p_ij = (dot * scale_e - lse_i).exp();
+        for i in 0..seq_q {
+            let masked = causal && j + seq_q > i + seq_kv;
+            if !masked {
+                let q_base = q_row_base + i * head_dim;
+                let do_base = do_row_base + i * val_dim;
+                let lse_i = lse[row_idx_base + i];
+                let d_i = d[row_idx_base + i];
 
-            let mut dp = E::new(0.0);
-            for dd in 0..val_dim {
-                dp += do_[do_base + dd] * v[v_base + dd];
-            }
+                let mut dot = E::new(0.0);
+                for dd in 0..head_dim {
+                    dot += q[q_base + dd] * k[k_base + dd];
+                }
+                let p_ij = (dot * scale_e - lse_i).exp();
 
-            let s_ds = scale_e * p_ij * (dp - d_i);
-            for dd in 0..head_dim {
-                dk_acc[dd] += s_ds * q[q_base + dd];
+                let mut dp = E::new(0.0);
+                for dd in 0..val_dim {
+                    dp += do_[do_base + dd] * v[v_base + dd];
+                }
+
+                let s_ds = scale_e * p_ij * (dp - d_i);
+                for dd in 0..head_dim {
+                    dk_acc[dd] += s_ds * q[q_base + dd];
+                }
             }
         }
     }
@@ -153,14 +169,15 @@ fn flash_attention_backward_dk_kernel<E: Float>(
 /// accumulates).
 ///
 /// Inputs:
-/// - `q, k, v`: `[B, H, N, d]`.
-/// - `do_`:     `[B, H, N, d]` upstream gradient.
-/// - `lse`:     `[B, H, N]` fp32: saved from forward.
-/// - `d`:       `[B, H, N]` fp32: from the prepass kernel.
+/// - `k`, `v`:  `[B, H_kv, N, d]`: the packed KV tensors.
+/// - `q`:       `[B, H_q, N, d]`, `H_kv` a divisor of `H_q` (GQA).
+/// - `do_`:     `[B, H_q, N, d]` upstream gradient.
+/// - `lse`:     `[B, H_q, N]` fp32: saved from forward.
+/// - `d`:       `[B, H_q, N]` fp32: from the prepass kernel.
 ///
 /// Outputs:
-/// - `dk`:      `[B, H, N, d]`: written cleanly.
-/// - `dv`:      `[B, H, N, d]`: written cleanly.
+/// - `dk`:      `[B, H_kv, N, d]`: written cleanly.
+/// - `dv`:      `[B, H_kv, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward_dkdv(
     client: &Client,

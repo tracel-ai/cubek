@@ -1,6 +1,15 @@
-# CubeK test configuration.
+# CubeK runtime and test configuration.
 #
-# This file controls how `cubek-test-utils` runs your tests — what it prints
+# Runtime settings can also be placed under [cubek.matmul] in burn.toml.
+# Configure before the first kernel selection; settings are immutable once read.
+
+[matmul]
+# Permit automatic F32-to-TF32 conversion for accelerated matmul.
+# false preserves F32 operands, possibly selecting a slower kernel.
+# This does not control compiler fast-math or convolution's own precision choices.
+allow_tf32 = true
+
+# The sections below control how `cubek-test-utils` runs your tests — what it prints
 # when comparing tensors, and which numerical / compilation outcomes count
 # as test failures.
 #

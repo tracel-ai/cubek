@@ -4,7 +4,7 @@
 use cubecl::{client::Client, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
-    launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
+    launch::tma::{stride_align_bits, tma_operand_tiled_typed, tma_operand_typed},
 };
 use cubek_tile::{
     Axis, Geometry, Launcher, Space, TileArgLaunch,
@@ -355,7 +355,8 @@ fn launch_tma(
     ) -> TileArgLaunch {
         if binding.tiling.is_tiled() {
             let landing = TmaLanding::Tiles;
-            let map = tma_operand_tiled(binding, box_dims, landing, dtype, TensorMapSwizzle::None);
+            let map =
+                tma_operand_tiled_typed(binding, box_dims, landing, dtype, TensorMapSwizzle::None);
             return TileArgLaunch::tensor_map_stored(
                 map,
                 axes,
@@ -366,7 +367,7 @@ fn launch_tma(
                 },
             );
         }
-        let (map, transposed) = tma_operand(
+        let (map, transposed) = tma_operand_typed(
             binding,
             1,
             MatrixLayout::RowMajor,

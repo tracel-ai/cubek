@@ -85,8 +85,34 @@ impl Blueprint for BatchMatmulBlueprint {
     }
 }
 
-/// Modifies the given matmul element types based on the kind of accelerator the kernel is run on.
+/// Resolves automatic matmul element types using the device's capabilities and
+/// [`cubek_std::config::MatmulConfig`].
 pub fn adjust_dtypes(client: &Client, dtypes: &mut MatmulElems, requires_accelerator: bool) {
+    adjust_dtypes_with_tf32(
+        &client.properties().features,
+        dtypes,
+        requires_accelerator,
+        cubek_std::config::MatmulConfig::get().allow_tf32,
+    );
+}
+
+/// Resolves accelerator element types with an explicit TF32 permission.
+///
+/// Operations sharing matmul's implementation, such as convolution, use this to
+/// retain their own precision choices independently of the matmul configuration.
+///
+/// When an accelerator is required, matching F32 global inputs select TF32 if
+/// permitted and supported; matching `flex32` global inputs select F16 if
+/// supported, independently of `allow_tf32`. Both conversions overwrite the
+/// input stage/register types, including caller-supplied overrides. Otherwise
+/// those types are left unchanged: disabling TF32 does not reset existing TF32
+/// stage/register types to F32. Global and accumulator types are never changed.
+pub fn adjust_dtypes_with_tf32(
+    features: &cubecl::features::Features,
+    dtypes: &mut MatmulElems,
+    requires_accelerator: bool,
+    allow_tf32: bool,
+) {
     let f32_dtype = f32::elem_type_native();
     let flex_dtype = flex32::elem_type_native();
     let tf32_dtype = tf32::elem_type_native();
@@ -95,7 +121,8 @@ pub fn adjust_dtypes(client: &Client, dtypes: &mut MatmulElems, requires_acceler
     if requires_accelerator {
         if dtypes.lhs_global == f32_dtype
             && dtypes.rhs_global == f32_dtype
-            && client.properties().supports_type(tf32_dtype)
+            && allow_tf32
+            && features.supports_type(tf32_dtype)
         {
             dtypes.lhs_stage = tf32_dtype;
             dtypes.rhs_stage = tf32_dtype;
@@ -103,7 +130,7 @@ pub fn adjust_dtypes(client: &Client, dtypes: &mut MatmulElems, requires_acceler
             dtypes.rhs_register = tf32_dtype;
         } else if dtypes.lhs_global == flex_dtype
             && dtypes.rhs_global == flex_dtype
-            && client.properties().supports_type(f16_dtype)
+            && features.supports_type(f16_dtype)
         {
             dtypes.lhs_stage = f16_dtype;
             dtypes.rhs_stage = f16_dtype;

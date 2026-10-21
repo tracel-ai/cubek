@@ -27,7 +27,8 @@ pub fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &ElemT
         .unwrap_or(31)
 }
 
-/// CUDA's TMA loads f32 as tf32 internally; remap explicitly so the descriptor matches.
+/// Requests TF32 rounding when loading F32 storage through TMA.
+/// Use the resolved type directly when F32 precision must be preserved.
 pub fn remap_storage_for_tma(ty: ElemType) -> ElemType {
     if ty == f32::elem_type_native() {
         tf32::elem_type_native()
@@ -65,6 +66,9 @@ pub fn transpose_inner_for_tma(
 /// operand (TMA discards the last stride) and keeps the batch stride outermost.
 /// `box_shape` is the box one bulk copy moves, in logical `(rows, cols)`; it rides the
 /// same swap. Returns the arg plus whether the swap occurred.
+///
+/// F32 storage requests TF32 rounding. Use [`tma_operand_typed`] to pass an
+/// already resolved descriptor type without this conversion.
 pub fn tma_operand(
     binding: TensorBinding,
     batches: usize,
@@ -96,7 +100,9 @@ pub fn tma_store_operand(
     tma_operand_typed(binding, batches, layout, box_shape, storage_ty, swizzle)
 }
 
-fn tma_operand_typed(
+/// [`tma_operand`] with an already resolved descriptor type. In particular, F32
+/// stays F32; callers that selected TF32 must pass TF32 explicitly.
+pub fn tma_operand_typed(
     binding: TensorBinding,
     batches: usize,
     layout: MatrixLayout,
@@ -144,6 +150,9 @@ fn tma_operand_typed(
 ///   nested inside the tiles' columns, and a box of whole tiles both ways lands its rows one after
 ///   another, each a run of its tiles' rows, as a row-major operand's box would land them.
 ///
+/// F32 storage requests TF32 rounding. Use [`tma_operand_tiled_typed`] to pass an
+/// already resolved descriptor type without this conversion.
+///
 /// # Panics
 ///
 /// A binding whose tile is not stored a row at a time: the descriptor takes the innermost dim to
@@ -157,6 +166,28 @@ pub fn tma_operand_tiled(
     box_shape: (usize, usize),
     landing: TmaLanding,
     storage_ty: ElemType,
+    swizzle: TensorMapSwizzle,
+) -> TensorMapArg<Tiled> {
+    tma_operand_tiled_typed(
+        binding,
+        box_shape,
+        landing,
+        remap_storage_for_tma(storage_ty),
+        swizzle,
+    )
+}
+
+/// [`tma_operand_tiled`] with an already resolved descriptor type, without
+/// automatically converting F32 to TF32.
+///
+/// # Panics
+///
+/// Has the same layout requirements as [`tma_operand_tiled`].
+pub fn tma_operand_tiled_typed(
+    binding: TensorBinding,
+    box_shape: (usize, usize),
+    landing: TmaLanding,
+    elem_ty: ElemType,
     swizzle: TensorMapSwizzle,
 ) -> TensorMapArg<Tiled> {
     let rank = binding.shape.len();
@@ -208,12 +239,7 @@ pub fn tma_operand_tiled(
             (metadata, box_dims)
         }
     };
-    let meta = tma_meta_tiled(
-        metadata,
-        box_dims,
-        remap_storage_for_tma(storage_ty),
-        swizzle,
-    );
+    let meta = tma_meta_tiled(metadata, box_dims, elem_ty, swizzle);
     TensorMapArg {
         tensor: binding.into_tensor_arg(),
         metadata: meta,
@@ -258,6 +284,33 @@ mod tests {
             strides,
             shape,
             tiling: Tiling::new(&[2, 2]).unwrap(),
+        }
+    }
+
+    #[test]
+    fn typed_descriptors_preserve_f32_and_explicit_tf32() {
+        let binding = tiled();
+        for elem in [f32::elem_type_native(), tf32::elem_type_native()] {
+            let arg = tma_operand_tiled_typed(
+                binding.clone(),
+                (32, 64),
+                TmaLanding::Tiles,
+                elem,
+                TensorMapSwizzle::None,
+            );
+            assert_eq!(arg.metadata.elem_ty, elem);
+
+            let mut plain = binding.clone();
+            plain.tiling = Tiling::UNTILED;
+            let (arg, _) = tma_operand_typed(
+                plain,
+                64,
+                MatrixLayout::RowMajor,
+                (32, 64),
+                elem,
+                TensorMapSwizzle::None,
+            );
+            assert_eq!(arg.metadata.elem_ty, elem);
         }
     }
 

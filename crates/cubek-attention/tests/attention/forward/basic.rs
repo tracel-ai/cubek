@@ -52,6 +52,7 @@ fn problem(
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim,
