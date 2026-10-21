@@ -1,7 +1,8 @@
-use crate::microkernel::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands};
+use crate::microkernel::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
 use crate::stored::Operand;
 use crate::stored::Packing;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::quant::scheme::QuantValue;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_tile::Axis;
 
@@ -123,16 +124,39 @@ impl MatmulWorkItem {
         }
     }
 
-    /// The product a cube's planes contract once it has decoded this item's packed rhs into a
-    /// stage: the activation against the weight at the activation's element, over the axes inside
-    /// a block, the rows tiled. A packed weight runs along `K`, and so does the stage it decodes
-    /// into: a col weight.
+    /// The element this item's packed inputs are decoded into to be contracted: the lhs's where
+    /// it is float, the output's where it is packed too.
+    pub fn decoded_element(&self) -> ElemType {
+        match self.blocks.and_then(|blocks| blocks.packings.lhs) {
+            Some(_) => self.elements.out,
+            None => self.elements.lhs,
+        }
+    }
+
+    /// How a microkernel that decodes this item's packed inputs reads each: a packed one
+    /// dequantized at [`decoded_element`](Self::decoded_element), a float one as bound.
+    pub fn decoding_reads(&self) -> MatmulOperands<MatmulRead> {
+        let element = self.decoded_element();
+        let packings = self
+            .blocks
+            .map_or(MatmulOperands::all(None), |blocks| blocks.packings);
+        packings.map(|_, packing| match packing {
+            Some(_) => MatmulRead::Dequantized(element),
+            None => MatmulRead::AsBound,
+        })
+    }
+
+    /// The product a cube's planes contract once it has decoded this item's packed inputs into
+    /// its stages: both inputs at [`decoded_element`](Self::decoded_element), over the axes
+    /// inside a block, the rows tiled. A packed rhs runs along `K`, and so does the stage it
+    /// decodes into: a col rhs.
     pub fn decoded(&self) -> Self {
+        let element = self.decoded_element();
         Self {
             contraction: MatmulContraction::AsStored,
             elements: MatmulOperands {
-                lhs: self.elements.lhs,
-                rhs: self.elements.lhs,
+                lhs: element,
+                rhs: element,
                 out: self.elements.out,
             },
             sum: self.sum,
@@ -145,6 +169,26 @@ impl MatmulWorkItem {
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes::INSIDE_BLOCKS,
         }
+    }
+
+    /// This item with both inputs read as they are stored, where both are packed into values that
+    /// name an element (`e2m1`): what an instruction that reads packed values and their scales as
+    /// they lie contracts, the block-scaled one. `None` where an input is float, or packed into
+    /// values no element names.
+    pub fn as_stored(&self) -> Option<Self> {
+        let blocks = self.blocks?;
+        let stored = |packing: Option<Packing>| match packing?.scheme.value {
+            QuantValue::E2M1 => Some(ElemType::Float(FloatKind::E2M1)),
+            _ => None,
+        };
+        Some(Self {
+            elements: MatmulOperands {
+                lhs: stored(blocks.packings.lhs)?,
+                rhs: stored(blocks.packings.rhs)?,
+                out: self.elements.out,
+            },
+            ..*self
+        })
     }
 
     /// Whether a stage of this item keeps an operand's block scales beside its values: an operand

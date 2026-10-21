@@ -11,6 +11,12 @@ pub const MATMUL_STEPS_UNCLOSED: Refusal = Refusal::Declined {
     why: "the packed routines read a weight whose reads sit inside one scale tile, and whose n and k are whole steps: the least box every load of the activation, of the values and of the scales fills whole",
 };
 
+/// What a product of a packed activation declines where the weight's read along `K` splits a word
+/// of it: the two are contracted a read of the weight at a time.
+pub const MATMUL_PACKED_LHS_SPLIT: Refusal = Refusal::Declined {
+    why: "a packed activation is contracted a read of the weight along k at a time, and this weight's read splits a word of the activation",
+};
+
 /// The step of a product against a packed weight: the smallest box over `M`, `N` and `K` that
 /// every load it makes, and the instruction contracting it, fill whole. On each axis it is the
 /// least common multiple of what they cover, stated as a product: the instruction's extent times

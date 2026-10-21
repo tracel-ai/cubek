@@ -1334,4 +1334,109 @@ mod base {
         // A `k` the stages overhang masks the lhs, whose contiguous axis it is.
         assert_eq!(widths(256, 512, 72), (1, widest, 1));
     }
+
+    /// Two NVFP4 inputs the block-scaled instruction reads as stored are estimated like any staged
+    /// product. An estimate is what a table ranks a routine's candidates by, and one that took
+    /// them for a weight its stages decode would ask for the scale blocks a stage of steps never
+    /// holds.
+    #[test]
+    fn an_nvfp4_product_read_as_stored_is_estimated() {
+        use crate::kernels::select::packed::nvfp4_activation_scheme;
+        use crate::microkernel::dense::cube::CubeStagedDepth;
+        use crate::stored::Operand;
+        use crate::stored::Packing;
+        use crate::tile_order;
+        use cubek_std::microkernel::KernelEstimate;
+
+        let hw = devices::offering_nvfp4(devices::h100());
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
+            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem::packed(
+            128,
+            256,
+            256,
+            ElemType::Float(FloatKind::F16),
+            MatmulOperands {
+                lhs: Some(packing(nvfp4_activation_scheme(), [M, K])),
+                rhs: Some(packing(tile_order::scheme(), [K, N])),
+                out: None,
+            },
+        );
+        let (blueprint, grid) = CubeStagedMatmulRoutine
+            .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
+            .expect("the default box prepares an NVFP4 product read as stored");
+        assert!(matches!(
+            blueprint.microkernel.depth,
+            CubeStagedDepth::Steps
+        ));
+        let mut estimate = KernelEstimate::from(&grid);
+        CubeStagedMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+        assert!(estimate.work.is_some());
+    }
+
+    /// A weight its stages decode is estimated a stage of scale blocks at a time: as many stages
+    /// as `K` holds stages of the microkernel's blocks, split between the planes sharing `K`.
+    #[test]
+    fn a_decoded_weight_is_estimated_in_stages_of_its_blocks() {
+        use crate::microkernel::dense::cube::CubeStagedDepth;
+        use crate::stored::Operand;
+        use crate::stored::Packing;
+        use crate::tile_order;
+        use cubek_std::matmul_axes::KI;
+        use cubek_std::microkernel::KernelEstimate;
+
+        // The M2 as Metal reports it: its simdgroup matrix, `8 × 8 × 8` over `f16` into `f32`.
+        let hw = devices::offering_cmma(
+            devices::m2_pro(),
+            [MmaConfig {
+                a_type: ElemType::Float(FloatKind::F16),
+                b_type: ElemType::Float(FloatKind::F16),
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 8,
+                n: 8,
+                k: 8,
+            }],
+        );
+        let scheme = tile_order::scheme();
+        let weight = Packing {
+            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let k = 1024;
+        let problem = MatmulRoutineProblem::packed(
+            128,
+            256,
+            k,
+            ElemType::Float(FloatKind::F16),
+            MatmulOperands {
+                lhs: None,
+                rhs: Some(weight),
+                out: None,
+            },
+        );
+        let mut estimated = 0;
+        for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
+            let Ok((blueprint, grid)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+            else {
+                continue;
+            };
+            let CubeStagedDepth::ScaleBlocks(blocks) = blueprint.microkernel.depth else {
+                panic!("{settings}: a decoded weight is staged in scale blocks");
+            };
+            let block = blueprint.partitioning.cube_box().extent(KI);
+            let planes_along_k = blueprint.microkernel.planes_along_k.get();
+            let mut estimate = KernelEstimate::from(&grid);
+            CubeStagedMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+            let staging = estimate.staging.expect("a staged estimate");
+            assert_eq!(
+                staging.stages,
+                k.div_ceil(block * blocks.get() * planes_along_k) as u64,
+                "{settings}"
+            );
+            estimated += 1;
+        }
+        assert!(estimated > 0, "no packed setting prepared");
+    }
 }

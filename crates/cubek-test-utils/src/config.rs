@@ -169,7 +169,8 @@ fn parse_cubek_toml(text: &str) -> Result<CubekConfig, String> {
     }
 
     for sec in sections.keys() {
-        if sec != "test" && sec != "print" {
+        // Runtime settings are read by cubek-std. Both readers share cubek.toml.
+        if sec != "test" && sec != "print" && sec != "matmul" {
             return Err(format!("unknown section [{}]", sec));
         }
     }
@@ -299,6 +300,10 @@ mod tests {
     #[test]
     fn parses_full_example() {
         let text = r#"
+# Runtime settings share this file but are read by cubek-std.
+[matmul]
+allow_tf32 = false
+
 [test]
 policy = "strict"
 

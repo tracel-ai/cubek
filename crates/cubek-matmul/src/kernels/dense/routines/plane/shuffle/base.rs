@@ -6,7 +6,7 @@ use crate::kernels::{
 };
 use crate::microkernel::MatmulPartitioning;
 use crate::microkernel::dense::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
-use crate::microkernel::{MatmulOperand, MatmulOperands, MatmulOrder};
+use crate::microkernel::{MatmulOperand, MatmulOrder};
 use crate::stored::Packing;
 use core::num::NonZeroUsize;
 use cubek_std::Hardware;
@@ -262,21 +262,16 @@ impl PlaneShufflePackedPlacement {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_Q_RHS_NOT_PACKED`], for a float weight; why `hw` cannot walk `problem`'s steps, or
+    /// [`MATMUL_Q_RHS_NOT_PACKED`], for a float rhs; why `hw` cannot walk `problem`'s steps, or
     /// run its microkernel at `settings`.
     pub fn new(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<Self, Refusal> {
-        let MatmulOperands {
-            lhs: None,
-            rhs: Some(_),
-            ..
-        } = problem.packings
-        else {
+        if problem.packings.rhs.is_none() {
             return Err(MATMUL_Q_RHS_NOT_PACKED);
-        };
+        }
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
         view.check_steps(hw)?;
         let microkernel =

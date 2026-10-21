@@ -501,6 +501,17 @@ fn finest_digit(axes: &[Axis], axis: Axis) -> Option<Axis> {
         .find(|digit| axes.contains(digit))
 }
 
+/// How a kernel reads a packed matrix's block scales, which they are bound as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockScales {
+    /// Each scale a number, widened where its values are decoded: fields of the scheme's scale
+    /// type, as many a word as fit.
+    Fields,
+    /// The words they are stored in, read whole: the block-scaled instruction takes a word of four
+    /// `e4m3` scales, the first block's in the low byte, as its scale register.
+    Words,
+}
+
 /// How a matrix is packed: what one read of its words brings and how far one block scale covers,
 /// over its two axes, and the scheme that stores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

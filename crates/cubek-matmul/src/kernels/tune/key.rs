@@ -67,9 +67,9 @@ pub struct OperandKey {
 /// it tiles the shapes inside the bucket — a power of two, at every level.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulTuneKey {
-    /// The activation dtype: it decides the vector widths, whether a gemm
-    /// routine can reach a tensor-core leaf, and what the memory-bound kernels
-    /// accumulate from.
+    /// The element the product is written in, the activation's or the one a packed activation
+    /// stands for: it decides the vector widths, whether a gemm routine can reach a tensor-core
+    /// leaf, and what the memory-bound kernels accumulate from.
     elem: ElemType,
     /// Reduction length.
     k: usize,

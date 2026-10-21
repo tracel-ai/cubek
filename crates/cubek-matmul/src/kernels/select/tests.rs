@@ -101,10 +101,11 @@ fn quantized(m: usize, scheme: QuantScheme) -> MatmulProblem {
     }
 }
 
-/// A quantized activation against a packed weight runs, under every strategy, as a float one
-/// would once decoded; against a float weight it is refused.
+/// A quantized activation against a packed weight takes, under every strategy, the selection a
+/// float one does: the packed routines read it as stored, every other kernel dequantized. Against a
+/// float weight it is refused.
 #[test]
-fn a_quantized_activation_is_decoded_then_runs_as_a_float_one() {
+fn a_quantized_activation_takes_a_float_ones_selection() {
     let hw = block_scaled();
     let strategies = [
         Autotune,
@@ -122,7 +123,7 @@ fn a_quantized_activation_is_decoded_then_runs_as_a_float_one() {
             };
             assert_eq!(
                 select(strategy, &quantized_lhs, &hw),
-                select(strategy, &float_lhs, &hw).map(|then| S::DecodeLhsThen(Box::new(then))),
+                select(strategy, &float_lhs, &hw),
                 "{strategy:?}, {rows} rows"
             );
             let float_rhs = MatmulProblem {

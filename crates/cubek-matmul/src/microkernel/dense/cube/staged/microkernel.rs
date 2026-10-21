@@ -27,6 +27,14 @@ pub struct CubeStagedWalk {
     pub reads: MatmulOperands<MatmulRead>,
 }
 
+impl CubeStagedWalk {
+    /// The element the fill decodes its packed inputs into, which their stages hold: `None` where
+    /// it stages every input as it lies.
+    pub fn decoded(&self) -> Option<ElemType> {
+        self.reads.lhs.staged().or(self.reads.rhs.staged())
+    }
+}
+
 #[cube]
 impl CubeStagedWalk {
     /// A zeroed sum over `over`'s box, its planes reading `a` and `b` as `walk` says.
@@ -105,14 +113,7 @@ impl CubeStagedWalk {
         let (a, a_factor) = a.factor(c.space(), comptime!(walk.instruction));
         let (b, b_factor) = b.factor(c.space(), comptime!(walk.instruction));
         let depth = comptime!(walk.ring.stages_in_flight.get());
-        let mut stages = Stages::smem(
-            &run,
-            &a,
-            &b,
-            storage,
-            depth,
-            comptime!(walk.reads.rhs.staged()),
-        );
+        let mut stages = Stages::smem(&run, &a, &b, storage, depth, comptime!(walk.decoded()));
         // Both sets drive the same ring, so both count its laps alike: `depth` stages a lap, the
         // last lap short wherever the walk ends.
         let total = run.total();
@@ -261,7 +262,7 @@ pub fn cube_staged_sum_microkernel<EL: Numeric>(
         b,
         storage,
         comptime!(walk.ring.stages_in_flight.get()),
-        comptime!(walk.reads.rhs.staged()),
+        comptime!(walk.decoded()),
     );
     stages.walk(run, comptime!(walk.ring.prefetch), |slot, stage| {
         let sum_stage = sum.at(stage);

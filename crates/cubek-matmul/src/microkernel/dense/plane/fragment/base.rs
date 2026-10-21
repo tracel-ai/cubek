@@ -9,6 +9,7 @@ use crate::microkernel::dense::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
 };
+use crate::microkernel::staged_walk::MatmulStage;
 use crate::stored::Operand;
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
@@ -16,7 +17,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Axis, Instruction, Levels, Scratch, Space};
+use cubek_tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The
@@ -232,6 +233,118 @@ impl PlaneFragmentMicrokernel {
             })
     }
 
+    /// The planes reading both packed inputs of `space` as they are stored: each block-scaled
+    /// instruction the device offers for their values, the largest first, whose step of `K` is
+    /// a word of each input's block scales, the blocks one read of the scales covers
+    /// ([`Operand::scale_read`]). A fragment's window spans those blocks along `KB` and the whole
+    /// of each along `KI`, and the instruction reads the values and the word of scales beside
+    /// them as they lie.
+    fn block_scaled_candidates(
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        settings: PlaneFragmentMicrokernelSettings,
+        space: MatmulBlocks,
+    ) -> Vec<Self> {
+        let committed = hw.plane_dim().is_ok();
+        let rhs = space.operand(MatmulOperand::Rhs);
+        let step = rhs
+            .grouping(K, space.k)
+            .map(|block| block * rhs.scale_read(K));
+        manual_mma(hw)
+            .for_triple(item.elements.lhs, item.elements.rhs, item.sum)
+            .largest_first()
+            .map(|shape| PlaneFragmentInstruction::Mma { shape })
+            .filter(|instruction| {
+                let [_, _, (_, k)] = instruction.shape();
+                committed && instruction.block_scaled() && step == Some(k)
+            })
+            .map(|instruction| Self {
+                instruction,
+                orders: instruction.orders(item.layouts),
+                settings,
+                axes: item.axes,
+                blocks: Some(space),
+            })
+            .collect()
+    }
+
+    /// The axes `K` is stated over, each with what one fragment `depth` instruction steps deep
+    /// spans of it: the instruction's whole step along the caller's `K` axis, or, where a
+    /// block-scaled instruction reads packed inputs in their blocks, a word of block scales' blocks
+    /// along `KB` beside the whole of each block along `KI`.
+    fn k_axes(&self, depth: usize) -> Vec<(Axis, usize)> {
+        let [_, _, (_, k)] = self.instruction.shape();
+        match (self.blocks, self.instruction.block_scaled()) {
+            (Some(space), true) => {
+                let rhs = space.operand(MatmulOperand::Rhs);
+                let block = rhs
+                    .grouping(K, space.k)
+                    .expect("a block-scaled plane reads inputs grouped along K");
+                let (blocks, inside) = blocked(K);
+                vec![(blocks, rhs.scale_read(K) * depth), (inside, block)]
+            }
+            _ => vec![(self.axes.k, k * depth)],
+        }
+    }
+
+    /// How a stage it reads holds its cells, filled by its units: in its instruction's tiles
+    /// ([`PlaneFragmentInstruction::stage_storage`]), each one step deep along every axis `K` is
+    /// stated over ([`k_axes`](Self::k_axes)).
+    pub fn stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+        let beside: Vec<Axis> = stage.beside().collect();
+        Self::over_k(
+            self.instruction.stage_storage(&beside, stage.axes()),
+            self.k_axes(1),
+        )
+    }
+
+    /// How a stage it reads holds its cells where one TMA box lands it whole
+    /// ([`PlaneFragmentInstruction::landed_stage_storage`]): each tile the whole stage deep along
+    /// every axis `K` is stated over.
+    pub fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+        let (beside, axes): (Vec<Axis>, _) = (stage.beside().collect(), stage.axes());
+        let whole_k = self
+            .k_axes(1)
+            .into_iter()
+            .map(|(axis, _)| (axis, stage.extent(axis)))
+            .collect();
+        Self::over_k(
+            self.instruction
+                .landed_stage_storage(&beside, axes, stage.extent(axes.k)),
+            whole_k,
+        )
+    }
+
+    /// `storage` with its tiles' extents along `K` restated as `k_axes`: an instruction tiles `K`
+    /// as one axis, where a block-scaled plane states it as its scale blocks and the position
+    /// inside one, which the stage lays beside its other axes.
+    fn over_k(storage: StageStorage, k_axes: Vec<(Axis, usize)>) -> StageStorage {
+        match storage {
+            StageStorage::Tiled { block, chunks } => StageStorage::Tiled {
+                block: block
+                    .into_iter()
+                    .map(|(axis, extent)| {
+                        k_axes
+                            .iter()
+                            .copied()
+                            .find(|&(k_axis, _)| k_axis == axis)
+                            .unwrap_or((axis, extent))
+                    })
+                    .collect(),
+                chunks,
+            },
+            storage => storage,
+        }
+    }
+
+    /// The axis its steps of `K` walk: `K` itself, or the blocks a block-scaled plane steps across.
+    pub fn walked(&self) -> Axis {
+        match (self.blocks, self.instruction.block_scaled()) {
+            (Some(_), true) => blocked(K).0,
+            _ => self.axes.k,
+        }
+    }
+
     /// What one step of the plane covers against a packed weight: its fragments over a window of
     /// `K`, split into the weight's scale blocks, the instruction's rows walked over every row so
     /// a decode's few overhang the fragment rather than shrink it, and a unit level that cuts
@@ -294,10 +407,10 @@ impl PlaneFragmentMicrokernel {
         };
         let tiling = match self.instruction {
             PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Mma { .. } => {
-                let leaf: Vec<_> = self
-                    .axes
-                    .name(self.fragment_shape(depth))
+                let [(_, rows), (_, columns), _] = self.instruction.shape();
+                let leaf: Vec<_> = [(m, rows), (n, columns)]
                     .into_iter()
+                    .chain(self.k_axes(depth))
                     .chain(held.iter().copied())
                     .collect();
                 Levels::leaf(&leaf).walk(&[(m, along_m), (n, along_n)])
@@ -324,7 +437,11 @@ impl PlaneFragmentMicrokernel {
                 Levels::leaf(&leaf).walk(&[(m, 1), (n, 1)])
             }
         };
-        let steps: Vec<(Axis, usize)> = outer.iter().copied().chain([(k, steps)]).collect();
+        let steps: Vec<(Axis, usize)> = outer
+            .iter()
+            .copied()
+            .chain([(self.walked(), steps)])
+            .collect();
         tiling.walk(&steps)
     }
 
@@ -338,6 +455,10 @@ impl PlaneFragmentMicrokernel {
             PlaneFragmentInstruction::Wgmma { .. } => (1, 1),
             _ => (settings.along_m.get(), settings.along_n.get()),
         };
+        let k_axes = self.k_axes(settings.depth.get());
+        if let Some(&(_, extent)) = k_axes.iter().find(|&&(k_axis, _)| k_axis == axis) {
+            return extent;
+        }
         match self.axes.dim(axis) {
             Some(MatmulDim::M) => along_m * m,
             Some(MatmulDim::N) => along_n * n,
@@ -525,15 +646,18 @@ impl Microkernel for PlaneFragmentMicrokernel {
         item: &MatmulWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let packed = item
-            .blocks
-            .into_iter()
-            .flat_map(|space| Self::packed_candidates(hw, item, *settings, space));
+        let packed: Vec<Self> = match item.blocks {
+            None => Vec::new(),
+            Some(space) if item.stages_scales_beside() => {
+                Self::block_scaled_candidates(hw, item, *settings, space)
+            }
+            Some(space) => Self::packed_candidates(hw, item, *settings, space).collect(),
+        };
         let float = item
             .blocks
             .is_none()
             .then(|| Self::float_candidates(hw, item, settings));
-        packed.chain(float.into_iter().flatten())
+        packed.into_iter().chain(float.into_iter().flatten())
     }
 
     /// The leaf a unit reads is one instruction's tile of each operand, or the unit's block of the

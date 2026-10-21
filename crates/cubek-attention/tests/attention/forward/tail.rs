@@ -51,11 +51,13 @@ fn problem(
 fn problem_heads(
     global_dtypes: AttentionGlobalTypes,
     num_heads: usize,
+    num_kv_heads: usize,
     (seq_q, seq_kv, head_dim, val_dim): (usize, usize, usize, usize),
 ) -> AttentionProblem {
     problem_heads_causal(
         global_dtypes,
         num_heads,
+        num_kv_heads,
         (seq_q, seq_kv, head_dim, val_dim),
         false,
     )
@@ -64,11 +66,13 @@ fn problem_heads(
 fn problem_heads_causal(
     global_dtypes: AttentionGlobalTypes,
     num_heads: usize,
+    num_kv_heads: usize,
     (seq_q, seq_kv, head_dim, val_dim): (usize, usize, usize, usize),
     causal: bool,
 ) -> AttentionProblem {
     let mut problem = problem_causal(global_dtypes, (seq_q, seq_kv, head_dim, val_dim), causal);
     problem.dims.num_heads = num_heads;
+    problem.dims.num_kv_heads = num_kv_heads;
     problem
 }
 
@@ -81,6 +85,7 @@ fn problem_causal(
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim,
@@ -244,7 +249,19 @@ fn permuted_inputs_unit() {
     let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
-        problem_heads(f32_dtypes(&client), 2, (64, 64, 32, 32)),
+        problem_heads(f32_dtypes(&client), 2, 2, (64, 64, 32, 32)),
+        unit_inferred(),
+    )
+}
+
+/// GQA under a permuted input layout: the packed KV head axis is strided, not
+/// contiguous, so the head offset must come from the tensor's own stride.
+#[test]
+fn permuted_inputs_gqa_unit() {
+    let client = cubecl::test_device().client();
+    test_launch_permuted(
+        client.clone(),
+        problem_heads(f32_dtypes(&client), 6, 2, (64, 64, 32, 32)),
         unit_inferred(),
     )
 }
@@ -254,7 +271,7 @@ fn permuted_inputs_encoder_shape_unit() {
     let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
-        problem_heads(f32_dtypes(&client), 6, (1500, 1500, 64, 64)),
+        problem_heads(f32_dtypes(&client), 6, 6, (1500, 1500, 64, 64)),
         unit_inferred(),
     )
 }
@@ -264,7 +281,7 @@ fn permuted_inputs_causal_unit() {
     let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
-        problem_heads_causal(f32_dtypes(&client), 2, (64, 64, 32, 32), true),
+        problem_heads_causal(f32_dtypes(&client), 2, 2, (64, 64, 32, 32), true),
         unit_inferred(),
     )
 }
@@ -274,7 +291,7 @@ fn permuted_inputs_causal_encoder_shape_unit() {
     let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
-        problem_heads_causal(f32_dtypes(&client), 6, (1500, 1500, 64, 64), true),
+        problem_heads_causal(f32_dtypes(&client), 6, 6, (1500, 1500, 64, 64), true),
         unit_inferred(),
     )
 }
@@ -284,7 +301,7 @@ fn permuted_inputs_blackbox() {
     let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
-        problem_heads(f32_dtypes(&client), 2, (64, 64, 32, 32)),
+        problem_heads(f32_dtypes(&client), 2, 2, (64, 64, 32, 32)),
         blackbox_accelerated_inferred(),
     )
 }

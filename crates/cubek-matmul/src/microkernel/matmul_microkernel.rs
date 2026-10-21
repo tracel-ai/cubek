@@ -1,6 +1,7 @@
 use crate::microkernel::{
     MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
+use crate::stored::BlockScales;
 use cubek_std::microkernel::Microkernel;
 use cubek_tile::launch::Delivery;
 
@@ -22,5 +23,11 @@ pub trait MatmulMicrokernel:
     /// both: [`SyncPerUnit`](Delivery::SyncPerUnit) for one that stages nothing.
     fn delivery(&self) -> Delivery {
         Delivery::SyncPerUnit
+    }
+
+    /// How it reads a packed input's block scales, which the launch binds them as:
+    /// [`Fields`](BlockScales::Fields) for one that decodes them.
+    fn block_scales(&self) -> BlockScales {
+        BlockScales::Fields
     }
 }

@@ -6,7 +6,7 @@ use cubek_matmul::{
     definition::{AccumulatorOperand, MatmulAvailabilityError, MatmulElems, MatmulVectorSizes},
     multi_level::{
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
-        definition::{BatchMatmulBlueprint, TilingScheme, adjust_dtypes},
+        definition::{BatchMatmulBlueprint, TilingScheme, adjust_dtypes_with_tf32},
         routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
     },
 };
@@ -89,7 +89,12 @@ pub fn convolution_matmul_selection(
     vector_sizes: &MatmulVectorSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<BatchMatmulBlueprint, MatmulAvailabilityError> {
-    adjust_dtypes(client, dtypes, tile_matmul.requires_accelerator());
+    adjust_dtypes_with_tf32(
+        &client.properties().features,
+        dtypes,
+        tile_matmul.requires_accelerator(),
+        true,
+    );
 
     // rough heuristic based on previous bench results where 512 channels with a 3x3 kernel seemed
     // to be the rough cutoff for the k=4 size.

@@ -27,6 +27,7 @@ fn one_tile_simple() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -85,6 +86,7 @@ fn one_tile_hd_neq_vd() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -138,6 +140,7 @@ fn partition_hd_neq_vd() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -191,6 +194,7 @@ fn one_tile_several_planes() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -246,6 +250,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim,
@@ -293,6 +298,7 @@ fn two_rows_in_array_tile() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -341,6 +347,7 @@ fn one_tile_seqq16() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -389,6 +396,7 @@ fn one_tile_seqq4() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -436,6 +444,7 @@ fn seqq2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -483,6 +492,7 @@ fn kv2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -530,6 +540,7 @@ fn hd2_vd2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -577,6 +588,7 @@ fn all2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -625,6 +637,7 @@ fn global_iterations_2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -673,6 +686,7 @@ fn global_iterations_2_kv2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -721,6 +735,7 @@ fn partition_kv1_global1_with_oob() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -769,6 +784,7 @@ fn partition_seqq2_global2_kv2_global2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -816,6 +832,7 @@ fn partition_many_planes() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -864,6 +881,7 @@ fn partition_kv1_global3_with_oob() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -911,6 +929,7 @@ fn partition_oob_in_q_with_batches() {
         dims: AttentionDims {
             batch: 2,
             num_heads: 2,
+            num_kv_heads: 2,
             seq_q: 1,
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -958,6 +977,7 @@ fn partition_kv2_with_oob() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme) - 1,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1005,6 +1025,7 @@ fn partition_kv2_causal() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1052,6 +1073,7 @@ fn partition_kv2_masked() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1099,6 +1121,7 @@ fn stage2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1146,6 +1169,7 @@ fn stage4() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1195,6 +1219,7 @@ fn stage2_problem4() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1242,6 +1267,7 @@ fn double_row_wise() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1289,6 +1315,7 @@ fn one_tile_masked() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1336,6 +1363,7 @@ fn one_tile_causal() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1383,6 +1411,7 @@ fn one_tile_masked_causal() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1431,6 +1460,7 @@ fn masked_oob() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1479,6 +1509,7 @@ fn masked_larger() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv,
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1526,6 +1557,7 @@ fn num_heads_2() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 2,
+            num_kv_heads: 2,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1573,6 +1605,7 @@ fn batch_2() {
         dims: AttentionDims {
             batch: 2,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1620,6 +1653,7 @@ fn batch_2_seqq2() {
         dims: AttentionDims {
             batch: 2,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1667,6 +1701,7 @@ fn num_heads_2_batch_2() {
         dims: AttentionDims {
             batch: 2,
             num_heads: 2,
+            num_kv_heads: 2,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1714,6 +1749,7 @@ fn num_heads_2_masked() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 2,
+            num_kv_heads: 2,
             seq_q: elements_in_stage_seq_q(&tiling_scheme),
             seq_kv: elements_in_partition_seq_kv(&tiling_scheme),
             head_dim: elements_in_partition_head_dim(&tiling_scheme),
@@ -1766,6 +1802,7 @@ fn huge_problem() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim,
@@ -1816,6 +1853,7 @@ fn causal_several_heads() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 2,
+            num_kv_heads: 2,
             seq_q: 16,
             seq_kv: 16,
             head_dim: head_val_dim as usize,

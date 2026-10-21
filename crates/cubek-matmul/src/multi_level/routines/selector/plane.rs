@@ -23,7 +23,8 @@ use crate::{
             tile::TileMatmulKind,
         },
         definition::{
-            BatchMatmulBlueprint, MultiRowStrategy, SwizzleModes, TilingScheme, adjust_dtypes,
+            BatchMatmulBlueprint, MultiRowStrategy, SwizzleModes, TilingScheme,
+            adjust_dtypes_with_tf32,
         },
         routines::selector::is_tiny,
         stage::SwizzleMode,
@@ -72,7 +73,12 @@ pub fn infer_blueprint_plane(
     vector_sizes: &MatmulVectorSizes,
     options: PlaneTilingBlueprintOptions,
 ) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
+    adjust_dtypes_with_tf32(
+        &client.properties().features,
+        &mut dtypes,
+        tile_matmul.requires_accelerator(),
+        problem.allow_tf32,
+    );
 
     if plane_dim == 1 {
         return Err(MatmulSetupError::Unavailable(

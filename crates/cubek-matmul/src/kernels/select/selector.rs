@@ -29,12 +29,16 @@
 //! which table a row count belongs to is decided by what the kernels do. A rule tuned to one
 //! device's sweep instead is a number every other device has to live with.
 
-use super::packed::{matmul_supported, nvfp4_admits, quantized_few_rows};
+use super::packed::{
+    NVFP4_SCALE_WORD_SPAN, matmul_supported, nvfp4_activation_scheme, quantized_few_rows,
+};
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
+use crate::stored::Operand;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_std::Hardware;
-use cubek_std::block_scaled_nvfp4;
+use cubek_std::matmul_axes::{K, N};
+use cubek_std::{NVFP4_BLOCK, block_scaled_nvfp4};
 use cubek_tile::launch::Refusal;
 
 /// How a product runs: what becomes of its weight, and the kernel that reads it.
@@ -44,16 +48,12 @@ pub enum MatmulSelection {
     Float(MatmulChoice),
     /// A packed weight read as it is stored, by the kernel `choice` gives.
     Packed(MatmulPackedChoice),
-    /// A packed weight dequantized into the activation's element by `dequantize`, then read by the
-    /// float kernel `choice` gives.
+    /// A packed weight dequantized into the product's element by `dequantize`, a packed activation
+    /// too, then read by the float kernel `choice` gives.
     DequantizeThen {
         dequantize: MatmulDequantize,
         choice: MatmulChoice,
     },
-    /// A quantized activation decoded into the float element it stands for, then the product
-    /// `then` runs on it, against the packed weight: no routine reads a packed activation as
-    /// stored yet.
-    DecodeLhsThen(Box<MatmulSelection>),
 }
 
 /// How the kernel reading a float weight is chosen.
@@ -159,7 +159,8 @@ impl MatmulTable {
 /// ceiling, and by the kernel a pin names; elsewhere it is decoded first and read by the kernel the
 /// strategy chooses for a float weight. A scheme no kernel here reads is dequantized by burn
 /// first, under every strategy but the `Nvfp4TensorCores` pin. A quantized activation against a
-/// packed weight is decoded first, and runs as a float one would.
+/// packed weight takes the selection a float one would: the packed routines read it as stored, and
+/// every other kernel is handed it dequantized.
 ///
 /// # Errors
 ///
@@ -172,31 +173,12 @@ pub fn select(
     hw: &Hardware,
 ) -> Result<MatmulSelection, Refusal> {
     match (problem.lhs, problem.rhs) {
-        (OperandKind::Float, _) => select_float_lhs(strategy, problem, hw),
-        (OperandKind::Quantized(_), OperandKind::Quantized(_)) => {
-            let decoded = MatmulProblem {
-                lhs: OperandKind::Float,
-                ..*problem
-            };
-            let then = select_float_lhs(strategy, &decoded, hw)?;
-            Ok(MatmulSelection::DecodeLhsThen(Box::new(then)))
-        }
         (OperandKind::Quantized(_), OperandKind::Float) => Err(QUANTIZED_LHS_FLOAT_RHS),
-    }
-}
-
-/// How a float activation against `problem`'s weight runs under `strategy` on `hw`.
-fn select_float_lhs(
-    strategy: MatmulOpStrategy,
-    problem: &MatmulProblem,
-    hw: &Hardware,
-) -> Result<MatmulSelection, Refusal> {
-    match problem.rhs {
-        OperandKind::Float => float_choice(strategy, problem).map(MatmulSelection::Float),
-        OperandKind::Quantized(scheme) if matmul_supported(hw, &scheme) => {
+        (_, OperandKind::Float) => float_choice(strategy, problem).map(MatmulSelection::Float),
+        (_, OperandKind::Quantized(scheme)) if matmul_supported(hw, &scheme) => {
             packed_selection(strategy, problem, &scheme, hw)
         }
-        OperandKind::Quantized(_) => Ok(MatmulSelection::DequantizeThen {
+        (_, OperandKind::Quantized(_)) => Ok(MatmulSelection::DequantizeThen {
             dequantize: MatmulDequantize::Burn,
             choice: float_choice(strategy, problem)?,
         }),
@@ -300,8 +282,20 @@ fn packed_selection(
     }
 }
 
-/// Whether the 4-bit tensor cores serve this product: an NVFP4 weight the kernel reads, on a GPU
-/// whose 4-bit instruction takes it.
+/// Whether the 4-bit tensor cores serve this product, on a GPU whose 4-bit instruction takes it:
+/// a weight packed as the activation is quantized for it ([`nvfp4_activation_scheme`]), `e2m1`
+/// values under a `ue4m3` scale every [`NVFP4_BLOCK`] of `k` and one `f32` over the whole of it,
+/// its words along `k`, `k` whole words of block scales.
 fn nvfp4_tensor_cores_serve(problem: &MatmulProblem, scheme: &QuantScheme, hw: &Hardware) -> bool {
-    nvfp4_admits(scheme, problem.k) && block_scaled_nvfp4(hw)
+    let activation = nvfp4_activation_scheme();
+    let format = (scheme.value, scheme.block_scale().map(|block| block.dtype))
+        == (
+            activation.value,
+            activation.block_scale().map(|block| block.dtype),
+        )
+        && scheme.tensor_scale() == activation.tensor_scale();
+    let along_k = Operand::axis_of(scheme, [K, N]) == Some(K)
+        && Operand::of_scheme(scheme, K, [K, N])
+            .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK));
+    format && along_k && problem.k.is_multiple_of(NVFP4_SCALE_WORD_SPAN) && block_scaled_nvfp4(hw)
 }

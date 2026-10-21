@@ -48,6 +48,9 @@ pub struct MatmulProblemDefinition {
     /// strides as if they were a plain matrix's, so they cannot tell a tiled tensor apart.
     pub lhs_storage: StorageTileKey,
     pub rhs_storage: StorageTileKey,
+    /// Whether automatic F32-to-TF32 conversion is allowed. Part of the persisted
+    /// key because it changes which kernels are eligible, including under fusion.
+    pub allow_tf32: bool,
 }
 
 /// How a matrix operand is stored, for the key: plain, or in storage tiles.
@@ -247,6 +250,7 @@ impl MatmulAutotuneKey {
             matrix_layout_rhs,
             lhs_storage,
             rhs_storage,
+            cubek_std::config::MatmulConfig::get().allow_tf32,
         );
         let analysis = MatmulAutotuneAnalysis {
             // From the anchored dims, like every derived field above: the raw

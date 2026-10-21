@@ -1,21 +1,23 @@
 //! A packed tensor bound as one tile: its words, under its block scales, under its per-tensor scale
 //! where its scheme has one. Every kernel that reads a packed operand reads it through
 //! [`PackedTensor::bind`], whichever family it belongs to; the family names the operand's axes and
-//! nothing else.
+//! how its block scales are read ([`BlockScales`]), nothing else.
 
 use super::PlainTensor;
-use crate::stored::{Operand, Packing};
+use crate::stored::{BlockScales, Operand, Packing};
 use crate::tile_order::{self, VALUES_AXES};
 use cubecl::ir::{ElemType, UIntKind};
+use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::zspace::metadata::Metadata;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
-use cubek_tile::launch::Refusal;
+use cubek_tile::launch::{Arg, Labelled, Refusal};
 use cubek_tile::{
     Axis, Launcher, Projection, TileArgLaunch,
+    kind::Field,
     layout::{PhysicalAxisMap, split},
 };
 
@@ -235,11 +237,12 @@ impl PackedTensor {
     }
 
     /// The matrix as one tile under `launcher`, its words `width` values wide: the words under
-    /// their block scales, under the per-tensor scale where the scheme has one.
+    /// their block scales, read as `scales` says, under the per-tensor scale where the scheme has
+    /// one.
     ///
     /// Every level binds as the words it lies in and is served every scale a word holds: the unit
     /// that reads a word of scales holds the blocks of every field in it.
-    pub fn bind(&self, launcher: &Launcher, width: usize) -> TileArgLaunch {
+    pub fn bind(&self, launcher: &Launcher, width: usize, scales: BlockScales) -> TileArgLaunch {
         let operand = &self.operand;
         let lined = operand.lined();
         // The buffer steps its rows before its words, so its dims are named that way.
@@ -292,32 +295,79 @@ impl PackedTensor {
             .expect("a block-scaled matrix groups one of its axes");
         let (blocks_axis, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
-        // A scale is looked up at its value's coordinates, so it names only the digits the values
+        // A scale is looked up at its value's coordinates, so it names only the axes the values
         // carry: values in tiles carry the position inside the rows' axis, not its blocks, which
         // no scale groups.
-        let scale_axes = match self.laid {
-            WordsLaid::InRows => axes,
-            WordsLaid::InTiles(_) => Projection::dims()
-                .dim(PhysicalAxisMap::of(blocked(rows_along).1))
-                .dim(self.dim(lined))
-                .build(),
+        let scale_rows = match self.laid {
+            WordsLaid::InRows => self.dim(rows_along),
+            WordsLaid::InTiles(_) => PhysicalAxisMap::of(blocked(rows_along).1),
         };
-        let block_scales = launcher
-            .arg(self.block_scales.rows(rows, blocks), WORD)
-            .gathered(scale_axes.scales_per(blocks_axis))
-            // A whole read of the scales at once: a word of them.
-            .vectorize(operand.scale_read_values());
         let global = self.global_scale.as_ref().map(|scale| {
             launcher
                 .arg(scale.rows(1, 1), WORD)
                 .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
         });
-        quantized_arg(
-            &self.scheme,
-            words,
-            [block_scales].into_iter().chain(global),
-        )
+        match scales {
+            BlockScales::Fields => {
+                let block_scales = launcher
+                    .arg(self.block_scales.rows(rows, blocks), WORD)
+                    .gathered(
+                        Projection::dims()
+                            .dim(scale_rows)
+                            .dim(self.dim(lined))
+                            .build()
+                            .scales_per(blocks_axis),
+                    )
+                    // A whole read of the scales at once: a word of them.
+                    .vectorize(operand.scale_read_values());
+                quantized_arg(
+                    &self.scheme,
+                    words,
+                    [block_scales].into_iter().chain(global),
+                )
+            }
+            BlockScales::Words => {
+                let per_word = operand.scales_per_word();
+                let block_scales = launcher
+                    .arg(self.block_scale_words(rows, blocks / per_word), WORD)
+                    .gathered(
+                        Projection::dims()
+                            .dim(scale_rows)
+                            .dim(PhysicalAxisMap::of(blocks_axis).over(per_word))
+                            .build(),
+                    );
+                self.under_scale_words(words, block_scales, global)
+            }
+        }
         .expect(ADMITTED_PLAN_RUNS)
+    }
+
+    /// `words` under `block_scales`, words of block scales read whole and so bound plain, under
+    /// `global`, the per-tensor scale packed as the scheme's field for it: what
+    /// [`quantized_arg`] binds, but for the block scales' level.
+    fn under_scale_words(
+        &self,
+        words: Arg<'_, Labelled>,
+        block_scales: Arg<'_, Labelled>,
+        global: Option<Arg<'_, Labelled>>,
+    ) -> Result<TileArgLaunch, Refusal> {
+        let mut tile = words
+            .packed(self.scheme.value)
+            .build()?
+            .arg()
+            .scales(block_scales.build()?.arg());
+        if let (Some(global), Some(field)) = (global, self.scheme.tensor_scale()) {
+            tile = tile.scales(global.packed(Field::of_scale(field)).build()?.arg());
+        }
+        Ok(tile)
+    }
+
+    /// The block scales as the `u32` words they are stored in, `words` a row: each row a run of
+    /// whole words, stepped from row to row at its stride, counted in words.
+    fn block_scale_words(&self, rows: usize, words: usize) -> TensorBinding {
+        let pitch = self.block_scales.binding.strides[0] * self.block_scales.elem.size();
+        self.block_scales
+            .bound_as(Metadata::new([rows, words], [pitch / 4, 1]))
     }
 
     /// The matrix's axis other than `axis`.

@@ -90,7 +90,8 @@ impl<M> MatmulBlueprint<M> {
     /// says, each operand bound at the width the packing reads it at: a vector count of a float
     /// element means nothing for words. In values: the weight's a whole read, every axis it spans,
     /// the lhs and the output that read's run along the axis they share with it, one value across
-    /// it.
+    /// it. A packed lhs is contracted in those runs too, whole words of it
+    /// ([`MatmulView::check_steps`](crate::kernels::MatmulView::check_steps)).
     pub fn packed(rhs: &Packing, microkernel: M, partitioning: MatmulPartitioning) -> Self {
         let operand = &rhs.operand;
         let lined = operand.lined();

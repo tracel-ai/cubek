@@ -95,8 +95,26 @@ impl MatmulTensors {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 Self::float(client, lhs, rhs, M::ROWS_KIND)
             }
-            (lhs, rhs) => Self::packed(client, lhs, rhs),
+            (lhs, rhs) => {
+                let out = Self::packed_output(&lhs);
+                Self::packed(client, lhs, rhs, out)
+            }
         }
+    }
+
+    /// [`new`](Self::new) into an output of `out`: what a product whose activation is packed, and
+    /// so names no float element, is written in.
+    ///
+    /// # Errors
+    ///
+    /// As [`new`](Self::new), for a packed input.
+    pub fn written_in(
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        out: ElemType,
+    ) -> Result<Self, Refusal> {
+        Self::packed(client, lhs, rhs, out)
     }
 
     /// The product of the float `lhs` and `rhs`, both on `client`'s device, as a launch on `M`
@@ -230,9 +248,13 @@ impl MatmulTensors {
         })
     }
 
-    /// `lhs` against `rhs`, either packed, the output allocated as `[.., n]` in the activation's
-    /// element, or the element a packed one's words unpack into.
-    fn packed(client: &Client, lhs: StoredTensor, rhs: StoredTensor) -> Result<Self, Refusal> {
+    /// `lhs` against `rhs`, either packed, the output allocated as `[.., n]` in `out`.
+    fn packed(
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        out: ElemType,
+    ) -> Result<Self, Refusal> {
         let k = rhs.extent([K, N], K);
         let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
@@ -241,7 +263,7 @@ impl MatmulTensors {
             StoredTensor::Packed(lhs) => vec![lhs.extent(M), k],
         };
         *shape.last_mut().expect("an activation has a rank") = rhs.extent([K, N], N);
-        let (tensor, bound) = PlainTensor::empty(client, shape.into(), Self::packed_output(&lhs));
+        let (tensor, bound) = PlainTensor::empty(client, shape.into(), out);
         let tensor = Some(tensor);
         Ok(Self {
             client: client.clone(),
@@ -296,7 +318,7 @@ impl MatmulTensors {
 
     /// The operands bound where either input is packed, the output restated over the block-split
     /// space.
-    fn bind_packed<Mk, SM>(
+    fn bind_packed<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
@@ -417,7 +439,7 @@ impl MatmulTensors<Geometry> {
     /// The operands bound where either input is packed, the output stated as a buffer output is
     /// ([`MatmulBlocks::restated`]): a dim for each axis of the block-split space, each at its own
     /// stride over the sink's dense rows.
-    fn bind_packed<Mk, SM>(
+    fn bind_packed<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
@@ -541,7 +563,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                         MatmulTensors::rows_of(lhs, k),
                         rhs.extent([K, N], N),
                         k,
-                        MatmulTensors::packed_output(lhs),
+                        self.out.element(lhs),
                         packings,
                     )
                 }
@@ -561,7 +583,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// Both inputs under `launcher`, beside `out`: each packed one as one tile of its words under
     /// its scales, each float one restated over the block-split space.
-    fn bind_packed_inputs<Mk, SM, O>(
+    fn bind_packed_inputs<Mk: MatmulMicrokernel, SM, O>(
         &self,
         launcher: Launcher,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -580,7 +602,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg()
             }
-            StoredTensor::Packed(tensor) => tensor.bind(&launcher, width),
+            StoredTensor::Packed(tensor) => {
+                tensor.bind(&launcher, width, blueprint.microkernel.block_scales())
+            }
         };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
         let rhs = bind(&self.rhs, [K, N], blueprint.widths.rhs);
@@ -843,6 +867,9 @@ pub trait MatmulOutput {
 
     /// The product of `lhs` and `rhs` landing here.
     fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem;
+
+    /// The element the product is written in, beside the activation `lhs`.
+    fn element(&self, lhs: &StoredTensor) -> ElemType;
 }
 
 impl MatmulOutput for MatmulOutputBuffer {
@@ -855,6 +882,10 @@ impl MatmulOutput for MatmulOutputBuffer {
     fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem {
         MatmulRoutineProblem::new(lhs, rhs, &self.bound)
     }
+
+    fn element(&self, _lhs: &StoredTensor) -> ElemType {
+        self.bound.elem
+    }
 }
 
 impl MatmulOutput for Geometry {
@@ -866,6 +897,10 @@ impl MatmulOutput for Geometry {
 
     fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem {
         MatmulRoutineProblem::sink(lhs, rhs, self)
+    }
+
+    fn element(&self, lhs: &StoredTensor) -> ElemType {
+        MatmulTensors::packed_output(lhs)
     }
 }
 
@@ -1147,10 +1182,9 @@ pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the packed routines are verified at f32, f16 or bf16 float operands",
 };
 
-/// What a packed routine declines: a problem whose weight is not packed, or whose activation is.
+/// What a packed routine declines: a problem whose rhs is not packed.
 pub const MATMUL_Q_RHS_NOT_PACKED: Refusal = Refusal::Declined {
-    why: "the packed routines read one packed, block-scaled weight matrix beside a float \
-              activation",
+    why: "the packed routines read a packed, block-scaled rhs, beside an lhs float or packed",
 };
 
 /// What a launch declines before preparing anything: operands of two elements, or of one the

@@ -13,8 +13,8 @@ version.workspace = true
 workspace = true
 
 [features]
-default = ["cubecl/default"]
-std = ["cubecl/std"]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "cubecl-environment/std"]
 
 heavy = []
 extended = ["heavy"]
@@ -36,6 +36,9 @@ cubek-test-utils = { workspace = true, optional = true }
 
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
+cubecl-environment = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 cubek-test-utils = { workspace = true }
+tempfile = "3"

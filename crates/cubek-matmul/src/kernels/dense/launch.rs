@@ -3,6 +3,7 @@ use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::microkernel::MatmulMicrokernel;
 use crate::microkernel::staged_walk::MatmulCubeWrite;
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubek_std::Hardware;
 use cubek_tile::Geometry;
@@ -99,6 +100,31 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         Ok(())
     }
 
+    /// [`launch_on`](Self::launch_on) into an output of `out`: what a product whose activation is
+    /// packed, and so names no float element, is written in
+    /// ([`MatmulTensors::written_in`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`launch_on`](Self::launch_on).
+    fn launch_written_in(
+        &self,
+        hw: &Hardware,
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        out: ElemType,
+        settings: &Self::Settings,
+    ) -> Result<TensorHandle, Refusal> {
+        let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
+        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        let binding = tensors
+            .bind(&blueprint, &grid)
+            .map_out(|out| (out, Write::Replace));
+        self.dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
+        Ok(tensors.into_out().expect(ALLOCATED))
+    }
+
     /// `lhs · rhs` at the first of the routine's own settings that prepares a launch on `hw`
     /// ([`prepare_first_served`](Routine::prepare_first_served)): what a caller naming the routine
     /// and no setting runs.
@@ -114,6 +140,31 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         rhs: StoredTensor,
     ) -> Result<TensorHandle, Refusal> {
         let tensors = MatmulTensors::new::<M>(client, lhs, rhs)?;
+        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
+        let binding = tensors
+            .bind(&blueprint, &grid)
+            .map_out(|out| (out, Write::Replace));
+        self.dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
+        Ok(tensors.into_out().expect(ALLOCATED))
+    }
+
+    /// [`launch_first_served_on`](Self::launch_first_served_on) into an output of `out`: what a
+    /// caller naming the routine and no setting runs on a packed activation
+    /// ([`MatmulTensors::written_in`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`launch_first_served_on`](Self::launch_first_served_on), and as
+    /// [`MatmulTensors::written_in`].
+    fn launch_first_served_in(
+        &self,
+        hw: &Hardware,
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        out: ElemType,
+    ) -> Result<TensorHandle, Refusal> {
+        let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
         let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
         let binding = tensors
             .bind(&blueprint, &grid)

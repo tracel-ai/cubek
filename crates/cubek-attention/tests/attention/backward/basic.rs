@@ -50,6 +50,7 @@ fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> Atte
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q,
             seq_kv,
             head_dim,
@@ -86,15 +87,16 @@ fn seed_inputs(client: &Client, problem: &AttentionProblem) -> BackwardInputs {
         problem.dims.seq_q,
         problem.dims.head_dim,
     ];
+    // dK and dV are gradients of the packed KV tensors, so they are packed too.
     let k_shape = [
         problem.dims.batch,
-        problem.dims.num_heads,
+        problem.dims.num_kv_heads,
         problem.dims.seq_kv,
         problem.dims.head_dim,
     ];
     let v_shape = [
         problem.dims.batch,
-        problem.dims.num_heads,
+        problem.dims.num_kv_heads,
         problem.dims.seq_kv,
         problem.dims.val_dim,
     ];
@@ -319,13 +321,13 @@ fn run_dkdv(problem: AttentionProblem) {
     ];
     let k_shape = [
         problem.dims.batch,
-        problem.dims.num_heads,
+        problem.dims.num_kv_heads,
         problem.dims.seq_kv,
         problem.dims.head_dim,
     ];
     let v_shape = [
         problem.dims.batch,
-        problem.dims.num_heads,
+        problem.dims.num_kv_heads,
         problem.dims.seq_kv,
         problem.dims.val_dim,
     ];
@@ -404,13 +406,13 @@ fn run_end_to_end(problem: AttentionProblem) {
     ];
     let k_shape = [
         problem.dims.batch,
-        problem.dims.num_heads,
+        problem.dims.num_kv_heads,
         problem.dims.seq_kv,
         problem.dims.head_dim,
     ];
     let v_shape = [
         problem.dims.batch,
-        problem.dims.num_heads,
+        problem.dims.num_kv_heads,
         problem.dims.seq_kv,
         problem.dims.val_dim,
     ];
@@ -592,10 +594,26 @@ fn gradcheck_small() {
 // {16, 64, 128, 257}, head dims in {32, 64, 128}. Each variant is
 // `#[ignore]`d so the default `cargo test` run doesn't fire every panic.
 
+/// MHA sweep: one KV head per query head, so dK and dV keep the query extent.
 fn sweep_problem(batch: usize, heads: usize, seq: usize, head_dim: usize) -> AttentionProblem {
     let mut p = problem(seq, seq, head_dim, head_dim);
     p.dims.batch = batch;
     p.dims.num_heads = heads;
+    p.dims.num_kv_heads = heads;
+    p
+}
+
+/// Same sweep under GQA: `heads / kv_heads` query heads share each KV head, so
+/// every dK/dV row is the sum of that group's contributions.
+fn sweep_problem_gqa(
+    batch: usize,
+    heads: usize,
+    kv_heads: usize,
+    seq: usize,
+    head_dim: usize,
+) -> AttentionProblem {
+    let mut p = sweep_problem(batch, heads, seq, head_dim);
+    p.dims.num_kv_heads = kv_heads;
     p
 }
 
@@ -617,4 +635,14 @@ fn sweep_b1_h4_n128_d128() {
 #[test]
 fn sweep_b1_h1_n257_d32() {
     run_end_to_end(sweep_problem(1, 1, 257, 32));
+}
+
+#[test]
+fn sweep_b1_h4_kv2_n128_d64() {
+    run_end_to_end(sweep_problem_gqa(1, 4, 2, 128, 64));
+}
+
+#[test]
+fn sweep_b2_h8_kv1_n64_d64() {
+    run_end_to_end(sweep_problem_gqa(2, 8, 1, 64, 64));
 }

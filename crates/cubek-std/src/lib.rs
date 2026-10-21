@@ -1,4 +1,5 @@
 pub mod autotune;
+pub mod config;
 pub mod cube_count;
 pub mod devices;
 pub mod launch;

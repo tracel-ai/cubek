@@ -68,11 +68,18 @@ impl AttentionCost {
     /// Compulsory global traffic in bytes, split by direction, which
     /// [`work`](Self::work) sums.
     ///
+    /// K and V scale with `num_kv_heads`, not `num_heads`: under GQA a KV head
+    /// is read once per cube that shares it, but it is still read once per
+    /// element, so the traffic a single KV tensor causes is its own size. What
+    /// grouping changes is the *total* — packing `num_kv_heads` heads instead of
+    /// `num_heads` shrinks those two operands by the GQA ratio.
+    ///
     /// Attention bias is excluded, as fast paths do not read one.
     pub fn traffic(&self) -> (usize, usize) {
         let AttentionDims {
             batch,
             num_heads,
+            num_kv_heads,
             seq_q,
             seq_kv,
             head_dim,
@@ -80,21 +87,26 @@ impl AttentionCost {
         } = self.dims;
 
         let batch_heads = batch * num_heads;
+        let batch_kv_heads = batch * num_kv_heads;
         let (visited, _) = self.visited();
-        let elements = |seq: usize, dim: usize| batch_heads * seq * dim;
+        let elements = |heads: usize, seq: usize, dim: usize| heads * seq * dim;
 
-        // Only the mask entries the kernel actually visits are read.
+        // Only the mask entries the kernel actually visits are read. The mask is
+        // indexed by query head, so it follows `num_heads`.
         let mask_bytes = match self.masked {
             true => batch_heads * visited * self.types.mask.size(),
             false => 0,
         };
 
-        let read = elements(seq_q, head_dim) * self.types.query.size()
-            + elements(seq_kv, head_dim) * self.types.key.size()
-            + elements(seq_kv, val_dim) * self.types.value.size()
+        let read = elements(batch_heads, seq_q, head_dim) * self.types.query.size()
+            + elements(batch_kv_heads, seq_kv, head_dim) * self.types.key.size()
+            + elements(batch_kv_heads, seq_kv, val_dim) * self.types.value.size()
             + mask_bytes;
 
-        (read, elements(seq_q, val_dim) * self.types.out.size())
+        (
+            read,
+            elements(batch_heads, seq_q, val_dim) * self.types.out.size(),
+        )
     }
 
     /// Calculates the compute operations and compulsory memory traffic for the attention pass.
@@ -158,6 +170,7 @@ mod tests {
             dims: AttentionDims {
                 batch: 2,
                 num_heads: 1,
+                num_kv_heads: 1,
                 seq_q: 8,
                 seq_kv: 16,
                 head_dim: 4,
@@ -234,6 +247,60 @@ mod tests {
     fn counts_the_operands_and_the_output() {
         // (q + k + v + out) elements per batch head * 2 heads * 4 bytes
         assert_eq!(cost().work().bytes, 2 * (32 + 64 + 64 + 32) * 4);
+    }
+
+    #[test]
+    fn grouping_shrinks_only_the_kv_bytes() {
+        // One KV head shared by 4 query heads reads a quarter of the K and V a
+        // 4-head MHA would, and leaves the query, output and mask untouched.
+        let gqa = AttentionCost {
+            dims: AttentionDims {
+                num_heads: 4,
+                num_kv_heads: 1,
+                ..cost().dims
+            },
+            ..cost()
+        };
+        let mha = AttentionCost {
+            dims: AttentionDims {
+                num_heads: 4,
+                num_kv_heads: 4,
+                ..cost().dims
+            },
+            ..cost()
+        };
+
+        let (gqa_read, _) = gqa.traffic();
+        let (mha_read, _) = mha.traffic();
+        // Per batch: 4 query heads and 1 kv head, at seq_q 8 / seq_kv 16.
+        let kv_per_head = (16 * 4 + 16 * 4) * 4;
+
+        assert_eq!(mha_read - gqa_read, 2 * 3 * kv_per_head);
+        assert!(gqa.work().bytes < mha.work().bytes);
+    }
+
+    #[test]
+    fn grouping_does_not_change_the_op_count() {
+        // Every query head still scores against a full key sequence, so grouping
+        // is a memory optimisation only. Compute throughput keys must not see it.
+        let gqa = AttentionCost {
+            dims: AttentionDims {
+                num_heads: 4,
+                num_kv_heads: 1,
+                ..cost().dims
+            },
+            ..cost()
+        };
+        let mha = AttentionCost {
+            dims: AttentionDims {
+                num_heads: 4,
+                num_kv_heads: 4,
+                ..cost().dims
+            },
+            ..cost()
+        };
+
+        assert_eq!(gqa.work().compute_ops, mha.work().compute_ops);
     }
 
     #[test]

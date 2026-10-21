@@ -1,8 +1,8 @@
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
 use crate::microkernel::MatmulPartitioning;
 use crate::microkernel::{
-    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRows,
-    MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MATMUL_PACKED_LHS_SPLIT, MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel,
+    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -238,19 +238,30 @@ impl<'a> MatmulView<'a> {
     }
 
     /// Whether a packed weight is a whole number of its [step](MatmulStep) on `hw`, each read of
-    /// it inside one scale tile. A float weight has no step to close.
+    /// it inside one scale tile, and a packed activation whole words of itself in each of the
+    /// weight's reads along `K`, the runs the two are contracted in. A float weight has no step to
+    /// close.
     ///
     /// # Errors
     ///
-    /// [`MATMUL_STEPS_UNCLOSED`](crate::microkernel::MATMUL_STEPS_UNCLOSED).
+    /// [`MATMUL_STEPS_UNCLOSED`](crate::microkernel::MATMUL_STEPS_UNCLOSED), and
+    /// [`MATMUL_PACKED_LHS_SPLIT`](crate::microkernel::MATMUL_PACKED_LHS_SPLIT).
     pub fn check_steps(&self, hw: &Hardware) -> Result<(), Refusal> {
-        self.problem.packings.rhs.iter().try_for_each(|rhs| {
-            MatmulStep::new(hw, &rhs.operand, self.problem.elements.lhs).check(
-                &rhs.operand,
-                self.problem.n,
-                self.problem.k,
-            )
-        })
+        let MatmulOperands { lhs, rhs, .. } = self.problem.packings;
+        let Some(rhs) = rhs else {
+            return Ok(());
+        };
+        MatmulStep::new(hw, &rhs.operand, self.problem.elements.lhs).check(
+            &rhs.operand,
+            self.problem.n,
+            self.problem.k,
+        )?;
+        match lhs {
+            Some(lhs) if !rhs.operand.read(K).is_multiple_of(lhs.operand.read(K)) => {
+                Err(MATMUL_PACKED_LHS_SPLIT)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// What every microkernel is handed, summing in [`SUM`](Self::SUM): its rows held whole, every

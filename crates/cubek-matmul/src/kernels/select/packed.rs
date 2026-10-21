@@ -5,7 +5,7 @@
 //! is one.
 
 use crate::stored::Operand;
-use cubecl::quant::scheme::{QuantScheme, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
 use cubek_std::matmul_axes::{K, N};
@@ -68,16 +68,13 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme) -> bool {
 /// Values of `k` one word of an NVFP4 weight's scales covers: four one-byte scales, a block each.
 pub const NVFP4_SCALE_WORD_SPAN: usize = NVFP4_BLOCK * 4;
 
-/// Whether a `[k, n]` weight under `scheme` reads as an NVFP4 operand's rows: `e2m1` values under
-/// a `ue4m3` scale every [`NVFP4_BLOCK`] of `k` and one `f32` over the whole operand, its words
-/// running along `k`, `k` a whole number of words of scales. What a rule asks before a tensor is
-/// in hand.
-pub fn nvfp4_admits(scheme: &QuantScheme, k: usize) -> bool {
-    let format = scheme.value == QuantValue::E2M1
-        && scheme.block_scale().map(|block| block.dtype) == Some(ScaleDtype::UE4M3)
-        && scheme.tensor_scale() == Some(ScaleDtype::F32);
-    let along_k = Operand::axis_of(scheme, [K, N]) == Some(K)
-        && Operand::of_scheme(scheme, K, [K, N])
-            .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK));
-    format && along_k && k.is_multiple_of(NVFP4_SCALE_WORD_SPAN)
+/// The scheme an activation is quantized under for the 4-bit tensor cores: `e2m1` values along
+/// its last axis, eight to a word, under a `ue4m3` scale every [`NVFP4_BLOCK`] and one `f32` over
+/// the whole of it.
+pub fn nvfp4_activation_scheme() -> QuantScheme {
+    QuantScheme::default()
+        .with_value(QuantValue::E2M1)
+        .per_block([NVFP4_BLOCK as u8], ScaleDtype::UE4M3)
+        .per_tensor(ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
 }

@@ -35,7 +35,7 @@ pub struct MatmulProblem {
     /// rather than a kernel.
     pub streamed_rows: Option<usize>,
     /// What the activation is: a float one, or one already quantized, which
-    /// makes the product the q_lhs_q_rhs one.
+    /// makes both inputs of the product packed.
     pub lhs: OperandKind,
     pub rhs: OperandKind,
 }
