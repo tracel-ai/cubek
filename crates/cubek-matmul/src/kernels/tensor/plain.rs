@@ -4,8 +4,9 @@ use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::std::tensor::is_contiguous;
 use cubecl::zspace::metadata::Metadata;
+use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Tiling};
-use cubek_std::layout::{assemble, fragments};
+use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
 use cubek_tile::launch::Refusal;
 use cubek_tile::layout::ElemAlignment;
 use cubek_tile::{Axis, Geometry, Projection};
@@ -132,13 +133,7 @@ impl PlainTensor {
     /// This buffer as the one matrix its last two logical dims hold, stored as they are, in rows
     /// or in tiles; `None` where a leading dim holds more than one.
     pub fn as_one_matrix(&self) -> Option<Self> {
-        let meta = self.meta();
-        let dims = fragments(&meta);
-        let rank = dims.len();
-        let held =
-            |dim: &[(usize, usize)]| dim.iter().map(|&(extent, _)| extent).product::<usize>();
-        (rank >= 2 && dims[..rank - 2].iter().all(|dim| held(dim) == 1))
-            .then(|| self.viewed(assemble(&[&dims[rank - 2], &dims[rank - 1]])))
+        one_matrix(&self.meta()).map(|meta| self.viewed(meta))
     }
 
     /// This tensor, dense rows along `rows` by `columns`, restated over the axes each is in the
@@ -193,43 +188,15 @@ impl PlainTensor {
         is_contiguous(&self.binding.shape, &self.binding.strides)
     }
 
-    /// Whether the elements are laid out row-major with no gaps, the axes of extent 1 ignored:
-    /// their stride is never observed.
+    /// Whether the elements are laid out row-major with no gaps, the axes of extent 1 ignored
+    /// ([`is_dense`]).
     pub fn is_dense(&self) -> bool {
-        let mut expected = 1;
-        for (dim, &extent) in self.binding.shape.iter().enumerate().rev() {
-            if extent != 1 && self.binding.strides[dim] != expected {
-                return false;
-            }
-            expected *= extent;
-        }
-        true
+        is_dense(&self.binding.shape, &self.binding.strides)
     }
 
-    /// Whether no two indices address the same element. An axis of extent 1 addresses one
-    /// element whatever its stride, zero included, so only a broadcast axis, a zero stride over
-    /// more than one index, maps many indices onto one element.
+    /// Whether no two indices address the same element ([`is_nonoverlapping`]).
     pub fn is_nonoverlapping(&self) -> bool {
-        let (shape, strides) = (&self.binding.shape, &self.binding.strides);
-        if shape
-            .iter()
-            .zip(strides.iter())
-            .any(|(&extent, &stride)| stride == 0 && extent > 1)
-        {
-            return false;
-        }
-        let mut dims = shape.iter().zip(strides.iter()).collect::<Vec<_>>();
-        dims.sort_by_key(|(_, stride)| **stride);
-        // Walking outward from the innermost axis: each axis must begin past the last element
-        // the ones inside it reach.
-        let mut max_offset = 0;
-        for (&extent, &stride) in dims {
-            if stride <= max_offset && extent != 1 {
-                return false;
-            }
-            max_offset += (extent - 1) * stride;
-        }
-        true
+        is_nonoverlapping(&self.binding.shape, &self.binding.strides)
     }
 
     /// This tensor row-major and gapless: as it is where it already is, restrided where only an
@@ -250,7 +217,7 @@ impl PlainTensor {
         // copy, the buffer is what a copy would have produced.
         if tensor.is_dense() {
             let shape = tensor.binding.shape.clone();
-            let strides = row_major_strides(&shape);
+            let strides = row_major_contiguous_strides(&shape);
             return tensor.viewed(Metadata::new(shape, strides));
         }
         Self::of_handle(cubecl::std::tensor::into_contiguous(
@@ -276,17 +243,6 @@ impl PlainTensor {
         );
         (rank >= 2).then(|| strides[rank - 2])
     }
-}
-
-/// The row-major strides of `shape`.
-fn row_major_strides(shape: &Shape) -> Vec<usize> {
-    let mut strides = vec![0; shape.rank()];
-    let mut current = 1;
-    for (dim, &extent) in shape.iter().enumerate().rev() {
-        strides[dim] = current;
-        current *= extent;
-    }
-    strides
 }
 
 /// What a launch declines on a device whose runtime does not compute in the operands' element and
