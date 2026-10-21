@@ -31,6 +31,11 @@ pub struct BlackboxAcceleratedStrategy {
     pub seq_kv: u8,
 }
 
+impl cubek_std::legacy::Routine for BlackboxAcceleratedRoutine {
+    type Strategy = BlackboxAcceleratedStrategy;
+    type Blueprint = AttentionBlueprint;
+}
+
 impl Routine for BlackboxAcceleratedRoutine {
     const TILE_KIND: TileAttentionKind = TileAttentionKind::BlackboxAccelerated;
 
@@ -41,9 +46,6 @@ impl Routine for BlackboxAcceleratedRoutine {
     >;
     type GlobalAttention = SimpleGlobalAttentionFamily<Self::StageAttention>;
     type BatchAttention = SimpleBatchAttentionFamily<Self::GlobalAttention>;
-
-    type Strategy = BlackboxAcceleratedStrategy;
-    type Blueprint = AttentionBlueprint;
 
     fn prepare(
         problem: &AttentionProblem,

@@ -21,10 +21,11 @@ use crate::{
         M, N,
         quant_gemv::{
             base::{QuantGemvProblem, QuantGemvRoutine},
-            kernel::{KB, KI, quant_gemv_kernel},
+            kernel::quant_gemv_kernel,
         },
     },
 };
+use cubek_std::matmul_axes::{KB, KI};
 
 /// The elements the activation, the per-tensor scale and the output hold. The weight holds `u32`
 /// words, which the contraction decodes to `f32`: its partials never round-trip through a
@@ -60,7 +61,7 @@ pub fn launch_ref(
     client: &Client,
     bindings: QuantGemvBindings,
     problem: &QuantGemvProblem,
-    strategy: &BlueprintStrategy<(), QuantGemvRoutine>,
+    strategy: &BlueprintStrategy<QuantGemvRoutine>,
     dtypes: QuantGemvElems,
 ) -> Result<(), MatmulSetupError> {
     let plane_dim = client.properties().hardware.plane_size_max as usize;

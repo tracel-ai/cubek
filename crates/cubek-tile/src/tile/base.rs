@@ -844,8 +844,13 @@ impl Tile {
             | TileKind::Procedural(_)
             | TileKind::Lines(_) => match (&mut self.kind, &src.kind) {
                 (TileKind::Lines(d), TileKind::Memory(_)) => d.load::<R>(src),
-                (TileKind::PlanePartition(d), TileKind::Memory(_)) => d.fill_from::<S>(src),
-                (TileKind::PlaneTile(d), TileKind::Memory(_)) => d.load_window::<S>(src),
+                // A fragment loaded on its own holds `k` in the instruction's order.
+                (TileKind::PlanePartition(d), TileKind::Memory(_)) => {
+                    d.fill_from::<S>(src, DeepLoad::Steps)
+                }
+                (TileKind::PlaneTile(d), TileKind::Memory(_)) => {
+                    d.load_window::<S>(src, DeepLoad::Steps)
+                }
                 (TileKind::Memory(d), TileKind::PlaneTile(s)) => s.store_window::<S>(d, space),
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => s.load_into::<S>(d),
                 (TileKind::TmaGmem(d), TileKind::Memory(s)) => d.store_from::<S>(s),

@@ -71,7 +71,7 @@ pub fn launch_ref(
     mut lhs: InputBinding,
     mut rhs: InputBinding,
     out: TensorBinding,
-    strategy: &BlueprintStrategy<(), GemmRoutine>,
+    strategy: &BlueprintStrategy<GemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     // A stride-0 (broadcast) matrix dim can't be classified as row/col-major;

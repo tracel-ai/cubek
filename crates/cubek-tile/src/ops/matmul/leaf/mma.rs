@@ -16,8 +16,9 @@ impl MmaData {
         let operands = comptime!(self.operands);
         let (lhs_layout, rhs_layout) =
             comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-        let a = lhs.mma_operand::<L>(MatrixIdent::A, m, n, k, lhs_layout, io, operands);
-        let b = rhs.mma_operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, operands);
+        let load = deep_load(lhs, rhs);
+        let a = lhs.mma_operand::<L>(MatrixIdent::A, m, n, k, lhs_layout, io, operands, load);
+        let b = rhs.mma_operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, operands, load);
 
         match &mut self.fragment {
             MmaFragment::Acc(acc) => match (&a.fragment, &b.fragment) {
@@ -60,7 +61,7 @@ impl MmaData {
 #[cube]
 impl Tile {
     /// This factor as the `ident` operand of a manual-mma contraction: the fragment it holds, or
-    /// its window loaded in `layout`.
+    /// its window loaded in `layout`, a fragment deeper than its instruction as `load` says.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn mma_operand<T: Numeric>(
         &self,
@@ -71,6 +72,7 @@ impl Tile {
         #[comptime] layout: MatrixLayout,
         #[comptime] io: MmaIo,
         #[comptime] operands: MmaOperands,
+        #[comptime] load: DeepLoad,
     ) -> MmaData {
         match &self.kind {
             TileKind::PlaneTile(tile) => match tile {
@@ -81,7 +83,7 @@ impl Tile {
             },
             TileKind::Memory(_) => {
                 let mut data = MmaData::operand::<T>(ident, m, n, k, layout, io, operands);
-                data.load_window::<T>(self);
+                data.load_window::<T>(self, load);
                 data
             }
             TileKind::PlanePartition(_)
@@ -92,6 +94,22 @@ impl Tile {
             }
         }
     }
+}
+
+/// How a contraction loads its factors' fragments where they are deeper than its instruction:
+/// in lane runs where both are memory windows and either lies in global memory, where whole loads
+/// pay, else a step at a time, which `ldmatrix` reads out of shared memory and a factor already
+/// in fragments holds.
+#[cube]
+pub(crate) fn deep_load(lhs: &Tile, rhs: &Tile) -> comptime_type!(DeepLoad) {
+    let (lhs_window, rhs_window) = (lhs.is_memory(), rhs.is_memory());
+    let (lhs_shared, rhs_shared) = (lhs.is_shared(), rhs.is_shared());
+    comptime!(
+        match lhs_window && rhs_window && !(lhs_shared && rhs_shared) {
+            true => DeepLoad::LaneRuns,
+            false => DeepLoad::Steps,
+        }
+    )
 }
 
 /// Each factor's window layout: `A` row-major and `B` col-major when its trailing axis is

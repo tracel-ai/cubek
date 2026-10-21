@@ -24,7 +24,7 @@ pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine
     out: TensorBinding,
     problem: MatmulProblem,
     vector_sizes: MatmulVectorSizes,
-    blueprint_strategy: &BlueprintStrategy<(), A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>
 where
@@ -76,7 +76,7 @@ pub fn launch_kernel_virtual<MA: MatmulArgs, A: BatchMatmulRoutine<MA::Config>>(
     config: ConfigRuntimeArg<MA>,
     problem: MatmulProblem,
     view_vector_sizes: MatmulVectorSizes,
-    blueprint_strategy: &BlueprintStrategy<MA::Config, A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
 ) -> Result<(), MatmulSetupError> {
     let device_settings = A::device_settings(client, view_vector_sizes);
     let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;

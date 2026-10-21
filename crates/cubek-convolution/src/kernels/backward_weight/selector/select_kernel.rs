@@ -24,7 +24,7 @@ pub fn launch_kernel_concrete<Args: ConcreteArgs<A>, A: BatchMatmulRoutine<Runti
     weight_grad: TensorBinding,
     problem: ConvolutionProblem,
     vector_sizes: MatmulVectorSizes,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError> {
     let mut view_vector_sizes = vector_sizes;

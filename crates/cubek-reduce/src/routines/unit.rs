@@ -16,10 +16,12 @@ pub struct UnitRoutine;
 #[derive(Debug, Clone)]
 pub struct UnitStrategy;
 
-impl Routine for UnitRoutine {
+impl cubek_std::legacy::Routine for UnitRoutine {
     type Strategy = UnitStrategy;
-    type Blueprint = UnitReduceBlueprint;
+    type Blueprint = (UnitReduceBlueprint, CubeDim);
+}
 
+impl Routine for UnitRoutine {
     fn prepare(
         &self,
         client: &cubecl::prelude::Client,
@@ -29,7 +31,7 @@ impl Routine for UnitRoutine {
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let address_type = problem.address_type;
         let (blueprint, cube_dim, cube_count) = match strategy {
-            BlueprintStrategy::Forced(blueprint, cube_dim) => {
+            BlueprintStrategy::Forced((blueprint, cube_dim)) => {
                 let working_units = working_units(&settings, &problem);
                 let num_units_in_cube = cube_dim.num_elems();
                 let working_cubes = working_units.div_ceil(num_units_in_cube as usize);

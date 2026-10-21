@@ -19,10 +19,12 @@ pub struct PlaneStrategy {
     pub independent: bool,
 }
 
-impl Routine for PlaneRoutine {
+impl cubek_std::legacy::Routine for PlaneRoutine {
     type Strategy = PlaneStrategy;
-    type Blueprint = PlaneReduceBlueprint;
+    type Blueprint = (PlaneReduceBlueprint, CubeDim);
+}
 
+impl Routine for PlaneRoutine {
     fn prepare(
         &self,
         client: &Client,
@@ -32,7 +34,7 @@ impl Routine for PlaneRoutine {
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let address_type = problem.address_type;
         let (blueprint, cube_dim, cube_count) = match strategy {
-            BlueprintStrategy::Forced(blueprint, cube_dim) => {
+            BlueprintStrategy::Forced((blueprint, cube_dim)) => {
                 if !support_plane(client) {
                     return Err(ReduceError::PlanesUnavailable);
                 }

@@ -40,6 +40,14 @@ impl PlaneTile {
         }
     }
 
+    /// Whether this tile contracts through the device's manual MMA.
+    pub(crate) fn contracts_through_mma(&self) -> comptime_type!(bool) {
+        match self {
+            PlaneTile::Mma(_) => comptime!(true),
+            PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => comptime!(false),
+        }
+    }
+
     /// Whether this tile contracts through the block-scaled instruction, which reads its factors'
     /// packed codes as they are stored.
     pub(crate) fn reads_codes_as_stored(&self) -> comptime_type!(bool) {
@@ -266,8 +274,9 @@ impl PlaneTile {
         }
     }
 
-    /// Fill this fragment from a memory `src`.
-    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile) {
+    /// Fill this fragment from a memory `src`, a manual-mma one deeper than its instruction as
+    /// `load` says.
+    pub(crate) fn load_window<T: Numeric>(&mut self, src: &Tile, #[comptime] load: DeepLoad) {
         match self {
             PlaneTile::Cmma(d) => match &src.kind {
                 TileKind::Memory(m) => {
@@ -281,7 +290,7 @@ impl PlaneTile {
                     panic!("PlaneTile::load_window: a cmma fragment loads from memory")
                 }
             },
-            PlaneTile::Mma(d) => d.load_window::<T>(src),
+            PlaneTile::Mma(d) => d.load_window::<T>(src, load),
             PlaneTile::Registers(_) => {
                 panic!("PlaneTile::load_window: a register accumulator is not a fill sink")
             }
@@ -762,11 +771,12 @@ impl PlanePartition {
 
     /// This region of an operand, in the form `instruction` reads it: as it is where it already
     /// holds fragments or the form is a register block, else loaded into fragments contracting
-    /// into `acc`.
+    /// into `acc`, manual-mma ones deeper than their instruction as `load` says.
     pub(crate) fn operand<T: Numeric>(
         src: &Tile,
         acc: &Tile,
         #[comptime] instruction: Instruction,
+        #[comptime] load: DeepLoad,
     ) -> Tile {
         match &src.kind {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => src.clone(),
@@ -777,13 +787,18 @@ impl PlanePartition {
                 // A warpgroup MMA reads the window itself, through a descriptor.
                 Instruction::Registers { .. } | Instruction::Wgmma => src.clone(),
                 Instruction::Cmma | Instruction::Mma { .. } => {
-                    PlanePartition::fragments_in::<T>(src, acc, instruction)
+                    PlanePartition::fragments_in::<T>(src, acc, instruction, load)
                 }
             },
         }
     }
 
-    fn fragments_in<T: Numeric>(src: &Tile, acc: &Tile, #[comptime] form: Instruction) -> Tile {
+    fn fragments_in<T: Numeric>(
+        src: &Tile,
+        acc: &Tile,
+        #[comptime] form: Instruction,
+        #[comptime] load: DeepLoad,
+    ) -> Tile {
         let gathered = src.gathered();
         comptime!(assert!(
             !gathered,
@@ -834,7 +849,7 @@ impl PlanePartition {
             // fragment deeper than it decodes them as it loads: nothing lands on the way, so each
             // fragment loads its own window of the source.
             match &frags.kind {
-                TileKind::PlanePartition(partition) => partition.fill_from::<T>(src),
+                TileKind::PlanePartition(partition) => partition.fill_from::<T>(src, load),
                 TileKind::Memory(_)
                 | TileKind::PlaneTile(_)
                 | TileKind::TmaGmem(_)
@@ -857,8 +872,9 @@ impl PlanePartition {
         frags
     }
 
-    /// Fill each tile from its window of `src`, in row-major order.
-    pub(crate) fn fill_from<T: Numeric>(&self, src: &Tile) {
+    /// Fill each tile from its window of `src`, in row-major order, manual-mma tiles deeper than
+    /// their instruction as `load` says.
+    pub(crate) fn fill_from<T: Numeric>(&self, src: &Tile, #[comptime] load: DeepLoad) {
         let level = comptime!(fragment_level(
             &src.place.space,
             (self.rows, self.cols),
@@ -882,7 +898,7 @@ impl PlanePartition {
                     mi,
                     ni,
                 ));
-                frag.load_window::<T>(&window);
+                frag.load_window::<T>(&window, load);
             }
         }
     }

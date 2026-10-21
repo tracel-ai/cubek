@@ -571,7 +571,7 @@ fn runs_f16_manual_mma(client: &cubecl::client::Client) -> bool {
 /// past the box add into nothing. The accumulator holds the box's rows alone, so a row past them
 /// landing would add past its end, out of the cube's shared memory.
 #[test]
-fn a_fragment_taller_than_its_box_adds_only_the_boxs_rows() {
+fn a_fragment_taller_than_its_box_adds_only_the_rows_of_its_box() {
     let client = cubecl::test_device().client();
     if !adds_atomically_in_shared_memory(&client) || !runs_f16_manual_mma(&client) {
         return;

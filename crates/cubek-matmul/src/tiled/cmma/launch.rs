@@ -53,7 +53,7 @@ fn setup(
     lhs: &InputBinding,
     rhs: &InputBinding,
     out: &TensorBinding,
-    strategy: &BlueprintStrategy<(), CmmaRoutine>,
+    strategy: &BlueprintStrategy<CmmaRoutine>,
     dtypes: &MatmulElems,
     acc: ElemType,
 ) -> Result<(MatmulProblem, CmmaBlueprint, Vec<usize>), MatmulSetupError> {
@@ -151,7 +151,7 @@ pub fn launch_ref(
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    strategy: &BlueprintStrategy<(), CmmaRoutine>,
+    strategy: &BlueprintStrategy<CmmaRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     // The accumulate type the routine mandates, whatever `dtypes` says (some callers build a

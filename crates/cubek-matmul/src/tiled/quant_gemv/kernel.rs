@@ -3,17 +3,12 @@
 use cubecl::prelude::*;
 use cubek_tile::{Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg};
 
+use cubek_std::matmul_axes::{KB, KI};
+
 use crate::tiled::{
     M, N,
     quant_gemv::base::{QuantGemvBlueprint, QuantGemvProblem},
 };
-
-/// Which block of the contraction, and where inside it. Together they are `K`.
-///
-/// Numbered past [`batch_axis`](crate::tiled::batch_axis)'s first slots because a gemv states
-/// no batch axes: the labels only have to be distinct within the space that uses them.
-pub(super) const KB: cubek_tile::Axis = cubek_tile::Axis(16);
-pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 
 /// The routine's three-level space, every axis static: the extents fold the address arithmetic
 /// to constants, which is what a plan built out of the shape is for. A strip of output rows per

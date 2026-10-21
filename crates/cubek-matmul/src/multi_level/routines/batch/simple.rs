@@ -89,6 +89,11 @@ type SimpleBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
     RowMajorGlobalPartitionMatmul,
 >;
 
+impl<LL, RL, AL> cubek_std::legacy::Routine for SimpleAlgorithm<LL, RL, AL> {
+    type Strategy = SimpleArgs;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
 impl<RC, LL, RL, AL> Routine<RC> for SimpleAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
@@ -96,8 +101,6 @@ where
     RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
     AL: FullLoadingStrategy<RC>,
 {
-    type Strategy = SimpleArgs;
-    type Blueprint = BatchMatmulBlueprint;
 }
 
 impl<RC, LL, RL, AL> BatchMatmulRoutine<RC> for SimpleAlgorithm<LL, RL, AL>
@@ -165,7 +168,7 @@ where
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let client = &device_settings.client;

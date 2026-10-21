@@ -41,6 +41,7 @@ use cubecl::{
     future,
     prelude::*,
 };
+use cubek_std::matmul_axes::{K, M, N};
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
@@ -52,10 +53,6 @@ use cubek_tile::{
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
 /// instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
-
-const M: Axis = Axis(0);
-const N: Axis = Axis(1);
-const K: Axis = Axis(2);
 
 /// The kernel under test for the one-level mappings: this cube's region, contracted whole at
 /// the leaf. The mapping is the only variable.

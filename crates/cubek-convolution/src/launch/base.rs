@@ -10,7 +10,7 @@ use cubek_matmul::{
     multi_level::{
         components::tile::TileMatmulKind, definition::BatchMatmulBlueprint, routines::TilingArgs,
     },
-    routine::{BlueprintStrategy, Routine as MatmulRoutine},
+    routine::BlueprintStrategy,
 };
 
 use crate::{components::ConvolutionOperation, definition::ConvBlueprint};
@@ -24,10 +24,11 @@ fn blueprint_operation(blueprint: &ConvBlueprint) -> ConvolutionOperation {
 }
 
 use crate::{
-    components::{ConvSetupError, global::args::RuntimeArgs},
+    components::ConvSetupError,
     kernels::{backward_data, backward_weight, forward},
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
+        unit,
     },
     routines::{
         Routine,
@@ -81,6 +82,9 @@ pub fn launch_ref<const N_SPATIAL: usize>(
             // the explicit tile_kind here is unused; we pass Cmma as a benign
             // default (it gets overwritten by the forced blueprint).
             (*algorithm, AcceleratedTileKind::Cmma, Some(matmul))
+        }
+        Strategy::Unit(strategy) => {
+            return unit::launch(*strategy, client, inputs, args, dtypes);
         }
     };
 
@@ -268,14 +272,14 @@ where
 fn build_blueprint_strategy<Rt: Routine<Blueprint = BatchMatmulBlueprint>>(
     tile_matmul: TileMatmulKind,
     forced_matmul: Option<BatchMatmulBlueprint>,
-) -> BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>
+) -> BlueprintStrategy<Rt::MatmulRoutine>
 where
     Rt::Strategy: TilingArgs,
 {
     match forced_matmul {
         Some(matmul) => BlueprintStrategy::Forced(matmul),
         None => {
-            let mut s = <Rt::MatmulRoutine as MatmulRoutine<RuntimeArgs>>::Strategy::default();
+            let mut s = <Rt::MatmulRoutine as cubek_std::legacy::Routine>::Strategy::default();
             s.set_tile_matmul(tile_matmul);
             BlueprintStrategy::Inferred(s)
         }

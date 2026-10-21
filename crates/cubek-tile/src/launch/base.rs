@@ -1,6 +1,6 @@
 //! One kernel launch: the [`Launcher`].
 
-use cubecl::ir::{ElemType, OpaqueType};
+use cubecl::ir::{ElemType, HardwareProperties, OpaqueType};
 use cubecl::prelude::*;
 
 use crate::{
@@ -15,6 +15,54 @@ pub enum Grid {
         cube_dim: CubeDim,
     },
     FromLevels,
+}
+
+/// Whether a device of `hardware` spawns `cube_count` cubes of `cube_dim` units, or the
+/// [`Refusal`] saying why not.
+///
+/// Three caps, and a launch clears all of them: the cube's unit product, the cube's per-axis
+/// shape, and the grid's per-axis extent. Checking only the product passes a cube legal in size
+/// and illegal in shape: a CPU runtime reports its core count on every axis, and a cube of many
+/// planes overruns `max_cube_dim.1` long before the product notices.
+///
+/// A zero axis is no launch rather than a small grid: cubecl's CUDA server returns before
+/// dispatching one, so the outputs keep what they held and the call is timed as though it ran.
+/// A dynamic count lives on the device, and the kernel reading one owns its bound.
+pub fn spawnable(
+    hardware: &HardwareProperties,
+    cube_dim: CubeDim,
+    cube_count: &CubeCount,
+) -> Result<(), Refusal> {
+    let units = cube_dim.num_elems();
+    if units > hardware.max_units_per_cube {
+        return Err(Refusal::CubePastDevice {
+            units,
+            most: hardware.max_units_per_cube,
+        });
+    }
+    if units == 0 {
+        return Err(Refusal::NoUnits);
+    }
+    let (most_x, most_y, most_z) = hardware.max_cube_dim;
+    if cube_dim.x > most_x || cube_dim.y > most_y || cube_dim.z > most_z {
+        return Err(Refusal::CubeShapePastDevice {
+            shape: (cube_dim.x, cube_dim.y, cube_dim.z),
+            most: hardware.max_cube_dim,
+        });
+    }
+    if let CubeCount::Static(x, y, z) = *cube_count {
+        if x == 0 || y == 0 || z == 0 {
+            return Err(Refusal::NoCubes);
+        }
+        let (most_x, most_y, most_z) = hardware.max_cube_count;
+        if x > most_x || y > most_y || z > most_z {
+            return Err(Refusal::GridPastDevice {
+                count: (x, y, z),
+                most: hardware.max_cube_count,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// One launch: a kernel-form partitioning, the concrete space with real extents, and the grid.
@@ -63,13 +111,7 @@ impl Launcher {
                 )
             }
         };
-        let max_units = client.properties().hardware.max_units_per_cube;
-        if cube_dim.num_elems() > max_units {
-            return Err(Refusal::CubePastDevice {
-                units: cube_dim.num_elems(),
-                most: max_units,
-            });
-        }
+        spawnable(&client.properties().hardware, cube_dim, &cube_count)?;
         let fillers = partitioning.fillers();
         // Checked on the host: a panic at expansion is unseen and the launch returns zeros.
         let barriers = client
@@ -90,6 +132,19 @@ impl Launcher {
             overhanging: over_concrete.overhanging(),
             leaf: over_concrete.leaf(),
         })
+    }
+
+    /// This launch, each cube holding `bytes` of shared memory, or the [`Refusal`] saying the device
+    /// gives one less: what the device gives a cube, less what it reserves for cube-scoped matrices.
+    pub fn holding(self, bytes: usize) -> Result<Self, Refusal> {
+        let hardware = &self.client.properties().hardware;
+        let most = hardware
+            .max_shared_memory_size
+            .saturating_sub(hardware.cube_mma_reserved_shared_memory);
+        match bytes > most {
+            true => Err(Refusal::SharedMemoryPastDevice { bytes, most }),
+            false => Ok(self),
+        }
     }
 
     pub fn client(&self) -> &Client {
@@ -192,5 +247,51 @@ impl Launcher {
             })
             .max()
             .unwrap_or(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A grid with a zero axis is refused, not launched: cubecl's CUDA server returns without
+    /// dispatching one, so the launch would answer with an uncomputed buffer. Every axis, since
+    /// the count is read off whichever axis a level put there.
+    #[test]
+    fn a_grid_with_a_zero_axis_is_refused() {
+        let hardware = HardwareProperties {
+            load_width: 128,
+            vector_register_count: None,
+            plane_size_min: 32,
+            plane_size_max: 32,
+            max_bindings: 30,
+            max_shared_memory_size: 32 * 1024,
+            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
+            max_units_per_cube: 1024,
+            max_cube_dim: (1024, 1024, 1024),
+            num_streaming_multiprocessors: None,
+            num_cpu_cores: None,
+            last_level_cache_size: None,
+            num_tensor_cores: None,
+            min_tensor_cores_dim: None,
+            max_vector_size: 4,
+            cube_mma_reserved_shared_memory: 0,
+        };
+        let cube_dim = CubeDim::new_2d(32, 1);
+        for count in [
+            CubeCount::Static(0, 8, 1),
+            CubeCount::Static(64, 0, 1),
+            CubeCount::Static(64, 8, 0),
+        ] {
+            assert_eq!(
+                spawnable(&hardware, cube_dim, &count),
+                Err(Refusal::NoCubes),
+                "{count:?}"
+            );
+        }
+        assert_eq!(
+            spawnable(&hardware, cube_dim, &CubeCount::Static(64, 8, 1)),
+            Ok(())
+        );
     }
 }

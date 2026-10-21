@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 
 use core::fmt::{self, Display, Formatter};
 
-use cubecl::zspace::Tiling;
+use cubecl::zspace::{SmallVec, Tiling};
 
 use crate::{Axis, StoragePartitioning, TileMisfit};
 
@@ -24,6 +24,20 @@ impl Geometry {
         Self {
             shape: dims.iter().map(|&(extent, _)| extent).collect(),
             strides: dims.iter().map(|&(_, stride)| stride).collect(),
+            tiling: Tiling::UNTILED,
+        }
+    }
+
+    /// A dense row-major buffer of `shape`, coarsest first: what an output with no tensor behind it
+    /// is counted in.
+    pub fn row_major(shape: &[usize]) -> Self {
+        let mut strides = vec![1; shape.len()];
+        for dim in (0..shape.len().saturating_sub(1)).rev() {
+            strides[dim] = strides[dim + 1] * shape[dim + 1];
+        }
+        Self {
+            shape: shape.to_vec(),
+            strides,
             tiling: Tiling::UNTILED,
         }
     }
@@ -123,13 +137,13 @@ impl Geometry {
             .holds(tile, &self.extents(labels))
             .map_err(LineMisfit::Tile)?;
         // The run, from the finest dim up: each dim it takes steps by what it has taken so far.
-        let mut by_stride: Vec<(usize, (usize, usize))> = self
+        let mut by_stride: SmallVec<[(usize, (usize, usize)); 8]> = self
             .dims()
             .enumerate()
             .filter(|&(_, (extent, stride))| extent > 1 && stride > 0)
             .collect();
         by_stride.sort_by_key(|&(dim, (_, stride))| (stride, core::cmp::Reverse(dim)));
-        let mut inside = Vec::new();
+        let mut inside: SmallVec<[usize; 8]> = SmallVec::new();
         let mut run = 1;
         for &(dim, (extent, stride)) in &by_stride {
             if run >= values {

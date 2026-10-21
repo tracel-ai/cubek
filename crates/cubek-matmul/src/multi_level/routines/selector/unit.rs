@@ -560,26 +560,14 @@ fn selection(
 
     let stage_buffering = if double_buffering { 2 } else { 1 };
 
-    // Shrink the register partition until the stage footprint fits the per-cube
-    // shared-memory budget, else launch fails the `SharedMemoryTooBig` check on
-    // shapes sharing an autotune bucket with the benchmarked one. Partition is
-    // the safe knob: tile (vectorization) and stage (unit mapping) stay intact.
-    let mut p = p;
-    let tiling_scheme = loop {
-        let tiling_scheme = TilingScheme::builder()
-            .with_tile_size(t.into())
-            .with_partition_size(p.into())
-            .with_stage_size((stage_size_m, stage_size_n, 1).into())
-            .build()
-            .unwrap();
-
-        if unit_stage_smem_bytes(&tiling_scheme, dtypes, stage_buffering, problem.accumulator)
-            <= max_smem
-            || !halve_largest_partition(&mut p)
-        {
-            break tiling_scheme;
-        }
-    };
+    let tiling_scheme = UnitSmemBudget {
+        dtypes,
+        stage_buffering,
+        accumulator: problem.accumulator,
+        max_smem,
+        plane_dim,
+    }
+    .fit(t, p, (stage_size_m, stage_size_n));
 
     let cube_count_strategy = match num_sms {
         Some(num_sms) => CubeCountStrategy::Sm {
@@ -640,42 +628,82 @@ fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSize) -
     }
 }
 
-/// Shared-memory bytes one cube allocates for a unit blueprint with this tiling.
+/// The shared memory one cube of a unit blueprint may allocate, and what it
+/// spends it on.
 ///
-/// Mirrors `requested_smem_bytes` in the batch setup: the lhs and rhs operand
-/// stages (each `num_stages = stage_buffering`) plus the output stage at the
-/// writer's allocation: each writer stages one tile per partition, so the out
-/// term is one tile per stage partition, independent of the partition size.
-/// Keeping this in step with the launch-time check is what lets [`selection`]
-/// cap the tiling to a blueprint the check will accept, without capping harder
-/// than the check requires.
-///
-/// A present accumulator operand adds its reader stage, which for a unit
-/// blueprint is the full stage: unlike the writer, the reader fills every tile
-/// before the k-loop.
-fn unit_stage_smem_bytes(
-    tiling_scheme: &TilingScheme,
-    dtypes: &MatmulElems,
-    stage_buffering: u32,
-    accumulator: AccumulatorOperand,
-) -> usize {
-    let em = tiling_scheme.elements_per_stage_along_m() as usize;
-    let ek = tiling_scheme.elements_per_stage_along_k() as usize;
-    let en = tiling_scheme.elements_per_stage_along_n() as usize;
-    let buf = stage_buffering as usize;
-    let out_writer = (tiling_scheme.partitions_per_stage_along_m()
-        * tiling_scheme.partitions_per_stage_along_n()
-        * tiling_scheme.tile_size.m
-        * tiling_scheme.tile_size.n) as usize;
+/// Without it, a tiling that overflows the budget fails the launch-time
+/// `SharedMemoryTooBig` check on shapes sharing an autotune bucket with the
+/// benchmarked one.
+pub struct UnitSmemBudget<'a> {
+    pub dtypes: &'a MatmulElems,
+    pub stage_buffering: u32,
+    pub accumulator: AccumulatorOperand,
+    pub max_smem: usize,
+    pub plane_dim: u32,
+}
 
-    let acc_reader = match accumulator {
-        AccumulatorOperand::Absent => 0,
-        AccumulatorOperand::Present => em * en,
-    };
+impl UnitSmemBudget<'_> {
+    /// The requested tiling, trimmed until its stage fits the budget.
+    ///
+    /// The partition is trimmed first: tile (vectorization) and stage (unit
+    /// mapping) stay intact. A single-tile partition can still overflow when an
+    /// accumulator is staged on a 32 KiB device, so the stage is then halved,
+    /// down to one plane of units.
+    pub fn fit(
+        &self,
+        tile: (u32, u32, u32),
+        mut partition: (u32, u32, u32),
+        mut stage: (u32, u32),
+    ) -> TilingScheme {
+        loop {
+            let tiling_scheme = TilingScheme::builder()
+                .with_tile_size(tile.into())
+                .with_partition_size(partition.into())
+                .with_stage_size((stage.0, stage.1, 1).into())
+                .build()
+                .unwrap();
 
-    em * ek * buf * dtypes.lhs_stage.size()
-        + ek * en * buf * dtypes.rhs_stage.size()
-        + (out_writer + acc_reader) * dtypes.acc_stage.size()
+            if self.bytes(&tiling_scheme) <= self.max_smem
+                || !(halve_largest_partition(&mut partition)
+                    || halve_stage(&mut stage, self.plane_dim))
+            {
+                return tiling_scheme;
+            }
+        }
+    }
+
+    /// Shared-memory bytes one cube allocates for a unit blueprint with this tiling.
+    ///
+    /// Mirrors `requested_smem_bytes` in the batch setup: the lhs and rhs operand
+    /// stages (each `num_stages = stage_buffering`) plus the output stage at the
+    /// writer's allocation: each writer stages one tile per partition, so the out
+    /// term is one tile per stage partition, independent of the partition size.
+    /// Keeping this in step with the launch-time check is what lets [`Self::fit`]
+    /// cap the tiling to a blueprint the check will accept, without capping harder
+    /// than the check requires.
+    ///
+    /// A present accumulator operand adds its reader stage, which for a unit
+    /// blueprint is the full stage: unlike the writer, the reader fills every tile
+    /// before the k-loop.
+    pub fn bytes(&self, tiling_scheme: &TilingScheme) -> usize {
+        let em = tiling_scheme.elements_per_stage_along_m() as usize;
+        let ek = tiling_scheme.elements_per_stage_along_k() as usize;
+        let en = tiling_scheme.elements_per_stage_along_n() as usize;
+        let buf = self.stage_buffering as usize;
+        let out_writer = (tiling_scheme.partitions_per_stage_along_m()
+            * tiling_scheme.partitions_per_stage_along_n()
+            * tiling_scheme.tile_size.m
+            * tiling_scheme.tile_size.n) as usize;
+
+        let acc_reader = match self.accumulator {
+            AccumulatorOperand::Absent => 0,
+            AccumulatorOperand::Present => em * en,
+        };
+
+        em * ek * buf * self.dtypes.lhs_stage.size()
+            + ek * en * buf * self.dtypes.rhs_stage.size()
+            + (out_writer + acc_reader) * self.dtypes.acc_stage.size()
+    }
 }
 
 /// Halve the largest partition dimension greater than 1, returning whether a
@@ -691,6 +719,20 @@ fn halve_largest_partition(p: &mut (u32, u32, u32)) -> bool {
         p.1 /= 2;
     } else {
         p.2 /= 2;
+    }
+    true
+}
+
+/// Halve the larger stage dimension, returning whether a reduction was made.
+/// A stage keeps at least one plane of units.
+fn halve_stage(stage: &mut (u32, u32), plane_dim: u32) -> bool {
+    if stage.0 * stage.1 / 2 < plane_dim {
+        return false;
+    }
+    if stage.0 >= stage.1 {
+        stage.0 /= 2;
+    } else {
+        stage.1 /= 2;
     }
     true
 }
@@ -719,6 +761,22 @@ fn scale_partition(setting: PartitionScaling, axis: usize, max_exp: u32, div_exp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unit_stage_smem_bytes(
+        scheme: &TilingScheme,
+        dtypes: &MatmulElems,
+        stage_buffering: u32,
+        accumulator: AccumulatorOperand,
+    ) -> usize {
+        UnitSmemBudget {
+            dtypes,
+            stage_buffering,
+            accumulator,
+            max_smem: usize::MAX,
+            plane_dim: 32,
+        }
+        .bytes(scheme)
+    }
 
     /// The out stage is charged at the writer's allocation (one tile per stage
     /// partition), like `requested_smem_bytes`; charging the full stage would
@@ -760,5 +818,24 @@ mod tests {
             unit_stage_smem_bytes(&scheme, &dtypes, 1, AccumulatorOperand::Present),
             absent + 64 * 64 * 4
         );
+    }
+
+    /// A staged accumulator can overflow a 32 KiB budget at a single-tile
+    /// partition; the stage then shrinks instead of the launch failing.
+    #[test]
+    fn stage_shrinks_once_the_partition_cannot() {
+        let dtypes = MatmulElems::new_deprecated::<f32>();
+        let budget = UnitSmemBudget {
+            dtypes: &dtypes,
+            stage_buffering: 1,
+            accumulator: AccumulatorOperand::Present,
+            max_smem: 32 * 1024,
+            plane_dim: 32,
+        };
+
+        let scheme = budget.fit((4, 4, 4), (1, 1, 1), (16, 16));
+
+        assert!(budget.bytes(&scheme) <= 32 * 1024);
+        assert_eq!(scheme.stage_size.m * scheme.stage_size.n, 128);
     }
 }

@@ -58,10 +58,12 @@ impl Display for DoubleUnitSelectionArgs {
     }
 }
 
-impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
+impl cubek_std::legacy::Routine for DoubleUnitAlgorithm {
     type Strategy = DoubleUnitSelectionArgs;
     type Blueprint = BatchMatmulBlueprint;
 }
+
+impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {}
 
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
@@ -122,7 +124,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

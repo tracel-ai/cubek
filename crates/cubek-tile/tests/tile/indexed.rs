@@ -474,6 +474,35 @@ fn indexed_ragged_sum_kernel<E: Numeric>(
     }
 }
 
+/// [`indexed_ragged_sum_kernel`] with each block of a group's rows staged in shared memory before
+/// it is folded.
+#[cube(launch)]
+fn indexed_staged_ragged_sum_kernel<E: Numeric>(
+    packed: &TileArg<'_>,
+    out: &TileArg<'_>,
+    space: Partitioning,
+    #[comptime] group: Level,
+    #[comptime] block: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let packed = packed.tile(&space);
+    let out = out.tile(&space);
+
+    for g in space.over(&group) {
+        let rows = packed.at(&g);
+        let mut total = out.at(&g);
+        total.init::<E>(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+        let blocks = rows.over(&block);
+        let mut stages = Stages::smem_single(&blocks, &rows, StageStorage::Strided, 1usize, None);
+        stages.pipelined(blocks, |slot, blk| {
+            let mut cell = total.at(blk);
+            slot.consume(|rows_s| {
+                cell.reduce_axis_accumulate(rows_s, comptime!(Monoid::Sum));
+            });
+        });
+    }
+}
+
 /// Every packed cell distinct, so folding a neighbouring group's row cannot land on the right
 /// answer by accident.
 fn packed_values() -> Vec<f32> {
@@ -491,7 +520,7 @@ enum Rows {
 }
 
 /// The fold over the groups `ends` cuts the rows into, `ends` each group's cumulative end row.
-fn run_ragged(ends: &[u32], rows: Rows) -> HostData {
+fn run_ragged(ends: &[u32], rows: Rows, reading: Reading) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let launcher = implied(
@@ -526,22 +555,43 @@ fn run_ragged(ends: &[u32], rows: Rows) -> HostData {
         .custom(vec![-1.0; GROUPS * FEATURES])
         .generate_without_host_data();
 
-    indexed_ragged_sum_kernel::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        f32_arg(packed, spec)
-            .indexed(
-                table(&client, ends, Shape::new([ends.len()]), &[G]),
-                Indexing::Run(P),
-            )
-            .unwrap(),
-        f32_arg(out.clone(), TileSpec::direct(&[G, D])),
-        launcher.partitioning_arg(),
+    let packed = f32_arg(packed, spec)
+        .indexed(
+            table(&client, ends, Shape::new([ends.len()]), &[G]),
+            Indexing::Run(P),
+        )
+        .unwrap();
+    let total = f32_arg(out.clone(), TileSpec::direct(&[G, D]));
+    let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
+    let (group, block) = (
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
-        f32_ty,
     );
+    match reading {
+        Reading::InPlace => indexed_ragged_sum_kernel::launch(
+            &client,
+            count,
+            dim,
+            packed,
+            total,
+            launcher.partitioning_arg(),
+            group,
+            block,
+            f32_ty,
+        ),
+        Reading::Staged => indexed_staged_ragged_sum_kernel::launch(
+            &client,
+            count,
+            dim,
+            packed,
+            total,
+            launcher.partitioning_arg(),
+            group,
+            block,
+            f32_ty,
+        ),
+        Reading::Skipping => unreachable!("a ragged fold has no step to skip"),
+    }
 
     HostData::from_tensor_handle(&client, out, HostDataType::F32)
 }
@@ -582,7 +632,11 @@ fn assert_ragged(got: &HostData, ends: &[u32], what: &str) {
 #[test]
 fn a_ragged_operand_folds_each_group_over_its_own_rows() {
     for ends in [[2u32, 2, 7, 10], [3, 3, 6, 10]] {
-        assert_ragged(&run_ragged(&ends, Rows::Lined), &ends, "lined");
+        assert_ragged(
+            &run_ragged(&ends, Rows::Lined, Reading::InPlace),
+            &ends,
+            "lined",
+        );
     }
 }
 
@@ -591,7 +645,25 @@ fn a_ragged_operand_folds_each_group_over_its_own_rows() {
 #[test]
 fn a_ragged_operand_runs_along_its_innermost_dim() {
     let ends = [2u32, 2, 7, 10];
-    assert_ragged(&run_ragged(&ends, Rows::Transposed), &ends, "transposed");
+    assert_ragged(
+        &run_ragged(&ends, Rows::Transposed, Reading::InPlace),
+        &ends,
+        "transposed",
+    );
+}
+
+/// The ragged fold with each block staged first: a block wholly inside its group's run is staged
+/// unchecked, and one that crosses the run's end reads zero past it. Under the first table the
+/// third group's first block is whole and every group's last block crosses its end; under the
+/// second the last group's one block is whole.
+#[test]
+fn a_ragged_operand_stages_each_block_of_its_run() {
+    for ends in [[2u32, 2, 7, 10], [3, 3, 6, 10]] {
+        for rows in [Rows::Lined, Rows::Transposed] {
+            let got = run_ragged(&ends, rows, Reading::Staged);
+            assert_ragged(&got, &ends, &format!("staged, {rows:?}"));
+        }
+    }
 }
 
 /// A table whose second group ends before it starts: that group is empty, not a run of some
@@ -599,7 +671,7 @@ fn a_ragged_operand_runs_along_its_innermost_dim() {
 #[test]
 fn a_run_that_ends_before_it_starts_is_empty() {
     let ends = [4u32, 2, 7, 10];
-    let got = run_ragged(&ends, Rows::Lined);
+    let got = run_ragged(&ends, Rows::Lined, Reading::InPlace);
     for d in 0..FEATURES {
         assert_eq!(got.get_f32(&[1, d]), 0.0, "group 1 feature {d}");
     }

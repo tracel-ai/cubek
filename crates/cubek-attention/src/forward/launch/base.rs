@@ -14,13 +14,7 @@ use crate::{
 
 use crate::components::batch::BatchAttentionFamily;
 
-#[derive(Debug, Clone)]
-pub enum BlueprintStrategy<R: Routine> {
-    /// Use a predefined blueprint
-    Forced(R::Blueprint),
-    /// Allows to give limited settings information, and the rest is inferred from it
-    Inferred(R::Strategy),
-}
+pub use cubek_std::legacy::BlueprintStrategy;
 
 #[derive(Debug, Clone)]
 pub enum Strategy {

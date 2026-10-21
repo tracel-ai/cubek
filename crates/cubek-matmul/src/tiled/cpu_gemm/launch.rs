@@ -56,7 +56,7 @@ pub fn launch_ref(
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
+    strategy: &BlueprintStrategy<CpuGemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let sz = dtypes.acc_global.size();

@@ -19,10 +19,12 @@ pub struct CubeStrategy {
     pub use_planes: bool,
 }
 
-impl Routine for CubeRoutine {
+impl cubek_std::legacy::Routine for CubeRoutine {
     type Strategy = CubeStrategy;
-    type Blueprint = CubeBlueprint;
+    type Blueprint = (CubeBlueprint, CubeDim);
+}
 
+impl Routine for CubeRoutine {
     fn prepare(
         &self,
         client: &Client,
@@ -32,7 +34,7 @@ impl Routine for CubeRoutine {
     ) -> Result<(ReduceBlueprint, ReduceLaunchSettings), ReduceError> {
         let address_type = problem.address_type;
         let (blueprint, cube_dim, num_cubes) = match strategy {
-            BlueprintStrategy::Forced(blueprint, cube_dim) => {
+            BlueprintStrategy::Forced((blueprint, cube_dim)) => {
                 // One accumulator per plane.
                 if blueprint.use_planes {
                     if !support_plane(client) {

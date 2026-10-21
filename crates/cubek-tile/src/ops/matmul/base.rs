@@ -44,14 +44,17 @@ impl Tile {
 
     /// `operand` dequantized at `element` for this accumulator to contract: the plane-level
     /// dequantize, called where the kernel wants it instead of left to the leaf, which loads it as
-    /// the multiply would. A grid loads it into its fragments (through a landing, or in lane runs);
-    /// one fragment into the fragment its leaf builds; a walk of steps into the landing the steps
+    /// the multiply would. A cmma grid loads it into its fragments through a landing; one cmma
+    /// fragment into the fragment its leaf builds; a walk of steps into the landing the steps
     /// read, where the tensor cores read through one. A plain operand is returned as it is: it
-    /// has nothing to decode.
+    /// has nothing to decode. So is any operand of a manual-mma sum, whose contraction decodes
+    /// it as it loads it, at its other factor's element ([`Tile::mma`]): loaded here, ahead of
+    /// that factor, its fragments could not hold `k` in the order the other factor's do.
     pub fn dequantized(&self, operand: &Tile, #[comptime] element: ElemType) -> Tile {
         let (quantized, packing) = (operand.quantized(), operand.packing());
         let decodes = comptime!(quantized || packing != Packing::Plain);
-        if comptime!(!decodes) {
+        let mma = self.contracts_through_mma();
+        if comptime!(!decodes || mma) {
             operand.clone()
         } else {
             let out = comptime!(self.place.space.clone());
@@ -64,9 +67,12 @@ impl Tile {
                         Descent::Here => {
                             operand.fragment_for::<Target>(&partition.at(0usize, 0usize), out)
                         }
-                        Descent::Cells(instruction) => {
-                            PlanePartition::operand::<Target>(operand, self, instruction)
-                        }
+                        Descent::Cells(instruction) => PlanePartition::operand::<Target>(
+                            operand,
+                            self,
+                            instruction,
+                            DeepLoad::Steps,
+                        ),
                         Descent::Steps(instruction) => match comptime!(instruction) {
                             Instruction::Cmma => {
                                 let side = comptime!(Side::of(&own, &out));
@@ -116,23 +122,9 @@ impl Tile {
                     scratch: ComptimeOption::new_None(),
                 })
             }
-            PlaneTile::Mma(data) => {
-                // `A` row-major and `B` col-major where the window's trailing axis is contracted.
-                let contracted = comptime!(!out.contains(own.axis_at(own.rank() - 1)));
-                let layout = comptime!(match (side, contracted) {
-                    (Side::Lhs, true) | (Side::Rhs, false) => MatrixLayout::RowMajor,
-                    (Side::Lhs, false) | (Side::Rhs, true) => MatrixLayout::ColMajor,
-                });
-                PlaneTile::new_Mma(self.mma_operand::<T>(
-                    ident,
-                    comptime!(data.m),
-                    comptime!(data.n),
-                    comptime!(data.k),
-                    layout,
-                    comptime!(data.io),
-                    comptime!(data.operands),
-                ))
-            }
+            PlaneTile::Mma(_) => panic!(
+                "Tile::dequantized: a manual-mma sum decodes its factor as its contraction loads it"
+            ),
             PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => panic!(
                 "Tile::dequantized: a register block and a warpgroup MMA read their operands where \
                  they lie"
@@ -146,14 +138,42 @@ impl Tile {
 
     /// `c += a · b`, added to what the accumulator or memory window holds. A packed factor is
     /// decoded into `f32`, unless the kernel [`dequantized`](Tile::dequantized) it at another
-    /// element first, or the instruction reads its codes as stored.
+    /// element first, a manual-mma instruction decodes it at its other factor's element, or the
+    /// instruction reads its codes as stored.
     pub fn mma(&mut self, lhs: &Tile, rhs: &Tile) {
         let stored = self.reads_codes_as_stored();
+        let mma = self.contracts_through_mma();
         let (lhs_read, rhs_read) = (lhs.read_element(), rhs.read_element());
+        let (lhs_packing, rhs_packing) = (lhs.packing(), rhs.packing());
+        // A manual-mma instruction multiplies two factors of one element, so a packed factor
+        // against a plain one decodes at that one's element.
+        let (lhs_read, rhs_read) = comptime!(match (
+            mma,
+            lhs_packing == Packing::Plain,
+            rhs_packing == Packing::Plain
+        ) {
+            (true, false, true) => (rhs_read, rhs_read),
+            (true, true, false) => (lhs_read, lhs_read),
+            _ => (lhs_read, rhs_read),
+        });
         let define!(Served) = self.element;
         let define!(Lhs) = comptime!(if stored { lhs.element } else { lhs_read });
         let define!(Rhs) = comptime!(if stored { rhs.element } else { rhs_read });
         Descent::contract::<Served, Lhs, Rhs>(self, lhs, rhs)
+    }
+
+    /// Whether this accumulator's fragments contract through the device's manual MMA.
+    fn contracts_through_mma(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => tile.contracts_through_mma(),
+            TileKind::PlanePartition(partition) => {
+                partition.at(0usize, 0usize).contracts_through_mma()
+            }
+            TileKind::Memory(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => comptime!(false),
+        }
     }
 
     /// Whether this accumulator's fragments read their factors' packed codes as stored; a memory

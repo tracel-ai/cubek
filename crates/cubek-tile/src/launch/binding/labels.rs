@@ -1,8 +1,8 @@
 //! The labelled reading of a buffer the [`Arg`](super::Arg) builder derives ([`Labels`]).
 
-use cubecl::zspace::Tiling;
+use cubecl::zspace::{SmallVec, Tiling};
 
-use crate::{Axis, Geometry, Launcher, PhysicalAxisMap, Projection, Refusal};
+use crate::{Axis, Geometry, Launcher, PhysicalAxisMap, Projection, Refusal, Space};
 
 /// The labelled reading of a buffer, as a [`Projection`] and the settled geometry.
 pub(crate) struct Labels {
@@ -42,9 +42,9 @@ impl Labels {
             .copied()
             .collect();
 
-        let mut maps = Vec::new();
-        let mut logical: Vec<Axis> = Vec::new();
-        let mut dims = Vec::new();
+        let mut maps: SmallVec<[PhysicalAxisMap; Space::MAX_RANK]> = SmallVec::new();
+        let mut logical: SmallVec<[Axis; Space::MAX_RANK]> = SmallVec::new();
+        let mut dims: SmallVec<[(usize, usize); Space::MAX_RANK]> = SmallVec::new();
         for (&axis, (extent, stride)) in addressed.iter().zip(geometry.dims()) {
             // A labelled axis never drops out: the tile is shaped over it.
             if batches.contains(&axis) && extent == 1 && !axes.contains(&axis) {
@@ -69,7 +69,7 @@ impl Labels {
         };
         Ok(Labels {
             geometry: Geometry::new(&dims).with_tiling(tiling),
-            projection: Projection::new(&logical, &maps),
+            projection: Projection::of_maps(&logical, maps),
             addressed,
         })
     }
