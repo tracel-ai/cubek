@@ -107,7 +107,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     /// # Errors
     ///
     /// As [`launch_on`](Self::launch_on).
-    fn launch_written_in(
+    fn launch_written_in_on(
         &self,
         hw: &Hardware,
         client: &Client,
@@ -156,7 +156,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ///
     /// As [`launch_first_served_on`](Self::launch_first_served_on), and as
     /// [`MatmulTensors::written_in`].
-    fn launch_first_served_in(
+    fn launch_first_served_in_on(
         &self,
         hw: &Hardware,
         client: &Client,
