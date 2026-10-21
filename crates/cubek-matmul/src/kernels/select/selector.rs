@@ -95,8 +95,8 @@ pub enum MatmulPackedChoice {
 /// How a packed weight becomes a float one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatmulDequantize {
-    /// Decoded by [`DequantizeMatmulQRhsRoutine`](crate::kernels::DequantizeMatmulQRhsRoutine),
-    /// in rows or in tiles. Where the decode declines (a device that commits to no plane width, a
+    /// Decoded by the caller's dequantize routine, which places the plane shuffle's planes over
+    /// the weight, in rows or in tiles. Where the decode declines (a device that commits to no plane width, a
     /// shape its placement does not cut), burn's dequantize instead: the decode's placement reads
     /// what the rules cannot ask, and a rule may not fail a launch over it.
     Decode,

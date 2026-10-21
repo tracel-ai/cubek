@@ -72,7 +72,7 @@ impl Routine for UnitWholeKMatmulRoutine {
     type Partitioning = MatmulPartitioning;
 
     /// Empty where the device commits to a plane width, since the shuffles serve it. Otherwise a
-    /// star off the default, which leads: [`launch_first_served`](MatmulRoutine::launch_first_served)
+    /// star off the default, which leads: [`launch_first_served_on`](MatmulRoutine::launch_first_served_on)
     /// runs the first setting that serves.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         if hw.plane_size().is_ok() {

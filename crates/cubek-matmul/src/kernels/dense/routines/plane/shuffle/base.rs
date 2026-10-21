@@ -45,8 +45,7 @@ impl PlaneShuffleMatmulRoutineSettings {
     };
 
     /// One step a unit, four planes a cube: the lead against a packed weight, whose decode the
-    /// weight dequantized first ([`DequantizeMatmulQRhsRoutine`](crate::kernels::DequantizeMatmulQRhsRoutine))
-    /// places its planes at.
+    /// weight dequantized first (its caller's dequantize routine) places its planes at.
     pub const PACKED: Self = Self {
         microkernel: PlaneShuffleMicrokernelSettings::stepping(1, None),
         planes: NonZeroUsize::new(4).unwrap(),
@@ -311,7 +310,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
     ///
     /// The order is also what a caller naming the routine and no setting runs: the `PlaneShuffle` pin
     /// and the `Tile` policy launch the first setting that serves the product
-    /// ([`launch_first_served`](MatmulRoutine::launch_first_served)), so a reorder changes what
+    /// ([`launch_first_served_on`](MatmulRoutine::launch_first_served_on)), so a reorder changes what
     /// they run, not only the order a table measures in.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneShuffleMicrokernelSettings as Block;

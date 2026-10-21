@@ -8,7 +8,7 @@ use cubek_tile::{
 /// One cube's part of a box it shares with the cubes before and after it along `K`: its run of
 /// `K` arrives as boxes one stage deep, the cube's regions of a partitioning that deals `K` to its
 /// cubes in runs, each staged on its own and added into one sum
-/// ([`cube_staged_sum_microkernel`]). The cube then takes its turn at `relay`'s carry, the last
+/// ([`cube_staged_sum_microkernel`](fn@cube_staged_sum_microkernel)). The cube then takes its turn at `relay`'s carry, the last
 /// turn handing the sum on to `out` ([`Relay`]).
 #[cube]
 pub fn hypercube_staged_relay_microkernel<'a, EA: Numeric, EL: Numeric>(
@@ -44,7 +44,7 @@ pub fn hypercube_staged_relay_microkernel<'a, EA: Numeric, EL: Numeric>(
 }
 
 /// One cube's part of a box any number of runs share: the cube walks its run of `K` into one sum
-/// ([`cube_staged_sum_microkernel`]), opened over its slot of the box, and hands it on straight
+/// ([`cube_staged_sum_microkernel`](fn@cube_staged_sum_microkernel)), opened over its slot of the box, and hands it on straight
 /// into `out` where this run holds the box whole, for the box's last arrival to add up otherwise
 /// ([`LastArrival`]).
 #[cube]
