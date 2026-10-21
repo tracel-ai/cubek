@@ -233,7 +233,7 @@ enum Handing {
 }
 
 impl Handing {
-    /// Steps past the one being cut that the entry is read at, where one is read.
+    /// How far past the step being cut `Own`, `Next` and `PastTable` read their entry.
     fn steps_ahead(self) -> usize {
         match self {
             Handing::Nothing
@@ -249,7 +249,8 @@ impl Handing {
 
 /// `out[b] = Σ pool[b's page of s, s % PAGE_LEN]` over positions `from..lens[b]` of sequence `b`,
 /// read through [`TileArg::tile_paged`]: the kernel walks logical positions, `read_block` of them
-/// a step, and [`Tile::within`] cuts each sequence at its own length.
+/// a step, and [`Tile::within`] cuts each sequence at its own length, handing each cut the entry
+/// `handing` names.
 #[cube(launch)]
 fn paged_read_sum_kernel<E: Numeric>(
     pool: &TileArg<'_>,

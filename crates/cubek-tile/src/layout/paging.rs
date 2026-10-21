@@ -159,9 +159,8 @@ pub(crate) enum WindowCut {
     Shifted,
 }
 
-/// A page table entry with its address: the page that column `column` of sequence `sequence`
-/// lists, read earlier. A cut that names the same sequence and column takes `page` from it instead
-/// of loading the table.
+/// A page table entry and the cell it was read from: the page column `column` of sequence
+/// `sequence` lists. A cut naming that cell takes `page` from it instead of loading the table.
 #[derive(CubeType, CubeTypeMut, Clone)]
 #[expand(derive(Clone))]
 pub struct PageEntry {
@@ -200,11 +199,6 @@ pub(crate) struct PageTable {
     /// The pool's last page: a table entry past it reads it, since a table is device data a
     /// launch may never have written.
     last_page: u32,
-    /// An entry handed in by [`Tile::with_page_entry`](crate::Tile::with_page_entry), consulted by
-    /// every cut and kept across them, unlike [`pin`](Self::pin). It holds one page, so the page
-    /// after it, which a [`Spans::TwoPages`] window also needs, is still loaded. Absent at compile
-    /// time when none is handed, so the cut emits no compare.
-    handed: ComptimeOption<PageEntry>,
     /// The entry this window was cut with, resolved once at the cut
     /// ([`pinned_at`](Self::pinned_at)): a line in the same sequence and column reads its page from
     /// here without loading the table. Replaced at each cut that resolves a new page.
@@ -215,6 +209,11 @@ pub(crate) struct PageTable {
     /// its offset as one sequence's.
     pin_base: u32,
     next_base: u32,
+    /// An entry handed in by [`Tile::with_page_entry`](crate::Tile::with_page_entry), consulted by
+    /// every cut that resolves its page and kept across cuts, unlike [`pin`](Self::pin). It holds
+    /// one page, so the page after it, which a [`Spans::TwoPages`] window also needs, is still
+    /// loaded. Absent at compile time when none is handed, so the cut emits no compare.
+    handed: ComptimeOption<PageEntry>,
     /// What the window's extent proves of the pages its lines lie in.
     #[cube(comptime)]
     spans: Spans,
@@ -380,7 +379,6 @@ impl PageTable {
     ) -> PageTable {
         let unit = comptime!(self.unit as u32);
         let page = self.cut_page(sequence, column);
-        // The page after the column is the table's: an entry handed in names one page.
         let next_page = match comptime!(spans) {
             Spans::TwoPages => self.lookup(sequence, column.plus(1u32)),
             Spans::Any | Spans::OnePage => 0u32,
