@@ -21,14 +21,6 @@ pub struct NhwcCoords {
     pub channel: u32,
 }
 
-impl DerefExpand for NhwcCoordsExpand {
-    type Target = Self;
-
-    fn __expand_deref_method(&self, _: &Scope) -> Self::Target {
-        self.clone()
-    }
-}
-
 #[cube]
 impl IntoDyn for NhwcCoords {
     fn into_dyn(self) -> Sequence<i32> {
