@@ -1427,7 +1427,6 @@ dependencies = [
  "half",
  "num-complex",
  "serde",
- "serde_json",
 ]
 
 [[package]]

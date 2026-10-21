@@ -50,6 +50,5 @@ cubek-matmul = { path = ".", default-features = false, features = ["cpu-referenc
 cubek-test-utils = { workspace = true }
 cubek-quant = { workspace = true, features = ["kernels"] }
 num-complex = { workspace = true }
-serde_json = "1"
 
 cubecl = { workspace = true, features = ["test-runtime"] }

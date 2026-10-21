@@ -298,18 +298,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn runtime_settings_can_coexist_with_test_settings() {
-        let cfg = parse_cubek_toml(
-            "[matmul]\nallow_tf32 = false\n[test]\npolicy = \"strict\"\n[print]\nenabled = true\n",
-        )
-        .unwrap();
-        assert_eq!(cfg.test.policy, TestPolicy::Strict);
-        assert!(cfg.print.enabled);
-    }
-
-    #[test]
     fn parses_full_example() {
         let text = r#"
+# Runtime settings share this file but are read by cubek-std.
+[matmul]
+allow_tf32 = false
+
 [test]
 policy = "strict"
 

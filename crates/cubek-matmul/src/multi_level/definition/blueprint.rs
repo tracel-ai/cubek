@@ -100,8 +100,13 @@ pub fn adjust_dtypes(client: &Client, dtypes: &mut MatmulElems, requires_acceler
 ///
 /// Operations sharing matmul's implementation, such as convolution, use this to
 /// retain their own precision choices independently of the matmul configuration.
-/// Only automatic conversions are affected; explicit stage/register types are
-/// otherwise preserved.
+///
+/// When an accelerator is required, matching F32 global inputs select TF32 if
+/// permitted and supported; matching `flex32` global inputs select F16 if
+/// supported, independently of `allow_tf32`. Both conversions overwrite the
+/// input stage/register types, including caller-supplied overrides. Otherwise
+/// those types are left unchanged: disabling TF32 does not reset existing TF32
+/// stage/register types to F32. Global and accumulator types are never changed.
 pub fn adjust_dtypes_with_tf32(
     features: &cubecl::features::Features,
     dtypes: &mut MatmulElems,

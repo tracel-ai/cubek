@@ -288,6 +288,33 @@ mod tests {
     }
 
     #[test]
+    fn typed_descriptors_preserve_f32_and_explicit_tf32() {
+        let binding = tiled();
+        for elem in [f32::elem_type_native(), tf32::elem_type_native()] {
+            let arg = tma_operand_tiled_typed(
+                binding.clone(),
+                (32, 64),
+                TmaLanding::Tiles,
+                elem,
+                TensorMapSwizzle::None,
+            );
+            assert_eq!(arg.metadata.elem_ty, elem);
+
+            let mut plain = binding.clone();
+            plain.tiling = Tiling::UNTILED;
+            let (arg, _) = tma_operand_typed(
+                plain,
+                64,
+                MatrixLayout::RowMajor,
+                (32, 64),
+                elem,
+                TensorMapSwizzle::None,
+            );
+            assert_eq!(arg.metadata.elem_ty, elem);
+        }
+    }
+
+    #[test]
     fn a_stored_descriptor_keeps_the_rank_and_boxes_one_storage_tile() {
         let arg = tma_operand_tiled(
             tiled(),
