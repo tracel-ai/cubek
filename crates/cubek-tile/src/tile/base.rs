@@ -477,8 +477,10 @@ impl Tile {
     }
 
     /// This tile, its cuts taking their page from `entry` where they name its sequence and column,
-    /// and from the table otherwise. `entry` must come from a tile reading the same table: it is
-    /// neither checked nor clamped to the pool. A tile not read through a page table is unchanged.
+    /// and from the table otherwise. `entry` must come from a tile reading the same table, keys
+    /// handing theirs to values included: it is neither checked nor clamped to the pool, so an
+    /// entry from another table reads the page that table lists. A tile not read through a page
+    /// table is unchanged.
     pub fn with_page_entry(&self, entry: &PageEntry) -> Tile {
         let kind = match &self.kind {
             TileKind::Memory(g) => TileKind::new_Memory(g.with_page_entry(entry)),
