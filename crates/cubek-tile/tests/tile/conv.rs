@@ -48,17 +48,16 @@ enum Stage {
 }
 
 /// The same body matmul runs: the operands' spaces say what is contracted, their projections say
-/// how they are addressed, and the leaf does the rest. `V` is the input's line width along its
-/// fastest contracted axis, which the leaf splits into line index and unit; a real width is needed.
+/// how they are addressed, and the leaf does the rest. The input's line width, along its fastest
+/// contracted axis, is what the leaf splits into line index and unit; a real width is needed.
 #[cube(launch)]
-fn conv_kernel<E: Numeric, V: Size>(
-    input: &TileArg<'_, E, V>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     #[comptime] config: RegisterBlock,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(&space);
     let weight = weight.tile(&space);
@@ -73,21 +72,20 @@ fn conv_kernel<E: Numeric, V: Size>(
 /// region is copied into a stage shaped like the physical *window* it reads, compacted onto the
 /// lattice its stride and dilation reach, and the leaf gathers out of the stage as out of gmem.
 #[cube(launch)]
-fn conv_kernel_smem<E: Numeric, V: Size>(
-    input: &TileArg<'_, E, V>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_smem(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(&space);
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region).accumulating(config, Semiring::SUM_PROD);
         slot.consume(|input, weight| {
@@ -99,16 +97,15 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
 /// [`conv_kernel_smem`] with the scalar input alone staged, padded out to `width`-wide lines;
 /// the weight is read where it lies.
 #[cube(launch)]
-fn conv_kernel_smem_padded<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_smem_padded(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
     #[comptime] width: usize,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(&space);
     let weight = weight.tile(&space);
@@ -120,6 +117,7 @@ fn conv_kernel_smem_padded<E: Numeric>(
         StageStorage::Strided,
         comptime!(Some(width)),
         depth,
+        None,
     );
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region).accumulating(config, Semiring::SUM_PROD);
@@ -133,15 +131,14 @@ fn conv_kernel_smem_padded<E: Numeric>(
 /// [`conv_kernel`] over two levels, both read where the operands lie: a second descent, where a
 /// rational window's leftover phase has to accumulate rather than restart.
 #[cube(launch)]
-fn conv_kernel_two_levels<E: Numeric, V: Size>(
-    input: &TileArg<'_, E, V>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_two_levels(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     #[comptime] config: RegisterBlock,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(&space);
     let weight = weight.tile(&space);
@@ -162,22 +159,21 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
 /// [`conv_kernel_two_levels`] with both inputs staged at the first level, the second walking
 /// windows of the stage.
 #[cube(launch)]
-fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
-    input: &TileArg<'_, E, V>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_two_levels_smem(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(&space);
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&outer);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
@@ -229,13 +225,21 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    // Every binding stays scalar-unit: the kernel's element type carries the width, and `Tile::of`
-    // is what converts the shape and strides to lines. `#[cube(launch)]` mints its own element
-    // type per kernel, so the arms cannot share pre-built arguments; only the bindings are common.
-    let in_binding = in_handle.binding();
-    let w_binding = w_handle.binding();
-    let w_spec = TileSpec::direct(w_axes);
-    let out_binding = out_handle.clone().binding();
+    // Every binding stays scalar-unit: its argument carries the width, and `Tile::of` is what
+    // converts the shape and strides to lines.
+    let in_arg = TileArgLaunch::new(in_handle.binding().into_tensor_arg(), f32_ty, in_v, in_spec);
+    let w_arg = TileArgLaunch::new(
+        w_handle.binding().into_tensor_arg(),
+        f32_ty,
+        1,
+        TileSpec::direct(w_axes),
+    );
+    let out_arg = TileArgLaunch::new(
+        out_handle.clone().binding().into_tensor_arg(),
+        f32_ty,
+        1,
+        out_spec,
+    );
     let cube_count = launcher.cube_count();
     let cube_dim = launcher.cube_dim();
     // The kernel that walks this space: one loop per level, the stage where `stage` says.
@@ -244,28 +248,24 @@ fn run(
             &client,
             cube_count,
             cube_dim,
-            in_v,
-            TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-            TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-            TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+            in_arg,
+            w_arg,
+            out_arg,
             config,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
-            f32_ty,
         ),
         (1, Stage::Smem { depth, width: None }) => conv_kernel_smem::launch(
             &client,
             cube_count,
             cube_dim,
-            in_v,
-            TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-            TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-            TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+            in_arg,
+            w_arg,
+            out_arg,
             config,
             depth,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
-            f32_ty,
         ),
         (
             1,
@@ -282,45 +282,40 @@ fn run(
                 &client,
                 cube_count,
                 cube_dim,
-                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-                TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+                in_arg,
+                w_arg,
+                out_arg,
                 config,
                 depth,
                 width,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                f32_ty,
             )
         }
         (2, Stage::InPlace) => conv_kernel_two_levels::launch(
             &client,
             cube_count,
             cube_dim,
-            in_v,
-            TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-            TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-            TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+            in_arg,
+            w_arg,
+            out_arg,
             config,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             launcher.partitioning().level(1),
-            f32_ty,
         ),
         (2, Stage::Smem { depth, width: None }) => conv_kernel_two_levels_smem::launch(
             &client,
             cube_count,
             cube_dim,
-            in_v,
-            TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-            TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-            TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+            in_arg,
+            w_arg,
+            out_arg,
             config,
             depth,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
             launcher.partitioning().level(1),
-            f32_ty,
         ),
         (levels, stage) => panic!("conv: no kernel walks {levels} levels under {stage:?}"),
     }
@@ -930,7 +925,7 @@ impl Conv1d {
             ),
         };
         let in_arg = launch
-            .arg(in_handle.binding())
+            .arg(in_handle.binding(), f32_ty)
             .gathered(Projection::new(
                 &[OH, RH, CI],
                 &[
@@ -942,12 +937,12 @@ impl Conv1d {
             .build()
             .unwrap();
         let w_arg = launch
-            .arg(w_handle.binding())
+            .arg(w_handle.binding(), f32_ty)
             .axes(&[RH, CI, CO])
             .build()
             .unwrap();
         let out_arg = launch
-            .arg(out_handle.clone().binding())
+            .arg(out_handle.clone().binding(), f32_ty)
             .axes(&[OH, CO])
             .build()
             .unwrap();
@@ -957,20 +952,17 @@ impl Conv1d {
                 &client,
                 launch.cube_count(),
                 launch.cube_dim(),
-                1,
                 in_arg.arg(),
                 w_arg.arg(),
                 out_arg.arg(),
                 RegisterBlock::new(16),
                 launch.partitioning_arg(),
                 launch.partitioning().level(0),
-                f32_ty,
             ),
             Stage::Smem { depth, width: None } => conv_kernel_smem::launch(
                 &client,
                 launch.cube_count(),
                 launch.cube_dim(),
-                1,
                 in_arg.arg(),
                 w_arg.arg(),
                 out_arg.arg(),
@@ -978,7 +970,6 @@ impl Conv1d {
                 depth,
                 launch.partitioning_arg(),
                 launch.partitioning().level(0),
-                f32_ty,
             ),
             Stage::Smem { width: Some(_), .. } => {
                 panic!("launched conv1d: no padded stage through the launcher")
@@ -1110,15 +1101,14 @@ fn conv1d_launched_masked_overhang() {
 /// [`conv_kernel`] with the input's stride and dilation arriving as runtime scalars rather than
 /// baked into its projection: the two `Scale::Dynamic` coefficients ride the tile.
 #[cube(launch)]
-fn conv_kernel_dynamic<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_dynamic(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     stride: u32,
     dilation: u32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     // In `Projection::dynamic_scale_index` order: physical axis 0's terms, `OH` then `RH`.
     let mut coefficients = Coords::<u32>::new();
@@ -1188,20 +1178,23 @@ impl Conv1d {
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), f32_ty, 1, in_spec),
             TileArgLaunch::new(
                 w_handle.binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[RH, CI, CO]),
             ),
             TileArgLaunch::new(
                 out_handle.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[OH, CO]),
             ),
             self.stride as u32,
             self.dilation as u32,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
-            f32_ty,
         );
 
         let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -1253,14 +1246,13 @@ fn conv1d_dynamic_strided_and_dilated() {
 /// [`conv_kernel`] with the input's padding arriving as a runtime scalar: the `Offset::Dynamic`
 /// rides the tile as a signed value, while the stride and the dilation stay comptime.
 #[cube(launch)]
-fn conv_kernel_dynamic_padding<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_dynamic_padding(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     offset: i32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
@@ -1279,14 +1271,13 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
 /// [`conv_kernel_dynamic_padding`] with the input and the weight staged into shared memory: a
 /// dynamic offset stages, since the compaction drops it.
 #[cube(launch)]
-fn conv_kernel_dynamic_padding_smem<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_dynamic_padding_smem(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     offset: i32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
@@ -1295,7 +1286,7 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out
             .at(region)
@@ -1309,16 +1300,15 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
 /// [`conv_kernel_dynamic`] with the padding runtime too: nothing of the input's affine map is
 /// known when the kernel is compiled.
 #[cube(launch)]
-fn conv_kernel_all_dynamic<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_all_dynamic(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     stride: u32,
     dilation: u32,
     offset: i32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
     coefficients.push(stride);
@@ -1340,16 +1330,15 @@ fn conv_kernel_all_dynamic<E: Numeric>(
 /// [`conv_kernel_all_dynamic`] with the input and the weight staged into shared memory: the
 /// stage carries the runtime coefficients as its own map.
 #[cube(launch)]
-fn conv_kernel_all_dynamic_smem<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_all_dynamic_smem(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     stride: u32,
     dilation: u32,
     offset: i32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
     coefficients.push(stride);
@@ -1361,7 +1350,7 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let weight = weight.tile(&space);
     let out = out.tile(&space);
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut out_region = out
             .at(region)
@@ -1475,53 +1464,49 @@ impl Conv1d {
                 &client,
                 cube_count,
                 cube_dim,
-                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-                TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), f32_ty, 1, in_spec),
+                TileArgLaunch::new(w_binding.into_tensor_arg(), f32_ty, 1, w_spec),
+                TileArgLaunch::new(out_binding.into_tensor_arg(), f32_ty, 1, out_spec),
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                f32_ty,
             ),
             (true, true) => conv_kernel_all_dynamic_smem::launch(
                 &client,
                 cube_count,
                 cube_dim,
-                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-                TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), f32_ty, 1, in_spec),
+                TileArgLaunch::new(w_binding.into_tensor_arg(), f32_ty, 1, w_spec),
+                TileArgLaunch::new(out_binding.into_tensor_arg(), f32_ty, 1, out_spec),
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                f32_ty,
             ),
             (false, false) => conv_kernel_dynamic_padding::launch(
                 &client,
                 cube_count,
                 cube_dim,
-                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-                TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), f32_ty, 1, in_spec),
+                TileArgLaunch::new(w_binding.into_tensor_arg(), f32_ty, 1, w_spec),
+                TileArgLaunch::new(out_binding.into_tensor_arg(), f32_ty, 1, out_spec),
                 offset,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                f32_ty,
             ),
             (false, true) => conv_kernel_dynamic_padding_smem::launch(
                 &client,
                 cube_count,
                 cube_dim,
-                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
-                TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), f32_ty, 1, in_spec),
+                TileArgLaunch::new(w_binding.into_tensor_arg(), f32_ty, 1, w_spec),
+                TileArgLaunch::new(out_binding.into_tensor_arg(), f32_ty, 1, out_spec),
                 offset,
                 launcher.partitioning_arg(),
                 launcher.partitioning().level(0),
-                f32_ty,
             ),
         }
 
@@ -2134,9 +2119,9 @@ fn conv2d_staged_mixed_steps() {
 /// smem (the input into its compacted window); the fragment load folds tap and channel into `k`.
 #[cube(launch)]
 fn conv_mma_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     #[comptime] io: MmaIo,
     space: Partitioning,
     #[comptime] level: Level,
@@ -2145,15 +2130,18 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(&space);
     let weight = weight.tile(&space);
     let out = out.tile(&space);
-    let acc = out.accumulator::<E, E, E>(
+    let acc = out.accumulator::<E>(
         &input,
         &weight,
-        comptime!(Instruction::Mma { io }),
+        comptime!(Instruction::Mma {
+            io,
+            operands: MmaOperands::Plain,
+        }),
         Semiring::SUM_PROD,
     );
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
-    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_region = acc.at(region);
         slot.consume(|input, weight| {
@@ -2241,13 +2229,17 @@ fn conv1d_mma_leaf_with(io: MmaIo) {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), f32_ty, 1, in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[RH, CI, CO]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
+            f32_ty,
+            1,
             TileSpec::direct(&[OH, CO]),
         ),
         io,
@@ -2563,15 +2555,14 @@ fn resize1d_staged_vectorized() {
 
 /// A rational gathered operand whose divisor and offset arrive at runtime.
 #[cube(launch)]
-fn conv_kernel_rational_dynamic<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_rational_dynamic(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     divisor: u32,
     offset: i32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     // The one carried coefficient is the divisor: both scales are Static, so it is the whole
     // carrier (`Projection::dynamic_divisor_index` puts it at 0).
@@ -2594,15 +2585,14 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
 /// [`conv_kernel_rational_dynamic`] with the gathered input staged per region: the stage is born
 /// with dynamic coefficients before any fill addresses it.
 #[cube(launch)]
-fn conv_kernel_rational_dynamic_staged<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    weight: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
+fn conv_kernel_rational_dynamic_staged(
+    input: &TileArg<'_>,
+    weight: &TileArg<'_>,
+    out: &TileArg<'_>,
     divisor: u32,
     offset: i32,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
     coefficients.push(divisor);
@@ -2685,40 +2675,46 @@ fn check_resize1d_rational_dynamic(staged: bool) {
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), f32_ty, 1, in_spec),
             TileArgLaunch::new(
                 w_handle.binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[RH, CI, CO]),
             ),
             TileArgLaunch::new(
                 out_handle.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             ),
             resize.divisor as u32,
             resize.offset as i32,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
-            f32_ty,
         );
     } else {
         conv_kernel_rational_dynamic::launch(
             &client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), f32_ty, 1, in_spec),
             TileArgLaunch::new(
                 w_handle.binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[RH, CI, CO]),
             ),
             TileArgLaunch::new(
                 out_handle.clone().binding().into_tensor_arg(),
+                f32_ty,
+                1,
                 TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             ),
             resize.divisor as u32,
             resize.offset as i32,
             launcher.partitioning_arg(),
             launcher.partitioning().level(0),
-            f32_ty,
         );
     }
 

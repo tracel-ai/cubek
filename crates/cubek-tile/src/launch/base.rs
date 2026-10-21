@@ -1,6 +1,6 @@
 //! One kernel launch: the [`Launcher`].
 
-use cubecl::ir::OpaqueType;
+use cubecl::ir::{ElemType, OpaqueType};
 use cubecl::prelude::*;
 
 use crate::{
@@ -63,12 +63,35 @@ impl Launcher {
                 )
             }
         };
-        let max_units = client.properties().hardware.max_units_per_cube;
-        if cube_dim.num_elems() > max_units {
+        let hardware = &client.properties().hardware;
+        if cube_dim.num_elems() > hardware.max_units_per_cube {
             return Err(Refusal::CubePastDevice {
                 units: cube_dim.num_elems(),
-                most: max_units,
+                most: hardware.max_units_per_cube,
             });
+        }
+        if cube_dim.num_elems() == 0 {
+            return Err(Refusal::NoUnits);
+        }
+        let (most_x, most_y, most_z) = hardware.max_cube_dim;
+        if cube_dim.x > most_x || cube_dim.y > most_y || cube_dim.z > most_z {
+            return Err(Refusal::CubeShapePastDevice {
+                shape: (cube_dim.x, cube_dim.y, cube_dim.z),
+                most: hardware.max_cube_dim,
+            });
+        }
+        // A dynamic count lives on the device, and the kernel reading one owns its bound.
+        if let CubeCount::Static(x, y, z) = cube_count {
+            if x == 0 || y == 0 || z == 0 {
+                return Err(Refusal::NoCubes);
+            }
+            let (most_x, most_y, most_z) = hardware.max_cube_count;
+            if x > most_x || y > most_y || z > most_z {
+                return Err(Refusal::GridPastDevice {
+                    count: (x, y, z),
+                    most: hardware.max_cube_count,
+                });
+            }
         }
         let fillers = partitioning.fillers();
         // Checked on the host: a panic at expansion is unseen and the launch returns zeros.
@@ -90,6 +113,19 @@ impl Launcher {
             overhanging: over_concrete.overhanging(),
             leaf: over_concrete.leaf(),
         })
+    }
+
+    /// This launch, each cube holding `bytes` of shared memory, or the [`Refusal`] saying the device
+    /// gives one less: what the device gives a cube, less what it reserves for cube-scoped matrices.
+    pub fn holding(self, bytes: usize) -> Result<Self, Refusal> {
+        let hardware = &self.client.properties().hardware;
+        let most = hardware
+            .max_shared_memory_size
+            .saturating_sub(hardware.cube_mma_reserved_shared_memory);
+        match bytes > most {
+            true => Err(Refusal::SharedMemoryPastDevice { bytes, most }),
+            false => Ok(self),
+        }
     }
 
     pub fn client(&self) -> &Client {
@@ -146,9 +182,10 @@ impl Launcher {
             .unwrap_or_else(|| self.concrete.extent(axis))
     }
 
-    /// Bind `binding` as an operand of this launch.
-    pub fn arg(&self, binding: TensorBinding) -> Arg<'_, Unlabelled> {
-        Arg::bound(self, binding)
+    /// Bind `binding`, whose buffer holds `element`, as an operand of this launch: for a
+    /// [`packed`](Arg::packed) one, the words its fields are stored in.
+    pub fn arg(&self, binding: TensorBinding, element: ElemType) -> Arg<'_, Unlabelled> {
+        Arg::bound(self, binding, element)
     }
 
     /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor; end it with

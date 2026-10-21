@@ -1,5 +1,7 @@
+mod bilinear;
 mod nearest;
 
+pub(crate) use bilinear::reference_bilinear_backward;
 pub(crate) use nearest::reference_nearest_backward;
 
 use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
@@ -97,7 +99,7 @@ pub fn reference_for_backward_interpolation_mode(
             reference_nearest_backward(out_grad, output_shape, nearest_mode, progress)
         }
         InterpolateMode::Bilinear => {
-            panic!("Bilinear interpolation backward is not supported by CPU reference")
+            reference_bilinear_backward(out_grad, output_shape, options.align_corners, progress)
         }
         InterpolateMode::Bicubic => {
             panic!("Bicubic interpolation backward is not supported by CPU reference")

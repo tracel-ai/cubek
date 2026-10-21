@@ -38,9 +38,9 @@ impl<T: Float> Recipe<T> for AxisValue {
 /// Walk the whole space and copy each region of `source`, evaluated where it is read, into
 /// `output`.
 #[cube]
-fn materialize<E: Numeric>(
-    source: &Tile<E>,
-    output: &TileArg<'_, E, Const<1>>,
+fn materialize(
+    source: &Tile,
+    output: &TileArg<'_>,
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
@@ -94,17 +94,16 @@ impl Harness {
     fn read(&self, output: TensorHandle) -> HostData {
         HostData::from_tensor_handle(&self.client, output, HostDataType::F32)
     }
-}
 
-/// The output launch argument. Each kernel gets its own opaque element type, so this cannot be a
-/// function.
-macro_rules! output_arg {
-    ($output:expr) => {
+    /// The output launch argument.
+    fn output_arg(&self, output: &TensorHandle) -> TileArgLaunch {
         TileArgLaunch::new(
-            $output.clone().binding().into_tensor_arg(),
+            output.clone().binding().into_tensor_arg(),
+            self.dtype,
+            1,
             TileSpec::direct(&[ROW, COL]),
         )
-    };
+    }
 }
 
 /// Assert every cell equals `expected(row, col)`, tolerating float rounding.
@@ -130,65 +129,65 @@ type LinearScaled = Linear<AxisValue>;
 
 #[cube(launch)]
 fn linear_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LinearAxis<E>>(
+    let source = Procedural::new::<E, LinearAxis<E>>(
         comptime!(space.space().clone()),
         linear_along(
             COL,
-            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-            runtime_scalar::<E>(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+            runtime_scalar::<E>(E::new(1.0)),
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn cubic_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<CubicAxis<E>>(
+    let source = Procedural::new::<E, CubicAxis<E>>(
         comptime!(space.space().clone()),
         cubic_along(
             COL,
-            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-            runtime_scalar::<E>(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+            runtime_scalar::<E>(E::new(1.0)),
             a,
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn lanczos_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LanczosAxis<E>>(
+    let source = Procedural::new::<E, LanczosAxis<E>>(
         comptime!(space.space().clone()),
         lanczos_along(
             COL,
-            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-            runtime_scalar::<E>(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+            runtime_scalar::<E>(E::new(1.0)),
             lobes,
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -196,12 +195,12 @@ fn lanczos_kernel<E: Float>(
 /// generic over their inner recipe buys.
 #[cube(launch)]
 fn linear_over_axis_value_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<LinearScaled>(
+    let source = Procedural::new::<E, LinearScaled>(
         comptime!(space.space().clone()),
         LinearScaled {
             coordinate: AxisValue {
@@ -210,7 +209,7 @@ fn linear_over_axis_value_kernel<E: Float>(
             },
         },
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -231,7 +230,7 @@ fn linear_is_a_triangle_with_unit_support() {
         &h.client,
         h.launcher.cube_count(),
         h.launcher.cube_dim(),
-        output_arg!(output),
+        h.output_arg(&output),
         h.launcher.partitioning_arg(),
         h.launcher.partitioning().level(0),
         offset(-2.5),
@@ -252,7 +251,7 @@ fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
         &h.client,
         h.launcher.cube_count(),
         h.launcher.cube_dim(),
-        output_arg!(output),
+        h.output_arg(&output),
         h.launcher.partitioning_arg(),
         h.launcher.partitioning().level(0),
         h.dtype,
@@ -275,7 +274,7 @@ fn cubic_matches_the_keys_convolution() {
             &h.client,
             h.launcher.cube_count(),
             h.launcher.cube_dim(),
-            output_arg!(output),
+            h.output_arg(&output),
             h.launcher.partitioning_arg(),
             h.launcher.partitioning().level(0),
             offset(-2.5),
@@ -307,7 +306,7 @@ fn lanczos_matches_the_windowed_sinc() {
             &h.client,
             h.launcher.cube_count(),
             h.launcher.cube_dim(),
-            output_arg!(output),
+            h.output_arg(&output),
             h.launcher.partitioning_arg(),
             h.launcher.partitioning().level(0),
             offset(start),

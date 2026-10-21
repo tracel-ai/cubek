@@ -24,6 +24,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct UnitRoutine {}
 
+impl cubek_std::Routine for UnitRoutine {
+    type Strategy = ();
+    type Blueprint = AttentionBlueprint;
+}
+
 impl Routine for UnitRoutine {
     const TILE_KIND: TileAttentionKind = TileAttentionKind::Unit;
 
@@ -34,9 +39,6 @@ impl Routine for UnitRoutine {
     >;
     type GlobalAttention = SimpleGlobalAttentionFamily<Self::StageAttention>;
     type BatchAttention = SimpleBatchAttentionFamily<Self::GlobalAttention>;
-
-    type Strategy = ();
-    type Blueprint = AttentionBlueprint;
 
     fn prepare(
         problem: &AttentionProblem,

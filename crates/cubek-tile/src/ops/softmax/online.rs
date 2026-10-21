@@ -60,7 +60,7 @@ pub struct OnlineSoftmaxState<E: Float> {
 impl<E: Float> OnlineSoftmax<E> {
     /// The state of every slice along `axis` of a score held as `score` is, before any block is
     /// taken in: each unit keeps the slices it holds cells of ([`Tile::slices_per_unit`]).
-    pub fn along<S: Numeric>(score: &Tile<S>, #[comptime] axis: Axis) -> OnlineSoftmax<E> {
+    pub fn along(score: &Tile, #[comptime] axis: Axis) -> OnlineSoftmax<E> {
         let slices = score.slices_per_unit(axis);
         let slots = comptime!(match slices == score.place.space.slices_along(axis) {
             true => SliceSlots::Every,
@@ -84,12 +84,12 @@ impl<E: Float> OnlineSoftmax<E> {
     /// `E::min_value()`; a slice whose every cell so far is masked holds zeros and a zero sum. On a
     /// plane's window every unit of the plane calls it, and the caller meets the plane before it
     /// and before the probabilities are read.
-    pub fn step(&mut self, score: &Tile<E>, bias: &Tile<E>, scale: E) -> Array<E> {
+    pub fn step(&mut self, score: &Tile, bias: &Tile, scale: E) -> Array<E> {
         let mut slices = score.along(self.axis);
-        slices.scale_add(scale, bias);
-        let max = slices.maxima(&self.m);
-        slices.exp_minus(&max);
-        let sum = slices.sums();
+        slices.scale_add::<E>(scale, bias);
+        let max = slices.maxima::<E>(&self.m);
+        slices.exp_minus::<E>(&max);
+        let sum = slices.sums::<E>();
         let mut correction = Array::<E>::new(self.slices);
         #[unroll]
         for i in 0..self.slices {
@@ -206,17 +206,17 @@ impl<E: Float> OnlineSoftmax<E> {
     /// Every unit of every plane calls it once its cube has [`take`](Relay::take)n the turn; the
     /// first unit of each plane writes the state, which the relay publishes with the carry. The
     /// caller rescales the carry ([`Relay::carried`]) and its sum by the factors, then drains.
-    pub fn relayed<C: Numeric>(
+    pub fn relayed(
         &mut self,
-        relay: &Relay<'_, C>,
-        carried_max: &mut Tile<E>,
-        carried_sum: &mut Tile<E>,
+        relay: &Relay<'_>,
+        carried_max: &mut Tile,
+        carried_sum: &mut Tile,
     ) -> RelayedFactors<E> {
         self.refuse_merging("OnlineSoftmax::relayed");
         let slices = self.slices;
         let (first, last) = (relay.is_first(), relay.is_last());
-        let stored_max = carried_max.cells(slices);
-        let stored_sum = carried_sum.cells(slices);
+        let stored_max = carried_max.cells::<E>(slices);
+        let stored_sum = carried_sum.cells::<E>(slices);
         let mut own = Array::<E>::new(slices);
         let mut carried = Array::<E>::new(slices);
         #[unroll]
@@ -224,8 +224,8 @@ impl<E: Float> OnlineSoftmax<E> {
             let before_max = select(first, E::min_value(), stored_max[i]);
             let before_sum = select(first, E::from_int(0), stored_sum[i]);
             let merged = before_max.max(self.m[i]);
-            own[i] = AxisSlices::<E>::exp_minus_cell(self.m[i], merged);
-            carried[i] = AxisSlices::<E>::exp_minus_cell(before_max, merged);
+            own[i] = AxisSlices::exp_minus_cell::<E>(self.m[i], merged);
+            carried[i] = AxisSlices::exp_minus_cell::<E>(before_max, merged);
             self.l[i] = carried[i] * before_sum + own[i] * self.l[i];
             self.m[i] = merged;
         }
@@ -253,6 +253,26 @@ impl<E: Float> OnlineSoftmax<E> {
             sum[i] = self.l[i];
         }
         OnlineSoftmaxState::<E> { max, sum }
+    }
+
+    /// Every slice's running max and sum as they stand, written into `max` and `sum`, a plane's
+    /// windows of one cell a slice in slice order: what a holder leaves beside its undivided sum
+    /// where its slices merge with other holders' parts of them, and the one way to read out a
+    /// state taken in from a manual-mma grid, whose units each keep the rows they hold cells of.
+    ///
+    /// `score` is the tile the state was taken in from ([`along`](OnlineSoftmax::along)), which
+    /// says which unit holds which row: each writes its own, one cell a row. A state every unit
+    /// holds whole is written by the plane's first unit. Every unit of the plane calls it, and the
+    /// caller meets the plane before the windows are read.
+    pub fn store_rows(&self, score: &Tile, max: &mut Tile, sum: &mut Tile) {
+        if comptime!(self.slots == SliceSlots::Every) {
+            max.set_cells(&self.m, self.slices);
+            sum.set_cells(&self.l, self.slices);
+        } else {
+            let slices = score.along(self.axis);
+            slices.store_held::<E>(&self.m, max);
+            slices.store_held::<E>(&self.l, sum);
+        }
     }
 
     /// Each slice's `1 / l`, what its sum of probabilities times values is normalized by; zero
@@ -296,7 +316,7 @@ impl<E: Float> OnlineSoftmax<E> {
             self.slots == SliceSlots::Every,
             "{op}: this state was taken in from a manual-mma grid, each unit keeping the rows it \
              holds cells of; a state merged with another holder's is taken in from a window or a \
-             cmma grid"
+             cmma grid, or written out row by row first (OnlineSoftmax::store_rows)"
         ));
     }
 }

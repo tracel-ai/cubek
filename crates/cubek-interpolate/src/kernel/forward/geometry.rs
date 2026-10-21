@@ -1,5 +1,6 @@
 use super::coordinate::gcd;
 use crate::definition::InterpolateBlueprint;
+use cubek_std::selector::divisor_at_most;
 
 /// How the output is spread over cubes, over a cube's planes, and over a plane's units.
 ///
@@ -85,13 +86,6 @@ fn unit_split(channels: usize, units: usize, block: Option<usize>) -> (usize, us
     // rounded up: a block the axis does not fill exactly is still one block, its tail padding.
     let unit_channels = gcd(units, channels.div_ceil(channel_block));
     (units / unit_channels, unit_channels, channel_block)
-}
-
-fn divisor_at_most(n: usize, cap: usize) -> usize {
-    (1..=n.min(cap))
-        .rev()
-        .find(|d| n.is_multiple_of(*d))
-        .unwrap_or(1)
 }
 
 #[cfg(test)]

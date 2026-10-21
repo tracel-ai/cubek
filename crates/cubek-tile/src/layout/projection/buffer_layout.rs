@@ -19,6 +19,9 @@ pub(crate) struct BufferLayout {
     /// Where a stage keeps each line of a block row.
     #[cube(comptime)]
     pub(crate) rows: RowArrangement,
+    /// The table a pool of pages is read as sequences through ([`Paging`]); `None` for a buffer
+    /// read where it lies.
+    pub(crate) paging: ComptimeOption<PageTable>,
 }
 
 #[cube]
@@ -33,6 +36,7 @@ impl Layout for BufferLayout {
         for pa in 0..rank {
             digits.push(self.physical_digit(&pos, pa));
         }
+        let (digits, base) = self.paged(digits);
         let digits = self.placed(&digits);
         let mut terms = Sequence::<u32>::new();
         #[unroll]
@@ -41,6 +45,7 @@ impl Layout for BufferLayout {
         }
         terms
             .sum(comptime!((0..rank).collect::<Vec<_>>()))
+            .plus(base)
             .cast::<usize>()
     }
 
@@ -123,6 +128,42 @@ impl BufferLayout {
             digits.push(line_digit(x, &self.physical_shape, pa));
         }
         digits
+    }
+
+    /// This layout for a window whose origin is `origin`, cut as `cut` says
+    /// ([`PageTable::pinned_at`]): the pages the window reads resolved once where the buffer is a
+    /// pool of pages, unchanged elsewhere.
+    pub(crate) fn pinned_at(
+        &self,
+        origin: &Coords<i32>,
+        #[comptime] cut: WindowCut,
+    ) -> BufferLayout {
+        #[comptime]
+        match &self.paging {
+            ComptimeOption::Some(table) => BufferLayout {
+                physical_shape: self.physical_shape.clone(),
+                physical_strides: self.physical_strides.clone(),
+                projection: comptime!(self.projection.clone()),
+                rows: comptime!(self.rows),
+                paging: ComptimeOption::new_Some(table.pinned_at(
+                    origin,
+                    cut,
+                    self.physical_strides.at(comptime!(table.sequence_dim)),
+                    self.physical_strides.at(comptime!(table.position_dim)),
+                )),
+            },
+            ComptimeOption::None => self.clone(),
+        }
+    }
+
+    /// `digits` located through the page table where the buffer is a pool of pages
+    /// ([`PageTable::located`]), with the base the line's offset adds past them.
+    fn paged(&self, digits: Coords<u32>) -> (Coords<u32>, u32) {
+        #[comptime]
+        match &self.paging {
+            ComptimeOption::Some(table) => table.located(&digits),
+            ComptimeOption::None => (digits, 0u32),
+        }
     }
 
     /// `digits` with a swizzled stage's line digit XORed by its row's key.

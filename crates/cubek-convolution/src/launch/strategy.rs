@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::definition::ConvBlueprint;
+use crate::{definition::ConvBlueprint, launch::UnitStrategy};
 
 /// Top-level user-facing strategy for `launch_ref`.
 ///
@@ -25,6 +25,10 @@ pub enum Strategy {
         algorithm: ConvAlgorithm,
         blueprint: ConvBlueprint,
     },
+    /// F32 register-tiled implicit convolution, for devices without a usable
+    /// accelerated matmul. It takes its own strategy because it has no tile-matmul
+    /// kind to pick, and its forced tilings span regimes autotune chooses from.
+    Unit(UnitStrategy),
 }
 
 /// The convolution-side algorithm enum. Subsumes the previous
@@ -88,6 +92,7 @@ impl Display for Strategy {
                 algorithm,
                 blueprint: _,
             } => write!(f, "{algorithm}_forced"),
+            Strategy::Unit(strategy) => write!(f, "{strategy}"),
         }
     }
 }

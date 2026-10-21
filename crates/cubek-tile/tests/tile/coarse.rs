@@ -34,13 +34,12 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// `c = a · b` with `a` coarse along the contracted axis: one value per block of `K`, read by
 /// every `k` the block covers.
 #[cube(launch)]
-fn coarse_lhs_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn coarse_lhs_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -110,15 +109,21 @@ fn run(launcher: Launcher) -> HostData {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(a.binding().into_tensor_arg(), coarse_spec()),
-        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
+        TileArgLaunch::new(a.binding().into_tensor_arg(), dtype, 1, coarse_spec()),
+        TileArgLaunch::new(
+            b.binding().into_tensor_arg(),
+            dtype,
+            1,
+            TileSpec::direct(&[K, N]),
+        ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            dtype,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
-        dtype,
     );
 
     HostData::from_tensor_handle(&client, c, HostDataType::F32)

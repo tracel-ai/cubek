@@ -43,31 +43,31 @@ impl<T: Float, C: Recipe<T>> Recipe<T> for Lanczos<C> {
         // Checked here rather than in a constructor, which a struct literal can bypass; it fires
         // while the kernel expands, on the client's compilation thread, not at the call site.
         comptime!(assert!(self.lobes > 0, "Lanczos: lobes must be non-zero"));
-        let lobes = comptime!(self.lobes as f32);
+        let lobes = comptime!(self.lobes as f64);
         let x = self.coordinate.evaluate(coordinates);
         let abs_x = x.abs();
         // With `u = pi * x / lobes` the kernel is `sin(lobes * u) * sin(u) / (lobes * u * u)`,
         // which folds both divisions by `lobes` into one comptime coefficient.
-        let u = T::new(core::f32::consts::PI / lobes) * x;
+        let u = T::new(core::f64::consts::PI / lobes) * x;
         let numerator = if comptime!(self.lobes == 3) {
             // sin(3u) = sin(u) * (3 - 4 sin^2 u), so the product needs a single sine.
             let s = u.sin();
             let s2 = s * s;
-            s2 * fma(T::new(-4.0_f32), s2, T::new(3.0_f32))
+            s2 * fma(T::new(-4.0), s2, T::new(3.0))
         } else {
             (T::new(lobes) * u).sin() * u.sin()
         };
         let denominator = T::new(lobes) * (u * u);
         // `select` evaluates both arms, so the x = 0 arm still divides. Substituting a harmless
         // denominator there keeps that division finite; the outer `select` discards its result.
-        let safe_denominator = select(abs_x < T::new(1e-7_f32), T::new(1.0_f32), denominator);
+        let safe_denominator = select(abs_x < T::new(1e-7), T::new(1.0), denominator);
         select(
-            abs_x < T::new(1e-7_f32),
-            T::new(1.0_f32),
+            abs_x < T::new(1e-7),
+            T::new(1.0),
             select(
                 abs_x < T::new(lobes),
                 numerator / safe_denominator,
-                T::new(0.0_f32),
+                T::new(0.0),
             ),
         )
     }

@@ -7,6 +7,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
+use cubek_std::matmul_axes::{K, M, N, NB, NI};
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
 use cubek_tile::launch::Grid;
 use cubek_tile::layout::PhysicalAxisMap;
@@ -20,27 +21,19 @@ use super::strategy::StageDepth;
 /// fan-out, so the numbers measure the staging, not the instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 
-const M: Axis = Axis(0);
-const K: Axis = Axis(2);
-/// `N` as the scale blocks make it: which block, and where inside it.
-const NB: Axis = Axis(3);
-const NI: Axis = Axis(4);
-
 /// `C = A · (B ⊗ S)`, `B` the packed weight staged in its stored form: both inputs stage into
 /// shared memory per cube region, and the plane's units read windows of the stage, each scaled
 /// where it is read (`b_s.at(&unit).mul(..)`), which is the decode this bench measures.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
-fn staged_matmul_quant_rhs<E: Numeric, VA: Size, VB: Size, VC: Size>(
-    a: &TileArg<'_, E, VA>,
-    b: &TileArg<'_, u32, VB>,
-    scales: &TileArg<'_, f32, Const<1>>,
-    c: &TileArg<'_, E, VC>,
+fn staged_matmul_quant_rhs(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    scales: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(&space);
-    let b = b.tile_as::<E>(&space);
+    let b = b.tile(&space);
     let scales = scales.tile(&space);
     let c = c.tile(&space);
     for cube in space {
@@ -49,7 +42,7 @@ fn staged_matmul_quant_rhs<E: Numeric, VA: Size, VB: Size, VC: Size>(
         let scales = scales.at(&cube);
         let c = c.at(&cube);
         let steps = cube.walk();
-        let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize);
+        let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize, None);
         stages.pipelined(steps, |slot, step| {
             let c_step = c.at(step);
             let scales_step = scales.at(step);
@@ -182,7 +175,6 @@ impl Benchmark for TileQuantStageBench {
 
     fn prepare(&self) -> Self::Input {
         // The buffers are the plain matrices; only the kernel's view splits `N`.
-        const N: Axis = Axis(1);
         let space = Space::new(&[(M, self.m), (N, self.n), (K, self.k)]);
         let a = TileInput::builder(&self.client, space.subspace(&[M, K]))
             .untiled()
@@ -205,8 +197,9 @@ impl Benchmark for TileQuantStageBench {
             Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
                 .map_err(|refusal| refusal.to_string())?
         };
+        let element = f32::elem_type_native();
         let a = launcher
-            .arg(a.handle().binding())
+            .arg(a.handle().binding(), element)
             .axes(&[M, K])
             .build()
             .map_err(|refusal| refusal.to_string())?;
@@ -220,15 +213,11 @@ impl Benchmark for TileQuantStageBench {
             &self.client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            a.vector_size,
-            1,
-            self.pack,
             a.arg(),
-            b.values_arg(TileSpec::new(b_projection.clone())),
-            b.scales_arg(TileSpec::new(b_projection.scales_per(NB))),
-            TileArgLaunch::new(c.tensor_arg(self.pack), c_spec),
+            b.values_arg(1, TileSpec::new(b_projection.clone())),
+            b.scales_arg(1, TileSpec::new(b_projection.scales_per(NB))),
+            TileArgLaunch::new(c.tensor_arg(self.pack), element, self.pack, c_spec),
             launcher.partitioning_arg(),
-            f32::elem_type_native(),
         );
         Ok(())
     }

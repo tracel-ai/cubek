@@ -13,7 +13,7 @@
 //! An `every` level ([`Count::All`]) closes its axis; only [`across`](Levels::across) may name it
 //! again, on the cube level.
 
-use super::CubeOrder;
+use super::{CubeOrder, PlaneOrder, UnitCube};
 use crate::{Axis, ComputeScope, Count, Coverage, Level, Spread};
 
 /// One level as the builder holds it before it is a [`Level`].
@@ -29,9 +29,14 @@ struct StatedLevel {
     fillers: usize,
     batches: Vec<Axis>,
     interleaved: Vec<Axis>,
+    reversed: Vec<Axis>,
     /// Closed axes this cube level names again, to distribute across cubes.
     reopened: Vec<Axis>,
     order: CubeOrder,
+    /// The order the launch's planes take this level's tiles in, where it spans the launch.
+    plane_order: Option<PlaneOrder>,
+    /// The cubes the launch's units are grouped in, where a unit level spans the launch.
+    unit_cube: Option<UnitCube>,
 }
 
 /// Which [`Count`] a stated level's entries carry.
@@ -129,6 +134,38 @@ impl Levels {
         self.every(Coverage::Distribute(ComputeScope::Cube), axes)
     }
 
+    /// One plane of the launch for every tile these axes hold, the planes taking them in `order`:
+    /// the outermost level of a partitioning with no cube level. A plane routine's planes share
+    /// nothing, so which cube a plane sits in is the launch's grouping, not a level of the
+    /// partitioning; the order sets the cubes' size ([`PlaneOrder::planes_per_cube`]).
+    pub fn launch_planes(mut self, axes: &[Axis], order: PlaneOrder) -> Self {
+        self = self.every(Coverage::Distribute(ComputeScope::Plane), axes);
+        let stated = self.last("launch_planes");
+        assert!(
+            stated.reopened.is_empty(),
+            "Levels::launch_planes: {:?} was taken whole by a level below",
+            stated.reopened
+        );
+        stated.plane_order = Some(order);
+        self
+    }
+
+    /// One unit of the launch for every tile these axes hold, in row order, the units grouped in
+    /// cubes of `cube`: the outermost level of a partitioning with no cube or plane level. A unit
+    /// routine's units share nothing, so which cube or plane a unit sits in is the launch's
+    /// grouping, not a level of the partitioning, and `for unit in &partitioning` walks them.
+    pub fn launch_units(mut self, axes: &[Axis], cube: UnitCube) -> Self {
+        self = self.every(Coverage::Distribute(ComputeScope::Unit), axes);
+        let stated = self.last("launch_units");
+        assert!(
+            stated.reopened.is_empty(),
+            "Levels::launch_units: {:?} was taken whole by a level below",
+            stated.reopened
+        );
+        stated.unit_cube = Some(cube);
+        self
+    }
+
     /// Distribute `axis` of the cube level just stated across `cubes` cubes, each a run (split-K).
     pub fn across(mut self, axis: Axis, cubes: usize) -> Self {
         let stated = self.last("across");
@@ -178,6 +215,15 @@ impl Levels {
     /// The workers of the level just stated take `axis`'s tiles in turns rather than in runs.
     pub fn interleaved(mut self, axis: Axis) -> Self {
         self.last("interleaved").interleaved.push(axis);
+        self
+    }
+
+    /// The level just stated, a cube level or a plane level spanning the launch, hands out
+    /// `axis`'s tiles from the last to the first: the first workers launched take the last tiles.
+    /// Where the later tiles hold more work, the heaviest start first and the light ones fill in
+    /// behind them.
+    pub fn reversed(mut self, axis: Axis) -> Self {
+        self.last("reversed").reversed.push(axis);
         self
     }
 
@@ -297,8 +343,11 @@ impl StatedLevel {
             fillers: 0,
             batches: Vec::new(),
             interleaved: Vec::new(),
+            reversed: Vec::new(),
             reopened: Vec::new(),
             order: CubeOrder::RowMajor,
+            plane_order: None,
+            unit_cube: None,
         }
     }
 
@@ -312,6 +361,18 @@ impl StatedLevel {
 
     /// The [`Level`] this states.
     fn level(&self) -> Level {
+        let tile = || -> Vec<_> {
+            self.tiles
+                .iter()
+                .map(|&(axis, tile, _)| (axis, tile))
+                .collect()
+        };
+        if let Some(order) = &self.plane_order {
+            return Level::spanning_launch(&tile(), order.clone()).reversed(&self.reversed);
+        }
+        if let Some(cube) = self.unit_cube {
+            return Level::units_spanning_launch(&tile(), cube).reversed(&self.reversed);
+        }
         let cuts: Vec<(Axis, usize, Count, Spread)> = self
             .tiles
             .iter()
@@ -340,9 +401,13 @@ impl StatedLevel {
             false => level,
             true => level.distributed_in(self.order),
         };
-        match self.shared_by {
+        let level = match self.shared_by {
             None => level,
             Some(cubes) => level.sharing(cubes),
+        };
+        match self.reversed.is_empty() {
+            true => level,
+            false => level.reversed(&self.reversed),
         }
     }
 }
@@ -356,6 +421,22 @@ mod tests {
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
     const B: Axis = Axis(3);
+
+    /// A level's tiles stay inside the box it is handed exactly where its tile divides that box,
+    /// which is what lets a window cut by it keep the page of the window it was cut from: pages of
+    /// 16 keys over 20 overhang, and steps of 4 inside a page's box of 16 do not.
+    #[test]
+    fn a_level_overhangs_only_a_box_its_tile_does_not_divide() {
+        let levels = Levels::leaf(&[(K, 4)])
+            .walk(&[(K, 4)])
+            .walk_every(&[K])
+            .build();
+        let keys = Space::new(&[(K, 20)]);
+        assert!(levels[0].overhangs(&keys, K));
+        let page = levels[0].child(&keys);
+        assert_eq!(page.extent(K), 16);
+        assert!(!levels[1].overhangs(&page, K));
+    }
 
     /// Every level's tile is the product of what was stated below it.
     #[test]
@@ -559,6 +640,30 @@ mod tests {
     #[should_panic(expected = "only cubes take an axis in runs")]
     fn only_cubes_take_an_axis_in_runs() {
         let _ = Levels::leaf(&[(K, 16)]).planes(&[(K, 4)]).across(K, 2);
+    }
+
+    /// A reversed axis reaches the cube level that states it, and no level below.
+    #[test]
+    fn a_reversed_axis_reaches_the_cube_level() {
+        let levels = Levels::leaf(&[(M, 16), (N, 8), (K, 16)])
+            .walk_every(&[K])
+            .planes(&[(M, 2)])
+            .cubes(&[M, N])
+            .reversed(M)
+            .build();
+        assert!(levels[0].is_reversed(M));
+        assert!(!levels[0].is_reversed(N));
+        assert!(levels[1..].iter().all(|level| !level.is_reversed(M)));
+    }
+
+    /// The planes of one cube are not dealt in launch order, so there is nothing to reverse.
+    #[test]
+    #[should_panic(expected = "only a cube level or a level spanning the launch")]
+    fn only_a_launch_order_is_reversed() {
+        let _ = Levels::leaf(&[(M, 16)])
+            .planes(&[(M, 2)])
+            .reversed(M)
+            .build();
     }
 
     #[test]

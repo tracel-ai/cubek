@@ -9,44 +9,35 @@ use super::base::{Payload, PayloadExpand, StageOperand, StageSpec, stage_one};
 /// Two operands staged together; `Clone` duplicates handles, not buffers.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct OperandPair<Lhs: Numeric, Rhs: Numeric> {
-    pub lhs: Tile<Lhs>,
-    pub rhs: Tile<Rhs>,
+pub struct OperandPair {
+    pub lhs: Tile,
+    pub rhs: Tile,
 }
 
 #[cube]
-impl<Lhs: Numeric, Rhs: Numeric> Payload<OperandPair<Lhs, Rhs>> for OperandPair<Lhs, Rhs> {
+impl Payload<OperandPair> for OperandPair {
     fn operands(&self) -> comptime_type!(Vec<StageOperand>) {
-        let lhs = self.lhs.delivery();
-        let rhs = self.rhs.delivery();
+        let lhs = self.lhs.stage_operand();
+        let rhs = self.rhs.stage_operand();
         // The scales a stage keeps beside its values come after both operands, so each operand
         // keeps its place in the slot's refills.
         let lhs_scales = self.lhs.scale_operands();
         let rhs_scales = self.rhs.scale_operands();
         comptime!(
-            [
-                StageOperand {
-                    delivery: lhs,
-                    space: self.lhs.place.space.clone(),
-                },
-                StageOperand {
-                    delivery: rhs,
-                    space: self.rhs.place.space.clone(),
-                },
-            ]
-            .into_iter()
-            .chain(lhs_scales)
-            .chain(rhs_scales)
-            .collect()
+            [lhs, rhs]
+                .into_iter()
+                .chain(lhs_scales)
+                .chain(rhs_scales)
+                .collect()
         )
     }
 
     fn staged(
         &self,
-        first: &OperandPair<Lhs, Rhs>,
+        first: &OperandPair,
         #[comptime] spec: StageSpec,
         #[comptime] refills: Vec<Refill>,
-    ) -> OperandPair<Lhs, Rhs> {
+    ) -> OperandPair {
         let lhs = if comptime!(refills[0] == Refill::Shared) {
             first.lhs.clone()
         } else {
@@ -57,7 +48,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Payload<OperandPair<Lhs, Rhs>> for OperandPair<
         } else {
             stage_one(&self.rhs, comptime!(spec))
         };
-        OperandPair::<Lhs, Rhs> { lhs, rhs }
+        OperandPair { lhs, rhs }
     }
 
     fn free(&self) {
@@ -67,7 +58,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Payload<OperandPair<Lhs, Rhs>> for OperandPair<
 
     fn bring(
         &mut self,
-        src: &OperandPair<Lhs, Rhs>,
+        src: &OperandPair,
         meeting: &Meeting,
         region: &Region,
         #[comptime] refills: Vec<Refill>,

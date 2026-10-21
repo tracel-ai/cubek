@@ -198,8 +198,16 @@ impl Projection {
 
     /// `axes` in the tile's logical order, `physical` one per physical axis in buffer order.
     pub fn new(axes: &[Axis], physical: &[PhysicalAxisMap]) -> Self {
+        Projection::of_maps(axes, physical.iter().cloned().collect())
+    }
+
+    /// [`new`](Projection::new) over maps the caller built for it, taken as they are.
+    pub(crate) fn of_maps(
+        axes: &[Axis],
+        physical: SmallVec<[PhysicalAxisMap; Space::MAX_RANK]>,
+    ) -> Self {
         Projection {
-            physical: physical.iter().cloned().collect(),
+            physical,
             axes: SmallVec::from_slice(axes),
         }
     }

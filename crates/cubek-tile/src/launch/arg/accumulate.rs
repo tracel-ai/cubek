@@ -1,7 +1,6 @@
 //! An output several instances accumulate into, as a single launch argument.
 
-use core::marker::PhantomData;
-
+use cubecl::define_size;
 use cubecl::ir::{ExpandValue, VectorSize};
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
@@ -11,78 +10,84 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// An output several instances accumulate into, as a single launch argument.
-/// The buffer must arrive holding zero: the atomic only ever adds.
+/// An output several instances accumulate into, as a single launch argument, in lines of
+/// `width`. The buffer must arrive holding zero: the atomic only ever adds.
 #[derive(CubeType, CubeLaunch)]
 pub struct AccumulateArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<Atomic<E>>,
+    /// The width a line is added in: the buffer's own elements are scalar.
+    #[cube(comptime)]
+    pub width: usize,
     #[cube(comptime)]
     pub spec: TileSpec,
 }
 
 #[cube]
 impl<'a, E: Numeric> AccumulateArg<'a, E> {
-    /// Serve the output as a [`Tile`] that accumulates into it at width `V`.
-    pub fn tile<V: Size>(&self, partitioning: &Partitioning) -> Tile<E> {
+    /// Serve the output as a [`Tile`] that accumulates into it in lines of its width.
+    pub fn tile(&self, partitioning: &Partitioning) -> Tile {
         let space = comptime!(partitioning.clone());
         // An atomic element is scalar, so these strides are already in scalars.
         let geometry = RuntimeGeometry::of_tensor::<Atomic<E>>(
             self.tensor,
             comptime!(self.spec.projection.physical_rank()),
         );
-        let sink = atomic_sink::<E, V>(self.tensor);
-        // A launch-time `Size` has a value only at expansion.
-        let width = V::value();
-        GlobalOperand::<E>::sink(
+        let sink = atomic_sink::<E>(self.tensor, comptime!(self.width));
+        GlobalOperand::sink(
             sink,
             geometry,
-            width,
+            comptime!(self.width),
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
             Write::Accumulate,
         )
-        .tile(comptime!(space.levels().to_vec()))
+        .tile::<E>(comptime!(space.levels().to_vec()))
     }
 }
 
-/// The erased tensor over an atomic buffer, accumulating at width `N`.
-// `N` is read by the expansion, which is where a `Size` has a value.
-#[allow(clippy::extra_unused_type_parameters)]
-fn atomic_sink<E: Numeric, N: Size>(_values: &Tensor<Atomic<E>>) -> ErasedTensor<E, WriteOnly> {
+/// The erased tensor over an atomic buffer, accumulating in lines of `width`.
+fn atomic_sink<E: Numeric>(
+    _values: &Tensor<Atomic<E>>,
+    _width: usize,
+) -> ErasedTensor<E, WriteOnly> {
     unexpanded!()
 }
 
 mod atomic_sink {
     use super::*;
 
-    pub(super) fn expand<E: Numeric, N: Size>(
+    pub(super) fn expand<E: Numeric>(
         _scope: &Scope,
         values: &<Tensor<Atomic<E>> as CubeType>::ExpandType,
+        width: usize,
     ) -> ErasedTensorExpand<E, WriteOnly> {
-        ErasedTensorExpand::new(AtomicAccumulate::<E, N> {
+        ErasedTensorExpand::new(AtomicAccumulate::<E> {
             values: ExpandTypeClone::clone_unchecked(values),
-            _n: PhantomData,
+            width,
         })
     }
 }
 
-/// A write-only backing that accumulates into an `Atomic<E>` buffer.
-struct AtomicAccumulate<E: Numeric, N: Size> {
+/// A write-only backing that accumulates into an `Atomic<E>` buffer in lines of `width`.
+struct AtomicAccumulate<E: Numeric> {
     values: <Tensor<Atomic<E>> as CubeType>::ExpandType,
-    _n: PhantomData<N>,
+    width: usize,
 }
 
-impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E, N> {
-    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
-        <N as Size>::__expand_value(scope)
+// The line a write hands over, typed at the width it is added in: registered where the write
+// expands and read nowhere after.
+define_size!(Line);
+
+impl<E: Numeric> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E> {
+    fn __expand_vector_size_method(&self, _scope: &Scope) -> VectorSize {
+        self.width
     }
 
-    /// In lines of `N`, as the trait counts them, off a buffer whose own elements are scalar: the
-    /// buffer's, not the tensor's, since a pitched buffer holds cells past its shape's product.
+    /// In lines of `width`, as the trait counts them, off a buffer whose own elements are scalar:
+    /// the buffer's, not the tensor's, since a pitched buffer holds cells past its shape's product.
     fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
         let scalars = self.values.__expand_buffer_len_method(scope);
-        // Read at expansion: a width the launch defines has no host-side value.
-        let width = <N as Size>::__expand_value(scope).__expand_runtime_method(scope);
+        let width = self.width.__expand_runtime_method(scope);
         scalars.__expand_div_method(scope, width)
     }
 
@@ -92,11 +97,12 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E
         index: NativeExpand<usize>,
         value: ExpandValue,
     ) {
-        accumulate_line::expand::<E, N>(scope, &self.values, index, value.into());
+        scope.register_size::<Line>(self.width);
+        accumulate_line::expand::<E, Line>(scope, &self.values, index, value.into());
     }
 }
 
-impl<E: Numeric, N: Size> WritesLines<E> for AtomicAccumulate<E, N> {}
+impl<E: Numeric> WritesLines<E> for AtomicAccumulate<E> {}
 
 /// Accumulate one line into the buffer: `N` scalar adds at the line's own offset.
 #[cube]

@@ -51,10 +51,12 @@ fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -
     }
 }
 
-impl Routine<()> for GemmRoutine {
+impl cubek_std::Routine for GemmRoutine {
     type Strategy = GemmStrategy;
     type Blueprint = GemmBlueprint;
 }
+
+impl Routine<()> for GemmRoutine {}
 
 impl BatchMatmulRoutine<()> for GemmRoutine {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
@@ -109,7 +111,7 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<(), Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let properties = device_settings.client.properties();

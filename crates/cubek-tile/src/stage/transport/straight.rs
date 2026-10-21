@@ -7,12 +7,12 @@ use super::padded::{read_stage_line, widened_shape};
 use crate::*;
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// Straight half of [`fill_from`](Memory::fill_from); `I2`/`WP2` are the storage element and
     /// width.
     pub(crate) fn fill_straight<I2: Numeric, WP2: Size>(
         &mut self,
-        src: &Memory<T>,
+        src: &Memory,
         #[comptime] space: Space,
     ) {
         // A gathered stage carries the source window's map in its own registers.

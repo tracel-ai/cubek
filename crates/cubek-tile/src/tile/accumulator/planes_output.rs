@@ -16,19 +16,19 @@ use crate::*;
 ///
 /// [`write`]: PlanesOutput::write
 #[derive(CubeType)]
-pub struct PlanesOutput<A: Numeric, T: Numeric> {
-    out: Tile<T>,
-    merged: ComptimeOption<SmemCyclicAccumulation<A, T>>,
+pub struct PlanesOutput<A: Numeric> {
+    out: Tile,
+    merged: ComptimeOption<SmemCyclicAccumulation<A>>,
     /// The axes the output lacks that the planes are split along, each with its count of planes.
     #[cube(comptime)]
     sharing: Vec<(Axis, usize)>,
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// This tile, `cube`'s window of an output, as its planes reach it, a sum shared by planes
     /// added in `A`.
-    pub fn planes_output<A: Numeric>(&self, cube: &Region) -> PlanesOutput<A, T> {
+    pub fn planes_output<A: Numeric>(&self, cube: &Region) -> PlanesOutput<A> {
         let space = comptime!(self.place.space.clone());
         let sharing = comptime!(cube.path.planes_along(|axis| !space.contains(axis)));
         let writers = comptime!(sharing.iter().map(|&(_, count)| count).product::<usize>());
@@ -37,7 +37,7 @@ impl<T: Numeric> Tile<T> {
         } else {
             ComptimeOption::new_Some(self.smem_cyclic_accumulation::<A>(writers))
         };
-        PlanesOutput::<A, T> {
+        PlanesOutput::<A> {
             out: self.clone(),
             merged,
             sharing,
@@ -46,16 +46,16 @@ impl<T: Numeric> Tile<T> {
 }
 
 #[cube]
-impl<A: Numeric, T: Numeric> PlanesOutput<A, T> {
+impl<A: Numeric> PlanesOutput<A> {
     /// Drain `partial`, the sum `plane` holds over its box of the output. Where planes share the
     /// box it is a meeting of the cube: every unit of every plane drains, each with its plane's
     /// partial.
-    pub fn drain<P: Numeric>(&self, partial: &Tile<P>, plane: &Region) {
+    pub fn drain(&self, partial: &Tile, plane: &Region) {
         #[comptime]
         match &self.merged {
             ComptimeOption::None => partial.drained_into(&self.out.at(plane)),
             ComptimeOption::Some(merged) => {
-                merged.drain_at(partial, plane, PlanesOutput::<A, T>::writer(self, plane))
+                merged.drain_at(partial, plane, PlanesOutput::<A>::writer(self, plane))
             }
         }
     }

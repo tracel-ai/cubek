@@ -13,8 +13,10 @@ use crate::*;
 /// `Clone` duplicates the handle, not the registers.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) struct WgmmaData<T: Numeric> {
-    pub(crate) acc: Pending<Accumulator<T>>,
+pub(crate) struct WgmmaData {
+    /// The accumulator handed to its MMAs, kept at [`Held`] and named at the element it holds
+    /// where it is used.
+    pub(crate) acc: Pending<Accumulator<Held>>,
     #[cube(comptime)]
     pub n: usize,
     /// The axes the tile's rows and columns lie along, which its cells drain through.
@@ -23,38 +25,42 @@ pub(crate) struct WgmmaData<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> WgmmaData<T> {
+impl WgmmaData {
     /// A zeroed `m × n` accumulator, `m` the warpgroup's 64 rows, its rows and columns along
     /// `axes`.
-    pub(crate) fn new(
+    pub(crate) fn new<T: Numeric>(
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] axes: MatrixAxes,
-    ) -> WgmmaData<T> {
+    ) -> WgmmaData {
         comptime!(assert!(
             m == WARPGROUP_M,
             "WgmmaData: a warpgroup MMA computes {WARPGROUP_M} rows, and this tile has {m}; give \
              each plane group a {WARPGROUP_M}-row tile"
         ));
-        WgmmaData::<T> {
-            acc: Accumulator::<T>::new(n).start(),
+        WgmmaData {
+            acc: unsafe {
+                Accumulator::<T>::new(n)
+                    .start()
+                    .downcast_unchecked::<Held>()
+            },
             n,
             axes,
         }
     }
 
     /// Zero the accumulator, once every MMA issued into it is done, for the MMAs to come.
-    pub(crate) fn zero(&mut self) {
-        self.acc.reset();
+    pub(crate) fn zero<T: Numeric>(&mut self) {
+        self.acc.downcast::<T>().reset();
     }
 
     /// Issue `self += lhs · rhs`, `out` the tile's window, over the whole of the windows' `k`, one
     /// MMA a step. Both windows lie in shared memory, K-major along their one contracted axis,
     /// their rows one swizzle span long.
-    pub(crate) fn mma<L: Numeric, R: Numeric>(
+    pub(crate) fn mma<T: Numeric, L: Numeric, R: Numeric>(
         &mut self,
-        lhs: &Tile<L>,
-        rhs: &Tile<R>,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] out: Space,
     ) {
         comptime!(assert_operands_fit(
@@ -79,24 +85,25 @@ impl<T: Numeric> WgmmaData<T> {
         ));
         let a = descriptor::<L>(lhs, WARPGROUP_M, k);
         let b = descriptor::<R>(rhs, comptime!(self.n), k);
+        let mut acc = self.acc.downcast::<T>();
         #[unroll]
         for step in 0..comptime!(k / k_step) {
             let at = step * k_step;
-            self.acc.execute(&a.at(0usize, at), &b.at(0usize, at));
+            acc.execute(&a.at(0usize, at), &b.at(0usize, at));
         }
     }
 
     /// Commit the MMAs issued since the last commit, and return their completion: once it
     /// resolves, they are done reading their stage.
-    pub(crate) fn commit(&mut self) -> Pending<()> {
-        self.acc.commit()
+    pub(crate) fn commit<T: Numeric>(&mut self) -> Pending<()> {
+        self.acc.downcast::<T>().commit()
     }
 
     /// Wait for every MMA, then drain the accumulator into `mem`'s window, cast to its element:
     /// each unit writes the cells it holds.
-    pub(crate) fn store_cast_window<Out: Numeric>(
+    pub(crate) fn store_cast_window<T: Numeric, Out: Numeric>(
         &self,
-        mem: &mut Memory<Out>,
+        mem: &mut Memory,
         #[comptime] space: Space,
     ) {
         comptime!(assert!(
@@ -105,9 +112,9 @@ impl<T: Numeric> WgmmaData<T> {
              its destination is bound {} wide; bind it one element wide",
             mem.store.vector_size
         ));
-        let acc = self.acc.clone().wait();
+        let acc = self.acc.downcast::<T>().wait();
         let unit = ComputeScope::unit(ComputeScope::WARPGROUP) as u32;
-        let mut sink = mem.matrix_mut::<Const<1>>(0usize, comptime!(self.axes), space);
+        let mut sink = mem.matrix_mut::<Out, Const<1>>(0usize, comptime!(self.axes), space);
         #[unroll]
         for nth in 0..acc.len() {
             let at = acc.position_of_nth(unit, nth as u32);
@@ -159,7 +166,7 @@ fn trailing_extent(space: &Space) -> usize {
 /// from the window's origin.
 #[cube]
 fn descriptor<E: Numeric>(
-    tile: &Tile<E>,
+    tile: &Tile,
     #[comptime] rows: usize,
     #[comptime] k: usize,
 ) -> MatrixDescriptor<E> {
@@ -178,7 +185,7 @@ fn descriptor<E: Numeric>(
         k: row,
     });
     let size!(W) = tile.vector_size();
-    let view = tile.fragment_matrix_packed::<W>(rows, k);
+    let view = tile.fragment_matrix_packed::<E, W>(rows, k);
     let origin = view.line_slice(
         (0u32.runtime(), 0u32.runtime()),
         (1u32.runtime(), 1u32.runtime()),

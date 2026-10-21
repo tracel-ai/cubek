@@ -59,6 +59,11 @@ impl Display for SimpleUnitSelectionArgs {
     }
 }
 
+impl<LL, RL, AL> cubek_std::Routine for SimpleUnitAlgorithm<LL, RL, AL> {
+    type Strategy = SimpleUnitSelectionArgs;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
 impl<RC, LL, RL, AL> Routine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
@@ -66,8 +71,6 @@ where
     RL: FullLoadingStrategy<RC, Stage = LL::Stage, SyncStrategy = LL::SyncStrategy>,
     AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
-    type Strategy = SimpleUnitSelectionArgs;
-    type Blueprint = BatchMatmulBlueprint;
 }
 
 impl<RC, LL, RL, AL> BatchMatmulRoutine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
@@ -135,7 +138,7 @@ where
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
         let tile_matmul = TileMatmulKind::Register;

@@ -30,7 +30,7 @@ pub fn launch_ref<A: BatchMatmulRoutine<()>>(
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    blueprint_strategy: &BlueprintStrategy<(), A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let lhs = into_contiguous_if_highly_permuted(client, lhs)?;
@@ -64,7 +64,7 @@ pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    blueprint_strategy: &BlueprintStrategy<(), A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
@@ -87,7 +87,7 @@ pub fn launch_ref_tma_store<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlu
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    blueprint_strategy: &BlueprintStrategy<(), A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
@@ -143,7 +143,7 @@ fn launch_inner_ref<MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine<()>>(
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
-    blueprint_strategy: &BlueprintStrategy<(), A>,
+    blueprint_strategy: &BlueprintStrategy<A>,
     vector_sizes: AvailableVectorSizes,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError>

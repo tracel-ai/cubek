@@ -91,6 +91,11 @@ impl From<()> for SpecializedStrategy {
     }
 }
 
+impl<L, AL, GW> cubek_std::Routine for SpecializedAlgorithm<L, AL, GW> {
+    type Strategy = SpecializedStrategy;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
 impl<RC, L, AL, GW> Routine<RC> for SpecializedAlgorithm<L, AL, GW>
 where
     RC: RuntimeConfig,
@@ -98,8 +103,6 @@ where
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,
     GW: GlobalWriterFamily,
 {
-    type Strategy = SpecializedStrategy;
-    type Blueprint = BatchMatmulBlueprint;
 }
 
 impl<RC, L, AL, GW> BatchMatmulRoutine<RC> for SpecializedAlgorithm<L, AL, GW>
@@ -167,7 +170,7 @@ where
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 

@@ -53,7 +53,7 @@ impl UnitLines {
 }
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// The lines of this stage one unit moves; the stage shape must fold.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
     pub(crate) fn unit_lines(&self) -> comptime_type!(UnitLines) {
@@ -84,9 +84,9 @@ impl<T: Numeric> Memory<T> {
     /// Read this unit's lines of `src` into `fetched`; only a plain, direct, whole stage at its
     /// source's width.
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
-    pub(crate) fn fetch_straight<W: Size>(
+    pub(crate) fn fetch_straight<T: Numeric, W: Size>(
         &self,
-        src: &Memory<T>,
+        src: &Memory,
         #[comptime] space: Space,
         fetched: &mut Array<Vector<T, W>>,
     ) {
@@ -119,7 +119,7 @@ impl<T: Numeric> Memory<T> {
     /// Write this unit's `fetched` lines into the stage. The caller must `sync_cube` before (after
     /// the stage's last read) and after (before the next read).
     #[allow(dead_code)] // Reached through its expand, from `Stages::prefetched`.
-    pub(crate) fn store_fetched<W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
+    pub(crate) fn store_fetched<T: Numeric, W: Size>(&mut self, fetched: &Array<Vector<T, W>>) {
         let lines = self.unit_lines();
         let total = self.stage_lines();
         let layout = self.layout.clone();
@@ -134,7 +134,7 @@ impl<T: Numeric> Memory<T> {
     }
 
     /// Refuse a pairing this transport cannot move.
-    fn refuse_unfetchable(&self, src: &Memory<T>) {
+    fn refuse_unfetchable(&self, src: &Memory) {
         comptime!(assert!(
             self.store.packing == Packing::Plain
                 && src.store.packing == Packing::Plain

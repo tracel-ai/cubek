@@ -111,7 +111,7 @@ impl Field {
 
     /// What a value read this way is short of: [`E2M1_F16_LIFT`] for an `e2m1` code placed, one
     /// for every value read as itself.
-    pub(crate) fn lift(self) -> f32 {
+    pub(crate) fn lift(self) -> f64 {
         match self {
             Field::PlacedE2M1 { lifted: false } => E2M1_F16_LIFT,
             _ => 1.0,
@@ -203,7 +203,7 @@ impl Packing {
     }
 
     /// What its values are short of ([`Field::lift`]).
-    pub(crate) fn lift(self) -> f32 {
+    pub(crate) fn lift(self) -> f64 {
         match self {
             Packing::Packed { field } => field.lift(),
             Packing::Plain => 1.0,

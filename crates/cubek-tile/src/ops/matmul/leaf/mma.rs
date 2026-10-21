@@ -7,98 +7,46 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<A: Numeric> MmaData<A> {
-    /// `self += lhs · rhs`; memory-window operands are loaded into transient fragments each call.
-    pub(crate) fn mma<L: Numeric, R: Numeric>(&mut self, lhs: &Tile<L>, rhs: &Tile<R>) {
+impl MmaData {
+    pub(crate) fn mma<A: Numeric, L: Numeric, R: Numeric>(&mut self, lhs: &Tile, rhs: &Tile) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
         let io = comptime!(self.io);
+        let operands = comptime!(self.operands);
+        let (lhs_layout, rhs_layout) =
+            comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
+        let load = deep_load(lhs, rhs);
+        let a = lhs.mma_operand::<L>(MatrixIdent::A, m, n, k, lhs_layout, io, operands, load);
+        let b = rhs.mma_operand::<R>(MatrixIdent::B, m, n, k, rhs_layout, io, operands, load);
 
         match &mut self.fragment {
-            MmaFragment::Acc(acc) => match (&lhs.kind, &rhs.kind) {
-                (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
-                    (PlaneTile::Mma(a), PlaneTile::Mma(b)) => match (&a.fragment, &b.fragment) {
-                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                        }
-                        (
-                            MmaFragment::LhsBlockScaled(af, a_scales),
-                            MmaFragment::RhsBlockScaled(bf, b_scales),
-                        ) => {
-                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
-                        }
-                        _ => panic!(
-                            "MmaData::mma: operands must carry the Lhs/Rhs roles, both \
-                             block-scaled or neither"
-                        ),
-                    },
-                    _ => panic!("MmaData::mma: operands must be mma fragments"),
-                },
-                (TileKind::PlaneTile(a), TileKind::Memory(_)) => {
-                    // An accumulator contracted again, read as the left factor in its registers:
-                    // only the right one loads.
-                    let (_, rhs_layout) =
-                        comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let mut rb =
-                        MmaData::<R>::operand(MatrixIdent::B, m, n, k, rhs_layout, io, false);
-                    rb.load_window(rhs);
-                    let b = PlaneTile::new_Mma(rb);
-                    match (a, &b) {
-                        (PlaneTile::Mma(a), PlaneTile::Mma(b)) => {
-                            match (&a.fragment, &b.fragment) {
-                                (MmaFragment::Acc(af), MmaFragment::Rhs(bf)) => {
-                                    let af = accumulator_as_a::<L>(af, m, n, k);
-                                    mma_execute::<L, R, A>(&af, bf, acc, m, n, k)
-                                }
-                                _ => panic!(
-                                    "MmaData::mma: a left factor held against a memory window is an \
-                                 accumulator"
-                                ),
-                            }
-                        }
-                        _ => panic!("MmaData::mma: a held left factor is an mma fragment"),
-                    }
+            MmaFragment::Acc(acc) => match (&a.fragment, &b.fragment) {
+                (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
+                    mma_execute::<L, R, A>(af.at::<L>(), bf.at::<R>(), acc.at_mut::<A>(), m, n, k)
                 }
-                (TileKind::Memory(_), TileKind::Memory(_)) => {
-                    // Read each window in its stored order (`{n, k}` reads transposed).
-                    let (lhs_layout, rhs_layout) =
-                        comptime!(window_layouts(&lhs.place.space, &rhs.place.space));
-                    let block_scaled = contracts_block_scaled(lhs, rhs, m, n, k);
-                    let mut la = MmaData::<L>::operand(
-                        MatrixIdent::A,
-                        m,
-                        n,
-                        k,
-                        lhs_layout,
-                        io,
-                        block_scaled,
-                    );
-                    la.load_window(lhs);
-                    let mut rb = MmaData::<R>::operand(
-                        MatrixIdent::B,
-                        m,
-                        n,
-                        k,
-                        rhs_layout,
-                        io,
-                        block_scaled,
-                    );
-                    rb.load_window(rhs);
-                    match (&la.fragment, &rb.fragment) {
-                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                        }
-                        (
-                            MmaFragment::LhsBlockScaled(af, a_scales),
-                            MmaFragment::RhsBlockScaled(bf, b_scales),
-                        ) => {
-                            mma_execute_block_scaled::<A>(af, a_scales, bf, b_scales, acc, m, n, k)
-                        }
-                        _ => panic!("MmaData::mma: transient operand fragments in the wrong roles"),
-                    }
+                // A left factor held as an accumulator, reread as the `A` it contracts as.
+                (MmaFragment::Acc(af), MmaFragment::Rhs(bf)) => {
+                    let af = accumulator_as_a::<L>(af.at::<L>(), m, n, k);
+                    mma_execute::<L, R, A>(&af, bf.at::<R>(), acc.at_mut::<A>(), m, n, k)
                 }
-                _ => panic!("MmaData::mma: operands must be fragments or memory windows"),
+                (
+                    MmaFragment::LhsBlockScaled(af, a_scales),
+                    MmaFragment::RhsBlockScaled(bf, b_scales),
+                ) => mma_execute_block_scaled::<A>(
+                    af,
+                    a_scales,
+                    bf,
+                    b_scales,
+                    acc.at_mut::<A>(),
+                    m,
+                    n,
+                    k,
+                ),
+                _ => panic!(
+                    "MmaData::mma: operands must carry the Lhs/Rhs roles, both block-scaled or \
+                     neither"
+                ),
             },
             MmaFragment::Lhs(_)
             | MmaFragment::Rhs(_)
@@ -108,6 +56,60 @@ impl<A: Numeric> MmaData<A> {
             }
         }
     }
+}
+
+#[cube]
+impl Tile {
+    /// This factor as the `ident` operand of a manual-mma contraction: the fragment it holds, or
+    /// its window loaded in `layout`, a fragment deeper than its instruction as `load` says.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn mma_operand<T: Numeric>(
+        &self,
+        #[comptime] ident: MatrixIdent,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] k: usize,
+        #[comptime] layout: MatrixLayout,
+        #[comptime] io: MmaIo,
+        #[comptime] operands: MmaOperands,
+        #[comptime] load: DeepLoad,
+    ) -> MmaData {
+        match &self.kind {
+            TileKind::PlaneTile(tile) => match tile {
+                PlaneTile::Mma(data) => data.clone(),
+                PlaneTile::Cmma(_) | PlaneTile::Registers(_) | PlaneTile::Wgmma(_) => {
+                    panic!("Tile::mma_operand: a held operand must be an mma fragment")
+                }
+            },
+            TileKind::Memory(_) => {
+                let mut data = MmaData::operand::<T>(ident, m, n, k, layout, io, operands);
+                data.load_window::<T>(self, load);
+                data
+            }
+            TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lines(_) => {
+                panic!("Tile::mma_operand: an operand must be a fragment or a memory window")
+            }
+        }
+    }
+}
+
+/// How a contraction loads its factors' fragments where they are deeper than its instruction:
+/// in lane runs where both are memory windows and either lies in global memory, where whole loads
+/// pay, else a step at a time, which `ldmatrix` reads out of shared memory and a factor already
+/// in fragments holds.
+#[cube]
+pub(crate) fn deep_load(lhs: &Tile, rhs: &Tile) -> comptime_type!(DeepLoad) {
+    let (lhs_window, rhs_window) = (lhs.is_memory(), rhs.is_memory());
+    let (lhs_shared, rhs_shared) = (lhs.is_shared(), rhs.is_shared());
+    comptime!(
+        match lhs_window && rhs_window && !(lhs_shared && rhs_shared) {
+            true => DeepLoad::LaneRuns,
+            false => DeepLoad::Steps,
+        }
+    )
 }
 
 /// Each factor's window layout: `A` row-major and `B` col-major when its trailing axis is

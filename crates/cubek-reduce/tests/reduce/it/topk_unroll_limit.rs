@@ -48,7 +48,7 @@ fn case(routine: RoutineStrategy, parallel_output_vectorization: bool) -> TestCa
 /// units once at the end, which is `plane_topk_merge`. Both are forced, since an
 /// inferred blueprint picks one of them and would leave the other uncovered.
 fn plane(plane_merge_strategy: PlaneMergeStrategy) -> RoutineStrategy {
-    RoutineStrategy::Plane(BlueprintStrategy::Forced(
+    RoutineStrategy::Plane(BlueprintStrategy::Forced((
         PlaneReduceBlueprint {
             plane_idle: IdleMode::Terminate,
             bound_checks: BoundChecks::Mask,
@@ -56,7 +56,7 @@ fn plane(plane_merge_strategy: PlaneMergeStrategy) -> RoutineStrategy {
             plane_dim_ceil: true,
         },
         CubeDim::new_2d(32, 2),
-    ))
+    )))
 }
 
 fn unit() -> RoutineStrategy {

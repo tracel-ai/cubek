@@ -46,9 +46,9 @@ impl<T: Float> Recipe<T> for AxisValue {
 /// Walk the whole space and copy each region of `source`, evaluated where it is read, into
 /// `output`.
 #[cube]
-fn materialize<E: Numeric>(
-    source: &Tile<E>,
-    output: &TileArg<'_, E, Const<1>>,
+fn materialize(
+    source: &Tile,
+    output: &TileArg<'_>,
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
@@ -72,8 +72,8 @@ fn runtime_scalar<E: Numeric>(value: E) -> E {
 fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinate<E> {
     affine_along(
         COL,
-        runtime_scalar::<E>(E::new(comptime!(offset.get()))),
-        runtime_scalar::<E>(E::new(1.0_f32)),
+        runtime_scalar::<E>(E::new(comptime!(f64::from(offset.get())))),
+        runtime_scalar::<E>(E::new(1.0)),
     )
 }
 
@@ -81,19 +81,19 @@ fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordina
 /// the source straight into the output.
 #[cube(launch)]
 fn product_kernel_in_place<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
+    let source = Procedural::new::<E, Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
         comptime!(space.space().clone()),
         product_of(
             affine_along(ROW, E::from_int(0), E::from_int(1)),
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -101,22 +101,22 @@ fn product_kernel_in_place<E: Float>(
 /// window cooperatively, and the output copies the stage. The grid must be the same either way.
 #[cube(launch)]
 fn product_kernel_staged<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
+    let source = Procedural::new::<E, Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
         comptime!(space.space().clone()),
         product_of(
             affine_along(ROW, E::from_int(0), E::from_int(1)),
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
     )
-    .tile();
+    .tile::<E>();
     let output = output.tile(&space);
     let walk = source.over(&level);
-    let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut output_region = output.at(region);
         slot.consume(|staged| {
@@ -133,13 +133,13 @@ fn affine_plus_phase<E: Float>(
     scale: u32,
     offset: i32,
     divisor: u32,
-) -> Tile<E> {
-    Procedural::<E>::new::<Sum<AffineCoordinate<E>, Phase<E>>>(
+) -> Tile {
+    Procedural::new::<E, Sum<AffineCoordinate<E>, Phase<E>>>(
         space,
         sum_of(
-            affine_along(ROW, E::from_int(0), runtime_scalar::<E>(E::new(1.0_f32))),
+            affine_along(ROW, E::from_int(0), runtime_scalar::<E>(E::new(1.0))),
             Phase::<E> {
-                coefficient: runtime_scalar::<E>(E::new(-1.0_f32)),
+                coefficient: runtime_scalar::<E>(E::new(-1.0)),
                 axis: COL,
                 numerator_scale: scale,
                 numerator_offset: offset,
@@ -147,7 +147,7 @@ fn affine_plus_phase<E: Float>(
             },
         ),
     )
-    .tile()
+    .tile::<E>()
 }
 
 /// `launch_ratio` decides whether the fraction is spelled in constants, which fold at expand time,
@@ -155,7 +155,7 @@ fn affine_plus_phase<E: Float>(
 /// must come out the same.
 #[cube(launch)]
 fn phase_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] launch_ratio: bool,
@@ -176,52 +176,52 @@ fn phase_kernel<E: Float>(
 
 #[cube(launch)]
 fn rebase_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<AxisValue>(
+    let source = Procedural::new::<E, AxisValue>(
         comptime!(space.space().clone()),
         AxisValue {
             axis: ROW,
             scale: 2.0,
         },
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level);
 }
 
 #[cube(launch)]
 fn constant_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<Constant<E>>(
+    let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
-            value: runtime_scalar::<E>(E::new(-1.25_f32)),
+            value: runtime_scalar::<E>(E::new(-1.25)),
         },
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn affine_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<AffineCoordinate<E>>(
+    let source = Procedural::new::<E, AffineCoordinate<E>>(
         comptime!(space.space().clone()),
         along_col::<E>(offset),
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -229,35 +229,35 @@ fn affine_kernel<E: Float>(
 /// nothing about a procedural source requires floats.
 #[cube(launch)]
 fn integer_kernel<E: Int>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<Constant<E>>(
+    let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(7)),
         },
     )
-    .tile();
+    .tile::<E>();
     materialize(&source, output, &space, level.clone());
 }
 
 /// A direct procedural read must use the masked view path on trailing partial tiles.
 #[cube(launch)]
 fn direct_copy_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<Constant<E>>(
+    let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
-            value: runtime_scalar::<E>(E::new(1.0_f32)),
+            value: runtime_scalar::<E>(E::new(1.0)),
         },
     )
-    .tile();
+    .tile::<E>();
     let mut output = output.tile(&space);
     output.copy_from(&source);
 }
@@ -265,18 +265,18 @@ fn direct_copy_kernel<E: Float>(
 /// Descend once before a direct read: the procedural bound remains in the parent coordinates.
 #[cube(launch)]
 fn divided_direct_copy_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::<E>::new::<Constant<E>>(
+    let source = Procedural::new::<E, Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
-            value: runtime_scalar::<E>(E::new(1.0_f32)),
+            value: runtime_scalar::<E>(E::new(1.0)),
         },
     )
-    .tile();
+    .tile::<E>();
     let region = Region::trailing(
         comptime!(0usize),
         comptime!(space.space().clone()),
@@ -326,12 +326,13 @@ impl Harness {
     }
 }
 
-/// The output launch argument. Each kernel gets its own opaque element type, so this cannot be a
-/// function.
+/// The output launch argument, served at the output's element.
 macro_rules! output_arg {
     ($output:expr) => {
         TileArgLaunch::new(
             $output.clone().binding().into_tensor_arg(),
+            $output.dtype,
+            1,
             TileSpec::direct(&[ROW, COL]),
         )
     };

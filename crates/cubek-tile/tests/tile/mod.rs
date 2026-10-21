@@ -13,6 +13,10 @@ mod distributed;
 mod dynamic_contraction;
 mod erased;
 mod imperative;
+mod indexed;
+mod lane_runs;
+mod launch_planes;
+mod launch_units;
 mod launcher;
 mod leaf;
 mod leaves;
@@ -54,7 +58,7 @@ pub(crate) enum Form<'a> {
     DynamicAlong(&'a [Axis]),
 }
 
-fn kernel_form(partitioning: &Partitioning, form: Form<'_>) -> Partitioning {
+pub(crate) fn kernel_form(partitioning: &Partitioning, form: Form<'_>) -> Partitioning {
     let space = partitioning.space().clone();
     let kernel = match form {
         Form::Static => space,

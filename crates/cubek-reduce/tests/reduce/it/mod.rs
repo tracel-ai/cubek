@@ -181,15 +181,14 @@ macro_rules! testgen_reduce {
                 strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
-                        BlueprintStrategy::Forced(
+                        BlueprintStrategy::Forced((
                             CubeBlueprint {
                                 cube_idle: IdleMode::Terminate,
                                 bound_checks: BoundChecks::Mask,
                                 num_shared_accumulators: 8,
                                 use_planes: false,
                             },
-                            CubeDim::new_2d(8, 1),
-                        )
+                            CubeDim::new_2d(8, 1)))
                     ),
                 },
             );
@@ -213,15 +212,14 @@ macro_rules! testgen_reduce {
                     strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                         vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
-                            BlueprintStrategy::Forced(
+                            BlueprintStrategy::Forced((
                                 PlaneReduceBlueprint {
                                     plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
                                     plane_merge_strategy: PlaneMergeStrategy::Lazy,
                                     plane_dim_ceil: true,
                                 },
-                                CubeDim::new_2d(32, 2),
-                            )
+                                CubeDim::new_2d(32, 2)))
                         ),
                     },
                 );
@@ -239,15 +237,14 @@ macro_rules! testgen_reduce {
                     strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                         vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
-                            BlueprintStrategy::Forced(
+                            BlueprintStrategy::Forced((
                                 PlaneReduceBlueprint {
                                     plane_idle: IdleMode::Terminate,
                                     bound_checks: BoundChecks::Mask,
                                     plane_merge_strategy: PlaneMergeStrategy::Lazy,
                                     plane_dim_ceil: true,
                                 },
-                                CubeDim::new_2d(64, 2),
-                            )
+                                CubeDim::new_2d(64, 2)))
                         ),
                     },
                 );
@@ -587,15 +584,14 @@ mod reduce_dim {
                         parallel_output_vectorization: true,
                     },
                     routine: RoutineStrategy::Plane(
-                        BlueprintStrategy::Forced(
+                        BlueprintStrategy::Forced((
                             PlaneReduceBlueprint {
                                 plane_idle: IdleMode::Terminate,
                                 bound_checks: BoundChecks::Mask,
                                 plane_merge_strategy: PlaneMergeStrategy::Lazy,
                                 plane_dim_ceil: true,
                             },
-                            CubeDim::new_2d(64, 2),
-                        )
+                            CubeDim::new_2d(64, 2)))
                     ),
                 },
             );

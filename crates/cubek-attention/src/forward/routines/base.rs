@@ -14,16 +14,13 @@ use crate::forward::definition::{
 };
 use crate::forward::launch::BlueprintStrategy;
 
-pub trait Routine: Debug + Clone {
+pub trait Routine: cubek_std::Routine<Blueprint: Clone> + Debug + Clone {
     /// Tile-level strategy this routine selects.
     const TILE_KIND: TileAttentionKind;
 
     type StageAttention: StageAttentionFamily;
     type GlobalAttention: GlobalAttentionFamily;
     type BatchAttention: BatchAttentionFamily<Blueprint = Self::Blueprint>;
-
-    type Strategy;
-    type Blueprint: Clone;
 
     fn prepare(
         problem: &AttentionProblem,

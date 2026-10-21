@@ -332,7 +332,9 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
         },
     };
     use cubek_std::InputBinding;
-    use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+    use cubek_test_utils::{
+        ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
+    };
     use cubek_tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -480,7 +482,9 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         },
     };
     use cubek_std::InputBinding;
-    use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+    use cubek_test_utils::{
+        ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
+    };
     use cubek_tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -493,6 +497,22 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
         return;
     }
     let dtype = f32::elem_type_native();
+    // The routine runs cmma over the global types, and a device can offer cmma for narrower types
+    // only: Vulkan on NVIDIA has f16 and bf16 but no f32.
+    let offered = client
+        .properties()
+        .features
+        .matmul
+        .cmma
+        .iter()
+        .any(|cfg| cfg.a_type == dtype && cfg.b_type == dtype && cfg.cd_type == dtype);
+    if !offered {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "the device offers no cmma instruction over f32".to_string(),
+        ))
+        .enforce();
+        return;
+    }
     let (n, k) = (512, 256);
     let dtypes = MatmulElems::from_single_dtype(dtype);
     let sz = dtype.size();

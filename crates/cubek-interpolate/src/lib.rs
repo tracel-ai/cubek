@@ -8,7 +8,10 @@ pub use definition::{InputStage, InterpolateBlueprint, InterpolateStrategy};
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    kernel::{interpolate_launch, interpolate_nearest_backward_launch},
+    kernel::{
+        interpolate_bilinear_backward_launch, interpolate_launch,
+        interpolate_nearest_backward_launch,
+    },
 };
 use core::result::Result;
 use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
@@ -40,7 +43,7 @@ pub fn interpolate(
 
 /// Backward interpolate operation
 ///
-/// Note: only nearest mode is supported
+/// Supports nearest and bilinear modes.
 ///
 /// Expects input in NHWC layout.
 pub fn interpolate_backward(
@@ -70,6 +73,13 @@ pub fn interpolate_backward(
         InterpolateMode::Nearest(nearest_mode) => {
             interpolate_nearest_backward_launch(client, out_grad, input_grad, nearest_mode, dtype)
         }
+        InterpolateMode::Bilinear => interpolate_bilinear_backward_launch(
+            client,
+            out_grad,
+            input_grad,
+            options.align_corners,
+            dtype,
+        ),
         _ => Err(InterpolateError::UnsupportedMode(format!(
             "{:?} interpolation backward is not supported by JIT backend",
             options.mode

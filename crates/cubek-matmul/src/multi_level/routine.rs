@@ -35,7 +35,7 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError>;
 
     fn prepare(

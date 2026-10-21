@@ -5,13 +5,13 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<EA: Float> Tile<EA> {
+impl Tile {
     /// `self = self * scale`, masked entries driven to `min_value`, per owned row.
-    pub(crate) fn scale_and_mask(
+    pub(crate) fn scale_and_mask<EA: Float>(
         &mut self,
         scale: EA,
         probe: &MaskProbe,
-        mask: &Tile<u32>,
+        mask: &Tile,
         state: &RowState<EA>,
     ) {
         let rpu = comptime!(state.share.rows());
@@ -20,7 +20,7 @@ impl<EA: Float> Tile<EA> {
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let mut view = self.flat_mut::<W>();
+        let mut view = self.flat_mut::<EA, W>();
 
         #[unroll]
         for ri in 0..rpu {
@@ -43,14 +43,14 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Per owned row max into `acc`, seeded from the running max `state.m`.
-    pub(crate) fn row_max(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
+    pub(crate) fn row_max<EA: Float>(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let view = self.flat::<W>();
+        let view = self.flat::<EA, W>();
 
         #[unroll]
         for ri in 0..rpu {
@@ -70,7 +70,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// `self = exp(self - rowwise)` per owned row; a fully-masked row goes to zero.
-    pub(crate) fn exp_diff(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
+    pub(crate) fn exp_diff<EA: Float>(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
@@ -78,7 +78,7 @@ impl<EA: Float> Tile<EA> {
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let mut view = self.flat_mut::<W>();
+        let mut view = self.flat_mut::<EA, W>();
 
         #[unroll]
         for ri in 0..rpu {
@@ -101,14 +101,14 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Per owned row sum into `acc`.
-    pub(crate) fn row_sum(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
+    pub(crate) fn row_sum<EA: Float>(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.place.space.extent_at(0));
         let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
-        let view = self.flat::<W>();
+        let view = self.flat::<EA, W>();
 
         #[unroll]
         for ri in 0..rpu {

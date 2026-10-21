@@ -2,9 +2,15 @@
 
 use core::fmt::{self, Display, Formatter};
 
-use cubecl::zspace::{MetadataError, Tiling};
+use cubecl::zspace::{MetadataError, SmallVec, Tiling};
 
-use crate::{Axis, Geometry};
+use crate::{Axis, Geometry, Space};
+
+/// The most pieces a statement keeps on the stack: a few stated tiles and the rest of each axis.
+const PIECES: usize = 12;
+
+/// A list of pieces, or of what each piece gives, without a heap allocation.
+type PieceList<T> = SmallVec<[T; PIECES]>;
 
 /// How a tensor's values are laid down: stated tiles, finest first, then the rest's order.
 ///
@@ -17,9 +23,9 @@ use crate::{Axis, Geometry};
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct StoragePartitioning {
     /// Stated tiles, finest first: each `(axis, count)` holds `count` of the piece below it.
-    tiles: Vec<(Axis, usize)>,
+    tiles: PieceList<(Axis, usize)>,
     /// The rest of each axis, finest first; its counts are what the extents leave.
-    order: Vec<Axis>,
+    order: SmallVec<[Axis; Space::MAX_RANK]>,
 }
 
 impl StoragePartitioning {
@@ -34,7 +40,7 @@ impl StoragePartitioning {
             true => tiling.logical_rank(rank).unwrap_or(rank),
             false => rank,
         };
-        let mut dims: Vec<(usize, usize, usize)> = geometry
+        let mut dims: PieceList<(usize, usize, usize)> = geometry
             .dims()
             .enumerate()
             .filter(|&(dim, (extent, stride))| {
@@ -44,8 +50,10 @@ impl StoragePartitioning {
             .map(|(dim, (extent, stride))| (dim, extent, stride))
             .collect();
         dims.sort_by_key(|&(dim, extent, stride)| (stride, extent > 1, core::cmp::Reverse(dim)));
-        let (stated, rest): (Vec<_>, Vec<_>) =
-            dims.iter().partition(|&&(dim, _, _)| dim >= first_stated);
+        let (stated, rest): (PieceList<_>, PieceList<_>) = dims
+            .iter()
+            .copied()
+            .partition(|&(dim, _, _)| dim >= first_stated);
         let finest_rest = rest.first().map_or(usize::MAX, |&(_, _, stride)| stride);
         if stated
             .iter()
@@ -146,12 +154,15 @@ impl StoragePartitioning {
     }
 
     /// The tiles, finest first, a window can be addressed inside with one stride per axis.
-    pub(crate) fn contiguous_tiles(&self, extents: &[(Axis, usize)]) -> Vec<Vec<(Axis, usize)>> {
+    pub(crate) fn contiguous_tiles(
+        &self,
+        extents: &[(Axis, usize)],
+    ) -> PieceList<SmallVec<[(Axis, usize); Space::MAX_RANK]>> {
         let Ok(pieces) = self.pieces(extents) else {
-            return Vec::new();
+            return PieceList::new();
         };
-        let mut tiles = Vec::new();
-        let mut tile: Vec<(Axis, usize)> = Vec::new();
+        let mut tiles = PieceList::new();
+        let mut tile: SmallVec<[(Axis, usize); Space::MAX_RANK]> = SmallVec::new();
         for piece in pieces.into_iter().filter(|piece| piece.count > 1) {
             let continues = tile.last().is_some_and(|&(axis, _)| axis == piece.axis);
             match tile.iter_mut().find(|(axis, _)| *axis == piece.axis) {
@@ -168,12 +179,13 @@ impl StoragePartitioning {
     /// The buffer storing a tensor of `extents`: its dims in [`labels`](Self::labels)' order and
     /// its [`Tiling`].
     pub fn physical(&self, extents: &[(Axis, usize)]) -> Result<Geometry, StorageMisfit> {
-        let axes: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
+        let axes: SmallVec<[Axis; Space::MAX_RANK]> =
+            extents.iter().map(|&(axis, _)| axis).collect();
         let named = |axis: &Axis| self.order.iter().filter(|&a| a == axis).count() == 1;
         if self.order.len() != axes.len() || !axes.iter().all(named) {
             return Err(StorageMisfit::Order {
-                order: self.order.clone(),
-                axes,
+                order: self.order.to_vec(),
+                axes: axes.to_vec(),
             });
         }
         let pieces = self.pieces(extents).map_err(|misfit| match misfit {
@@ -183,7 +195,7 @@ impl StoragePartitioning {
             _ => unreachable!("only the rest of an axis is computed against its extent"),
         })?;
         let tiling = Tiling::new(&self.fragments(&axes)).map_err(StorageMisfit::Unrecordable)?;
-        let strides: Vec<usize> = pieces
+        let strides: PieceList<usize> = pieces
             .iter()
             .scan(1, |run, piece| {
                 let stride = *run;
@@ -192,8 +204,8 @@ impl StoragePartitioning {
             })
             .collect();
         // `labels` names an axis's pieces coarsest first; `pieces` lists them finest first.
-        let mut taken = vec![false; pieces.len()];
-        let dims: Vec<(usize, usize)> = self
+        let mut taken: PieceList<bool> = SmallVec::from_elem(false, pieces.len());
+        let dims: PieceList<(usize, usize)> = self
             .labels(&axes)
             .iter()
             .map(|&axis| {
@@ -210,15 +222,15 @@ impl StoragePartitioning {
 
     /// How many buffer dims each of `axes` is stored as: one per stated tile along it, and one for
     /// the rest of it.
-    fn fragments(&self, axes: &[Axis]) -> Vec<usize> {
+    fn fragments(&self, axes: &[Axis]) -> SmallVec<[usize; Space::MAX_RANK]> {
         axes.iter()
             .map(|&axis| 1 + self.tiles.iter().filter(|&&(a, _)| a == axis).count())
             .collect()
     }
 
     /// Every piece over a tensor of `extents`, finest first: stated tiles, then each rest.
-    fn pieces(&self, extents: &[(Axis, usize)]) -> Result<Vec<Piece>, TileMisfit> {
-        let mut pieces: Vec<Piece> = self
+    fn pieces(&self, extents: &[(Axis, usize)]) -> Result<PieceList<Piece>, TileMisfit> {
+        let mut pieces: PieceList<Piece> = self
             .tiles
             .iter()
             .map(|&(axis, count)| Piece {
@@ -254,14 +266,14 @@ impl StoragePartitioning {
 /// A [`StoragePartitioning`] being stated leaf-up, until [`grid`](Self::grid).
 #[derive(Clone, Debug)]
 pub struct StorageLevels {
-    tiles: Vec<(Axis, usize)>,
+    tiles: PieceList<(Axis, usize)>,
 }
 
 impl StorageLevels {
     /// The finest tile, `(axis, count)` finest first, in values.
     pub fn new(tile: &[(Axis, usize)]) -> Self {
         Self {
-            tiles: tile.to_vec(),
+            tiles: SmallVec::from_slice(tile),
         }
     }
 
@@ -275,7 +287,7 @@ impl StorageLevels {
     pub fn grid(self, order: &[Axis]) -> StoragePartitioning {
         StoragePartitioning {
             tiles: self.tiles,
-            order: order.to_vec(),
+            order: SmallVec::from_slice(order),
         }
     }
 }
@@ -531,19 +543,31 @@ mod tests {
         assert_eq!(batched.labels(&[M, K, N]), vec![M, K, N, K, N]);
     }
 
+    /// The windows `storage` addresses with one stride per axis over `extents`, as lists.
+    fn windows(
+        storage: &StoragePartitioning,
+        extents: &[(Axis, usize)],
+    ) -> Vec<Vec<(Axis, usize)>> {
+        storage
+            .contiguous_tiles(extents)
+            .iter()
+            .map(|tile| tile.to_vec())
+            .collect()
+    }
+
     #[test]
     fn a_window_is_one_run_inside_the_tiles_whose_axes_do_not_interleave() {
         let with_read = StorageLevels::new(&[(N, 4)])
             .tile(&[(N, 8), (K, 32)])
             .grid(&[N, K]);
         assert_eq!(
-            with_read.contiguous_tiles(&[(K, 64), (N, 64)]),
+            windows(&with_read, &[(K, 64), (N, 64)]),
             vec![vec![(N, 4)], vec![(N, 32)], vec![(N, 32), (K, 32)]]
         );
 
         let down_k = StorageLevels::new(&[(N, 16), (K, 32)]).grid(&[K, N]);
         assert_eq!(
-            down_k.contiguous_tiles(&[(K, 128), (N, 64)]),
+            windows(&down_k, &[(K, 128), (N, 64)]),
             vec![
                 vec![(N, 16)],
                 vec![(N, 16), (K, 32)],
@@ -555,7 +579,7 @@ mod tests {
             .tile(&[(N, 2), (K, 16)])
             .grid(&[N, K]);
         assert_eq!(
-            interleaved.contiguous_tiles(&[(K, 64), (N, 64)]),
+            windows(&interleaved, &[(K, 64), (N, 64)]),
             vec![vec![(N, 16)], vec![(N, 16), (K, 2)]]
         );
     }

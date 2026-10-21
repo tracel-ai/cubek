@@ -41,16 +41,17 @@ pub struct ReduceProblem {
     pub address_type: AddressType,
 }
 
-#[derive(Debug, Clone)]
-pub enum BlueprintStrategy<R: Routine> {
-    Forced(R::Blueprint, CubeDim),
-    Inferred(R::Strategy),
-}
+pub use cubek_std::BlueprintStrategy;
 
-pub trait Routine: core::fmt::Debug + Clone + Sized {
-    type Strategy: core::fmt::Debug + Clone + Send + 'static;
-    type Blueprint: core::fmt::Debug + Clone + Send + 'static;
-
+/// A reduce routine. A forced blueprint comes with the cube it runs on.
+pub trait Routine:
+    cubek_std::Routine<
+        Strategy: core::fmt::Debug + Clone + Send + 'static,
+        Blueprint: core::fmt::Debug + Clone + Send + 'static,
+    > + core::fmt::Debug
+    + Clone
+    + Sized
+{
     fn prepare(
         &self,
         client: &Client,

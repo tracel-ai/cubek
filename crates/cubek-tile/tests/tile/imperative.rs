@@ -22,13 +22,12 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 /// `c = a · b` over a K walk whose blocks of `a` and `b` are double-buffered in shared memory,
 /// the leaf running the software instruction on the block's final tiles.
 #[cube(launch)]
-fn ring_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn ring_matmul(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] depth: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -37,7 +36,7 @@ fn ring_matmul<E: Numeric>(
 
     // The cube's walk: one block of K per region, both operands staged for it.
     let walk = space.walk();
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth, None);
     stages.pipelined(walk, |slot, region| {
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
@@ -56,20 +55,14 @@ fn ring_matmul<E: Numeric>(
 /// the shape a specialized kernel takes. With no plane set aside to fill, every plane computes,
 /// so the fill arm is emitted and never entered and the compute arm does both halves itself.
 #[cube(launch)]
-fn role_split_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
-    space: Partitioning,
-    #[define(E)] _dtype: ElemType,
-) {
+fn role_split_matmul(a: &TileArg<'_>, b: &TileArg<'_>, c: &TileArg<'_>, space: Partitioning) {
     let a = a.tile(&space);
     let b = b.tile(&space);
     let mut c = c.tile(&space);
     c.zero();
 
     let walk = space.walk();
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
 
     match stages.role() {
         Role::Fill => {
@@ -98,7 +91,6 @@ fn role_split_matmul<E: Numeric>(
 fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize) {
     let client = cubecl::test_device().client();
     let tile = 4usize;
-    let dtype = f32::elem_type_native();
     let launcher = implied(
         &client,
         Partitioning::new(
@@ -124,13 +116,12 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     ring_matmul::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
         depth,
-        dtype,
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
@@ -204,12 +195,11 @@ fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
     role_split_matmul::launch(
         &client,
         launcher.cube_count(),
-        CubeDim::new_single(),
-        a.arg(),
-        b.arg(),
-        c.arg(),
+        launcher.cube_dim(),
+        a.arg(&launcher, 1),
+        b.arg(&launcher, 1),
+        c.arg(&launcher, 1),
         launcher.partitioning_arg(),
-        f32::elem_type_native(),
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);

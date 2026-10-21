@@ -1,21 +1,19 @@
 //! What a [`Memory`] is: its [`Backing`], its [`Store`], and how it may be touched ([`Access`]).
 
-use cubecl::{
-    prelude::*,
-    std::tensor::{ErasedTensor, WriteOnly},
-};
+use cubecl::{prelude::*, std::tensor::WriteOnly};
 
 use crate::*;
 
-/// A lifetime-erased buffer, its fixed `layout`, and the window this tile looks at.
+/// A lifetime-erased buffer, its fixed `layout`, and the window this tile looks at. The buffer
+/// holds its element as data; what reads or writes it names the element ([`Store::buffer`]).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) struct Memory<T: Numeric> {
+pub(crate) struct Memory {
     /// Which memory the bytes sit in.
     #[cube(comptime)]
     pub(crate) address: AddressSpace,
     /// What the bytes are and mean.
-    pub(crate) store: Store<T>,
+    pub(crate) store: Store,
     /// How a logical coordinate becomes a buffer offset; fixed at construction.
     pub(crate) layout: BufferLayout,
     /// The region of the physical buffer this tile covers; narrowed by [`at`](Tile::at).
@@ -48,10 +46,11 @@ pub(crate) struct Memory<T: Numeric> {
     /// Where this tile's cells sit in the buffer they were filled from; `Some` only for a gathered
     /// stage.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
-    /// The scales these values carry ([`Tile::mul`](crate::Tile::mul)); empty when none.
-    pub(crate) factor: Factor,
     /// The table these values index ([`Tile::lookup`](crate::Tile::lookup)); empty when none.
     pub(crate) codebook: Codebook,
+    /// The table that places this window ([`Indexing`]); `None` for an operand read where its
+    /// windows are cut.
+    pub(crate) index: ComptimeOption<IndexTable>,
 }
 
 /// How a contraction into a memory window runs: the register block a unit's share is tiled into,
@@ -74,21 +73,21 @@ pub(crate) enum AddressSpace {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 #[allow(dead_code)] // Built through the derived `new_*` expand constructors.
-pub(crate) enum Backing<T: Numeric> {
+pub(crate) enum Backing {
     /// Bytes this kernel addresses directly, grouped into lines at `vector_size`.
-    Buffer(Box<[T]>),
-    /// A write-only destination that is not memory ([`ErasedTensor`]).
-    WriteCall(ErasedTensor<T, WriteOnly>),
+    Buffer(Raw<Slice>),
+    /// A write-only destination that is not memory (an erased tensor).
+    WriteCall(RawCall<WriteOnly>),
     /// A read-only producer that is not memory.
-    ReadCall(ErasedTensor<T, ReadOnly>),
+    ReadCall(RawCall<ReadOnly>),
 }
 
 /// What a [`Memory`]'s values are: their backing, line width and packing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub(crate) struct Store<T: Numeric> {
+pub(crate) struct Store {
     /// What backs the values.
-    pub(crate) backing: Backing<T>,
+    pub(crate) backing: Backing,
     /// Physical line size of the destination, `1` when unvectorized.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
@@ -103,7 +102,7 @@ pub(crate) struct Store<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> Memory<T> {
+impl Memory {
     /// What one vector load of this memory covers over a window spanning `space`: the stored
     /// tiles that hold [`vector_size`](Store::vector_size) values, a run along the innermost axis
     /// where none are stated ([`VectorTile::new`]).
@@ -130,14 +129,14 @@ impl<T: Numeric> Memory<T> {
 }
 
 #[cube]
-impl<T: Numeric> Store<T> {
+impl Store {
     /// A store whose buffer is laid down in rows, stored in no tiles: every stage.
     pub(crate) fn untiled(
-        backing: Backing<T>,
+        backing: Backing,
         #[comptime] vector_size: usize,
         #[comptime] packing: Packing,
-    ) -> Store<T> {
-        Store::<T> {
+    ) -> Store {
+        Store {
             backing,
             vector_size,
             packing,
@@ -157,9 +156,9 @@ impl<T: Numeric> Store<T> {
     /// The bytes, for a destination that has an address.
     // `Box<[T]>` is cubecl's owned-slice handle, not a Rust box; `&[T]` is a different kernel type.
     #[allow(clippy::borrowed_box)]
-    pub(crate) fn buffer(&self) -> &Box<[T]> {
+    pub(crate) fn buffer<T: Numeric>(&self) -> &Box<[T]> {
         match &self.backing {
-            Backing::Buffer(buffer) => buffer,
+            Backing::Buffer(buffer) => buffer.at::<T>(),
             Backing::WriteCall(_) => panic!(
                 "Store::buffer: this tile's backing is written through a call, which has no \
                  address, it can only be written through its layout"
@@ -177,7 +176,7 @@ impl<T: Numeric> Store<T> {
     /// a call holds none.
     pub(crate) fn free(&self) {
         match &self.backing {
-            Backing::Buffer(buffer) => free_shared(buffer),
+            Backing::Buffer(buffer) => buffer.free(),
             Backing::WriteCall(_) | Backing::ReadCall(_) => {}
         }
     }
@@ -192,9 +191,9 @@ impl<T: Numeric> Store<T> {
 
     /// The mutable twin of [`buffer`](Self::buffer).
     #[allow(clippy::borrowed_box)]
-    pub(crate) fn buffer_mut(&mut self) -> &mut Box<[T]> {
+    pub(crate) fn buffer_mut<T: Numeric>(&mut self) -> &mut Box<[T]> {
         match &mut self.backing {
-            Backing::Buffer(buffer) => buffer,
+            Backing::Buffer(buffer) => buffer.at_mut::<T>(),
             Backing::WriteCall(_) => panic!(
                 "Store::buffer_mut: this tile's backing is written through a call, which has no \
                  address, it can only be written through its layout"
@@ -224,8 +223,9 @@ pub(crate) struct Access {
     pub delivery: Delivery,
 }
 
-/// The units that share a cooperative fill of a window: every unit of the cube, or the units of
-/// one plane, for a stage that plane owns and fills alone ([`Stages::smem`](crate::Stages::smem)).
+/// The units that share a cooperative fill of a window: every unit of the cube, the units of the
+/// planes the cube sets aside to fill its stages, or the units of one plane, for a stage that
+/// plane owns and fills alone ([`Stages::smem`](crate::Stages::smem)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct FillUnits {
     /// Whose units they are: the cube's, or one plane's.
@@ -233,6 +233,9 @@ pub(crate) struct FillUnits {
     /// How many there are, `0` when unknown: a stage filled from this tile emits its fill
     /// straight-line when it knows. The launch's cube size, or one plane's width.
     pub count: usize,
+    /// The planes at the end of the cube set aside to fill its stages, whose units alone share
+    /// the fill of a cube's stage; `0` where every unit of the cube does.
+    pub fillers: usize,
 }
 
 impl FillUnits {
@@ -241,6 +244,31 @@ impl FillUnits {
         FillUnits {
             scope: ComputeScope::Cube,
             count,
+            fillers: 0,
+        }
+    }
+
+    /// The units of the `fillers` planes at the end of the cube set aside to fill its stages
+    /// ([`Level::fillers`](crate::Level::fillers)), how many unknown: the launch states the
+    /// cube's units, not the plane's width.
+    pub(crate) fn filling_planes(fillers: usize) -> Self {
+        FillUnits {
+            scope: ComputeScope::Cube,
+            count: 0,
+            fillers,
+        }
+    }
+
+    /// These units narrowed to `holder`'s where it has fewer: a plane's window of a buffer the
+    /// cube fills is the plane's to fill.
+    pub(crate) fn held_by(self, holder: ComputeScope) -> Self {
+        match holder < self.scope {
+            true => FillUnits {
+                scope: holder,
+                count: 0,
+                fillers: 0,
+            },
+            false => self,
         }
     }
 }
@@ -248,21 +276,28 @@ impl FillUnits {
 #[cube]
 impl FillUnits {
     /// This unit's position among the units `fill` names, which a cooperative fill takes its
-    /// lines at: its position in the cube, or in its plane.
+    /// lines at: its position in the cube, among the filling planes' units, or in its plane.
     ///
     /// A plane is the launch's `x` ([`Partitioning::cube_dim`]), so a unit's position in its plane
-    /// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`.
+    /// is `UNIT_POS_X` and the plane's width `CUBE_DIM_X`; the filling planes are the cube's last.
     pub(crate) fn worker(#[comptime] fill: FillUnits) -> usize {
         comptime!(assert!(
             fill.scope != ComputeScope::Unit,
             "FillUnits::worker: a cooperative fill is shared by a cube or a plane, never one unit"
         ));
-        ComputeScope::unit(comptime!(fill.scope))
+        if comptime!(fill.fillers > 0) {
+            (UNIT_POS - (CUBE_DIM - comptime!(fill.fillers as u32) * CUBE_DIM_X)) as usize
+        } else {
+            ComputeScope::unit(comptime!(fill.scope))
+        }
     }
 
-    /// How many units `fill` names at runtime: the cube's, or one plane's
+    /// How many units `fill` names at runtime: the cube's, the filling planes', or one plane's
     /// ([`worker`](FillUnits::worker)).
     pub(crate) fn workers(#[comptime] fill: FillUnits) -> usize {
+        if comptime!(fill.fillers > 0) {
+            return comptime!(fill.fillers) * CUBE_DIM_X as usize;
+        }
         match comptime!(fill.scope) {
             ComputeScope::Cube => CUBE_DIM as usize,
             ComputeScope::Plane => CUBE_DIM_X as usize,
@@ -472,19 +507,4 @@ mod tests {
             Write::Replace.admits(SplitShare::Whole, monoid, "test");
         }
     }
-}
-
-/// Free the shared memory `buffer` is a window of: its list, which the shared-memory allocation
-/// traces back to its declaration.
-// `Box<[T]>` is cubecl's owned-slice handle, not a Rust box.
-#[allow(clippy::borrowed_box)]
-#[cube]
-fn free_shared<T: Numeric>(buffer: &Box<[T]>) {
-    intrinsic!(|scope| {
-        let list = buffer.__extract_list(scope);
-        scope.register(&cubecl::ir::dialect::general::FreeOp::new(
-            scope.ctx_mut(),
-            list,
-        ));
-    })
 }

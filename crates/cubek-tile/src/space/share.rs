@@ -24,6 +24,10 @@ impl UnitShare {
         if level.coverage() != Coverage::Distribute(ComputeScope::Unit) {
             return UnitShare::Repeated;
         }
+        // A unit of the whole launch holds its tile's cells alone.
+        if level.unit_cube().is_some() {
+            return UnitShare::Whole;
+        }
         // Innermost first, so `weight` is the axis's stride in the unit index.
         let (mut weight, mut unit_bits) = (1usize, 0usize);
         for axis in level.axes().into_iter().rev() {

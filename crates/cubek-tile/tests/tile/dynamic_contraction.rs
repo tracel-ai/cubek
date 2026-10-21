@@ -29,10 +29,10 @@ const FORMS: [Form<'static>; 4] = [
 /// One register block over the whole nest, summed at every leaf and drained once. The two levels
 /// under the planes are the units and the walk, in whichever order the walk puts them.
 #[cube(launch)]
-fn contract<E: Numeric, VA: Size, VB: Size, VC: Size>(
-    x: &TileArg<'_, E, VA>,
-    w: &TileArg<'_, E, VB>,
-    out: &TileArg<'_, E, VC>,
+fn contract<E: Numeric>(
+    x: &TileArg<'_>,
+    w: &TileArg<'_>,
+    out: &TileArg<'_>,
     space: Partitioning,
     #[comptime] budget: usize,
     #[define(E)] _dtype: ElemType,
@@ -40,7 +40,7 @@ fn contract<E: Numeric, VA: Size, VB: Size, VC: Size>(
     let a = x.tile(&space);
     let b = w.tile(&space);
     let c = out.tile(&space);
-    let acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Registers {
@@ -110,7 +110,7 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
     let launcher = implied(&client, partitioning, form);
 
     let a = launcher
-        .arg(x.binding())
+        .arg(x.binding(), dtype)
         .axes(&[M, K])
         .vectorize(VECTOR)
         .build()
@@ -119,14 +119,14 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
     weight.shape = [k, n].into();
     weight.strides = [1, k].into();
     let b = launcher
-        .arg(weight)
+        .arg(weight, dtype)
         .axes(&[K, N])
         .in_stride_order()
         .vectorize(VECTOR)
         .build()
         .unwrap();
     let c = launcher
-        .arg(out.clone().binding())
+        .arg(out.clone().binding(), dtype)
         .axes(&[M, N])
         .vectorize(1)
         .build()
@@ -136,9 +136,6 @@ fn run(walk: Walk, plane: usize, m: usize, k: usize, n: usize, form: Form<'_>) -
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        a.vector_size,
-        b.vector_size,
-        c.vector_size,
         a.arg(),
         b.arg(),
         c.arg(),

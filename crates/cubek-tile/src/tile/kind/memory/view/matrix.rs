@@ -229,26 +229,26 @@ impl Layout for TileMatrix {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// The `i`-th batch matrix over `axes`, unpacked if packed.
-    pub(crate) fn matrix_packed<W: Size>(
+    pub(crate) fn matrix_packed<T: Numeric, W: Size>(
         &self,
         #[comptime] axes: MatrixAxes,
         i: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
         let g = self.mem("matrix");
         let layout = g.batch_matrix(comptime!(self.place.space.clone()), axes, i);
-        g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
+        g.packed::<T, W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
     /// The fragment's grouped matrix, unpacked if packed; `cols` is in scalars.
-    pub(crate) fn fragment_matrix_packed<W: Size>(
+    pub(crate) fn fragment_matrix_packed<T: Numeric, W: Size>(
         &self,
         #[comptime] rows: usize,
         #[comptime] cols: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
         let g = self.mem("fragment_matrix");
         let layout = g.whole_matrix(comptime!(self.place.space.clone()), rows, cols);
-        g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
+        g.packed::<T, W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 }

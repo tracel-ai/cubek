@@ -1,24 +1,22 @@
+use crate::quantized_arg;
 use cubecl::{
     ir::ElemType,
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
 };
+use cubek_std::matmul_axes::{M, N};
 use cubek_tile::{
-    Axis, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
+    Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
     launch::Grid, layout::PhysicalAxisMap,
 };
-
-// Input axes
-const M: Axis = Axis(0);
-const N: Axis = Axis(1);
 
 /// Convert the tensor back to a higher precision data type.
 /// Uses the tile-based implementation for dequantization.
 /// Very WIP and naive implementation for now.
 ///
 /// The decode is the kernel's own statement: the values are fields of the scheme's element read
-/// out of words, and `output.copy_from(&values.mul(&scale))` multiplies each by the scale where it
-/// is copied. Nothing decodes behind a read.
+/// out of words, under their scale, and `output.dequantize_from(&values)` multiplies each by the
+/// scale where it is written. Nothing decodes behind a read.
 pub fn launch_ref(
     client: &Client,
     input: TensorBinding,
@@ -91,36 +89,36 @@ pub fn launch_ref(
     .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
     // One scale for the whole tensor: a scale tile over no axis of the values.
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
+    let values = quantized_arg(
+        scheme,
+        launch.arg(input, u32::elem_type_native()).axes(&[M, N]),
+        [launch
+            .arg(scales, u32::elem_type_native())
+            .gathered(per_tensor)],
+    )
+    .unwrap_or_else(|refusal| panic!("dequantize_tiled: {refusal}"));
     dequantize::launch(
         client,
         cube_count,
         cube_dim,
-        per_word,
+        values,
         TileArgLaunch::new(
-            input.into_tensor_arg(),
-            TileSpec::direct(&[M, N]).packed(field),
+            output.into_tensor_arg(),
+            output_dtype,
+            per_word,
+            TileSpec::direct(&[M, N]),
         ),
-        TileArgLaunch::new(scales.into_tensor_arg(), TileSpec::new(per_tensor)),
-        TileArgLaunch::new(output.into_tensor_arg(), TileSpec::direct(&[M, N])),
         launch.partitioning_arg(),
-        output_dtype,
     );
 
     Ok(())
 }
 
 #[cube(launch)]
-/// The values are fields of the scheme's element read out of `u32` words, served as `O`; the
-/// scale is a second operand, multiplied in by the copy that says so.
-pub fn dequantize<O: Numeric, V: Size>(
-    input: &TileArg<'_, u32, Const<1>>,
-    scale: &TileArg<'_, f32, Const<1>>,
-    output: &TileArg<'_, O, V>,
-    space: Partitioning,
-    #[define(O)] _output_dtype: ElemType,
-) {
-    let input = input.tile_as::<O>(&space);
-    let scale = scale.tile(&space);
+/// The values are fields of the scheme's element read out of `u32` words, served as the output's
+/// element under their scale, which the copy that says so multiplies in.
+pub fn dequantize(input: &TileArg<'_>, output: &TileArg<'_>, space: Partitioning) {
+    let input = input.tile(&space);
     let mut output = output.tile(&space);
-    output.copy_from(&input.mul(&scale));
+    output.dequantize_from(&input);
 }

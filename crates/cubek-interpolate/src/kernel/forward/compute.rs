@@ -26,9 +26,9 @@ fn tap_distance<E: Float>(
     #[comptime] radius: usize,
 ) -> TapDistance<E> {
     sum_of(
-        affine_along(tap, E::new(-(radius as f32)), E::new(1.0_f32)),
+        affine_along(tap, E::new(-(radius as f64)), E::new(1.0)),
         Phase::<E> {
-            coefficient: E::new(-1.0_f32),
+            coefficient: E::new(-1.0),
             numerator_scale: comptime!(scale),
             numerator_offset: comptime!(offset),
             divisor: comptime!(divisor),
@@ -38,9 +38,9 @@ fn tap_distance<E: Float>(
 }
 
 #[cube(launch)]
-pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
-    input: &TileArg<'_, E, V>,
-    output: &TileArg<'_, E, V>,
+pub fn interpolate_tile_kernel<E: Float, F: SeparableFilterFamily>(
+    input: &TileArg<'_>,
+    output: &TileArg<'_>,
     space: Partitioning,
     #[comptime] row_scale: u32,
     #[comptime] row_offset: i32,
@@ -61,7 +61,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     let mut factors = Sequence::new();
     factors.push(F::Filter::<E>::along(row));
     factors.push(F::Filter::<E>::along(col));
-    let weights = Procedural::<E>::separable::<SeparableWeights<E, F::Filter<E>>>(
+    let weights = Procedural::separable::<E, SeparableWeights<E, F::Filter<E>>>(
         comptime!(
             space
                 .space()
@@ -73,7 +73,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         Some((taps, guard)) => weights.normalized(comptime!(taps), comptime!(guard)),
         None => weights,
     }
-    .tile();
+    .tile::<E>();
 
     let output = output.tile(&space);
 
@@ -84,8 +84,14 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         let blocks = cube.walk();
         match comptime!(stage) {
             InputStage::Smem => {
-                let mut stages =
-                    Stages::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
+                let mut stages = Stages::smem_single_at(
+                    &blocks,
+                    &input,
+                    StageStorage::Strided,
+                    padded,
+                    1usize,
+                    None,
+                );
                 stages.pipelined(blocks, |slot, block| {
                     let output_block = output.at(block);
                     let weights_block = weights.at(block);
@@ -118,11 +124,11 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
 /// One block of the cube's walk: this plane's rows, then this unit's columns and channel
 /// lines, each output cell contracting its whole tap window at the leaf under `config`.
 #[cube]
-fn interpolate_block<E: Float>(
+fn interpolate_block(
     block: &Region,
-    output: &Tile<E>,
-    weights: &Tile<E>,
-    input: &Tile<E>,
+    output: &Tile,
+    weights: &Tile,
+    input: &Tile,
     #[comptime] config: RegisterBlock,
 ) {
     for plane in block {

@@ -1,19 +1,20 @@
 //! `acc.mma(&a.mul(&sa), &b.mul(&sb))` over `e2m1` values under `e4m3` scales, one every sixteen
-//! values of `k`: NVFP4, contracted through the device's block-scaled instruction where it offers
-//! one, the values and scales handed to it as they lie rather than decoded first.
+//! values of `k`: NVFP4, contracted through the device's block-scaled instruction, the values and
+//! scales handed to it as they lie rather than decoded first.
 //!
-//! The kernel is the plain staged walk a float product takes; nothing in it names the
-//! instruction. Whether the block-scaled path ran is the device's to say, so the test also holds
-//! the device that offers it to the reference on values the decoding path would read the same:
-//! codes and scales that are exact in `f32`.
+//! The kernel is the plain staged walk a float product takes, its instruction stating its operands
+//! block-scaled (`MmaOperands::BlockScaled`). A per-tensor factor above the block scales rides an
+//! operand whose block scales are words of four `e4m3`, which a stage keeps beside the values, so
+//! the factor leaves for the sum. It runs only where the device offers that instruction, and is
+//! held to the reference on codes and scales that are exact in `f32`.
 
 use cubecl::{client::Client, ir::FloatKind, prelude::*, quant::scheme::QuantValue, zspace::Shape};
-use cubecl_common::e2m1;
+use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Projection,
-    Semiring, Space, StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    launch::scale_tile, layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    Axis, Instruction, Level, Levels, MmaOperands, Partitioning, Projection, Semiring, Space,
+    StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
+    ops::matmul::MmaIo,
 };
 
 use super::{Form, implied};
@@ -25,36 +26,38 @@ const K: Axis = Axis(2);
 /// Values one scale covers along `k`: NVFP4's block.
 const BLOCK: usize = 16;
 
+/// Values of `k` one instruction step covers, and so one word of four block scales.
+const STEP: usize = 64;
+
 /// `c = (a ⊗ sa) · (b ⊗ sb)`, a stage of `K` at a time, contracted through the manual-mma
-/// instruction.
+/// instruction, the block scales applied to each stage as numbers.
 #[cube(launch)]
 fn block_scaled_matmul<E: Numeric>(
-    a: &TileArg<'_, u32, Const<1>>,
-    a_scales: &TileArg<'_, f32, Const<1>>,
-    b: &TileArg<'_, u32, Const<1>>,
-    b_scales: &TileArg<'_, f32, Const<1>>,
-    a_global: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-    b_global: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    a_scales: &TileArg<'_>,
+    b: &TileArg<'_>,
+    b_scales: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile_as::<E>(&space);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
+    let mut c = c.tile(&space);
     let a_scales = a_scales.tile(&space);
-    let b = b.tile_as::<E>(&space);
     let b_scales = b_scales.tile(&space);
-    let c = c.tile(&space);
-    let mut acc = c.accumulator::<E, E, E>(
+    let acc = c.accumulator::<E>(
         &a,
         &b,
         comptime!(Instruction::Mma {
-            io: MmaIo::manual()
+            io: MmaIo::manual(),
+            operands: MmaOperands::BlockScaled,
         }),
         Semiring::SUM_PROD,
     );
     let walk = space.over(&level);
-    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
     stages.pipelined(walk, |slot, region| {
         let mut acc_r = acc.at(region);
         let a_scales_r = a_scales.at(region);
@@ -63,10 +66,39 @@ fn block_scaled_matmul<E: Numeric>(
             acc_r.mma(&a_s.mul(&a_scales_r), &b_s.mul(&b_scales_r));
         });
     });
-    // The per-tensor factors above the block scales, which the instruction holds no level for.
-    acc.scale(&scale_tile::<E>(a_global, &space));
-    acc.scale(&scale_tile::<E>(b_global, &space));
-    acc.drained_into(&c);
+    c.dequantize_from(&acc);
+}
+
+/// `c = (a ⊗ sa ⊗ ga) · (b ⊗ sb ⊗ gb)`: each operand carries its block scales as words of `e4m3`,
+/// which a stage keeps beside the values, and a per-tensor factor above them, which the
+/// instruction holds no level for, so it leaves the operand and multiplies the sum once, as it
+/// drains.
+#[cube(launch)]
+fn block_scaled_matmul_under_words<E: Numeric>(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let instruction = comptime!(Instruction::Mma {
+        io: MmaIo::manual(),
+        operands: MmaOperands::BlockScaled,
+    });
+    let mut c = c.tile(&space);
+    let (a, a_factor) = a.tile(&space).factor(c.space(), instruction);
+    let (b, b_factor) = b.tile(&space).factor(c.space(), instruction);
+    let acc = c.accumulator::<E>(&a, &b, instruction, Semiring::SUM_PROD);
+    let walk = space.over(&level);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
+    stages.pipelined(walk, |slot, region| {
+        let mut acc_r = acc.at(region);
+        slot.consume(|a_s, b_s| {
+            acc_r.mma(a_s, b_s);
+        });
+    });
+    c.dequantize_from(&acc.scaled(&a_factor).scaled(&b_factor));
 }
 
 /// A `16 × 8` product of `k` deep, `a` row-major and `b` held `[n, k]`, against the host sum of
@@ -116,8 +148,6 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
     };
     let a_words = client.create_from_slice(u32::as_bytes(&words(&a_codes)));
     let b_words = client.create_from_slice(u32::as_bytes(&words(&b_codes)));
-    let a_scales = client.create_from_slice(f32::as_bytes(&a_scale_values));
-    let b_scales = client.create_from_slice(f32::as_bytes(&b_scale_values));
     let c = TestInput::builder(client.clone(), Shape::from(vec![m, n]))
         .zeros()
         .generate_without_host_data();
@@ -137,35 +167,86 @@ fn check_block_scaled(k: usize, globals: Option<(f32, f32)>) {
     let tensor = |handle, rows: usize, cols: usize| unsafe {
         TensorArg::from_raw_parts(handle, [cols, 1].into(), [rows, cols].into())
     };
+    // The values are bound at the words their buffers hold, which the block-scaled instruction
+    // reads as they lie.
+    let stored = u32::elem_type_native();
+    let element = f32::elem_type_native();
     // One `f32` over the whole operand, read as the word it is stored in.
     let global = |value: f32| {
         let word = client.create_from_slice(f32::as_bytes(&[value]));
         let spec = TileSpec::new(Projection::new(&[M, N, K], &[PhysicalAxisMap::broadcast()]))
             .packed(Field::Float(FloatKind::F32));
-        ComptimeOptionArgs::Some(TileArgLaunch::new(tensor(word, 1, 1), spec))
+        TileArgLaunch::new(tensor(word, 1, 1), u32::elem_type_native(), 1, spec)
     };
-    let (a_global, b_global) = match globals {
-        Some((a, b)) => (global(a), global(b)),
-        None => (ComptimeOptionArgs::None, ComptimeOptionArgs::None),
-    };
-    block_scaled_matmul::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(tensor(a_words, m, k), values(M)),
-        TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), scales(M)),
-        TileArgLaunch::new(tensor(b_words, n, k), values(N)),
-        TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), scales(N)),
-        a_global,
-        b_global,
-        TileArgLaunch::new(
-            c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
-        ),
-        launcher.partitioning_arg(),
-        launcher.partitioning().level(0),
-        f32::elem_type_native(),
+    let out = TileArgLaunch::new(
+        c.clone().binding().into_tensor_arg(),
+        element,
+        1,
+        TileSpec::direct(&[M, N]),
     );
+    match globals {
+        // Block scales the values carry beside them only as words of four `e4m3`, as an NVFP4
+        // checkpoint packs them: a factor above scales read as numbers is decoded into the values
+        // as they are staged, which the block-scaled instruction cannot read.
+        Some((a_global, b_global)) => {
+            let scale_words = |values: &[f32]| -> Vec<u32> {
+                values
+                    .chunks(STEP / BLOCK)
+                    .map(|word| {
+                        word.iter().enumerate().fold(0u32, |acc, (j, &scale)| {
+                            acc | (e4m3::from_f32(scale).to_bits() as u32) << (8 * j)
+                        })
+                    })
+                    .collect()
+            };
+            let word_scales = |values: &[f32], rows: usize, axis: Axis| {
+                let handle = client.create_from_slice(u32::as_bytes(&scale_words(values)));
+                let spec = TileSpec::new(Projection::new(
+                    &[axis, K],
+                    &[PhysicalAxisMap::of(axis), PhysicalAxisMap::of(K).over(STEP)],
+                ));
+                TileArgLaunch::new(
+                    tensor(handle, rows, k / STEP),
+                    u32::elem_type_native(),
+                    1,
+                    spec,
+                )
+            };
+            let operand = |words, rows: usize, axis: Axis, scales: &[f32], global_value: f32| {
+                TileArgLaunch::new(tensor(words, rows, k), stored, 1, values(axis))
+                    .scales(word_scales(scales, rows, axis))
+                    .scales(global(global_value))
+            };
+            block_scaled_matmul_under_words::launch(
+                &client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                operand(a_words, m, M, &a_scale_values, a_global),
+                operand(b_words, n, N, &b_scale_values, b_global),
+                out,
+                launcher.partitioning_arg(),
+                launcher.partitioning().level(0),
+                element,
+            );
+        }
+        None => {
+            let a_scales = client.create_from_slice(f32::as_bytes(&a_scale_values));
+            let b_scales = client.create_from_slice(f32::as_bytes(&b_scale_values));
+            block_scaled_matmul::launch(
+                &client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                TileArgLaunch::new(tensor(a_words, m, k), stored, 1, values(M)),
+                TileArgLaunch::new(tensor(a_scales, m, k / BLOCK), element, 1, scales(M)),
+                TileArgLaunch::new(tensor(b_words, n, k), stored, 1, values(N)),
+                TileArgLaunch::new(tensor(b_scales, n, k / BLOCK), element, 1, scales(N)),
+                out,
+                launcher.partitioning_arg(),
+                launcher.partitioning().level(0),
+                element,
+            );
+        }
+    }
 
     let decoded = |code: u8| e2m1::from_bits(code).to_f32();
     let (a_global, b_global) = globals.unwrap_or((1.0, 1.0));

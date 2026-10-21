@@ -52,19 +52,19 @@ impl Layout for FlatLayout {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl Tile {
     /// A flat row-major view over `Vector<T, W>` lines of the tile's window, masking the overhang.
     /// A packed store is refused.
-    pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+    pub fn flat<T: Numeric, W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         let g = self.mem("flat");
         if comptime!(g.store.packing != Packing::Plain) {
             panic!("Tile::flat: a packed tile only unpacks under Tile::copy_from")
         }
-        g.flat::<W>()
+        g.flat::<T, W>()
     }
 
     /// The mutable twin of [`flat`](Tile::flat).
-    pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
-        self.mem_mut("flat_mut").flat_mut::<W>()
+    pub fn flat_mut<T: Numeric, W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+        self.mem_mut("flat_mut").flat_mut::<T, W>()
     }
 }

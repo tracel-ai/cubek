@@ -24,14 +24,8 @@ const CI: Axis = Axis(2);
 /// `out = weights ⊗ scales`. The weights arrive packed and unpack at the read; the scales
 /// broadcast over the axis they omit. Neither fact is stated here; both are the operands'.
 #[cube(launch)]
-fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
-    weights: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, S, F>,
-    out: &TileArg<'_, E, W>,
-    space: Partitioning,
-    #[define(E, S)] _dtypes: [ElemType; 2],
-) {
-    let weights = weights.tile_as::<E>(&space);
+fn dequantize(weights: &TileArg<'_>, scales: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
+    let weights = weights.tile(&space);
     let scales = scales.tile(&space);
     let mut out = out.tile(&space);
     out.product(&weights, &scales);
@@ -113,7 +107,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         Form::Dynamic,
     );
     let w_op = launcher
-        .arg(w_tensor.clone().binding())
+        .arg(w_tensor.clone().binding(), w_tensor.dtype)
         .gathered(split())
         .packed(field)
         .vectorize(factor)
@@ -122,13 +116,13 @@ fn a_packed_tensor_decodes_against_its_scales() {
     // Four scales per read: one read covers four blocks of columns, and each of its units is
     // taken by the run of values that block holds.
     let s_op = launcher
-        .arg(s_tensor.binding())
+        .arg(s_tensor.binding(), dtype)
         .axes(&[ROW, CB])
         .vectorize(scale_units)
         .build()
         .unwrap();
     let out_op = launcher
-        .arg(out.clone().binding())
+        .arg(out.clone().binding(), dtype)
         .gathered(split())
         .vectorize(factor)
         .build()
@@ -138,13 +132,10 @@ fn a_packed_tensor_decodes_against_its_scales() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        factor,
-        scale_units,
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),
         launch.partitioning_arg(),
-        [dtype, dtype],
     );
 
     let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);

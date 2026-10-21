@@ -9,10 +9,10 @@ use crate::*;
 /// What a compute plane does with each stage of a walk whose reads run on after it returns: it
 /// issues them, and hands back their completion, which frees the stage once it resolves.
 #[cube]
-pub trait AsyncStage<Lhs: Numeric, Rhs: Numeric>: CubeType {
+pub trait AsyncStage: CubeType {
     /// Issue the reads of the stage `lhs` and `rhs` hold for `region`, and return their
     /// completion.
-    fn issue(&self, region: &Region, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Pending<()>;
+    fn issue(&self, region: &Region, lhs: &Tile, rhs: &Tile) -> Pending<()>;
 
     /// A completion of the same work with nothing in flight, which is done at once: what a slot
     /// holds before the walk first reads it.
@@ -20,12 +20,12 @@ pub trait AsyncStage<Lhs: Numeric, Rhs: Numeric>: CubeType {
 }
 
 #[cube]
-impl<Lhs: Numeric, Rhs: Numeric> Stages<OperandPair<Lhs, Rhs>> {
+impl Stages<OperandPair> {
     /// A compute plane's side of `walk`, whose stages the filling planes fill by TMA: each stage
     /// issued through `stage`, and its slot freed only once what it issued completes. That is a
     /// stage later, so the reads of the previous stage run on beside the ones just issued, where
     /// the ring holds more than one slot; a ring of one waits for them at once.
-    pub fn consume_async<S: AsyncStage<Lhs, Rhs>>(&mut self, walk: &Walk, stage: &S) {
+    pub fn consume_async<S: AsyncStage>(&mut self, walk: &Walk, stage: &S) {
         let lhs = self.sources.lhs.delivery();
         let rhs = self.sources.rhs.delivery();
         comptime!(assert!(

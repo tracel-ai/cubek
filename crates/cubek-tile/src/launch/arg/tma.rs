@@ -1,40 +1,13 @@
-//! The TMA delivery's argument and its in-kernel layouts.
+//! A TMA tensor map as an operand's values ([`TileArgLaunch::tensor_map`]) and its in-kernel
+//! layouts.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
-    ViewMut,
-    layout::{CoordsDyn, Layout, LayoutExpand},
-    view::launch::ViewArg,
+    layout::{CoordsDyn, Layout, LayoutExpand, as_dyn::IntoDynLayout},
+    view::launch::VirtualViewLayoutLaunch,
 };
 
 use crate::*;
-
-/// The TMA [`Delivery`]'s argument: a tensor-map [`ViewMut`] with its comptime [`TileSpec`].
-#[derive(CubeType, CubeLaunch)]
-pub struct TmaTileArg<E: Numeric> {
-    pub view: ViewMut<'static, E, CoordsDyn>,
-    #[cube(comptime)]
-    pub spec: TileSpec,
-}
-
-#[cube]
-impl<E: Numeric> TmaTileArg<E> {
-    /// Serve the tensor map as a TMA-filled tile over `partitioning`.
-    pub fn tile(&self, partitioning: &Partitioning) -> Tile<E> {
-        let space = comptime!(partitioning.clone());
-        let own = comptime!(space.space().subspace(self.spec.axes()));
-        let data = TmaData::from_tensor_map(
-            self.view.clone(),
-            comptime!(own.rank()),
-            comptime!(self.spec.units),
-            comptime!(self.spec.packing),
-        );
-        Tile::new(
-            TileKind::new_TmaGmem(data),
-            comptime!(Placement::root(own.clone(), space.levels().to_vec())),
-        )
-    }
-}
 
 /// The box a TMA descriptor moves: logical `(rows, cols)`, optional batch, and whether the
 /// descriptor is transposed (column-major).
@@ -53,17 +26,27 @@ pub struct TmaOperand {
     pub shape: TmaBox,
 }
 
-impl<E: Numeric> TmaTileArgLaunch<E> {
+impl TmaOperand {
+    /// The tensor map as an operand's values, served at the element it moves, under no scales.
+    pub fn arg(self) -> TileArgLaunch {
+        TileArgLaunch::tensor_map(self.map, &self.axes, self.shape)
+    }
+}
+
+impl TileArgLaunch {
     /// A TMA tensor map as a tile argument over `axes`: two, or three with `shape.batch` set.
     pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
         let layout = Self::dyn_layout(axes, shape, 1);
-        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes))
+        Self::of_tensor_map(
+            tensor_map,
+            VirtualViewLayoutLaunch::new::<IntoDynLayout<TmaDynLayout>>(layout),
+            TileSpec::direct(axes),
+        )
     }
 
     /// [`tensor_map`](Self::tensor_map) over a packed operand: the descriptor moves the words its
-    /// values are stored in, `field.per_word()` values a cell along its innermost dimension, which
-    /// the layout divides the values' coordinate along it by. `shape` counts values.
+    /// values are stored in, `field.per_word()` values a cell along its innermost dimension,
+    /// which the layout divides the values' coordinate along it by. `shape` counts values.
     pub fn tensor_map_packed(
         tensor_map: TensorMapArg<Tiled>,
         axes: &[Axis],
@@ -71,8 +54,11 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         field: Field,
     ) -> Self {
         let layout = Self::dyn_layout(axes, shape, field.per_word() as u32);
-        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes).packed(field))
+        Self::of_tensor_map(
+            tensor_map,
+            VirtualViewLayoutLaunch::new::<IntoDynLayout<TmaDynLayout>>(layout),
+            TileSpec::direct(axes).packed(field),
+        )
     }
 
     /// The layout of a descriptor over `axes` moving cells of `per_cell` values along its
@@ -82,8 +68,8 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
             (2, None) => false,
             (3, Some(_)) => true,
             (r, batch) => panic!(
-                "TmaTileArg: the descriptor is (batch, row, col); {r} axes with batch {batch:?} \
-                 is not a matrix nor a batched one"
+                "TileArgLaunch::tensor_map: the descriptor is (batch, row, col); {r} axes with \
+                 batch {batch:?} is not a matrix nor a batched one"
             ),
         };
         let dims = (shape.batch.unwrap_or(1), shape.rows, shape.cols);
@@ -96,8 +82,9 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         axes: &[Axis],
         tiles: TmaTiles,
     ) -> Self {
-        Self::new(
-            Self::stored_view(tensor_map, axes, tiles),
+        Self::of_tensor_map(
+            tensor_map,
+            Self::stored_layout(axes, tiles, 1),
             TileSpec::direct(axes),
         )
     }
@@ -110,22 +97,28 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         tiles: TmaTiles,
         field: Field,
     ) -> Self {
-        let view = Self::stored_view(tensor_map, axes, tiles);
-        Self::new(view, TileSpec::direct(axes).packed(field))
+        Self::of_tensor_map(
+            tensor_map,
+            Self::stored_layout(axes, tiles, field.per_word() as u32),
+            TileSpec::direct(axes).packed(field),
+        )
     }
 
-    fn stored_view(
-        tensor_map: TensorMapArg<Tiled>,
+    /// The layout of a storage-tiled descriptor over `axes` moving `per_cell` values a cell along
+    /// `cols`.
+    fn stored_layout(
         axes: &[Axis],
         tiles: TmaTiles,
-    ) -> ViewArg<CoordsDyn> {
+        per_cell: u32,
+    ) -> VirtualViewLayoutLaunch<CoordsDyn, Sequence<i32>, TensorMapArg<Tiled>> {
         assert_eq!(
             axes.len(),
             2,
-            "TmaTileArg: a storage-tiled descriptor is a matrix; batch it by launching per batch"
+            "TileArgLaunch::tensor_map_stored: a storage-tiled descriptor is a matrix; batch it by \
+             launching per batch"
         );
-        let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, tiles.landing);
-        ViewArg::new_tensor_map_tiled::<TmaStoredLayout>(tensor_map, layout)
+        let layout = TmaStoredLayoutLaunch::new(tiles.dims, tiles.tile, per_cell, tiles.landing);
+        VirtualViewLayoutLaunch::new::<IntoDynLayout<TmaStoredLayout>>(layout)
     }
 }
 
@@ -136,9 +129,11 @@ pub enum TmaLanding {
     /// One storage tile a box, landing as the contiguous run it is stored as: the descriptor is
     /// the operand as stored, `[.., R/tr, C/tc, tr, tc]`.
     Tiles,
-    /// Whole tiles both ways, landing the box's rows one after another, each a run of its tiles'
-    /// rows, as a row-major operand's box would land them: the descriptor is the operand as
-    /// `[R/tr, tr, C/tc, tc]`, the tiles' rows nested inside the tiles' columns.
+    /// Whole tiles along the rows, landing the box's rows one after another, each a run of its
+    /// tiles' rows, as a row-major operand's box would land them: the descriptor is the operand as
+    /// `[R/tr, tr, C/tc, tc]`, the tiles' rows nested inside the tiles' columns. Along the columns
+    /// a box is whole tiles, or a part of one tile's run that divides it, starting where the box's
+    /// own columns do.
     Rows,
 }
 
@@ -158,6 +153,8 @@ pub(crate) struct TmaStoredLayout {
     dims: (u32, u32),
     /// The storage tile `(rows, cols)`.
     tile: (u32, u32),
+    /// Values one cell of the descriptor holds along `cols`: one, or a packed field's per word.
+    per_cell: u32,
     /// The order the descriptor states the tiles in.
     #[cube(comptime)]
     landing: TmaLanding,
@@ -171,7 +168,8 @@ impl Layout for TmaStoredLayout {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (tile_rows, tile_cols) = self.tile;
         let mut src = CoordsDyn::new();
-        // A box origin is tile-aligned, so the in-tile offset is zero.
+        // A box origin is tile-aligned along the rows, so the in-tile offset there is zero; along
+        // the columns a box landing rows may start partway into a tile's run, in cells.
         match comptime!(self.landing) {
             TmaLanding::Tiles => {
                 src.push(pos[0] / tile_rows);
@@ -183,7 +181,7 @@ impl Layout for TmaStoredLayout {
                 src.push(pos[0] / tile_rows);
                 src.push(0u32);
                 src.push(pos[1] / tile_cols);
-                src.push(0u32);
+                src.push(pos[1] % tile_cols / self.per_cell);
             }
         }
         src

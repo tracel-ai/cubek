@@ -4,11 +4,11 @@
 //! against a representative shape; that is enough to catch selector regressions
 //! without blowing up compile time.
 
-use cubecl::client::Client;
+use cubecl::prelude::*;
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
     launch::launch_ref,
-    multi_level::Strategy as MultiLevel,
+    multi_level::{Strategy as MultiLevel, definition::adjust_dtypes},
 };
 use cubek_std::InputBinding;
 use cubek_test_utils::{
@@ -73,13 +73,21 @@ fn simple_cyclic_cmma() {
 
 /// A small f32 problem runs rather than declining: a routine that runs at 37 rows also runs at 32,
 /// since autotune buckets the two together. Asserted as executed on a device with cmma, where the
-/// default test policy would accept the decline; reported as skipped on one without.
+/// default test policy would accept the decline; reported as skipped on one without. A device
+/// can offer cmma for narrower types only: Vulkan on NVIDIA has f16 and bf16 but no f32 or tf32.
 #[test]
 fn simple_cyclic_cmma_runs_a_small_f32_problem() {
     let client = client();
-    if client.properties().features.matmul.cmma.is_empty() {
+    let mut dtypes = MatmulElems::from_single_dtype(f32::elem_type_native());
+    adjust_dtypes(&client, &mut dtypes, true);
+    let offered = client.properties().features.matmul.cmma.iter().any(|cfg| {
+        cfg.a_type == dtypes.lhs_register
+            && cfg.b_type == dtypes.rhs_register
+            && cfg.cd_type == dtypes.acc_register
+    });
+    if !offered {
         TestOutcome::Validated(ValidationResult::Skipped(
-            "the device offers no cmma instruction".to_string(),
+            "the device offers no cmma instruction for an f32 matmul".to_string(),
         ))
         .enforce();
         return;

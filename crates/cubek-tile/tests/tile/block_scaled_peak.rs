@@ -22,9 +22,9 @@ use cubecl::{client::Client, ir::FloatKind, prelude::*, quant::scheme::QuantValu
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Accumulate, AccumulateExpand, Axis, Instruction, Level, Levels, Partitioning, Projection,
-    Semiring, Space, StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    layout::PhysicalAxisMap, ops::matmul::MmaIo,
+    Axis, Instruction, Level, Levels, MmaOperands, Partitioning, Projection, Semiring, Space,
+    StageStorage, Stages, TileArg, TileArgLaunch, TileSpec, kind::Field, layout::PhysicalAxisMap,
+    ops::matmul::MmaIo,
 };
 
 use super::{Form, implied};
@@ -58,46 +58,38 @@ enum ScaleForm {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn block_scaled_peak<E: Numeric>(
-    a: &TileArg<'_, u32, Const<1>>,
-    a_scales: &TileArg<'_, u32, Const<1>>,
-    b: &TileArg<'_, u32, Const<1>>,
-    b_scales: &TileArg<'_, u32, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_>,
+    a_scales: &TileArg<'_>,
+    b: &TileArg<'_>,
+    b_scales: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] repeats: usize,
-    #[comptime] words: bool,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile_as::<E>(&space);
-    let b = b.tile_as::<E>(&space);
+    let a = a.tile(&space);
+    let b = b.tile(&space);
     let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
-        let acc = c.accumulator::<E, E, E>(
+        let acc = c.accumulator::<E>(
             &a,
             &b,
             comptime!(Instruction::Mma {
-                io: MmaIo::manual()
+                io: MmaIo::manual(),
+                operands: MmaOperands::BlockScaled,
             }),
             Semiring::SUM_PROD,
         );
         let walk = cube.over(&steps);
-        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
         stages.pipelined(walk, |slot, region| {
             let acc_r = acc.at(region);
             slot.consume(|a_s, b_s| {
-                let (a_s, b_s) = match comptime!(words) {
-                    true => (
-                        a_s.mul(&a_scales.tile(&space).at(region)),
-                        b_s.mul(&b_scales.tile(&space).at(region)),
-                    ),
-                    false => (
-                        a_s.mul(&a_scales.tile_as::<f32>(&space).at(region)),
-                        b_s.mul(&b_scales.tile_as::<f32>(&space).at(region)),
-                    ),
-                };
+                let a_s = a_s.mul(&a_scales.tile(&space).at(region));
+                let b_s = b_s.mul(&b_scales.tile(&space).at(region));
                 for plane in region {
                     let acc_p = acc_r.at(&plane);
                     let (a_p, b_p) = (a_s.at(&plane), b_s.at(&plane));
@@ -118,31 +110,31 @@ fn block_scaled_peak<E: Numeric>(
 /// instruction.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn float_peak<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, f32, Const<1>>,
+fn float_peak(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] steps: Level,
     #[comptime] repeats: usize,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
     let c = c.tile(&space);
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
-        let acc = c.accumulator::<f32, E, E>(
+        let acc = c.accumulator::<f32>(
             &a,
             &b,
             comptime!(Instruction::Mma {
-                io: MmaIo::manual()
+                io: MmaIo::manual(),
+                operands: MmaOperands::Plain,
             }),
             Semiring::SUM_PROD,
         );
         let walk = cube.over(&steps);
-        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize, None);
         stages.pipelined(walk, |slot, region| {
             let acc_r = acc.at(region);
             slot.consume(|a_s, b_s| {
@@ -308,24 +300,28 @@ fn launch_nvfp4(
             k,
         )
     };
+    // Values and scales are bound at the words their buffers hold.
+    let words = u32::elem_type_native();
+    let element = f32::elem_type_native();
     block_scaled_peak::launch(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(upload_codes(&operands.a_codes, m), values(M)),
-        TileArgLaunch::new(upload_scales(&operands.a_scales, m), scales(M)),
-        TileArgLaunch::new(upload_codes(&operands.b_codes, n), values(N)),
-        TileArgLaunch::new(upload_scales(&operands.b_scales, n), scales(N)),
+        TileArgLaunch::new(upload_codes(&operands.a_codes, m), words, 1, values(M)),
+        TileArgLaunch::new(upload_scales(&operands.a_scales, m), words, 1, scales(M)),
+        TileArgLaunch::new(upload_codes(&operands.b_codes, n), words, 1, values(N)),
+        TileArgLaunch::new(upload_scales(&operands.b_scales, n), words, 1, scales(N)),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
+            element,
+            1,
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         repeats,
-        form == ScaleForm::Words,
-        f32::elem_type_native(),
+        element,
     );
     c
 }
@@ -350,18 +346,23 @@ fn launch_f16(
         .zeros()
         .generate_without_host_data();
     let rows = |axis: Axis| TileSpec::new(Projection::direct(&[axis, K]));
+    let element = half::f16::elem_type_native();
     float_peak::launch(
         client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(tensor(zeros(m), m, k), rows(M)),
-        TileArgLaunch::new(tensor(zeros(n), n, k), rows(N)),
-        TileArgLaunch::new(c.binding().into_tensor_arg(), TileSpec::direct(&[M, N])),
+        TileArgLaunch::new(tensor(zeros(m), m, k), element, 1, rows(M)),
+        TileArgLaunch::new(tensor(zeros(n), n, k), element, 1, rows(N)),
+        TileArgLaunch::new(
+            c.binding().into_tensor_arg(),
+            f32::elem_type_native(),
+            1,
+            TileSpec::direct(&[M, N]),
+        ),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         launcher.partitioning().level(1),
         repeats,
-        half::f16::elem_type_native(),
     );
 }
 

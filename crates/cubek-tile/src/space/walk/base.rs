@@ -4,17 +4,19 @@ use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 use crate::{
-    Axis, ComputeScope, Coords, Integer, IntegerExpand, Level, Region, RegionExpand, Space,
+    Axis, ComputeScope, Coords, Integer, IntegerExpand, Level, Planes, Region, RegionExpand, Space,
     StageOwner,
 };
 
 use super::distribution::{AxisDistribution, Distribution};
 use crate::Spread;
-use crate::space::partition::{GridCount, in_plane_axes, swizzled_positions};
+use crate::space::partition::{GridCount, in_plane_axes, launch_tiles, swizzled_positions};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
 pub struct Walk {
+    /// The level's tiles along each axis, which a reversed axis counts back from.
+    tiles: Coords<usize>,
     counts: Coords<usize>,
     positions: Coords<usize>,
     scales: Coords<usize>,
@@ -67,6 +69,63 @@ impl Walk {
             }
         }
 
+        let (counts, positions, scales) = match comptime!(level.spans_launch()) {
+            true => Walk::spanning_launch(comptime!(host.clone()), comptime!(level.clone()), &grid),
+            false => Walk::dealt(
+                comptime!(host.clone()),
+                comptime!(level.clone()),
+                comptime!(distributes.clone()),
+                &grid,
+            ),
+        };
+
+        // Folded, not accumulated, so a static walk can unroll.
+        let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
+
+        Walk {
+            tiles: grid,
+            counts,
+            positions,
+            scales,
+            route: Coords::constant(comptime!(vec![0; rank])),
+            routed_at: comptime!(Vec::new()),
+            base: 0usize,
+            steps,
+            parent,
+            distributes,
+            space: host,
+            level,
+            unroll: comptime!(false),
+        }
+    }
+
+    /// `(counts, positions, scales)` of a level spanning the launch: along each of its axes, the
+    /// one tile this plane's or unit's place in the launch names, past the last for one past the
+    /// last tile, which the binding masks; every tile of the others.
+    fn spanning_launch(
+        #[comptime] host: Space,
+        #[comptime] level: Level,
+        grid: &Coords<usize>,
+    ) -> (Coords<usize>, Coords<usize>, Coords<usize>) {
+        let (positions, counts) = launch_tiles(comptime!(host.clone()), level, grid);
+        let mut scales = Coords::<usize>::new();
+        #[unroll]
+        for _ in 0..comptime!(host.rank()) {
+            scales.push(1usize);
+        }
+        (counts, positions, scales)
+    }
+
+    /// `(counts, positions, scales)` of a level dealt to the instances of one cube, or of the
+    /// grid's cubes, each axis as `distributes` says.
+    #[allow(clippy::needless_range_loop)]
+    fn dealt(
+        #[comptime] host: Space,
+        #[comptime] level: Level,
+        #[comptime] distributes: Vec<AxisDistribution>,
+        grid: &Coords<usize>,
+    ) -> (Coords<usize>, Coords<usize>, Coords<usize>) {
+        let rank = comptime!(host.rank());
         // Folded, so a constant grid's decode folds too.
         let mut instances = Coords::<usize>::new();
         #[unroll]
@@ -144,23 +203,7 @@ impl Walk {
             }
         }
 
-        // Folded, not accumulated, so a static walk can unroll.
-        let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
-
-        Walk {
-            counts,
-            positions,
-            scales,
-            route: Coords::constant(comptime!(vec![0; rank])),
-            routed_at: comptime!(Vec::new()),
-            base: 0usize,
-            steps,
-            parent,
-            distributes,
-            space: host,
-            level,
-            unroll: comptime!(false),
-        }
+        (counts, positions, scales)
     }
 
     /// This walk taking one step along `axis`, at the coordinate `coord`.
@@ -192,6 +235,7 @@ impl Walk {
         let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
+            tiles: self.tiles,
             counts,
             positions: self.positions,
             scales: self.scales,
@@ -221,6 +265,7 @@ impl Walk {
                 .scope()
                 .min(self.level.coverage().scope().unwrap_or(ComputeScope::Cube)),
             self.parent.path.planes_per_cube(),
+            self.level.fillers(),
         ))
     }
 
@@ -247,6 +292,12 @@ impl Walk {
         let idx = self.base.plus(i);
         self.parent
             .below(self.resolve(idx), comptime!(self.level.clone()))
+    }
+
+    /// The planes below this walk's regions, each once, at its first step ([`Region::planes`]):
+    /// for a walk with no single region above it, such as a run of interleaved steps.
+    pub fn planes(&self) -> Planes {
+        self.region(0).planes()
     }
 
     /// Unravel a runtime step `idx` to its per-axis coordinates.
@@ -286,9 +337,10 @@ impl Walk {
         }
     }
 
-    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`].
+    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`], counted from the
+    /// last tile where the level hands the axis out [`reversed`](crate::Levels::reversed).
     fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
-        match comptime!(self.distributes[p].clone()) {
+        let tile = match comptime!(self.distributes[p].clone()) {
             AxisDistribution::Walked => digit,
             AxisDistribution::Distributed(Distribution {
                 spread: Spread::Contiguous,
@@ -298,6 +350,13 @@ impl Walk {
                 spread: Spread::Interleaved,
                 ..
             }) => digit.times(self.scales.at(p)).plus(self.positions.at(p)),
+        };
+        let tiles = self.tiles.at(p);
+        // A plane past the last tile stays past it, where the binding masks it.
+        if comptime!(self.level.is_reversed(self.space.axis_at(p))) && tile < tiles {
+            tiles.minus(1usize).minus(tile)
+        } else {
+            tile
         }
     }
 }

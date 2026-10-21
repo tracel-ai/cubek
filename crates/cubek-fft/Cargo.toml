@@ -34,6 +34,8 @@ cubecl = { workspace = true }
 
 num-complex = { workspace = true, optional = true }
 
+thiserror = { workspace = true }
+
 [dev-dependencies]
 cubek-fft = { path = ".", features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }

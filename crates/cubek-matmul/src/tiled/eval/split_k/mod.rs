@@ -21,8 +21,7 @@
 //! reads one scalar per row while the neighboring columns belong to other cubes, wasting the rest
 //! of every cache line; `cols` per cube restores full lines and amortizes the lhs broadcast, at
 //! the price of `cols`× fewer cubes. `split_kt` (rhs layout): the same split on a K-contiguous
-//! rhs: a `[N, K]` buffer presented as `[K, N]` by stride swap ([`rhs_arg`]), sound at
-//! `vector_size == 1` where the tile carries strides verbatim: making each unit's walk down its
+//! rhs: a `[N, K]` buffer bound over `[N, K]` as it lies, making each unit's walk down its
 //! K-slice sequential in memory (a pre-transposed weight, the layout the legacy `execute_dot`
 //! demands). There `cols` flips sign: extra columns sit a whole K apart, so `split_kt` wants
 //! `cols = 1`.
@@ -41,14 +40,13 @@ use cubecl::{
     client::Client,
     future,
     prelude::*,
-    std::tensor::TensorHandle,
 };
+use cubek_std::matmul_axes::{K, M, N};
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch,
-    launch::Grid,
+    Axis, Launcher, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, launch::Grid,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no unit
@@ -56,19 +54,14 @@ use cubek_tile::{
 /// instruction.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 
-const M: Axis = Axis(0);
-const N: Axis = Axis(1);
-const K: Axis = Axis(2);
-
 /// The kernel under test for the one-level mappings: this cube's region, contracted whole at
 /// the leaf. The mapping is the only variable.
 #[cube(launch)]
-fn split_k_matmul_one_level<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn split_k_matmul_one_level(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -84,12 +77,11 @@ fn split_k_matmul_one_level<E: Numeric>(
 /// [`split_k_matmul_one_level`] for the mappings that cut the cube's region across the
 /// plane's units as a second level.
 #[cube(launch)]
-fn split_k_matmul_two_levels<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+fn split_k_matmul_two_levels(
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
-    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(&space);
     let b = b.tile(&space);
@@ -248,8 +240,8 @@ impl Mapping {
     }
 }
 
-/// The rhs operand for `mapping`: row-major `[K, N]`, or (`KContiguous`) a `[N, K]` row-major
-/// buffer to be presented as `[K, N]` by [`rhs_arg`]. `fill` is the data finalizer.
+/// The rhs operand for `mapping`: row-major `[K, N]`, or (`KContiguous`) row-major `[N, K]`.
+/// `fill` is the data finalizer.
 fn rhs_input(
     client: &Client,
     mapping: Mapping,
@@ -263,27 +255,9 @@ fn rhs_input(
     fill(TileInput::builder(client, launcher.space().subspace(axes)).untiled())
 }
 
-/// The launch arg for [`rhs_input`]'s tensor: as-is, or the `[N, K]` buffer presented as shape
-/// `[K, N]` with swapped strides `[1, k]`: a metadata-only transpose, exactly how
-/// [`TileInput::tensor_arg`] re-presents for vectorization. Sound at `vector_size == 1`, where
-/// [`MemData::from_tensor`](cubek_tile::MemData) carries strides verbatim.
-fn rhs_arg(b: &TileInput, mapping: Mapping) -> TensorArg {
-    match mapping.rhs_layout() {
-        RhsLayout::NContiguous => b.tensor_arg(1),
-        RhsLayout::KContiguous => {
-            let handle = b.handle();
-            let (n, k) = (handle.shape()[0], handle.shape()[1]);
-            TensorHandle::new(handle.handle.clone(), vec![k, n], vec![1, k], handle.dtype)
-                .binding()
-                .into_tensor_arg()
-        }
-    }
-}
-
 /// One launch of `mapping` over `problem`, into a freshly zeroed accumulator.
 fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, plane_units: usize) -> TileInput {
     let launcher = mapping.launcher(client, problem, plane_units);
-    let dtype = f32::elem_type_native();
     let a = TileInput::builder(client, launcher.space().subspace(&[M, K]))
         .untiled()
         .arange();
@@ -297,21 +271,19 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, plane_units: u
             client,
             launcher.cube_count(),
             mapping.cube_dim(&launcher),
-            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
-            TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
-            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+            a.arg(&launcher, 1),
+            b.arg(&launcher, 1),
+            c.arg(&launcher, 1),
             launcher.partitioning_arg(),
-            dtype,
         ),
         NestDepth::Two => split_k_matmul_two_levels::launch(
             client,
             launcher.cube_count(),
             mapping.cube_dim(&launcher),
-            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
-            TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
-            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+            a.arg(&launcher, 1),
+            b.arg(&launcher, 1),
+            c.arg(&launcher, 1),
             launcher.partitioning_arg(),
-            dtype,
         ),
     }
     c
@@ -326,8 +298,7 @@ struct SplitKBench {
     cube_dim: CubeDim,
     a: TileInput,
     b: TileInput,
-    /// The one kernel space; each operand's spec carries only its spanned axes (the rhs
-    /// is `[K, N]` even when its buffer is the transposed layout re-strided).
+    /// The one kernel space, which binds each operand over the axes it spans.
     launcher: Launcher,
     c: TileInput,
 }
@@ -342,27 +313,24 @@ impl Benchmark for SplitKBench {
 
     fn execute(&self, _: Self::Input) -> Result<Self::Output, String> {
         let (a, b, c) = (&self.a, &self.b, &self.c);
-        let dtype = f32::elem_type_native();
         match self.mapping.nest() {
             NestDepth::One => split_k_matmul_one_level::launch(
                 &self.client,
                 self.cube_count.clone(),
                 self.cube_dim,
-                TileArgLaunch::new(a.tensor_arg(1), a.spec()),
-                TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
-                TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+                a.arg(&self.launcher, 1),
+                b.arg(&self.launcher, 1),
+                c.arg(&self.launcher, 1),
                 self.launcher.partitioning_arg(),
-                dtype,
             ),
             NestDepth::Two => split_k_matmul_two_levels::launch(
                 &self.client,
                 self.cube_count.clone(),
                 self.cube_dim,
-                TileArgLaunch::new(a.tensor_arg(1), a.spec()),
-                TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
-                TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+                a.arg(&self.launcher, 1),
+                b.arg(&self.launcher, 1),
+                c.arg(&self.launcher, 1),
                 self.launcher.partitioning_arg(),
-                dtype,
             ),
         }
         Ok(())

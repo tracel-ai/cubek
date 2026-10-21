@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use super::leaf::{Side, memory};
+use super::leaf::{Side, deep_load, memory};
 use crate::tile::base::witnessed_space;
 use crate::*;
 
@@ -45,11 +45,7 @@ impl Descent {
 #[cube]
 impl Descent {
     /// The descent a contraction into `acc` takes.
-    pub(crate) fn of_tile<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-        acc: &Tile<E>,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-    ) -> comptime_type!(Descent) {
+    pub(crate) fn of_tile(acc: &Tile, lhs: &Tile, rhs: &Tile) -> comptime_type!(Descent) {
         match &acc.kind {
             TileKind::PlanePartition(p) => {
                 let grid = p.grid();
@@ -70,13 +66,13 @@ impl Descent {
 
     /// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form.
     pub(crate) fn contract<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-        acc: &mut Tile<E>,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
+        acc: &mut Tile,
+        lhs: &Tile,
+        rhs: &Tile,
     ) {
         // A clone holds the same fragments: writes through it land in `acc`.
         let grid = acc.clone();
-        let descent = Self::of_tile::<E, Lhs, Rhs>(&grid, lhs, rhs);
+        let descent = Self::of_tile(&grid, lhs, rhs);
         match comptime!(descent) {
             Descent::Here => Self::here::<E, Lhs, Rhs>(acc, lhs, rhs),
             Descent::Steps(instruction) => Self::steps::<E, Lhs, Rhs>(&grid, lhs, rhs, instruction),
@@ -91,14 +87,14 @@ impl Descent {
     /// step, a whole load at a time: a step of the instruction may be narrower than one of its
     /// loads, and its scales are read once for the box rather than once a step.
     fn steps<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-        acc: &Tile<E>,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
+        acc: &Tile,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] instruction: Instruction,
     ) {
         let out = comptime!(acc.place.space.clone());
-        let lhs = lhs.landed_for(comptime!(Side::Lhs), comptime!(out.clone()), instruction);
-        let rhs = rhs.landed_for(comptime!(Side::Rhs), out, instruction);
+        let lhs = lhs.landed_for::<Lhs>(comptime!(Side::Lhs), comptime!(out.clone()), instruction);
+        let rhs = rhs.landed_for::<Rhs>(comptime!(Side::Rhs), out, instruction);
         let operands = comptime!(Space::merge(&[
             &acc.place.space,
             &lhs.place.space,
@@ -119,13 +115,14 @@ impl Descent {
 
     /// [`Descent::Cells`]: each operand's fragments loaded once, then every cell of the grid.
     fn cells<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-        acc: &Tile<E>,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
+        acc: &Tile,
+        lhs: &Tile,
+        rhs: &Tile,
         #[comptime] instruction: Instruction,
     ) {
-        let lhs = PlanePartition::<Lhs>::operand(lhs, acc, instruction);
-        let rhs = PlanePartition::<Rhs>::operand(rhs, acc, instruction);
+        let load = deep_load(lhs, rhs);
+        let lhs = PlanePartition::operand::<Lhs>(lhs, acc, instruction, load);
+        let rhs = PlanePartition::operand::<Rhs>(rhs, acc, instruction, load);
         for cell in acc.walk().unrolled() {
             let mut acc_cell = acc.at(&cell);
             Self::contract::<E, Lhs, Rhs>(&mut acc_cell, &lhs.at(&cell), &rhs.at(&cell));
@@ -134,18 +131,14 @@ impl Descent {
 
     /// [`Descent::Here`]: `acc += lhs · rhs` into the one fragment or block `acc` holds, or the
     /// memory window it is.
-    fn here<E: Numeric, Lhs: Numeric, Rhs: Numeric>(
-        acc: &mut Tile<E>,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-    ) {
+    fn here<E: Numeric, Lhs: Numeric, Rhs: Numeric>(acc: &mut Tile, lhs: &Tile, rhs: &Tile) {
         let space = comptime!(acc.place.space.clone());
         let tile_kind = &mut acc.kind;
         match tile_kind {
-            TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
+            TileKind::PlaneTile(t) => t.mma::<E, Lhs, Rhs>(lhs, rhs, space),
             TileKind::PlanePartition(p) => {
                 let mut t = p.at(0usize, 0usize);
-                t.mma(lhs, rhs, space)
+                t.mma::<E, Lhs, Rhs>(lhs, rhs, space)
             }
             TileKind::Memory(g) => {
                 let contraction = g.stated_contraction();

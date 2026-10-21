@@ -7,6 +7,8 @@ use crate::{
     Walk,
 };
 
+use super::UnitCube;
+
 /// A space with the levels that partition it, outermost first: what a kernel's loops iterate.
 #[derive(CubeType, CubeLaunch, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Partitioning {
@@ -116,6 +118,30 @@ impl Partitioning {
                         .iter()
                         .all(|other| other.coverage() != level.coverage()),
                     "Partitioning::new: two levels distribute over {scope:?}"
+                );
+            }
+            if level.spans_launch() {
+                assert!(
+                    i == 0,
+                    "Partitioning::new: a level spanning the launch is the outermost level, and \
+                     this one sits {i} levels down"
+                );
+                assert!(
+                    levels.iter().all(|other| other.coverage()
+                        != Coverage::Distribute(ComputeScope::Cube)
+                        && other.fillers() == 0),
+                    "Partitioning::new: the launch's planes or units take the outermost level, so \
+                     no cube level groups them and no plane only fills a cube's stages"
+                );
+            }
+            if level.unit_cube().is_some() {
+                assert!(
+                    levels.iter().all(|other| !matches!(
+                        other.coverage(),
+                        Coverage::Distribute(ComputeScope::Plane | ComputeScope::PlaneGroup { .. })
+                    )),
+                    "Partitioning::new: the launch's units take the outermost level, so no plane \
+                     level holds them"
                 );
             }
         }
@@ -254,7 +280,8 @@ impl Partitioning {
         let mut total = 1u32;
         let mut space = self.space.clone();
         for level in &self.levels {
-            if levels(level) {
+            // A unit of a level spanning the launch takes one tile, and asks for no units of its own.
+            if levels(level) && level.unit_cube().is_none() {
                 match level.shared_by() {
                     Some(workers) => total *= workers as u32,
                     None => {
@@ -278,6 +305,10 @@ impl Partitioning {
 
     /// The cube grid these levels distribute to.
     pub fn cube_count(&self) -> CubeCount {
+        if let Some(order) = self.levels.first().and_then(Level::launch_order) {
+            let (x, y) = order.grid(&self.levels[0], &self.space);
+            return CubeCount::Static(x as u32, y as u32, 1);
+        }
         CubeCount::Static(
             self.cube_instances(CubeAxis::X),
             self.cube_instances(CubeAxis::Y),
@@ -286,8 +317,14 @@ impl Partitioning {
     }
 
     /// Planes one cube holds: the levels' plane cuts, each plane group's planes, plus any that
-    /// only fill.
+    /// only fill; where the planes or units span the launch, the cubes their order groups them in.
     pub fn planes_per_cube(&self) -> u32 {
+        if let Some(order) = self.levels.first().and_then(Level::plane_order) {
+            return order.planes_per_cube() as u32;
+        }
+        if let Some(cube) = self.unit_cube() {
+            return cube.planes as u32;
+        }
         // `Levels` deals plane groups by one level, beside no plane level.
         let grouped = self.levels.iter().find_map(|level| {
             let scope = level.coverage().scope()?;
@@ -309,9 +346,18 @@ impl Partitioning {
         self.instances(Coverage::Distribute(ComputeScope::Unit))
     }
 
-    /// The cube this partitioning asks for at `plane_size`.
+    /// The cube this partitioning asks for at `plane_size`; where the units span the launch, the
+    /// cube they are grouped in, whatever `plane_size`.
     pub fn cube_dim(&self, plane_size: u32) -> CubeDim {
-        CubeDim::new_2d(plane_size, self.planes_per_cube())
+        match self.unit_cube() {
+            Some(cube) => CubeDim::new_2d(cube.plane_width as u32, cube.planes as u32),
+            None => CubeDim::new_2d(plane_size, self.planes_per_cube()),
+        }
+    }
+
+    /// The cubes the launch's units are grouped in, where a unit level spans the launch.
+    pub fn unit_cube(&self) -> Option<UnitCube> {
+        self.levels.first().and_then(Level::unit_cube)
     }
 }
 

@@ -12,11 +12,10 @@ use cubecl::{
     zspace::{shape, strides},
 };
 use cubek_test_utils::{TestOutcome, ValidationResult};
-use cubek_tile::launch::{TmaBox, TmaTileArg, TmaTileArgLaunch};
+use cubek_tile::launch::TmaBox;
 use cubek_tile::space::ComputeScope;
 use cubek_tile::stage::{AsyncStage, AsyncStageExpand, Role, RowChunks};
 use cubek_tile::*;
-use half::f16;
 
 use super::{Form, implied};
 
@@ -35,12 +34,12 @@ const GROUPS: usize = 2;
 /// Each group's MMAs into its window of `sum`, every step of the stage.
 #[derive(CubeType)]
 struct GroupMma {
-    sum: Tile<f32>,
+    sum: Tile,
 }
 
 #[cube]
-impl AsyncStage<f16, f16> for GroupMma {
-    fn issue(&self, region: &Region, lhs: &Tile<f16>, rhs: &Tile<f16>) -> Pending<()> {
+impl AsyncStage for GroupMma {
+    fn issue(&self, region: &Region, lhs: &Tile, rhs: &Tile) -> Pending<()> {
         let sum = self.sum.at(region);
         for group in region {
             let (sum, lhs, rhs) = (sum.at(&group), lhs.at(&group), rhs.at(&group));
@@ -60,9 +59,9 @@ impl AsyncStage<f16, f16> for GroupMma {
 /// `c = a · bᵀ`, each cube's box walked a stage of `K` at a time.
 #[cube(launch)]
 fn wgmma_walk(
-    a: &TmaTileArg<f16>,
-    b: &TmaTileArg<f16>,
-    c: &TileArg<'_, f32, Const<1>>,
+    a: &TileArg<'_>,
+    b: &TileArg<'_>,
+    c: &TileArg<'_>,
     space: Partitioning,
     #[comptime] cubes: Level,
     #[comptime] storage: StageStorage,
@@ -74,7 +73,7 @@ fn wgmma_walk(
     for cube in space.over(&cubes) {
         let (a, b, c) = (a.at(&cube), b.at(&cube), c.at(&cube));
         let walk = cube.walk();
-        let mut stages = Stages::smem(&walk, &a, &b, comptime!(storage.clone()), depth);
+        let mut stages = Stages::smem(&walk, &a, &b, comptime!(storage.clone()), depth, None);
         let total = walk.total();
         let laps = (total + comptime!(depth - 1)) / comptime!(depth);
         match stages.role() {
@@ -90,12 +89,8 @@ fn wgmma_walk(
                 }
             }
             Role::Compute => {
-                let mut sum = c.accumulator::<f32, f16, f16>(
-                    &a,
-                    &b,
-                    comptime!(Instruction::Wgmma),
-                    Semiring::SUM_PROD,
-                );
+                let mut sum =
+                    c.accumulator::<f32>(&a, &b, comptime!(Instruction::Wgmma), Semiring::SUM_PROD);
                 sum.zero();
                 let mma = GroupMma { sum: sum.clone() };
                 stages.consume_async::<GroupMma>(&walk, &mma);
@@ -173,7 +168,7 @@ fn tma_matrix(
     (stage_rows, stage_cols): (usize, usize),
     axes: [Axis; 2],
     swizzle: TensorMapSwizzle,
-) -> TmaTileArgLaunch<f16> {
+) -> TileArgLaunch {
     let handle = client.create_from_slice(half::f16::as_bytes(values));
     let tensor = unsafe {
         TensorArg::from_raw_parts(
@@ -190,7 +185,7 @@ fn tma_matrix(
         half::f16::elem_type_native(),
     )
     .with_swizzle(swizzle);
-    TmaTileArgLaunch::tensor_map(
+    TileArgLaunch::tensor_map(
         map,
         &axes,
         TmaBox {
@@ -254,7 +249,7 @@ fn check_wgmma_walk(m: usize, n: usize, k: usize, depth: usize) {
         launcher.cube_dim(),
         a,
         b,
-        TileArgLaunch::new(c, TileSpec::direct(&[M, N])),
+        TileArgLaunch::new(c, f32::elem_type_native(), 1, TileSpec::direct(&[M, N])),
         launcher.partitioning_arg(),
         launcher.partitioning().level(0),
         storage,

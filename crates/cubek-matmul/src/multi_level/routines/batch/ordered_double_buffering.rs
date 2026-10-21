@@ -90,13 +90,12 @@ impl Display for OrderedSelectionArgs {
     }
 }
 
-impl<RC> Routine<RC> for OrderedDoubleBufferingAlgorithm
-where
-    RC: RuntimeConfig,
-{
+impl cubek_std::Routine for OrderedDoubleBufferingAlgorithm {
     type Strategy = OrderedSelectionArgs;
     type Blueprint = BatchMatmulBlueprint;
 }
+
+impl<RC> Routine<RC> for OrderedDoubleBufferingAlgorithm where RC: RuntimeConfig {}
 
 impl<RC> BatchMatmulRoutine<RC> for OrderedDoubleBufferingAlgorithm
 where
@@ -160,7 +159,7 @@ where
     fn expand_blueprint(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
-        strategy: &BlueprintStrategy<RC, Self>,
+        strategy: &BlueprintStrategy<Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
