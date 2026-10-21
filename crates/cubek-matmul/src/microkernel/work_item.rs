@@ -2,6 +2,7 @@ use crate::microkernel::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands
 use crate::stored::Operand;
 use crate::stored::Packing;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::quant::scheme::QuantValue;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_tile::Axis;
 
@@ -145,6 +146,26 @@ impl MatmulWorkItem {
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes::INSIDE_BLOCKS,
         }
+    }
+
+    /// This item with both inputs read as they are stored, where both are packed into values that
+    /// name an element (`e2m1`): what an instruction that reads packed values and their scales as
+    /// they lie contracts, the block-scaled one. `None` where an input is float, or packed into
+    /// values no element names.
+    pub fn as_stored(&self) -> Option<Self> {
+        let blocks = self.blocks?;
+        let stored = |packing: Option<Packing>| match packing?.scheme.value {
+            QuantValue::E2M1 => Some(ElemType::Float(FloatKind::E2M1)),
+            _ => None,
+        };
+        Some(Self {
+            elements: MatmulOperands {
+                lhs: stored(blocks.packings.lhs)?,
+                rhs: stored(blocks.packings.rhs)?,
+                out: self.elements.out,
+            },
+            ..*self
+        })
     }
 
     /// Whether a stage of this item keeps an operand's block scales beside its values: an operand

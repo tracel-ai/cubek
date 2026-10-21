@@ -14,6 +14,7 @@ use crate::microkernel::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
+use crate::stored::BlockScales;
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubek_std::Hardware;
@@ -320,7 +321,7 @@ impl CubeStagedMicrokernel {
     pub fn tiling(&self) -> Levels {
         let MatmulAxes { m, n, .. } = self.plane.axes;
         let (tiling, walked) = match self.depth {
-            CubeStagedDepth::Steps => (self.plane.tiling(), K),
+            CubeStagedDepth::Steps => (self.plane.tiling(), self.plane.walked()),
             CubeStagedDepth::ScaleBlocks(blocks) => {
                 (self.plane.tiling_over((KB, blocks.get())), KB)
             }
@@ -503,21 +504,21 @@ impl CubeStagedMicrokernel {
         walked + accumulator + stored
     }
 
-    /// Bytes one stage's block scales take beside its values: a word of scales a row of each
-    /// operand an instruction step of `K`, where the instruction is block-scaled. Beside a box the
-    /// TMA engine lands, each operand's box may also sit up to its alignment past the scale words
-    /// staged before it.
+    /// Bytes one stage's block scales take beside its values, where the instruction is
+    /// block-scaled: a scale a row of each operand and a block of `K`, one byte each. Beside a box
+    /// the TMA engine lands, each operand's box may also sit up to its alignment past the scale
+    /// words staged before it.
     fn scale_bytes(&self, stage: &MatmulStage) -> usize {
         if !self.plane.instruction.block_scaled() {
             return 0;
         }
-        let [_, _, (_, step)] = self.plane.instruction.shape();
-        let words = (stage.extent(M) + stage.extent(N)) * stage.extent(K) / step;
+        let axes = stage.axes();
+        let scales = (stage.extent(axes.m) + stage.extent(axes.n)) * stage.extent(KB);
         let landing = match self.fill.delivery {
             CubeStagedDelivery::Tma => 2 * Delivery::TMA_STAGE_ALIGNMENT,
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => 0,
         };
-        words * size_of::<u32>() + landing
+        scales + landing
     }
 
     /// Panics where `out`'s writes are masked but its fragments hold no scratch to bounce
@@ -797,6 +798,9 @@ impl Microkernel for CubeStagedMicrokernel {
         let merges = settings.planes_along_k.get() > 1;
         let atomic = hw.shared_f32_atomic_add();
         let candidates: Vec<Self> = match item.blocks {
+            Some(_) if item.stages_scales_beside() => {
+                Self::float_candidates(hw, item, settings).collect()
+            }
             Some(_) => Self::packed_candidates(hw, item, settings),
             None => Self::float_candidates(hw, item, settings).collect(),
         };
@@ -906,6 +910,15 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
 
     fn delivery(&self) -> Delivery {
         self.fill.delivery.bound()
+    }
+
+    /// As their words where its planes' instruction is block-scaled, which takes a word of them as
+    /// its scale register.
+    fn block_scales(&self) -> BlockScales {
+        match self.plane.instruction.block_scaled() {
+            true => BlockScales::Words,
+            false => BlockScales::Fields,
+        }
     }
 }
 
