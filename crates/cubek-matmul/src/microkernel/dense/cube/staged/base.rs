@@ -389,8 +389,7 @@ impl CubeStagedMicrokernel {
             .ring
             .resolve(hw, &stage.operands(item.elements, self.plane.orders), units);
         let instruction = self.plane.instruction;
-        let (beside, axes) = (stage.beside().collect::<Vec<_>>(), stage.axes());
-        let landed = instruction.landed_stage_storage(&beside, axes, stage.extent(axes.k));
+        let landed = self.plane.landed_stage_storage(&stage);
         let folds = self.drain() == CubeStagedDrain::Merged || write.accumulates();
         let store = self
             .store
@@ -435,7 +434,7 @@ impl CubeStagedMicrokernel {
         let (storage, stage_rows) = match fill.delivery {
             CubeStagedDelivery::Tma => (landed, CubeStagedRows::Spread),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
-                let spread = instruction.stage_storage(&beside, axes);
+                let spread = self.plane.stage_storage(&stage);
                 let laid = self.stage_rows.lay(spread.clone());
                 let stage_rows = match laid == spread {
                     true => CubeStagedRows::Spread,

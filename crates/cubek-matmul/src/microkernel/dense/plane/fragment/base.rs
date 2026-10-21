@@ -9,6 +9,7 @@ use crate::microkernel::dense::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
 };
+use crate::microkernel::staged_walk::MatmulStage;
 use crate::stored::Operand;
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
@@ -16,7 +17,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Axis, Instruction, Levels, Scratch, Space};
+use cubek_tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The
@@ -283,6 +284,56 @@ impl PlaneFragmentMicrokernel {
                 vec![(blocks, rhs.scale_read(K) * depth), (inside, block)]
             }
             _ => vec![(self.axes.k, k * depth)],
+        }
+    }
+
+    /// How a stage it reads holds its cells, filled by its units: in its instruction's tiles
+    /// ([`PlaneFragmentInstruction::stage_storage`]), each one step deep along every axis `K` is
+    /// stated over ([`k_axes`](Self::k_axes)).
+    pub fn stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+        let beside: Vec<Axis> = stage.beside().collect();
+        Self::over_k(
+            self.instruction.stage_storage(&beside, stage.axes()),
+            self.k_axes(1),
+        )
+    }
+
+    /// How a stage it reads holds its cells where one TMA box lands it whole
+    /// ([`PlaneFragmentInstruction::landed_stage_storage`]): each tile the whole stage deep along
+    /// every axis `K` is stated over.
+    pub fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+        let (beside, axes): (Vec<Axis>, _) = (stage.beside().collect(), stage.axes());
+        let whole_k = self
+            .k_axes(1)
+            .into_iter()
+            .map(|(axis, _)| (axis, stage.extent(axis)))
+            .collect();
+        Self::over_k(
+            self.instruction
+                .landed_stage_storage(&beside, axes, stage.extent(axes.k)),
+            whole_k,
+        )
+    }
+
+    /// `storage` with its tiles' extents along `K` restated as `k_axes`: an instruction tiles `K`
+    /// as one axis, where a block-scaled plane states it as its scale blocks and the position
+    /// inside one, which the stage lays beside its other axes.
+    fn over_k(storage: StageStorage, k_axes: Vec<(Axis, usize)>) -> StageStorage {
+        match storage {
+            StageStorage::Tiled { block, chunks } => StageStorage::Tiled {
+                block: block
+                    .into_iter()
+                    .map(|(axis, extent)| {
+                        k_axes
+                            .iter()
+                            .copied()
+                            .find(|&(k_axis, _)| k_axis == axis)
+                            .unwrap_or((axis, extent))
+                    })
+                    .collect(),
+                chunks,
+            },
+            storage => storage,
         }
     }
 
