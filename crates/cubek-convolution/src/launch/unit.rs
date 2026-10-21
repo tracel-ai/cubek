@@ -3,7 +3,7 @@ use cubecl::{
     prelude::{Scalar, TensorBinding},
 };
 use cubek_matmul::definition::{AccumulatorOperand, MatmulElems, MatmulProblem};
-use cubek_std::{InputBinding, MatrixLayout};
+use cubek_std::{InputBinding, MatrixLayout, config::MatmulConfig};
 
 use crate::{
     ConvolutionArgs, ConvolutionInputs,
@@ -120,7 +120,7 @@ pub(crate) fn launch<const N: usize>(
     if [m, n, k].into_iter().any(|n| n > u32::MAX as usize) {
         return Err(ConvSetupError::Unknown);
     }
-    let mut problem = MatmulProblem::from_parameters(
+    let mut problem = MatmulProblem::from_parameters_with_config(
         m,
         n,
         k,
@@ -133,6 +133,7 @@ pub(crate) fn launch<const N: usize>(
         None,
         dtypes.as_global_elems(),
         Default::default(),
+        MatmulConfig { allow_tf32: true },
     );
     if matches!(&inputs, ConvolutionInputs::Forward { bias: Some(_), .. }) {
         problem.accumulator = AccumulatorOperand::Present;

@@ -6,7 +6,7 @@ use cubecl::{
     quant::scheme::QuantScheme,
     zspace::{Shape, Strides},
 };
-use cubek_std::{MatmulProblemSize, MatrixLayout, StageIdent};
+use cubek_std::{MatmulProblemSize, MatrixLayout, StageIdent, config::MatmulConfig};
 use serde::{Deserialize, Serialize};
 
 /// Numpy-style batch broadcast: left-pad the shorter shape with 1s, then take the
@@ -88,10 +88,15 @@ pub struct MatmulProblem {
 
     pub global_dtypes: MatmulGlobalElems,
 
+    /// Whether automatic F32-to-TF32 conversion is allowed for this operation.
+    /// Constructors use the process's matmul defaults unless an explicit
+    /// configuration is supplied to [`Self::from_parameters_with_config`].
+    pub allow_tf32: bool,
+
     /// Address type, defined by the max of each handle's `required_address_type`
     pub address_type: AddressType,
 
-    /// Whether the launch reads an accumulator operand. Both constructors leave
+    /// Whether the launch reads an accumulator operand. All constructors leave
     /// it [`Absent`](AccumulatorOperand::Absent); a caller that passes one says
     /// so, so the shared-memory budget charges its stage.
     pub accumulator: AccumulatorOperand,
@@ -143,11 +148,13 @@ impl MatmulProblem {
             lhs_scheme: lhs_scheme.copied(),
             rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
+            allow_tf32: MatmulConfig::get().allow_tf32,
             address_type,
             accumulator: AccumulatorOperand::Absent,
         })
     }
 
+    /// Constructs a problem using the process's matmul configuration.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parameters(
         m: usize,
@@ -162,6 +169,44 @@ impl MatmulProblem {
         rhs_scheme: Option<&QuantScheme>,
         global_dtypes: MatmulGlobalElems,
         address_type: AddressType,
+    ) -> Self {
+        Self::from_parameters_with_config(
+            m,
+            n,
+            k,
+            lhs_batches,
+            rhs_batches,
+            lhs_layout,
+            rhs_layout,
+            out_layout,
+            lhs_scheme,
+            rhs_scheme,
+            global_dtypes,
+            address_type,
+            *MatmulConfig::get(),
+        )
+    }
+
+    /// Constructs a problem with explicit configuration without reading or
+    /// initializing the process's matmul configuration.
+    ///
+    /// Operations that reuse matmul routines, such as convolution, can supply
+    /// their own precision permission independently of the matmul defaults.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parameters_with_config(
+        m: usize,
+        n: usize,
+        k: usize,
+        lhs_batches: Shape,
+        rhs_batches: Shape,
+        lhs_layout: MatrixLayout,
+        rhs_layout: MatrixLayout,
+        out_layout: MatrixLayout,
+        lhs_scheme: Option<&QuantScheme>,
+        rhs_scheme: Option<&QuantScheme>,
+        global_dtypes: MatmulGlobalElems,
+        address_type: AddressType,
+        config: MatmulConfig,
     ) -> Self {
         let out_batches =
             broadcast_batches(&lhs_batches, &rhs_batches).expect("Batches should match");
@@ -193,6 +238,7 @@ impl MatmulProblem {
             lhs_scheme: lhs_scheme.copied(),
             rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
+            allow_tf32: config.allow_tf32,
             address_type,
             accumulator: AccumulatorOperand::Absent,
         }
