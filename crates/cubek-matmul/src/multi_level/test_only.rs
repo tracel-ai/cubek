@@ -72,7 +72,7 @@ impl Display for TestStrategy {
 
 fn with_kind<A>(sel: &BlueprintStrategy<A>, kind: TileMatmulKind) -> BlueprintStrategy<A>
 where
-    A: cubek_std::Routine<Strategy: TilingArgs + Clone, Blueprint: Clone>,
+    A: cubek_std::legacy::Routine<Strategy: TilingArgs + Clone, Blueprint: Clone>,
 {
     let mut sel = sel.clone();
     if let BlueprintStrategy::Inferred(args) = &mut sel {
