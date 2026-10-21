@@ -8,9 +8,9 @@ use core::num::NonZeroUsize;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Axis, Levels};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Axis, Levels};
 
 /// Every row of a run of the output's columns, owned by one cube: its planes each run the plane
 /// microkernel's step on their own slice of every step of `K`, and add their partial sums into

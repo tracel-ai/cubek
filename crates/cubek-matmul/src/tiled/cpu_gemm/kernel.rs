@@ -1,7 +1,7 @@
 //! The CpuGemm kernel: the space it runs over and the walk written out, level by level.
 
 use cubecl::prelude::*;
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Instruction, Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg,
 };
 

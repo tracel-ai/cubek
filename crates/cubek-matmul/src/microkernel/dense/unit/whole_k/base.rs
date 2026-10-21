@@ -8,9 +8,9 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Instruction, Levels, RegisterBlock};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Instruction, Levels, RegisterBlock};
 
 /// Every row of a run of the output's columns, owned by one unit that walks all of `K` alone, so
 /// no partial meets another unit's. What a product of few rows runs on a device that commits to

@@ -9,7 +9,7 @@
 //! what the operands are.
 
 use cubecl::prelude::*;
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Instruction, Level, Levels, Partitioning, Semiring, Space, StageStorage, Stages, TileArg,
     stage::RowChunks,
 };
@@ -162,7 +162,7 @@ mod tests {
             stage_k: 32,
             buffering: 2,
             delivery: CmmaDelivery::SyncPerUnit,
-            order: cubek_tile::space::CubeOrder::RowMajor,
+            order: cubecl::tile::space::CubeOrder::RowMajor,
         }
     }
 
@@ -181,7 +181,7 @@ mod tests {
                 stage_k,
                 buffering: 2,
                 delivery: CmmaDelivery::SyncPerUnit,
-                order: cubek_tile::space::CubeOrder::RowMajor,
+                order: cubecl::tile::space::CubeOrder::RowMajor,
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);

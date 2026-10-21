@@ -9,9 +9,9 @@ use crate::microkernel::{MatmulOperand, MatmulOperands, MatmulRead, MatmulWorkIt
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::Vectorization;
-use cubek_tile::{Axis, Instruction, Levels, Space};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Vectorization;
+use cubecl::tile::{Axis, Instruction, Levels, Space};
 
 /// The software plane: its units take `K`'s scale blocks in turns, each summing its share in
 /// registers, the float product's cube shuffle ([`CubeShuffleMicrokernel`]) over a packed weight.

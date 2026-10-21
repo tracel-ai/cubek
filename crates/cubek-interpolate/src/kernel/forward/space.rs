@@ -1,7 +1,7 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Level, Levels, Partitioning, Projection, RegisterBlock, Space,
     layout::{Compaction, PhysicalAxisMap},
 };

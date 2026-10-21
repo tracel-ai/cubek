@@ -78,7 +78,7 @@ fn cmma_partition_1x1_f32() {
         stage_k: 48,
         buffering: 2,
         delivery: CmmaDelivery::SyncPerUnit,
-        order: cubek_tile::space::CubeOrder::RowMajor,
+        order: cubecl::tile::space::CubeOrder::RowMajor,
     };
     test_matmul_strategy(
         client(),
@@ -148,7 +148,7 @@ fn cmma_tma_rejects_oversized_box() {
         stage_k: 16,
         buffering: 2,
         delivery: CmmaDelivery::Tma,
-        order: cubek_tile::space::CubeOrder::RowMajor,
+        order: cubecl::tile::space::CubeOrder::RowMajor,
     };
     let problem = rect(64, 1024, 64, f16_elems());
     let device_settings = DeviceSettings {
@@ -335,7 +335,7 @@ fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy, order: TileOrde
     use cubek_test_utils::{
         ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
     };
-    use cubek_tile::Axis;
+    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 
@@ -485,7 +485,7 @@ fn cmma_tiled_weight_names_the_stage_across_m() {
     use cubek_test_utils::{
         ExecutionOutcome, TestInput, TestOutcome, ValidationResult, launch_and_capture_outcome,
     };
-    use cubek_tile::Axis;
+    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 
@@ -653,7 +653,7 @@ fn cmma_rejects_a_strip_of_no_boxes() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
-    use cubek_tile::space::CubeOrder;
+    use cubecl::tile::space::CubeOrder;
 
     for order in [CubeOrder::SwizzleRow(0), CubeOrder::SwizzleCol(0)] {
         let blueprint = CmmaBlueprint {
@@ -691,7 +691,7 @@ fn cmma_swizzled_cube_order_f32() {
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
-    use cubek_tile::space::CubeOrder;
+    use cubecl::tile::space::CubeOrder;
 
     for order in [
         CubeOrder::RowMajor,
@@ -724,7 +724,7 @@ fn cmma_takes_a_strip_the_grid_does_not_divide() {
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
-    use cubek_tile::space::CubeOrder;
+    use cubecl::tile::space::CubeOrder;
 
     // stage_m = 1 * 1 * 16 = 16 over m = 48 is a grid of 3 boxes along m, which a strip of 2
     // leaves ragged.
@@ -761,7 +761,7 @@ fn cmma_refuses_the_storage_it_cannot_read() {
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::TestInput;
-    use cubek_tile::Axis;
+    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 

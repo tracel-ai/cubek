@@ -12,7 +12,7 @@
 //! interleave the fold is built on.
 
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{Launcher, Projection, kind::Field, launch::Grid, layout::PhysicalAxisMap};
+use cubecl::tile::{Launcher, Projection, kind::Field, launch::Grid, layout::PhysicalAxisMap};
 
 use crate::{
     definition::MatmulSetupError,

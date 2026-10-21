@@ -1,7 +1,7 @@
 //! A quantized operand as the one tile a kernel reads.
 
 use cubecl_common::quant::scheme::QuantScheme;
-use cubek_tile::{
+use cubecl::tile::{
     TileArgLaunch,
     kind::Field,
     launch::{Arg, Labelled, Refusal},

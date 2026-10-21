@@ -9,9 +9,9 @@ use cubecl::{
 };
 use cubek_std::matmul_axes::{K, M, N, NB, NI};
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
-use cubek_tile::launch::Grid;
-use cubek_tile::layout::PhysicalAxisMap;
-use cubek_tile::*;
+use cubecl::tile::launch::Grid;
+use cubecl::tile::layout::PhysicalAxisMap;
+use cubecl::tile::*;
 
 use super::problem::TileQuantStageProblem;
 

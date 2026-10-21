@@ -35,7 +35,7 @@ use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
-use cubek_tile::{
+use cubecl::tile::{
     Instruction, Launcher, Levels, Monoid, Partitioning, Projection, RegisterBlock, Semiring,
     Space, TileArg, TileArgLaunch, TileSpec,
     launch::{AccumulateArg, AccumulateArgLaunch, Grid},

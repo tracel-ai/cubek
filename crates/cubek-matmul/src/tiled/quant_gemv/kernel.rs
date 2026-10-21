@@ -1,7 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg};
+use cubecl::tile::{Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg};
 
 use cubek_std::matmul_axes::{KB, KI};
 

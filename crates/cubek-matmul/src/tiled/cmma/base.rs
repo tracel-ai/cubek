@@ -20,7 +20,7 @@ use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
-use cubek_tile::{Space, launch::Delivery, space::CubeOrder};
+use cubecl::tile::{Space, launch::Delivery, space::CubeOrder};
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -74,7 +74,7 @@ const CUBES_PER_SM_FLOOR: usize = 3;
 const MAX_TILES_PER_AXIS: usize = 32;
 
 /// The CMMA routine's launch-time input transport choice. This is deliberately separate from
-/// [`cubek_tile::launch::Delivery`], which describes an already-constructed tile's staging behavior.
+/// [`cubecl::tile::launch::Delivery`], which describes an already-constructed tile's staging behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CmmaDelivery {
     /// Every unit loads and stores its own lines of each stage.
@@ -101,7 +101,7 @@ impl CmmaDelivery {
     }
 
     /// Whether TMA moves `stage` for this problem: cubek bounds the box
-    /// ([`Delivery::moves`](cubek_tile::launch::Delivery::moves)), and this routine's descriptor is
+    /// ([`Delivery::moves`](cubecl::tile::launch::Delivery::moves)), and this routine's descriptor is
     /// 3-D `(batch, row, col)`, so a surviving batch dim needs a batch-aware path not wired yet.
     fn validate_tma(self, stage: &Space, batched: bool) -> Result<(), String> {
         if !self.is_tma() {
@@ -110,7 +110,7 @@ impl CmmaDelivery {
         if batched {
             return Err("TMA: batched problems are not supported yet".to_string());
         }
-        cubek_tile::launch::Delivery::Tma
+        cubecl::tile::launch::Delivery::Tma
             .moves(stage)
             .map_err(|refusal| refusal.to_string())
     }

@@ -7,8 +7,8 @@
 
 use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubek_std::matmul_axes::{K, blocked};
-use cubek_tile::launch::Refusal;
-use cubek_tile::{Axis, Space, kind::Field};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{Axis, Space, kind::Field};
 
 /// The shape of the smallest indivisible tile of something: one value on every
 /// axis but the ones it names.

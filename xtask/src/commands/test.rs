@@ -31,7 +31,6 @@ pub(crate) fn handle_command(
                 "cubek-reduce",
                 "cubek-std",
                 "cubek-test-utils",
-                "cubek-tile",
             ],
             vec!["--features", backend],
             None,

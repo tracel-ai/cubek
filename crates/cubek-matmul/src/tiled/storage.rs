@@ -15,7 +15,7 @@ use cubecl::{
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
-use cubek_tile::{
+use cubecl::tile::{
     Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
     layout::StorageMisfit,
 };
@@ -68,7 +68,7 @@ fn relayout<E: Numeric, V: Size>(
 
 /// What [`tile`] is told: how the matrix is laid down in memory, stated leaf-up over axes the
 /// caller names.
-pub use cubek_tile::{
+pub use cubecl::tile::{
     Axis,
     layout::{StorageLevels, StoragePartitioning},
 };

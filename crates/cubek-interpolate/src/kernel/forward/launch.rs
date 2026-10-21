@@ -11,7 +11,7 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{client::Client, ir::ElemType, prelude::*};
-use cubek_tile::{
+use cubecl::tile::{
     Geometry, Launcher,
     launch::{BoundaryPolicy, Grid},
 };

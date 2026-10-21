@@ -24,9 +24,8 @@ full = ["extended"]
 
 [dependencies]
 cubek-std = { workspace = true }
-cubek-tile = { workspace = true }
 
-cubecl = { workspace = true, features = ["stdlib"] }
+cubecl = { workspace = true, features = ["tile"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
 
 half.workspace = true

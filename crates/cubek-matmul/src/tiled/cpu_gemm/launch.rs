@@ -2,7 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, Launcher, Space, launch::Grid};
+use cubecl::tile::{Axis, Geometry, Launcher, Space, launch::Grid};
 
 use crate::{
     definition::{

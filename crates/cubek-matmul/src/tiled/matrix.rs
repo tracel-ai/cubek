@@ -4,7 +4,7 @@ use cubecl::{
     prelude::TensorBinding,
     zspace::{Tiling, metadata::Metadata},
 };
-use cubek_tile::{Axis, Geometry, Level, Partitioning, Space};
+use cubecl::tile::{Axis, Geometry, Level, Partitioning, Space};
 
 use crate::{definition::MatmulSetupError, tiled::labels};
 
@@ -232,7 +232,7 @@ mod tests {
     /// where a caller hears it: matched on a worker thread, a refusal reaches no one.
     fn a_stored_tile_that_is_a_level_passes_and_one_that_is_none_is_refused() {
         let space = Space::new(&[(M, 64), (N, 64), (K, 32)]);
-        let levels = cubek_tile::Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
+        let levels = cubecl::tile::Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
             .walk_every(&[K])
             .planes(&[(M, 2), (N, 4)])
             .cubes(&[M, N])

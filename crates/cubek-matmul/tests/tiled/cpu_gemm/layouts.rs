@@ -13,7 +13,7 @@ use cubek_matmul::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Geometry, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
     launch::Grid,
 };

@@ -5,7 +5,7 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
 };
 use cubek_std::matmul_axes::{M, N};
-use cubek_tile::{
+use cubecl::tile::{
     Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
     launch::Grid, layout::PhysicalAxisMap,
 };

@@ -2,13 +2,13 @@ use crate::microkernel::{
     MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulOrder, MatmulWorkItem,
 };
 use cubek_std::Hardware;
-use cubek_tile::launch::Refusal;
+use cubecl::tile::launch::Refusal;
 
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::wgmma::WARPGROUP_UNITS;
 use cubek_std::microkernel::ArithmeticInstruction;
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Instruction, MmaOperands, RegisterBlock, StageStorage, ops::matmul::MmaIo,
     stage::RowChunks,
 };

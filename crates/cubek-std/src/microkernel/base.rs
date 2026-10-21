@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Display};
-use cubek_tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Refusal, Vectorization};
 
 use crate::Hardware;
 use crate::microkernel::{CubePlanes, KernelEstimate};

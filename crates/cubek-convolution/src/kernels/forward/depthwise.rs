@@ -25,10 +25,10 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_std::InputBinding;
-use cubek_tile::kind::Boundary;
-use cubek_tile::launch::Grid;
-use cubek_tile::layout::PhysicalAxisMap;
-use cubek_tile::*;
+use cubecl::tile::kind::Boundary;
+use cubecl::tile::launch::Grid;
+use cubecl::tile::layout::PhysicalAxisMap;
+use cubecl::tile::*;
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 

@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone)]
 pub enum InterpolateError {
     #[error(transparent)]
-    Refused(#[from] cubek_tile::launch::Refusal),
+    Refused(#[from] cubecl::tile::launch::Refusal),
 
     #[error("Unsupported interpolation mode: {0}")]
     UnsupportedMode(String),

@@ -23,7 +23,7 @@
 use std::fmt::Display;
 
 use cubecl::quant::scheme::{QuantValue, ScaleDtype};
-use cubek_tile::kind::Field;
+use cubecl::tile::kind::Field;
 
 use crate::definition::MatmulSetupError;
 

@@ -1,5 +1,5 @@
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_tile::{Region, Tile};
+use cubecl::tile::{Region, Tile};
 
 /// `sum += a · b` over one step of a unit's block. The caller opens `sum` (an `accumulator` of
 /// `Instruction::Registers` at [`tile_instruction`](crate::microkernel::dense::unit::UnitWholeKMicrokernel::tile_instruction)),

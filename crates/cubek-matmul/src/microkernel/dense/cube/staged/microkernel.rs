@@ -6,7 +6,7 @@ use crate::microkernel::dense::plane::{
 use crate::microkernel::staging::StageRing;
 use crate::microkernel::{MatmulOperands, MatmulRead};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_tile::{
+use cubecl::tile::{
     Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
     stage::{AsyncStage, AsyncStageExpand, Role},
 };

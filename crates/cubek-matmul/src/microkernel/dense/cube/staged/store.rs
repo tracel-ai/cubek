@@ -4,8 +4,8 @@ use crate::microkernel::{MatmulBuffers, MatmulDestination, MatmulOperand, Matmul
 use core::num::NonZeroUsize;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
-use cubek_tile::launch::Delivery;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
 
 /// Who moves a cube microkernel's box of the output into global memory once its walk ends. A
 /// request the microkernel resolves against the device and the problem

@@ -1,6 +1,6 @@
 use crate::microkernel::dense::cube::{CubeStagedWalk, cube_staged_sum_microkernel};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_tile::{
+use cubecl::tile::{
     StageStorage, Tile, Walk,
     launch::{LastArrival, Relay},
 };

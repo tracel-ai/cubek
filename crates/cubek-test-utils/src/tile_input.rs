@@ -20,7 +20,7 @@ use cubecl::{
         layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
     },
 };
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Launcher, Space, TileArgLaunch, TileSpec as CubekTileSpec,
     kind::Field,
     launch::{Arg, Labelled},

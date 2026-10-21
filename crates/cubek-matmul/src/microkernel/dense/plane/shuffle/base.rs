@@ -10,9 +10,9 @@ use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Axis, Instruction, Levels, RegisterBlock};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 
 /// Bytes one stored word of a packed weight holds: it binds one `u32` per line whatever it packs.
 const WORD_BYTES: usize = core::mem::size_of::<u32>();

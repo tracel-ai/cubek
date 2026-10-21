@@ -1,5 +1,5 @@
 use crate::definition::Transform;
-use cubek_tile::{Axis, layout::PhysicalAxisMap};
+use cubecl::tile::{Axis, layout::PhysicalAxisMap};
 
 /// A source coordinate `(output * scale + offset) / divisor`, in lowest terms.
 #[derive(Clone, Copy)]

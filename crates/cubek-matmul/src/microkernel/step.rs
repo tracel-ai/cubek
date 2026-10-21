@@ -2,8 +2,8 @@ use crate::stored::Operand;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_nvfp4, manual_mma};
-use cubek_tile::launch::Refusal;
-use cubek_tile::{Axis, Space};
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{Axis, Space};
 
 /// What a launch of this kind declines whatever the routine: a weight a read of which straddles
 /// two scale tiles, or an `n` or a `k` that is not a whole number of [steps](MatmulStep).

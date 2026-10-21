@@ -4,7 +4,7 @@ use super::{
 };
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Partitioning, Region, RegisterBlock, Semiring, StageStorage, Stages, Tile, TileArg,
     procedural::{Factors, Phase, Procedural, affine_along, sum_of},
 };

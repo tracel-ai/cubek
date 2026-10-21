@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 
-use cubek_tile::{
+use cubecl::tile::{
     Axis,
     procedural::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand},
 };

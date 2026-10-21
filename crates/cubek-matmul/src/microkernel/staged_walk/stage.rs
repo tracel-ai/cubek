@@ -3,8 +3,8 @@ use crate::microkernel::staging::StagedOperand;
 use crate::microkernel::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulOrder};
 use cubecl::ir::ElemType;
 use cubek_std::Hardware;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Axis, Space, StageStorage};
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Axis, Space, StageStorage};
 
 /// The box one step of a walk through `K` stages of both operands: a cube's, or a plane's own.
 #[derive(Debug, Clone, PartialEq, Eq)]

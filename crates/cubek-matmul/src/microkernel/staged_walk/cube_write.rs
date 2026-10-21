@@ -5,12 +5,12 @@ pub enum MatmulCubeWrite {
     Replace,
     /// The cubes sharing a box take their turns at a carry in the sum's element, each adding its
     /// part into what the turns before it left, and the last hands the sum on to the output, which
-    /// is written once ([`Relay`](cubek_tile::launch::Relay)).
+    /// is written once ([`Relay`](cubecl::tile::launch::Relay)).
     Relay,
     /// A cube holding a box whole writes it once. Each of the cubes sharing a box parks its part in
     /// a slot of the sum's element, and the last to arrive adds the parts in the order of their
     /// runs and hands the sum on to the output, which is written once
-    /// ([`LastArrival`](cubek_tile::launch::LastArrival)).
+    /// ([`LastArrival`](cubecl::tile::launch::LastArrival)).
     LastArrival,
 }
 

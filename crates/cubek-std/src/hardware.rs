@@ -10,7 +10,7 @@ use cubecl::{
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
 };
-use cubek_tile::launch::Refusal;
+use cubecl::tile::launch::Refusal;
 
 /// The device, as the routines see it.
 ///
@@ -23,7 +23,7 @@ pub struct Hardware {
     pub properties: Arc<DeviceProperties>,
     /// Whether an `mma` accumulator holds its cells where the `A` operand of a contraction as
     /// deep as it is wide holds them, so a product contracted again reads it as that operand in
-    /// the same registers (cubek-tile's `accumulator_as_a`).
+    /// the same registers (the tile DSL's `accumulator_as_a`).
     ///
     /// True on CUDA, and on Metal, whose simdgroup matrix gives every lane two cells of one row
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down

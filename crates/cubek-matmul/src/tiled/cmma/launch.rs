@@ -6,7 +6,7 @@ use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand_tiled_typed, tma_operand_typed},
 };
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Geometry, Launcher, Space, TileArgLaunch,
     launch::{Delivery, Grid, TmaBox, TmaLanding, TmaTiles},
 };
@@ -255,8 +255,8 @@ struct Elems {
 
 /// The tensor-bound path, the cube's units moving each stage, themselves or through the async copy
 /// engine as the blueprint's delivery says: each operand lined at the widest width the launcher's
-/// gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
-/// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
+/// gate allows, bound to its [`Operand`](cubecl::tile::Operand) by the shared
+/// [`StridedTileSource`](cubecl::tile::StridedTileSource) derivation. An operand's own spec says
 /// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
 #[allow(clippy::too_many_arguments)]
 fn launch_strided(

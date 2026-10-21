@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use cubek_tile::{
+use cubecl::tile::{
     Axis,
     procedural::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand},
 };

@@ -23,7 +23,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 use cubek_std::layout::{Fragments, assemble, fragments_of};
 use cubek_std::matmul_axes::{KB, KI, NI};
-use cubek_tile::Axis;
+use cubecl::tile::Axis;
 
 /// NVFP4's block: sixteen values along `k` under one scale.
 pub const BLOCK: usize = 16;

@@ -4,7 +4,7 @@ use crate::stored::Packing;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_tile::Axis;
+use cubecl::tile::Axis;
 
 /// What a microkernel is handed to choose by: the elements it reads and writes and the one it
 /// sums in, how each operand lies and the space their scales cut, how many rows it holds, and

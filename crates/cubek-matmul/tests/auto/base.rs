@@ -104,7 +104,7 @@ fn auto_sends_a_tiled_weight_to_the_tiled_cmma() {
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
-    use cubek_tile::Axis;
+    use cubecl::tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 

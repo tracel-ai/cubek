@@ -1,8 +1,8 @@
 use crate::microkernel::staged_walk::MatmulStage;
 use crate::microkernel::{MatmulAxes, MatmulRowsKind, MatmulWorkItem};
 use cubek_std::matmul_axes::{K, KB, M, MB, MI, N, NB, NI};
-use cubek_tile::launch::Refusal;
-use cubek_tile::{
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{
     Axis, Partitioning, Space, TileSpec,
     space::{ComputeScope, Count, Coverage, CubeOrder, PlaneOrder},
 };

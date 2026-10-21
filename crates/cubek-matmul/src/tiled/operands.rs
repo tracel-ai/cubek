@@ -1,12 +1,12 @@
 //! The axes every tiled routine builds its space over.
 
 pub(crate) use cubek_std::matmul_axes::{K, M, N, batch_axis};
-use cubek_tile::{Axis, Space};
+use cubecl::tile::{Axis, Space};
 
 /// The space a routine's levels are stated over before any problem: every axis dynamic, so the
 /// counts a shape decides print as unknown and the tiling itself still reads. The axis order is
 /// the launch's — batch axes first, then the matrix dims and the contraction — since that order
-/// is what a [`Region`](cubek_tile::Region)'s coordinates come in.
+/// is what a [`Region`](cubecl::tile::Region)'s coordinates come in.
 ///
 /// Nothing may ask this space for a grid: [`Partitioning::cube_count`] needs an extent the
 /// launch has not stamped yet. Printing is what it is for, and only tests print one today. It
