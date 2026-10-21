@@ -1,6 +1,6 @@
-use crate::microkernel::{MatmulPartitioning, MatmulSpace};
 use crate::microkernel::staged_walk::{MatmulCubeWrite, MatmulStage};
 use crate::microkernel::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
+use crate::microkernel::{MatmulPartitioning, MatmulSpace};
 use core::num::NonZeroUsize;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
