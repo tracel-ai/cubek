@@ -421,3 +421,251 @@ fn a_policy_never_names_a_kernel_that_can_decline() {
         }
     }
 }
+
+mod strategy {
+    use super::super::*;
+
+    /// Everything that is not a pin lets the caller choose; a `Specific`
+    /// names the kernel a benchmark row or a capture asked for and must not be
+    /// substituted.
+    #[test]
+    fn the_policies_are_the_strategies_that_name_no_kernel() {
+        let policies: Vec<_> = MatmulOpStrategy::all()
+            .into_iter()
+            .filter(MatmulOpStrategy::is_policy)
+            .collect();
+        assert_eq!(
+            policies,
+            vec![
+                MatmulOpStrategy::Autotune,
+                MatmulOpStrategy::Heuristic(MatmulKernelHeuristic::Tile),
+                MatmulOpStrategy::Heuristic(MatmulKernelHeuristic::Cubek),
+            ],
+        );
+    }
+
+    /// Autotune is what a caller naming nothing gets.
+    #[test]
+    fn the_default_is_autotune() {
+        assert_eq!(MatmulOpStrategy::default(), MatmulOpStrategy::Autotune);
+    }
+
+    /// No pin names a framework op. The tables are built from kernels, and the
+    /// pin vocabulary is what a benchmark drives one of them with — a variant
+    /// reaching burn's `matmul` would be a candidate whose winner is another
+    /// tuner's answer.
+    #[test]
+    fn every_pin_names_a_kernel() {
+        for strategy in MatmulOpStrategy::all() {
+            let MatmulOpStrategy::Specific(kernel) = strategy else {
+                continue;
+            };
+            assert!(
+                matches!(
+                    kernel,
+                    MatmulKernel::UnitRegisters
+                        | MatmulKernel::PlaneShuffle
+                        | MatmulKernel::CubekAuto
+                        | MatmulKernel::Nvfp4TensorCores
+                ),
+                "{kernel:?} is not one of this family's kernels",
+            );
+        }
+    }
+}
+
+mod float {
+    use super::super::problem::*;
+    use super::super::selector::*;
+    use super::super::*;
+    use MatmulChoice as F;
+    use MatmulKernel as K;
+    use MatmulKernelHeuristic as H;
+    use MatmulOpStrategy::*;
+    use cubek_std::devices;
+    use cubek_tile::launch::Refusal;
+
+    /// The kernel `strategy` chooses for the float `problem`: the selection, which reads a float
+    /// weight on any device alike.
+    fn select(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<F, Refusal> {
+        match super::super::selector::select(strategy, problem, &devices::cpu_12())? {
+            MatmulSelection::Float(choice) => Ok(choice),
+            other => panic!("a float weight is read as it is: {other:?}"),
+        }
+    }
+
+    /// A product against an unbatched weight, so the left-hand side's extents
+    /// fold: `m` rows in each of `batches` of them is what one memory-bound
+    /// launch streams.
+    fn float(m: usize, batches: usize) -> MatmulProblem {
+        MatmulProblem {
+            m,
+            k: 2048,
+            n: 8192,
+            batches,
+            streamed_rows: Some(m * batches),
+            lhs: OperandKind::Float,
+            rhs: OperandKind::Float,
+        }
+    }
+
+    /// The same shape against a weight of its own per batch — nothing folds,
+    /// and no memory-bound kernel here reads more than one weight.
+    fn batched_weight(m: usize, batches: usize) -> MatmulProblem {
+        MatmulProblem {
+            streamed_rows: None,
+            ..float(m, batches)
+        }
+    }
+
+    /// Every row of the float table: a float product never asks the hardware anything, so its
+    /// selection is asked of no device.
+    #[test]
+    fn float_rules() {
+        for (strategy, problem, expected) in [
+            // Rows pick the table, and nothing else does.
+            (Autotune, float(1, 1), Ok(F::Autotune(MatmulTable::FewRows))),
+            (
+                Autotune,
+                float(512, 1),
+                Ok(F::Autotune(MatmulTable::ManyRows)),
+            ),
+            // No heuristic measures. Below the cubek ceiling the answer is
+            // this crate's routines, resolved at the launch by the strides;
+            // at it, cubek's own selector.
+            (
+                Heuristic(H::Tile),
+                float(1, 1),
+                Ok(F::Rule(MatmulKernel::PlaneShuffle)),
+            ),
+            (
+                Heuristic(H::Tile),
+                float(512, 4),
+                Ok(F::Rule(MatmulKernel::PlaneShuffle)),
+            ),
+            (
+                Heuristic(H::Cubek),
+                float(1, 1),
+                Ok(F::Rule(MatmulKernel::CubekAuto)),
+            ),
+            (
+                Heuristic(H::Cubek),
+                float(512, 4),
+                Ok(F::Rule(MatmulKernel::CubekAuto)),
+            ),
+            (
+                Specific(K::UnitRegisters),
+                float(512, 1),
+                Ok(F::Pin(MatmulKernel::UnitRegisters)),
+            ),
+            (
+                Specific(K::PlaneShuffle),
+                float(1, 1),
+                Ok(F::Pin(MatmulKernel::PlaneShuffle)),
+            ),
+            (
+                Specific(K::CubekAuto),
+                float(1, 1),
+                Ok(F::Pin(MatmulKernel::CubekAuto)),
+            ),
+        ] {
+            assert_eq!(select(strategy, &problem), expected, "{strategy:?}");
+        }
+        // The 4-bit kernel reads a packed weight: there is no float product for it to serve, at
+        // any row count.
+        for m in [1, 2, 512] {
+            assert_eq!(
+                select(Specific(K::Nvfp4TensorCores), &float(m, 1)),
+                Err(NO_NVFP4_WEIGHT)
+            );
+        }
+    }
+
+    /// The float bound is what every float gemv candidate holds: the plane shuffle compiles at most
+    /// that many rows in, so a wider float width routed to the few-rows table would meet a candidate
+    /// that declines it and be answered by the fallback.
+    #[test]
+    fn the_float_bound_is_what_the_plane_shuffle_holds() {
+        use crate::microkernel::dense::plane::PlaneShuffleMicrokernel;
+        assert_eq!(FLOAT_FEW_ROWS, PlaneShuffleMicrokernel::MAX_ROWS);
+    }
+
+    /// The bound's edges: a float product reaches the few-rows table from one row to the bound.
+    #[test]
+    fn the_float_bound_holds_its_edges() {
+        assert!(!float_few_rows(0));
+        assert!(float_few_rows(1) && float_few_rows(FLOAT_FEW_ROWS));
+        assert!(!float_few_rows(FLOAT_FEW_ROWS + 1));
+    }
+
+    /// A row count picks the table, and nothing else does: no weight layout narrows what reaches
+    /// the few-rows table.
+    #[test]
+    fn the_row_count_alone_picks_the_table() {
+        for rows in 1..=FLOAT_FEW_ROWS {
+            assert_eq!(
+                select(Autotune, &float(rows, 1)),
+                Ok(F::Autotune(MatmulTable::FewRows)),
+                "{rows} float rows"
+            );
+        }
+        for rows in [0, FLOAT_FEW_ROWS + 1, 512] {
+            assert_eq!(
+                select(Autotune, &float(rows, 1)),
+                Ok(F::Autotune(MatmulTable::ManyRows)),
+                "{rows} float rows"
+            );
+        }
+    }
+
+    /// Routing counts the rows a memory-bound kernel would stream, not the
+    /// trailing extent.
+    ///
+    /// `[b, m, k] @ [1, k, n]` is one product of `b·m` rows to every memory-bound
+    /// candidate — they all fold the leading extents and read the weight once.
+    /// Routing on `m` alone calls a 512-row product an 8-row one and sends it
+    /// to a table on which the float kernel rejects the plane shuffle, cubek's vec-mats
+    /// reject anything past one row, and the answer is whatever is left. This
+    /// reaches the attention score product and every backward.
+    #[test]
+    fn a_folded_batch_is_routed_by_the_rows_a_memory_bound_kernel_would_stream() {
+        let folded = float(8, 64);
+        assert_eq!(
+            folded.m, 8,
+            "the trailing extent is inside the memory-bound regime"
+        );
+        assert_eq!(folded.streamed_rows, Some(512));
+        assert_eq!(
+            select(Autotune, &folded),
+            Ok(F::Autotune(MatmulTable::ManyRows))
+        );
+
+        // A weight per batch folds nothing, at any row count.
+        for problem in [batched_weight(1, 64), batched_weight(8, 64)] {
+            assert_eq!(
+                select(Autotune, &problem),
+                Ok(F::Autotune(MatmulTable::ManyRows)),
+                "{problem:?}"
+            );
+        }
+    }
+
+    /// A policy never names a kernel that may decline without a fallback beside it: the launches
+    /// read strides and ask cubek's selector for a plan, which these rules cannot see, and a pin
+    /// panics on a decline.
+    #[test]
+    fn a_policy_never_names_a_pin() {
+        for strategy in MatmulOpStrategy::all()
+            .into_iter()
+            .filter(MatmulOpStrategy::is_policy)
+        {
+            for problem in [float(1, 1), float(512, 1)] {
+                let selection = select(strategy, &problem);
+                assert!(
+                    !matches!(selection, Ok(F::Pin(_))),
+                    "{strategy:?} names a pin for {problem:?}: {selection:?}"
+                );
+            }
+        }
+    }
+}

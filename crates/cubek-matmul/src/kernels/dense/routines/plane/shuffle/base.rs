@@ -251,7 +251,7 @@ impl PlaneShuffleMatmulRoutine {
 /// and the planes one cube holds side by side along it, a target snapped to what the runs of
 /// columns divide, so no cube overhangs. The gemv deals the planes the launch's columns; the
 /// decode into a float weight places the same planes in cubes, each cube copying its box.
-pub(crate) struct PlaneShufflePackedPlacement {
+pub struct PlaneShufflePackedPlacement {
     pub microkernel: PlaneShuffleMicrokernel,
     pub columns: Axis,
     pub planes: usize,
@@ -264,7 +264,7 @@ impl PlaneShufflePackedPlacement {
     ///
     /// [`MATMUL_Q_RHS_NOT_PACKED`], for a float weight; why `hw` cannot walk `problem`'s steps, or
     /// run its microkernel at `settings`.
-    pub(crate) fn new(
+    pub fn new(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,

@@ -37,6 +37,11 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
             .collect()
     }
 
+    /// The setting this candidate launches the routine at.
+    pub fn settings(&self) -> &R::Settings {
+        &self.settings
+    }
+
     /// The routine this candidate launches.
     pub fn routine(&self) -> R {
         self.routine

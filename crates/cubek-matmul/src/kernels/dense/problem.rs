@@ -472,4 +472,32 @@ mod tests {
             row.alignment(rhs, MatmulOrder::Stated)
         );
     }
+
+    /// Where the lines lie is read off the strides, so a weight with no single
+    /// lined axis has no problem at all — it is not a col weight and not a row
+    /// weight, and there is no third tiling to sort it into.
+    ///
+    /// Neither stride one: a weight narrowed along both dims, which no line walks.
+    /// Both stride one at full extents: the two dims alias, and the addressability
+    /// check refuses what the contiguity read alone could not. And a stride below
+    /// the row it steps over is a narrowed or aliasing view this binding cannot
+    /// describe.
+    #[test]
+    fn a_weight_with_no_single_lined_axis_has_no_problem() {
+        for strides in [[2, 8192], [1, 1], [1, 4092]] {
+            assert!(
+                MatmulLayout::lines([K, N], [4096, 4096], strides).is_none(),
+                "{strides:?}"
+            );
+        }
+        assert_eq!(
+            MatmulLayout::lines([K, N], [4096, 4096], [1, 4096 + 4]),
+            Some((K, 4096 + 4)),
+            "padding is served: the launch binds the real stride"
+        );
+        assert_eq!(
+            MatmulLayout::lines([K, N], [4096, 4096], [4096, 1]),
+            Some((N, 4096))
+        );
+    }
 }
