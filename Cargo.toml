@@ -89,3 +89,16 @@ opt-level = 0
 
 [profile.dev.build-override]
 opt-level = 3
+
+# Kernels are compiled when a test first launches them, by pliron and cubecl's
+# optimizer, and a debug build runs those unoptimized, so a cpu suite spends
+# most of its time compiling. Optimizing the compiler crates alone keeps the
+# code under test debuggable.
+[profile.dev.package.pliron]
+opt-level = 3
+[profile.dev.package.pliron-llvm]
+opt-level = 3
+[profile.dev.package.cubecl-opt]
+opt-level = 3
+[profile.dev.package.cubecl-llvm]
+opt-level = 3
