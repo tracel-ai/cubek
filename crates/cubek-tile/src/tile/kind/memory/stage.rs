@@ -692,6 +692,19 @@ mod tests {
         assert_eq!(tiled.strides(), vec![64, 16, 4, 1]);
     }
 
+    /// A stage's bytes are its lines, and a padded block's rows each a chunk longer: `16 × 16`
+    /// `f16` values in 8-byte lines are 512 bytes, and 768 with 16 bytes after each of the 16 rows.
+    #[test]
+    fn a_stage_holds_its_lines_and_its_padding() {
+        let (space, _) = space();
+        assert_eq!(StageStorage::Strided.bytes(&space, 4, 16), 512);
+        let padded = StageStorage::Tiled {
+            block: space.extents(),
+            chunks: RowChunks::Padded,
+        };
+        assert_eq!(padded.bytes(&space, 4, 16), 768);
+    }
+
     /// A swizzled block keeps in-order extents and strides, swizzling only 16-byte lines.
     #[test]
     fn a_swizzled_block_is_laid_out_as_one_in_order() {

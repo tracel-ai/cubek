@@ -101,6 +101,14 @@ impl StageStorage {
         Ok(swizzle)
     }
 
+    /// Bytes a stage over `space` holds laid out this way, its lines `vector_size` values of
+    /// `elem_bits` bits, which a line holds whole bytes of: every line of its cells, and the
+    /// padding after each row. What [`Stages::smem`](crate::Stages::smem) allocates for it.
+    pub fn bytes(&self, space: &Space, vector_size: usize, elem_bits: usize) -> usize {
+        let line = vector_size * elem_bits / 8;
+        StageForm::dense(space, vector_size, self.clone(), LineBytes(line)).cells() * line
+    }
+
     /// The storage-tiling nesting a stage over `space` gets, coarse to fine; empty is row-major.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
