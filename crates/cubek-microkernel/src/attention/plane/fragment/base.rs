@@ -93,7 +93,7 @@ impl PlaneFragmentAttentionMicrokernel {
         self.value.leaf_extent(MatmulDim::N)
     }
 
-    /// The value's instruction as cubek's tile engine runs it, which the plane's sum is opened in.
+    /// The value's instruction as the tile DSL runs it, which the plane's sum is opened in.
     pub fn tile_instruction(&self) -> Instruction {
         self.value.tile_instruction()
     }
