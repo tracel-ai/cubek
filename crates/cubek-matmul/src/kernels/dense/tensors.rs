@@ -1058,7 +1058,8 @@ impl Operands {
         let lhs = Self::with_foldable_rows(client, lhs);
         let lhs_shape = lhs.shape();
         let k = lhs_shape[lhs_shape.rank() - 1];
-        let [weight_k, n] = [weight.binding.shape[0], weight.binding.shape[1]];
+        let weight_shape = weight.shape();
+        let [weight_k, n] = [weight_shape[0], weight_shape[1]];
         assert_eq!(
             k,
             weight_k,
@@ -1080,7 +1081,7 @@ impl Operands {
     /// activation's rows, the weight's columns.
     fn out_rows(&self) -> Option<[usize; 2]> {
         match self.rows_kind {
-            MatmulRowsKind::Whole => Some([self.lhs.binding.shape[0], self.rhs.binding.shape[1]]),
+            MatmulRowsKind::Whole => Some([self.lhs.shape()[0], self.rhs.shape()[1]]),
             MatmulRowsKind::Tiled => None,
         }
     }
