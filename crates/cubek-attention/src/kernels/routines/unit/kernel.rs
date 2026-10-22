@@ -33,8 +33,8 @@ pub fn unit_attention_kernel<EA: Float>(
         let bias = visible.bias::<EA>(&partitioning);
         let steps = visible.steps(
             &unit,
-            comptime!(microkernel.settings.rows.get()),
-            comptime!(microkernel.keys()),
+            comptime!(microkernel.settings.seq_q.get()),
+            comptime!(microkernel.seq_kv()),
             1usize,
         );
         unit_attention_microkernel::<EA>(

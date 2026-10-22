@@ -12,7 +12,7 @@ pub struct AttentionSlotShape {
     /// Units of the plane that merges a row, which share its work.
     pub units: usize,
     /// Elements of a row's output.
-    pub value: usize,
+    pub val_dim: usize,
     /// Slots of every row.
     pub splits: usize,
 }
@@ -38,7 +38,7 @@ pub struct AttentionSlotBox {
     pub first_row: usize,
     /// Queries of the box the problem holds, from the first: none for a head past the group,
     /// which a cube holding several heads overhangs where they do not divide it.
-    pub queries: usize,
+    pub seq_q: usize,
 }
 
 #[cube]
@@ -68,7 +68,7 @@ impl AttentionSlotBox {
             first_query,
             head_index,
             first_row: head_index * held_queries + first_query,
-            queries: held.min(queries),
+            seq_q: held.min(queries),
         }
     }
 }

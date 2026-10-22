@@ -36,10 +36,10 @@ pub trait CubePlaneMicrokernel:
     fn tiling(&self) -> Levels;
 
     /// Query positions one plane owns, of one head.
-    fn queries(&self) -> usize;
+    fn seq_q(&self) -> usize;
 
     /// Keys one plane takes in one step.
-    fn keys(&self) -> usize;
+    fn seq_kv(&self) -> usize;
 
     /// Bytes of shared memory one plane holds while the cube walks, beside the cube's own.
     fn window_bytes(&self, item: &AttentionWorkItem) -> usize;
@@ -224,5 +224,5 @@ pub struct StagedPlaneOperands {
 pub struct GlobalPlaneOperands {
     pub query: Tile,
     #[cube(comptime)]
-    pub value: usize,
+    pub val_dim: usize,
 }

@@ -47,7 +47,7 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         #[comptime] layout: CubePlaneLayout,
     ) -> Self {
         let score = StageScore::open::<EA, ES>(walk, &opening.query, microkernel);
-        let softmax = score.softmax::<EA>(comptime!(microkernel.queries()));
+        let softmax = score.softmax::<EA>(comptime!(microkernel.seq_q()));
         PlaneFragmentAttention::<EA, ES> {
             sum: plane_fragment_attention_sum::<EA>(
                 &opening.out,
@@ -132,7 +132,7 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         let read = rows_window.flat::<EA, Const<1>>();
         let (max, sum) = (max.flat::<EA, Const<1>>(), sum.flat::<EA, Const<1>>());
         #[unroll]
-        for r in 0..comptime!(self.microkernel.queries()) {
+        for r in 0..comptime!(self.microkernel.seq_q()) {
             if r < rows {
                 let slot = first_slot + r * row_stride;
                 let mut d = UNIT_POS_PLANE as usize;
@@ -447,7 +447,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     staged_query.copy_from(query);
     sync_plane();
     let score = StageScore::open::<EA, ES>(&walk, &staged_query, microkernel);
-    let mut softmax = score.softmax::<EA>(comptime!(microkernel.queries()));
+    let mut softmax = score.softmax::<EA>(comptime!(microkernel.seq_q()));
     let mut stages = Stages::smem(
         &walk,
         key,

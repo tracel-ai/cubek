@@ -224,7 +224,7 @@ mod fragment {
                 .shared_memory(&hw, &item, &blueprint.shared_memory)
         };
         let microkernel = prepared(CubeAttentionStageLayout::Strided).microkernel;
-        let stage = item.stage(microkernel.keys(), microkernel.key_order());
+        let stage = item.stage(microkernel.seq_kv(), microkernel.key_order());
         let whole_rows: usize = stage
             .iter()
             .map(|operand| operand.cells() / operand.space.extent(operand.innermost))
@@ -261,7 +261,7 @@ mod fragment {
         assert_eq!(heads, problem.group.min(4));
         assert_eq!(cube.extent(G), heads);
         assert_eq!(stage.extent(G), heads);
-        assert_eq!(stage.extent(S), microkernel.plane.keys());
+        assert_eq!(stage.extent(S), microkernel.plane.seq_kv());
         assert_eq!(grid.planes().count, heads);
     }
 

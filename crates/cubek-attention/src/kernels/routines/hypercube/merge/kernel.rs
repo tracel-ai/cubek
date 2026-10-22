@@ -26,7 +26,7 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         query_head / group,
         query_head % group,
         query,
-        comptime!(merge.queries),
+        comptime!(merge.seq_q),
     );
     plane_merge_attention_microkernel::<EA, E, N>(
         slot_out,
@@ -35,6 +35,6 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         out,
         &slot_box,
         merge.slots,
-        merge.queries,
+        merge.seq_q,
     );
 }

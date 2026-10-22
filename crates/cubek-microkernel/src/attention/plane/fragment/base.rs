@@ -119,7 +119,7 @@ impl PlaneFragmentAttentionMicrokernel {
     /// 32-bit registers one unit keeps the softmax's running max and sum in, beside its share of
     /// both multiplications' fragments: at most every row's, which a window's state keeps.
     fn softmax_registers(&self, item: &AttentionWorkItem) -> u32 {
-        (2 * self.queries() * item.sum.size()).div_ceil(4) as u32
+        (2 * self.seq_q() * item.sum.size()).div_ceil(4) as u32
     }
 
     /// The score as the shared microkernel is handed it: summed into the plane's window.
@@ -141,11 +141,11 @@ impl PlaneFragmentAttentionMicrokernel {
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
         let item = &item.read_as(read);
-        let (head, value) = (item.head, item.value);
+        let (head, value) = (item.head_dim, item.val_dim);
         // The grids and walks are sized once the instruction is named, from its shape.
         let unsized_grid = PlaneFragmentMicrokernelSettings {
-            along_m: settings.rows,
-            along_n: settings.keys,
+            along_m: settings.seq_q,
+            along_n: settings.seq_kv,
             transport: settings.transport,
             ..PlaneFragmentMicrokernelSettings::DEFAULT
         };
@@ -162,7 +162,7 @@ impl PlaneFragmentAttentionMicrokernel {
                 let [_, (_, width), (_, value_depth)] = value_instruction.shape();
                 let head_steps = Self::steps(head, depth)?;
                 let value_steps = Self::steps(value, width)?;
-                let key_steps = Self::steps(settings.keys.get() * keys, value_depth)?;
+                let key_steps = Self::steps(settings.seq_kv.get() * keys, value_depth)?;
                 Some(Self {
                     settings,
                     read,
@@ -399,8 +399,8 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
                 (DV, self.out_edge()),
             ])
             .walk(&[
-                (Q, self.settings.rows.get()),
-                (S, self.settings.keys.get()),
+                (Q, self.settings.seq_q.get()),
+                (S, self.settings.seq_kv.get()),
                 (D, self.score.settings.depth.get()),
                 (DV, self.value.settings.along_n.get()),
             ]),
@@ -410,11 +410,11 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
         }
     }
 
-    fn queries(&self) -> usize {
+    fn seq_q(&self) -> usize {
         self.value.tile_extent(Q)
     }
 
-    fn keys(&self) -> usize {
+    fn seq_kv(&self) -> usize {
         self.value.tile_extent(S)
     }
 
@@ -424,7 +424,7 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
         if self.score_holder() == ScoreHolder::Fragments {
             return 0;
         }
-        let cells = self.queries() * self.keys();
+        let cells = self.seq_q() * self.seq_kv();
         let bounced = self
             .value
             .scratch_bytes(&Self::value_item(item), self.settings.scratch);
@@ -434,7 +434,7 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
     /// A window of every row of the cube's box over the value dim, its sums drain into, and two
     /// of one cell a row, its softmax state's max and sum.
     fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        layout.row_groups() * self.queries() * (item.value + 2) * item.sum.size()
+        layout.row_groups() * self.seq_q() * (item.val_dim + 2) * item.sum.size()
     }
 
     /// The sum of the products of the planes holding the same rows, and every plane's softmax
@@ -444,8 +444,8 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
         match layout.planes_along_keys {
             1 => 0,
             _ => {
-                let rows = layout.row_groups() * self.queries();
-                (rows * item.value + layout.planes() * self.queries()) * item.sum.size()
+                let rows = layout.row_groups() * self.seq_q();
+                (rows * item.val_dim + layout.planes() * self.seq_q()) * item.sum.size()
             }
         }
     }

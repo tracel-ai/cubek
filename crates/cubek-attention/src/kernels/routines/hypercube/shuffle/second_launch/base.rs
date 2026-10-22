@@ -52,7 +52,7 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
             grid.launch.cube_dim,
         );
         let partitioning = binding.launcher.partitioning_arg();
-        let (queries, scale) = (problem.queries as u32, tensors.scale());
+        let (queries, scale) = (problem.seq_q as u32, tensors.scale());
         let elements = problem.work_item().kernel_elements();
         match binding.cache {
             AttentionCacheBinding::Tiles { key, value } => {

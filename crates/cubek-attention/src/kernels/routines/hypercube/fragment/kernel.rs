@@ -47,8 +47,8 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     let bias = visible.bias::<EA>(&partitioning);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.queries()),
-        comptime!(microkernel.cube.keys()),
+        comptime!(microkernel.cube.seq_q()),
+        comptime!(microkernel.cube.seq_kv()),
         comptime!(merge.cubes),
     );
     // The query and the output span no key: their box is the first step's.

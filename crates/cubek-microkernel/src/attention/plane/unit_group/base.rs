@@ -30,8 +30,8 @@ pub struct PlaneUnitGroupAttentionMicrokernel {
 
 impl PlaneUnitGroupAttentionMicrokernel {
     /// The rows one unit owns.
-    pub fn rows(&self) -> usize {
-        self.unit.settings.rows.get()
+    pub fn unit_seq_q(&self) -> usize {
+        self.unit.settings.seq_q.get()
     }
 }
 
@@ -117,12 +117,12 @@ impl CubePlaneMicrokernel for PlaneUnitGroupAttentionMicrokernel {
         self.unit.step_tiling().units(&[(Q, self.units)])
     }
 
-    fn queries(&self) -> usize {
-        self.rows() * self.units
+    fn seq_q(&self) -> usize {
+        self.unit_seq_q() * self.units
     }
 
-    fn keys(&self) -> usize {
-        self.unit.keys()
+    fn seq_kv(&self) -> usize {
+        self.unit.seq_kv()
     }
 
     /// None: its rows and their sums stay in registers.
@@ -143,7 +143,7 @@ impl CubePlaneMicrokernel for PlaneUnitGroupAttentionMicrokernel {
 
     /// A window of every row of the cube's box over the value dim, its units' sums drain into.
     fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        layout.row_groups() * self.queries() * item.value * item.sum.size()
+        layout.row_groups() * self.seq_q() * item.val_dim * item.sum.size()
     }
 }
 

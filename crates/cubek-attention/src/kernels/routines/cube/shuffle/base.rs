@@ -188,11 +188,11 @@ impl AttentionRoutine<CubeShuffleAttentionMicrokernel, StageStorage>
                 binding.out.arg(),
                 binding.lengths,
                 binding.pages,
-                problem.queries as u32,
+                problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
-                problem.value,
+                problem.val_dim,
                 problem.visibility,
                 problem.work_item().kernel_elements(),
             );
@@ -271,7 +271,7 @@ mod tests {
         let (blueprint, _) = CubeShuffleAttentionRoutine
             .prepare(&devices::m2_pro(), &paged, settings)
             .expect("the lead prepares on the M2");
-        let keys = blueprint.microkernel.keys();
+        let keys = blueprint.microkernel.seq_kv();
         assert_eq!(
             blueprint.microkernel.page_steps.map(|steps| steps.get()),
             Some(64 / keys)

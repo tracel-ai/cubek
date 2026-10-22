@@ -31,8 +31,8 @@ pub struct UnitAttentionMicrokernel {
 /// The query rows a unit owns, and the keys one step of its walk scores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitAttentionMicrokernelSettings {
-    pub rows: NonZeroUsize,
-    pub keys: NonZeroUsize,
+    pub seq_q: NonZeroUsize,
+    pub seq_kv: NonZeroUsize,
 }
 
 impl UnitAttentionMicrokernelSettings {
@@ -45,15 +45,15 @@ impl UnitAttentionMicrokernelSettings {
     /// On a count of zero.
     pub const fn new(rows: usize, keys: usize) -> Self {
         Self {
-            rows: NonZeroUsize::new(rows).unwrap(),
-            keys: NonZeroUsize::new(keys).unwrap(),
+            seq_q: NonZeroUsize::new(rows).unwrap(),
+            seq_kv: NonZeroUsize::new(keys).unwrap(),
         }
     }
 }
 
 impl core::fmt::Display for UnitAttentionMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "rows={} keys={}", self.rows, self.keys)
+        write!(f, "rows={} keys={}", self.seq_q, self.seq_kv)
     }
 }
 
@@ -69,11 +69,11 @@ impl UnitAttentionMicrokernel {
     /// whole head dim, inside which both multiplications contract their blocks.
     pub fn step_tiling(&self) -> Levels {
         Levels::leaf(&[
-            (Q, self.settings.rows.get()),
+            (Q, self.settings.seq_q.get()),
             (G, 1),
-            (S, self.keys()),
-            (D, self.head()),
-            (DV, self.value_dim()),
+            (S, self.seq_kv()),
+            (D, self.head_dim()),
+            (DV, self.val_dim()),
         ])
         .walk_every(&[D])
     }
@@ -81,21 +81,21 @@ impl UnitAttentionMicrokernel {
     /// 32-bit registers one unit keeps the softmax's running max and sum of every row in, beside
     /// both multiplications' blocks.
     fn softmax_registers(&self, item: &AttentionWorkItem) -> u32 {
-        (2 * self.settings.rows.get() * item.sum.size()).div_ceil(4) as u32
+        (2 * self.settings.seq_q.get() * item.sum.size()).div_ceil(4) as u32
     }
 
     /// Keys one step scores.
-    pub fn keys(&self) -> usize {
-        self.settings.keys.get()
+    pub fn seq_kv(&self) -> usize {
+        self.settings.seq_kv.get()
     }
 
     /// The head dim a row of the query spans: the score's depth.
-    fn head(&self) -> usize {
+    fn head_dim(&self) -> usize {
         self.score.settings.depth.get()
     }
 
     /// The value dim a row of the output spans: the value's columns.
-    fn value_dim(&self) -> usize {
+    fn val_dim(&self) -> usize {
         self.value.settings.columns.get()
     }
 
@@ -142,17 +142,17 @@ impl Microkernel for UnitAttentionMicrokernel {
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let settings = *settings;
-        let dims = NonZeroUsize::new(item.head).zip(NonZeroUsize::new(item.value));
+        let dims = NonZeroUsize::new(item.head_dim).zip(NonZeroUsize::new(item.val_dim));
         let multiplications = dims.and_then(|(head, value)| {
             let score = UnitRegistersMicrokernelSettings {
-                rows: settings.rows,
-                columns: settings.keys,
+                rows: settings.seq_q,
+                columns: settings.seq_kv,
                 depth: head,
             };
             let value = UnitRegistersMicrokernelSettings {
-                rows: settings.rows,
+                rows: settings.seq_q,
                 columns: value,
-                depth: settings.keys,
+                depth: settings.seq_kv,
             };
             let score = UnitRegistersMicrokernel::best(hw, &Self::score_item(item), &score);
             let value = UnitRegistersMicrokernel::best(hw, &Self::value_item(item), &value);

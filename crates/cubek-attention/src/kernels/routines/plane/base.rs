@@ -81,10 +81,10 @@ impl PlaneFragmentAttentionRoutine {
         problem: &AttentionRoutineProblem,
         ring: &StageRing,
     ) -> usize {
-        let query = microkernel.queries() * problem.head * problem.elements.query.size();
+        let query = microkernel.seq_q() * problem.head_dim * problem.elements.query.size();
         let stage: usize = problem
             .work_item()
-            .stage(microkernel.keys(), microkernel.key_order())
+            .stage(microkernel.seq_kv(), microkernel.key_order())
             .iter()
             .map(|operand| operand.bytes(hw, &StageStorage::Strided))
             .sum();
@@ -162,15 +162,15 @@ impl Routine for PlaneFragmentAttentionRoutine {
         let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
         let cube = partitioning.cube_box();
-        let readers = (cube.extent(Q) / microkernel.queries()) as u64;
+        let readers = (cube.extent(Q) / microkernel.seq_q()) as u64;
         AttentionStagingCount {
-            keys: microkernel.keys(),
+            seq_kv: microkernel.seq_kv(),
             stages_in_flight: blueprint.shared_memory.ring.stages_in_flight.get() as u32,
             runs: AttentionOperands {
-                query: item.head,
-                key: item.head,
-                value: item.value,
-                out: item.value,
+                query: item.head_dim,
+                key: item.head_dim,
+                value: item.val_dim,
+                out: item.val_dim,
             },
             readers: AttentionOperands {
                 query: 1,
@@ -208,7 +208,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
             hw,
             &microkernel
                 .served(&item)
-                .stage(microkernel.keys(), microkernel.key_order()),
+                .stage(microkernel.seq_kv(), microkernel.key_order()),
             plane_width as usize,
         );
         let cube = CubeResources {
@@ -261,7 +261,7 @@ impl AttentionRoutine<PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionR
                 binding.out.arg(),
                 binding.lengths,
                 binding.pages,
-                problem.queries as u32,
+                problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
@@ -397,7 +397,7 @@ mod tests {
         );
         assert_eq!(
             microkernel.value.settings.depth.get() * 16,
-            microkernel.keys()
+            microkernel.seq_kv()
         );
     }
 
@@ -414,9 +414,9 @@ mod tests {
             )
             .expect("the default prepares on the M2");
         let (stage, microkernel) = (blueprint.partitioning.stage(), blueprint.microkernel);
-        assert_eq!(stage.extent(Q), microkernel.queries());
+        assert_eq!(stage.extent(Q), microkernel.seq_q());
         assert_eq!(stage.extent(G), 1);
-        assert_eq!(stage.extent(S), microkernel.keys());
+        assert_eq!(stage.extent(S), microkernel.seq_kv());
         assert_eq!(stage.extent(D), 64);
         let planes = PlaneFragmentAttentionRoutineSettings::DEFAULT.planes.get();
         assert_eq!(grid.planes().count, planes);
@@ -454,7 +454,10 @@ mod tests {
         let microkernel = blueprint.microkernel;
         assert_eq!(microkernel.score_holder(), ScoreHolder::Fragments);
         assert_eq!(microkernel.value.leaf_extent(MatmulDim::K), 8);
-        assert_eq!(blueprint.partitioning.stage().extent(S), microkernel.keys());
+        assert_eq!(
+            blueprint.partitioning.stage().extent(S),
+            microkernel.seq_kv()
+        );
         assert_eq!(microkernel.window_bytes(&problems()[2].work_item()), 0);
     }
 

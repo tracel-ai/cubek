@@ -212,7 +212,7 @@ impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
                 slots.sum.clone().binding().into_tensor_arg(),
                 binding.lengths,
                 binding.pages,
-                problem.queries as u32,
+                problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 microkernel,

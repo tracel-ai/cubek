@@ -40,7 +40,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
         let visible = VisibleKeys::new(len, cube.origin(B), queries, visibility);
         let steps = visible.steps(
             &cube,
-            comptime!(microkernel.queries()),
+            comptime!(microkernel.seq_q()),
             comptime!(microkernel.region_keys()),
             1usize,
         );

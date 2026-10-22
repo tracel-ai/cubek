@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn a_key_states_the_problem_its_dense_tensors_do() {
         let keyed = AttentionRoutineProblem::try_from(&key(32, 8, 2048)).expect("an even group");
-        let extents = (keyed.queries, keyed.keys);
+        let extents = (keyed.seq_q, keyed.seq_kv);
         let dense = AttentionRoutineProblem {
             visibility: AttentionVisibility::Causal,
             ..AttentionRoutineProblem::dense((1, 32, 8), extents, (128, 128), F16)

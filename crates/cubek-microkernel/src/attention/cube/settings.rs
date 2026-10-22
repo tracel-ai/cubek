@@ -92,8 +92,8 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let fragments = move |rows: usize, keys: usize| CubeAttentionMicrokernelSettings {
             plane: PlaneFragmentAttentionMicrokernelSettings {
-                rows: count(rows),
-                keys: count(keys),
+                seq_q: count(rows),
+                seq_kv: count(keys),
                 ..lead.plane
             },
             ..lead
@@ -149,7 +149,7 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
         };
         let wide = [8, 16].map(|keys| CubeAttentionMicrokernelSettings {
             plane: PlaneFragmentAttentionMicrokernelSettings {
-                keys: count(keys),
+                seq_kv: count(keys),
                 ..lead.plane
             },
             heads: count(1),
@@ -187,7 +187,7 @@ impl CubeAttentionPlaneSettings for PlaneShuffleAttentionMicrokernelSettings {
         });
         let plane = |plane| CubeAttentionMicrokernelSettings { plane, ..lead };
         let rows = plane(PlaneShuffleAttentionMicrokernelSettings {
-            rows: count(8),
+            seq_q: count(8),
             ..lead.plane
         });
         let units = plane(PlaneShuffleAttentionMicrokernelSettings {
@@ -223,8 +223,8 @@ impl CubeAttentionPlaneSettings for UnitAttentionMicrokernelSettings {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let unit = |rows: usize, keys: usize| CubeAttentionMicrokernelSettings {
             plane: UnitAttentionMicrokernelSettings {
-                rows: count(rows),
-                keys: count(keys),
+                seq_q: count(rows),
+                seq_kv: count(keys),
             },
             ..lead
         };

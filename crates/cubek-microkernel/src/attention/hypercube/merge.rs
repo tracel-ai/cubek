@@ -65,5 +65,5 @@ impl core::fmt::Display for HypercubeMerge {
 pub struct HypercubeMergeShape {
     pub slots: AttentionSlotShape,
     pub cubes: usize,
-    pub queries: usize,
+    pub seq_q: usize,
 }

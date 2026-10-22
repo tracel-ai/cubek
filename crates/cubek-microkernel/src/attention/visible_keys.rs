@@ -17,7 +17,7 @@ use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 pub struct VisibleKeys {
     /// Keys attended, a prefix of the buffers': none past it is read.
     pub attended: u32,
-    pub queries: u32,
+    pub seq_q: u32,
     #[cube(comptime)]
     pub visibility: AttentionVisibility,
 }
@@ -34,7 +34,7 @@ impl VisibleKeys {
     ) -> VisibleKeys {
         VisibleKeys {
             attended: len[batch * len.stride(0)],
-            queries,
+            seq_q: queries,
             visibility,
         }
     }
@@ -45,7 +45,7 @@ impl VisibleKeys {
             comptime!(partitioning.space().subspace(&[G, Q, S])),
             VisibleKeys {
                 attended: self.attended,
-                queries: self.queries,
+                seq_q: self.seq_q,
                 visibility: comptime!(self.visibility),
             },
         )
@@ -73,8 +73,8 @@ impl VisibleKeys {
             // Query `q` sees key `s` where `s + queries ≤ q + attended`: the region's last query
             // sees below `reach`.
             let reach = region.origin(Q) + region_queries + self.attended as usize;
-            if reach > self.queries as usize {
-                seen = seen.min(reach - self.queries as usize);
+            if reach > self.seq_q as usize {
+                seen = seen.min(reach - self.seq_q as usize);
             } else {
                 seen = 0;
             }
@@ -92,12 +92,12 @@ impl VisibleKeys {
     pub fn sees(&self, query: u32, key: u32) -> bool {
         let mut seen = key < self.attended;
         if comptime!(self.visibility.is_causal()) {
-            seen = seen && key + self.queries <= query + self.attended;
+            seen = seen && key + self.seq_q <= query + self.attended;
         }
         if comptime!(self.visibility.window().is_some()) {
             let window = comptime!(self.visibility.window().unwrap().get() as u32);
             if comptime!(self.visibility.is_causal()) {
-                seen = seen && key + self.queries + window > query + self.attended;
+                seen = seen && key + self.seq_q + window > query + self.attended;
             } else {
                 seen = seen && key + window >= self.attended;
             }

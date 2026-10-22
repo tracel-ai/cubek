@@ -77,7 +77,7 @@ impl HypercubeAttentionPlaneSettings for PlaneShuffleAttentionMicrokernelSetting
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let plane =
             |rows, units_per_key, keys_in_flight| PlaneShuffleAttentionMicrokernelSettings {
-                rows: count(rows),
+                seq_q: count(rows),
                 units_per_key: count(units_per_key),
                 keys_in_flight: count(keys_in_flight),
             };
@@ -121,8 +121,8 @@ impl HypercubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettin
             [(1, 8), (2, 4), (2, 8)].map(|(rows, keys)| HypercubeAttentionMicrokernelSettings {
                 cube: CubeAttentionMicrokernelSettings {
                     plane: PlaneFragmentAttentionMicrokernelSettings {
-                        rows: count(rows),
-                        keys: count(keys),
+                        seq_q: count(rows),
+                        seq_kv: count(keys),
                         ..cube.plane
                     },
                     layout: CubeAttentionStageLayout::SwizzledBlocks,

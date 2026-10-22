@@ -41,7 +41,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let lane = UNIT_POS_PLANE as usize % units_per_key;
         let read = query.flat::<E, N>();
         #[unroll]
-        for r in 0..comptime!(microkernel.queries()) {
+        for r in 0..comptime!(microkernel.seq_q()) {
             #[unroll]
             for p in 0..per_head {
                 let line = lane + p * units_per_key;
@@ -60,7 +60,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
     fn close(&mut self) {
         let microkernel = comptime!(self.microkernel);
         if comptime!(microkernel.teams > 1) {
-            let rows = comptime!(microkernel.queries());
+            let rows = comptime!(microkernel.seq_q());
             let units_per_key = comptime!(microkernel.settings.units_per_key.get());
             let per_value = comptime!(self.value_lines.div_ceil(units_per_key));
             let teams = comptime!(UnitShare::Group {
@@ -111,7 +111,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let per_value = comptime!(value_lines.div_ceil(units_per_key));
         let unit = UNIT_POS_PLANE as usize;
         #[unroll]
-        for r in 0..comptime!(microkernel.queries()) {
+        for r in 0..comptime!(microkernel.seq_q()) {
             if r < rows {
                 let slot = first_slot + r * row_stride;
                 if unit < units_per_key {
@@ -143,7 +143,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let mut lines = out.flat_mut::<E, N>();
         if unit < units_per_key {
             #[unroll]
-            for r in 0..comptime!(microkernel.queries()) {
+            for r in 0..comptime!(microkernel.seq_q()) {
                 let total = self.total[r];
                 let recip = select(
                     total > EA::from_int(0),
@@ -185,8 +185,8 @@ impl<EA: Float, E: Float, N: Size, K: StepLines<N>, L: StepLines<N>>
     ) -> Self {
         let width = opening.query.vector_size();
         let head_lines = comptime!(opening.query.space().extent(D) / width);
-        let value_lines = comptime!(opening.value / width);
-        let rows = comptime!(microkernel.queries());
+        let value_lines = comptime!(opening.val_dim / width);
+        let rows = comptime!(microkernel.seq_q());
         let units_per_key = comptime!(microkernel.settings.units_per_key.get());
         let per_head = comptime!(head_lines.div_ceil(units_per_key));
         let per_value = comptime!(value_lines.div_ceil(units_per_key));
@@ -226,7 +226,7 @@ impl<EA: Float, E: Float, N: Size, K: StepLines<N>, L: StepLines<N>>
     fn step(&mut self, plane: &Region, keys: &K, values: &L, visible: &VisibleKeys, scale: EA) {
         let microkernel = comptime!(self.microkernel);
         let (head_lines, value_lines) = comptime!((self.head_lines, self.value_lines));
-        let rows = comptime!(microkernel.queries());
+        let rows = comptime!(microkernel.seq_q());
         let teams = comptime!(microkernel.teams);
         let in_flight = comptime!(microkernel.settings.keys_in_flight.get());
         let units_per_key = comptime!(microkernel.settings.units_per_key.get());

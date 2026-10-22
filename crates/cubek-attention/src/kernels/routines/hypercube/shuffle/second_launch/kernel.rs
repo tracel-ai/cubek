@@ -46,7 +46,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     let visible = VisibleKeys::new(len, first_step.origin(B), queries, visibility);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.queries()),
+        comptime!(microkernel.cube.seq_q()),
         comptime!(microkernel.cube.region_keys()),
         comptime!(merge.cubes),
     );
@@ -71,7 +71,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
         slot_sum,
         comptime!(microkernel.cube),
         comptime!(merge.slots.splits),
-        comptime!(merge.slots.value),
+        comptime!(merge.slots.val_dim),
     );
 }
 
@@ -103,7 +103,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     let visible = VisibleKeys::new(len, first_step.origin(B), queries, visibility);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.queries()),
+        comptime!(microkernel.cube.seq_q()),
         comptime!(microkernel.cube.region_keys()),
         comptime!(merge.cubes),
     );
@@ -128,6 +128,6 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         slot_sum,
         comptime!(microkernel.cube),
         comptime!(merge.slots.splits),
-        comptime!(merge.slots.value),
+        comptime!(merge.slots.val_dim),
     );
 }

@@ -89,8 +89,8 @@ where
         let rows = (cube.extent(Q) * cube.extent(G)) as u64;
         let size = item.sum.size();
         let partial = GlobalStream {
-            bytes: rows * (item.value as u64 + 2) * size as u64,
-            run_bytes: item.value * size,
+            bytes: rows * (item.val_dim as u64 + 2) * size as u64,
+            run_bytes: item.val_dim * size,
         };
         if let Some(staging) = estimate.staging.as_mut() {
             staging.reads.push(partial);
@@ -126,12 +126,12 @@ impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
         HypercubeMergeShape {
             slots: AttentionSlotShape {
                 units: self.cube.units,
-                value: item.value,
+                val_dim: item.val_dim,
                 splits: cubes,
             },
             cubes,
-            queries: match merge {
-                HypercubeMerge::LastArrival => self.cube.queries(),
+            seq_q: match merge {
+                HypercubeMerge::LastArrival => self.cube.seq_q(),
                 HypercubeMerge::SecondLaunch => 1,
             },
         }

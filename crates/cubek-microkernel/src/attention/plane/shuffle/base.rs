@@ -37,7 +37,7 @@ pub struct PlaneShuffleAttentionMicrokernel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleAttentionMicrokernelSettings {
     /// Query rows of one head, each held whole in the plane's registers.
-    pub rows: NonZeroUsize,
+    pub seq_q: NonZeroUsize,
     /// Units scoring one key together, each holding its share of the head and value dims: fewer
     /// put more teams beside each other, more hold fewer lines each.
     pub units_per_key: NonZeroUsize,
@@ -48,7 +48,7 @@ pub struct PlaneShuffleAttentionMicrokernelSettings {
 impl PlaneShuffleAttentionMicrokernelSettings {
     /// A decode step's group of four read as rows, two teams of a 32-wide plane, two keys each.
     pub const DEFAULT: Self = Self {
-        rows: NonZeroUsize::new(4).unwrap(),
+        seq_q: NonZeroUsize::new(4).unwrap(),
         units_per_key: NonZeroUsize::new(16).unwrap(),
         keys_in_flight: NonZeroUsize::new(2).unwrap(),
     };
@@ -59,7 +59,7 @@ impl core::fmt::Display for PlaneShuffleAttentionMicrokernelSettings {
         write!(
             f,
             "shuffle rows={} units_per_key={} keys_in_flight={}",
-            self.rows, self.units_per_key, self.keys_in_flight
+            self.seq_q, self.units_per_key, self.keys_in_flight
         )
     }
 }
@@ -78,9 +78,9 @@ impl PlaneShuffleAttentionMicrokernel {
     /// softmax state, and the lines of each key in flight. The compiler adds addressing on top.
     fn registers_per_unit(&self, item: &AttentionWorkItem) -> u32 {
         let units_per_key = self.settings.units_per_key.get();
-        let held = self.queries() * ((item.head + item.value).div_ceil(units_per_key) + 2);
-        let in_flight =
-            self.settings.keys_in_flight.get() * (item.head + item.value).div_ceil(units_per_key);
+        let held = self.seq_q() * ((item.head_dim + item.val_dim).div_ceil(units_per_key) + 2);
+        let in_flight = self.settings.keys_in_flight.get()
+            * (item.head_dim + item.val_dim).div_ceil(units_per_key);
         (held * item.sum.size() + in_flight * item.elements.key.size()).div_ceil(4) as u32
     }
 }
@@ -109,7 +109,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
         vec![
             lead,
             Self::Settings {
-                rows: count(8),
+                seq_q: count(8),
                 ..lead
             },
             Self::Settings {
@@ -138,7 +138,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
             .filter(|width| {
                 width.is_power_of_two()
                     && width.is_multiple_of(settings.units_per_key.get())
-                    && settings.rows.get() <= Self::MAX_ROWS
+                    && settings.seq_q.get() <= Self::MAX_ROWS
             })
             .map(|width| Self {
                 settings,
@@ -176,13 +176,13 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
         estimate: &mut KernelEstimate,
     ) {
         AttentionStagingCount {
-            keys: self.keys(),
+            seq_kv: self.seq_kv(),
             stages_in_flight: 1,
             runs: AttentionOperands {
-                query: item.head,
-                key: item.head,
-                value: item.value,
-                out: item.value,
+                query: item.head_dim,
+                key: item.head_dim,
+                value: item.val_dim,
+                out: item.val_dim,
             },
             readers: AttentionOperands {
                 query: 1,
@@ -218,15 +218,15 @@ impl CubePlaneMicrokernel for PlaneShuffleAttentionMicrokernel {
     /// Its rows of one head against a step of keys, the head and value dims whole. The plane's
     /// units lie over them in teams it places itself.
     fn tiling(&self) -> Levels {
-        Levels::leaf(&[(Q, self.queries()), (G, 1), (S, self.keys())])
+        Levels::leaf(&[(Q, self.seq_q()), (G, 1), (S, self.seq_kv())])
     }
 
-    fn queries(&self) -> usize {
-        self.settings.rows.get()
+    fn seq_q(&self) -> usize {
+        self.settings.seq_q.get()
     }
 
     /// Every team's keys in flight.
-    fn keys(&self) -> usize {
+    fn seq_kv(&self) -> usize {
         self.teams * self.settings.keys_in_flight.get()
     }
 
@@ -247,7 +247,7 @@ impl CubePlaneMicrokernel for PlaneShuffleAttentionMicrokernel {
     fn merge_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
         match layout.planes_along_keys {
             1 => 0,
-            _ => layout.planes() * self.queries() * (item.value + 2) * item.sum.size(),
+            _ => layout.planes() * self.seq_q() * (item.val_dim + 2) * item.sum.size(),
         }
     }
 

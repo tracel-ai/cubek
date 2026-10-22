@@ -37,8 +37,8 @@ pub fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
         let bias = visible.bias::<EA>(&partitioning);
         let steps = visible.steps(
             &plane,
-            comptime!(microkernel.queries()),
-            comptime!(microkernel.keys()),
+            comptime!(microkernel.seq_q()),
+            comptime!(microkernel.seq_kv()),
             1usize,
         );
         plane_fragment_attention_microkernel::<EA, ES>(

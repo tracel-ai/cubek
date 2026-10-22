@@ -47,7 +47,7 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         sum.zero();
         PlaneUnitGroupAttention::<EA, ES> {
             sum,
-            softmax: OnlineSoftmax::<EA>::new(comptime!(microkernel.rows()), S),
+            softmax: OnlineSoftmax::<EA>::new(comptime!(microkernel.unit_seq_q()), S),
             query: opening.query.clone(),
             staged: PhantomData,
             microkernel,
@@ -112,7 +112,7 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
             let read = rows_window.flat::<EA, Const<1>>();
             let first_row = unit_rows.origin(Q) - plane.origin(Q);
             #[unroll]
-            for r in 0..comptime!(self.microkernel.rows()) {
+            for r in 0..comptime!(self.microkernel.unit_seq_q()) {
                 let row = first_row + r;
                 if row < rows {
                     let slot = first_slot + row * row_stride;

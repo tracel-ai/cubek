@@ -215,7 +215,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane>
                 binding.out.arg(),
                 binding.lengths,
                 binding.pages,
-                problem.queries as u32,
+                problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,

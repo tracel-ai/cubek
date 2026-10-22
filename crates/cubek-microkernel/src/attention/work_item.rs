@@ -20,8 +20,8 @@ pub struct AttentionWorkItem {
     pub page_size: Option<usize>,
     /// Query heads per key head.
     pub group: usize,
-    pub head: usize,
-    pub value: usize,
+    pub head_dim: usize,
+    pub val_dim: usize,
 }
 
 /// Which elements an attention's operands may be read in.
@@ -132,8 +132,8 @@ impl AttentionWorkItem {
             innermost: operand.innermost(key_order),
         };
         [
-            operand(AttentionOperand::Key, D, self.head),
-            operand(AttentionOperand::Value, DV, self.value),
+            operand(AttentionOperand::Key, D, self.head_dim),
+            operand(AttentionOperand::Value, DV, self.val_dim),
         ]
     }
 }

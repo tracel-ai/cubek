@@ -52,9 +52,9 @@ impl HypercubeShuffleMerge for HypercubeLastArrivalShuffle {
             grid.launch.cube_dim,
         );
         let partitioning = binding.launcher.partitioning_arg();
-        let (queries, scale) = (problem.queries as u32, tensors.scale());
+        let (queries, scale) = (problem.seq_q as u32, tensors.scale());
         let elements = problem.work_item().kernel_elements();
-        let arrivals = tensors.box_arrivals(microkernel.cube.queries());
+        let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
         match binding.cache {
             AttentionCacheBinding::Tiles { key, value } => {
                 // SAFETY: the query, keys and values are bound through the launcher, which masks

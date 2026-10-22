@@ -23,8 +23,8 @@ impl HypercubeSecondLaunch {
             launch: LaunchSettings {
                 cube_dim: CubeDim::new_1d(merge.slots.units as u32),
                 cube_count: CubeCount::new_3d(
-                    problem.queries as u32,
-                    (problem.kv_heads * problem.group) as u32,
+                    problem.seq_q as u32,
+                    (problem.num_kv_heads * problem.group) as u32,
                     problem.batch as u32,
                 ),
                 vectors: (),

@@ -42,8 +42,8 @@ pub fn cube_staged_attention_kernel<
         let bias = visible.bias::<EA>(&partitioning);
         let steps = visible.steps(
             &cube,
-            comptime!(microkernel.queries()),
-            comptime!(microkernel.keys()),
+            comptime!(microkernel.seq_q()),
+            comptime!(microkernel.seq_kv()),
             1usize,
         );
         cube_staged_attention_microkernel::<EA, E, M::Attention<EA, E, ES>>(

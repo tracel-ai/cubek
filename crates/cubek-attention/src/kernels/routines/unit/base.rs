@@ -104,13 +104,13 @@ impl Routine for UnitAttentionRoutine {
         let steps = cube.extent(S).div_ceil(leaf.extent(S)) as u64;
         let row_readers = (cube.extent(Q) / leaf.extent(Q)) as u64;
         AttentionStagingCount {
-            keys: leaf.extent(S),
+            seq_kv: leaf.extent(S),
             stages_in_flight: 1,
             runs: AttentionOperands {
-                query: item.head,
+                query: item.head_dim,
                 key: leaf.extent(S),
-                value: item.value,
-                out: item.value,
+                value: item.val_dim,
+                out: item.val_dim,
             },
             readers: AttentionOperands {
                 query: steps,
@@ -189,7 +189,7 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 binding.out.arg(),
                 binding.lengths,
                 binding.pages,
-                problem.queries as u32,
+                problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,

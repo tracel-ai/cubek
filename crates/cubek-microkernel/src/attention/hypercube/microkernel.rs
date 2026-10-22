@@ -22,7 +22,7 @@ pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
     arrivals: &[Atomic<u32>],
     #[comptime] merge: HypercubeMergeShape,
 ) {
-    let box_queries = comptime!(merge.queries);
+    let box_queries = comptime!(merge.seq_q);
     let counter = slot_box.head_index * slot_max.shape(3).div_ceil(box_queries)
         + slot_box.first_query / box_queries;
     // The partial lands at device scope before the cube counts itself in.
@@ -43,7 +43,7 @@ pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
             out,
             slot_box,
             merge.slots,
-            merge.queries,
+            merge.seq_q,
         );
         if UNIT_POS == 0 {
             arrivals[counter].store(0u32);

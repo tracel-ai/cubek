@@ -6,8 +6,8 @@ use cubecl::tile::Scratch;
 /// much of its output a correction bounces through shared memory at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentAttentionMicrokernelSettings {
-    pub rows: NonZeroUsize,
-    pub keys: NonZeroUsize,
+    pub seq_q: NonZeroUsize,
+    pub seq_kv: NonZeroUsize,
     /// One fragment at a time, three `sync_plane` each, or the whole grid at once, three a stage
     /// for a window as large as the plane's output.
     pub scratch: Scratch,
@@ -37,8 +37,8 @@ impl InstructionShape {
 
 impl PlaneFragmentAttentionMicrokernelSettings {
     pub const DEFAULT: Self = Self {
-        rows: NonZeroUsize::new(2).unwrap(),
-        keys: NonZeroUsize::new(2).unwrap(),
+        seq_q: NonZeroUsize::new(2).unwrap(),
+        seq_kv: NonZeroUsize::new(2).unwrap(),
         scratch: Scratch::OneTile,
         transport: PlaneFragmentTransport::Mma,
         shape: InstructionShape::Square,
@@ -57,8 +57,8 @@ impl PlaneFragmentAttentionMicrokernelSettings {
     /// On a count of zero.
     pub const fn fragments(rows: usize, keys: usize) -> Self {
         Self {
-            rows: NonZeroUsize::new(rows).unwrap(),
-            keys: NonZeroUsize::new(keys).unwrap(),
+            seq_q: NonZeroUsize::new(rows).unwrap(),
+            seq_kv: NonZeroUsize::new(keys).unwrap(),
             ..Self::DEFAULT
         }
     }
@@ -76,7 +76,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
 
 impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "fragments={}x{}", self.rows, self.keys)?;
+        write!(f, "fragments={}x{}", self.seq_q, self.seq_kv)?;
         match self.scratch {
             Scratch::WholeGrid => write!(f, " scratch=whole")?,
             Scratch::OneTile | Scratch::None => {}

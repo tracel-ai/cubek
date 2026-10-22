@@ -23,14 +23,14 @@ use cubek_std::routine::EstimatedProblem;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttentionRoutineProblem {
     pub batch: usize,
-    pub kv_heads: usize,
+    pub num_kv_heads: usize,
     /// Query heads per key head.
     pub group: usize,
-    pub queries: usize,
+    pub seq_q: usize,
     /// The keys the buffers hold, attended or not.
-    pub keys: usize,
-    pub head: usize,
-    pub value: usize,
+    pub seq_kv: usize,
+    pub head_dim: usize,
+    pub val_dim: usize,
     /// Which of the attended keys a query sees.
     pub visibility: AttentionVisibility,
     /// The element each operand is stored in.
@@ -104,26 +104,26 @@ impl AttentionRoutineProblem {
                 AttentionCacheLayout::Sequences | AttentionCacheLayout::Packed(_) => None,
             },
             group: self.group,
-            head: self.head,
-            value: self.value,
+            head_dim: self.head_dim,
+            val_dim: self.val_dim,
         }
     }
 
     /// Query heads.
     pub fn heads(&self) -> usize {
-        self.kv_heads * self.group
+        self.num_kv_heads * self.group
     }
 
     /// Every axis of the problem at its extent: what a routine partitions.
     pub fn space(&self) -> Space {
         Space::new(&[
             (B, self.batch),
-            (KV, self.kv_heads),
+            (KV, self.num_kv_heads),
             (G, self.group),
-            (Q, self.queries),
-            (S, self.keys),
-            (D, self.head),
-            (DV, self.value),
+            (Q, self.seq_q),
+            (S, self.seq_kv),
+            (D, self.head_dim),
+            (DV, self.val_dim),
         ])
     }
 
@@ -140,12 +140,12 @@ impl AttentionRoutineProblem {
         let aligned = |innermost: usize| ElemAlignment::new(&[1, innermost], &[innermost, 1]);
         Self {
             batch,
-            kv_heads,
+            num_kv_heads: kv_heads,
             group: heads / kv_heads,
-            queries,
-            keys,
-            head,
-            value,
+            seq_q: queries,
+            seq_kv: keys,
+            head_dim: head,
+            val_dim: value,
             visibility: AttentionVisibility::Attended,
             elements: AttentionOperands {
                 query: element,
@@ -173,14 +173,14 @@ impl AttentionRoutineProblem {
     /// Elements `operand` holds.
     pub fn elements_of(&self, operand: AttentionOperand) -> usize {
         let (queries, keys) = (
-            self.batch * self.heads() * self.queries,
-            self.batch * self.kv_heads * self.keys,
+            self.batch * self.heads() * self.seq_q,
+            self.batch * self.num_kv_heads * self.seq_kv,
         );
         match operand {
-            AttentionOperand::Query => queries * self.head,
-            AttentionOperand::Key => keys * self.head,
-            AttentionOperand::Value => keys * self.value,
-            AttentionOperand::Out => queries * self.value,
+            AttentionOperand::Query => queries * self.head_dim,
+            AttentionOperand::Key => keys * self.head_dim,
+            AttentionOperand::Value => keys * self.val_dim,
+            AttentionOperand::Out => queries * self.val_dim,
         }
     }
 }
@@ -190,9 +190,9 @@ impl EstimatedProblem for AttentionRoutineProblem {
     /// buffers hold, and every operand's elements once. The attended keys are the device's: a
     /// problem is sized to its capacity, and one whose queries see fewer to all of it.
     fn demand(&self) -> Work {
-        let pairs = self.batch * self.heads() * self.queries * self.keys;
+        let pairs = self.batch * self.heads() * self.seq_q * self.seq_kv;
         Work {
-            compute_ops: 2 * pairs * (self.head + self.value),
+            compute_ops: 2 * pairs * (self.head_dim + self.val_dim),
             bytes: AttentionOperand::ALL
                 .iter()
                 .map(|&operand| self.elements_of(operand) * self.elements.get(operand).size())

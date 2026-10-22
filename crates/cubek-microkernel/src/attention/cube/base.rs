@@ -45,7 +45,7 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
     /// they lie and a page holds a whole number of its steps, more than one; otherwise still
     /// walking steps.
     pub(crate) fn over_pages(self, item: &AttentionWorkItem) -> Self {
-        let keys = self.keys();
+        let keys = self.seq_kv();
         let page_steps = match (M::READS, item.page_size) {
             (CubePlaneReads::Global, Some(page_size))
                 if page_size > keys && page_size.is_multiple_of(keys) =>
@@ -59,7 +59,7 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
 
     /// Keys one region of the cube's walk covers: a step, or a page where it walks over pages.
     pub fn region_keys(&self) -> usize {
-        self.keys() * self.page_steps.map_or(1, NonZeroUsize::get)
+        self.seq_kv() * self.page_steps.map_or(1, NonZeroUsize::get)
     }
 
     /// The levels inside one step of the cube's walk through `S`, which its partitioning states
@@ -74,13 +74,13 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
     }
 
     /// Query positions of one head a cube's box holds.
-    pub fn queries(&self) -> usize {
-        self.plane.queries() * self.settings.planes_along_queries.get()
+    pub fn seq_q(&self) -> usize {
+        self.plane.seq_q() * self.settings.planes_along_queries.get()
     }
 
     /// Keys one stage of the ring holds: a block for every plane along them.
-    pub fn keys(&self) -> usize {
-        self.plane.keys() * self.settings.planes_along_keys.get()
+    pub fn seq_kv(&self) -> usize {
+        self.plane.seq_kv() * self.settings.planes_along_keys.get()
     }
 
     /// How the slots its planes that split the same rows' keys leave their rows in lie, `value`
@@ -89,7 +89,7 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
     pub fn merge_shape(&self, value: usize) -> AttentionSlotShape {
         AttentionSlotShape {
             units: self.units,
-            value,
+            val_dim: value,
             splits: self.settings.planes_along_keys.get(),
         }
     }
@@ -133,9 +133,9 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
         let staged = match M::READS {
             CubePlaneReads::Stage => {
-                let query = self.heads * self.queries() * item.head * item.elements.query.size();
+                let query = self.heads * self.seq_q() * item.head_dim * item.elements.query.size();
                 let stage: usize = item
-                    .stage(self.keys(), self.key_order())
+                    .stage(self.seq_kv(), self.key_order())
                     .iter()
                     .map(|operand| operand.bytes(hw, storage))
                     .sum();
@@ -155,13 +155,13 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
             CubePlaneReads::Global => (self.layout().row_groups() as u64, 1),
         };
         AttentionStagingCount {
-            keys: self.keys(),
+            seq_kv: self.seq_kv(),
             stages_in_flight,
             runs: AttentionOperands {
-                query: item.head,
-                key: item.head,
-                value: item.value,
-                out: item.value,
+                query: item.head_dim,
+                key: item.head_dim,
+                value: item.val_dim,
+                out: item.val_dim,
             },
             readers: AttentionOperands {
                 query: 1,
@@ -224,7 +224,7 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
                     hw,
                     &requested
                         .served(item)
-                        .stage(requested.keys(), requested.key_order()),
+                        .stage(requested.seq_kv(), requested.key_order()),
                     requested.layout().planes() * requested.units,
                 );
                 Some(Self { ring, ..requested })

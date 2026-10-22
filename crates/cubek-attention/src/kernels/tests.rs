@@ -333,7 +333,7 @@ mod problem {
             .expect("the decode step prepares")
             .0
             .microkernel
-            .keys();
+            .seq_kv();
         assert_eq!(page_steps(&dense), None);
         assert_eq!(page_steps(&paged(4 * keys)), Some(4));
         assert_eq!(page_steps(&paged(keys)), None);

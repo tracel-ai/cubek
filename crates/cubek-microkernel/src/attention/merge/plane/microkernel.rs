@@ -19,14 +19,14 @@ pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
     #[comptime] slots: AttentionSlotShape,
     #[comptime] queries: usize,
 ) {
-    let AttentionSlotShape { units, value, .. } = slots;
+    let AttentionSlotShape { units, val_dim, .. } = slots;
     let width = slot_out.vector_size();
-    let lines = comptime!(value / width);
+    let lines = comptime!(val_dim / width);
     let elements = comptime!(lines.div_ceil(units));
     let lane = UNIT_POS_PLANE as usize;
     #[unroll]
     for r in 0..queries {
-        if r < slot_box.queries {
+        if r < slot_box.seq_q {
             let merged = MergedSlotRow::<EA, N>::new(
                 slot_out,
                 slot_max,
@@ -75,11 +75,11 @@ pub fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
 ) {
     let AttentionSlotShape {
         units,
-        value,
+        val_dim,
         splits,
     } = slots;
     let width = N::value();
-    let lines_of_value = comptime!(value / width);
+    let lines_of_value = comptime!(val_dim / width);
     let lane = UNIT_POS_PLANE as usize;
     let mut out = out.clone();
     let mut lines = out.flat_mut::<E, N>();
@@ -124,11 +124,11 @@ pub fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
 ) {
     let AttentionSlotShape {
         units,
-        value,
+        val_dim,
         splits,
     } = slots;
     let width = N::value();
-    let lines_of_value = comptime!(value / width);
+    let lines_of_value = comptime!(val_dim / width);
     let lane = UNIT_POS_PLANE as usize;
     #[unroll]
     for r in 0..queries {
@@ -188,11 +188,11 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
     ) -> MergedSlotRow<EA, N> {
         let AttentionSlotShape {
             units,
-            value,
+            val_dim,
             splits,
         } = shape;
         let width = slot_out.vector_size();
-        let lines = comptime!(value / width);
+        let lines = comptime!(val_dim / width);
         let groups = comptime!(match lines < units && lines.is_power_of_two() {
             true => units / lines,
             false => 1,

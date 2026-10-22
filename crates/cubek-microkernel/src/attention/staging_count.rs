@@ -12,7 +12,7 @@ use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttentionStagingCount {
     /// Keys one stage covers.
-    pub keys: usize,
+    pub seq_kv: usize,
     /// Stages a reader holds at once.
     pub stages_in_flight: u32,
     /// Elements of each operand a plane touches contiguously over the walk.
@@ -36,7 +36,7 @@ impl AttentionStagingCount {
         let cube = partitioning.cube_box();
         let rows = (cube.extent(Q) * cube.extent(G)) as u64;
         let keys = cube.extent(S) as u64;
-        let (head, value) = (item.head as u64, item.value as u64);
+        let (head, value) = (item.head_dim as u64, item.val_dim as u64);
         let stream = |operand: AttentionOperand, elements: u64| {
             let size = item.elements.get(operand).size();
             GlobalStream {
@@ -52,7 +52,7 @@ impl AttentionStagingCount {
                 stream(AttentionOperand::Value, keys * value),
             ],
             writes: vec![stream(AttentionOperand::Out, rows * value)],
-            stages: keys.div_ceil(self.keys.max(1) as u64),
+            stages: keys.div_ceil(self.seq_kv.max(1) as u64),
             stages_in_flight: self.stages_in_flight,
             drain_atomics: 0,
         });

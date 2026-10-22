@@ -106,12 +106,12 @@ impl AttentionKey {
     }
 
     /// Query positions, at the bucket's own extent.
-    pub fn queries(&self) -> usize {
+    pub fn seq_q(&self) -> usize {
         self.queries
     }
 
     /// Key positions the buffers hold, at the bucket's own extent.
-    pub fn keys(&self) -> usize {
+    pub fn seq_kv(&self) -> usize {
         self.keys
     }
 
@@ -121,7 +121,7 @@ impl AttentionKey {
     }
 
     /// Key/value heads.
-    pub fn kv_heads(&self) -> usize {
+    pub fn num_kv_heads(&self) -> usize {
         self.kv_heads
     }
 
@@ -174,15 +174,15 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
         let (element, head) = (key.elem(), key.head_dim());
         let rows = |innermost: usize| ElemAlignment::new(&[1, innermost], &[innermost, 1]);
         let (group, queries, visibility) =
-            QueryAxis::new(key.queries()).read(group, key.queries(), key.visibility());
+            QueryAxis::new(key.seq_q()).read(group, key.seq_q(), key.visibility());
         Ok(Self {
             batch: key.batch(),
-            kv_heads: key.kv_heads(),
+            num_kv_heads: key.num_kv_heads(),
             group,
-            queries,
-            keys: key.keys(),
-            head,
-            value: head,
+            seq_q: queries,
+            seq_kv: key.seq_kv(),
+            head_dim: head,
+            val_dim: head,
             visibility,
             elements: AttentionOperands {
                 query: element,

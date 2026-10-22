@@ -169,7 +169,7 @@ pub fn cube_unstaged_attention_microkernel<
                 microkernel,
                 shape,
             );
-        let queries = comptime!(microkernel.plane.queries());
+        let queries = comptime!(microkernel.plane.seq_q());
         let layout = comptime!(microkernel.layout());
         for plane in cube.planes() {
             let group = plane.coord(G) * comptime!(layout.planes_along_queries) + plane.coord(Q);
@@ -219,7 +219,7 @@ fn unstaged_walk<
         walk,
         &GlobalPlaneOperands {
             query: query.clone(),
-            value: value_dim,
+            val_dim: value_dim,
         },
         comptime!(microkernel.plane),
         comptime!(microkernel.layout()),
@@ -227,7 +227,7 @@ fn unstaged_walk<
     match comptime!(microkernel.page_steps.is_some()) {
         // Each page's keys and values cut once, and the steps its rows see cut from them.
         true => {
-            let (rows, keys) = comptime!((microkernel.queries(), microkernel.keys()));
+            let (rows, keys) = comptime!((microkernel.seq_q(), microkernel.seq_kv()));
             for p in 0..steps.min(walk.total()) {
                 let page = walk.region(p);
                 let (page_keys, page_values) = (key.at(&page), value.at(&page));
@@ -411,12 +411,12 @@ fn store_plane_partials<
         first.origin(KV),
         first.origin(G),
         first.origin(Q),
-        comptime!(cube.queries()),
+        comptime!(cube.seq_q()),
     );
     // The cube's run starts at its step, or page, of the first `splits`: the cubes take them in
     // turns.
     let cube_slot = first.origin(S) / comptime!(cube.region_keys());
-    let queries = comptime!(cube.plane.queries());
+    let queries = comptime!(cube.plane.seq_q());
     if comptime!(cube.settings.planes_along_keys.get() == 1) {
         for plane in run.planes() {
             let plane_box = AttentionSlotBox::new::<EA>(
@@ -435,7 +435,7 @@ fn store_plane_partials<
                 slot_sum,
                 plane_box.first_row * splits + cube_slot,
                 splits,
-                plane_box.queries,
+                plane_box.seq_q,
             );
         }
     } else {
@@ -464,7 +464,7 @@ fn store_plane_partials<
                 plane.coord(S),
                 plane_box.first_row * splits + cube_slot,
                 splits,
-                plane_box.queries,
+                plane_box.seq_q,
                 shape,
                 queries,
             );
@@ -497,12 +497,12 @@ fn split_planes_in_slots<
     #[comptime] microkernel: CubeAttentionMicrokernel<P::Microkernel>,
     #[comptime] shape: AttentionSlotShape,
 ) -> (Shared<[Vector<EA, N>]>, Shared<[EA]>, Shared<[EA]>) {
-    let queries = comptime!(microkernel.plane.queries());
+    let queries = comptime!(microkernel.plane.seq_q());
     let layout = comptime!(microkernel.layout());
     let slots = comptime!(layout.planes() * queries);
     let width = N::value();
     let mut slot_out =
-        Shared::<[Vector<EA, N>]>::new_slice(comptime!(slots * (shape.value / width)));
+        Shared::<[Vector<EA, N>]>::new_slice(comptime!(slots * (shape.val_dim / width)));
     let mut slot_max = Shared::<[EA]>::new_slice(slots);
     let mut slot_sum = Shared::<[EA]>::new_slice(slots);
     for plane in walk.planes() {

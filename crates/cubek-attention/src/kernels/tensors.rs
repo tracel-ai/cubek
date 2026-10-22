@@ -319,7 +319,7 @@ impl AttentionTensors {
         // strides, which a pitched allocation would invalidate.
         let (out, out_plain) = PlainTensor::empty_contiguous(
             client,
-            [batch, queries, heads, cache.value_dim()].into(),
+            [batch, queries, heads, cache.val_dim()].into(),
             query.elem,
         );
         Self {
@@ -401,7 +401,7 @@ impl AttentionTensors {
     /// The problem the tensors state.
     pub fn problem(&self) -> AttentionRoutineProblem {
         let [batch, queries, heads, value] = self.out.shape().dims::<4>();
-        let kv_heads = self.cache.kv_heads();
+        let kv_heads = self.cache.num_kv_heads();
         let (group, queries, visibility) =
             self.axis
                 .read(heads / kv_heads, queries, self.scoring.visibility);
@@ -425,12 +425,12 @@ impl AttentionTensors {
         };
         AttentionRoutineProblem {
             batch,
-            kv_heads,
+            num_kv_heads: kv_heads,
             group,
-            queries,
-            keys: self.cache.keys(),
-            head,
-            value,
+            seq_q: queries,
+            seq_kv: self.cache.seq_kv(),
+            head_dim: head,
+            val_dim: value,
             visibility,
             elements: AttentionOperands {
                 query: element,
@@ -585,9 +585,9 @@ impl AttentionTensors {
         let problem = self.problem();
         let slots = [
             problem.batch,
-            problem.kv_heads,
+            problem.num_kv_heads,
             problem.group,
-            problem.queries,
+            problem.seq_q,
             splits,
         ];
         let output = |shape: &[usize]| {
@@ -595,7 +595,7 @@ impl AttentionTensors {
             PlainTensor::empty_contiguous(&self.client, shape, AttentionRoutineProblem::SUM).0
         };
         AttentionSplitSlots {
-            out: output(&[slots.as_slice(), &[problem.value]].concat()),
+            out: output(&[slots.as_slice(), &[problem.val_dim]].concat()),
             max: output(&slots),
             sum: output(&slots),
         }
@@ -611,9 +611,9 @@ impl AttentionTensors {
     pub fn box_arrivals(&self, box_queries: usize) -> PlainTensor {
         let problem = self.problem();
         let boxes = problem.batch
-            * problem.kv_heads
+            * problem.num_kv_heads
             * problem.group
-            * problem.queries.div_ceil(box_queries);
+            * problem.seq_q.div_ceil(box_queries);
         match &self.arrivals {
             Some(kept) => {
                 let counters = kept.shape().num_elements();
@@ -632,7 +632,7 @@ impl AttentionTensors {
 
 impl AttentionCache {
     /// Key heads.
-    fn kv_heads(&self) -> usize {
+    fn num_kv_heads(&self) -> usize {
         match self {
             Self::Float { key, .. } => key.shape()[1],
             Self::Packed(cache) => cache.key.words.shape()[1],
@@ -640,7 +640,7 @@ impl AttentionCache {
     }
 
     /// Keys each sequence holds, attended or not: a pool's are its table's pages.
-    fn keys(&self) -> usize {
+    fn seq_kv(&self) -> usize {
         match self {
             Self::Float {
                 key,
@@ -653,7 +653,7 @@ impl AttentionCache {
     }
 
     /// Elements of a value.
-    fn value_dim(&self) -> usize {
+    fn val_dim(&self) -> usize {
         match self {
             Self::Float { value, .. } => value.shape()[3],
             Self::Packed(cache) => cache.coords(),
