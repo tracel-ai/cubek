@@ -58,6 +58,83 @@ pub enum MatmulSelection {
     },
 }
 
+impl MatmulSelection {
+    /// How `strategy` runs a packed weight under `scheme`, which the kernels stream, in rows or in
+    /// tiles: each kernel reads its layout or declines it at the launch.
+    fn packed(
+        strategy: MatmulOpStrategy,
+        problem: &MatmulProblem,
+        scheme: &QuantScheme,
+        hw: &Hardware,
+    ) -> Result<Self, Refusal> {
+        use MatmulKernel as K;
+        use MatmulKernelHeuristic as H;
+        use MatmulOpStrategy::*;
+        let packed = |choice| Ok(MatmulSelection::Packed(choice));
+        let rule = |kernel, otherwise| MatmulPackedChoice::Rule {
+            kernel,
+            otherwise: Box::new(otherwise),
+        };
+        let decoded = || {
+            MatmulChoice::new(strategy, problem).map(|choice| MatmulSelection::DequantizeThen {
+                dequantize: MatmulDequantize::Decode,
+                choice,
+            })
+        };
+        // What every narrow candidate counts, which is not the trailing extent.
+        let rows = problem.streamed_rows;
+        let single_row = rows == Some(1);
+        match strategy {
+            Autotune => packed(MatmulPackedChoice::Autotune(MatmulTable::packed(problem))),
+            // The packed plane routine with the heuristic's own ceiling behind it, since it can still
+            // decline a contraction its steps do not close, which no rule here sees.
+            Heuristic(H::Tile) if single_row => packed(rule(K::PlaneShuffle, decoded()?)),
+            Heuristic(H::Cubek) if single_row => packed(rule(
+                K::PlaneShuffle,
+                MatmulSelection::Packed(rule(K::CubekAuto, decoded()?)),
+            )),
+            // Below the cubek ceiling the weight is decoded and run on this crate's kernels; at it,
+            // cubek reads the weight as it is stored.
+            Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
+            Heuristic(H::Cubek) => packed(rule(K::CubekAuto, decoded()?)),
+            Specific(kernel @ (K::PlaneShuffle | K::CubekAuto)) => {
+                packed(MatmulPackedChoice::Pin(kernel))
+            }
+            Specific(K::Nvfp4TensorCores)
+                if Self::nvfp4_tensor_cores_serve(problem, scheme, hw) =>
+            {
+                packed(MatmulPackedChoice::Pin(K::Nvfp4TensorCores))
+            }
+            Specific(K::Nvfp4TensorCores) => Err(NO_NVFP4_WEIGHT),
+        }
+    }
+
+    /// Whether the 4-bit tensor cores serve this product, on a GPU whose 4-bit instruction takes it:
+    /// a weight packed as the activation is quantized for it ([`nvfp4_activation_scheme`]), `e2m1`
+    /// values under a `ue4m3` scale every [`NVFP4_BLOCK`] of `k` and one `f32` over the whole of it,
+    /// its words along `k`, `k` whole words of block scales.
+    fn nvfp4_tensor_cores_serve(
+        problem: &MatmulProblem,
+        scheme: &QuantScheme,
+        hw: &Hardware,
+    ) -> bool {
+        let activation = nvfp4_activation_scheme();
+        let format = (scheme.value, scheme.block_scale().map(|block| block.dtype))
+            == (
+                activation.value,
+                activation.block_scale().map(|block| block.dtype),
+            )
+            && scheme.tensor_scale() == activation.tensor_scale();
+        let along_k = Operand::axis_of(scheme, [K, N]) == Some(K)
+            && Operand::of_scheme(scheme, K, [K, N])
+                .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK));
+        format
+            && along_k
+            && problem.k.is_multiple_of(NVFP4_SCALE_WORD_SPAN)
+            && block_scaled_nvfp4(hw)
+    }
+}
+
 /// How the kernel reading a float weight is chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatmulChoice {
@@ -72,6 +149,29 @@ pub enum MatmulChoice {
     /// The kernel a pin names, and only it: a decline is the caller's contract broken, so it is
     /// loud.
     Pin(MatmulKernel),
+}
+
+impl MatmulChoice {
+    /// The kernel `strategy` chooses for a float weight, or one a packed weight is decoded into.
+    fn new(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<Self, Refusal> {
+        use MatmulKernel as K;
+        use MatmulKernelHeuristic as H;
+        use MatmulOpStrategy::*;
+        match strategy {
+            Autotune => Ok(MatmulChoice::Autotune(MatmulTable::new(problem))),
+            // No foreign kernel and nothing to measure: this crate's float routines are the whole pool
+            // below the cubek ceiling, and which of them serves a call is a question about strides,
+            // answered at the launch.
+            Heuristic(H::Tile) => Ok(MatmulChoice::Rule(K::PlaneShuffle)),
+            // At the ceiling the rules run out: no constant says which staged GEMM suits a shape, so
+            // the answer comes from the selector that owns those routines rather than from a guess.
+            Heuristic(H::Cubek) => Ok(MatmulChoice::Rule(K::CubekAuto)),
+            Specific(kernel @ (K::UnitRegisters | K::PlaneShuffle | K::CubekAuto)) => {
+                Ok(MatmulChoice::Pin(kernel))
+            }
+            Specific(K::Nvfp4TensorCores) => Err(NO_NVFP4_WEIGHT),
+        }
+    }
 }
 
 /// How the kernel reading a packed weight as it is stored is chosen.
@@ -172,13 +272,13 @@ pub fn select(
 ) -> Result<MatmulSelection, Refusal> {
     match (problem.lhs, problem.rhs) {
         (OperandKind::Quantized(_), OperandKind::Float) => Err(QUANTIZED_LHS_FLOAT_RHS),
-        (_, OperandKind::Float) => float_choice(strategy, problem).map(MatmulSelection::Float),
+        (_, OperandKind::Float) => MatmulChoice::new(strategy, problem).map(MatmulSelection::Float),
         (_, OperandKind::Quantized(scheme)) if matmul_supported(hw, &scheme) => {
-            packed_selection(strategy, problem, &scheme, hw)
+            MatmulSelection::packed(strategy, problem, &scheme, hw)
         }
         (_, OperandKind::Quantized(_)) => Ok(MatmulSelection::DequantizeThen {
             dequantize: MatmulDequantize::Burn,
-            choice: float_choice(strategy, problem)?,
+            choice: MatmulChoice::new(strategy, problem)?,
         }),
     }
 }
@@ -207,93 +307,3 @@ pub const NO_NVFP4_WEIGHT: Refusal = Refusal::Declined {
     why: "Nvfp4TensorCores multiplies an NVFP4 weight, its words along k, on a GPU with a 4-bit \
               tensor-core instruction; take autotune or a policy for any other product",
 };
-
-/// The kernel `strategy` chooses for a float weight, or one a packed weight is decoded into.
-fn float_choice(
-    strategy: MatmulOpStrategy,
-    problem: &MatmulProblem,
-) -> Result<MatmulChoice, Refusal> {
-    use MatmulKernel as K;
-    use MatmulKernelHeuristic as H;
-    use MatmulOpStrategy::*;
-    match strategy {
-        Autotune => Ok(MatmulChoice::Autotune(MatmulTable::new(problem))),
-        // No foreign kernel and nothing to measure: this crate's float routines are the whole pool
-        // below the cubek ceiling, and which of them serves a call is a question about strides,
-        // answered at the launch.
-        Heuristic(H::Tile) => Ok(MatmulChoice::Rule(K::PlaneShuffle)),
-        // At the ceiling the rules run out: no constant says which staged GEMM suits a shape, so
-        // the answer comes from the selector that owns those routines rather than from a guess.
-        Heuristic(H::Cubek) => Ok(MatmulChoice::Rule(K::CubekAuto)),
-        Specific(kernel @ (K::UnitRegisters | K::PlaneShuffle | K::CubekAuto)) => {
-            Ok(MatmulChoice::Pin(kernel))
-        }
-        Specific(K::Nvfp4TensorCores) => Err(NO_NVFP4_WEIGHT),
-    }
-}
-
-/// How `strategy` runs a packed weight under `scheme`, which the kernels stream, in rows or in
-/// tiles: each kernel reads its layout or declines it at the launch.
-fn packed_selection(
-    strategy: MatmulOpStrategy,
-    problem: &MatmulProblem,
-    scheme: &QuantScheme,
-    hw: &Hardware,
-) -> Result<MatmulSelection, Refusal> {
-    use MatmulKernel as K;
-    use MatmulKernelHeuristic as H;
-    use MatmulOpStrategy::*;
-    let packed = |choice| Ok(MatmulSelection::Packed(choice));
-    let rule = |kernel, otherwise| MatmulPackedChoice::Rule {
-        kernel,
-        otherwise: Box::new(otherwise),
-    };
-    let decoded = || {
-        float_choice(strategy, problem).map(|choice| MatmulSelection::DequantizeThen {
-            dequantize: MatmulDequantize::Decode,
-            choice,
-        })
-    };
-    // What every narrow candidate counts, which is not the trailing extent.
-    let rows = problem.streamed_rows;
-    let single_row = rows == Some(1);
-    match strategy {
-        Autotune => packed(MatmulPackedChoice::Autotune(MatmulTable::packed(problem))),
-        // The packed plane routine with the heuristic's own ceiling behind it, since it can still
-        // decline a contraction its steps do not close, which no rule here sees.
-        Heuristic(H::Tile) if single_row => packed(rule(K::PlaneShuffle, decoded()?)),
-        Heuristic(H::Cubek) if single_row => packed(rule(
-            K::PlaneShuffle,
-            MatmulSelection::Packed(rule(K::CubekAuto, decoded()?)),
-        )),
-        // Below the cubek ceiling the weight is decoded and run on this crate's kernels; at it,
-        // cubek reads the weight as it is stored.
-        Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
-        Heuristic(H::Cubek) => packed(rule(K::CubekAuto, decoded()?)),
-        Specific(kernel @ (K::PlaneShuffle | K::CubekAuto)) => {
-            packed(MatmulPackedChoice::Pin(kernel))
-        }
-        Specific(K::Nvfp4TensorCores) if nvfp4_tensor_cores_serve(problem, scheme, hw) => {
-            packed(MatmulPackedChoice::Pin(K::Nvfp4TensorCores))
-        }
-        Specific(K::Nvfp4TensorCores) => Err(NO_NVFP4_WEIGHT),
-    }
-}
-
-/// Whether the 4-bit tensor cores serve this product, on a GPU whose 4-bit instruction takes it:
-/// a weight packed as the activation is quantized for it ([`nvfp4_activation_scheme`]), `e2m1`
-/// values under a `ue4m3` scale every [`NVFP4_BLOCK`] of `k` and one `f32` over the whole of it,
-/// its words along `k`, `k` whole words of block scales.
-fn nvfp4_tensor_cores_serve(problem: &MatmulProblem, scheme: &QuantScheme, hw: &Hardware) -> bool {
-    let activation = nvfp4_activation_scheme();
-    let format = (scheme.value, scheme.block_scale().map(|block| block.dtype))
-        == (
-            activation.value,
-            activation.block_scale().map(|block| block.dtype),
-        )
-        && scheme.tensor_scale() == activation.tensor_scale();
-    let along_k = Operand::axis_of(scheme, [K, N]) == Some(K)
-        && Operand::of_scheme(scheme, K, [K, N])
-            .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK));
-    format && along_k && problem.k.is_multiple_of(NVFP4_SCALE_WORD_SPAN) && block_scaled_nvfp4(hw)
-}
