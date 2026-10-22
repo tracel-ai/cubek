@@ -1,9 +1,13 @@
 use cubecl::prelude::*;
+#[cfg(feature = "multi-level")]
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
+#[cfg(feature = "multi-level")]
 use cubek_std::InputBinding;
 use std::fmt::{Debug, Display};
 
-use crate::definition::{MatmulSetupError, MatmulVectorSizes};
+#[cfg(feature = "multi-level")]
+use crate::definition::MatmulSetupError;
+use crate::definition::MatmulVectorSizes;
 
 /// A launch-time config carried alongside the tensors. `()` for a plain matmul; the
 /// fusion path substitutes its own.
@@ -18,6 +22,7 @@ impl<T: LaunchArg + CubeType<ExpandType: Clone> + Clone + Send + Sync> RuntimeCo
 /// A storage-tiled operand is passed as it is: its strides order its tiles, not a matrix's rows
 /// and columns, so this classification does not read them, and a routine that reads storage
 /// tiles checks the layout it was handed itself.
+#[cfg(feature = "multi-level")]
 #[allow(clippy::result_large_err)]
 pub(crate) fn into_contiguous_if_highly_permuted(
     client: &Client,
