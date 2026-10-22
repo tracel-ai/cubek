@@ -10,7 +10,9 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
 use cubek_std::Hardware;
 
-use crate::kernels::{MatmulBlueprint, MatmulOutput, MatmulRoutineProblem, MatmulTensors};
+use crate::kernels::{
+    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
+};
 use cubecl::tile::{
     TileArgLaunch,
     kind::Write,
@@ -98,6 +100,33 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
             .map_out(|out| (out, Write::Replace));
         self.dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
         Ok(())
+    }
+
+    /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, prepared for
+    /// `hw` at `settings`: the output allocated as `[batches.., rows, n]`
+    /// ([`MatmulTensors::indexed`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`MatmulTensors::indexed`], and why `hw` cannot run the product at these settings,
+    /// [`MATMUL_INDEX_UNREAD`](crate::kernels::MATMUL_INDEX_UNREAD) for a routine whose kernel walks
+    /// no indexed input among them.
+    fn launch_indexed_on(
+        &self,
+        hw: &Hardware,
+        client: &Client,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
+        table: MatmulIndexTable,
+        settings: &Self::Settings,
+    ) -> Result<TensorHandle, Refusal> {
+        let tensors = MatmulTensors::indexed::<M>(client, lhs, rhs, table)?;
+        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        let binding = tensors
+            .bind(&blueprint, &grid)
+            .map_out(|out| (out, Write::Replace));
+        self.dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
+        Ok(tensors.into_out().expect(ALLOCATED))
     }
 
     /// [`launch_on`](Self::launch_on) into an output of `out`: what a product whose activation is

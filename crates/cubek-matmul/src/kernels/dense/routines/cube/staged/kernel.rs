@@ -11,6 +11,10 @@ use cubek_microkernel::matmul::dense::cube::{CubeStagedWalk, cube_staged_microke
 /// scales, which the stages keep beside its values and the block-scaled instruction reads with
 /// them, and its per-tensor scale, one `f32` taken out for the sum and applied once, as it is
 /// written.
+///
+/// The walk is within the weight: where it reads a table, a batch whose entry names no slab, or
+/// an empty run of `K`, holds nothing, so its cube takes no step and writes zeros; under a run, the
+/// cube steps that run's stages alone. A plain weight is walked whole.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "each element is defined from its operand at launch, which the kernel is compiled for"
@@ -36,10 +40,11 @@ pub fn cube_staged_matmul_kernel<
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
     for cube in &partitioning {
+        let b = b.at(&cube);
         cube_staged_microkernel::<EA, EL>(
-            cube.walk(),
+            cube.walk_within(&b),
             &a.at(&cube),
-            &b.at(&cube),
+            &b,
             &c.at(&cube),
             walk,
             comptime!(storage.clone()),

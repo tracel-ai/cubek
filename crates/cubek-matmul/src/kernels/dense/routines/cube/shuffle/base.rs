@@ -171,6 +171,7 @@ impl CubeShuffleMatmulRoutine {
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         problem.check_plain()?;
+        problem.check_unindexed()?;
         let view = MatmulView::of::<CubeShuffleMicrokernel>(problem)?;
         let item = view.work_item();
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;

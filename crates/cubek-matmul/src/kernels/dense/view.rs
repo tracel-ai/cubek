@@ -83,7 +83,7 @@ impl<'a> MatmulView<'a> {
     /// Where every row is held whole: [`MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED`], for a
     /// weight lined along neither axis; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
     /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED`], for an activation or an output that does not
-    /// hold every batch.
+    /// hold every batch, unless a table is read per batch, which keeps the batches apart.
     pub fn new(
         problem: &'a MatmulRoutineProblem,
         rows_kind: MatmulRowsKind,
@@ -109,7 +109,8 @@ impl<'a> MatmulView<'a> {
                 return Err(MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH);
             }
             let batches: usize = problem.batches.iter().product();
-            if problem.batches_held.lhs != batches || problem.batches_held.out != batches {
+            let folds = problem.batches_held.lhs == batches && problem.batches_held.out == batches;
+            if problem.index.is_none() && !folds {
                 return Err(MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED);
             }
         }
@@ -225,6 +226,7 @@ impl<'a> MatmulView<'a> {
     /// The space a launch cuts: the batches its cubes are handed one of, then the rows, `n` and
     /// `k`. Against a packed operand, each of the three is the tiles its scales are constant
     /// inside and the position within one, so a microkernel's tiles land on whole scale tiles.
+    /// Last, the axis a table's entry picks along, which no level cuts: a stacked rhs's slabs.
     pub fn space(&self) -> Space {
         let product = [(M, self.rows()), (N, self.problem.n), (K, self.problem.k)];
         let product = match self.blocks() {
@@ -234,7 +236,15 @@ impl<'a> MatmulView<'a> {
                 .flat_map(|axis| blocks.axes(axis))
                 .collect(),
         };
-        Space::new(&[self.distributed_batches(), product].concat())
+        let indexed = self.problem.index.and_then(|index| index.axis());
+        Space::new(
+            &[
+                self.distributed_batches(),
+                product,
+                indexed.into_iter().collect(),
+            ]
+            .concat(),
+        )
     }
 
     /// Whether a packed weight is a whole number of its [step](MatmulStep) on `hw`, each read of
@@ -299,9 +309,19 @@ impl<'a> MatmulView<'a> {
     /// The problem's rows as the view's kind reads them: those a work item holds and those its
     /// microkernel is told.
     fn read(&self) -> RowsReading {
-        match self.rows_kind {
-            MatmulRowsKind::Whole => self.read_folded(),
-            MatmulRowsKind::Tiled => self.read_tiled(),
+        match (self.rows_kind, self.problem.index) {
+            (MatmulRowsKind::Whole, None) => self.read_folded(),
+            (MatmulRowsKind::Whole, Some(_)) => self.read_per_batch(),
+            (MatmulRowsKind::Tiled, _) => self.read_tiled(),
+        }
+    }
+
+    /// Every row of one batch held whole, each batch handed to the cubes: a table read per batch
+    /// tells the batches apart, so none folds into another's rows.
+    fn read_per_batch(&self) -> RowsReading {
+        RowsReading {
+            rows: self.problem.stated_rows,
+            work_item_rows: MatmulRows::Whole(self.problem.stated_rows),
         }
     }
 
@@ -331,17 +351,19 @@ impl<'a> MatmulView<'a> {
     }
 
     /// The batch axes the cubes are handed one of, with their extents: in a tiled launch those
-    /// longer than one; a launch holding every row whole has folded them into its rows.
+    /// longer than one; a launch holding every row whole has folded them into its rows. Under a
+    /// table, every one, of one batch too: the table's dims are the batches, all cut at the level
+    /// that reads its entry.
     fn distributed_batches(&self) -> Vec<(Axis, usize)> {
-        match self.rows_kind {
-            MatmulRowsKind::Whole => Vec::new(),
-            MatmulRowsKind::Tiled => self
-                .problem
-                .batch_axes()
-                .into_iter()
-                .zip(self.problem.batches.iter().copied())
-                .filter(|&(_, extent)| extent > 1)
-                .collect(),
+        let batches = self
+            .problem
+            .batch_axes()
+            .into_iter()
+            .zip(self.problem.batches.iter().copied());
+        match (self.rows_kind, self.problem.index) {
+            (_, Some(_)) => batches.collect(),
+            (MatmulRowsKind::Whole, None) => Vec::new(),
+            (MatmulRowsKind::Tiled, None) => batches.filter(|&(_, extent)| extent > 1).collect(),
         }
     }
 }

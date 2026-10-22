@@ -199,6 +199,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_plain()?;
+        problem.check_unindexed()?;
         let view = MatmulView::of::<HypercubeStagedMicrokernel>(problem)?;
         let item = view.work_item();
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;

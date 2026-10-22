@@ -22,7 +22,8 @@ use cubek_std::{Hardware, Instructions};
 use cubek_std::{UNIT_REGISTERS, manual_mma};
 
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_INDEX_UNREAD_BY_TMA, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{
@@ -603,6 +604,9 @@ impl Routine for CubeStagedMatmulRoutine {
             &place(microkernel.tiling()),
         )?;
         let (microkernel, storage) = (resolved.microkernel, resolved.storage);
+        if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {
+            return Err(MATMUL_INDEX_UNREAD_BY_TMA);
+        }
         let partitioning = place(microkernel.launch_tiling());
         let cube = CubeResources {
             plane_width: resolved.plane_width,

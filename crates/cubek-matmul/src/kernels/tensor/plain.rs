@@ -106,6 +106,15 @@ impl PlainTensor {
         Self::new(self.bound_as(meta), self.elem)
     }
 
+    /// This view at `rank` dims, the ones it lacks leading ones of one, which broadcast: the same
+    /// buffer. A view already as long is unchanged.
+    pub fn broadcast_to(&self, rank: usize) -> Self {
+        let (shape, strides) = (&self.binding.shape, &self.binding.strides);
+        let missing = rank.saturating_sub(shape.len());
+        let lead = |dims: &[usize]| [&vec![1; missing][..], dims].concat();
+        self.viewed(Metadata::new(lead(shape), lead(strides)))
+    }
+
     /// This view's last two dims swapped, over the same buffer.
     pub fn transposed(&self) -> Self {
         let (mut shape, mut strides) = (self.binding.shape.clone(), self.binding.strides.clone());

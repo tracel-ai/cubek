@@ -1,6 +1,7 @@
 //! Tests for the routines written on the tile DSL.
 
 mod cmma;
+mod indexed;
 mod storage;
 
 #[cfg(feature = "benchmarks")]

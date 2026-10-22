@@ -1,9 +1,9 @@
 use crate::kernels::tensor::PlainTensor;
 use cubecl::ir::ElemType;
-use cubecl::tile::Axis;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::{Axis, Indexing};
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::stored::Packing;
@@ -11,7 +11,7 @@ use cubek_microkernel::matmul::{
     MatmulBuffers, MatmulContraction, MatmulDestination, MatmulLayout, MatmulOperand,
     MatmulOperands, MatmulOrder, MatmulStoredTile,
 };
-use cubek_std::matmul_axes::batch_axis;
+use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
 
 /// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input float or
@@ -55,6 +55,58 @@ pub struct MatmulRoutineProblem {
     /// How each operand is stored where it is packed: its words, its scales and their scheme.
     /// `None` for a float operand, read as stored.
     pub packings: MatmulOperands<Option<Packing>>,
+    /// The table an input reads one entry of per batch, where the product has one: which slab of
+    /// a stacked rhs a batch contracts against, or the run of `K` it sums.
+    pub index: Option<MatmulIndex>,
+}
+
+/// What each batch's entry of a product's table says, the table's dims being the batches: one
+/// entry per batch, read where the launch cuts them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MatmulIndex {
+    /// The slab of the rhs the batch contracts against: the rhs is a stack of `slabs` `[k, n]`
+    /// slabs along [`EXPERT`], which no level cuts, and an entry past it names no slab, so its
+    /// batch sums nothing.
+    Slab { slabs: usize },
+    /// Where the batch's run of `K` ends, both inputs holding every run end to end: the entry
+    /// before it along the batches is where it starts. A run that ends before it starts sums
+    /// nothing.
+    RunOfK,
+}
+
+impl MatmulIndex {
+    /// The inputs that read the table.
+    pub fn readers(&self) -> MatmulOperands<bool> {
+        match self {
+            Self::Slab { .. } => MatmulOperands {
+                lhs: false,
+                rhs: true,
+                out: false,
+            },
+            Self::RunOfK => MatmulOperands {
+                lhs: true,
+                rhs: true,
+                out: false,
+            },
+        }
+    }
+
+    /// What an entry places in the input that reads it.
+    pub fn indexing(&self) -> Indexing {
+        match self {
+            Self::Slab { .. } => Indexing::Coordinate(EXPERT),
+            Self::RunOfK => Indexing::Run(K),
+        }
+    }
+
+    /// The axis the index adds to the product's space, with its extent: the stack's slabs, which
+    /// an entry picks one of.
+    pub fn axis(&self) -> Option<(Axis, usize)> {
+        match self {
+            Self::Slab { slabs } => Some((EXPERT, *slabs)),
+            Self::RunOfK => None,
+        }
+    }
 }
 
 impl MatmulRoutineProblem {
@@ -68,6 +120,19 @@ impl MatmulRoutineProblem {
         match self.packings == MatmulOperands::all(None) {
             true => Ok(()),
             false => Err(MATMUL_PACKED_UNREAD),
+        }
+    }
+
+    /// Checks no input reads a table: what a routine whose kernel walks no indexed input
+    /// declines first.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_INDEX_UNREAD`], for a product with a table.
+    pub fn check_unindexed(&self) -> Result<(), Refusal> {
+        match self.index {
+            None => Ok(()),
+            Some(_) => Err(MATMUL_INDEX_UNREAD),
         }
     }
 
@@ -155,6 +220,7 @@ impl MatmulRoutineProblem {
             stored_tiles: MatmulOperands::all(None),
             destination: out.destination,
             packings: MatmulOperands::all(None),
+            index: None,
         }
     }
 
@@ -215,6 +281,7 @@ impl MatmulRoutineProblem {
             // A launch the table times allocates its output.
             destination: MatmulDestination::Buffer,
             packings: MatmulOperands::all(None),
+            index: None,
         }
     }
 
@@ -298,6 +365,7 @@ impl MatmulRoutineProblem {
             stored_tiles: MatmulOperands::all(None),
             destination: MatmulDestination::Buffer,
             packings,
+            index: None,
         }
     }
 
@@ -384,6 +452,19 @@ impl EstimatedProblem for MatmulRoutineProblem {
 /// routines read.
 pub const MATMUL_PACKED_UNREAD: Refusal = Refusal::Declined {
     why: "this routine reads float operands; a packed one runs on the packed routines",
+};
+
+/// What a routine whose kernel walks no indexed input declines: a product whose inputs read a
+/// table, which the routines walking within their inputs serve.
+pub const MATMUL_INDEX_UNREAD: Refusal = Refusal::Declined {
+    why: "this routine's kernel walks no indexed input; a routed or grouped product runs on the \
+          routines that walk within it",
+};
+
+/// What a fill the TMA engine delivers declines: a product whose inputs read a table, which a
+/// tensor map, addressing its tensor whole, does not.
+pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
+    why: "a tensor map reads no table; an indexed input is staged by the cube's units",
 };
 
 #[cfg(test)]

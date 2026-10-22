@@ -161,6 +161,7 @@ impl Routine for UnitWholeKMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_plain()?;
+        problem.check_unindexed()?;
         let view = MatmulView::of::<UnitWholeKMicrokernel>(problem)?;
         let microkernel =
             UnitWholeKMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
