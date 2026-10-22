@@ -94,17 +94,6 @@ impl KernelChoice {
 const ONE_POSITION_RULE: AttentionKernel =
     AttentionKernel::Hypercube(HypercubeAttentionKernel::LastArrivalShuffle);
 
-/// Whether `kernel` reads a packed cache as it lies: the hypercube shuffles, either merge.
-fn reads_packed(kernel: AttentionKernel) -> bool {
-    matches!(
-        kernel,
-        AttentionKernel::Hypercube(
-            HypercubeAttentionKernel::LastArrivalShuffle
-                | HypercubeAttentionKernel::SecondLaunchShuffle
-        )
-    )
-}
-
 /// How a call of `queries` positions over a `cache` runs under `strategy`.
 ///
 /// A measuring strategy measures: a call of one query position on the one-position table, any
@@ -135,7 +124,7 @@ pub fn select(
     match (cache, choice) {
         (KvKind::Float, choice) => Ok(AttentionSelection::Float(choice)),
         (KvKind::Packed, AttentionChoice::Kernel(KernelChoice::Pin(kernel)))
-            if reads_packed(kernel) =>
+            if kernel.reads_packed() =>
         {
             Ok(AttentionSelection::Packed {
                 read: KernelChoice::Pin(kernel),
