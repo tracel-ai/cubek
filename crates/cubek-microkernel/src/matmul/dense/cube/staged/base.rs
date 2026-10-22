@@ -417,7 +417,7 @@ impl CubeStagedMicrokernel {
             .resolve(hw, &stage.operands(item.elements, self.plane.orders), units);
         let instruction = self.plane.instruction;
         let landed = self.plane.landed_stage_storage(&stage);
-        let folds = self.drain() == CubeStagedDrain::Merged || write.accumulates();
+        let merges = self.drain() == CubeStagedDrain::Merged || write.accumulates();
         let store = self
             .store
             .resolve(hw, item, buffers, partitioning, write, self.planes_along_k);
@@ -431,7 +431,7 @@ impl CubeStagedMicrokernel {
             }
             PlaneFragmentDrain::CellByCell | PlaneFragmentDrain::InLines => Scratch::None,
         };
-        let bounces = folds || cut_short || item.destination == MatmulDestination::Sink;
+        let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
         let scratch = match bounces {
             true => window,
             false => Scratch::None,
@@ -449,7 +449,7 @@ impl CubeStagedMicrokernel {
             self.planes_along_k,
         );
         if let PlaneFragmentInstruction::Wgmma { .. } = instruction
-            && let Some(refusal) = CubeStagedWgmmaRefusal::new(&fill, self.planes_along_k, folds)
+            && let Some(refusal) = CubeStagedWgmmaRefusal::new(&fill, self.planes_along_k, merges)
         {
             return Err(refusal.into());
         }

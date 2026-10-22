@@ -10,4 +10,4 @@ pub use fill::*;
 pub use microkernel::*;
 pub use settings::*;
 pub use store::*;
-pub use wgmma_refusal::*;
+pub(crate) use wgmma_refusal::*;
