@@ -4,13 +4,7 @@ use crate::kernels::{
     MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulRoutineProblem,
     MatmulView,
 };
-use crate::microkernel::staged_walk::MatmulStage;
-use crate::microkernel::{
-    MatmulBlocks, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulRowsKind, MatmulWorkItem,
-};
 use cubecl::client::Client;
-use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
@@ -18,6 +12,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, launch::Bound, launch::TmaBox,
     launch::TmaOperand, launch::Unbound,
+};
+use cubek_microkernel::matmul::staged_walk::MatmulStage;
+use cubek_microkernel::matmul::{
+    MatmulBlocks, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
+    MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
@@ -931,7 +930,7 @@ impl MatmulInputs {
         if lhs.elem != rhs.elem || !Self::VERIFIED.contains(&lhs.elem) {
             return Err(MATMUL_ELEMENT_UNVERIFIED);
         }
-        if !runs_on(lhs.elem, client) {
+        if !lhs.runs_on(client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
         Ok(Self { lhs, rhs })
@@ -964,16 +963,6 @@ impl MatmulInputs {
             false => tensor.into_contiguous(client),
         }
     }
-}
-
-/// Whether `client`'s runtime computes in `elem` and stores it in a buffer: what a kernel at that
-/// element needs to compile there.
-fn runs_on(elem: ElemType, client: &Client) -> bool {
-    client
-        .properties()
-        .features
-        .type_usage(elem)
-        .is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
 }
 
 /// The carry and the turn counters of a launch whose cubes take turns at the output.
@@ -1223,9 +1212,9 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
 
 #[cfg(test)]
 mod tests {
-    use crate::microkernel::{MatmulLayout, MatmulOperand};
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::zspace::metadata::Metadata;
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand};
 
     /// A stack's alignment over the order its buffer steps, as a problem derives it from the
     /// stack's layout, is the one a binding stepping that order reads, for every slab view of a

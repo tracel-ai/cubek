@@ -1,13 +1,13 @@
 use crate::kernels::MatmulBinding;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::microkernel::MatmulMicrokernel;
-use crate::microkernel::staged_walk::MatmulCubeWrite;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::SinkLaunch;
+use cubek_microkernel::matmul::MatmulMicrokernel;
+use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
 use cubek_std::Hardware;
 
 use crate::kernels::{MatmulBlueprint, MatmulOutput, MatmulRoutineProblem, MatmulTensors};

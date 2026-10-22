@@ -14,8 +14,11 @@ version.workspace = true
 workspace = true
 
 [features]
-default = ["std", "cubecl/default"]
+default = ["std", "tiled", "cubecl/default"]
 std = ["cubecl/std"]
+
+# The tiled attention's kernels, on the attention microkernels.
+tiled = ["cubecl/tile", "cubek-matmul/tiled", "dep:cubek-microkernel"]
 
 heavy = []
 extended = ["heavy"]
@@ -31,6 +34,7 @@ benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubek-matmul = { workspace = true, features = ["multi-level"] }
+cubek-microkernel = { workspace = true, optional = true, features = ["attention"] }
 cubek-std = { workspace = true }
 cubek-test-utils = { workspace = true, optional = true }
 

@@ -1,8 +1,8 @@
-use crate::microkernel::dense::plane::plane_shuffle_microkernel;
-use crate::microkernel::{MatmulOperands, MatmulRead};
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Instruction, Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::plane::plane_shuffle_microkernel;
+use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every plane of the launch, running its run of the output. The weight is read at the element it
 /// is bound at, under the scales it carries, none where it is plain, which ride every read the

@@ -1,11 +1,11 @@
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::{MatmulAxes, MatmulMicrokernel, MatmulOperand, MatmulOperands};
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::{MatmulAxes, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 
 use crate::kernels::MatmulRoutineProblem;
-use crate::stored::Packing;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
+use cubek_microkernel::matmul::stored::Packing;
 use cubek_std::matmul_axes::{K, N};
 
 /// What a routine's launch compiles: the microkernel, the partitioning that places its

@@ -5,16 +5,18 @@
 //!
 //! # The tables, and the line between them
 //!
-//! A product races on a **gemv** table or a **gemm** one, the [`MatmulTable`]s, a float weight's
-//! and a packed one's each. The few-rows and many-rows tables share no candidate but the unit
-//! routine (the few-rows table's floor) and cubek's naive floor: the two regimes are different
-//! kernel bodies, so a single table would be one whose rows mostly decline, paying a compile each
-//! to say so. A packed weight's tables race the settings worth trying against a packed weight,
-//! and the float routines on the weight decoded first.
+//! A product races on a **gemv** table or a **gemm** one, the [`MatmulTable`]s, whatever its
+//! weight. The few-rows and many-rows tables share no candidate but the unit routine (the few-rows
+//! table's floor) and cubek's naive floor: the two regimes are different kernel bodies, so a single
+//! table would be one whose rows mostly decline, paying a compile each to say so. Within a table a
+//! float weight and a packed one race the same list: each candidate is listed for one kind of
+//! weight and declines the other before compiling anything, so a key races what its weight is
+//! listed for. A packed weight races the settings worth trying against it, and the float routines
+//! on the weight decoded first.
 //!
 //! # The NVFP4 table
 //!
-//! A fifth table, [`MatmulTable::Nvfp4`], is reached only by naming
+//! A third table, [`MatmulTable::Nvfp4`], is reached only by naming
 //! [`Nvfp4TensorCores`](crate::kernels::MatmulKernel::Nvfp4TensorCores). Its kernel rounds the
 //! activation to NVFP4 and multiplies 4-bit by 4-bit, a different product from the one an NVFP4
 //! weight asks for: the weight is packed and the activation stays in 16-bit. Autotune never sends
@@ -34,9 +36,9 @@ use super::packed::{
 };
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-use crate::stored::Operand;
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::launch::Refusal;
+use cubek_microkernel::matmul::stored::Operand;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::{NVFP4_BLOCK, block_scaled_nvfp4};
@@ -105,20 +107,16 @@ pub enum MatmulDequantize {
     Burn,
 }
 
-/// The autotune tables a product races on, split by whether its weight is packed and by the rows a
-/// gemv would stream.
+/// The autotune tables a product races on, split by the rows a gemv would stream: each holds the
+/// candidates for a float weight and for a packed one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatmulTable {
-    /// A handful of rows against a float weight, each read once: the gemv routines.
+    /// A handful of rows, each read once: the gemv routines, against a packed weight at the
+    /// settings worth trying against it, reading it as stored.
     FewRows,
-    /// Everything past the float gemv row bound: the gemm routines.
+    /// Everything past the gemv row bound: the gemm routines, and against a packed weight the
+    /// packed staged gemm reading it as stored and the float routines on it decoded first.
     ManyRows,
-    /// A handful of rows against a packed weight read as stored: the gemv routines at the settings
-    /// worth trying against it.
-    PackedFewRows,
-    /// Everything past the packed gemv row bound: the packed staged gemm reading the weight as
-    /// stored, and the float routines on the weight decoded first.
-    PackedManyRows,
     /// The activation rounded to NVFP4 and multiplied against an NVFP4 weight on a GPU's 4-bit
     /// tensor cores, at each of [`Nvfp4TensorCores`](crate::kernels::MatmulKernel::Nvfp4TensorCores)'s
     /// settings: what that pin runs, and nothing else.
@@ -141,8 +139,8 @@ impl MatmulTable {
     /// and its floor, the weight decoded, answers there.
     pub fn packed(problem: &MatmulProblem) -> Self {
         match problem.streamed_rows.is_some_and(quantized_few_rows) {
-            true => Self::PackedFewRows,
-            false => Self::PackedManyRows,
+            true => Self::FewRows,
+            false => Self::ManyRows,
         }
     }
 }

@@ -3,18 +3,18 @@ use crate::kernels::MatmulBinding;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::microkernel::MatmulOperand;
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::dense::cube::{
-    CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
-};
-use crate::microkernel::dense::plane::PlaneShuffleMicrokernel;
-use crate::stored::Packing;
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::DestinationLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
+use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::dense::cube::{
+    CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
+};
+use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
+use cubek_microkernel::matmul::stored::Packing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -25,7 +25,7 @@ use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine}
 /// ([`PlaneShuffleMicrokernel`]), or, against a packed weight, on the tensor cores, where an NVFP4
 /// weight against a 16-bit activation holds up to a fragment's sixteen rows at the cost of
 /// reading the weight
-/// ([`PlaneFragmentMicrokernel`](crate::microkernel::dense::plane::PlaneFragmentMicrokernel)).
+/// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel)).
 ///
 /// What a product whose runs of columns are too few to fill the device with planes wants: a
 /// narrow `N` on a device of many compute units. Declines a float row weight, a col weight whose
@@ -342,13 +342,13 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::microkernel::dense::cube::CubeShufflePlaneSettings;
-    use crate::microkernel::dense::plane::PlaneFragmentMicrokernelSettings;
-    use crate::microkernel::{MatmulLayout, MatmulOperands};
-    use crate::stored::Operand;
-    use crate::tile_order::{self, VALUES_AXES};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
+    use cubek_microkernel::matmul::dense::cube::CubeShufflePlaneSettings;
+    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::stored::Operand;
+    use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

@@ -1,7 +1,9 @@
-use crate::microkernel::dense::unit::{UnitRegistersMicrokernel, unit_registers_microkernel};
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::unit::{
+    UnitRegistersMicrokernel, unit_registers_microkernel,
+};
 
 /// Every plane of the launch, each of its units running its block.
 #[cube(launch_unchecked)]

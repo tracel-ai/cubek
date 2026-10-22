@@ -12,7 +12,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 rust-version = "1.92"
-version = "0.3.0"
+version = "0.4.0-pre.1"
 
 [workspace.lints.clippy]
 # Temporary workaround for linting generated code:
@@ -23,19 +23,19 @@ redundant_field_names = "allow"
 ### Internal cubek crates ###
 # Declared here so each consumer Cargo.toml can use `workspace = true` instead of
 # repeating the path and version.
-cubek = { path = "crates/cubek", version = "0.3.0", default-features = false }
-cubek-attention = { path = "crates/cubek-attention", version = "0.3.0", default-features = false }
-cubek-convolution = { path = "crates/cubek-convolution", version = "0.3.0", default-features = false }
-cubek-fft = { path = "crates/cubek-fft", version = "0.3.0", default-features = false }
-cubek-interpolate = { path = "crates/cubek-interpolate", version = "0.3.0", default-features = false }
-cubek-matmul = { path = "crates/cubek-matmul", version = "0.3.0", default-features = false }
-cubek-pool = { path = "crates/cubek-pool", version = "0.3.0", default-features = false }
-cubek-quant = { path = "crates/cubek-quant", version = "0.3.0", default-features = false }
-cubek-random = { path = "crates/cubek-random", version = "0.3.0", default-features = false }
-cubek-reduce = { path = "crates/cubek-reduce", version = "0.3.0", default-features = false }
-cubek-std = { path = "crates/cubek-std", version = "0.3.0", default-features = false }
-cubek-test-utils = { path = "crates/cubek-test-utils", version = "0.3.0", default-features = false }
-cubek-tile = { path = "crates/cubek-tile", version = "0.3.0", default-features = false }
+cubek = { path = "crates/cubek", version = "0.4.0-pre.1", default-features = false }
+cubek-attention = { path = "crates/cubek-attention", version = "0.4.0-pre.1", default-features = false }
+cubek-convolution = { path = "crates/cubek-convolution", version = "0.4.0-pre.1", default-features = false }
+cubek-fft = { path = "crates/cubek-fft", version = "0.4.0-pre.1", default-features = false }
+cubek-interpolate = { path = "crates/cubek-interpolate", version = "0.4.0-pre.1", default-features = false }
+cubek-matmul = { path = "crates/cubek-matmul", version = "0.4.0-pre.1", default-features = false }
+cubek-microkernel = { path = "crates/cubek-microkernel", version = "0.4.0-pre.1", default-features = false }
+cubek-pool = { path = "crates/cubek-pool", version = "0.4.0-pre.1", default-features = false }
+cubek-quant = { path = "crates/cubek-quant", version = "0.4.0-pre.1", default-features = false }
+cubek-random = { path = "crates/cubek-random", version = "0.4.0-pre.1", default-features = false }
+cubek-reduce = { path = "crates/cubek-reduce", version = "0.4.0-pre.1", default-features = false }
+cubek-std = { path = "crates/cubek-std", version = "0.4.0-pre.1", default-features = false }
+cubek-test-utils = { path = "crates/cubek-test-utils", version = "0.4.0-pre.1", default-features = false }
 
 ### For local development. ###
 # cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
@@ -43,15 +43,15 @@ cubek-tile = { path = "crates/cubek-tile", version = "0.3.0", default-features =
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "5625fb9b628e214d0ca47ccf1b94b110f423e032", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "5625fb9b628e214d0ca47ccf1b94b110f423e032", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "5625fb9b628e214d0ca47ccf1b94b110f423e032", default-features = false }
-cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "5625fb9b628e214d0ca47ccf1b94b110f423e032", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "3ba67ff007503151654a857ad3274e2267e6cc88", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "3ba67ff007503151654a857ad3274e2267e6cc88", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "3ba67ff007503151654a857ad3274e2267e6cc88", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "3ba67ff007503151654a857ad3274e2267e6cc88", default-features = false }
 ### For releases ###
-# cubecl = { version = "0.11.0", default-features = false }
-# cubecl-common = { version = "0.11.0", default-features = false }
-# cubecl-environment = { version = "0.11.0", default-features = false }
-# cubecl-ir = { version = "0.11.0", default-features = false }
+# cubecl = { version = "0.12.0-pre.1", default-features = false }
+# cubecl-common = { version = "0.12.0-pre.1", default-features = false }
+# cubecl-environment = { version = "0.12.0-pre.1", default-features = false }
+# cubecl-ir = { version = "0.12.0-pre.1", default-features = false }
 
 
 log = { default-features = false, version = "0.4.22" }
@@ -88,4 +88,17 @@ debug = 1     # Speed up compilation time and not necessary.
 opt-level = 0
 
 [profile.dev.build-override]
+opt-level = 3
+
+# Kernels are compiled when a test first launches them, by pliron and cubecl's
+# optimizer, and a debug build runs those unoptimized, so a cpu suite spends
+# most of its time compiling. Optimizing the compiler crates alone keeps the
+# code under test debuggable.
+[profile.dev.package.pliron]
+opt-level = 3
+[profile.dev.package.pliron-llvm]
+opt-level = 3
+[profile.dev.package.cubecl-opt]
+opt-level = 3
+[profile.dev.package.cubecl-llvm]
 opt-level = 3

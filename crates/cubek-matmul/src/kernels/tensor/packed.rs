@@ -4,11 +4,10 @@
 //! how its block scales are read ([`BlockScales`]), nothing else.
 
 use super::PlainTensor;
-use crate::stored::{BlockScales, Operand, Packing};
-use crate::tile_order::{self, VALUES_AXES};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::server::BufferBinding;
 use cubecl::tile::launch::{Arg, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
@@ -16,6 +15,8 @@ use cubecl::tile::{
     layout::{PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::stored::{BlockScales, Operand, Packing};
+use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N, blocked};
@@ -64,6 +65,33 @@ impl StoredTensor {
             }
             Self::Packed(tensor) => tensor.extent(axis),
         }
+    }
+
+    /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
+    /// block scales and its per-tensor scale. What a kept binding is rebound to, in place of the
+    /// buffers it was made over ([`TileArgLaunch::rebound`]).
+    pub fn buffers(&self) -> Vec<BufferBinding> {
+        self.tensors()
+            .map(|tensor| tensor.binding.handle.clone())
+            .collect()
+    }
+
+    /// How each of [`buffers`](Self::buffers) lies, in its order: what a binding derived over them
+    /// reads of them, so a kept binding is reused only over buffers that lie the same.
+    pub fn layouts(&self) -> impl Iterator<Item = Metadata> + '_ {
+        self.tensors().map(PlainTensor::meta)
+    }
+
+    /// The tensors behind [`buffers`](Self::buffers), in its order.
+    fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
+        let (values, scales) = match self {
+            Self::Plain(tensor) => (tensor, None),
+            Self::Packed(tensor) => (
+                &tensor.words,
+                Some(core::iter::once(&tensor.block_scales).chain(&tensor.global_scale)),
+            ),
+        };
+        core::iter::once(values).chain(scales.into_iter().flatten())
     }
 }
 

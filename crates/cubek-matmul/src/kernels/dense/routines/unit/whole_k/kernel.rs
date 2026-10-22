@@ -1,7 +1,7 @@
-use crate::microkernel::dense::unit::{UnitWholeKMicrokernel, unit_whole_k_microkernel};
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::unit::{UnitWholeKMicrokernel, unit_whole_k_microkernel};
 
 /// Every plane of the launch, each of its units running its run of the output. `O` is how the output
 /// is reached: a buffer, or a sink.

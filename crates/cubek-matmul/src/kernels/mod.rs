@@ -1,4 +1,4 @@
-//! Matmul kernels built on the microkernels in [`microkernel`](crate::microkernel): the dense
+//! Matmul kernels built on the microkernels in [`microkernel`](cubek_microkernel::matmul): the dense
 //! product's routines ([`MatmulRoutine`]), which kernel runs a product ([`select`]) and how a table
 //! measures them ([`tune`]). A routine reads each operand as it is stored ([`tensor`]).
 

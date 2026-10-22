@@ -1,22 +1,22 @@
 use super::kernel::plane_fragment_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
 use cubecl::tile::launch::Refusal;
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::microkernel::dense::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
-use crate::microkernel::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
-use crate::microkernel::staging::StageRing;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubek_microkernel::matmul::dense::plane::{
+    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
+};
+use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
+use cubek_microkernel::staging::StageRing;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -330,10 +330,10 @@ impl MatmulRoutine<PlaneFragmentMicrokernel, PlaneFragmentMatmulRoutineSharedMem
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::microkernel::MatmulLayout;
-    use crate::microkernel::dense::plane::PlaneFragmentInstruction;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::matmul::MatmulLayout;
+    use cubek_microkernel::matmul::dense::plane::PlaneFragmentInstruction;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

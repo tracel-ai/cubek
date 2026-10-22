@@ -145,10 +145,10 @@ fn a_quantized_activation_takes_a_float_ones_selection() {
 fn autotune_keeps_an_nvfp4_activation_in_16_bit() {
     for hw in [block_scaled(), devices::h100()] {
         for (rows, table) in [
-            (1, MatmulTable::PackedFewRows),
-            (QUANTIZED_FEW_ROWS, MatmulTable::PackedFewRows),
-            (QUANTIZED_FEW_ROWS + 1, MatmulTable::PackedManyRows),
-            (2048, MatmulTable::PackedManyRows),
+            (1, MatmulTable::FewRows),
+            (QUANTIZED_FEW_ROWS, MatmulTable::FewRows),
+            (QUANTIZED_FEW_ROWS + 1, MatmulTable::ManyRows),
+            (2048, MatmulTable::ManyRows),
         ] {
             assert_eq!(
                 select(Autotune, &quantized(rows, nvfp4_along_k()), &hw),
@@ -252,12 +252,12 @@ fn autotuned_and_pinned_quantized_rules() {
         (
             Autotune,
             quantized(1, q4()),
-            Ok(packed(P::Autotune(MatmulTable::PackedFewRows))),
+            Ok(packed(P::Autotune(MatmulTable::FewRows))),
         ),
         (
             Autotune,
             quantized(512, q4()),
-            Ok(packed(P::Autotune(MatmulTable::PackedManyRows))),
+            Ok(packed(P::Autotune(MatmulTable::ManyRows))),
         ),
         (
             Specific(K::UnitRegisters),
@@ -387,11 +387,11 @@ fn a_packed_weight_reaches_its_table_by_its_own_row_ceiling() {
     const { assert!(FLOAT_FEW_ROWS < QUANTIZED_FEW_ROWS, "the ceilings coincide") };
     assert_eq!(
         select(Autotune, &quantized(QUANTIZED_FEW_ROWS, q4()), &hw),
-        Ok(packed(P::Autotune(MatmulTable::PackedFewRows)))
+        Ok(packed(P::Autotune(MatmulTable::FewRows)))
     );
     assert_eq!(
         select(Autotune, &quantized(QUANTIZED_FEW_ROWS + 1, q4()), &hw),
-        Ok(packed(P::Autotune(MatmulTable::PackedManyRows)))
+        Ok(packed(P::Autotune(MatmulTable::ManyRows)))
     );
 }
 
@@ -607,7 +607,7 @@ mod float {
     /// that declines it and be answered by the fallback.
     #[test]
     fn the_float_bound_is_what_the_plane_shuffle_holds() {
-        use crate::microkernel::dense::plane::PlaneShuffleMicrokernel;
+        use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
         assert_eq!(FLOAT_FEW_ROWS, PlaneShuffleMicrokernel::MAX_ROWS);
     }
 

@@ -1,6 +1,6 @@
-use crate::microkernel::dense::cube::{CubeStagedWalk, cube_staged_microkernel};
 use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::cube::{CubeStagedWalk, cube_staged_microkernel};
 
 /// Every cube running its box, walked as `walk` says. Each operand's values are a buffer the cube's
 /// units fill the stages from, or a tensor map the TMA engine fills them from; `O` is how the

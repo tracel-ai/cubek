@@ -4,20 +4,20 @@ use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::microkernel::MatmulOperand;
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::dense::cube::CubeStagedDelivery;
-use crate::microkernel::dense::hypercube::{
-    HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
-};
-use crate::microkernel::staged_walk::MatmulCubeWrite;
-use crate::microkernel::staging::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::VectorRequirement;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::dense::cube::CubeStagedDelivery;
+use cubek_microkernel::matmul::dense::hypercube::{
+    HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
+};
+use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
+use cubek_microkernel::staging::StageRing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -295,12 +295,12 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeRelayM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::microkernel::MatmulLayout;
-    use crate::microkernel::dense::cube::CubeStagedMicrokernelSettings;
-    use crate::microkernel::dense::plane::PlaneFragmentMicrokernelSettings;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::space::CubeOrder;
+    use cubek_microkernel::matmul::MatmulLayout;
+    use cubek_microkernel::matmul::dense::cube::CubeStagedMicrokernelSettings;
+    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
     use cubek_std::devices;
     use cubek_std::matmul_axes::K;
     use cubek_std::microkernel::GlobalStream;
@@ -327,10 +327,10 @@ mod tests {
     /// returns, before the MMAs reading it are done.
     #[test]
     fn declines_the_warpgroup_mma() {
-        use crate::microkernel::dense::cube::{CubeStagedDelivery, CubeStagedFill};
-        use crate::microkernel::dense::plane::PlaneFragmentTransport;
-        use crate::microkernel::staging::StageRing;
         use cubecl::features::{WgmmaConfig, WgmmaElems};
+        use cubek_microkernel::matmul::dense::cube::{CubeStagedDelivery, CubeStagedFill};
+        use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+        use cubek_microkernel::staging::StageRing;
 
         let hw = devices::offering_wgmma(
             offering(devices::h100()),

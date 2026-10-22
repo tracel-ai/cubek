@@ -1,8 +1,8 @@
-use crate::microkernel::dense::hypercube::{
-    HypercubeStagedMicrokernel, hypercube_staged_last_arrival_microkernel,
-};
 use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::hypercube::{
+    HypercubeStagedMicrokernel, hypercube_staged_last_arrival_microkernel,
+};
 
 /// Every cube running its run of the line: for each tile the run touches, its part of the tile's
 /// `K`, a stage at a time into one sum, handed on to the output by the tile's last arrival

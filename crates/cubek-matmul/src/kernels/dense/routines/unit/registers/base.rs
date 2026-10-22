@@ -4,16 +4,18 @@ use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::dense::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
-use crate::microkernel::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
-use crate::microkernel::{MatmulOperand, MatmulOperands};
 use core::num::NonZeroUsize;
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::DestinationLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::dense::unit::{
+    UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings,
+};
+use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -252,8 +254,8 @@ impl MatmulRoutine<UnitRegistersMicrokernel> for UnitRegistersMatmulRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::microkernel::MatmulLayout;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::matmul::MatmulLayout;
     use cubek_std::devices;
 
     /// A register block reads a col weight along `K`, folding each line of it with a line of the

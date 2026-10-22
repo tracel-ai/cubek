@@ -4,23 +4,6 @@ mod base {
     use super::super::*;
     use crate::kernels::CUBE_STRIPS;
     use crate::kernels::{MatmulRoutineProblem, MatmulView};
-    use crate::microkernel::MatmulOperand;
-    use crate::microkernel::MatmulPartitioning;
-    use crate::microkernel::dense::cube::{
-        CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
-        CubeStagedStore,
-    };
-    use crate::microkernel::dense::cube::{
-        CubeStagedFill, CubeStagedFillingRefusal, CubeStagedTmaRefusal,
-    };
-    use crate::microkernel::dense::plane::PlaneFragmentMicrokernelSettings;
-    use crate::microkernel::dense::plane::PlaneFragmentTransport;
-    use crate::microkernel::dense::plane::{
-        PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
-    };
-    use crate::microkernel::staged_walk::MatmulPlaneLayout;
-    use crate::microkernel::staging::StageRing;
-    use crate::microkernel::{MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder};
     use core::num::NonZeroUsize;
     use cubecl::features::MmaConfig;
     use cubecl::features::{WgmmaConfig, WgmmaElems};
@@ -30,6 +13,23 @@ mod base {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
+    use cubek_microkernel::matmul::MatmulOperand;
+    use cubek_microkernel::matmul::MatmulPartitioning;
+    use cubek_microkernel::matmul::dense::cube::{
+        CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
+        CubeStagedStore,
+    };
+    use cubek_microkernel::matmul::dense::cube::{
+        CubeStagedFill, CubeStagedFillingRefusal, CubeStagedTmaRefusal,
+    };
+    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::dense::plane::{
+        PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
+    };
+    use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
+    use cubek_microkernel::matmul::{MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder};
+    use cubek_microkernel::staging::StageRing;
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};
@@ -67,7 +67,7 @@ mod base {
             .instruction
             .landed_stage_storage(
                 blueprint.partitioning.batch_axes(),
-                crate::microkernel::MatmulAxes::MNK,
+                cubek_microkernel::matmul::MatmulAxes::MNK,
                 blueprint.partitioning.stage().extent(K),
             )
     }
@@ -1342,10 +1342,10 @@ mod base {
     #[test]
     fn an_nvfp4_product_read_as_stored_is_estimated() {
         use crate::kernels::select::packed::nvfp4_activation_scheme;
-        use crate::microkernel::dense::cube::CubeStagedDepth;
-        use crate::stored::Operand;
-        use crate::stored::Packing;
-        use crate::tile_order;
+        use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
+        use cubek_microkernel::matmul::stored::Operand;
+        use cubek_microkernel::matmul::stored::Packing;
+        use cubek_microkernel::matmul::tile_order;
         use cubek_std::microkernel::KernelEstimate;
 
         let hw = devices::offering_nvfp4(devices::h100());
@@ -1380,10 +1380,10 @@ mod base {
     /// as `K` holds stages of the microkernel's blocks, split between the planes sharing `K`.
     #[test]
     fn a_decoded_weight_is_estimated_in_stages_of_its_blocks() {
-        use crate::microkernel::dense::cube::CubeStagedDepth;
-        use crate::stored::Operand;
-        use crate::stored::Packing;
-        use crate::tile_order;
+        use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
+        use cubek_microkernel::matmul::stored::Operand;
+        use cubek_microkernel::matmul::stored::Packing;
+        use cubek_microkernel::matmul::tile_order;
         use cubek_std::matmul_axes::KI;
         use cubek_std::microkernel::KernelEstimate;
 

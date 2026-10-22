@@ -1,4 +1,5 @@
 use cubecl::client::Client;
+use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
@@ -11,7 +12,7 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Tiling};
 use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
 
-use crate::microkernel::MatmulBlocks;
+use cubek_microkernel::matmul::MatmulBlocks;
 
 /// A float operand as the routines read it: cubecl's binding of its buffer, and the element it
 /// holds. Every view below reads the same buffer under other dims, so a launch states its problem
@@ -41,6 +42,26 @@ impl PlainTensor {
         let handle = TensorHandle::new(layout.memory, shape, layout.strides, elem);
         let plain = Self::of_handle(handle.clone());
         (handle, plain)
+    }
+
+    /// An uninitialized row-major tensor shaped `shape` in `elem`, gapless whatever the runtime: a
+    /// view that factors its strides, as a reshape does, stays valid. The handle is the caller's
+    /// to hand back; the view binds it.
+    pub fn empty_contiguous(client: &Client, shape: Shape, elem: ElemType) -> (TensorHandle, Self) {
+        let memory = client.empty(shape.num_elements() * elem.size());
+        let handle = TensorHandle::new_contiguous(shape, memory, elem);
+        let plain = Self::of_handle(handle.clone());
+        (handle, plain)
+    }
+
+    /// Whether `client`'s runtime computes in this tensor's element and stores it in a buffer:
+    /// what a kernel at that element needs to compile there.
+    pub fn runs_on(&self, client: &Client) -> bool {
+        client
+            .properties()
+            .features
+            .type_usage(self.elem)
+            .is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
     }
 
     /// The buffer's shape, strides and tiling.
@@ -83,6 +104,15 @@ impl PlainTensor {
     /// This buffer read as `meta` states.
     pub fn viewed(&self, meta: Metadata) -> Self {
         Self::new(self.bound_as(meta), self.elem)
+    }
+
+    /// This view's last two dims swapped, over the same buffer.
+    pub fn transposed(&self) -> Self {
+        let (mut shape, mut strides) = (self.binding.shape.clone(), self.binding.strides.clone());
+        let rank = shape.len();
+        shape.swap(rank - 2, rank - 1);
+        strides.swap(rank - 2, rank - 1);
+        self.viewed(Metadata::new(shape, strides))
     }
 
     /// This buffer bound as `meta` states.
