@@ -14,6 +14,8 @@
 //! A folder per problem, behind a feature of the same name, and the stage ring every staged walk
 //! holds its stages in ([`staging`]).
 
+#[cfg(feature = "attention")]
+pub mod attention;
 #[cfg(feature = "matmul")]
 pub mod matmul;
 pub mod staging;

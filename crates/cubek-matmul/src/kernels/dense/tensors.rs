@@ -5,7 +5,6 @@ use crate::kernels::{
     MatmulView,
 };
 use cubecl::client::Client;
-use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
@@ -931,7 +930,7 @@ impl MatmulInputs {
         if lhs.elem != rhs.elem || !Self::VERIFIED.contains(&lhs.elem) {
             return Err(MATMUL_ELEMENT_UNVERIFIED);
         }
-        if !runs_on(lhs.elem, client) {
+        if !lhs.runs_on(client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
         Ok(Self { lhs, rhs })
@@ -964,16 +963,6 @@ impl MatmulInputs {
             false => tensor.into_contiguous(client),
         }
     }
-}
-
-/// Whether `client`'s runtime computes in `elem` and stores it in a buffer: what a kernel at that
-/// element needs to compile there.
-fn runs_on(elem: ElemType, client: &Client) -> bool {
-    client
-        .properties()
-        .features
-        .type_usage(elem)
-        .is_superset(TypeUsage::Arithmetic | TypeUsage::Buffer)
 }
 
 /// The carry and the turn counters of a launch whose cubes take turns at the output.
