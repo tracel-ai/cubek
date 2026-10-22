@@ -6,33 +6,35 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::PackedCacheArgLaunch;
 use cubek_microkernel::attention::packed_cache::{KeyFixup, KvBitWidths};
 
-/// A packed cache: both operands at their bit widths, and the keys' fix-up where they carry one,
-/// as a kernel reads it: `u32` words whose fields of a row are adjacent, and every norm and
-/// codebook in `f32`, the sum's element ([`new`](Self::new)).
+/// A packed cache: both operands at their bit widths, and the keys' fix-up where they carry one.
+///
+/// Each buffer is a `T`: a caller states the cache in its own tensors and converts it to the
+/// default, [`PlainTensor`], which is what a kernel reads: `u32` words whose fields of a row are
+/// adjacent, and every norm and codebook in `f32`, the sum's element ([`new`](Self::new)).
 #[derive(Debug, Clone)]
-pub struct PackedAttentionCache {
-    pub key: PackedAttentionOperand,
-    pub value: PackedAttentionOperand,
+pub struct PackedAttentionCache<T = PlainTensor> {
+    pub key: PackedAttentionOperand<T>,
+    pub value: PackedAttentionOperand<T>,
     pub bits: KvBitWidths,
-    pub fixup: Option<QjlFixup>,
+    pub fixup: Option<QjlFixup<T>>,
 }
 
 /// The keys or the values of a packed cache: `words` `[b, kv, s, w]`, each vector's coordinates
 /// packed low first as `bits`-wide indices into `codebook`, and the vector scaled by its entry of
 /// `norms` `[b, kv, s, 1]`.
 #[derive(Debug, Clone)]
-pub struct PackedAttentionOperand {
-    pub words: PlainTensor,
-    pub norms: PlainTensor,
-    pub codebook: PlainTensor,
+pub struct PackedAttentionOperand<T = PlainTensor> {
+    pub words: T,
+    pub norms: T,
+    pub codebook: T,
 }
 
 /// The keys' QJL fix-up: each key's residual length `errs` `[b, kv, s, 1]`, and `sign_codebook`,
 /// the codebook its indices read the residual's projected sign through.
 #[derive(Debug, Clone)]
-pub struct QjlFixup {
-    pub errs: PlainTensor,
-    pub sign_codebook: PlainTensor,
+pub struct QjlFixup<T = PlainTensor> {
+    pub errs: T,
+    pub sign_codebook: T,
 }
 
 /// What a launch compiles about a packed cache: each operand's bit width, and whether the keys
