@@ -238,7 +238,7 @@ impl PlaneFragmentInstruction {
 
     /// Whether this is a block-scaled instruction over NVFP4: one whose operands are `e2m1`
     /// values under an `e4m3` scale every sixteen of `k` (the `e2m1` instructions
-    /// [`Hardware::manual_mma`] holds), which reads the stored words and their scales as they lie.
+    /// [`manual_mma`](cubek_std::manual_mma) holds), which reads the stored words and their scales as they lie.
     pub fn block_scaled(self) -> bool {
         let e2m1 = ElemType::Float(FloatKind::E2M1);
         match self {

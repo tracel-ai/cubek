@@ -289,7 +289,7 @@ impl PlaneFragmentMicrokernel {
 
     /// How a stage it reads holds its cells, filled by its units: in its instruction's tiles
     /// ([`PlaneFragmentInstruction::stage_storage`]), each one step deep along every axis `K` is
-    /// stated over ([`k_axes`](Self::k_axes)).
+    /// stated over.
     pub fn stage_storage(&self, stage: &MatmulStage) -> StageStorage {
         let beside: Vec<Axis> = stage.beside().collect();
         Self::over_k(
