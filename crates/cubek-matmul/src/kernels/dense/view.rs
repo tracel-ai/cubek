@@ -152,7 +152,7 @@ impl<'a> MatmulView<'a> {
             .batches(&distributed_batch_axes)
             .build();
         let partitioning = Partitioning::new(self.space(), levels);
-        let tile = partitioning.box_of(ComputeScope::Cube);
+        let tile = self.one_slab(partitioning.box_of(ComputeScope::Cube));
         let cube_box = match cubes_along_k.get() {
             1 => tile,
             // The cube level's own tile is one step of `K` where cubes share a box, distributed
@@ -221,6 +221,22 @@ impl<'a> MatmulView<'a> {
             distributed_batch_axes,
             self.rows_kind,
         )
+    }
+
+    /// `tile`, one slab wide along the axis a table's entry picks along: no level cuts that axis,
+    /// so a box spans every slab, but each cube's tile holds the one its entry names, and so does
+    /// the stage it fills. Any other tile as it is.
+    fn one_slab(&self, tile: Space) -> Space {
+        match self.problem.index.and_then(|index| index.axis()) {
+            Some((stacked, _)) => Space::new(
+                &tile
+                    .extents()
+                    .into_iter()
+                    .map(|(axis, extent)| (axis, if axis == stacked { 1 } else { extent }))
+                    .collect::<Vec<_>>(),
+            ),
+            None => tile,
+        }
     }
 
     /// The space a launch cuts: the batches its cubes are handed one of, then the rows, `n` and
@@ -500,6 +516,25 @@ mod tests {
         let view = MatmulView::new(&problem, MatmulRowsKind::Whole).expect("a table keeps batches");
         assert_eq!(view.rows(), 1);
         assert_eq!(view.work_item().rows, MatmulRows::Whole(1));
+    }
+
+    /// A cube's box spans one slab of the stack, the one its entry names, though no level cuts
+    /// the slabs: what its stage is sized for.
+    #[test]
+    fn a_cube_holds_one_slab() {
+        let problem = MatmulRoutineProblem {
+            stated_rows: 64,
+            ..routed()
+        };
+        let view = MatmulView::new(&problem, MatmulRowsKind::Tiled).unwrap();
+        let partitioning = view.partitioning(
+            Levels::leaf(&[(M, 16), (N, 16), (K, 16)]),
+            &[M, N],
+            CubeOrder::RowMajor,
+            MatmulView::ONE_CUBE_A_BOX,
+        );
+        assert_eq!(view.space().extent(EXPERT), 4);
+        assert_eq!(partitioning.cube_box().extent(EXPERT), 1);
     }
 
     /// Every batch is handed to the cubes, one of a single batch too, since the table's dims are
