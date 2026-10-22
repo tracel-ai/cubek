@@ -86,6 +86,71 @@ impl MicroTile {
             .find(|&(_, extent)| extent > 1)
             .map(|(a, _)| a)
     }
+
+    /// This tile, a word along `along`, as a buffer `stored` so reads it `words` words a load: the
+    /// word, along `along` or along `across`, and the tiles stored right above it, whole, while they
+    /// fit one load and stay inside `inside` along each axis it names. The tiles past the load are the
+    /// buffer's to step, not the read's.
+    ///
+    /// `None` where the buffer does not start with that word, or where a tile inside the load lies
+    /// along neither axis or comes back to one after the other.
+    fn read_off(
+        self,
+        along: Axis,
+        across: Axis,
+        words: usize,
+        inside: &MicroTile,
+        stored: Option<Stored<'_>>,
+    ) -> Option<MicroTile> {
+        let Some((axes, tiles)) = stored else {
+            return Some(self);
+        };
+        let per_word = self.extent(along);
+        // The word starts at an axis's finest digit; a tile above it continues the run along an axis
+        // at that digit, or at the blocks once `read` holds a whole one of `inside`: before then the
+        // next block's values are not the next ones along the axis.
+        let axis_of = |digit: Axis, read: &MicroTile| {
+            [along, across].into_iter().find(|&axis| {
+                let (groups, within) = blocked(axis);
+                let block = inside.extent(axis);
+                Self::finest_digit(axes, axis) == Some(digit)
+                    || (digit == groups
+                        && axes.contains(&within)
+                        && block > 1
+                        && read.extent(axis) == block)
+            })
+        };
+        let (&(digit, first), above) = tiles.split_first()?;
+        let word_along = axis_of(digit, &MicroTile::unit()).filter(|_| first == per_word)?;
+        let mut read = MicroTile::along(word_along, per_word);
+        let mut taken = 1;
+        let mut last = word_along;
+        for &(digit, count) in above.iter().filter(|&&(_, count)| count > 1) {
+            if taken * count > words {
+                break;
+            }
+            let axis = axis_of(digit, &read)?;
+            let bound = inside.extent(axis);
+            if bound > 1 && read.extent(axis) * count > bound {
+                break;
+            }
+            if axis != last && read.extent(axis) > 1 {
+                return None;
+            }
+            read = read.times(axis, count);
+            (taken, last) = (taken * count, axis);
+        }
+        Some(read)
+    }
+
+    /// The finer of `axis`'s two digits ([`blocked`]) a buffer over `axes` carries: the position
+    /// inside a block where it has it, the blocks where it omits it (as scales do).
+    fn finest_digit(axes: &[Axis], axis: Axis) -> Option<Axis> {
+        let (groups, within) = blocked(axis);
+        [within, groups]
+            .into_iter()
+            .find(|digit| axes.contains(digit))
+    }
 }
 
 /// How an operand is read and how it is scaled, as tiles of its own axes.
@@ -225,9 +290,13 @@ impl Operand {
         // A read of the values stays inside one scale, and its scales' inside one unit.
         let unit = MicroTile::unit();
         let inside = self.scale.as_ref().unwrap_or(&unit);
-        let read = read_off(self.read, self.lined(), across, words, inside, values)?;
+        let read = self
+            .read
+            .read_off(self.lined(), across, words, inside, values)?;
         let scale_read = match self.scaled_along() {
-            Some(axis) => read_off(self.scale_read, axis, across, words, &unit, scales)?,
+            Some(axis) => self
+                .scale_read
+                .read_off(axis, across, words, &unit, scales)?,
             None => self.scale_read,
         };
         Some(Operand {
@@ -431,75 +500,31 @@ impl Operand {
             walk: Walked::Above(vec![groups]),
         })
     }
+
+    /// An operand whose read brings `read` values along `lined`, whose scales
+    /// each cover `scale` along `tiled`, and whose scales come `scales_per_word`
+    /// to a word.
+    ///
+    /// The two axes are usually the same one, and the shape where they are not
+    /// is the one no scheme writes today.
+    #[cfg(test)]
+    pub fn packed(
+        lined: Axis,
+        read: usize,
+        tiled: Axis,
+        scale: usize,
+        scales_per_word: usize,
+    ) -> Self {
+        Operand {
+            read: MicroTile::along(lined, read),
+            scale: Some(MicroTile::along(tiled, scale)),
+            scale_read: MicroTile::along(tiled, scales_per_word),
+        }
+    }
 }
 
 /// A buffer stored in tiles: the axes its dims carry, and its stored tiles, finest first.
 pub type Stored<'a> = (&'a [Axis], &'a [(Axis, usize)]);
-
-/// `tile`, a word along `along`, as a buffer `stored` so reads it `words` words a load: the word,
-/// along `along` or along `across`, and the tiles stored right above it, whole, while they fit
-/// one load and stay inside `inside` along each axis it names. The tiles past the load are the
-/// buffer's to step, not the read's.
-///
-/// `None` where the buffer does not start with that word, or where a tile inside the load lies
-/// along neither axis or comes back to one after the other.
-fn read_off(
-    tile: MicroTile,
-    along: Axis,
-    across: Axis,
-    words: usize,
-    inside: &MicroTile,
-    stored: Option<Stored<'_>>,
-) -> Option<MicroTile> {
-    let Some((axes, tiles)) = stored else {
-        return Some(tile);
-    };
-    let per_word = tile.extent(along);
-    // The word starts at an axis's finest digit; a tile above it continues the run along an axis
-    // at that digit, or at the blocks once `read` holds a whole one of `inside`: before then the
-    // next block's values are not the next ones along the axis.
-    let axis_of = |digit: Axis, read: &MicroTile| {
-        [along, across].into_iter().find(|&axis| {
-            let (groups, within) = blocked(axis);
-            let block = inside.extent(axis);
-            finest_digit(axes, axis) == Some(digit)
-                || (digit == groups
-                    && axes.contains(&within)
-                    && block > 1
-                    && read.extent(axis) == block)
-        })
-    };
-    let (&(digit, first), above) = tiles.split_first()?;
-    let word_along = axis_of(digit, &MicroTile::unit()).filter(|_| first == per_word)?;
-    let mut read = MicroTile::along(word_along, per_word);
-    let mut taken = 1;
-    let mut last = word_along;
-    for &(digit, count) in above.iter().filter(|&&(_, count)| count > 1) {
-        if taken * count > words {
-            break;
-        }
-        let axis = axis_of(digit, &read)?;
-        let bound = inside.extent(axis);
-        if bound > 1 && read.extent(axis) * count > bound {
-            break;
-        }
-        if axis != last && read.extent(axis) > 1 {
-            return None;
-        }
-        read = read.times(axis, count);
-        (taken, last) = (taken * count, axis);
-    }
-    Some(read)
-}
-
-/// The finer of `axis`'s two digits ([`blocked`]) a buffer over `axes` carries: the position
-/// inside a block where it has it, the blocks where it omits it (as scales do).
-fn finest_digit(axes: &[Axis], axis: Axis) -> Option<Axis> {
-    let (groups, within) = blocked(axis);
-    [within, groups]
-        .into_iter()
-        .find(|digit| axes.contains(digit))
-}
 
 /// How a kernel reads a packed matrix's block scales, which they are bound as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -537,29 +562,6 @@ impl Packing {
             _ => 0,
         };
         self.values_bytes(values) + scales
-    }
-}
-
-#[cfg(test)]
-impl Operand {
-    /// An operand whose read brings `read` values along `lined`, whose scales
-    /// each cover `scale` along `tiled`, and whose scales come `scales_per_word`
-    /// to a word.
-    ///
-    /// The two axes are usually the same one, and the shape where they are not
-    /// is the one no scheme writes today.
-    pub fn packed(
-        lined: Axis,
-        read: usize,
-        tiled: Axis,
-        scale: usize,
-        scales_per_word: usize,
-    ) -> Self {
-        Operand {
-            read: MicroTile::along(lined, read),
-            scale: Some(MicroTile::along(tiled, scale)),
-            scale_read: MicroTile::along(tiled, scales_per_word),
-        }
     }
 }
 
