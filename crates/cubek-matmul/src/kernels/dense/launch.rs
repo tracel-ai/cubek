@@ -116,7 +116,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         hw: &Hardware,
         client: &Client,
         lhs: PlainTensor,
-        rhs: PlainTensor,
+        rhs: StoredTensor,
         table: MatmulIndexTable,
         settings: &Self::Settings,
     ) -> Result<TensorHandle, Refusal> {

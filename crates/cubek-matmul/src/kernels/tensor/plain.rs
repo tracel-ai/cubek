@@ -177,21 +177,43 @@ impl PlainTensor {
 
     /// This tensor, dense rows along `rows` by `columns`, restated over the axes each is in the
     /// block-split space of `blocks`, and those axes: the same bytes, a dim an axis, which the
-    /// tile engine stages and masks as it lies ([`MatmulBlocks::restated_dims`]).
-    pub fn restated(&self, blocks: &MatmulBlocks, rows: Axis, columns: Axis) -> (Self, Vec<Axis>) {
-        let dense = self.as_rows(blocks.extent(rows), blocks.extent(columns));
-        let dims = blocks.restated_dims(rows, columns, dense.binding.strides[0]);
+    /// tile engine stages and masks as it lies ([`MatmulBlocks::restated_dims`]). Its leading
+    /// dims fold into the rows, unless they are `batches`, which stay dims of their own, labelled
+    /// so, ahead of the block-split ones.
+    pub fn restated(
+        &self,
+        blocks: &MatmulBlocks,
+        rows: Axis,
+        columns: Axis,
+        batches: &[Axis],
+    ) -> (Self, Vec<Axis>) {
+        let (shape, strides) = (&self.binding.shape, &self.binding.strides);
+        let kept = batches.len();
+        let dense = match kept {
+            0 => self.as_rows(blocks.extent(rows), blocks.extent(columns)),
+            _ => self.clone(),
+        };
+        let step = dense.row_step().unwrap_or(blocks.extent(columns));
+        let dims = blocks.restated_dims(rows, columns, step);
         let meta = Metadata::new(
-            dims.iter()
-                .map(|&(_, extent, _)| extent)
+            shape[..kept]
+                .iter()
+                .copied()
+                .chain(dims.iter().map(|&(_, extent, _)| extent))
                 .collect::<Vec<_>>(),
-            dims.iter()
-                .map(|&(_, _, stride)| stride)
+            strides[..kept]
+                .iter()
+                .copied()
+                .chain(dims.iter().map(|&(_, _, stride)| stride))
                 .collect::<Vec<_>>(),
         );
         (
             dense.viewed(meta),
-            dims.iter().map(|&(axis, _, _)| axis).collect(),
+            batches
+                .iter()
+                .copied()
+                .chain(dims.iter().map(|&(axis, _, _)| axis))
+                .collect(),
         )
     }
 

@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
-use cubek_matmul::kernels::tensor::PlainTensor;
+use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, MatmulIndex, MatmulIndexTable, MatmulRoutine,
     PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
@@ -60,7 +60,14 @@ fn check_every_setting<M, SM, R>(
     let mut ran = 0;
     for settings in routine.settings(&hw) {
         let (lhs, rhs, table) = inputs();
-        let Ok(out) = routine.launch_indexed_on(&hw, &client, lhs, rhs, table, &settings) else {
+        let Ok(out) = routine.launch_indexed_on(
+            &hw,
+            &client,
+            lhs,
+            StoredTensor::Plain(rhs),
+            table,
+            &settings,
+        ) else {
             continue;
         };
         ran += 1;
@@ -193,6 +200,72 @@ impl Grouped {
     }
 }
 
+/// `chunks` chunks of `rows` rows each, sorted by slab and padded to whole chunks: batches
+/// `[chunks]`, each against the slab its entry names. The last chunk is padding, its entry one
+/// past the stack.
+struct Chunked {
+    chunks: usize,
+    rows: usize,
+    slabs: usize,
+    k: usize,
+    n: usize,
+}
+
+impl Chunked {
+    fn slab_of_each(&self) -> Vec<u32> {
+        let mut slabs: Vec<u32> = (0..self.chunks)
+            .map(|c| ((c * 5 + 2) % self.slabs) as u32)
+            .collect();
+        *slabs.last_mut().unwrap() = self.slabs as u32;
+        slabs
+    }
+
+    fn inputs(&self) -> (PlainTensor, PlainTensor, MatmulIndexTable) {
+        let client = client();
+        let Self {
+            chunks,
+            rows,
+            slabs,
+            k,
+            n,
+        } = *self;
+        let lhs = upload(&client, &[chunks, rows, k], &values(chunks * rows * k, 5));
+        let stack = upload(&client, &[slabs, k, n], &values(slabs * k * n, 6));
+        let entries = upload(&client, &[chunks], &self.slab_of_each());
+        let table = MatmulIndexTable {
+            index: MatmulIndex::Slab { slabs },
+            entries,
+        };
+        (lhs, stack, table)
+    }
+
+    fn expected(&self) -> Vec<f32> {
+        let Self {
+            chunks,
+            rows,
+            slabs,
+            k,
+            n,
+        } = *self;
+        let (lhs, stack) = (values(chunks * rows * k, 5), values(slabs * k * n, 6));
+        let mut out = vec![0.; chunks * rows * n];
+        for (c, &slab) in self.slab_of_each().iter().enumerate() {
+            let slab = slab as usize;
+            if slab >= slabs {
+                continue;
+            }
+            for r in c * rows..(c + 1) * rows {
+                for j in 0..n {
+                    out[r * n + j] = (0..k)
+                        .map(|kk| lhs[r * k + kk] * stack[(slab * k + kk) * n + j])
+                        .sum();
+                }
+            }
+        }
+        out
+    }
+}
+
 const ROUTED: Routed = Routed {
     tokens: 5,
     picks: 3,
@@ -230,5 +303,37 @@ fn a_grouped_product_on_the_cube_staged_sums_each_group_s_run() {
         CubeStagedMatmulRoutine,
         || grouped.inputs(),
         &grouped.expected(),
+    );
+}
+
+#[test]
+fn a_chunked_product_on_the_cube_staged_reads_each_chunk_s_slab() {
+    let chunked = Chunked {
+        chunks: 5,
+        rows: 32,
+        slabs: 3,
+        k: 96,
+        n: 80,
+    };
+    check_every_setting(
+        CubeStagedMatmulRoutine,
+        || chunked.inputs(),
+        &chunked.expected(),
+    );
+}
+
+#[test]
+fn a_chunked_product_on_the_plane_shuffle_reads_each_chunk_s_slab() {
+    let chunked = Chunked {
+        chunks: 5,
+        rows: 4,
+        slabs: 3,
+        k: 96,
+        n: 80,
+    };
+    check_every_setting(
+        PlaneShuffleMatmulRoutine,
+        || chunked.inputs(),
+        &chunked.expected(),
     );
 }

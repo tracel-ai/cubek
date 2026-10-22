@@ -378,9 +378,11 @@ struct RowsReading {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::MatmulIndex;
     use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::matmul::MatmulOperands;
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands, MatmulRows};
+    use cubek_std::matmul_axes::{EXPERT, batch_axis};
 
     fn shape(batch: usize, batching: MatmulBatching) -> MatmulShape {
         MatmulShape {
@@ -466,5 +468,61 @@ mod tests {
             Err(MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED)
         );
         assert!(MatmulView::new(&broadcast, MatmulRowsKind::Tiled).is_ok());
+    }
+
+    /// A routed product: 5 tokens, each routed to 3 of 4 slabs, batches `[5, 3]` of one row, the
+    /// activation broadcast along the picks.
+    fn routed() -> MatmulRoutineProblem {
+        let problem = MatmulRoutineProblem::dense(
+            1,
+            48,
+            64,
+            ElemType::Float(FloatKind::F16),
+            MatmulLayout::Row,
+        );
+        MatmulRoutineProblem {
+            batches: vec![5, 3],
+            batches_held: MatmulOperands {
+                lhs: 5,
+                rhs: 1,
+                out: 15,
+            },
+            index: Some(MatmulIndex::Slab { slabs: 4 }),
+            ..problem
+        }
+    }
+
+    /// Under a table, a launch holding rows whole keeps each batch's row apart instead of folding
+    /// the batches into rows, so a broadcast activation is no refusal, and the rows are one batch's.
+    #[test]
+    fn a_table_keeps_the_batches_apart_where_rows_are_held_whole() {
+        let problem = routed();
+        let view = MatmulView::new(&problem, MatmulRowsKind::Whole).expect("a table keeps batches");
+        assert_eq!(view.rows(), 1);
+        assert_eq!(view.work_item().rows, MatmulRows::Whole(1));
+    }
+
+    /// Every batch is handed to the cubes, one of a single batch too, since the table's dims are
+    /// the batches; the stack's slabs are in the space beside the product, for an entry to pick.
+    #[test]
+    fn a_table_puts_every_batch_and_the_stack_in_the_space() {
+        let problem = MatmulRoutineProblem {
+            batches: vec![5, 1],
+            batches_held: MatmulOperands {
+                lhs: 5,
+                rhs: 1,
+                out: 5,
+            },
+            ..routed()
+        };
+        for rows_kind in [MatmulRowsKind::Whole, MatmulRowsKind::Tiled] {
+            let space = MatmulView::new(&problem, rows_kind).unwrap().space();
+            let [first, second] = [batch_axis(0), batch_axis(1)];
+            assert_eq!(
+                [first, second, M, N, K, EXPERT].map(|axis| space.extent(axis)),
+                [5, 1, 1, 48, 64, 4],
+                "{rows_kind:?}"
+            );
+        }
     }
 }

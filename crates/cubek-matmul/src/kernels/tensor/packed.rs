@@ -12,14 +12,14 @@ use cubecl::tile::launch::{Arg, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
     kind::Field,
-    layout::{PhysicalAxisMap, split},
+    layout::{DimsBuilder, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::stored::{BlockScales, Operand, Packing};
 use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, N, blocked};
+use cubek_std::matmul_axes::{EXPERT, K, N, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
@@ -111,6 +111,16 @@ pub struct PackedTensor {
     scheme: QuantScheme,
     operand: Operand,
     axes: [(Axis, usize); 2],
+    stack: Option<PackedStack>,
+}
+
+/// A packed tensor holding `slabs` matrices end to end along one of its axes, `along`: the words
+/// and scales of each slab one slab's extent further along it, bound as a leading [`EXPERT`] dim
+/// a table's entry picks one of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PackedStack {
+    slabs: usize,
+    along: Axis,
 }
 
 /// How a packed matrix's words lie in their buffer: read off the matrix once, and bound as it says.
@@ -154,7 +164,43 @@ impl PackedTensor {
             scheme,
             operand,
             axes,
+            stack: None,
         }
+    }
+
+    /// This matrix read as `slabs` matrices laid end to end along `along`, each its extent there
+    /// divided by `slabs`: a stacked weight one slab of which a table's entry picks
+    /// ([`MatmulIndex::Slab`](crate::kernels::MatmulIndex::Slab)).
+    ///
+    /// # Errors
+    ///
+    /// [`PACKED_STACK_UNREAD`]: words stored in tiles, or slabs that split a read, a scale's block,
+    /// or a word of block scales.
+    pub fn stacked(self, slabs: usize, along: Axis) -> Result<Self, Refusal> {
+        let extent = self.extent(along);
+        let slab = extent / slabs.max(1);
+        let operand = &self.operand;
+        let whole = |unit: usize| unit > 0 && slab.is_multiple_of(unit);
+        let blocks_whole = match operand.grouping(along, extent) {
+            Some(block) => whole(block) && (slab / block).is_multiple_of(operand.scales_per_word()),
+            None => true,
+        };
+        if self.laid != WordsLaid::InRows
+            || slabs == 0
+            || !extent.is_multiple_of(slabs)
+            || !whole(operand.read(along))
+            || !blocks_whole
+        {
+            return Err(PACKED_STACK_UNREAD);
+        }
+        let axes = self
+            .axes
+            .map(|(axis, extent)| (axis, if axis == along { slab } else { extent }));
+        Ok(Self {
+            axes,
+            stack: Some(PackedStack { slabs, along }),
+            ..self
+        })
     }
 
     /// `operand`, of a matrix `sized` so and stored in `tile`, read what one load of `hw` takes of
@@ -185,6 +231,11 @@ impl PackedTensor {
         operand
             .stored(N, words, Some((&VALUES_AXES[..], values.tiles())), None)
             .ok_or(STORED_TILES_UNREAD)
+    }
+
+    /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
+    pub fn slabs(&self) -> Option<usize> {
+        self.stack.map(|stack| stack.slabs)
     }
 
     /// How its values are packed and scaled.
@@ -276,7 +327,8 @@ impl PackedTensor {
         // The buffer steps its rows before its words, so its dims are named that way.
         let rows_along = self.other_axis(lined);
         let rows = self.extent(rows_along);
-        let axes = Projection::dims()
+        let axes = self
+            .stack_dim()
             .dim(self.dim(rows_along))
             .dim(self.dim(lined))
             .build();
@@ -293,8 +345,11 @@ impl PackedTensor {
                     .collect(),
                 launcher
                     .arg(
-                        self.words
-                            .rows_unpacked(rows, self.extent(lined), operand.read(lined)),
+                        self.per_slab(self.words.rows_unpacked(
+                            rows,
+                            self.extent(lined),
+                            operand.read(lined),
+                        )),
                         WORD,
                     )
                     .gathered(axes.clone()),
@@ -338,9 +393,9 @@ impl PackedTensor {
         match scales {
             BlockScales::Fields => {
                 let block_scales = launcher
-                    .arg(self.block_scales.rows(rows, blocks), WORD)
+                    .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
                     .gathered(
-                        Projection::dims()
+                        self.stack_dim()
                             .dim(scale_rows)
                             .dim(self.dim(lined))
                             .build()
@@ -357,9 +412,12 @@ impl PackedTensor {
             BlockScales::Words => {
                 let per_word = operand.scales_per_word();
                 let block_scales = launcher
-                    .arg(self.block_scale_words(rows, blocks / per_word), WORD)
+                    .arg(
+                        self.per_slab(self.block_scale_words(rows, blocks / per_word)),
+                        WORD,
+                    )
                     .gathered(
-                        Projection::dims()
+                        self.stack_dim()
                             .dim(scale_rows)
                             .dim(PhysicalAxisMap::of(blocks_axis).over(per_word))
                             .build(),
@@ -398,6 +456,31 @@ impl PackedTensor {
             .bound_as(Metadata::new([rows, words], [pitch / 4, 1]))
     }
 
+    /// The dims a binding of words or scales starts with: the slabs, where this tensor is a stack.
+    fn stack_dim(&self) -> DimsBuilder {
+        match self.stack {
+            Some(_) => Projection::dims().dim(PhysicalAxisMap::of(EXPERT)),
+            None => Projection::dims(),
+        }
+    }
+
+    /// `binding`, words or scales of one matrix over its two axes in the order the buffer steps
+    /// them, rows then line, once per slab where this tensor is a stack: the slabs a leading dim,
+    /// each one slab's run of the dim the stack lies along further. As it is otherwise.
+    fn per_slab(&self, binding: TensorBinding) -> TensorBinding {
+        let Some(PackedStack { slabs, along }) = self.stack else {
+            return binding;
+        };
+        let dim = usize::from(along == self.operand.lined());
+        let step = binding.shape[dim] * binding.strides[dim];
+        let lead = |slab: usize, dims: &[usize]| [&[slab][..], dims].concat();
+        TensorBinding {
+            shape: lead(slabs, &binding.shape).into(),
+            strides: lead(step, &binding.strides).into(),
+            ..binding
+        }
+    }
+
     /// The matrix's axis other than `axis`.
     fn other_axis(&self, axis: Axis) -> Axis {
         match self.axes {
@@ -432,6 +515,13 @@ impl PackedTensor {
 /// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
 pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {
     why: "a packed read takes one packed, block-scaled matrix",
+};
+
+/// What reading a packed tensor as a stack of slabs declines: words stored in tiles, or slabs that
+/// split one read of its words, one block of its scales or one word of block scales.
+pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
+    why: "a packed stack is read slab by slab from words in rows, each slab whole reads, whole \
+          scale blocks and whole words of block scales",
 };
 
 /// What a read of a packed tensor declines: values stored in tiles it reads no whole load of.
