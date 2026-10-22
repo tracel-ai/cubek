@@ -1,12 +1,11 @@
-//! The matmul microkernels, a folder per problem they solve: [`dense`], the float product, and
-//! [`q_rhs`], the product against a quantized weight. Each holds its microkernels in a folder
-//! per scope, named by algorithm, beside what only they share. Beside them, what every
-//! matmul-shaped microkernel reads, attention's included: the [`MatmulWorkItem`] and its axes and
-//! layouts, the [`MatmulMicrokernel`] trait, the operands it names, the [`MatmulPartitioning`]
-//! every product places its work with, stated over a packed product's block-split space too
-//! ([`MatmulSpace`]), the [`MatmulStep`], the least box every load of a product fills whole, the
-//! [`staged_walk`] a cube takes through `K`, and the [`staging`] ring every family's staged walk
-//! holds its stages in.
+//! The matmul microkernels, in [`dense`]: the one product, whichever of its inputs are packed. It
+//! holds its microkernels in a folder per scope, named by algorithm, beside what only they share.
+//! Beside them, what every matmul-shaped microkernel reads, attention's included: the
+//! [`MatmulWorkItem`] and its axes and layouts, the [`MatmulMicrokernel`] trait, the operands it
+//! names, the [`MatmulPartitioning`] every product places its work with, stated over a packed
+//! product's block-split space too ([`MatmulSpace`]), the [`MatmulStep`], the least box every load
+//! of a product fills whole, the [`staged_walk`] a cube takes through `K`, and the [`staging`] ring
+//! every family's staged walk holds its stages in.
 //!
 //! A microkernel is what one owner of a work item runs, and its scope is the owner: a unit, a
 //! plane, a cube. Nothing here is launched: a routine is a whole kernel written around one
@@ -21,7 +20,6 @@ mod layout;
 mod matmul_microkernel;
 mod operand;
 mod partitioning;
-pub mod q_rhs;
 pub mod staged_walk;
 pub mod staging;
 mod step;
