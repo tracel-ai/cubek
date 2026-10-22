@@ -8,16 +8,16 @@
 //! outermost stored tile, one cube per tile. Whichever side is storage-tiled is read or written
 //! through its layout, however many levels lie inside that tile.
 
+use cubecl::tile::{
+    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
+    layout::StorageMisfit,
+};
 use cubecl::{
     client::Client,
     ir::ElemType,
     prelude::*,
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
-};
-use cubek_tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileArg, kind::Field, launch::Grid,
-    layout::StorageMisfit,
 };
 
 use crate::definition::MatmulSetupError;
@@ -68,7 +68,7 @@ fn relayout<E: Numeric, V: Size>(
 
 /// What [`tile`] is told: how the matrix is laid down in memory, stated leaf-up over axes the
 /// caller names.
-pub use cubek_tile::{
+pub use cubecl::tile::{
     Axis,
     layout::{StorageLevels, StoragePartitioning},
 };

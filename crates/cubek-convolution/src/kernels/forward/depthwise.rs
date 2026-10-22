@@ -19,16 +19,16 @@
 //! a unit's whole cell. A depthwise pass has too little arithmetic per byte to be anything but
 //! bandwidth-bound, and both of those are what let it reach the bandwidth.
 
+use cubecl::tile::kind::Boundary;
+use cubecl::tile::launch::Grid;
+use cubecl::tile::layout::PhysicalAxisMap;
+use cubecl::tile::*;
 use cubecl::{
     prelude::*,
     server::LaunchError,
     zspace::{Shape, Strides},
 };
 use cubek_std::InputBinding;
-use cubek_tile::kind::Boundary;
-use cubek_tile::launch::Grid;
-use cubek_tile::layout::PhysicalAxisMap;
-use cubek_tile::*;
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 

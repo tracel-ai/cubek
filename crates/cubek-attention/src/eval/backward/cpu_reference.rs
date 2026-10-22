@@ -93,6 +93,7 @@ fn compute_backward_inner(
 ) -> FlashAttentionBackwardDebug {
     let batch = problem.dims.batch;
     let num_heads = problem.dims.num_heads;
+    let num_kv_heads = problem.dims.num_kv_heads;
     let seq_q = problem.dims.seq_q;
     let seq_kv = problem.dims.seq_kv;
     let head_dim = problem.dims.head_dim;
@@ -101,15 +102,16 @@ fn compute_backward_inner(
     let scale = (head_dim as f32).sqrt().recip();
 
     let q_shape = Shape::new([batch, num_heads, seq_q, head_dim]);
-    let k_shape = Shape::new([batch, num_heads, seq_kv, head_dim]);
-    let v_shape = Shape::new([batch, num_heads, seq_kv, val_dim]);
+    // dK and dV are gradients of the packed KV tensors, so they are packed too.
+    let k_shape = Shape::new([batch, num_kv_heads, seq_kv, head_dim]);
+    let v_shape = Shape::new([batch, num_kv_heads, seq_kv, val_dim]);
     let o_shape = Shape::new([batch, num_heads, seq_q, val_dim]);
     let row_shape = Shape::new([batch, num_heads, seq_q]);
     let attn_shape = Shape::new([batch, num_heads, seq_q, seq_kv]);
 
     let mut dq = vec![0f32; batch * num_heads * seq_q * head_dim];
-    let mut dk = vec![0f32; batch * num_heads * seq_kv * head_dim];
-    let mut dv = vec![0f32; batch * num_heads * seq_kv * val_dim];
+    let mut dk = vec![0f32; batch * num_kv_heads * seq_kv * head_dim];
+    let mut dv = vec![0f32; batch * num_kv_heads * seq_kv * val_dim];
 
     let mut p_buf = vec![0f32; batch * num_heads * seq_q * seq_kv];
     let mut dp_buf = vec![0f32; batch * num_heads * seq_q * seq_kv];
@@ -120,6 +122,10 @@ fn compute_backward_inner(
 
     for b in 0..batch {
         for h in 0..num_heads {
+            // Spelled out rather than shared with `AttentionDims::kv_head`: this is
+            // ground truth. The `h` heads of a group all write into the same dK/dV
+            // rows, which is the GQA gradient accumulation the kernel must do too.
+            let kv_h = h / (num_heads / num_kv_heads);
             // Per-row online softmax: produces P, O, lse for this (b, h).
             for i in 0..seq_q {
                 let mut s_row = vec![f32::NEG_INFINITY; seq_kv];
@@ -130,7 +136,7 @@ fn compute_backward_inner(
                     }
                     let mut dot = 0f32;
                     for d in 0..head_dim {
-                        dot += query.get_f32(&[b, h, i, d]) * key.get_f32(&[b, h, j, d]);
+                        dot += query.get_f32(&[b, h, i, d]) * key.get_f32(&[b, kv_h, j, d]);
                     }
                     let s_ij = dot * scale;
                     s_row[j] = s_ij;
@@ -166,7 +172,7 @@ fn compute_backward_inner(
                     let mut acc = 0f32;
                     for j in 0..seq_kv {
                         let p_idx = ((b * num_heads + h) * seq_q + i) * seq_kv + j;
-                        acc += p_buf[p_idx] * value.get_f32(&[b, h, j, d]);
+                        acc += p_buf[p_idx] * value.get_f32(&[b, kv_h, j, d]);
                     }
                     o_buf[((b * num_heads + h) * seq_q + i) * val_dim + d] = acc;
                 }
@@ -199,7 +205,7 @@ fn compute_backward_inner(
                         } else {
                             let mut dot = 0f32;
                             for d in 0..head_dim {
-                                dot += query.get_f32(&[b, h, i, d]) * key.get_f32(&[b, h, j, d]);
+                                dot += query.get_f32(&[b, h, i, d]) * key.get_f32(&[b, kv_h, j, d]);
                             }
                             (dot * scale - lse_i).exp()
                         };
@@ -215,7 +221,7 @@ fn compute_backward_inner(
                     let p_idx = ((b * num_heads + h) * seq_q + i) * seq_kv + j;
                     let mut dp_ij = 0f32;
                     for d in 0..val_dim {
-                        dp_ij += do_.get_f32(&[b, h, i, d]) * value.get_f32(&[b, h, j, d]);
+                        dp_ij += do_.get_f32(&[b, h, i, d]) * value.get_f32(&[b, kv_h, j, d]);
                     }
                     dp_buf[p_idx] = dp_ij;
 
@@ -224,15 +230,15 @@ fn compute_backward_inner(
                     ds_buf[p_idx] = ds_ij;
 
                     for d in 0..val_dim {
-                        let dv_idx = ((b * num_heads + h) * seq_kv + j) * val_dim + d;
+                        let dv_idx = ((b * num_kv_heads + kv_h) * seq_kv + j) * val_dim + d;
                         dv[dv_idx] += p_ij * do_.get_f32(&[b, h, i, d]);
                     }
 
                     let s_ds = scale * ds_ij;
                     for d in 0..head_dim {
                         let dq_idx = ((b * num_heads + h) * seq_q + i) * head_dim + d;
-                        dq[dq_idx] += s_ds * key.get_f32(&[b, h, j, d]);
-                        let dk_idx = ((b * num_heads + h) * seq_kv + j) * head_dim + d;
+                        dq[dq_idx] += s_ds * key.get_f32(&[b, kv_h, j, d]);
+                        let dk_idx = ((b * num_kv_heads + kv_h) * seq_kv + j) * head_dim + d;
                         dk[dk_idx] += s_ds * query.get_f32(&[b, h, i, d]);
                     }
                 }

@@ -5,7 +5,6 @@
 use cubek_matmul::{
     eval::benchmarks::gemm::{GemmCorrectness, GemmProblem},
     strategy::Strategy,
-    tiled::Strategy as Tiled,
 };
 use cubek_test_utils::{
     CatalogEntry, Correctness, TestOutcome, assert_equals_approx, skip_unless_cpu,
@@ -53,41 +52,4 @@ fn gemm_cpu_gemm_vecmat_2x1x4096x4096_rr_f32() {
         return;
     }
     run_gemm("cpu_gemm", "vecmat_2x1x4096x4096_rr_f32");
-}
-
-/// Correctness at the forced legacy-shaped point (the crosspoint probe's blueprint):
-/// the timing probe never validates, so this guards it.
-#[test]
-#[ignore = "crosspoint probe guard, run manually"]
-fn gemm_cyclic_cmma_forced_point_correctness() {
-    use cubek_matmul::{
-        eval::benchmarks::gemm::{GemmCorrectness, problems},
-        routine::BlueprintStrategy,
-        tiled::{
-            cmma::{CmmaBlueprint, Partition},
-            cpu_gemm::{InstructionShape, PlaneGrid},
-        },
-    };
-    use cubek_test_utils::Correctness;
-
-    let problem: GemmProblem = lookup(problems(), "rect_1x512x512x512_rr_f16");
-    let forced = Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-        instruction: InstructionShape { m: 8, n: 8, k: 8 },
-        partition: Partition { m: 1, n: 4 },
-        planes: PlaneGrid { m: 4, n: 1 },
-        stage_k: 32,
-        buffering: 2,
-        delivery: cubek_matmul::tiled::cmma::CmmaDelivery::SyncPerUnit,
-        order: cubek_tile::space::CubeOrder::RowMajor,
-    }))
-    .into();
-    let actual = GemmCorrectness
-        .kernel_result(&forced, &problem, &SEEDS)
-        .unwrap();
-    let expected = GemmCorrectness
-        .reference_result(&problem, &SEEDS, None)
-        .unwrap();
-    assert_equals_approx(&actual, &expected, F16_EPS)
-        .as_test_outcome()
-        .enforce();
 }

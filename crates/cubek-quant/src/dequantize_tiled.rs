@@ -1,14 +1,14 @@
 use crate::quantized_arg;
+use cubecl::tile::{
+    Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
+    launch::Grid, layout::PhysicalAxisMap,
+};
 use cubecl::{
     ir::ElemType,
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
 };
 use cubek_std::matmul_axes::{M, N};
-use cubek_tile::{
-    Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec, kind::Field,
-    launch::Grid, layout::PhysicalAxisMap,
-};
 
 /// Convert the tensor back to a higher precision data type.
 /// Uses the tile-based implementation for dequantization.

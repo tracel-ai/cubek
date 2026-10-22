@@ -4,13 +4,13 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
+use cubecl::tile::launch::Refusal;
 use cubecl::{
     CubeDim,
     client::Client,
-    features::{AtomicUsage, MmaConfig, Plane, Tma},
+    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
 };
-use cubek_tile::launch::Refusal;
 
 /// The device, as the routines see it.
 ///
@@ -23,7 +23,7 @@ pub struct Hardware {
     pub properties: Arc<DeviceProperties>,
     /// Whether an `mma` accumulator holds its cells where the `A` operand of a contraction as
     /// deep as it is wide holds them, so a product contracted again reads it as that operand in
-    /// the same registers (cubek-tile's `accumulator_as_a`).
+    /// the same registers (the tile DSL's `accumulator_as_a`).
     ///
     /// True on CUDA, and on Metal, whose simdgroup matrix gives every lane two cells of one row
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
@@ -373,9 +373,76 @@ fn size_rank(shape: &MmaConfig) -> (Reverse<usize>, usize, u32, u32, u32, MmaCon
     )
 }
 
+/// The fragment contractions cubek's own transport over the matrix intrinsics (`mma`) runs on
+/// `hw`: the runtime's `mma` set, and its block-scaled instructions over NVFP4, `e2m1` operands
+/// under an `e4m3` scale every [`NVFP4_BLOCK`] values of `k`, which the transport runs on the
+/// stored words as they lie.
+///
+/// The runtime states a block-scaled instruction's operands as the `e2m1x2` pairs a register
+/// holds; here they are the `e2m1` values a work item stores. An `e2m1` value means nothing
+/// without the scale of its block, so the `mma` set's unscaled `e2m1` shapes are left out.
+pub fn manual_mma(hw: &Hardware) -> impl Instructions + '_ {
+    let matmul = &hw.properties.features.matmul;
+    let e2m1 = ElemType::Float(FloatKind::E2M1);
+    matmul
+        .mma
+        .iter()
+        .copied()
+        .filter(move |config| config.a_type != e2m1 && config.b_type != e2m1)
+        .chain(matmul.scaled_mma.iter().filter_map(nvfp4_instruction))
+}
+
+/// Whether `hw` contracts NVFP4 as it is stored: a block-scaled instruction over `e2m1`
+/// operands among its [`manual_mma`] shapes.
+pub fn block_scaled_nvfp4(hw: &Hardware) -> bool {
+    let e2m1 = ElemType::Float(FloatKind::E2M1);
+    manual_mma(hw)
+        .for_triple(e2m1, e2m1, ElemType::Float(FloatKind::F32))
+        .next()
+        .is_some()
+}
+
+/// The shape `config` contracts, where it is a block-scaled instruction over NVFP4.
+fn nvfp4_instruction(config: &ScaledMmaConfig) -> Option<MmaConfig> {
+    let fp4 = ElemType::Float(FloatKind::E2M1x2);
+    let nvfp4 = config.a_type == fp4
+        && config.b_type == fp4
+        && config.scales_type == ElemType::Float(FloatKind::E4M3)
+        && config.scales_factor as usize * NVFP4_BLOCK == config.k as usize;
+    nvfp4.then_some(MmaConfig {
+        a_type: ElemType::Float(FloatKind::E2M1),
+        b_type: ElemType::Float(FloatKind::E2M1),
+        cd_type: config.cd_type,
+        m: config.m,
+        n: config.n,
+        k: config.k,
+    })
+}
+
+/// Bytes a descriptor's start address and strides are whole multiples of, and the least a box's
+/// inner row moves.
+pub const TMA_ALIGNMENT_BYTES: usize = 16;
+
+/// Bytes of a box's inner row the TMA engine copies at full speed: shorter rows land as many more,
+/// smaller requests. A measurement rather than a derivation, the engine's speed being the
+/// device's: on the RTX PRO 6000 a stage landed in 32-byte rows copies about 40% slower than the
+/// same stage in 64-byte rows (the NVFP4 product with no contraction, Qwen3-4B's down projection
+/// at 2048 rows, 126 against 89 µs). The step rule cuts a stage the engine fills to it
+/// (`MatmulStep::filled_by_tma` in cubek-matmul).
+pub const TMA_ROW_BYTES: usize = 64;
+
+/// 32-bit registers one unit addresses before a kernel spills to memory: NVIDIA's 255. The NVFP4
+/// settings read it, which a device offers only with NVIDIA's block-scaled instruction, and a unit's
+/// register block unrolls no more cells than it.
+pub const UNIT_REGISTERS: u32 = 255;
+
+/// Values of `k` one NVFP4 block scale covers.
+pub const NVFP4_BLOCK: usize = 16;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::devices;
     use cubecl::{
         features::Features,
         ir::{DeviceIdentity, HardwareProperties, MemoryDeviceProperties},
@@ -544,5 +611,28 @@ mod tests {
             order([shape(8, 32, 16), shape(32, 8, 16), shape(16, 16, 16)]),
             [(16, 16, 16), (8, 32, 16), (32, 8, 16)]
         );
+    }
+
+    /// The NVFP4 offer is the block-scaled instruction stated over `e2m1` values, and an unscaled
+    /// `e2m1` shape is no offer.
+    #[test]
+    fn a_block_scaled_instruction_is_offered_over_its_values() {
+        let e2m1 = ElemType::Float(FloatKind::E2M1);
+        let unscaled = MmaConfig {
+            a_type: e2m1,
+            b_type: e2m1,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 32,
+        };
+        let hw = devices::offering_mma(devices::h100(), [unscaled]);
+        assert!(!block_scaled_nvfp4(&hw));
+        let hw = devices::offering_nvfp4(hw);
+        assert_eq!(
+            manual_mma(&hw).collect::<Vec<_>>(),
+            [MmaConfig { k: 64, ..unscaled }]
+        );
+        assert!(block_scaled_nvfp4(&hw));
     }
 }

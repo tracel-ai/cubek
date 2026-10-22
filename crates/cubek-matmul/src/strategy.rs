@@ -80,7 +80,8 @@ fn auto(
 ) -> Result<(), MatmulSetupError> {
     #[cfg(feature = "tiled")]
     if lhs.data().tiling.is_tiled() || rhs.data().tiling.is_tiled() {
-        return tiled::Strategy::Cmma(Default::default()).launch_ref(client, lhs, rhs, out, dtypes);
+        return tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
+            .launch_ref(client, lhs, rhs, out, dtypes);
     }
     if let Err(err) = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
         client,
@@ -111,17 +112,17 @@ fn auto(
     out: TensorBinding,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    if let Err(err) = tiled::Strategy::Cmma(Default::default()).launch_ref(
-        client,
-        lhs.clone(),
-        rhs.clone(),
-        out.clone(),
-        dtypes,
-    ) {
+    if let Err(err) = tiled::Strategy::Cmma(
+        crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT,
+    )
+    .launch_ref(client, lhs.clone(), rhs.clone(), out.clone(), dtypes)
+    {
         match err {
             MatmulSetupError::Unavailable(_) => {
-                tiled::Strategy::CpuGemm(Default::default())
-                    .launch_ref(client, lhs, rhs, out, dtypes)?;
+                tiled::Strategy::CpuGemm(
+                    crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
+                )
+                .launch_ref(client, lhs, rhs, out, dtypes)?;
             }
             _ => panic!("{err:?}"),
         }

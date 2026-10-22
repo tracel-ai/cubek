@@ -150,12 +150,12 @@ where
 {
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a vector size, the shape/strides are always row-major.
-    let vector_sizes = AvailableVectorSizes::from_type_sizes(
+    let vector_sizes = Rt::filter_vector_sizes(AvailableVectorSizes::from_type_sizes(
         client,
         input.data_elem_size(),
         out_grad.data_elem_size(),
         dtypes.acc_global.size(),
-    )
+    ))
     .filter_lhs_with_tensor(
         &out_grad.data().strides,
         &out_grad.data().shape,
@@ -166,9 +166,8 @@ where
         &input.data().shape,
         MatrixLayout::RowMajor,
     )
-    .filter_out_with_tensor(&weight_grad.strides, &weight_grad.shape);
-
-    let vector_sizes = Rt::filter_vector_sizes(vector_sizes).pick_max()?;
+    .filter_out_with_tensor(&weight_grad.strides, &weight_grad.shape)
+    .pick_max()?;
 
     launch_kernel_concrete::<Rt::Args, Rt::MatmulRoutine>(
         client,

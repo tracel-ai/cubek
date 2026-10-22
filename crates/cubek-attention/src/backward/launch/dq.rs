@@ -31,13 +31,18 @@ fn flash_attention_backward_dq_kernel<E: Float>(
     let seq_q = q.shape(q.rank() - 2);
     let seq_kv = k.shape(k.rank() - 2);
     let i = row_idx % seq_q;
+    // `row_idx` walks the query's `[batch * num_heads, seq_q]` rows. Under GQA
+    // K and V are packed, so the KV head is the query head folded down by the
+    // group size rather than the flattened index itself.
+    let group = q.shape(1) / k.shape(1);
     let bh = row_idx / seq_q;
+    let kv_bh = bh / group;
 
     let q_base = row_idx * head_dim;
     let do_base = row_idx * val_dim;
     let dq_base = row_idx * head_dim;
-    let k_row_base = bh * seq_kv * head_dim;
-    let v_row_base = bh * seq_kv * val_dim;
+    let k_row_base = kv_bh * seq_kv * head_dim;
+    let v_row_base = kv_bh * seq_kv * val_dim;
 
     let lse_i = lse[row_idx];
     let d_i = d[row_idx];
@@ -82,13 +87,14 @@ fn flash_attention_backward_dq_kernel<E: Float>(
 /// Compute `dQ` into a pre-allocated tensor (overwrites, not accumulates).
 ///
 /// Inputs:
-/// - `q, k, v`: `[B, H, N, d]`.
-/// - `do_`:     `[B, H, N, d]` upstream gradient.
-/// - `lse`:     `[B, H, N]` fp32: saved from forward.
-/// - `d`:       `[B, H, N]` fp32: from the prepass kernel.
+/// - `q`:       `[B, H_q, N, d]`.
+/// - `k`, `v`:  `[B, H_kv, N, d]`, `H_kv <= H_q` and a divisor of it (GQA).
+/// - `do_`:     `[B, H_q, N, d]` upstream gradient.
+/// - `lse`:     `[B, H_q, N]` fp32: saved from forward.
+/// - `d`:       `[B, H_q, N]` fp32: from the prepass kernel.
 ///
 /// Output:
-/// - `dq`:      `[B, H, N, d]`: written cleanly.
+/// - `dq`:      `[B, H_q, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward_dq(
     client: &Client,

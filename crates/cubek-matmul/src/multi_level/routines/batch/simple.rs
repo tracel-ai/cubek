@@ -24,7 +24,8 @@ use crate::{
             tile::TileMatmulKind,
         },
         definition::{
-            BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy, TilingScheme, adjust_dtypes,
+            BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy, TilingScheme,
+            adjust_dtypes_with_tf32,
         },
         routines::{
             TilingArgs,
@@ -256,7 +257,12 @@ fn infer_blueprint_multi_rows(
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
 ) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
+    adjust_dtypes_with_tf32(
+        &client.properties().features,
+        &mut dtypes,
+        tile_matmul.requires_accelerator(),
+        problem.allow_tf32,
+    );
 
     let supported = |m: u32, n: u32, k: u32| {
         tile_matmul.is_supported(

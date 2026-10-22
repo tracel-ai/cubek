@@ -9,6 +9,7 @@ use cubek_matmul::{
         definition::BatchMatmulBlueprint,
         routines::{
             TileSizeSelection, UnitSmemBudget, batch::simple_unit::SimpleUnitSelectionArgs,
+            closest_factor_pair,
         },
         stage::{SwizzleMode, SwizzleModes},
     },
@@ -34,6 +35,8 @@ pub enum UnitStrategy {
 ///
 /// The tile `(4, 4, 4)` and stage `(16, 8, 1)` are held constant, so the stage
 /// a preset asks for is `(64*m) x (32*n) x (4*k)` output/reduction elements.
+/// A device whose cube holds fewer than 128 units gets the largest
+/// power-of-two stage it holds instead.
 /// A preset that overflows shared memory is trimmed by [`UnitSmemBudget`], the
 /// same budget the matmul unit selector fits its tilings to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,15 +90,22 @@ impl UnitStrategy {
             }
             Self::Fixed(tiling) => tiling.partition,
         };
-        let plane_dim = client.properties().hardware.plane_size_min.max(32);
+        let hardware = &client.properties().hardware;
+        let plane_dim = match hardware.plane_size_min {
+            0 => 32,
+            plane_dim => plane_dim,
+        };
+        // One unit per stage partition. The cpu runtime runs a barrier kernel on
+        // one thread per unit, so a 128-unit stage there crawls.
+        let stage = closest_factor_pair(1 << hardware.max_units_per_cube.min(128).ilog2());
         let tiling = UnitSmemBudget {
             dtypes,
             stage_buffering: 1,
             accumulator: problem.accumulator,
-            max_smem: client.properties().hardware.max_shared_memory_size,
+            max_smem: hardware.max_shared_memory_size,
             plane_dim,
         }
-        .fit((4, 4, 4), partition, (16, 8));
+        .fit((4, 4, 4), partition, stage);
         let mut builder =
             BatchMatmulBlueprint::builder(TileMatmulKind::Register, tiling, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single);

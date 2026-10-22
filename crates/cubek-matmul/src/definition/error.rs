@@ -97,8 +97,8 @@ impl From<VectorizationError> for MatmulSetupError {
 
 /// A launch the tile engine refused is a configuration the routine cannot run.
 #[cfg(feature = "tiled")]
-impl From<cubek_tile::launch::Refusal> for MatmulSetupError {
-    fn from(refusal: cubek_tile::launch::Refusal) -> Self {
+impl From<cubecl::tile::launch::Refusal> for MatmulSetupError {
+    fn from(refusal: cubecl::tile::launch::Refusal) -> Self {
         Self::InvalidConfig(Box::new(refusal))
     }
 }

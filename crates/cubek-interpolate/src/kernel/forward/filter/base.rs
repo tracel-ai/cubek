@@ -1,9 +1,9 @@
 use crate::definition::{InterpolateMode, ModeProperties, mode_properties};
 use cubecl::prelude::*;
-use cubecl_common::Ratio;
-use cubek_tile::procedural::{
+use cubecl::tile::procedural::{
     AffineCoordinate, Constant, DivGuard, Factors, Phase, Reads, Recipe, Sum, TapSupport,
 };
+use cubecl_common::Ratio;
 
 use super::{Cubic, Lanczos, Linear};
 

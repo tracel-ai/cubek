@@ -77,8 +77,10 @@ impl StridedLayout {
                 let mut strides = vec![0; n];
                 strides[n - 2] = 1;
                 strides[n - 1] = shape[n - 2];
+                let mut inner = shape[n - 2] * shape[n - 1];
                 for i in (0..n - 2).rev() {
-                    strides[i] = strides[i + 1] * shape[i + 1];
+                    strides[i] = inner;
+                    inner *= shape[i];
                 }
                 Strides::new(&strides)
             }
@@ -126,5 +128,28 @@ mod tests {
         assert_eq!(physical_extent(&shape, &strides), 3);
         // ...and it's less than the logical element count.
         assert!(physical_extent(&shape, &strides) < 4 * 3);
+    }
+
+    #[test]
+    fn col_major_matrix_steps_a_whole_column_per_column() {
+        // 2x3 col-major: rows contiguous, each column 2 elements on → strides (1, 2).
+        let strides = StridedLayout::ColMajor.compute_strides(&Shape::from(vec![2, 3]));
+        assert_eq!(strides, Strides::new(&[1, 2]));
+    }
+
+    #[test]
+    fn col_major_batches_step_over_whole_matrices() {
+        // Two 2x3 col-major matrices: the batch axis steps 2*3 = 6.
+        let shape = Shape::from(vec![2, 2, 3]);
+        let strides = StridedLayout::ColMajor.compute_strides(&shape);
+        assert_eq!(strides, Strides::new(&[6, 1, 2]));
+        assert_eq!(physical_extent(&shape, &strides), 2 * 2 * 3);
+    }
+
+    #[test]
+    fn col_major_batch_axes_chain_like_row_major() {
+        // [2, 3, 4, 5]: a matrix is 4*5 = 20, the inner batch steps 20, the outer 3*20 = 60.
+        let strides = StridedLayout::ColMajor.compute_strides(&Shape::from(vec![2, 3, 4, 5]));
+        assert_eq!(strides, Strides::new(&[60, 20, 1, 4]));
     }
 }

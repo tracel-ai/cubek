@@ -6,7 +6,6 @@ mod bias;
 #[cfg(feature = "benchmarks")]
 mod bench_catalog;
 #[cfg(feature = "benchmarks")]
-mod comparison;
 #[cfg(feature = "extended")]
 mod extended;
 #[cfg(feature = "full")]

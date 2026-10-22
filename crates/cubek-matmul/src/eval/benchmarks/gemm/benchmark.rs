@@ -97,27 +97,39 @@ impl Benchmark for GemmBench {
 
         let mut lhs = make_uniform(
             &client,
-            [self.b, self.m, self.k],
+            match tl {
+                // Initialize [b, k, m] so the `m` axis is contiguous.
+                true => [self.b, self.k, self.m],
+                false => [self.b, self.m, self.k],
+            },
             self.dtypes.lhs_global,
             0,
             0.0,
             1.0,
         );
         if tl {
+            // Then swap shape and strides in the metadata.
             let len = lhs.metadata.rank();
+            lhs.metadata.shape_mut().swap(len - 2, len - 1);
             lhs.metadata.strides_mut().swap(len - 2, len - 1);
         }
 
         let mut rhs = make_uniform(
             &client,
-            [self.b, self.k, self.n],
+            match tr {
+                // Initialize [b, n, k] so the `k` axis is contiguous.
+                true => [self.b, self.n, self.k],
+                false => [self.b, self.k, self.n],
+            },
             self.dtypes.rhs_global,
             1,
             0.0,
             1.1,
         );
         if tr {
+            // Then swap shape and strides in the metadata.
             let len = rhs.metadata.rank();
+            rhs.metadata.shape_mut().swap(len - 2, len - 1);
             rhs.metadata.strides_mut().swap(len - 2, len - 1);
         }
 
@@ -136,7 +148,7 @@ impl Benchmark for GemmBench {
             &self.strategy,
             &self.client,
             InputBinding::Normal(lhs.binding(), self.dtypes.lhs_global),
-            InputBinding::Normal(rhs.binding(), self.dtypes.lhs_global),
+            InputBinding::Normal(rhs.binding(), self.dtypes.rhs_global),
             out.clone().binding(),
             &mut self.dtypes.clone(),
         )

@@ -63,7 +63,7 @@ impl TileGeometry {
 /// part padding, which the space reports as an overhang and every read and write then masks. That
 /// is the point of stating one, since a block of `4` over `3` channels is what lets the operand be
 /// staged in whole lines an `NHWC` buffer could never hand out
-/// ([`stage_vectorize`](cubek_tile::StridedTileSource::stage_vectorize)).
+/// ([`stage_vectorize`](cubecl::tile::StridedTileSource::stage_vectorize)).
 fn unit_split(channels: usize, units: usize, block: Option<usize>) -> (usize, usize, usize) {
     if let Some(block) = block {
         assert!(

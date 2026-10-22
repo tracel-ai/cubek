@@ -142,13 +142,12 @@ pub(crate) fn launch_split<const N: usize>(
             .max(out_grad.required_address_type(4))
             .max(partials.clone().binding().required_address_type(4)),
     };
-    let vector_sizes = UnitConv::filter_vector_sizes(
-        AvailableVectorSizes::from_type_sizes(client, 4, 4, 4)
+    let vector_sizes =
+        UnitConv::filter_vector_sizes(AvailableVectorSizes::from_type_sizes(client, 4, 4, 4))
             .filter_lhs_with_tensor(&out_grad.strides, &out_grad.shape, MatrixLayout::RowMajor)
             .filter_rhs_with_tensor(&input.strides, &input.shape, MatrixLayout::RowMajor)
-            .filter_out_with_tensor(partials.strides(), partials.shape()),
-    )
-    .pick_max()?;
+            .filter_out_with_tensor(partials.strides(), partials.shape())
+            .pick_max()?;
     let mut matmul_problem = problem.as_matmul_problem(AccumulatorOperand::Absent);
     matmul_problem.k = per;
     matmul_problem.lhs_batches = vec![split].into();
