@@ -5,7 +5,7 @@
 //! numbered after the three leading ones ([`batch_axis`]); the blocked axes are numbered past the
 //! batch slots, since labels only have to be distinct within the space that uses them.
 
-use cubek_tile::{Axis, Space};
+use cubecl::tile::{Axis, Space};
 
 /// Rows of the output: the lhs's outer dimension.
 pub const M: Axis = Axis(0);
@@ -88,7 +88,7 @@ pub fn axis_name(axis: Axis) -> &'static str {
 }
 
 /// The labels a partitioning over `space` prints under
-/// ([`Partitioning::table`](cubek_tile::Partitioning::table)): every axis of the space that has a
+/// ([`Partitioning::table`](cubecl::tile::Partitioning::table)): every axis of the space that has a
 /// name. A batch axis prints as its index.
 pub fn labels(space: &Space) -> Vec<(Axis, &'static str)> {
     NAMED

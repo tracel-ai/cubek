@@ -2,10 +2,10 @@ use crate::microkernel::staged_walk::{MatmulCubeWrite, MatmulStage};
 use crate::microkernel::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
 use crate::microkernel::{MatmulPartitioning, MatmulSpace};
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
-use cubek_tile::launch::Delivery;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
 
 /// Who moves a cube microkernel's box of the output into global memory once its walk ends. A
 /// request the microkernel resolves against the device and the problem

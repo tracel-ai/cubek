@@ -14,17 +14,17 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{
+    Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, launch::Bound, launch::TmaBox,
+    launch::TmaOperand, launch::Unbound,
+};
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
-use cubek_tile::launch::Refusal;
-use cubek_tile::{
-    Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, launch::Bound, launch::TmaBox,
-    launch::TmaOperand, launch::Unbound,
-};
 
 /// The tensors of one product, the output among them, from which the problem they state is read
 /// ([`problem`](Self::problem)). `Out` is where
@@ -466,7 +466,7 @@ impl MatmulTensors<Geometry> {
 impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// The output's tensor map, its descriptor moving `stage`'s box of the output, dense: what a
     /// routine binds where the TMA engine stores its cubes' boxes
-    /// ([`TmaStored`](cubek_tile::launch::TmaStored)).
+    /// ([`TmaStored`](cubecl::tile::launch::TmaStored)).
     ///
     /// # Panics
     ///
@@ -730,7 +730,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// The slots the cubes sharing a box park their parts in, over the output's axes in the sum's
     /// element, two cube boxes a cube
-    /// ([`Partitioning::arrival_slots`](cubek_tile::Partitioning::arrival_slots)), beside one
+    /// ([`Partitioning::arrival_slots`](cubecl::tile::Partitioning::arrival_slots)), beside one
     /// arrival counter a box, holding zero.
     ///
     /// # Panics
@@ -1223,8 +1223,8 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
 #[cfg(test)]
 mod tests {
     use crate::microkernel::{MatmulLayout, MatmulOperand};
+    use cubecl::tile::layout::ElemAlignment;
     use cubecl::zspace::metadata::Metadata;
-    use cubek_tile::layout::ElemAlignment;
 
     /// A stack's alignment over the order its buffer steps, as a problem derives it from the
     /// stack's layout, is the one a binding stepping that order reads, for every slab view of a

@@ -18,7 +18,7 @@ default = ["std", "tiled", "multi-level", "cubecl/default"]
 std = ["cubecl/std", "cubek-std/std"]
 
 # The two kernel architectures. At least one is required; both are on by default.
-tiled = ["dep:cubek-tile", "dep:cubek-quant"]
+tiled = ["cubecl/tile", "dep:cubek-quant"]
 multi-level = []
 
 heavy = []
@@ -34,7 +34,6 @@ benchmarks = ["cpu-reference", "dep:cubek-quant", "cubecl/test-runtime"]
 [dependencies]
 cubek-quant = { workspace = true, optional = true, features = ["kernels"] }
 cubek-std = { workspace = true }
-cubek-tile = { workspace = true, optional = true }
 cubek-test-utils = { workspace = true, optional = true }
 
 cubecl = { workspace = true, features = ["stdlib"] }

@@ -2,8 +2,8 @@ use crate::microkernel::{
     MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
 use crate::stored::BlockScales;
+use cubecl::tile::launch::Delivery;
 use cubek_std::microkernel::Microkernel;
-use cubek_tile::launch::Delivery;
 
 /// A microkernel of every matmul product: handed a [`MatmulWorkItem`], and read by a routine for
 /// the order it binds each operand in and how it moves its stages. A cube microkernel that stages is

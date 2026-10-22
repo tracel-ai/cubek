@@ -1,6 +1,6 @@
 use crate::microkernel::dense::cube::{CubeStagedDelivery, CubeStagedFill};
 use core::num::NonZeroUsize;
-use cubek_tile::launch::Refusal;
+use cubecl::tile::launch::Refusal;
 
 /// Why a cube does not run a warpgroup MMA its plane microkernel elected: what only the cube's
 /// fill and fold decide, beside the device and product rules the plane microkernel checked.

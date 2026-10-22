@@ -1,4 +1,4 @@
-use cubek_tile::space::CubeOrder;
+use cubecl::tile::space::CubeOrder;
 
 /// The orders a routine's settings list besides the grid's own: strips four boxes wide, along
 /// either axis.

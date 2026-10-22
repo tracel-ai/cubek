@@ -97,7 +97,7 @@ This pattern ensures that the external interface remains clean and the compilati
 
 ## The Tile Launch Surface
 
-Tile-DSL kernels are the concrete embodiment of the rules above, with one canonical shape:
+Tile-DSL kernels (written on `cubecl::tile`) are the concrete embodiment of the rules above, with one canonical shape:
 
 ```rust
 #[cube(launch)]

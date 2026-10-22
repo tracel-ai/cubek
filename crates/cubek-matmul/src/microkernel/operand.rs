@@ -1,6 +1,6 @@
 use crate::microkernel::{MatmulAxes, MatmulDim, MatmulOrder};
+use cubecl::tile::{Axis, Tile};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
-use cubek_tile::{Axis, Tile};
 
 /// One of the three operands of `out = lhs · rhs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

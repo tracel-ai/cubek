@@ -5,14 +5,14 @@ use crate::microkernel::{
 };
 use crate::stored::Packing;
 use cubecl::ir::ElemType;
+use cubecl::tile::Axis;
+use cubecl::tile::Geometry;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::matmul_axes::batch_axis;
 use cubek_std::routine::EstimatedProblem;
-use cubek_tile::Axis;
-use cubek_tile::Geometry;
-use cubek_tile::launch::Refusal;
-use cubek_tile::layout::ElemAlignment;
 
 /// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input float or
 /// packed ([`packings`](Self::packings)).

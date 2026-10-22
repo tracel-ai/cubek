@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use cubecl::tile::launch::Grid;
+use cubecl::tile::layout::PhysicalAxisMap;
+use cubecl::tile::*;
 use cubecl::{
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
@@ -9,9 +12,6 @@ use cubecl::{
 };
 use cubek_std::matmul_axes::{K, M, N, NB, NI};
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
-use cubek_tile::launch::Grid;
-use cubek_tile::layout::PhysicalAxisMap;
-use cubek_tile::*;
 
 use super::problem::TileQuantStageProblem;
 

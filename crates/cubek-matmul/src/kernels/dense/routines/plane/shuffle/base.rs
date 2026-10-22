@@ -9,16 +9,16 @@ use crate::microkernel::dense::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicr
 use crate::microkernel::{MatmulOperand, MatmulOrder};
 use crate::stored::Packing;
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::DestinationLaunch;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Vectorization;
+use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 use cubek_std::selector::divisor_at_most;
-use cubek_tile::launch::DestinationLaunch;
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::Vectorization;
-use cubek_tile::space::{CubeOrder, PlaneOrder};
-use cubek_tile::{Axis, TileArgLaunch};
 
 /// `out = lhs · rhs` with every plane of the launch owning every row of a run of the output's
 /// columns, the launch grouping its planes in cubes side by side along `n`. Each column is read

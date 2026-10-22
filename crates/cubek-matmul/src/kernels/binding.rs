@@ -1,5 +1,5 @@
-use cubek_tile::Launcher;
-use cubek_tile::launch::Bound;
+use cubecl::tile::Launcher;
+use cubecl::tile::launch::Bound;
 
 /// The operands of one launch, bound under its launcher; `Out` is a buffer's [`Bound`] or a
 /// sink's `Unbound`. A float operand is one [`Bound`]; the dense product binds its weight as one

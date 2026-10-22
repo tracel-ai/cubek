@@ -1,6 +1,6 @@
 use cubecl::ir::ElemType;
+use cubecl::tile::{Axis, Space, StageStorage, stage::Prefetch};
 use cubek_std::Hardware;
-use cubek_tile::{Axis, Space, StageStorage, stage::Prefetch};
 
 /// One operand's box of a stage, as the ring that holds it reads it: what a stage of it costs in
 /// shared memory, and in registers where the next one waits there.

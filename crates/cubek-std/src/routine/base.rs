@@ -1,6 +1,6 @@
 use core::fmt::{Debug, Display};
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tune::Work;
-use cubek_tile::launch::{Refusal, Vectorization};
 
 use crate::Hardware;
 use crate::microkernel::{KernelEstimate, Microkernel};

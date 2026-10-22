@@ -25,16 +25,16 @@ mod base {
     use cubecl::features::MmaConfig;
     use cubecl::features::{WgmmaConfig, WgmmaElems};
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::Scratch;
+    use cubecl::tile::StageStorage;
+    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::layout::ElemAlignment;
+    use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::Microkernel;
     use cubek_std::routine::Routine;
-    use cubek_tile::Scratch;
-    use cubek_tile::StageStorage;
-    use cubek_tile::launch::Refusal;
-    use cubek_tile::layout::ElemAlignment;
-    use cubek_tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.
     fn tma_refusal(
@@ -643,7 +643,7 @@ mod base {
     /// of three plane widths, over a row weight, a col weight and a ragged problem.
     #[test]
     fn every_kept_register_prefetch_fits_what_cubek_fetches() {
-        use cubek_tile::stage::Prefetch;
+        use cubecl::tile::stage::Prefetch;
         let mut kept = 0;
         for hw in [
             offering(devices::strix_halo()),

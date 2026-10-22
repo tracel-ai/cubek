@@ -64,6 +64,7 @@ fn cmma_storage_tiled_weight_f32() {
 }
 
 fn storage_tiled_weight(dtype: ElemType) {
+    use cubecl::tile::Axis;
     use cubek_matmul::{
         definition::{MatmulElems, MatmulSetupError},
         launch::launch_ref,
@@ -71,7 +72,6 @@ fn storage_tiled_weight(dtype: ElemType) {
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
-    use cubek_tile::Axis;
     const K: Axis = Axis(0);
     const N: Axis = Axis(1);
 

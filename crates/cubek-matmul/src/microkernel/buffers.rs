@@ -1,5 +1,5 @@
 use crate::microkernel::MatmulOperands;
-use cubek_tile::layout::ElemAlignment;
+use cubecl::tile::layout::ElemAlignment;
 
 /// Where each operand's buffer starts, how its rows are aligned over the order it is bound in, and
 /// the tile it is stored in where it is: what a bulk copy descriptor is encoded from, which a work

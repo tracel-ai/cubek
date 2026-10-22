@@ -16,9 +16,9 @@ use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::select::problem::OperandKind;
 use crate::microkernel::{MatmulLayout, MatmulOperand, MatmulOperands};
 use cubecl::ir::ElemType;
+use cubecl::tile::Axis;
 use cubecl::{self as cubecl, AutotuneKey};
 use cubek_std::autotune::CandidatePriority;
-use cubek_tile::Axis;
 use serde::{Deserialize, Serialize};
 
 use cubecl::zspace::metadata::Metadata;

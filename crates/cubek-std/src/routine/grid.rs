@@ -3,9 +3,9 @@ use crate::microkernel::{CubeFootprint, CubePlanes, KernelEstimate};
 use crate::routine::{ADMITTED_PLAN_RUNS, LaunchSettings};
 use cubecl::CubeCount;
 use cubecl::client::Client;
-use cubek_tile::launch::Grid as LaunchGrid;
-use cubek_tile::launch::Refusal;
-use cubek_tile::{Launcher, Partitioning, Space};
+use cubecl::tile::launch::Grid as LaunchGrid;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{Launcher, Partitioning, Space};
 
 /// The cubes a launch spawns, the units each holds, and the shared memory each holds.
 ///

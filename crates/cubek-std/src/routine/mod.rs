@@ -3,7 +3,7 @@
 //!
 //! A routine is the one place a kernel's hardware assumptions are stated. It takes the problem
 //! and the [`Hardware`](crate::Hardware), and returns a blueprint of compile-time decisions and
-//! the grid to run on, or a [`Refusal`](cubek_tile::launch::Refusal) saying why this device
+//! the grid to run on, or a [`Refusal`](cubecl::tile::launch::Refusal) saying why this device
 //! cannot run the kernel. Anything it decides is explicit and testable; anything it cannot
 //! decide, it declines.
 //!

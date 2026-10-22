@@ -3,7 +3,7 @@ use crate::microkernel::dense::plane::{PlaneFragmentMicrokernelSettings, PlaneFr
 use crate::microkernel::staged_walk::MatmulPlaneLayout;
 use crate::microkernel::staging::StageRing;
 use core::num::NonZeroUsize;
-use cubek_tile::{Scratch, StageStorage, stage::RowChunks};
+use cubecl::tile::{Scratch, StageStorage, stage::RowChunks};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedMicrokernelSettings {

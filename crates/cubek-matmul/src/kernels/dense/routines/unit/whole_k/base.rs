@@ -8,15 +8,15 @@ use crate::microkernel::dense::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokern
 use crate::microkernel::staged_walk::MatmulStagingCount;
 use crate::microkernel::{MatmulOperand, MatmulOperands, MatmulOrder};
 use core::num::NonZeroUsize;
+use cubecl::tile::TileArgLaunch;
+use cubecl::tile::launch::DestinationLaunch;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Vectorization;
+use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
-use cubek_tile::TileArgLaunch;
-use cubek_tile::launch::DestinationLaunch;
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::Vectorization;
-use cubek_tile::space::{CubeOrder, PlaneOrder};
 
 /// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking
 /// all of `K` alone. The gemv of a device that commits to no plane width: a plane's units share

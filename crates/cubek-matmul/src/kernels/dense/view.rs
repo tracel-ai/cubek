@@ -6,13 +6,13 @@ use crate::microkernel::{
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
-use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
-use cubek_tile::launch::Refusal;
-use cubek_tile::{
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
+use cubek_std::Hardware;
+use cubek_std::matmul_axes::{K, M, N};
 
 /// What a launch holding every row whole declines whatever the device: an activation or an output
 /// that does not hold every batch, whose batches no fold makes rows of one matrix.

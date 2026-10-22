@@ -13,15 +13,15 @@ use crate::microkernel::dense::hypercube::{
 use crate::microkernel::staged_walk::MatmulCubeWrite;
 use crate::microkernel::staging::StageRing;
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::VectorRequirement;
+use cubecl::tile::launch::Vectorization;
+use cubecl::tile::space::CubeOrder;
+use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::VectorRequirement;
-use cubek_tile::launch::Vectorization;
-use cubek_tile::space::CubeOrder;
-use cubek_tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 
 /// `out = lhs · rhs` with several cubes owning every tile of the output, each contracting its own
 /// run of `K`, then taking its turn at the tile.
@@ -31,7 +31,7 @@ use cubek_tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch
 /// twice. Each cube runs the cube microkernel over its run, its planes laid out along `m` and `n`
 /// sharing its stage; a box's cubes ride the grid's third dimension beside the batches.
 ///
-/// The cubes of a box meet in turns, in the order of their runs ([`Relay`](cubek_tile::launch::Relay)):
+/// The cubes of a box meet in turns, in the order of their runs ([`Relay`](cubecl::tile::launch::Relay)):
 /// the first writes its sum into a carry of the sum's element, each after adds its own into it a
 /// line at a time, and the last hands the total on to the output. The order is fixed, so its sums
 /// are the same bits from run to run. Declines where one cube's stores do not reach another within
@@ -300,10 +300,10 @@ mod tests {
     use crate::microkernel::dense::plane::PlaneFragmentMicrokernelSettings;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::space::CubeOrder;
     use cubek_std::devices;
     use cubek_std::matmul_axes::K;
     use cubek_std::microkernel::GlobalStream;
-    use cubek_tile::space::CubeOrder;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 

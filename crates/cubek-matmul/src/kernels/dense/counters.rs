@@ -4,8 +4,8 @@ use cubecl::prelude::BufferArg;
 use cubecl::std::tensor::TensorHandle;
 
 /// Counters the cubes of a launch meet through, one `u32` each, holding zero: a relay's turns
-/// ([`Partitioning::relay_counters`](cubek_tile::Partitioning::relay_counters)), or a merge's
-/// arrivals ([`Partitioning::arrival_counters`](cubek_tile::Partitioning::arrival_counters)).
+/// ([`Partitioning::relay_counters`](cubecl::tile::Partitioning::relay_counters)), or a merge's
+/// arrivals ([`Partitioning::arrival_counters`](cubecl::tile::Partitioning::arrival_counters)).
 /// The cubes leave them holding zero, so they serve the next launch as they arrived.
 pub struct ZeroedCounters {
     counters: TensorHandle,

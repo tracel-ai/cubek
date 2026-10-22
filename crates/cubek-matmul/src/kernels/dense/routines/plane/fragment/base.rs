@@ -3,8 +3,8 @@ use crate::kernels::MatmulBinding;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::microkernel::MatmulPartitioning;
 use crate::microkernel::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
+use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
-use cubek_tile::launch::Refusal;
 
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
@@ -14,12 +14,12 @@ use crate::microkernel::dense::plane::{
 };
 use crate::microkernel::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
 use crate::microkernel::staging::StageRing;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::space::{CubeOrder, PlaneOrder};
-use cubek_tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 
 /// `out = lhs · rhs` with every plane owning a tile of the output from loading to writing: it
 /// stages its own tile's rows of the lhs and columns of the rhs a step of `K` at a time, in shared
@@ -217,7 +217,7 @@ impl Routine for PlaneFragmentMatmulRoutine {
     /// planes' level, so each stages its own copy of the stage ([`Stages::smem`]); the ring is
     /// resolved against the one plane's units that fill it.
     ///
-    /// [`Stages::smem`]: cubek_tile::Stages::smem
+    /// [`Stages::smem`]: cubecl::tile::Stages::smem
     ///
     /// A fragment's store intrinsic writes its whole tile through an address, so where the tiles
     /// overhang the output, or the output is a sink with no address, the fragments drain through a

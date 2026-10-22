@@ -7,7 +7,7 @@ use cubecl::server::TensorMapMeta;
 pub use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides, shape, strides};
 
-use cubek_tile::launch::TmaLanding;
+use cubecl::tile::launch::TmaLanding;
 
 use crate::MatrixLayout;
 

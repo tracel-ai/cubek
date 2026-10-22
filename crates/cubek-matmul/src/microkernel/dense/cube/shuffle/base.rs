@@ -8,12 +8,12 @@ use crate::microkernel::{
     MatmulRowsKind, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Axis, Instruction, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Axis, Instruction, Levels, Space};
 
 /// Every row of a run of the output's columns, owned by one cube: its planes each run their plane
 /// microkernel's step on their own slice of every step of `K`, and add their partial sums into

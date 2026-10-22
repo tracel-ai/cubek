@@ -9,17 +9,17 @@ use crate::tile_order::{self, VALUES_AXES};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::tile::launch::{Arg, Labelled, Refusal};
+use cubecl::tile::{
+    Axis, Launcher, Projection, TileArgLaunch,
+    kind::Field,
+    layout::{PhysicalAxisMap, split},
+};
 use cubecl::zspace::metadata::Metadata;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
-use cubek_tile::launch::{Arg, Labelled, Refusal};
-use cubek_tile::{
-    Axis, Launcher, Projection, TileArgLaunch,
-    kind::Field,
-    layout::{PhysicalAxisMap, split},
-};
 
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);

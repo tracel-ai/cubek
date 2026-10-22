@@ -483,8 +483,8 @@ mod float {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
+    use cubecl::tile::launch::Refusal;
     use cubek_std::devices;
-    use cubek_tile::launch::Refusal;
 
     /// The kernel `strategy` chooses for the float `problem`: the selection, which reads a float
     /// weight on any device alike.

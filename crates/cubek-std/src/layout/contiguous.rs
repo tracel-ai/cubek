@@ -1,6 +1,6 @@
 use super::fragments::fragments;
+use cubecl::tile::Axis;
 use cubecl::zspace::metadata::Metadata;
-use cubek_tile::Axis;
 
 /// The one reading of which axis an operand is contiguous along: the axis whose fragments hold the
 /// unit-strided dim, over the trailing two logical dims named `axes`, or `None` where no fragment

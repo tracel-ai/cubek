@@ -5,18 +5,18 @@ use crate::microkernel::staged_walk::MatmulCubeWrite;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::Geometry;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::SinkLaunch;
 use cubek_std::Hardware;
-use cubek_tile::Geometry;
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::SinkLaunch;
 
 use crate::kernels::{MatmulBlueprint, MatmulOutput, MatmulRoutineProblem, MatmulTensors};
-use cubek_std::routine::{Grid, Routine};
-use cubek_tile::{
+use cubecl::tile::{
     TileArgLaunch,
     kind::Write,
     launch::{Buffered, DestinationLaunch, Unbound},
 };
+use cubek_std::routine::{Grid, Routine};
 
 /// What a routine declines before preparing anything: a sink, for a routine whose cubes reach the
 /// output in a way no sink takes ([`MatmulCubeWrite::takes_sink`]).

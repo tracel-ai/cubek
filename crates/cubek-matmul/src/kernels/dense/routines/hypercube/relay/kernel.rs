@@ -1,11 +1,11 @@
 use crate::microkernel::dense::hypercube::{
     HypercubeStagedMicrokernel, hypercube_staged_relay_microkernel,
 };
+use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_tile::{Partitioning, StageStorage, TileArg, launch::Destination};
 
 /// Every cube running its part of its box: its run of `K`, a stage at a time into one sum, then
-/// its turn at the box's carry ([`Relay`](cubek_tile::launch::Relay)), the last turn handing the
+/// its turn at the box's carry ([`Relay`](cubecl::tile::launch::Relay)), the last turn handing the
 /// sum on to the output. A cube whose run holds no stage takes no turn and leaves at once. A box's
 /// turns lie on the grid's third dimension, a whole grid layer apart: a waiting cube rests on the
 /// earlier turns having started, which the device's dispatch of the grid in order gives.

@@ -175,8 +175,8 @@ mod candidate {
         use crate::kernels::CubeShuffleMatmulRoutine;
         use crate::kernels::PlaneShuffleMatmulRoutine;
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::tile::Axis;
         use cubek_std::devices;
-        use cubek_tile::Axis;
 
         /// A key over an `f16` product of `batch` batches of `m` rows against a `k × n` weight whose
         /// buffer runs along `rhs`, or along neither axis for `None`.

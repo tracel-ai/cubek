@@ -8,15 +8,15 @@ use crate::microkernel::MatmulRead;
 use crate::microkernel::dense::cube::{CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings};
 use crate::microkernel::dense::plane::PlaneShuffleMicrokernel;
 use crate::microkernel::{MatmulOperand, MatmulOperands};
+use cubecl::tile::TileArgLaunch;
+use cubecl::tile::launch::DestinationLaunch;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Vectorization;
+use cubecl::tile::space::CubeOrder;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
-use cubek_tile::TileArgLaunch;
-use cubek_tile::launch::DestinationLaunch;
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::Vectorization;
-use cubek_tile::space::CubeOrder;
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them.

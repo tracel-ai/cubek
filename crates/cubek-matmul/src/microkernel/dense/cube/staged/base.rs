@@ -16,13 +16,13 @@ use crate::microkernel::{
 };
 use crate::stored::BlockScales;
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, M, N};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
-use cubek_tile::launch::Delivery;
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Levels, Scratch, Space, StageStorage, launch::Bound};
 
 /// A box of the output one cube owns: it stages the box's rows of the lhs and columns of the rhs
 /// a step of `K` at a time, and its planes each run a [`PlaneFragmentMicrokernel`] out of every

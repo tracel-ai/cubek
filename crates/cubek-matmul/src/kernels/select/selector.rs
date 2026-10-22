@@ -36,10 +36,10 @@ use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::stored::Operand;
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::{NVFP4_BLOCK, block_scaled_nvfp4};
-use cubek_tile::launch::Refusal;
 
 /// How a product runs: what becomes of its weight, and the kernel that reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]

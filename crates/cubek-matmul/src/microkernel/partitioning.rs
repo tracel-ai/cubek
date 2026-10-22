@@ -1,11 +1,11 @@
 use crate::microkernel::staged_walk::MatmulStage;
 use crate::microkernel::{MatmulAxes, MatmulRowsKind, MatmulWorkItem};
-use cubek_std::matmul_axes::{K, KB, M, MB, MI, N, NB, NI};
-use cubek_tile::launch::Refusal;
-use cubek_tile::{
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::{
     Axis, Partitioning, Space, TileSpec,
     space::{ComputeScope, Count, Coverage, CubeOrder, PlaneOrder},
 };
+use cubek_std::matmul_axes::{K, KB, M, MB, MI, N, NB, NI};
 
 /// How a matmul product places its microkernel's work items over a problem: cubek's levels, which
 /// the kernel launches and walks, and the box each cube is handed. Each product builds one from

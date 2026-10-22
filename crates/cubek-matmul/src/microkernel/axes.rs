@@ -1,5 +1,5 @@
+use cubecl::tile::Axis;
 use cubek_std::matmul_axes::{K, KI, M, MI, N, NI};
-use cubek_tile::Axis;
 
 /// The axes the product's rows, columns and contraction lie along in the caller's space: matmul's
 /// own [`MNK`](Self::MNK), or another's, so a microkernel tiles attention's score product

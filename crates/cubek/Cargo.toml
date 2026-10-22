@@ -21,7 +21,6 @@ default = [
     "std",
     "stdlib",
     "cubek-std?/default",
-    "cubek-tile?/default",
     "cubek-quant?/default",
     "cubek-random?/default",
     "cubek-reduce?/default",
@@ -35,7 +34,6 @@ default = [
 
 std = [
     "cubek-std?/std",
-    "cubek-tile?/std",
     "cubek-quant?/std",
     "cubek-random?/std",
     "cubek-reduce?/std",
@@ -60,7 +58,6 @@ quantization = ["cubek-quant/kernels"]
 random = ["cubek-random"]
 reduce = ["cubek-reduce"]
 stdlib = ["cubek-std"]
-tile = ["cubek-tile"]
 fft = ["cubek-fft"]
 
 
@@ -76,4 +73,3 @@ cubek-quant = { workspace = true, optional = true }
 cubek-random = { workspace = true, optional = true }
 cubek-reduce = { workspace = true, optional = true }
 cubek-std = { workspace = true, optional = true }
-cubek-tile = { workspace = true, optional = true }

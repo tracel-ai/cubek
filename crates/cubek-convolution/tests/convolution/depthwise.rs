@@ -1,6 +1,6 @@
 //! The depthwise routine against a CPU reference, over every tiling the catalogue offers.
 //!
-//! The tile suite next door (`cubek-tile/tests/tile/depthwise.rs`) checks that the *DSL* can
+//! The tile suite next door (cubecl-tile's `tests/tile/depthwise.rs`) checks that the *DSL* can
 //! express a depthwise convolution, and builds its own space to do it. This checks the space
 //! `launch_depthwise` actually builds — which is the one that ships, and the one whose tiling
 //! moves whenever the kernel is optimized. A tiling that is fast and wrong has to fail here.

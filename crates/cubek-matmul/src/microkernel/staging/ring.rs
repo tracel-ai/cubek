@@ -1,8 +1,8 @@
 use crate::microkernel::staging::StagedOperand;
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::tile::stage::Prefetch;
 use cubek_std::Hardware;
-use cubek_tile::stage::Prefetch;
 
 /// How a walk through shared memory holds its stages: a staged cube's, or each plane's own,
 /// whatever operands it stages.
@@ -119,9 +119,9 @@ impl core::fmt::Display for StageRing {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::{Axis, Space};
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};
-    use cubek_tile::{Axis, Space};
 
     /// A small stage of both operands of a product in `f16`, which fits in registers.
     fn small_stage() -> [StagedOperand; 2] {

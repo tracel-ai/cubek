@@ -12,14 +12,14 @@ use crate::microkernel::dense::hypercube::{
 use crate::microkernel::staged_walk::MatmulCubeWrite;
 use crate::microkernel::staging::StageRing;
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::VectorRequirement;
+use cubecl::tile::launch::Vectorization;
+use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
-use cubek_tile::launch::Refusal;
-use cubek_tile::launch::VectorRequirement;
-use cubek_tile::launch::Vectorization;
-use cubek_tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
 /// grid of cubes, one run each: a run may start inside one tile and end inside another,
@@ -33,7 +33,7 @@ use cubek_tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 /// tiles, so one kernel serves them all for an element and a layout.
 ///
 /// A cube contracts its part of every tile its run touches with the cube microkernel, then hands
-/// it on ([`LastArrival`](cubek_tile::launch::LastArrival)). A tile it holds whole goes straight
+/// it on ([`LastArrival`](cubecl::tile::launch::LastArrival)). A tile it holds whole goes straight
 /// into the output. A part of a tile several runs share goes into a slot of the sum's element, and
 /// the last of them to arrive adds the parts in run order and hands the total on. No cube waits on
 /// another, and the total is the same bits from run to run. Any number of runs may share a tile,

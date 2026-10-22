@@ -3,12 +3,12 @@ use crate::microkernel::{
     MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::{Instruction, Levels, RegisterBlock};
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 use cubek_std::{Hardware, UNIT_REGISTERS};
-use cubek_tile::launch::{VectorRequirement, Vectorization};
-use cubek_tile::{Instruction, Levels, RegisterBlock};
 
 /// A block of the output one unit owns, summed in registers while it walks `K`, as its settings
 /// size it. It asks nothing of the hardware, so it is its settings and the order it reads the rhs

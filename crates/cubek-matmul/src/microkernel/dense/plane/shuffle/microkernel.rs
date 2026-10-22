@@ -1,6 +1,6 @@
 use crate::microkernel::{MatmulOperands, MatmulRead};
+use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_tile::{Region, Tile};
 
 /// `sum += a · b` over one step of `plane`: each unit adds its block. The caller opens `sum`
 /// (an `accumulator` of `Instruction::Registers` at [`tile_instruction`](crate::microkernel::dense::plane::PlaneShuffleMicrokernel::tile_instruction)), walks `K`

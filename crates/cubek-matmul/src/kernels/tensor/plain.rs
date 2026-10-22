@@ -3,13 +3,13 @@ use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::std::tensor::is_contiguous;
+use cubecl::tile::launch::Refusal;
+use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::{Axis, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Tiling};
 use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
-use cubek_tile::launch::Refusal;
-use cubek_tile::layout::ElemAlignment;
-use cubek_tile::{Axis, Geometry, Projection};
 
 use crate::microkernel::MatmulBlocks;
 

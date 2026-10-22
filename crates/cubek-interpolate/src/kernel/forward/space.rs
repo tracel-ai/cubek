@@ -1,10 +1,10 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
-use cubecl::{CubeCount, CubeDim};
-use cubek_tile::{
+use cubecl::tile::{
     Axis, Level, Levels, Partitioning, Projection, RegisterBlock, Space,
     layout::{Compaction, PhysicalAxisMap},
 };
+use cubecl::{CubeCount, CubeDim};
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
