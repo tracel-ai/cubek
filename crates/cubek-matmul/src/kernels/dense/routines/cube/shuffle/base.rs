@@ -90,8 +90,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
         let groups = columns / leaf.extent(N) as u64;
         let planes_along_k = microkernel.planes_along_k.get() as u64;
-        let k_per_stage =
-            (leaf.extent(K) * microkernel.plane.units_along_k) as u64 * planes_along_k;
+        let k_per_stage = microkernel.plane.step_depth(&leaf) as u64 * planes_along_k;
         let stream = |operand: MatmulOperand, elements: u64, run: u64| {
             let size = item.elements.get(operand).size() as u64;
             GlobalStream {
