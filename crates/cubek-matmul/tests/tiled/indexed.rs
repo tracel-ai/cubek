@@ -60,18 +60,32 @@ fn check_every_setting<M, SM, R>(
     let mut ran = 0;
     for settings in routine.settings(&hw) {
         let (lhs, rhs, table) = inputs();
-        let Ok(out) = routine.launch_indexed_on(
+        // `[batches.., rows, n]`: the table's dims, then the activation's rows and the weight's
+        // columns.
+        let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());
+        let shape = [
+            table.entries.shape().as_slice(),
+            &[
+                lhs_shape[lhs_shape.rank() - 2],
+                rhs_shape[rhs_shape.rank() - 1],
+            ],
+        ]
+        .concat();
+        let (out, bound) =
+            PlainTensor::empty_contiguous(&client, Shape::from(shape.clone()), lhs.elem);
+        let launched = routine.launch_indexed_into(
             &hw,
             &client,
             lhs,
             StoredTensor::Plain(rhs),
             table,
+            bound,
             &settings,
-        ) else {
+        );
+        if launched.is_err() {
             continue;
-        };
+        }
         ran += 1;
-        let shape = out.shape().to_vec();
         let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
         for (i, &want) in expected.iter().enumerate() {
             let have = got.get_f32(&unravel(i, &shape));

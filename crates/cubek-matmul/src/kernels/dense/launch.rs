@@ -102,31 +102,35 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         Ok(())
     }
 
-    /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, prepared for
-    /// `hw` at `settings`: the output allocated as `[batches.., rows, n]`
-    /// ([`MatmulTensors::indexed`]).
+    /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, written into
+    /// `out`, `[batches.., rows, n]`, which the caller allocated as its product lies, prepared for
+    /// `hw` at `settings` ([`MatmulTensors::indexed`]).
     ///
     /// # Errors
     ///
     /// As [`MatmulTensors::indexed`], and why `hw` cannot run the product at these settings,
     /// [`MATMUL_INDEX_UNREAD`](crate::kernels::MATMUL_INDEX_UNREAD) for a routine whose kernel walks
     /// no indexed input among them.
-    fn launch_indexed_on(
+    // The indexed operands are the dense ones beside the table and the output the caller laid out,
+    // each named where the caller hands it.
+    #[allow(clippy::too_many_arguments)]
+    fn launch_indexed_into(
         &self,
         hw: &Hardware,
         client: &Client,
         lhs: PlainTensor,
         rhs: StoredTensor,
         table: MatmulIndexTable,
+        out: PlainTensor,
         settings: &Self::Settings,
-    ) -> Result<TensorHandle, Refusal> {
-        let tensors = MatmulTensors::indexed::<M>(client, lhs, rhs, table)?;
+    ) -> Result<(), Refusal> {
+        let tensors = MatmulTensors::indexed::<M>(client, lhs, rhs, table, out)?;
         let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
         let binding = tensors
             .bind(&blueprint, &grid)
             .map_out(|out| (out, Write::Replace));
         self.dispatch::<Buffered, _>(&tensors, binding, blueprint, grid);
-        Ok(tensors.into_out().expect(ALLOCATED))
+        Ok(())
     }
 
     /// [`launch_on`](Self::launch_on) into an output of `out`: what a product whose activation is

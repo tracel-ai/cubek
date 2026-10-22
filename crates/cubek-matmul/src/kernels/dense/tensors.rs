@@ -169,7 +169,8 @@ impl MatmulTensors {
     }
 
     /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch on `M`
-    /// reads them, the output allocated as `[batches.., rows, n]` in the activation's element. The
+    /// reads them, written into `out`, `[batches.., rows, n]` in the activation's element, which
+    /// the caller allocated as its product lies: a grouped one's slabs side by side, say. The
     /// activation's batch dims broadcast against the table's. Under [`MatmulIndex::Slab`] the rhs
     /// is the stack: a float one `[slabs, k, n]`, read where it lies; a packed one read as its
     /// slabs ([`PackedTensor::stacked`]), every row of a batch then held whole.
@@ -178,7 +179,8 @@ impl MatmulTensors {
     ///
     /// As [`MatmulInputs::new`] for a float rhs; for a packed one, as
     /// [`beside_packed`](Self::beside_packed), and [`PACKED_STACK_UNREAD`] for one read along a
-    /// run of `K`, which no packed product reads.
+    /// run of `K`, which no packed product reads. [`MATMUL_OUTPUT_UNREAD`] for an output of
+    /// another shape or element, or stored in tiles.
     ///
     /// # Panics
     ///
@@ -189,6 +191,7 @@ impl MatmulTensors {
         lhs: PlainTensor,
         rhs: StoredTensor,
         table: MatmulIndexTable,
+        out: PlainTensor,
     ) -> Result<Self, Refusal> {
         assert_eq!(
             table.entries.elem,
@@ -196,8 +199,10 @@ impl MatmulTensors {
             "a table's entries are `u32`"
         );
         match rhs {
-            StoredTensor::Plain(rhs) => Self::indexed_float(client, lhs, rhs, table, M::ROWS_KIND),
-            StoredTensor::Packed(rhs) => Self::indexed_packed(client, lhs, rhs, table),
+            StoredTensor::Plain(rhs) => {
+                Self::indexed_float(client, lhs, rhs, table, out, M::ROWS_KIND)
+            }
+            StoredTensor::Packed(rhs) => Self::indexed_packed(client, lhs, rhs, table, out),
         }
     }
 
@@ -207,6 +212,7 @@ impl MatmulTensors {
         lhs: PlainTensor,
         rhs: PlainTensor,
         table: MatmulIndexTable,
+        out: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Refusal> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
@@ -214,7 +220,7 @@ impl MatmulTensors {
             .into_parts();
         let matrix = Self::matrix_of(&rhs, &table.index);
         let matrix_shape = matrix.shape();
-        let out = Self::indexed_output(client, &lhs, matrix_shape[0], matrix_shape[1], &table);
+        let out = Self::indexed_output(&lhs, matrix_shape[0], matrix_shape[1], &table, out)?;
         Ok(Self {
             client: client.clone(),
             lhs: StoredTensor::Plain(lhs),
@@ -231,6 +237,7 @@ impl MatmulTensors {
         lhs: PlainTensor,
         rhs: PackedTensor,
         table: MatmulIndexTable,
+        out: PlainTensor,
     ) -> Result<Self, Refusal> {
         let MatmulIndex::Slab { slabs } = table.index else {
             return Err(PACKED_STACK_UNREAD);
@@ -242,7 +249,7 @@ impl MatmulTensors {
         );
         let k = rhs.extent(K);
         let lhs = Self::beside_packed(client, lhs, [M, K], k)?;
-        let out = Self::indexed_output(client, &lhs, k, rhs.extent(N), &table);
+        let out = Self::indexed_output(&lhs, k, rhs.extent(N), &table, out)?;
         Ok(Self {
             client: client.clone(),
             lhs: StoredTensor::Plain(lhs),
@@ -253,28 +260,35 @@ impl MatmulTensors {
         })
     }
 
-    /// The output of `lhs` against one `[k, n]` matrix per batch of `table`, allocated as
+    /// `out`, the output of `lhs` against one `[k, n]` matrix per batch of `table`, checked to be
     /// `[batches.., rows, n]` in the activation's element.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_OUTPUT_UNREAD`] for an output of another shape or element, or stored in tiles.
     ///
     /// # Panics
     ///
     /// On an activation whose contraction is not `k`.
     fn indexed_output(
-        client: &Client,
         lhs: &PlainTensor,
         k: usize,
         n: usize,
         table: &MatmulIndexTable,
-    ) -> MatmulOutputBuffer {
+        out: PlainTensor,
+    ) -> Result<MatmulOutputBuffer, Refusal> {
         let shape = lhs.shape();
         let rank = shape.rank();
         assert_eq!(shape[rank - 1], k, "the contraction dims must agree");
         let out_shape = [table.entries.shape().as_slice(), &[shape[rank - 2], n]].concat();
-        let (tensor, bound) = PlainTensor::empty(client, out_shape.into(), lhs.elem);
-        MatmulOutputBuffer {
-            tensor: Some(tensor),
-            bound,
+        if out.shape().as_slice() != out_shape.as_slice() || out.elem != lhs.elem || out.is_tiled()
+        {
+            return Err(MATMUL_OUTPUT_UNREAD);
         }
+        Ok(MatmulOutputBuffer {
+            tensor: None,
+            bound: out,
+        })
     }
 
     /// The one `[k, n]` matrix of `rhs` a batch contracts against: a stacked rhs's first slab,
