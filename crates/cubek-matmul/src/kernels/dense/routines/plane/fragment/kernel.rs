@@ -1,10 +1,10 @@
 use super::base::PlaneFragmentMatmulRoutineSharedMemory;
 
-use crate::microkernel::dense::plane::{
-    PlaneFragmentMicrokernel, plane_fragment_staged_microkernel,
-};
 use cubecl::tile::{Partitioning, Semiring, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::plane::{
+    PlaneFragmentMicrokernel, plane_fragment_staged_microkernel,
+};
 
 /// Every plane of the launch owning its tile: it walks the tile through stages of its own
 /// ([`plane_fragment_staged_microkernel`]) and drains its fragments into the output, through the

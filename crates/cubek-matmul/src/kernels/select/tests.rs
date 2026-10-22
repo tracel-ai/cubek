@@ -607,7 +607,7 @@ mod float {
     /// that declines it and be answered by the fallback.
     #[test]
     fn the_float_bound_is_what_the_plane_shuffle_holds() {
-        use crate::microkernel::dense::plane::PlaneShuffleMicrokernel;
+        use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
         assert_eq!(FLOAT_FEW_ROWS, PlaneShuffleMicrokernel::MAX_ROWS);
     }
 

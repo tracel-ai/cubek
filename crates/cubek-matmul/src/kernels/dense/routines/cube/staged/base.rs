@@ -2,20 +2,20 @@ use super::cube_staged_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::select::packed::nvfp4_activation_scheme;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
-use crate::microkernel::MatmulStep;
-use crate::microkernel::staging::StageRing;
-use crate::microkernel::{
-    MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
-};
-use crate::stored::Operand;
-use crate::stored::Packing;
-use crate::tile_order;
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
+use cubek_microkernel::matmul::MatmulStep;
+use cubek_microkernel::matmul::stored::Operand;
+use cubek_microkernel::matmul::stored::Packing;
+use cubek_microkernel::matmul::tile_order;
+use cubek_microkernel::matmul::{
+    MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
+};
+use cubek_microkernel::staging::StageRing;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::{Hardware, Instructions};
@@ -24,17 +24,19 @@ use cubek_std::{UNIT_REGISTERS, manual_mma};
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::microkernel::dense::cube::{
-    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedRows, CubeStagedStore,
-};
-use crate::microkernel::dense::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
-use crate::microkernel::staged_walk::MatmulPlaneLayout;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
+use cubek_microkernel::matmul::dense::cube::{
+    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
+    CubeStagedRows, CubeStagedStore,
+};
+use cubek_microkernel::matmul::dense::plane::{
+    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
+};
+use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -93,7 +95,7 @@ impl CubeStagedMatmulRoutine {
     /// and two by four on four by two or two by four planes, three stages in flight and the box
     /// stored by the TMA engine in one bulk copy, which a contraction of a few thousand finishes
     /// sooner with. A stage one step deep is one tile of a weight in
-    /// [tile order](crate::tile_order), which a box lands as it lands rows. Filled by the
+    /// [tile order](cubek_microkernel::matmul::tile_order), which a box lands as it lands rows. Filled by the
     /// cube's units asynchronously: four by four on two by four planes, three stages in flight,
     /// and two by four on four by two planes, two.
     ///
@@ -189,7 +191,7 @@ impl CubeStagedMatmulRoutine {
     /// The step of an NVFP4 product on `hw` ([`MatmulStep`]): the least box every load of
     /// both operands fills whole — a row of the TMA engine's box, a word of scales — under the
     /// device's block-scaled instruction. `None` on a device that offers none. A weight in rows and
-    /// one in [tile order](crate::tile_order) step alike, and a load on such a device
+    /// one in [tile order](cubek_microkernel::matmul::tile_order) step alike, and a load on such a device
     /// stores in this step.
     pub fn block_scaled_step(hw: &Hardware) -> Option<MatmulStep> {
         let e2m1 = ElemType::Float(FloatKind::E2M1);
@@ -241,7 +243,7 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// Registers the compiler adds around a plane's lower bound
-    /// ([`registers_per_unit`](crate::microkernel::dense::plane::PlaneFragmentMicrokernel::registers_per_unit)):
+    /// ([`registers_per_unit`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel::registers_per_unit)):
     /// addressing, loop state and the scale registers. A margin rather than a derivation, since
     /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.

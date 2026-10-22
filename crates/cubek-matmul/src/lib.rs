@@ -19,14 +19,8 @@ pub mod tune_key;
 
 #[cfg(feature = "tiled")]
 pub mod kernels;
-#[cfg(feature = "tiled")]
-pub mod microkernel;
 #[cfg(feature = "multi-level")]
 pub mod multi_level;
-#[cfg(feature = "tiled")]
-pub mod stored;
-#[cfg(feature = "tiled")]
-pub mod tile_order;
 #[cfg(feature = "tiled")]
 pub mod tiled;
 

@@ -4,8 +4,6 @@
 //! how its block scales are read ([`BlockScales`]), nothing else.
 
 use super::PlainTensor;
-use crate::stored::{BlockScales, Operand, Packing};
-use crate::tile_order::{self, VALUES_AXES};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::QuantScheme;
@@ -16,6 +14,8 @@ use cubecl::tile::{
     layout::{PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::stored::{BlockScales, Operand, Packing};
+use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N, blocked};

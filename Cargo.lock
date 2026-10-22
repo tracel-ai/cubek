@@ -1360,6 +1360,7 @@ dependencies = [
  "cubek-fft",
  "cubek-interpolate",
  "cubek-matmul",
+ "cubek-microkernel",
  "cubek-pool",
  "cubek-quant",
  "cubek-random",
@@ -1432,11 +1433,21 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubek-matmul",
+ "cubek-microkernel",
  "cubek-quant",
  "cubek-std",
  "cubek-test-utils",
  "half",
  "num-complex",
+ "serde",
+]
+
+[[package]]
+name = "cubek-microkernel"
+version = "0.4.0-pre.1"
+dependencies = [
+ "cubecl",
+ "cubek-std",
  "serde",
 ]
 

@@ -7,10 +7,10 @@ mod candidate {
     use crate::kernels::{
         CubeStagedMatmulRoutine, MatmulRoutineProblem, UnitRegistersMatmulRoutine,
     };
-    use crate::microkernel::MatmulMicrokernel;
-    use crate::microkernel::MatmulOrder;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::matmul::MatmulMicrokernel;
+    use cubek_microkernel::matmul::MatmulOrder;
     use cubek_std::Hardware;
     use cubek_std::autotune::{CandidatePriority, TuneCandidate};
     use cubek_std::devices;
@@ -278,9 +278,9 @@ mod candidate {
         use crate::kernels::CubeStagedMatmulRoutine;
         use crate::kernels::UnitRegistersMatmulRoutine;
         use crate::kernels::{MatmulRoutine, MatmulRoutineProblem};
-        use crate::microkernel::{MatmulLayout, MatmulMicrokernel};
         use cubecl::features::MmaConfig;
         use cubecl::ir::{ElemType, FloatKind};
+        use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel};
         use cubek_std::Hardware;
         use cubek_std::devices;
         use cubek_std::microkernel::KernelEstimate;
@@ -350,8 +350,8 @@ mod candidate {
         use crate::kernels::CubeShuffleMatmulRoutine;
         use crate::kernels::PlaneShuffleMatmulRoutine;
         use crate::kernels::{MatmulRoutine, MatmulRoutineProblem};
-        use crate::microkernel::{MatmulLayout, MatmulMicrokernel};
         use cubecl::ir::{ElemType, FloatKind};
+        use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel};
         use cubek_std::Hardware;
         use cubek_std::devices;
         use cubek_std::microkernel::KernelEstimate;

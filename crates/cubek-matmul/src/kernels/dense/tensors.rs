@@ -4,11 +4,6 @@ use crate::kernels::{
     MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulRoutineProblem,
     MatmulView,
 };
-use crate::microkernel::staged_walk::MatmulStage;
-use crate::microkernel::{
-    MatmulBlocks, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulRowsKind, MatmulWorkItem,
-};
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind};
@@ -18,6 +13,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, launch::Bound, launch::TmaBox,
     launch::TmaOperand, launch::Unbound,
+};
+use cubek_microkernel::matmul::staged_walk::MatmulStage;
+use cubek_microkernel::matmul::{
+    MatmulBlocks, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
+    MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
@@ -1223,9 +1223,9 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
 
 #[cfg(test)]
 mod tests {
-    use crate::microkernel::{MatmulLayout, MatmulOperand};
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::zspace::metadata::Metadata;
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand};
 
     /// A stack's alignment over the order its buffer steps, as a problem derives it from the
     /// stack's layout, is the one a binding stepping that order reads, for every slab view of a

@@ -1,9 +1,4 @@
 use crate::kernels::tensor::PlainTensor;
-use crate::microkernel::{
-    MatmulBuffers, MatmulContraction, MatmulDestination, MatmulLayout, MatmulOperand,
-    MatmulOperands, MatmulOrder, MatmulStoredTile,
-};
-use crate::stored::Packing;
 use cubecl::ir::ElemType;
 use cubecl::tile::Axis;
 use cubecl::tile::Geometry;
@@ -11,6 +6,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::stored::Packing;
+use cubek_microkernel::matmul::{
+    MatmulBuffers, MatmulContraction, MatmulDestination, MatmulLayout, MatmulOperand,
+    MatmulOperands, MatmulOrder, MatmulStoredTile,
+};
 use cubek_std::matmul_axes::batch_axis;
 use cubek_std::routine::EstimatedProblem;
 
@@ -317,7 +317,7 @@ impl MatmulRoutineProblem {
 
     /// `operand`'s alignment bound in `order`: over its buffer's order, or as the product names
     /// it. Which order a launch binds it in is its microkernel's choice
-    /// ([`MatmulMicrokernel::orders`](crate::microkernel::MatmulMicrokernel::orders)).
+    /// ([`MatmulMicrokernel::orders`](cubek_microkernel::matmul::MatmulMicrokernel::orders)).
     pub fn alignment(&self, operand: MatmulOperand, order: MatmulOrder) -> ElemAlignment {
         match order {
             MatmulOrder::InBufferOrder => self.buffer_alignments.get(operand),

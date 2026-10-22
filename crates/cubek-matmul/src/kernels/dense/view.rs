@@ -1,15 +1,15 @@
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::{
-    MATMUL_PACKED_LHS_SPLIT, MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel,
-    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
-};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, CubeOrder, PlaneOrder},
+};
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::{
+    MATMUL_PACKED_LHS_SPLIT, MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel,
+    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
@@ -244,8 +244,8 @@ impl<'a> MatmulView<'a> {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_STEPS_UNCLOSED`](crate::microkernel::MATMUL_STEPS_UNCLOSED), and
-    /// [`MATMUL_PACKED_LHS_SPLIT`](crate::microkernel::MATMUL_PACKED_LHS_SPLIT).
+    /// [`MATMUL_STEPS_UNCLOSED`](cubek_microkernel::matmul::MATMUL_STEPS_UNCLOSED), and
+    /// [`MATMUL_PACKED_LHS_SPLIT`](cubek_microkernel::matmul::MATMUL_PACKED_LHS_SPLIT).
     pub fn check_steps(&self, hw: &Hardware) -> Result<(), Refusal> {
         let MatmulOperands { lhs, rhs, .. } = self.problem.packings;
         let Some(rhs) = rhs else {
@@ -357,8 +357,8 @@ struct RowsReading {
 mod tests {
     use super::*;
     use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
-    use crate::microkernel::MatmulOperands;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::matmul::MatmulOperands;
 
     fn shape(batch: usize, batching: MatmulBatching) -> MatmulShape {
         MatmulShape {

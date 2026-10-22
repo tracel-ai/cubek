@@ -10,6 +10,9 @@ pub use cubek_reduce as reduce;
 #[cfg(feature = "matmul")]
 pub use cubek_matmul as matmul;
 
+#[cfg(feature = "microkernel")]
+pub use cubek_microkernel as microkernel;
+
 #[cfg(feature = "convolution")]
 pub use cubek_convolution as convolution;
 

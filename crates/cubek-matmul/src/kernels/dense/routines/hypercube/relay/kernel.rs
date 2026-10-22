@@ -1,8 +1,8 @@
-use crate::microkernel::dense::hypercube::{
-    HypercubeStagedMicrokernel, hypercube_staged_relay_microkernel,
-};
 use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::dense::hypercube::{
+    HypercubeStagedMicrokernel, hypercube_staged_relay_microkernel,
+};
 
 /// Every cube running its part of its box: its run of `K`, a stage at a time into one sum, then
 /// its turn at the box's carry ([`Relay`](cubecl::tile::launch::Relay)), the last turn handing the

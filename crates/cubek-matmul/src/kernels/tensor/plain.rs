@@ -11,7 +11,7 @@ use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Tiling};
 use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
 
-use crate::microkernel::MatmulBlocks;
+use cubek_microkernel::matmul::MatmulBlocks;
 
 /// A float operand as the routines read it: cubecl's binding of its buffer, and the element it
 /// holds. Every view below reads the same buffer under other dims, so a launch states its problem

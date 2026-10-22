@@ -2,8 +2,8 @@
 
 use crate::kernels::tune::key::{CubeBlock, MatmulTuneKey};
 use crate::kernels::{MatmulBlueprint, MatmulRoutineProblem};
-use crate::microkernel::MatmulMicrokernel;
 use cubecl::CubeDim;
+use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::matmul_axes::{K, M, N};

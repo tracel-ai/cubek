@@ -25,6 +25,7 @@ default = [
     "cubek-random?/default",
     "cubek-reduce?/default",
     "cubek-matmul?/default",
+    "cubek-microkernel?/default",
     "cubek-convolution?/default",
     "cubek-attention?/default",
     "cubek-interpolate?/default",
@@ -38,6 +39,7 @@ std = [
     "cubek-random?/std",
     "cubek-reduce?/std",
     "cubek-matmul?/std",
+    "cubek-microkernel?/std",
     "cubek-convolution?/std",
     "cubek-attention?/std",
     "cubek-interpolate?/std",
@@ -54,6 +56,8 @@ matmul = ["cubek-matmul", "stdlib"]
 # `cubek-matmul`'s own default; these are for builds that want only one.
 matmul-tiled = ["cubek-matmul?/tiled"]
 matmul-multi-level = ["cubek-matmul?/multi-level"]
+# The microkernels the kernels are built from, for a caller writing kernels of its own.
+microkernel = ["cubek-microkernel", "stdlib"]
 quantization = ["cubek-quant/kernels"]
 random = ["cubek-random"]
 reduce = ["cubek-reduce"]
@@ -68,6 +72,7 @@ cubek-convolution = { workspace = true, optional = true }
 cubek-fft = { workspace = true, optional = true }
 cubek-interpolate = { workspace = true, optional = true }
 cubek-matmul = { workspace = true, optional = true }
+cubek-microkernel = { workspace = true, optional = true }
 cubek-pool = { workspace = true, optional = true }
 cubek-quant = { workspace = true, optional = true }
 cubek-random = { workspace = true, optional = true }

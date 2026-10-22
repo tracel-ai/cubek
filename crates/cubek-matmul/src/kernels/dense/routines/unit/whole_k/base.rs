@@ -3,16 +3,18 @@ use crate::kernels::MatmulBinding;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
-use crate::microkernel::MatmulPartitioning;
-use crate::microkernel::dense::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings};
-use crate::microkernel::staged_walk::MatmulStagingCount;
-use crate::microkernel::{MatmulOperand, MatmulOperands, MatmulOrder};
 use core::num::NonZeroUsize;
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::DestinationLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::dense::unit::{
+    UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings,
+};
+use cubek_microkernel::matmul::staged_walk::MatmulStagingCount;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulOrder};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -219,8 +221,8 @@ impl MatmulRoutine<UnitWholeKMicrokernel> for UnitWholeKMatmulRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::microkernel::MatmulLayout;
     use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::matmul::MatmulLayout;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

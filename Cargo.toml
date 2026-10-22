@@ -29,6 +29,7 @@ cubek-convolution = { path = "crates/cubek-convolution", version = "0.4.0-pre.1"
 cubek-fft = { path = "crates/cubek-fft", version = "0.4.0-pre.1", default-features = false }
 cubek-interpolate = { path = "crates/cubek-interpolate", version = "0.4.0-pre.1", default-features = false }
 cubek-matmul = { path = "crates/cubek-matmul", version = "0.4.0-pre.1", default-features = false }
+cubek-microkernel = { path = "crates/cubek-microkernel", version = "0.4.0-pre.1", default-features = false }
 cubek-pool = { path = "crates/cubek-pool", version = "0.4.0-pre.1", default-features = false }
 cubek-quant = { path = "crates/cubek-quant", version = "0.4.0-pre.1", default-features = false }
 cubek-random = { path = "crates/cubek-random", version = "0.4.0-pre.1", default-features = false }
