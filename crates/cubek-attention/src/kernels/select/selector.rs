@@ -144,3 +144,131 @@ pub fn select(
         (KvKind::Packed, choice) => Ok(AttentionSelection::DequantizeThen(choice)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::select::selector::*;
+    use crate::kernels::*;
+    use AttentionChoice::{Autotune as Measured, Kernel};
+    use AttentionKernelHeuristic as H;
+    use AttentionOpStrategy::{Autotune, Heuristic, Specific};
+    use AttentionSelection::{DequantizeThen, Float, Packed};
+    use KernelChoice::{Pin, Rule};
+    use QueryPositions::{Many, One};
+
+    const KINDS: [KvKind; 2] = [KvKind::Float, KvKind::Packed];
+    const LAST_ARRIVAL_SHUFFLE: AttentionKernel =
+        AttentionKernel::Hypercube(HypercubeAttentionKernel::LastArrivalShuffle);
+    const SECOND_LAUNCH_SHUFFLE: AttentionKernel =
+        AttentionKernel::Hypercube(HypercubeAttentionKernel::SecondLaunchShuffle);
+    const CUBE_FRAGMENT: AttentionKernel = AttentionKernel::Cube(CubeAttentionKernel::Fragment);
+
+    /// What a packed cache of one query position reads under every policy: the hypercube shuffle
+    /// merged on the last arrival by rule, then the unit routine over the rebuilt cache.
+    const PACKED_BY_RULE: AttentionSelection = Packed {
+        read: Rule(LAST_ARRIVAL_SHUFFLE),
+        otherwise: Some(Kernel(Rule(AttentionKernel::Unit))),
+    };
+
+    /// The tile ceiling: over a float cache the hypercube by rule at one query position and the
+    /// cube elsewhere; over a packed one the hypercube decoding inline at one position, the unit
+    /// routine after it, and the cache rebuilt before the cube elsewhere. Nothing measured
+    /// anywhere.
+    #[test]
+    fn the_tile_ceiling_rules() {
+        let tile = Heuristic(H::Tile);
+        assert_eq!(
+            select(tile, One, KvKind::Float),
+            Ok(Float(Kernel(Rule(LAST_ARRIVAL_SHUFFLE))))
+        );
+        assert_eq!(
+            select(tile, Many, KvKind::Float),
+            Ok(Float(Kernel(Rule(CUBE_FRAGMENT)))),
+            "many query positions are never measured below the burn ceiling"
+        );
+        assert_eq!(select(tile, One, KvKind::Packed), Ok(PACKED_BY_RULE));
+        assert_eq!(
+            select(tile, Many, KvKind::Packed),
+            Ok(DequantizeThen(Kernel(Rule(CUBE_FRAGMENT))))
+        );
+    }
+
+    /// Where a kernel a rule named declines, the cube's plane unit groups run after its plane
+    /// fragments, the hypercube shuffle merged by a second launch after the one merged on the last
+    /// arrival, and the unit routine after any other: every kernel reaches the unit routine,
+    /// and nothing follows it.
+    #[test]
+    fn every_rule_ends_at_the_unit_routine() {
+        assert_eq!(
+            CUBE_FRAGMENT.instead_by_rule(),
+            Some(AttentionKernel::Cube(CubeAttentionKernel::UnitGroup))
+        );
+        assert_eq!(
+            LAST_ARRIVAL_SHUFFLE.instead_by_rule(),
+            Some(SECOND_LAUNCH_SHUFFLE)
+        );
+        for kernel in AttentionKernel::all() {
+            let last = std::iter::successors(Some(kernel), AttentionKernel::instead_by_rule).last();
+            assert_eq!(last, Some(AttentionKernel::Unit), "{kernel:?}");
+        }
+        assert_eq!(AttentionKernel::Unit.instead_by_rule(), None);
+    }
+
+    /// `Autotune` measures every float call, on the table of its query positions; a packed call
+    /// of one position has one kernel and nothing to race, and a packed call of many is rebuilt
+    /// and measured as a float one.
+    #[test]
+    fn autotune_measures_every_float_call() {
+        for queries in [One, Many] {
+            assert_eq!(
+                select(Autotune, queries, KvKind::Float),
+                Ok(Float(Measured(queries)))
+            );
+        }
+        assert_eq!(select(Autotune, One, KvKind::Packed), Ok(PACKED_BY_RULE));
+        assert_eq!(
+            select(Autotune, Many, KvKind::Packed),
+            Ok(DequantizeThen(Measured(Many)))
+        );
+    }
+
+    /// Every candidate of the family is on a table, so the cubek ceiling and `Autotune` name the
+    /// same set.
+    #[test]
+    fn the_cubek_ceiling_and_autotune_agree_while_every_candidate_is_on_a_table() {
+        for cache in KINDS {
+            for queries in [One, Many] {
+                assert_eq!(
+                    select(Heuristic(H::Cubek), queries, cache),
+                    select(Autotune, queries, cache),
+                    "{queries:?} over {cache:?}"
+                );
+            }
+        }
+    }
+
+    /// A routine's pin runs that routine at any query length over a float cache; over a packed
+    /// one only the two hypercube shuffles' run.
+    #[test]
+    fn a_routine_pin_runs_its_routine() {
+        for kernel in AttentionKernel::all() {
+            for queries in [One, Many] {
+                assert_eq!(
+                    select(Specific(kernel), queries, KvKind::Float),
+                    Ok(Float(Kernel(Pin(kernel))))
+                );
+            }
+            let packed = select(Specific(kernel), One, KvKind::Packed);
+            match kernel {
+                LAST_ARRIVAL_SHUFFLE | SECOND_LAUNCH_SHUFFLE => assert_eq!(
+                    packed,
+                    Ok(Packed {
+                        read: Pin(kernel),
+                        otherwise: None
+                    })
+                ),
+                _ => assert!(packed.is_err(), "{kernel:?}"),
+            }
+        }
+    }
+}

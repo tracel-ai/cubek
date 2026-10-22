@@ -10,3 +10,6 @@ pub use cube::*;
 pub use hypercube::*;
 pub use plane::*;
 pub use unit::*;
+
+#[cfg(test)]
+mod tests;

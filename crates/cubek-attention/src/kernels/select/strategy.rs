@@ -233,3 +233,36 @@ impl AttentionKernel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::select::*;
+
+    /// Everything that is not a pin lets the caller's policy choose; a `Specific`
+    /// names the kernel a benchmark row or a capture asked for and must not be
+    /// substituted.
+    #[test]
+    fn the_policies_are_the_strategies_that_name_no_kernel() {
+        let policies: Vec<_> = AttentionOpStrategy::all()
+            .into_iter()
+            .filter(AttentionOpStrategy::is_policy)
+            .collect();
+        assert_eq!(
+            policies,
+            vec![
+                AttentionOpStrategy::Autotune,
+                AttentionOpStrategy::Heuristic(AttentionKernelHeuristic::Tile),
+                AttentionOpStrategy::Heuristic(AttentionKernelHeuristic::Cubek),
+            ],
+        );
+    }
+
+    /// Autotune is what a caller naming nothing gets, as in the matmul family.
+    #[test]
+    fn the_default_is_autotune() {
+        assert_eq!(
+            AttentionOpStrategy::default(),
+            AttentionOpStrategy::Autotune
+        );
+    }
+}

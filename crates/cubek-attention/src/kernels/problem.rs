@@ -274,3 +274,259 @@ impl QueryAxis {
         tensor.viewed(Metadata::new(view_shape, view_strides))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::test_support::{offering, qwen};
+    use crate::kernels::*;
+    use cubek_microkernel::attention::plane::{
+        PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
+    };
+    use cubek_microkernel::attention::{AttentionMicrokernel, S};
+    use cubek_std::Hardware;
+    use cubek_std::devices;
+
+    /// Every power of two up to the widest class, the last inside the limit standing for it.
+    #[test]
+    fn capacity_classes_are_the_powers_of_two_to_the_widest() {
+        assert_eq!(
+            AttentionRoutineProblem::capacity_classes(1 << 20),
+            vec![2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+        );
+        assert_eq!(
+            AttentionRoutineProblem::capacity_classes(100),
+            vec![2, 4, 8, 16, 32, 64, 100]
+        );
+        assert_eq!(
+            AttentionRoutineProblem::capacity_classes(64),
+            vec![2, 4, 8, 16, 32, 64]
+        );
+    }
+
+    /// The widest step is a multiple of every step of keys a routine walks, at every setting it
+    /// lists on every device the fleet names and on an M2 Pro offering its square instruction, so
+    /// a cache of whole widest steps is read unmasked; and the widest class is a multiple of it,
+    /// so the classes compile every setting's launch over whole steps as well as its bounded one.
+    #[test]
+    fn every_step_of_keys_divides_the_widest_class() {
+        assert!(
+            AttentionRoutineProblem::WIDEST_CAPACITY_CLASS
+                .is_multiple_of(AttentionRoutineProblem::WIDEST_STEP)
+        );
+        let fleet = [
+            offering(devices::m2_pro(), 8),
+            devices::cpu_12(),
+            devices::wgpu_no_subgroups(),
+            devices::rdna_range(),
+            devices::m2_pro(),
+            devices::strix_halo(),
+            devices::cdna_wave64(),
+            devices::h100(),
+        ];
+        let prepared = [
+            fleet
+                .iter()
+                .map(|hw| assert_steps_divide(UnitAttentionRoutine, hw))
+                .sum::<usize>(),
+            fleet
+                .iter()
+                .map(|hw| assert_steps_divide(PlaneFragmentAttentionRoutine, hw))
+                .sum(),
+            fleet
+                .iter()
+                .map(|hw| {
+                    assert_steps_divide(
+                        CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
+                        hw,
+                    )
+                })
+                .sum(),
+            fleet
+                .iter()
+                .map(|hw| {
+                    assert_steps_divide(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw)
+                })
+                .sum(),
+            fleet
+                .iter()
+                .map(|hw| {
+                    assert_steps_divide(HypercubeSecondLaunchShuffleAttentionRoutine::new(), hw)
+                })
+                .sum(),
+        ];
+        assert!(
+            prepared.iter().all(|&count| count > 0),
+            "prepared {prepared:?}"
+        );
+    }
+
+    /// A problem read from pools of pages reads its operands as stored: a table binds no
+    /// operand as words, so an `f32` cache is never read as tf32.
+    #[test]
+    fn a_paged_problem_reads_as_stored() {
+        const F32: cubecl::ir::ElemType = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F32);
+        let f32 = AttentionRoutineProblem::dense((1, 32, 8), (1, 4096), (128, 128), F32);
+        let paged = AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Pages { page_size: 16 },
+            ..f32
+        };
+        assert_eq!(f32.work_item().readings().count(), 2);
+        assert_eq!(paged.work_item().readings().collect::<Vec<_>>(), [F32]);
+    }
+
+    /// A cube whose planes read keys where they lie walks a paged cache a page at a time only
+    /// where a page holds a whole number of its steps, more than one; a staging cube never does.
+    #[test]
+    fn a_cube_walks_pages_only_where_a_page_holds_several_whole_steps() {
+        use cubek_std::routine::Routine;
+        const F16: cubecl::ir::ElemType = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16);
+        let hw = devices::m2_pro();
+        let dense = AttentionRoutineProblem::dense((1, 32, 8), (1, 4096), (128, 128), F16);
+        let paged = |page_size| AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Pages { page_size },
+            ..dense
+        };
+        let shuffle = &CubeShuffleAttentionRoutine.settings(&hw)[0];
+        let page_steps = |problem: &AttentionRoutineProblem| {
+            let (blueprint, _) = CubeShuffleAttentionRoutine
+                .prepare(&hw, problem, shuffle)
+                .expect("the decode step prepares");
+            blueprint
+                .microkernel
+                .page_steps
+                .map(core::num::NonZeroUsize::get)
+        };
+        let keys = CubeShuffleAttentionRoutine
+            .prepare(&hw, &dense, shuffle)
+            .expect("the decode step prepares")
+            .0
+            .microkernel
+            .seq_kv();
+        assert_eq!(page_steps(&dense), None);
+        assert_eq!(page_steps(&paged(4 * keys)), Some(4));
+        assert_eq!(page_steps(&paged(keys)), None);
+        assert_eq!(page_steps(&paged(3 * keys / 2)), None);
+        let staged = CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new();
+        let staged_settings = &staged.settings(&hw)[0];
+        let (blueprint, _) = staged
+            .prepare(&hw, &paged(4 * keys), staged_settings)
+            .expect("the decode step prepares");
+        assert_eq!(blueprint.microkernel.page_steps, None);
+    }
+
+    /// Every routine but the two hypercube shuffles declines a packed cache, at every setting it
+    /// lists; each hypercube shuffle prepares it.
+    #[test]
+    fn only_the_hypercube_shuffles_read_a_packed_cache() {
+        fn reads<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+            routine: R,
+            hw: &Hardware,
+            problem: &AttentionRoutineProblem,
+        ) -> bool {
+            routine
+                .settings(hw)
+                .iter()
+                .any(|settings| routine.prepare(hw, problem, settings).is_ok())
+        }
+        fn declines<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+            routine: R,
+            hw: &Hardware,
+            problem: &AttentionRoutineProblem,
+        ) {
+            for settings in routine.settings(hw) {
+                assert_eq!(
+                    routine.prepare(hw, problem, &settings).err(),
+                    Some(ATTENTION_PACKED_UNREAD),
+                    "{settings}"
+                );
+            }
+        }
+        let hw = offering(devices::h100(), 16);
+        let layout = PackedLayout {
+            bits: cubek_microkernel::attention::packed_cache::KvBitWidths { key: 4, value: 4 },
+            fixup: cubek_microkernel::attention::packed_cache::KeyFixup::RoundOnly,
+        };
+        let packed = AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Packed(layout),
+            ..qwen(1, 4096)
+        };
+        assert!(reads(
+            HypercubeLastArrivalShuffleAttentionRoutine::new(),
+            &hw,
+            &packed
+        ));
+        assert!(reads(
+            HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+            &hw,
+            &packed
+        ));
+        declines(UnitAttentionRoutine, &hw, &packed);
+        declines(PlaneFragmentAttentionRoutine, &hw, &packed);
+        declines(
+            CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
+            &hw,
+            &packed,
+        );
+        declines(
+            CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new(),
+            &hw,
+            &packed,
+        );
+        declines(CubeShuffleAttentionRoutine, &hw, &packed);
+        declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
+    }
+
+    fn assert_steps_divide<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        routine: R,
+        hw: &Hardware,
+    ) -> usize {
+        let problems = [qwen(512, 512), qwen(1, 4096)];
+        let mut prepared = 0;
+        for settings in routine.settings(hw) {
+            for problem in &problems {
+                let Ok((blueprint, _)) = routine.prepare(hw, problem, &settings) else {
+                    continue;
+                };
+                prepared += 1;
+                let step = blueprint.partitioning.stage().extent(S);
+                assert!(
+                    AttentionRoutineProblem::WIDEST_STEP.is_multiple_of(step),
+                    "{settings} on {hw:?} steps {step} keys"
+                );
+            }
+        }
+        prepared
+    }
+
+    /// A single position reads its group as rows of one head, every one attending every key: a
+    /// causal single position sees every attended key, so nothing is masked differently. More
+    /// positions keep their own rows and visibility.
+    #[test]
+    fn a_single_position_reads_its_group_as_rows() {
+        assert_eq!(
+            QueryAxis::new(1).read(4, 1, AttentionVisibility::Causal),
+            (1, 4, AttentionVisibility::Attended)
+        );
+        assert_eq!(
+            QueryAxis::new(7).read(4, 7, AttentionVisibility::Causal),
+            (4, 7, AttentionVisibility::Causal)
+        );
+    }
+
+    /// A windowed single position keeps its window as rows: every head of the group sees the
+    /// last keys the window spans, which no longer depends on which row it is. More positions
+    /// keep their own window.
+    #[test]
+    fn a_single_position_keeps_its_window_as_rows() {
+        let window = core::num::NonZeroUsize::new(512).unwrap();
+        let windowed = AttentionVisibility::new(true, Some(window));
+        assert_eq!(windowed, AttentionVisibility::Windowed { window });
+        assert_eq!(
+            QueryAxis::new(1).read(4, 1, windowed),
+            (1, 4, AttentionVisibility::Recent { window })
+        );
+        assert_eq!(QueryAxis::new(7).read(4, 7, windowed), (4, 7, windowed));
+        assert!(windowed.is_causal());
+        assert!(!AttentionVisibility::Recent { window }.is_causal());
+    }
+}

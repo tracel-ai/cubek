@@ -62,3 +62,95 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
         self.launch_on(hw, tensors, &lead)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::tune::key::AttentionKey;
+    use crate::kernels::*;
+    use cubecl::features::MmaConfig;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_microkernel::attention::AttentionMicrokernel;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_std::Hardware;
+    use cubek_std::devices;
+    use cubek_std::microkernel::KernelEstimate;
+    use cubek_std::routine::EstimatedProblem;
+
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Every routine's estimate at every setting it lists, on a prompt and on a decode step: each
+    /// owner down the walk set its own part, and the cubes perform at least what the problem asks.
+    #[test]
+    fn every_routine_estimates_every_setting_whole() {
+        assert_every_estimate_is_whole(UnitAttentionRoutine);
+        assert_every_estimate_is_whole(PlaneFragmentAttentionRoutine);
+        assert_every_estimate_is_whole(CubeStagedAttentionRoutine::<
+            PlaneFragmentAttentionMicrokernel,
+        >::new());
+        assert_every_estimate_is_whole(HypercubeLastArrivalShuffleAttentionRoutine::new());
+        assert_every_estimate_is_whole(HypercubeSecondLaunchShuffleAttentionRoutine::new());
+    }
+
+    /// An M2 Pro offering the square `8×8×8` instruction for `f16` and `f32` summed in `f32`.
+    fn m2_pro() -> Hardware {
+        let square = |element| MmaConfig {
+            a_type: element,
+            b_type: element,
+            cd_type: F32,
+            m: 8,
+            n: 8,
+            k: 8,
+        };
+        devices::offering_cmma(devices::m2_pro(), [square(F16), square(F32)])
+    }
+
+    /// Qwen3-8B's attention: a prompt of 512 positions, and a decode step against a cache of 4096,
+    /// the problems the tables read off their keys.
+    fn problems() -> [AttentionRoutineProblem; 2] {
+        [(512, 512, true), (1, 4096, false)].map(|(queries, keys, causal)| {
+            let visibility = AttentionVisibility::new(causal, None);
+            let key = AttentionKey::new(
+                F16,
+                32,
+                8,
+                128,
+                queries,
+                keys,
+                1,
+                visibility,
+                ScoreScale::standard(128),
+                None,
+            );
+            AttentionRoutineProblem::try_from(&key).expect("an even group")
+        })
+    }
+
+    fn assert_every_estimate_is_whole<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
+        routine: R,
+    ) {
+        let hw = &m2_pro();
+        let mut prepared = 0;
+        for settings in routine.settings(hw) {
+            for problem in problems() {
+                let Ok((blueprint, grid)) = routine.prepare(hw, &problem, &settings) else {
+                    continue;
+                };
+                prepared += 1;
+                let mut estimate = KernelEstimate::from(&grid);
+                routine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                let (staging, cubes) = (estimate.staging.as_ref(), estimate.cubes);
+                assert!(estimate.work.is_some(), "{settings}: no work");
+                let staging = staging.unwrap_or_else(|| panic!("{settings}: no staging"));
+                assert!(
+                    staging.stages > 0 && !staging.reads.is_empty(),
+                    "{settings}"
+                );
+                let performed = staging.operations * cubes.expect("a static grid") as f64;
+                let useful = problem.demand().compute_ops as f64;
+                assert!(performed >= useful, "{settings}: {performed} < {useful}");
+            }
+        }
+        assert!(prepared > 0, "no setting of the routine prepares here");
+    }
+}
