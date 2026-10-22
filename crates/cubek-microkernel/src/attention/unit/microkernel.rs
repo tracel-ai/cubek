@@ -58,7 +58,7 @@ pub fn unit_attention_microkernel<EA: Float>(
 /// `value` and `bias` are windowed to it, wherever the keys and values lie.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub fn unit_attention_step<EA: Float>(
+pub(crate) fn unit_attention_step<EA: Float>(
     step: &Region,
     sum: &mut Tile,
     softmax: &mut OnlineSoftmax<EA>,

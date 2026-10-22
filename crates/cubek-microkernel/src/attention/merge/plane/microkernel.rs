@@ -62,7 +62,7 @@ pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
 /// them. `out` is windowed to the group's rows. A row whose every slot saw nothing writes zeros.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
+pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the cube holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
     slot_max: &mut [EA],
@@ -106,7 +106,7 @@ pub fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
 /// merge across cubes reads is one slot a cube, whatever its planes.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
+pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     // Read only, taken as the cube holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut [Vector<EA, N>],
     slot_max: &mut [EA],
