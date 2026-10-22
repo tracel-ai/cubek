@@ -10,7 +10,7 @@ use cubek_tile::launch::Delivery;
 /// placed in a [`MatmulPartitioning`](crate::microkernel::MatmulPartitioning); a
 /// cube shuffle, a plane or a unit one reads only its own tiling, so its partitioning is `()`.
 pub trait MatmulMicrokernel:
-    Microkernel<WorkItem = MatmulWorkItem, Operand = MatmulOperand> + core::fmt::Display
+    Microkernel<WorkItem = MatmulWorkItem, Operand = MatmulOperand> + core::fmt::Display + 'static
 {
     /// How its launches hold a product's rows, which decides how their tensors and their view read
     /// the problem and what their kernels compile in.

@@ -28,9 +28,13 @@ pub fn build_problem(
     }
 }
 
+/// `num_kv_heads` is explicit everywhere, including when it equals
+/// `num_heads`: the catalog documents KV packing per model, so an MHA entry
+/// should read as one rather than hide the equality in a default.
 fn dims(
     batch: usize,
     num_heads: usize,
+    num_kv_heads: usize,
     seq_q: usize,
     seq_kv: usize,
     head_dim: usize,
@@ -38,6 +42,7 @@ fn dims(
     AttentionDims {
         batch,
         num_heads,
+        num_kv_heads,
         seq_q,
         seq_kv,
         head_dim,
@@ -55,7 +60,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             "bert",
             "BERT (b=8 h=12 sq=skv=128 d=64)",
             AttentionSpec {
-                dims: dims(8, 12, 128, 128, 64),
+                dims: dims(8, 12, 12, 128, 128, 64),
                 masked: false,
                 options: Default::default(),
             },
@@ -64,7 +69,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             "gpt2",
             "GPT-2 (b=4 h=12 sq=skv=1024 d=64, causal+mask)",
             AttentionSpec {
-                dims: dims(4, 12, 1024, 1024, 64),
+                dims: dims(4, 12, 12, 1024, 1024, 64),
                 masked: true,
                 options: causal_masked.clone(),
             },
@@ -73,7 +78,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             "gpt2_tiny",
             "GPT-2 tiny (b=1 h=1 sq=skv=64 d=64, causal+mask)",
             AttentionSpec {
-                dims: dims(1, 1, 64, 64, 64),
+                dims: dims(1, 1, 1, 64, 64, 64),
                 masked: true,
                 options: causal_masked.clone(),
             },
@@ -82,7 +87,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             "llama",
             "Llama (b=4 h=32 sq=skv=2048 d=128, causal+mask)",
             AttentionSpec {
-                dims: dims(4, 32, 2048, 2048, 128),
+                dims: dims(4, 32, 32, 2048, 2048, 128),
                 masked: true,
                 options: causal_masked.clone(),
             },
@@ -91,7 +96,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             "long_context",
             "Long context (b=1 h=16 sq=skv=4096 d=128, causal+mask)",
             AttentionSpec {
-                dims: dims(1, 16, 4096, 4096, 128),
+                dims: dims(1, 16, 16, 4096, 4096, 128),
                 masked: true,
                 options: causal_masked.clone(),
             },
@@ -100,7 +105,7 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             "encoder_decoder",
             "Encoder-decoder (b=2 h=16 sq=512 skv=1024 d=128)",
             AttentionSpec {
-                dims: dims(2, 16, 512, 1024, 128),
+                dims: dims(2, 16, 16, 512, 1024, 128),
                 masked: false,
                 options: AttentionOptions {
                     causal: false,
@@ -109,10 +114,19 @@ pub fn problems() -> Vec<CatalogEntry<AttentionSpec>> {
             },
         ),
         CatalogEntry::new(
+            "lfm2",
+            "LFM2 (b=1 h=32 kv=8 sq=skv=4096 d=64, causal, GQA 4)",
+            AttentionSpec {
+                dims: dims(1, 32, 8, 4096, 4096, 64),
+                masked: false,
+                options: causal_masked.clone(),
+            },
+        ),
+        CatalogEntry::new(
             "mask_causal_4096",
             "Masked+Causal (b=1 h=4 sq=4096 skv=4096 d=64)",
             AttentionSpec {
-                dims: dims(1, 4, 4096, 4096, 64),
+                dims: dims(1, 4, 4, 4096, 4096, 64),
                 masked: true,
                 options: AttentionOptions {
                     causal: true,

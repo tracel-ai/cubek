@@ -1489,8 +1489,11 @@ version = "0.3.0"
 dependencies = [
  "cubecl",
  "cubecl-common",
+ "cubecl-environment",
  "cubek-test-utils",
  "cubek-tile",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -1516,6 +1519,7 @@ dependencies = [
  "cubek-quant",
  "cubek-test-utils",
  "half",
+ "hashbrown 0.17.1",
  "serde",
 ]
 

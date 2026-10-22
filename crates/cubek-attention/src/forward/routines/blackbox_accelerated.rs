@@ -202,6 +202,8 @@ fn validate(
     problem: &AttentionProblem,
     blueprint: AttentionBlueprint,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
+    problem.dims.validate()?;
+
     if !(problem.dims.seq_q as u32)
         .is_multiple_of(blueprint.tiling_scheme.elements_in_stage_seq_q())
     {

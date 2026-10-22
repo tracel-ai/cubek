@@ -472,7 +472,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
     /// partials across the plane, so a guessed width sums the wrong units. It holds every row of
     /// the product, one to [`MAX_ROWS`](Self::MAX_ROWS), and reads a weight lined along one of its
     /// axes. Against a packed weight, one for each count of steps of `N` from the settings' down
-    /// to one ([`packed_steps`](Self::packed_steps)).
+    /// to one (its packed steps).
     fn candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,

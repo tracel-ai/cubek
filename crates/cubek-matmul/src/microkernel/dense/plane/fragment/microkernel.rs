@@ -77,7 +77,7 @@ pub fn plane_fragment_staged_microkernel<EL: Numeric>(
 /// every instruction step of the stage and every fragment of the plane's grid.
 ///
 /// `plane` is the plane's region of the stage; `sum`, `a` and `b` are already windowed to it, and
-/// `partial` is [`plane_fragment_partial`](fn@plane_fragment_partial)'s, opened over the whole of the walker's output. The
+/// `partial` is `plane_fragment_partial`'s, opened over the whole of the walker's output. The
 /// loops are the same whichever instruction runs: below a step lie the plane's fragments, or the
 /// one block of the software instruction this unit holds.
 ///

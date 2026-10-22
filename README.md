@@ -28,6 +28,24 @@
 | [Convolution](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-convolution) | `mma` `unit` `tma` `multi-stage` `im2col`                                |
 | [Attention](https://github.com/tracel-ai/cubek/tree/main/crates/cubek-attention)     | `mma` `unit` `multi-rows`                                                |
 
+# Runtime configuration
+
+CubeK loads runtime settings from `cubek.toml` or `CubeK.toml` in the current directory or a
+parent directory. Missing settings use defaults.
+
+To disable automatic F32-to-TF32 conversion for matrix multiplication:
+
+```toml
+[matmul]
+allow_tf32 = false
+```
+
+`allow_tf32` defaults to `true`. Disabling it preserves F32 operands during automatic selection
+and may reduce performance.
+
+Configuration is loaded on first use. Restart the application after editing the file;
+no recompilation is needed.
+
 # Contributing
 
 If you want to contribute new kernels, please read the [`GUIDE.md`](./GUIDE.md).

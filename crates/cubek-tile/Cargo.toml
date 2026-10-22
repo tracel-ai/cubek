@@ -25,6 +25,7 @@ cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
 
 bytemuck = { workspace = true }
+hashbrown = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 

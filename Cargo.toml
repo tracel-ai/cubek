@@ -67,6 +67,7 @@ rand = { version = "0.10.0", default-features = false, features = [
 
 # Testing
 bytemuck = "1.16.1"
+hashbrown = "0.17"
 half = { version = "2.5", features = [
     "alloc",
     "num-traits",

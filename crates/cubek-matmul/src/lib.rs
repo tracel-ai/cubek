@@ -18,6 +18,8 @@ pub mod strategy;
 pub mod tune_key;
 
 #[cfg(feature = "tiled")]
+pub mod kernels;
+#[cfg(feature = "tiled")]
 pub mod microkernel;
 #[cfg(feature = "multi-level")]
 pub mod multi_level;

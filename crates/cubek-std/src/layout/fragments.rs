@@ -68,3 +68,46 @@ pub fn tile(meta: &Metadata) -> (usize, usize) {
     let [first, second] = [&dims[dims.len() - 2], &dims[dims.len() - 1]];
     (inside(first), inside(second))
 }
+
+/// The one matrix the last two logical dims of `meta` hold, each stored as its [`fragments`] say;
+/// `None` where a leading dim holds more than one, or there are not two dims.
+pub fn one_matrix(meta: &Metadata) -> Option<Metadata> {
+    let dims = fragments(meta);
+    let rank = dims.len();
+    let held = |dim: &[(usize, usize)]| dim.iter().map(|&(extent, _)| extent).product::<usize>();
+    (rank >= 2 && dims[..rank - 2].iter().all(|dim| held(dim) == 1))
+        .then(|| assemble(&[&dims[rank - 2], &dims[rank - 1]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::one_matrix;
+    use cubecl::zspace::metadata::Metadata;
+    use cubecl::zspace::{Shape, Strides, Tiling};
+
+    /// Leading dims of one hold a single matrix, read at its own strides; a leading dim of more
+    /// holds several, and one dim holds no matrix. A matrix stored in tiles keeps its tiles.
+    #[test]
+    fn only_leading_dims_of_one_hold_one_matrix() {
+        let (k, n) = (64, 48);
+        let plain =
+            |shape: &[usize], strides: &[usize]| Metadata::new(shape.to_vec(), strides.to_vec());
+        assert_eq!(
+            one_matrix(&plain(&[k, n], &[n, 1])),
+            Some(plain(&[k, n], &[n, 1]))
+        );
+        assert_eq!(
+            one_matrix(&plain(&[1, k, n], &[k * n, 1, k])),
+            Some(plain(&[k, n], &[1, k]))
+        );
+        assert_eq!(one_matrix(&plain(&[2, k, n], &[k * n, n, 1])), None);
+        assert_eq!(one_matrix(&plain(&[k], &[1])), None);
+        let tiles = Metadata::new(
+            Shape::from(vec![k / 8, n / 8, 8, 8]),
+            Strides::from(vec![n * 8, 64, 8, 1]),
+        )
+        .with_tiling(Tiling::new(&[2, 2]).expect("two fragments a dim"))
+        .expect("the tiling describes the dims");
+        assert_eq!(one_matrix(&tiles), Some(tiles.clone()));
+    }
+}

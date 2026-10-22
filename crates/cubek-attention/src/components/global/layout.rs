@@ -6,6 +6,39 @@ use cubecl::std::tensor::{
 use cubecl::{self as cubecl};
 use cubek_matmul::multi_level::components::global::memory::GlobalMemoryConfig;
 
+/// The `(batch, query head, kv head)` a cube is responsible for.
+///
+/// `batch_index` is the cube's flattened `(batch, query_head)` position over the
+/// *query* tensor's extents, so exactly one query head is resident per cube and
+/// the GQA ratio is resolved here, once, instead of in every reader. Readers
+/// then take the head they index by: [`query`](Self::query) for Query, Mask and
+/// Out, [`kv`](Self::kv) for Key and Value.
+///
+/// The mask is deliberately indexed by the *query* head — a mask is a predicate
+/// on a `(query, key)` pair, so it belongs to the query, not to the KV cache. A
+/// mask with a head extent of 1 broadcasts to every head.
+#[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
+pub struct GlobalHeads {
+    pub batch: u32,
+    pub query: u32,
+    pub kv: u32,
+}
+
+#[cube]
+impl GlobalHeads {
+    /// Resolves the flattened `(batch, query_head)` index. `num_kv_heads` must
+    /// divide `num_heads`; the launch validates that before any cube runs.
+    pub fn new(batch_index: u32, num_heads: u32, num_kv_heads: u32) -> Self {
+        let query = batch_index % num_heads;
+        GlobalHeads {
+            batch: batch_index / num_heads,
+            query,
+            kv: query / (num_heads / num_kv_heads),
+        }
+    }
+}
+
 /// Global layout that uses the last two dimensions and ignores all others.
 #[derive(CubeType, Clone, Copy)]
 pub struct AttentionGlobalLayout {
@@ -21,16 +54,13 @@ pub struct AttentionGlobalLayout {
 #[cube]
 impl AttentionGlobalLayout {
     /// Creates a new 2D layout for the `(batch, head)` slice selected by
-    /// `batch_index`, the flattened `batch * num_heads + head` index over the
-    /// query's extents. `num_heads` is always the query's head count.
+    /// `batch` and `head`.
     pub fn new<T: Numeric, N: Size, IO: Clone>(
         tensor: &VirtualTensor<T, N, IO>,
-        batch_index: u32,
-        num_heads: u32,
+        batch: u32,
+        head: u32,
         #[comptime] config: GlobalMemoryConfig,
     ) -> Self {
-        let batch = batch_index / num_heads;
-        let head = batch_index % num_heads;
         // A broadcast (size-1) batch/head dimension contributes no offset,
         // so a [1, 1, S, S] mask reuses its slice instead of striding past it.
         let batch_part = if tensor.shape(0) > 1 {

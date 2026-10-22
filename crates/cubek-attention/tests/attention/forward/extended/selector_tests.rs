@@ -6,6 +6,7 @@ fn very_small_problem_selector() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: 8,
             seq_kv: 8,
             head_dim: 8,
@@ -33,6 +34,7 @@ fn small_problem_selector() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: 128,
             seq_kv: 128,
             head_dim: 64,
@@ -60,6 +62,7 @@ fn hd_smaller_than_vd_problem_selector() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: 64,
             seq_kv: 64,
             head_dim: 32,
@@ -87,6 +90,7 @@ fn hd_larger_than_vd_problem_selector() {
         dims: AttentionDims {
             batch: 1,
             num_heads: 1,
+            num_kv_heads: 1,
             seq_q: 64,
             seq_kv: 64,
             head_dim: 64,
