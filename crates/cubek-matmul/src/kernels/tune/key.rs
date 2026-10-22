@@ -13,7 +13,7 @@
 //! function.
 
 use crate::kernels::MatmulRoutineProblem;
-use crate::kernels::select::problem::OperandKind;
+use crate::kernels::select::problem::{MatmulProblem, OperandKind};
 use cubecl::ir::ElemType;
 use cubecl::tile::Axis;
 use cubecl::{self as cubecl, AutotuneKey};
@@ -355,16 +355,11 @@ pub fn create_key(
         rhs_shape.rank(),
         "the batch dims are read pairwise off operands of one rank"
     );
-    let m = lhs_shape[rank - 2];
-    let k = lhs_shape[rank - 1];
-    let n = rhs_shape[rhs_shape.rank() - 1];
-    // The broadcast batch volume — one number, since the tuner only needs to
-    // know how much work rides the leading axes, not how it is spread.
-    let batches: usize = lhs_shape.as_slice()[..rank - 2]
-        .iter()
-        .zip(rhs_shape.as_slice()[..rank - 2].iter())
-        .map(|(l, r)| *l.max(r))
-        .product();
+    // The broadcast batch volume is one number, since the tuner only needs to know how much work
+    // rides the leading axes, not how it is spread.
+    let MatmulProblem {
+        m, k, n, batches, ..
+    } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
     // An operand keys by the axis it is contiguous along and the tile it is stored in, so a
     // winner elected on one layout is never served to another, which its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
