@@ -54,8 +54,9 @@ impl AttentionPartitioning {
 
     /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
     /// the walk through `S`, and `cubes_along_keys` cubes sharing every box
-    /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of the walk
-    /// (cubek's [`Levels::across`]), the boxes of queries taken in `queries` order. With
+    /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of the
+    /// walk (the tile DSL's [`Levels::across`]), the boxes of queries taken in `queries` order.
+    /// With
     /// `page_steps`, the walk takes a page of that many steps at a time.
     ///
     /// The count is the one asked for, whatever the keys: it is part of what a kernel compiles,

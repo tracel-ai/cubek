@@ -37,9 +37,9 @@ pub enum CubeStagedDelivery {
 }
 
 impl CubeStagedDelivery {
-    /// The delivery the launch states on the operands it binds, which is how cubek's stage fill
-    /// learns whether the units load a line or hand it to the engine. A descriptor's stages are
-    /// filled from tensor maps and never from the bound operands, which state the loads.
+    /// The delivery the launch states on the operands it binds, which is how the tile DSL's stage
+    /// fill learns whether the units load a line or hand it to the engine. A descriptor's stages
+    /// are filled from tensor maps and never from the bound operands, which state the loads.
     pub fn bound(self) -> Delivery {
         match self {
             Self::Copy | Self::Tma => Delivery::SyncPerUnit,
@@ -72,7 +72,7 @@ pub enum CubeStagedTmaRefusal {
     /// An operand's view starts partway into its buffer at an address a descriptor cannot
     /// encode, which it would refuse at launch rather than here.
     UnalignedStart(MatmulOperand),
-    /// One box cannot land the operand's stage as its instruction reads it (cubek's
+    /// One box cannot land the operand's stage as its instruction reads it (the tile DSL's
     /// `StageStorage::tma_swizzle`): its rows longer than the 128 bytes a descriptor swizzles,
     /// among others.
     Unlanded(MatmulOperand),

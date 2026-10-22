@@ -9,7 +9,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// `rows` is the region the unit owns, its walk the steps of keys; `out`, `query`, `key`, `value`
 /// and `bias` are already windowed to it. The bias is where the masking lies, read at each score's
-/// own coordinates. Each step is taken into the rows by [`unit_attention_step()`], then the rows are
+/// own coordinates. Each step is taken into the rows by `unit_attention_step`, then the rows are
 /// normalized and drained into `out`.
 #[cube]
 #[allow(clippy::too_many_arguments)]

@@ -20,8 +20,8 @@ pub enum CubeAttentionStageLayout {
     /// In tiles of the instruction, each of their rows one chunk longer.
     PaddedBlocks,
     /// In tiles of the instruction, each row's chunks swizzled: what a fragment reads that hands
-    /// every row its own address, as cubek's own transport does; a cmma fragment reads a tile off
-    /// a pointer and a stride, and cannot.
+    /// every row its own address, as the tile DSL's own transport does; a cmma fragment reads a
+    /// tile off a pointer and a stride, and cannot.
     SwizzledBlocks,
 }
 

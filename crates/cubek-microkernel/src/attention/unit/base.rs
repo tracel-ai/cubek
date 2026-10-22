@@ -168,7 +168,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     }
 
     /// Each multiplication's own, on the operands it binds: the score reads the query and the keys
-    /// along `D`, where the keys lie contiguous, folding a line of each into every score; the
+    /// along `D`, where the keys lie contiguous, summing a line of each into every score; the
     /// value reads the values along `DV` and writes the output along `DV`, lining its block with
     /// both. The score's block, a value a cell, is the value's lhs, read in registers.
     fn vectorize(

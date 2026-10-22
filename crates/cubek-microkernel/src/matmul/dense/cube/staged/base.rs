@@ -89,7 +89,7 @@ impl CubeStagedMicrokernel {
     };
 
     /// Boxes against a packed weight several steps of `M` a plane, `(steps, planes)` as
-    /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them: the float staged gemm's. A
+    /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them: the float staged routine's. A
     /// cube decodes every block of the weight it stages once, for all its rows, so the boxes more
     /// planes high give that decode more rows to serve, and the box four steps wide along `N`
     /// serves each row of the activation it stages to more columns.
@@ -139,7 +139,7 @@ impl CubeStagedMicrokernel {
     }
 
     /// The settings a product against a packed weight races on `hw`: the lead, the boxes several
-    /// steps tall the float staged gemm races, one stage at a time and with a second in flight,
+    /// steps tall the float staged routine races, one stage at a time and with a second in flight,
     /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)).
     /// Planes splitting `K` only on a device whose shared memory takes the atomic `f32` add they
     /// merge through: elsewhere they would only be tried and declined.
@@ -585,10 +585,10 @@ impl Microkernel for CubeStagedMicrokernel {
     /// instruction steps of `K` a stage, which read longer runs of a col weight's rows; the small
     /// ones a short problem fills the device with; the small cubes, one to four planes on a line
     /// each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix, or
-    /// the software instruction) contracts more per shared read and more cubes fit a core; cubek's
-    /// multi-row box ([`MULTI_ROW`](CubeStagedMicrokernelSettings::MULTI_ROW)) — the named ones
-    /// crossed with the rings that keep a second stage in flight and the transport that reaches
-    /// its instruction.
+    /// the software instruction) contracts more per shared read and more cubes fit a core; the tile
+    /// DSL's multi-row box ([`MULTI_ROW`](CubeStagedMicrokernelSettings::MULTI_ROW)) — the named
+    /// ones crossed with the rings that keep a second stage in flight and the transport that
+    /// reaches its instruction.
     ///
     /// Then the default's grid on two by two planes and the small cube four fragments deep on two
     /// planes, each with its stage's rows in order ([`CubeStagedRows::InOrder`]): a col weight's
@@ -606,9 +606,9 @@ impl Microkernel for CubeStagedMicrokernel {
     /// L4. A ring that prefetches through registers is not listed with it, which it refuses.
     ///
     /// Then, on a device with a bulk tensor copy, boxes whose stages the TMA engine fills
-    /// ([`CubeStagedDelivery::Tma`]) through cubek's transport, two and three stages in their
-    /// slots, some beside a plane set aside to fill them, one whose box the TMA engine stores too
-    /// ([`CubeStagedStore::Tma`]). On a device with a warpgroup MMA too, two plane groups along
+    /// ([`CubeStagedDelivery::Tma`]) through the tile DSL's transport, two and three stages in
+    /// their slots, some beside a plane set aside to fill them, one whose box the TMA engine stores
+    /// too ([`CubeStagedStore::Tma`]). On a device with a warpgroup MMA too, two plane groups along
     /// `m`, each one `64 × 128` instruction four steps of `K` a stage (a 128-byte swizzle span of
     /// `f16`), beside the plane that fills the stages, which a warpgroup MMA needs to release a
     /// stage only once its MMAs are done with it.
@@ -734,18 +734,18 @@ impl Microkernel for CubeStagedMicrokernel {
             })
         });
 
-        // Through cubek's transport, whose `ldmatrix` reads the rows a box lands swizzled, in
-        // their slots, which is the only ring a bulk copy fills. A ring deeper than two keeps
-        // the engine more than one stage ahead, which a two-stage ring cannot: its next fill
-        // waits on every plane having read the stage before. The boxes are the ones that won on
-        // the Qwen3 projections at 512 and 2048 rows on a 188-core Blackwell, crossed with the
-        // ring, the filling plane and the store each won with: the `128 × 128` deep box, and the
-        // same on two by two planes of `64 × 64`, whose fragments reuse each operand load twice
-        // as much; the `64 × 128` boxes beside a filling plane, which put twice the cubes on a
-        // narrow projection a prompt's chunk of rows would leave cores idle under, the deeper one
-        // stored by the TMA engine, whose box costs no cube a core where the stages already hold
-        // one alone; the `256 × 128` and `128 × 256` boxes, on eight planes, for the long products.
-        // Every one of them fits two stages in 64 KB and its own ring and box in 99 KB.
+        // Through the tile DSL's transport, whose `ldmatrix` reads the rows a box lands swizzled,
+        // in their slots, which is the only ring a bulk copy fills. A ring deeper than two keeps
+        // the engine more than one stage ahead, which a two-stage ring cannot: its next fill waits
+        // on every plane having read the stage before. The boxes are the ones that won on the Qwen3
+        // projections at 512 and 2048 rows on a 188-core Blackwell, crossed with the ring, the
+        // filling plane and the store each won with: the `128 × 128` deep box, and the same on two
+        // by two planes of `64 × 64`, whose fragments reuse each operand load twice as much; the
+        // `64 × 128` boxes beside a filling plane, which put twice the cubes on a narrow projection
+        // a prompt's chunk of rows would leave cores idle under, the deeper one stored by the TMA
+        // engine, whose box costs no cube a core where the stages already hold one alone; the `256
+        // × 128` and `128 × 256` boxes, on eight planes, for the long products. Every one of them
+        // fits two stages in 64 KB and its own ring and box in 99 KB.
         let filled_by_tma = |grid, planes, ring, filling_planes| {
             boxed(grid, planes)
                 .ringed(ring)
@@ -954,7 +954,7 @@ mod tests {
     /// memory, so a device without one lists none of them: a listed setting it cannot run would be
     /// tried and declined, and the merge without the atomic loses partial sums.
     #[test]
-    fn packed_planes_split_k_only_where_shared_memory_adds_atomically() {
+    fn packed_planes_split_along_k_only_where_shared_memory_adds_atomically() {
         for hw in [
             devices::strix_halo(),
             devices::wgpu_no_subgroups(),

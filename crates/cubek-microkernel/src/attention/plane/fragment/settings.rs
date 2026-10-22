@@ -11,8 +11,8 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     /// One fragment at a time, three `sync_plane` each, or the whole grid at once, three a stage
     /// for a window as large as the plane's output.
     pub scratch: Scratch,
-    /// Which transport a matrix instruction is reached through first: cubek's own keeps the score
-    /// in its fragments ([`ScoreHolder::Fragments`](super::ScoreHolder::Fragments)), cubecl's
+    /// Which transport a matrix instruction is reached through first: the tile DSL's own keeps the
+    /// score in its fragments ([`ScoreHolder::Fragments`](super::ScoreHolder::Fragments)), cubecl's
     /// reads it through the plane's windows.
     pub transport: PlaneFragmentTransport,
     /// The shape of cmma instruction tried first, where the plane reads the score through its

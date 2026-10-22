@@ -9,17 +9,17 @@ use cubek_std::Hardware;
 ///
 /// One stage in flight fills a stage and contracts it, two cube barriers a step. Two fill the next
 /// stage before contracting this one, at twice the shared memory. Where the next stage waits while
-/// this one is contracted is [`prefetch`](Self::prefetch). cubek drives every depth through one
-/// schedule each, so neither is a kernel of its own. Who fills the stages is the microkernel's own
-/// question.
+/// this one is contracted is [`prefetch`](Self::prefetch). The tile DSL drives every depth through
+/// one schedule each, so neither is a kernel of its own. Who fills the stages is the microkernel's
+/// own question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StageRing {
     /// Stages the ring holds at once.
     pub stages_in_flight: NonZeroUsize,
     /// Where the next stage's loads wait while this one is contracted: in its own slot, the
-    /// whole fill running before the contraction of the stage before it (cubek's
+    /// whole fill running before the contraction of the stage before it (the tile DSL's
     /// `Stages::pipelined`), or in registers, each unit reading its share of the next stage before
-    /// the contraction and writing it into its slot after (cubek's `Stages::prefetched`).
+    /// the contraction and writing it into its slot after (the tile DSL's `Stages::prefetched`).
     pub prefetch: Prefetch,
 }
 
@@ -61,9 +61,10 @@ impl StageRing {
     }
 
     /// The ring that fills stages of `operands` on a cube of `units` units: this one, prefetching
-    /// into its slots where cubek would refuse to hold the next stage in registers. A refusal is
-    /// made at expansion, where it is a launch that writes nothing; so every setting runs on every
-    /// problem, and where it resolves to another's ring it compiles that one's launch.
+    /// into its slots where the tile DSL would refuse to hold the next stage in registers. A
+    /// refusal is made at expansion, where it is a launch that writes nothing; so every setting
+    /// runs on every problem, and where it resolves to another's ring it compiles that one's
+    /// launch.
     ///
     /// Asked before the operands' widths are settled, so each operand's share is its most over
     /// every width it could bind at: the powers of two up to the widest line `hw` reads.
@@ -72,9 +73,9 @@ impl StageRing {
     /// prefetch, which reads a plain source at its own width, does not carry it, and its ring
     /// prefetches into its slots.
     ///
-    /// cubek holds one stage ahead in registers, so a ring of more than two stages would leave the
-    /// slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit of every
-    /// operand's stage ([`StagedOperand::most_prefetched`]).
+    /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
+    /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit
+    /// of every operand's stage ([`StagedOperand::most_prefetched`]).
     pub fn resolve(self, hw: &Hardware, operands: &[StagedOperand], units: usize) -> Self {
         let words = [FloatKind::E2M1, FloatKind::TF32].map(ElemType::Float);
         if operands
@@ -133,9 +134,9 @@ mod tests {
         [operand([(M, 16), (K, 16)]), operand([(K, 16), (N, 16)])]
     }
 
-    /// cubek holds one stage ahead in registers and refuses a deeper ring at expansion, where the
-    /// refusal is a launch that writes nothing: a deeper ring keeps its depth and prefetches into
-    /// its slots instead.
+    /// The tile DSL holds one stage ahead in registers and refuses a deeper ring at expansion,
+    /// where the refusal is a launch that writes nothing: a deeper ring keeps its depth and
+    /// prefetches into its slots instead.
     #[test]
     fn a_ring_deeper_than_two_prefetches_into_its_slots() {
         let deep = |prefetch| StageRing {

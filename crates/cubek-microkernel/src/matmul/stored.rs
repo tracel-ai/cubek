@@ -1,8 +1,8 @@
-//! An operand of a contraction, as the derivation sees it.
+//! An operand of a contraction, as a launch derives its reads.
 //!
-//! Two numbers per axis answer every question the derivation asks of a tensor:
-//! the microtile one read of it brings, and the microtile one scale covers. Both are read off the tensor, so a float operand reads one value and
-//! is constant inside nothing, and the same derivation serves it without asking
+//! Two numbers per axis answer every question a launch asks of a tensor: the microtile one read of
+//! it brings, and the microtile one scale covers. Both are read off the tensor, so a float operand
+//! reads one value and is constant inside nothing, and the same reads serve it without asking
 //! whether anything is quantized at all.
 
 use cubecl::quant::scheme::{QuantScheme, QuantStore};

@@ -57,9 +57,9 @@ impl PlaneFragmentMicrokernelSettings {
         }
     }
 
-    /// `along_n` fragments a plane along `n` and one along `m`, each a window `depth` steps of
-    /// `K` deep, reached through cubek's transport: the grid a plane holds against a packed weight
-    /// it reads straight from memory, decoding it as each fragment loads.
+    /// `along_n` fragments a plane along `n` and one along `m`, each a window `depth` steps of `K`
+    /// deep, reached through the tile DSL's transport: the grid a plane holds against a packed
+    /// weight it reads straight from memory, decoding it as each fragment loads.
     ///
     /// # Panics
     ///

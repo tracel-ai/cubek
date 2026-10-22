@@ -18,7 +18,7 @@ use cubek_std::microkernel::{
 const WORD_BYTES: usize = core::mem::size_of::<u32>();
 
 /// Every row of a run of the output's columns, owned by one plane: its units split `K` between
-/// them in turns, each summing its share in registers, and their partials fold inside the plane
+/// them in turns, each summing its share in registers, and their partials merge inside the plane
 /// when the walk ends.
 ///
 /// Where a unit holding every row would hold more sums than its registers keep, units side by
@@ -27,7 +27,7 @@ const WORD_BYTES: usize = core::mem::size_of::<u32>();
 ///
 /// A unit's step is a block of the output's columns and of `K`, counted in the reads the weight
 /// is loaded in: along the axis its buffer runs a read is one vector, across it one line. So a
-/// col weight's block is one column, a run of vectors down `K` folded into its cell, and a row
+/// col weight's block is one column, a run of vectors down `K` merged into its cell, and a row
 /// weight's is a few vectors of columns, each read at a few rows of `K`.
 ///
 /// Against a packed weight ([`PlaneShuffleBlocks`]) the units multiply each read by its block's
@@ -123,21 +123,22 @@ impl PlaneShuffleMicrokernel {
         }
     }
 
-    /// What a col weight is declined with where it binds one element at a time: cubek folds a
-    /// vector of it with a vector of the lhs into one cell, so it reads both in vectors of at least
-    /// two, and a `K` the steps overhang, or either buffer aligned to one element, gives none.
+    /// What a col weight is declined with where it binds one element at a time: the tile DSL merges
+    /// a vector of it with a vector of the lhs into one cell, so it reads both in vectors of at
+    /// least two, and a `K` the steps overhang, or either buffer aligned to one element, gives
+    /// none.
     pub const COL_RHS_NEEDS_VECTORS_ALONG_K: Refusal = Refusal::Declined {
         why: "the plane shuffle reads a col weight and the lhs beside it in vectors of at least two elements along `K`",
     };
 
-    /// What a col weight is declined with where a unit's block holds more than one column: cubek
-    /// folds a col weight's line of partials into its cell correctly only for a block of one
+    /// What a col weight is declined with where a unit's block holds more than one column: the tile
+    /// DSL sums a col weight's line of partials into its cell correctly only for a block of one
     /// column.
     pub const COL_RHS_ONE_COLUMN_A_UNIT: Refusal = Refusal::Declined {
         why: "the plane shuffle reads a col weight one column a unit, each folding its line of partials",
     };
 
-    /// Whether the operands bound at `widths` are read in vectors this microkernel folds.
+    /// Whether the operands bound at `widths` are read in vectors this microkernel merges.
     ///
     /// # Errors
     ///
@@ -223,8 +224,8 @@ impl PlaneShuffleMicrokernel {
 
     /// [`step_levels`](Self::step_levels) for a float weight.
     ///
-    /// An axis the units do not spread over is not stated: cubek reads a stated level of one as
-    /// a level the accumulator has to shape itself to.
+    /// An axis the units do not spread over is not stated: the tile DSL reads a stated level of one
+    /// as a level the accumulator has to shape itself to.
     fn float_step_levels(&self) -> Levels {
         let units_along_k = self.units_along_k;
         let MatmulAxes { m, n, k } = self.axes;
@@ -399,7 +400,7 @@ impl PlaneShuffleMicrokernel {
     }
 
     /// Scalars one unit's accumulator holds: a cell per row and column, which for a col weight is
-    /// a line of partials folded on drain, a packed weight's a read of its values along `K`.
+    /// a line of partials summed on drain, a packed weight's a read of its values along `K`.
     fn accumulator_scalars(&self) -> usize {
         let cell = match (&self.blocks, self.orders.rhs) {
             (Some(blocks), _) => blocks.space.operand(MatmulOperand::Rhs).read(K),
@@ -468,7 +469,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
         }
     }
 
-    /// The one the settings size, where the device commits to a plane width: its units fold their
+    /// The one the settings size, where the device commits to a plane width: its units merge their
     /// partials across the plane, so a guessed width sums the wrong units. It holds every row of
     /// the product, one to [`MAX_ROWS`](Self::MAX_ROWS), and reads a weight lined along one of its
     /// axes. Against a packed weight, one for each count of steps of `N` from the settings' down
@@ -518,7 +519,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
 
     /// Each operand's step is the leaf's extent along the axis it is bound innermost along: the lhs
     /// down `K`, the weight along its own contiguous axis, the output along `N`. A col weight's
-    /// step folds with the lhs's, a line of each at a time; a row weight's lands in the output's
+    /// step is contracted with the lhs's, a line of each at a time; a row weight's lands in the output's
     /// cells, lined with it.
     ///
     /// Nothing against a packed weight: every width follows from its packing, and a count of a

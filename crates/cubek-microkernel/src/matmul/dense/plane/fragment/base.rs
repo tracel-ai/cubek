@@ -27,8 +27,8 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 /// Against a packed weight ([`blocks`](Self::blocks)) the plane reads the weight straight from
 /// memory and holds every row: one fragment of rows, its settings' fragments along `n`, each a
 /// window of `K` its steps deep, so each unit reads its run of `K` in whole loads and the weight
-/// decodes into the activation's element as each fragment loads (cubek's lane runs); the fragments
-/// share the activation the plane loads ([`step_levels`](Self::step_levels)).
+/// decodes into the activation's element as each fragment loads (the tile DSL's lane runs); the
+/// fragments share the activation the plane loads ([`step_levels`](Self::step_levels)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentMicrokernel {
     /// What its fragments contract through.
@@ -49,9 +49,8 @@ impl PlaneFragmentMicrokernel {
     /// instruction's `m`, every row held whole.
     pub const MAX_PACKED_ROWS: usize = 16;
 
-    /// The one instruction whose fragments decode a packed weight as they load, as
-    /// `(m, n, k)`: the 16-bit `16 × 8 × 16`, whose `B` fragment's lanes cubek's lane runs are
-    /// laid over.
+    /// The one instruction whose fragments decode a packed weight as they load, as `(m, n, k)`: the
+    /// 16-bit `16 × 8 × 16`, whose `B` fragment's lanes the tile DSL's lane runs are laid over.
     const DECODING_SHAPE: (u32, u32, u32) = (16, 8, 16);
 
     /// Units of a plane the decoding instruction's lane runs are laid over: the only width a
@@ -118,13 +117,13 @@ impl PlaneFragmentMicrokernel {
             && rhs.grouping(K, space.k) == Some(Self::DECODED_BLOCK)
     }
 
-    /// The planes against the packed weight of `space`: one fragment of the decoding
-    /// instruction's rows, the settings' fragments along `n` and then every narrower count down
-    /// to one, each where its columns close `n`, each fragment a window of the settings' steps of
-    /// `K` through cubek's transport. A window is whole windows of `K`, and a unit's run of it,
-    /// one of the four quads of `k` its fragment's units split, whole reads of the weight. Only
-    /// settings stating such a grid size one ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)),
-    /// on a device offering the decoding instruction over the activation's element.
+    /// The planes against the packed weight of `space`: one fragment of the decoding instruction's
+    /// rows, the settings' fragments along `n` and then every narrower count down to one, each
+    /// where its columns close `n`, each fragment a window of the settings' steps of `K` through
+    /// the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it, one of
+    /// the four quads of `k` its fragment's units split, whole reads of the weight. Only settings
+    /// stating such a grid size one ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on
+    /// a device offering the decoding instruction over the activation's element.
     fn packed_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -633,14 +632,14 @@ impl Microkernel for PlaneFragmentMicrokernel {
         }
     }
 
-    /// Every matrix instruction this device offers for these elements and this sum through
-    /// cubecl's fragment operations, then through cubek's own transport, each the one that contracts the
-    /// most per call first; then the software instruction, which every device runs. A matrix
+    /// Every matrix instruction this device offers for these elements and this sum through cubecl's
+    /// fragment operations, then through the tile DSL's own transport, each the one that contracts
+    /// the most per call first; then the software instruction, which every device runs. A matrix
     /// instruction spreads its fragment across the plane, so it is offered only where the device
     /// commits to one plane width. Where the settings ask for the warpgroup MMA, that alone, where
     /// it runs. Against a packed weight, the planes that decode it as they load, at the grids
-    /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their
-    /// columns close `n`.
+    /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their columns
+    /// close `n`.
     fn candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,

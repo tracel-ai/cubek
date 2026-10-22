@@ -67,7 +67,7 @@ pub trait CubePlaneMicrokernel:
     }
 
     /// The element a stage of its query, keys and values holds where the stage's fill decodes
-    /// them, as it does an operand bound as its words: `f32` where `None`, the element cubek
+    /// them, as it does an operand bound as its words: `f32` where `None`, the element the tile DSL
     /// decodes a packed operand at unless the kernel names another.
     fn decoded_stage(&self) -> Option<ElemType> {
         None

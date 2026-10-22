@@ -22,7 +22,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 /// with its units, a few units a column taking `K`'s scale words in turns, so one step of the plane
 /// reads whole tiles, every byte of them. The cube's planes take those steps in turns, so between
 /// them they read the group front to back. Each unit sums its share in registers, the units of a
-/// column fold across the plane, and the planes add their partials into one accumulator in shared
+/// column sum across the plane, and the planes add their partials into one accumulator in shared
 /// memory, as the device lets them meet ([`CubeMeet`]).
 ///
 /// What a weight stored in tiles wants at a few rows: a plane that owns one column reads a few
@@ -109,7 +109,7 @@ impl CubeTileGroupMicrokernel {
 
     /// Bytes of shared memory one cube holds over its group: the accumulator, one sum a cell of
     /// the cube's box of the output for each copy its planes meet in ([`CubeMeet::copies`]),
-    /// which cubek sizes itself.
+    /// which the tile DSL sizes itself.
     pub fn shared_memory(&self, item: &MatmulWorkItem, partitioning: &MatmulPartitioning) -> usize {
         let cells = (partitioning.rows() * partitioning.columns()) as usize;
         cells * self.meet.copies(self.planes_along_k.get()) * item.sum.size()

@@ -51,10 +51,10 @@ impl CubeStagedMicrokernelSettings {
         ..Self::DEFAULT
     };
 
-    /// cubek's multi-row box: one column of four planes, each holding two rows of fragments
-    /// across the cube's `n`, reached through cubek's transport. Under `cmma` a row weight's `B`
-    /// fragment is read in scalar loads and spills two steps deep, where cubek's transport does
-    /// not.
+    /// The tile DSL's multi-row box: one column of four planes, each holding two rows of fragments
+    /// across the cube's `n`, reached through the tile DSL's transport. Under `cmma` a row weight's
+    /// `B` fragment is read in scalar loads and spills two steps deep, where the tile DSL's
+    /// transport does not.
     pub const MULTI_ROW: Self = Self::boxed(
         PlaneFragmentMicrokernelSettings::grid(2, 8, 2).through(PlaneFragmentTransport::Mma),
         MatmulPlaneLayout::new(4, 1),
@@ -88,7 +88,7 @@ impl CubeStagedMicrokernelSettings {
     }
 
     /// Eight by one steps on each of one by two planes, one stage at a time: on the M2, eight by
-    /// two instructions a plane in tile order, the float staged gemm's fastest box on the
+    /// two instructions a plane in tile order, the float staged routine's fastest box on the
     /// Qwen3-4B projections at a prompt's rows, whose planes contract the same stages these hold.
     pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE);
 

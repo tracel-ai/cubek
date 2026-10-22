@@ -3,7 +3,7 @@ use cubecl::tile::{Monoid, Tile, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The slots of `slot_box`'s queries, laid out as `slots` states, merged into those queries of
-/// `out` by one plane, a query at a time ([`MergedSlotRow::new`]), the first `queries` of the box.
+/// `out` by one plane, a query at a time (`MergedSlotRow::new`), the first `queries` of the box.
 /// A query whose every slot saw nothing stays zero.
 ///
 /// The slots lie as [`AttentionSlotBox`] states; `out` is the attention's output,
@@ -56,7 +56,7 @@ pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
 }
 
 /// One plane's share of the rows a group of planes split the keys of, merged from the slots
-/// they left ([`MergedSlotRow::new`]) and written into `out`, normalized: of the group's first
+/// they left (`MergedSlotRow::new`) and written into `out`, normalized: of the group's first
 /// `queries` rows, which lie from row `first_row` of the slots as `slots` states, the plane
 /// merges each `r` whose remainder by the planes splitting the keys is `split`, its place among
 /// them. `out` is windowed to the group's rows. A row whose every slot saw nothing writes zeros.
