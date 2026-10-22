@@ -1,11 +1,11 @@
 use super::counters::ZeroedCounters;
-use crate::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulRoutineProblem,
-    MatmulView,
+    MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulInputs, MatmulOutput,
+    MatmulOutputBuffer, MatmulRoutineProblem, MatmulView,
 };
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::ElemType;
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -15,8 +15,8 @@ use cubecl::tile::{
 };
 use cubek_microkernel::matmul::staged_walk::MatmulStage;
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulRowsKind, MatmulWorkItem,
+    MatmulBlocks, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind,
+    MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
@@ -24,6 +24,56 @@ use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
+
+/// What a launch writing into its caller's output declines: an output of another shape or element
+/// than the product's, or one stored in tiles.
+pub const MATMUL_OUTPUT_UNREAD: Refusal = Refusal::Declined {
+    why: "the output handed in is not the product's shape and element, laid in rows",
+};
+
+/// What a launch beside a packed input declines before preparing anything: a float operand of an
+/// element it is not verified at.
+pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+    why: "the packed routines are verified at f32, f16 or bf16 float operands",
+};
+
+/// What a packed routine declines: a problem whose rhs is not packed.
+pub const MATMUL_Q_RHS_NOT_PACKED: Refusal = Refusal::Declined {
+    why: "the packed routines read a packed, block-scaled rhs, beside an lhs float or packed",
+};
+
+/// What a launch declines before preparing anything: operands of two elements, or of one the
+/// routines do not take.
+pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+    why: "the microkernel matmul takes f32, f16 and bf16 operands of one element",
+};
+
+/// What a routed or grouped product declines before preparing anything: an operand stored in
+/// tiles that its routines would read in rows, a slab at a time. That is either grouped operand,
+/// and the routed product's stack; a routed activation is laid back in rows instead.
+pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Refusal = Refusal::Declined {
+    why: "the routed and grouped products read their operands in rows, slab by slab; store \
+              them untiled",
+};
+
+/// An operand stored in tiles that each step down a column first
+/// ([`PlainTensor::is_tiled_column_first`]), which a tile read by its columns cannot walk.
+pub const MATMUL_COLUMN_FIRST_TILES: Refusal = Refusal::Declined {
+    why: "the matmul kernels read storage tiles stored a row at a time; this operand's are \
+              stored a column at a time",
+};
+
+/// What a launch tiling the rows declines before preparing anything: operands of two ranks, which
+/// the routines do not broadcast.
+pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
+    why: "the microkernel gemm's operands share a rank",
+};
+
+/// What a launch holding every row whole declines before preparing anything: a weight contiguous
+/// along neither of its axes, or one stored in tiles, which no gemv reads in vectors.
+pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
+    why: "the microkernel gemv reads one weight matrix contiguous along `k` or `n`",
+};
 
 /// The tensors of one product, the output among them, from which the problem they state is read
 /// ([`problem`](Self::problem)). `Out` is where
@@ -218,7 +268,7 @@ impl MatmulTensors {
     /// The element a product beside a packed input is written in: the activation's, or, for a
     /// packed one, which names none, the element its words unpack into
     /// ([`PACKED`](MatmulRoutineProblem::PACKED)).
-    fn packed_output(lhs: &StoredTensor) -> ElemType {
+    pub(super) fn packed_output(lhs: &StoredTensor) -> ElemType {
         match lhs {
             StoredTensor::Plain(lhs) => lhs.elem,
             StoredTensor::Packed(_) => MatmulRoutineProblem::PACKED,
@@ -845,126 +895,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     }
 }
 
-/// An output buffer, in the operands' element: the tensor the launch hands back where it
-/// allocated it, and the view of it the launch binds, its rows folded where the launch reads every
-/// row whole.
-#[derive(Debug, Clone)]
-pub struct MatmulOutputBuffer {
-    tensor: Option<TensorHandle>,
-    bound: PlainTensor,
-}
-
-/// Where a product goes, as a launch that stores its boxes through the TMA engine asks of it: the
-/// tensor a buffer the launch allocates is bound as, which a descriptor addresses, and nothing
-/// for a sink a caller binds, which has no address.
-pub trait MatmulOutput {
-    /// Where the product lands, as the problem states it.
-    const DESTINATION: MatmulDestination;
-
-    /// The tensor the launch binds the product into, where it has one.
-    fn addressed(&self) -> Option<&PlainTensor>;
-
-    /// The product of `lhs` and `rhs` landing here.
-    fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem;
-
-    /// The element the product is written in, beside the activation `lhs`.
-    fn element(&self, lhs: &StoredTensor) -> ElemType;
-}
-
-impl MatmulOutput for MatmulOutputBuffer {
-    const DESTINATION: MatmulDestination = MatmulDestination::Buffer;
-
-    fn addressed(&self) -> Option<&PlainTensor> {
-        Some(&self.bound)
-    }
-
-    fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::new(lhs, rhs, &self.bound)
-    }
-
-    fn element(&self, _lhs: &StoredTensor) -> ElemType {
-        self.bound.elem
-    }
-}
-
-impl MatmulOutput for Geometry {
-    const DESTINATION: MatmulDestination = MatmulDestination::Sink;
-
-    fn addressed(&self) -> Option<&PlainTensor> {
-        None
-    }
-
-    fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::sink(lhs, rhs, self)
-    }
-
-    fn element(&self, lhs: &StoredTensor) -> ElemType {
-        MatmulTensors::packed_output(lhs)
-    }
-}
-
-/// A product's two operands, on one device and of one element the routines are
-/// verified at: what every launch's tensors are read from, before a launch prepares them as it
-/// reads them.
-#[derive(Debug, Clone)]
-pub struct MatmulInputs {
-    lhs: PlainTensor,
-    rhs: PlainTensor,
-}
-
-impl MatmulInputs {
-    /// The elements the routines are verified at.
-    pub const VERIFIED: [ElemType; 3] = [
-        ElemType::Float(FloatKind::F32),
-        ElemType::Float(FloatKind::F16),
-        ElemType::Float(FloatKind::BF16),
-    ];
-
-    /// `lhs` and `rhs`, on `client`'s device, checked as every routine needs them.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_ELEMENT_UNVERIFIED`]: what the routines decline whatever the device, and
-    /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
-    pub fn new(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
-        if lhs.elem != rhs.elem || !Self::VERIFIED.contains(&lhs.elem) {
-            return Err(MATMUL_ELEMENT_UNVERIFIED);
-        }
-        if !lhs.runs_on(client) {
-            return Err(ELEMENT_NOT_ON_DEVICE);
-        }
-        Ok(Self { lhs, rhs })
-    }
-
-    /// Both operands where they lie, unless one aliases itself: what a launch tiling the rows
-    /// reads, by strides.
-    pub fn addressable(self, client: &Client) -> Self {
-        Self {
-            lhs: Self::without_self_aliasing(client, self.lhs),
-            rhs: Self::without_self_aliasing(client, self.rhs),
-        }
-    }
-
-    /// The operands, the lhs first: the only way out of the check, so no launch reads them
-    /// unchecked.
-    pub fn into_parts(self) -> (PlainTensor, PlainTensor) {
-        (self.lhs, self.rhs)
-    }
-
-    /// `tensor` where no two of its indices address one element, a row-major copy of it where they do.
-    ///
-    /// Neither a pitch nor gaps between rows stop a read by strides; the runtime pitches rows whose
-    /// bytes are not aligned, so a check on the buffer's size would copy those. A storage-tiled
-    /// operand is read through its tiling, stored as a launch reads it, so it stands: a copy would
-    /// lay it back in rows on every launch.
-    fn without_self_aliasing(client: &Client, tensor: PlainTensor) -> PlainTensor {
-        match tensor.is_tiled() || tensor.is_contiguous() || tensor.is_nonoverlapping() {
-            true => tensor,
-            false => tensor.into_contiguous(client),
-        }
-    }
-}
-
 /// The carry and the turn counters of a launch whose cubes take turns at the output.
 pub struct MatmulRelayBinding {
     /// The partial sums the turns add up, the output's shape in the sum's element.
@@ -1159,56 +1089,6 @@ struct TmaLanding {
     stage: Space,
     swizzle: TensorMapSwizzle,
 }
-
-/// What a launch writing into its caller's output declines: an output of another shape or element
-/// than the product's, or one stored in tiles.
-pub const MATMUL_OUTPUT_UNREAD: Refusal = Refusal::Declined {
-    why: "the output handed in is not the product's shape and element, laid in rows",
-};
-
-/// What a launch beside a packed input declines before preparing anything: a float operand of an
-/// element it is not verified at.
-pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the packed routines are verified at f32, f16 or bf16 float operands",
-};
-
-/// What a packed routine declines: a problem whose rhs is not packed.
-pub const MATMUL_Q_RHS_NOT_PACKED: Refusal = Refusal::Declined {
-    why: "the packed routines read a packed, block-scaled rhs, beside an lhs float or packed",
-};
-
-/// What a launch declines before preparing anything: operands of two elements, or of one the
-/// routines do not take.
-pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the microkernel matmul takes f32, f16 and bf16 operands of one element",
-};
-
-/// What a routed or grouped product declines before preparing anything: an operand stored in
-/// tiles that its routines would read in rows, a slab at a time. That is either grouped operand,
-/// and the routed product's stack; a routed activation is laid back in rows instead.
-pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Refusal = Refusal::Declined {
-    why: "the routed and grouped products read their operands in rows, slab by slab; store \
-              them untiled",
-};
-
-/// An operand stored in tiles that each step down a column first
-/// ([`PlainTensor::is_tiled_column_first`]), which a tile read by its columns cannot walk.
-pub const MATMUL_COLUMN_FIRST_TILES: Refusal = Refusal::Declined {
-    why: "the matmul kernels read storage tiles stored a row at a time; this operand's are \
-              stored a column at a time",
-};
-
-/// What a launch tiling the rows declines before preparing anything: operands of two ranks, which
-/// the routines do not broadcast.
-pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
-    why: "the microkernel gemm's operands share a rank",
-};
-
-/// What a launch holding every row whole declines before preparing anything: a weight contiguous
-/// along neither of its axes, or one stored in tiles, which no gemv reads in vectors.
-pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the microkernel gemv reads one weight matrix contiguous along `k` or `n`",
-};
 
 #[cfg(test)]
 mod tests {
