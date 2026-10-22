@@ -121,6 +121,7 @@ impl Routine for CubeTileGroupMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
+        problem.check_unindexed()?;
         let Some(packing) = problem.packings.rhs else {
             return Err(MATMUL_Q_RHS_NOT_PACKED);
         };
