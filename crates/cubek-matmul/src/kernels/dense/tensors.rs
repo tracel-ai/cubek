@@ -18,8 +18,8 @@ use cubecl::tile::{
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::staged_walk::MatmulStage;
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulRowsKind, MatmulWorkItem,
+    MatmulBlocks, MatmulDestination, MatmulLayout, MatmulMicrokernel, MatmulOperand,
+    MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
@@ -781,17 +781,37 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .out
             .problem(&lhs.broadcast_to(rank), &matrix.broadcast_to(rank));
         let (shape, strides) = (&rhs.binding.shape, &rhs.binding.strides);
+        let rhs_layout = match problem.layouts.rhs {
+            MatmulLayout::Strided => Self::stacked_layout(&matrix),
+            layout => layout,
+        };
         MatmulRoutineProblem {
             elem_alignments: MatmulOperands {
                 rhs: rhs.elem_alignment(),
                 ..problem.elem_alignments
             },
+            layouts: MatmulOperands {
+                rhs: rhs_layout,
+                ..problem.layouts
+            },
             buffer_alignments: MatmulOperands {
-                rhs: problem.layouts.rhs.buffer_alignment(shape, strides),
+                rhs: rhs_layout.buffer_alignment(shape, strides),
                 ..problem.buffer_alignments
             },
             index: Some(table.index),
             ..problem
+        }
+    }
+
+    /// How `slab`, one `[k, n]` slab of a stack, lies where it is one wide along an axis: along
+    /// that axis where its stride there is the unit one. A dim of extent one addresses nothing
+    /// in a matrix of its own, but a slab's is cut from its stack, whose lines run along it.
+    fn stacked_layout(slab: &PlainTensor) -> MatmulLayout {
+        let (shape, strides) = (&slab.binding.shape, &slab.binding.strides);
+        match ([shape[0], shape[1]], [strides[0], strides[1]]) {
+            ([_, 1], [_, 1]) => MatmulLayout::Row,
+            ([1, _], [1, _]) => MatmulLayout::Col,
+            _ => MatmulLayout::Strided,
         }
     }
 
