@@ -516,7 +516,7 @@ mod float {
     }
 
     /// A product against an unbatched weight, so the left-hand side's extents
-    /// fold: `m` rows in each of `batches` of them is what one memory-bound
+    /// merge: `m` rows in each of `batches` of them is what one memory-bound
     /// launch streams.
     fn float(m: usize, batches: usize) -> MatmulProblem {
         MatmulProblem {
@@ -530,7 +530,7 @@ mod float {
         }
     }
 
-    /// The same shape against a weight of its own per batch — nothing folds,
+    /// The same shape against a weight of its own per batch — nothing merges,
     /// and no memory-bound kernel here reads more than one weight.
     fn batched_weight(m: usize, batches: usize) -> MatmulProblem {
         MatmulProblem {
@@ -602,7 +602,7 @@ mod float {
         }
     }
 
-    /// The float bound is what every float gemv candidate holds: the plane shuffle compiles at most
+    /// The float bound is what every float few-rows candidate holds: the plane shuffle compiles at most
     /// that many rows in, so a wider float width routed to the few-rows table would meet a candidate
     /// that declines it and be answered by the fallback.
     #[test]
@@ -643,25 +643,25 @@ mod float {
     /// trailing extent.
     ///
     /// `[b, m, k] @ [1, k, n]` is one product of `b·m` rows to every memory-bound
-    /// candidate — they all fold the leading extents and read the weight once.
+    /// candidate — they all merge the leading extents and read the weight once.
     /// Routing on `m` alone calls a 512-row product an 8-row one and sends it
     /// to a table on which the float kernel rejects the plane shuffle, cubek's vec-mats
     /// reject anything past one row, and the answer is whatever is left. This
     /// reaches the attention score product and every backward.
     #[test]
     fn a_folded_batch_is_routed_by_the_rows_a_memory_bound_kernel_would_stream() {
-        let folded = float(8, 64);
+        let merged = float(8, 64);
         assert_eq!(
-            folded.m, 8,
+            merged.m, 8,
             "the trailing extent is inside the memory-bound regime"
         );
-        assert_eq!(folded.streamed_rows, Some(512));
+        assert_eq!(merged.streamed_rows, Some(512));
         assert_eq!(
-            select(Autotune, &folded),
+            select(Autotune, &merged),
             Ok(F::Autotune(MatmulTable::ManyRows))
         );
 
-        // A weight per batch folds nothing, at any row count.
+        // A weight per batch merges nothing, at any row count.
         for problem in [batched_weight(1, 64), batched_weight(8, 64)] {
             assert_eq!(
                 select(Autotune, &problem),

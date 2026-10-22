@@ -70,7 +70,7 @@ pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
 };
 
 /// What a launch holding every row whole declines before preparing anything: a weight contiguous
-/// along neither of its axes, or one stored in tiles, which no gemv reads in vectors.
+/// along neither of its axes, or one stored in tiles, which no routine holding every row whole reads in vectors.
 pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
     why: "the microkernel gemv reads one weight matrix contiguous along `k` or `n`",
 };
@@ -87,15 +87,15 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
 /// - **Rows tiled.** An operand is read where it lies whenever no two of its indices address one
 ///   element, a transposed or row-pitched one included; only a broadcast or a view aliasing itself
 ///   is copied row-major first. Copying the rest would move all of it on every launch.
-/// - **Every row whole.** The activation's leading dims are folded into rows at the step it really
-///   has, and copied first only where they do not fold; the weight is read as the one matrix it
+/// - **Every row whole.** The activation's leading dims are merged into rows at the step it really
+///   has, and copied first only where they do not merge; the weight is read as the one matrix it
 ///   holds, where it lies, since copying it would move the whole weight on every launch, which is
-///   the whole cost of a gemv; the output is bound as its rows.
+///   the whole cost of a product of few rows; the output is bound as its rows.
 ///
 /// Each input is read as it is stored ([`StoredTensor`]): float ones as above, or, where either is
 /// packed, each packed one bound as one tile of its words under its scales over the problem's
 /// block-split space, the float ones restated over the same space. Against a packed input every
-/// row is held whole, the activation's leading dims folded: the problem it states has no batches,
+/// row is held whole, the activation's leading dims merged: the problem it states has no batches,
 /// so a tiled launch reads it alike. Either way every input binds as one tile, so a kernel reads
 /// it as the tile it is.
 #[derive(Clone)]
@@ -257,7 +257,7 @@ impl MatmulTensors {
         }
     }
 
-    /// The rows of `lhs`, `k` deep, its leading dims folded into them.
+    /// The rows of `lhs`, `k` deep, its leading dims merged into them.
     fn rows_of(lhs: &StoredTensor, k: usize) -> usize {
         match lhs {
             StoredTensor::Plain(lhs) => lhs.shape().num_elements() / k.max(1),
@@ -706,7 +706,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// The lhs's and the rhs's tensor maps, each descriptor moving `stage`'s box of its operand,
     /// one matrix of it read one element wide, so it lands as `storage` holds the stage: the rhs
     /// described in `rhs` order, a col weight as the `[n, k]` matrix its buffer is, and each box
-    /// swizzled as cubek says the stage keeps its rows (`StageStorage::tma_swizzle`). What a
+    /// swizzled as the tile DSL says the stage keeps its rows (`StageStorage::tma_swizzle`). What a
     /// routine binds where the TMA engine fills its stages.
     ///
     /// # Panics
@@ -961,7 +961,7 @@ impl Operands {
         })
     }
 
-    /// The activation folded into `[m, k]` rows, the weight its one `[k, n]` matrix, the output
+    /// The activation merged into `[m, k]` rows, the weight its one `[k, n]` matrix, the output
     /// allocated as `[.., n]` and bound as `[m, n]` rows.
     fn whole(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
@@ -974,7 +974,7 @@ impl Operands {
         }
         let weight =
             Self::one_weight_matrix(&rhs).ok_or(MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED)?;
-        let lhs = Self::with_foldable_rows(client, lhs);
+        let lhs = Self::with_mergeable_rows(client, lhs);
         let lhs_shape = lhs.shape();
         let k = lhs_shape[lhs_shape.rank() - 1];
         let weight_shape = weight.shape();
@@ -1030,16 +1030,16 @@ impl Operands {
             .filter(|matrix| contiguous(&matrix.meta(), [K, N]).is_some())
     }
 
-    /// `lhs` where its leading dims fold into rows of its last at one step, a row-major copy of it
+    /// `lhs` where its leading dims merge into rows of its last at one step, a row-major copy of it
     /// where they do not: an activation the launch reads as rows either way.
-    fn with_foldable_rows(client: &Client, lhs: PlainTensor) -> PlainTensor {
+    fn with_mergeable_rows(client: &Client, lhs: PlainTensor) -> PlainTensor {
         let (shape, strides) = (lhs.shape(), lhs.binding.strides.to_vec());
         let rank = shape.rank();
-        let folds = rank >= 1
+        let merges = rank >= 1
             && strides[rank - 1] == 1
             && (0..rank.saturating_sub(2))
                 .all(|dim| strides[dim] == shape[dim + 1] * strides[dim + 1]);
-        match folds && !lhs.is_tiled() {
+        match merges && !lhs.is_tiled() {
             true => lhs,
             false => lhs.into_contiguous(client),
         }

@@ -1,9 +1,9 @@
 //! Matrix multiplication kernels.
 //!
 //! Two architectures live here, and the crate branches between them at its root:
-//! `tiled` holds routines written on the tile DSL, `multi_level` holds routines
-//! written on the batch/global/stage/tile levels. Everything outside those two
-//! modules is vocabulary both of them speak. Each is behind a feature of its own
+//! `kernels` holds routines written on the tile DSL, with `tiled` holding their launch strategy,
+//! the storage relayout and their benchmarks; `multi_level` holds routines written on the
+//! batch/global/stage/tile levels, with `routine` the contract they implement. Each is behind a feature of its own
 //! name, both on by default, and either compiles without the other.
 
 /// The problem, its element types, and the errors either architecture can raise.

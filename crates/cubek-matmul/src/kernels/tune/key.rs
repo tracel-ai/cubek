@@ -55,7 +55,7 @@ pub struct OperandKey {
 /// the axis a caller varies freely (batch × sequence), and it is the axis the
 /// crossovers actually live on, so its buckets are where candidates trade
 /// places. `batches` is anchored for the same reason and is 1 almost
-/// everywhere: `Linear` folds before projecting.
+/// everywhere: `Linear` merges before projecting.
 ///
 /// **The family anchors, not the derive.** cubecl's anchor attribute scales
 /// its base by the autotune level, and that level is set for how close to
@@ -68,7 +68,7 @@ pub struct OperandKey {
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulTuneKey {
     /// The element the product is written in, the activation's or the one a packed activation
-    /// stands for: it decides the vector widths, whether a gemm routine can reach a tensor-core
+    /// stands for: it decides the vector widths, whether a staged routine can reach a tensor-core
     /// leaf, and what the memory-bound kernels accumulate from.
     elem: ElemType,
     /// Reduction length.
@@ -201,7 +201,7 @@ impl OperandKey {
 
 /// Whether an operand's batches read one matrix. A batch count alone does not say: a projection
 /// of batched activations and a product of batched operands count the same batches, and only the
-/// first can fold them into rows of one weight.
+/// first can merge them into rows of one weight.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MatmulBatching {
     /// Every batch reads its one matrix, so the batches are more rows against it.

@@ -160,7 +160,7 @@ impl MatmulRoutine<CubeTileGroupMicrokernel> for CubeTileGroupMatmulRoutine {
         let [sum, _, _, out] = item.kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
-        // its tiles; its shared memory is the accumulator cubek sizes to the cube's group.
+        // its tiles; its shared memory is the accumulator the tile DSL sizes to the cube's group.
         unsafe {
             cube_shuffle_matmul_kernel::launch_unchecked::<O>(
                 tensors.client(),

@@ -34,9 +34,9 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// plane along `m`.
 ///
 /// A fragment that bounces into the output drains through the plane's own scratch window, but
-/// behind the cube's barriers, which cubek's drain raises: every plane of the cube reaches them,
-/// the same count each, a plane past the last tile walking one past the grid, so the planes still
-/// share no work, only the drain's rendezvous.
+/// behind the cube's barriers, which the tile DSL's drain raises: every plane of the cube reaches
+/// them, the same count each, a plane past the last tile walking one past the grid, so the planes
+/// still share no work, only the drain's rendezvous.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaneFragmentMatmulRoutine;
 

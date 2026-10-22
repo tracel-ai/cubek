@@ -19,7 +19,7 @@ fn scheme_operand(scheme: &QuantScheme) -> Option<Operand> {
 }
 
 /// The most rows a packed product goes to the few-rows table with. Past it the staged routines win on
-/// arithmetic, and measuring a gemv at prefill widths would cost minutes of first-touch tuning for
+/// arithmetic, and measuring a routine that does not stage at prefill widths would cost minutes of first-touch tuning for
 /// a candidate that cannot win there.
 pub const QUANTIZED_FEW_ROWS: usize = 32;
 
@@ -31,8 +31,8 @@ pub fn quantized_few_rows(rows: usize) -> bool {
 
 /// Whether the packed kernels stream `scheme`: the packed int formats
 /// (`q4f`/`q4s`/`q8f`/`q8s`), the fp4 one (`e2m1`) or the fp8 ones (`e4m3`/`e5m2`), in
-/// either packed-u32 form — `PackedU32(0)` with blocks along the output dimension (burn's
-/// artifact form) or `PackedU32(1)` with blocks along the reduction (the
+/// either packed-u32 form — `PackedU32(0)` with blocks along the output dimension (the
+/// framework's artifact form) or `PackedU32(1)` with blocks along the reduction (the
 /// col-requantized serving form) — with block-level scales running the packed
 /// direction and covering whole `u32`s (see
 /// [`Operand::of_scheme`](cubek_microkernel::matmul::stored::Operand::of_scheme)), at any block-scale
@@ -42,13 +42,13 @@ pub fn quantized_few_rows(rows: usize) -> bool {
 /// and whether a decode runs is the device's answer, not the scheme's: asking
 /// the scheme alone once said `true` on a device whose kernel failed at codegen
 /// on a worker thread and left its output as the allocator had it. Every
-/// decode the engine has today is software — `e2m1` included, unpacked as
+/// decode the kernels have is software — `e2m1` included, unpacked as
 /// every other read of it is — so the device currently declines nothing, and
 /// the parameter is where the next format that needs a named type asks.
 ///
 /// A scheme outside this set still goes through the family's entry — dequantized
 /// first, or on the framework's quantized matmul — it just never reaches one
-/// of this crate's kernels packed. This is the gate that decides which, so
+/// of the tiled kernels packed. This is the gate that decides which, so
 /// everything downstream may take the form, and the decode, for granted.
 pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme) -> bool {
     let value = matches!(

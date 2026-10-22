@@ -7,7 +7,7 @@ use cubecl::tile::Geometry;
 use cubek_microkernel::matmul::MatmulDestination;
 
 /// An output buffer, in the operands' element: the tensor the launch hands back where it
-/// allocated it, and the view of it the launch binds, its rows folded where the launch reads every
+/// allocated it, and the view of it the launch binds, its rows merged where the launch reads every
 /// row whole.
 #[derive(Debug, Clone)]
 pub struct MatmulOutputBuffer {

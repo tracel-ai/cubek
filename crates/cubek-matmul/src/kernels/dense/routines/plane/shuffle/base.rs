@@ -248,9 +248,9 @@ impl PlaneShuffleMatmulRoutine {
     }
 }
 
-/// Where the plane gemv places a packed product: its microkernel, the axis its columns land on,
+/// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
 /// and the planes one cube holds side by side along it, a target snapped to what the runs of
-/// columns divide, so no cube overhangs. The gemv deals the planes the launch's columns; the
+/// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns; the
 /// decode into a float weight places the same planes in cubes, each cube copying its box.
 pub struct PlaneShufflePackedPlacement {
     pub microkernel: PlaneShuffleMicrokernel,

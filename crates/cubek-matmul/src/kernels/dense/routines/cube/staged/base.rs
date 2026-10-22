@@ -87,16 +87,16 @@ impl CubeStagedMatmulRoutine {
     /// the planes sharing each step of `K`, the stages in flight and who stores the box, and who
     /// fills the stages.
     ///
-    /// For a prompt's rows, filled by the TMA engine through cubek's transport: four by eight
-    /// steps on four by two planes, the box a long weight fills the device with; two by eight,
-    /// the one a narrower weight at a prompt's chunk of rows leaves fewer cores idle with; two by
-    /// four on two by two planes, the small box the narrowest projections take; each two stages
-    /// in flight, its planes storing their fragments. Then four by four on two by four planes,
-    /// and two by four on four by two or two by four planes, three stages in flight and the box
-    /// stored by the TMA engine in one bulk copy, which a contraction of a few thousand finishes
-    /// sooner with. A stage one step deep is one tile of a weight in
-    /// [tile order](cubek_microkernel::matmul::tile_order), which a box lands as it lands rows. Filled by the
-    /// cube's units asynchronously: four by four on two by four planes, three stages in flight,
+    /// For a prompt's rows, filled by the TMA engine through the tile DSL's transport: four by
+    /// eight steps on four by two planes, the box a long weight fills the device with; two by
+    /// eight, the one a narrower weight at a prompt's chunk of rows leaves fewer cores idle with;
+    /// two by four on two by two planes, the small box the narrowest projections take; each two
+    /// stages in flight, its planes storing their fragments. Then four by four on two by four
+    /// planes, and two by four on four by two or two by four planes, three stages in flight and the
+    /// box stored by the TMA engine in one bulk copy, which a contraction of a few thousand
+    /// finishes sooner with. A stage one step deep is one tile of a weight in [tile
+    /// order](cubek_microkernel::matmul::tile_order), which a box lands as it lands rows. Filled by
+    /// the cube's units asynchronously: four by four on two by four planes, three stages in flight,
     /// and two by four on four by two planes, two.
     ///
     /// For a decode's rows, one step of rows (the instruction's sixteen, every row a decode
@@ -250,7 +250,7 @@ impl CubeStagedMatmulRoutine {
     const ADDRESSING_REGISTERS: u32 = 64;
 
     /// A setting of `shape`, its stages filled by `delivery` and its planes reaching them through
-    /// cubek's transport, which reads the rows a box lands swizzled.
+    /// the tile DSL's transport, which reads the rows a box lands swizzled.
     fn in_steps(
         step: &MatmulStep,
         shape: StagedShape,
@@ -491,7 +491,7 @@ impl Routine for CubeStagedMatmulRoutine {
     type Partitioning = MatmulPartitioning;
 
     /// Its microkernel's settings ([`CubeStagedMicrokernel::settings`]), its cubes in the grid's
-    /// order, except cubek's multi-row box
+    /// order, except the tile DSL's multi-row box
     /// ([`MULTI_ROW`](CubeStagedMicrokernelSettings::MULTI_ROW)), whose cubes walk in strips along
     /// `m`. Then its own knob around the boxes it suits: the default, the default's grid on two by
     /// two planes with its stage's rows in order, and the planes splitting `K`, in strips.

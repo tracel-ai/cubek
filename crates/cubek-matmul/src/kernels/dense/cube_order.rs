@@ -8,9 +8,9 @@ use cubecl::tile::space::CubeOrder;
 /// of the lhs, and the next wave reads them all again. Strips gather a wave into a patch a few boxes
 /// wide, so the cubes running together share rows and columns in the last level cache.
 ///
-/// The width is the one a kernel compiles whatever the problem: cubek distributes a last strip the
-/// axis cuts short, so it is never fitted to a grid's count, which would compile one kernel per
-/// count.
+/// The width is the one a kernel compiles whatever the problem: the tile DSL distributes a last
+/// strip the axis cuts short, so it is never fitted to a grid's count, which would compile one
+/// kernel per count.
 pub const CUBE_STRIPS: [CubeOrder; 2] = [CubeOrder::SwizzleRow(4), CubeOrder::SwizzleCol(4)];
 
 /// How a setting's name spells its cube order: nothing for the grid's own, so the settings that

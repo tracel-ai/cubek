@@ -47,7 +47,7 @@ impl StoredTensor {
 
     /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
     /// block scales and its per-tensor scale. What a kept binding is rebound to, in place of the
-    /// buffers it was made over ([`TileArgLaunch::rebound`]).
+    /// buffers it was made over ([`TileArgLaunch::rebound`](cubecl::tile::TileArgLaunch::rebound)).
     pub fn buffers(&self) -> Vec<BufferBinding> {
         self.tensors()
             .map(|tensor| tensor.binding.handle.clone())

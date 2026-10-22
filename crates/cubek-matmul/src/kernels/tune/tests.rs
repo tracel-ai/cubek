@@ -120,9 +120,9 @@ mod candidate {
         assert!(in_buffer_order.widths.rhs > 1);
 
         let unit = MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, &hw).swap_remove(0);
-        let (folded, _) = unit.blueprint(&col).expect("runs here");
-        assert_eq!(folded.microkernel.orders().rhs, MatmulOrder::InBufferOrder);
-        assert!(folded.widths.rhs > 1);
+        let (merged, _) = unit.blueprint(&col).expect("runs here");
+        assert_eq!(merged.microkernel.orders().rhs, MatmulOrder::InBufferOrder);
+        assert!(merged.widths.rhs > 1);
     }
 
     /// On devices a dev machine cannot show: the unit routine, this kind's floor, prepares
@@ -170,7 +170,7 @@ mod candidate {
     }
 
     /// The few-rows table's candidates: the shuffle routines, every quantized weight launched as stored.
-    mod gemv {
+    mod few_rows {
         use super::*;
         use crate::kernels::CubeShuffleMatmulRoutine;
         use crate::kernels::PlaneShuffleMatmulRoutine;
@@ -222,7 +222,7 @@ mod candidate {
             assert_eq!(listed, PlaneShuffleMatmulRoutine.settings(&hw));
         }
 
-        /// A key's batches are read as rows against one weight, as the whole-rows tensors fold an
+        /// A key's batches are read as rows against one weight, as the whole-rows tensors merge an
         /// activation's leading dims.
         #[test]
         fn a_keys_batches_are_read_as_rows() {
@@ -274,7 +274,7 @@ mod candidate {
     }
 
     /// The many-rows table's routines: their estimates on a strix halo.
-    mod gemm_estimates {
+    mod many_rows_estimates {
         use crate::kernels::CubeStagedMatmulRoutine;
         use crate::kernels::UnitRegistersMatmulRoutine;
         use crate::kernels::{MatmulRoutine, MatmulRoutineProblem};
@@ -346,7 +346,7 @@ mod candidate {
     }
 
     /// The few-rows table's routines: their estimates on an rtx2060.
-    mod gemv_estimates {
+    mod few_rows_estimates {
         use crate::kernels::CubeShuffleMatmulRoutine;
         use crate::kernels::PlaneShuffleMatmulRoutine;
         use crate::kernels::{MatmulRoutine, MatmulRoutineProblem};

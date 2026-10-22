@@ -5,9 +5,9 @@
 //!
 //! # The tables, and the line between them
 //!
-//! A product races on a **gemv** table or a **gemm** one, the [`MatmulTable`]s, whatever its
+//! A product races on a **few-rows** table or a **many-rows** one, the [`MatmulTable`]s, whatever its
 //! weight. The few-rows and many-rows tables share no candidate but the unit routine (the few-rows
-//! table's floor) and cubek's naive floor: the two regimes are different kernel bodies, so a single
+//! table's floor) and the multi-level routines' naive floor: the two regimes are different kernel bodies, so a single
 //! table would be one whose rows mostly decline, paying a compile each to say so. Within a table a
 //! float weight and a packed one race the same list: each candidate is listed for one kind of
 //! weight and declines the other before compiling anything, so a key races what its weight is
@@ -93,8 +93,8 @@ impl MatmulSelection {
                 K::PlaneShuffle,
                 MatmulSelection::Packed(rule(K::CubekAuto, decoded()?)),
             )),
-            // Below the cubek ceiling the weight is decoded and run on this crate's kernels; at it,
-            // cubek reads the weight as it is stored.
+            // Below the `Cubek` ceiling the weight is decoded and run on the tiled routines; at it,
+            // the multi-level selection reads the weight as it is stored.
             Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
             Heuristic(H::Cubek) => packed(rule(K::CubekAuto, decoded()?)),
             Specific(kernel @ (K::PlaneShuffle | K::CubekAuto)) => {
@@ -140,10 +140,10 @@ impl MatmulSelection {
 pub enum MatmulChoice {
     /// The fastest candidate of the table.
     Autotune(MatmulTable),
-    /// The kernel a rule names where it serves these operands, the fixed gemm where it declines.
+    /// The kernel a rule names where it serves these operands, the fixed float routine where it declines.
     /// The rules read the shape, not the strides the caller arrived with, and a rule may not fail
     /// a launch over a question it could not ask: whether the plane shuffle binds the strides, or
-    /// whether cubek's selection finds an accelerated path ("no path on this device" comes back as
+    /// whether the multi-level selection finds an accelerated path ("no path on this device" comes back as
     /// an error at launch, which no rule can ask in advance).
     Rule(MatmulKernel),
     /// The kernel a pin names, and only it: a decline is the caller's contract broken, so it is
@@ -159,11 +159,11 @@ impl MatmulChoice {
         use MatmulOpStrategy::*;
         match strategy {
             Autotune => Ok(MatmulChoice::Autotune(MatmulTable::new(problem))),
-            // No foreign kernel and nothing to measure: this crate's float routines are the whole pool
-            // below the cubek ceiling, and which of them serves a call is a question about strides,
+            // No foreign kernel and nothing to measure: the tiled float routines are the whole pool
+            // below the `Cubek` ceiling, and which of them serves a call is a question about strides,
             // answered at the launch.
             Heuristic(H::Tile) => Ok(MatmulChoice::Rule(K::PlaneShuffle)),
-            // At the ceiling the rules run out: no constant says which staged GEMM suits a shape, so
+            // At the ceiling the rules run out: no constant says which staged routine suits a shape, so
             // the answer comes from the selector that owns those routines rather than from a guess.
             Heuristic(H::Cubek) => Ok(MatmulChoice::Rule(K::CubekAuto)),
             Specific(kernel @ (K::UnitRegisters | K::PlaneShuffle | K::CubekAuto)) => {
@@ -178,12 +178,12 @@ impl MatmulChoice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MatmulPackedChoice {
     /// The fastest candidate of the table. On the few-rows table each candidate reads the weight as it
-    /// is stored; on the many-rows table the packed staged gemm does, and each float routine runs on it
+    /// is stored; on the many-rows table the packed staged routine does, and each float routine runs on it
     /// decoded, priced with its decode included, because a caller pays it every launch. The NVFP4
     /// table only a pin reaches.
     Autotune(MatmulTable),
     /// The kernel a rule names where it serves these operands, and `otherwise` where it declines:
-    /// a kernel's plan reads the strides and the scheme's block, and cubek's selection whether the
+    /// a kernel's plan reads the strides and the scheme's block, and the multi-level selection whether the
     /// device has a path, which the rules could not ask, and a rule may not fail a launch over it.
     Rule {
         kernel: MatmulKernel,
@@ -199,23 +199,23 @@ pub enum MatmulPackedChoice {
 pub enum MatmulDequantize {
     /// Decoded by the caller's dequantize routine, which places the plane shuffle's planes over
     /// the weight, in rows or in tiles. Where the decode declines (a device that commits to no plane width, a
-    /// shape its placement does not cut), burn's dequantize instead: the decode's placement reads
+    /// shape its placement does not cut), the framework's dequantize instead: the decode's placement reads
     /// what the rules cannot ask, and a rule may not fail a launch over it.
     Decode,
-    /// Dequantized by burn at the activation's element: a scheme no kernel here reads
+    /// Dequantized by the framework at the activation's element: a scheme no kernel here reads
     /// ([`matmul_supported`]).
     Burn,
 }
 
-/// The autotune tables a product races on, split by the rows a gemv would stream: each holds the
+/// The autotune tables a product races on, split by the rows a routine that does not stage would stream: each holds the
 /// candidates for a float weight and for a packed one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MatmulTable {
-    /// A handful of rows, each read once: the gemv routines, against a packed weight at the
+    /// A handful of rows, each read once: the routines that do not stage, against a packed weight at the
     /// settings worth trying against it, reading it as stored.
     FewRows,
-    /// Everything past the gemv row bound: the gemm routines, and against a packed weight the
-    /// packed staged gemm reading it as stored and the float routines on it decoded first.
+    /// Everything past the few-rows bound: the staged routines, and against a packed weight the
+    /// packed staged routine reading it as stored and the float routines on it decoded first.
     ManyRows,
     /// The activation rounded to NVFP4 and multiplied against an NVFP4 weight on a GPU's 4-bit
     /// tensor cores, at each of [`Nvfp4TensorCores`](crate::kernels::MatmulKernel::Nvfp4TensorCores)'s
@@ -248,14 +248,14 @@ impl MatmulTable {
 /// How `problem` runs under `strategy` on `hw`.
 ///
 /// `Autotune` measures, on the table the rows go to. `Heuristic` picks by rule, reaching no further
-/// than its ceiling: `Tile` stays on this crate's kernels, and `Cubek` is the one that may hand a
-/// shape to cubek's own selector, which it does wherever these rules have nothing better than a
+/// than its ceiling: `Tile` stays on the tiled routines, and `Cubek` is the one that may hand a
+/// shape to the multi-level selection, which it does wherever these rules have nothing better than a
 /// guess. No heuristic measures. A `Specific` names its kernel.
 ///
 /// A float weight is read by the kernel the strategy chooses. A packed weight under a scheme the
-/// kernels stream is read as it is stored by the plane shuffle at one row, by cubek at the `Cubek`
+/// kernels stream is read as it is stored by the plane shuffle at one row, by the multi-level selection at the `Cubek`
 /// ceiling, and by the kernel a pin names; elsewhere it is decoded first and read by the kernel the
-/// strategy chooses for a float weight. A scheme no kernel here reads is dequantized by burn
+/// strategy chooses for a float weight. A scheme no kernel here reads is dequantized by the framework
 /// first, under every strategy but the `Nvfp4TensorCores` pin. A quantized activation against a
 /// packed weight takes the selection a float one would: the packed routines read it as stored, and
 /// every other kernel is handed it dequantized.
@@ -283,7 +283,7 @@ pub fn select(
     }
 }
 
-/// The most rows a float product goes to the few-rows table with: the rows every float gemv candidate
+/// The most rows a float product goes to the few-rows table with: the rows every float few-rows candidate
 /// holds whole, each one more accumulator line per cell of its register block (the plane shuffle's
 /// `MAX_ROWS` is held to it by a test). Past it, a body that reuses the weight across rows is the
 /// better shape anyway.

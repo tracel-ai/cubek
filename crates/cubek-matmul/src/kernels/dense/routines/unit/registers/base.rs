@@ -258,7 +258,7 @@ mod tests {
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_std::devices;
 
-    /// A register block reads a col weight along `K`, folding each line of it with a line of the
+    /// A register block reads a col weight along `K`, contracting each line of it with a line of the
     /// lhs into a cell one value wide, so on every device the weight binds as wide as the lhs and
     /// the output is written a value at a time.
     #[test]
@@ -316,7 +316,7 @@ mod tests {
 
     /// The floor of the memory-bound product too: its default prepares every decode projection,
     /// one to eight rows of `qkv` to `down` against a weight laid either way, on every device
-    /// described, those whose plane width no memory-bound routine can fold across included.
+    /// described, those whose plane width no memory-bound routine can merge across included.
     #[test]
     fn the_default_prepares_every_decode_projection_on_every_device() {
         use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
