@@ -3,7 +3,7 @@
 
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::PackedCacheArgLaunch;
+use cubek_microkernel::attention::packed_cache::PackedCacheArgLaunch;
 use cubek_microkernel::attention::packed_cache::{KeyFixup, KvBitWidths};
 
 /// A packed cache: both operands at their bit widths, and the keys' fix-up where they carry one.
@@ -91,7 +91,7 @@ impl PackedAttentionCache {
     }
 
     /// The cache as a kernel argument
-    /// ([`PackedCacheArg`](cubek_microkernel::attention::PackedCacheArg)).
+    /// ([`PackedCacheArg`](cubek_microkernel::attention::packed_cache::PackedCacheArg)).
     pub fn arg(&self) -> PackedCacheArgLaunch {
         // Without a fix-up the kernel still takes its two tensors, and never reads them.
         let (errs, sign_codebook) = match &self.fixup {
