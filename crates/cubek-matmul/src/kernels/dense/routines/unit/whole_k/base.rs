@@ -184,7 +184,7 @@ impl Routine for UnitWholeKMatmulRoutine {
             plane_width,
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 }

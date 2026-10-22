@@ -274,7 +274,7 @@ impl Routine for PlaneFragmentMatmulRoutine {
                     microkernel.orders,
                 )) + microkernel.scratch_bytes(&item, window)),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let shared_memory = PlaneFragmentMatmulRoutineSharedMemory {
             stage,
             ring,

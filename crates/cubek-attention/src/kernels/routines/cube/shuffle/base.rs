@@ -134,7 +134,7 @@ impl Routine for CubeShuffleAttentionRoutine {
             plane_width: hw.plane_dim()?,
             shared_memory: microkernel.shared_memory(hw, &item, &storage),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(

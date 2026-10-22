@@ -944,8 +944,8 @@ mod base {
         assert_eq!(launched.leaf(), placed.leaf());
         assert_eq!(launched.overhangs_output(), placed.overhangs_output());
         assert_eq!(
-            launched.as_cubek().planes_per_cube(),
-            placed.as_cubek().planes_per_cube() + 1
+            launched.as_tile().planes_per_cube(),
+            placed.as_tile().planes_per_cube() + 1
         );
     }
 

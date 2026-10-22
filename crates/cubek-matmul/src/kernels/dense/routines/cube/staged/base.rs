@@ -608,7 +608,7 @@ impl Routine for CubeStagedMatmulRoutine {
             plane_width: resolved.plane_width,
             shared_memory: resolved.shared_memory,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let blueprint = match item.blocks {
             None => self.float_blueprint(hw, problem, &item, microkernel, partitioning, storage),
             Some(_) => {

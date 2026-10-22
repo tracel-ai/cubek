@@ -155,7 +155,7 @@ impl Routine for UnitAttentionRoutine {
             plane_width,
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =

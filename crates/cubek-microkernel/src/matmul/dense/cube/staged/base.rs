@@ -405,7 +405,7 @@ impl CubeStagedMicrokernel {
         partitioning: &MatmulPartitioning,
     ) -> Result<CubeStagedResolved, Refusal> {
         assert_eq!(
-            partitioning.as_cubek().fillers(),
+            partitioning.as_tile().fillers(),
             0,
             "a cube resolves against its tiling's placement, which sets no plane aside"
         );
@@ -843,7 +843,7 @@ impl Microkernel for CubeStagedMicrokernel {
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         assert_eq!(
-            partitioning.as_cubek().fillers() as usize,
+            partitioning.as_tile().fillers() as usize,
             self.fill.filling_planes,
             "a cube is launched over its launch tiling, beside the planes its fill sets aside"
         );

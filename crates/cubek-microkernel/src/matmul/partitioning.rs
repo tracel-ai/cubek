@@ -297,8 +297,8 @@ impl MatmulPartitioning {
             })
     }
 
-    /// cubek's partitioning, for what the tile engine reads of it: the launch and the binding.
-    pub fn as_cubek(&self) -> &Partitioning {
+    /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
+    pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning
     }
 }

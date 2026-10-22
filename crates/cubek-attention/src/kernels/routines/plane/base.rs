@@ -217,7 +217,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
                 * (Self::stage_bytes(hw, &microkernel, problem, &ring)
                     + microkernel.window_bytes(&item)),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(

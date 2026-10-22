@@ -167,7 +167,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
             plane_width: hw.plane_dim()?,
             shared_memory: microkernel.shared_memory(hw, &item, &storage),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         microkernel.plane.reads_stage(settings.microkernel.layout)?;
         if settings.microkernel.planes_along_keys.get() > 1 {
             microkernel.plane.merges_rows()?;

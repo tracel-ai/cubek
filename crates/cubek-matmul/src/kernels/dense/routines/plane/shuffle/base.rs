@@ -216,7 +216,7 @@ impl PlaneShuffleMatmulRoutine {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 
@@ -243,7 +243,7 @@ impl PlaneShuffleMatmulRoutine {
             shared_memory: 0,
         };
         let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 }

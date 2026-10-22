@@ -495,7 +495,7 @@ impl AttentionTensors {
         let launcher = Launcher::new(
             &self.client,
             partitioning.kernel(),
-            partitioning.as_cubek().space(),
+            partitioning.as_tile().space(),
             LaunchGrid::Stated {
                 cube_count: grid.launch.cube_count.clone(),
                 cube_dim: grid.launch.cube_dim,

@@ -585,7 +585,7 @@ impl<Out> MatmulTensors<Out> {
         grid.launcher(
             self.client(),
             blueprint.partitioning.kernel(),
-            blueprint.partitioning.as_cubek().space(),
+            blueprint.partitioning.as_tile().space(),
         )
     }
 }
@@ -770,7 +770,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 .build()
                 .expect(ADMITTED_PLAN_RUNS),
             turns: ZeroedCounters::new(
-                blueprint.partitioning.as_cubek().relay_counters(),
+                blueprint.partitioning.as_tile().relay_counters(),
                 &self.client,
             )
             .into_arg(),
@@ -791,7 +791,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         launcher: &Launcher,
     ) -> MatmulLastArrivalBinding {
         self.assert_tiled();
-        let partitioning = blueprint.partitioning.as_cubek();
+        let partitioning = blueprint.partitioning.as_tile();
         // The output's axes in its order: the batches the cube level hands out, then its rows and
         // columns. Stated as labels, so a batch axis one box long stays a dim of the slots.
         let axes: Vec<Axis> = blueprint
@@ -836,7 +836,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
     ) -> (Launcher, [Bound; 2]) {
-        let partitioning = blueprint.partitioning.as_cubek();
+        let partitioning = blueprint.partitioning.as_tile();
         let launcher = grid.launcher(
             self.client(),
             blueprint.partitioning.kernel(),

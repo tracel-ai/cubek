@@ -140,7 +140,7 @@ impl Routine for CubeTileGroupMatmulRoutine {
             shared_memory: microkernel.shared_memory(&item, &partitioning),
         };
         let blueprint = MatmulBlueprint::packed(&packing, microkernel, partitioning);
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 }

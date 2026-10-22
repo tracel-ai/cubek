@@ -216,7 +216,7 @@ impl Routine for UnitRegistersMatmulRoutine {
             plane_width: Self::plane_width(hw, planes.count()),
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let blueprint = self.blueprint(hw, problem, microkernel, partitioning);
         Ok((blueprint, grid))
     }

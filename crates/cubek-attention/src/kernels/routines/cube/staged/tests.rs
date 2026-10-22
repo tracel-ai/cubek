@@ -351,7 +351,7 @@ mod fragment {
                 .expect("the lead's box prepares on the M2 in either order");
             blueprint
                 .partitioning
-                .as_cubek()
+                .as_tile()
                 .levels()
                 .iter()
                 .any(|level| level.is_reversed(Q))

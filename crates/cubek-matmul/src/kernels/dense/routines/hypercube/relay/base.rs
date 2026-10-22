@@ -202,7 +202,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         vectorization.require(VectorRequirement::Access {
