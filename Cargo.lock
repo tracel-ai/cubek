@@ -1377,6 +1377,7 @@ dependencies = [
  "cubecl-common",
  "cubek-attention",
  "cubek-matmul",
+ "cubek-microkernel",
  "cubek-std",
  "cubek-test-utils",
  "half",

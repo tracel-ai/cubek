@@ -3,8 +3,8 @@
 //! own part of the keys; the trait a routine reads them through, the traits a cube holds its
 //! planes through, and what every attention microkernel shares under them: the axes, the
 //! operands, where a plane shuffle's lines come from, the work item, the partitioning, the staging
-//! count, how a cube lays its stages out, how partials of the same rows lie in slots, which keys
-//! a query sees, and the packed KV cache's format as a plane reads it ([`packed_cache`]).
+//! count, how a cube lays its stages out, how partials of the same rows lie in slots, and which
+//! keys a query sees.
 
 mod attention_microkernel;
 mod axes;

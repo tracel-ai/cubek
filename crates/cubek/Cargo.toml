@@ -58,6 +58,7 @@ matmul-tiled = ["cubek-matmul?/tiled"]
 matmul-multi-level = ["cubek-matmul?/multi-level"]
 # The microkernels the kernels are built from, for a caller writing kernels of its own.
 microkernel = ["cubek-microkernel", "stdlib"]
+attention-tiled = ["cubek-attention?/tiled"]
 quantization = ["cubek-quant/kernels"]
 random = ["cubek-random"]
 reduce = ["cubek-reduce"]
