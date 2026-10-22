@@ -97,6 +97,9 @@ impl ConvolutionProblem {
             lhs_scheme: None,
             rhs_scheme: None,
             global_dtypes: self.global_dtypes.clone(),
+            // Convolution retains its existing precision policy even when
+            // ordinary matmul disables automatic TF32 conversion.
+            allow_tf32: true,
             address_type: self.address_type,
             accumulator,
         }

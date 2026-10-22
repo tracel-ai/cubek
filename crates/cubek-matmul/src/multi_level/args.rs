@@ -9,7 +9,7 @@ use cubecl::std::tensor::{
 use cubecl::unexpanded;
 use cubek_std::{
     InputBinding, MatrixLayout,
-    launch::tma::{tma_operand, tma_store_operand},
+    launch::tma::{tma_operand_typed, tma_store_operand},
 };
 
 pub use crate::routine::RuntimeConfig;
@@ -438,7 +438,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRo
         let lhs_dims = dims(&lhs, &problem.lhs_batches);
         let rhs_dims = dims(&rhs, &problem.rhs_batches);
 
-        let (lhs, lhs_transposed) = tma_operand(
+        let (lhs, lhs_transposed) = tma_operand_typed(
             lhs,
             lhs_dims.0,
             problem.lhs_layout,
@@ -446,7 +446,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRo
             dtypes.lhs_stage,
             blueprint.swizzle_modes().lhs.into(),
         );
-        let (rhs, rhs_transposed) = tma_operand(
+        let (rhs, rhs_transposed) = tma_operand_typed(
             rhs,
             rhs_dims.0,
             problem.rhs_layout,
