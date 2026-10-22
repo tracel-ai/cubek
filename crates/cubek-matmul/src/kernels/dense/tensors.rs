@@ -490,6 +490,7 @@ impl MatmulTensors {
         let out = launcher
             .arg(out.binding, out.elem)
             .axes(&out_axes)
+            .batches(&self.table_batches())
             .vectorize(blueprint.widths.out)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -842,6 +843,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 launcher
                     .arg(tensor.binding, tensor.elem)
                     .axes(&axes)
+                    .batches(&batches)
                     .vectorize(width)
                     .build()
                     .expect(ADMITTED_PLAN_RUNS)
