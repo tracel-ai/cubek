@@ -180,7 +180,7 @@ pub fn rows_read(k: usize, n: usize, tile: (usize, usize), words_per_load: usize
 }
 
 /// The kernel's statement of a weight's values over [`VALUES_AXES`]: `k`'s finest fragments, as
-/// many as make a block, become `KI`, and the rest `KB`. The statement cubek's tile wrote, exactly:
+/// many as make a block, become `KI`, and the rest `KB`. The statement the tile DSL wrote, exactly:
 /// a reader matches the tiles it is stored in, not only the addresses. `None` for a weight in rows, or one
 /// whose `k` fragments do not close a block.
 pub fn kernel_values(weight: &Metadata) -> Option<Metadata> {
@@ -208,7 +208,7 @@ fn weight_fragments(weight: &Metadata) -> Option<[Fragments; 2]> {
 }
 
 /// Where `k`'s fragments split into the blocks and the values inside one: its finest fragments,
-/// as many as make a block, and any fragment of one coarser than them, where cubek's tile leaves
+/// as many as make a block, and any fragment of one coarser than them, where the tile DSL leaves
 /// it. `None` where they do not close a block.
 fn block_split(k: &[(usize, usize)]) -> Option<usize> {
     let mut split = k.len();

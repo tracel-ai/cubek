@@ -109,7 +109,7 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// The instruction as cubek's tile engine runs it, a unit holding `cells` accumulator cells.
+    /// The instruction as the tile DSL runs it, a unit holding `cells` accumulator cells.
     ///
     /// The software instruction takes each lhs line's values at fixed positions
     /// ([`RegisterBlock::component_fanout`]): a position read at runtime sends the whole line through

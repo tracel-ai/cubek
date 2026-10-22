@@ -498,7 +498,7 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// The instruction as cubek's tile engine runs it, each unit holding its cells of every
+    /// The instruction as the tile DSL runs it, each unit holding its cells of every
     /// instruction the plane holds.
     pub fn tile_instruction(&self) -> Instruction {
         let cells = self.settings.along_m.get() * self.settings.along_n.get();
