@@ -106,7 +106,7 @@ mod tests {
     }
 
     /// Qwen3-8B's attention: a prompt of 512 positions, and a decode step against a cache of 4096,
-    /// the problems the tables read off their keys.
+    /// the problems autotune reads off its keys.
     fn problems() -> [AttentionRoutineProblem; 2] {
         [(512, 512, true), (1, 4096, false)].map(|(queries, keys, causal)| {
             let visibility = AttentionVisibility::new(causal, None);

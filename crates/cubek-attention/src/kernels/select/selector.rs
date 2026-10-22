@@ -2,8 +2,8 @@
 //! its rules are unit-tested with no GPU.
 //!
 //! The selector runs first. What it answers is how the call reads its cache, and then how the
-//! kernel is chosen: by measurement on one of two autotune tables, by rule, or by the caller's pin.
-//! Each routine then chooses its own setting, the table's candidates being its settings.
+//! kernel is chosen: by measurement on one of two autotunes, by rule, or by the caller's pin.
+//! Each routine then chooses its own setting, the autotune's candidates being its settings.
 
 use super::{AttentionKernel, AttentionOpStrategy};
 use crate::kernels::{AttentionTensors, CubeAttentionKernel, HypercubeAttentionKernel};
@@ -11,7 +11,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 
-/// How many query positions a call has: what the rules and the tables tell calls apart by.
+/// How many query positions a call has: what the rules and autotune tell calls apart by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryPositions {
     One,
@@ -41,7 +41,7 @@ pub enum KvKind {
 pub enum AttentionSelection {
     /// A float cache, read by the kernel `choice` gives.
     Float(AttentionChoice),
-    /// A packed cache rebuilt as floats, the QJL fix-up folded into the keys, then read by the
+    /// A packed cache rebuilt as floats, the QJL fix-up merged into the keys, then read by the
     /// kernel `choice` gives.
     DequantizeThen(AttentionChoice),
     /// A packed cache read as it lies, decoded by the hypercube shuffle `read` gives. Where it
@@ -56,7 +56,7 @@ pub enum AttentionSelection {
 /// How a float attention's kernel is chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttentionChoice {
-    /// The fastest candidate of the autotune table of calls of these query positions.
+    /// The fastest candidate of the autotune of calls of these query positions.
     Autotune(QueryPositions),
     /// A kernel named by rule or by the caller.
     Kernel(KernelChoice),
@@ -96,8 +96,8 @@ const ONE_POSITION_RULE: AttentionKernel =
 
 /// How a call of `queries` positions over a `cache` runs under `strategy`.
 ///
-/// A measuring strategy measures: a call of one query position on the one-position table, any
-/// other on the many-positions table. A rule runs the hypercube shuffle merged on the last arrival
+/// A measuring strategy measures: a call of one query position on the one-position autotune, any
+/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last arrival
 /// at one position, and the cube fragment routine elsewhere. A pin runs its kernel.
 ///
 /// A packed cache is decoded inline at one position under every policy, by the hypercube shuffle
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(AttentionKernel::Unit.instead_by_rule(), None);
     }
 
-    /// `Autotune` measures every float call, on the table of its query positions; a packed call
+    /// `Autotune` measures every float call, on the autotune of its query positions; a packed call
     /// of one position has one kernel and nothing to race, and a packed call of many is rebuilt
     /// and measured as a float one.
     #[test]
@@ -232,10 +232,10 @@ mod tests {
         );
     }
 
-    /// Every candidate of the family is on a table, so the cubek ceiling and `Autotune` name the
+    /// Every candidate of the family is measured, so the `Cubek` ceiling and `Autotune` name the
     /// same set.
     #[test]
-    fn the_cubek_ceiling_and_autotune_agree_while_every_candidate_is_on_a_table() {
+    fn the_cubek_ceiling_and_autotune_agree_while_every_candidate_is_measured() {
         for cache in KINDS {
             for queries in [One, Many] {
                 assert_eq!(

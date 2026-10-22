@@ -21,19 +21,19 @@ use serde::{Deserialize, Serialize};
 /// that kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum AttentionOpStrategy {
-    /// Pick by measurement. Two tables: one for calls of many query positions,
-    /// where this crate's routines sit above the flash op, and one
+    /// Pick by measurement. Two autotunes: one for calls of many query positions,
+    /// where the tiled routines race the flash routines ([`forward`](crate::forward)), and one
     /// for a single position, where they race each other.
     ///
-    /// Every candidate of the single position's table launches the same kernel
+    /// Every candidate of the single position's autotune launches the same kernel
     /// at every step of a cache, its attended length read on device: the
     /// graph-capture precondition, which the list keeps rather than the
     /// measurement. A chunk against a partly filled cache is measured without
     /// the flash op, for a different reason: its causal mask is not
-    /// bottom-right aligned on that shape, so the table would be measuring two
+    /// bottom-right aligned on that shape, so the autotune would be measuring two
     /// different functions.
     ///
-    /// The default, and what production runs.
+    /// The default.
     #[default]
     Autotune,
     /// Pick by rule, reaching no further than the named architecture.
@@ -42,34 +42,33 @@ pub enum AttentionOpStrategy {
     Specific(AttentionKernel),
 }
 
-/// How far from this crate's routines a
+/// How far from the tiled routines a
 /// [`Heuristic`](AttentionOpStrategy::Heuristic) may reach.
 ///
-/// A **ceiling**, not an exclusive choice, as in the matmul family. This
-/// family has no hand-written kernel, so there is no `Raw` rung between them.
+/// A **ceiling**, not an exclusive choice, as in the matmul family.
 ///
 /// [`Cubek`](Self::Cubek) and [`Autotune`](AttentionOpStrategy::Autotune)
-/// resolve identically while every foreign candidate is on a table: "may
-/// reach cubek's routines" and "measure everything" then name the same set.
-/// They part company once a candidate sits outside the tables, and stating
+/// resolve identically while every flash candidate is measured: "may
+/// reach the flash routines" and "measure everything" then name the same set.
+/// They part company once a candidate is left out of autotune, and stating
 /// both keeps the vocabulary the same as matmul's rather than encoding the
 /// family's kernel count into the type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AttentionKernelHeuristic {
-    /// This crate's kernels throughout, by rule ([`select`](super::selector::select)). Nothing
+    /// The tiled routines throughout, by rule ([`select`](super::selector::select)). Nothing
     /// here reaches the flash op, and nothing here measures.
     Tile,
-    /// The same rules, with the prompt's routines measured against cubek's
-    /// flash routines.
+    /// The same rules, with the prompt's routines measured against
+    /// the flash routines ([`forward`](crate::forward)).
     Cubek,
 }
 
 /// The kernels themselves, named for what they are: the unit routine, or a cube or a hypercube
 /// routine, each scope naming its own.
 ///
-/// This is the vocabulary a [`Specific`](AttentionOpStrategy::Specific) pin speaks. cubek's flash
-/// routines are not here: they are reachable as measured candidates, and a caller that wants one
-/// unconditionally launches it directly, outside this family.
+/// This is the vocabulary a [`Specific`](AttentionOpStrategy::Specific) pin speaks. The flash
+/// routines ([`forward`](crate::forward)) are not here: they are reachable as measured candidates,
+/// and a caller that wants one unconditionally launches it directly, outside this family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AttentionKernel {
     /// [`UnitAttentionRoutine`] at its lead setting, at any query length, over a float cache:
@@ -118,10 +117,10 @@ impl AttentionOpStrategy {
     /// Whether this strategy settles a choice by measuring.
     ///
     /// [`Autotune`](Self::Autotune) does by name, and
-    /// [`Cubek`](AttentionKernelHeuristic::Cubek) does because "may reach cubek's
-    /// routines" is the same set as "measure everything" while every foreign
-    /// candidate is on a table. [`Tile`](AttentionKernelHeuristic::Tile) does not,
-    /// and that is the whole of what it means: this crate's kernels by rule, at
+    /// [`Cubek`](AttentionKernelHeuristic::Cubek) does because "may reach the flash
+    /// routines" is the same set as "measure everything" while every flash
+    /// candidate is measured. [`Tile`](AttentionKernelHeuristic::Tile) does not,
+    /// and that is the whole of what it means: the tiled routines by rule, at
     /// their lead settings, with nothing timed.
     pub(crate) fn measures(&self) -> bool {
         matches!(
