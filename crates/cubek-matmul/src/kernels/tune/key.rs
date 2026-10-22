@@ -234,14 +234,14 @@ pub struct CubeBlock {
     pub k: usize,
 }
 
-/// What a product is, as one candidate's cube meets it: whether a **candidate's
+/// How a grid of one candidate's cubes covers a product: whether a **candidate's
 /// cuts are cuts this problem affords**.
 ///
 /// Not a property of the problem alone — a block that tiles one product masks
 /// another — and every arm is arithmetic over the extents and the block. How
 /// much a masked cube or a lone one *costs* is a measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatmulKind {
+pub enum GridCoverage {
     /// One cube covers the whole product: the grid is the batch and nothing
     /// else, so no device spreads this candidate over more than one worker per
     /// batch.
@@ -274,33 +274,33 @@ impl MatmulShape {
     /// Where a candidate whose cube covers `block` is tried on this problem —
     /// the priority both arms are written in.
     ///
-    /// [`Tiled`](MatmulKind::Tiled) candidates go first. A
-    /// [`Masked`](MatmulKind::Masked) candidate falls one priority level per doubling of
+    /// [`Tiled`](GridCoverage::Tiled) candidates go first. A
+    /// [`Masked`](GridCoverage::Masked) candidate falls one priority level per doubling of
     /// what its grid covers against what the problem asks for. A
-    /// [`Whole`](MatmulKind::Whole) candidate goes last: a grid that cannot
+    /// [`Whole`](GridCoverage::Whole) candidate goes last: a grid that cannot
     /// spread is the one claim about a launch that needs no clock — and even
     /// that says only where to try it, since how much it costs is still a
     /// measurement.
     pub fn priority(&self, block: CubeBlock) -> CandidatePriority {
-        match self.kind(block) {
-            MatmulKind::Tiled => CandidatePriority::FIRST,
-            MatmulKind::Masked => CandidatePriority::FIRST
+        match self.coverage(block) {
+            GridCoverage::Tiled => CandidatePriority::FIRST,
+            GridCoverage::Masked => CandidatePriority::FIRST
                 .lowered((self.covered(block) / self.work().max(1)).max(1).ilog2()),
-            MatmulKind::Whole => CandidatePriority::LAST,
+            GridCoverage::Whole => CandidatePriority::LAST,
         }
     }
 
-    /// What this product is as a cube of `block` meets it. The arms are
-    /// ordered by how much they take away and the first that holds is the kind:
+    /// How a grid of `block` cubes covers this product. The arms are
+    /// ordered by how much they take away and the first that holds is the coverage:
     /// a block covering the product has no second cube to be masked against.
-    pub fn kind(&self, block: CubeBlock) -> MatmulKind {
+    pub fn coverage(&self, block: CubeBlock) -> GridCoverage {
         let (block_m, block_n) = (block.m.max(1), block.n.max(1));
         if block_m >= self.m && block_n >= self.n {
-            return MatmulKind::Whole;
+            return GridCoverage::Whole;
         }
         match self.m.is_multiple_of(block_m) && self.n.is_multiple_of(block_n) {
-            true => MatmulKind::Tiled,
-            false => MatmulKind::Masked,
+            true => GridCoverage::Tiled,
+            false => GridCoverage::Masked,
         }
     }
 }
