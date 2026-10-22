@@ -331,6 +331,26 @@ fn the_fp4_value_reaches_the_plane_routine_on_every_device() {
     );
 }
 
+/// The fp8 value types reach the packed plane routine on every device, for the reason
+/// `e2m1`'s does: a code is a byte of a word, decoded in software. MXFP8 is `e4m3` under
+/// `ue8m0` blocks, so a device that refused it would dequantize every MXFP8 weight.
+#[test]
+fn the_fp8_values_reach_the_plane_routine_on_every_device() {
+    let hw = devices::m2_pro();
+    for value in [QuantValue::E4M3, QuantValue::E5M2] {
+        let mxfp8 = QuantScheme::default()
+            .with_value(value)
+            .per_block([32], ScaleDtype::UE8M0)
+            .with_store(QuantStore::PackedU32(0));
+        assert!(matmul_supported(&hw, &mxfp8), "{value:?}");
+        assert_eq!(
+            select(Specific(K::PlaneShuffle), &quantized(1, mxfp8), &hw),
+            Ok(packed(P::Pin(K::PlaneShuffle))),
+            "{value:?}"
+        );
+    }
+}
+
 /// A narrow (minifloat) scale dtype is served as it is stored: the launch binds the bytes
 /// as words and the kernel decodes one scale a read. `ue8m0` is MXFP4's scale level, so
 /// declining it would dequantize every MXFP4 weight.

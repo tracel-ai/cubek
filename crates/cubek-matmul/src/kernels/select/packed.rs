@@ -30,8 +30,8 @@ pub fn quantized_few_rows(rows: usize) -> bool {
 }
 
 /// Whether the packed kernels stream `scheme`: the packed int formats
-/// (`q4f`/`q4s`/`q8f`/`q8s`) or the fp4 one (`e2m1`), in either packed-u32
-/// form — `PackedU32(0)` with blocks along the output dimension (burn's
+/// (`q4f`/`q4s`/`q8f`/`q8s`), the fp4 one (`e2m1`) or the fp8 ones (`e4m3`/`e5m2`), in
+/// either packed-u32 form — `PackedU32(0)` with blocks along the output dimension (burn's
 /// artifact form) or `PackedU32(1)` with blocks along the reduction (the
 /// col-requantized serving form) — with block-level scales running the packed
 /// direction and covering whole `u32`s (see
@@ -61,6 +61,10 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme) -> bool {
             // software wherever it is read. NVFP4 and MXFP4 differ only in their scale
             // levels, which the packing answers.
             | QuantValue::E2M1
+            // The fp8 formats' value types, MXFP8's among them: a byte a code, four a word,
+            // decoded in software as `e2m1` is.
+            | QuantValue::E4M3
+            | QuantValue::E5M2
     );
     value && scheme_operand(scheme).is_some()
 }
