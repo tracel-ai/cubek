@@ -4,4 +4,3 @@ mod kernel;
 mod tests;
 
 pub use base::*;
-pub use kernel::*;

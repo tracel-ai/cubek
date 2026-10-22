@@ -1,4 +1,4 @@
-use super::cube_staged_matmul_kernel;
+use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::select::packed::nvfp4_activation_scheme;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
