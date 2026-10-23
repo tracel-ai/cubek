@@ -1,4 +1,7 @@
-use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
+use crate::components::{
+    instructions::{lowest_coordinate_matching, max_identity},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -263,7 +266,7 @@ fn plane_topk_insert_with_coords<N: Numeric, S: Size>(
         let is_winner = local_best_val
             .equal(&winning_val)
             .vec_and(local_best_coord.equal(&winning_coord));
-        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+        local_best_val = select_many(is_winner, Vector::new(max_identity::<N>()), local_best_val);
         local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
     }
 }
@@ -295,7 +298,7 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
 
         // Winner masking logic
         let is_winner = unit_id.equal(&winning_unit);
-        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+        local_best_val = select_many(is_winner, Vector::new(max_identity::<N>()), local_best_val);
     }
 }
 
@@ -327,7 +330,7 @@ fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
-        let mut local_val = Vector::new(N::min_value());
+        let mut local_val = Vector::new(max_identity::<N>());
         let mut local_coord = Vector::new(u32::MAX);
 
         #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
@@ -368,7 +371,7 @@ fn plane_topk_merge_values<N: Numeric, S: Size>(
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
-        let mut local_val = Vector::new(N::min_value());
+        let mut local_val = Vector::new(max_identity::<N>());
 
         #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
