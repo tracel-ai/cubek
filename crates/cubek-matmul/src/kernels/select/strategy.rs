@@ -95,11 +95,10 @@ pub enum MatmulKernel {
     /// measured against, and what [`Heuristic(Cubek)`](MatmulKernelHeuristic::Cubek)
     /// falls through to.
     CubekAuto,
-    /// An NVFP4 input multiplied on the GPU's 4-bit tensor cores: a float input is rounded to
-    /// NVFP4 first, since the 4-bit instruction takes 4-bit numbers on both sides, and the packed
-    /// one is read as it is stored. Rounding the float input changes what the product computes, so
-    /// no policy runs it: an NVFP4 input multiplies a 16-bit one everywhere else. Named
-    /// here for a benchmark or a test; NVFP4 inputs only, on a GPU with the instruction.
+    /// Two NVFP4 inputs multiplied on the GPU's 4-bit tensor cores, both read as they are stored.
+    /// The inputs a caller rounded to NVFP4 are its choice of what the product computes, so no
+    /// policy runs it. Named here for a benchmark or a test; two NVFP4 inputs only, on a GPU with
+    /// the instruction.
     Nvfp4TensorCores,
 }
 

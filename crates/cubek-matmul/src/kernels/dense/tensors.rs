@@ -126,7 +126,7 @@ impl<Out: core::fmt::Debug> core::fmt::Debug for MatmulTensors<Out> {
 
 impl MatmulTensors {
     /// The product of `lhs` and `rhs`, both on `client`'s device, as a launch on `M` reads it, its
-    /// output allocated in the lhs's element: float inputs holding the rows as `M`'s
+    /// output allocated in a float input's element: float inputs holding the rows as `M`'s
     /// [`ROWS_KIND`](MatmulMicrokernel::ROWS_KIND) says, a packed one every row whole.
     ///
     /// # Errors
@@ -150,7 +150,7 @@ impl MatmulTensors {
                 Self::float(client, lhs, rhs, M::ROWS_KIND)
             }
             (lhs, rhs) => {
-                let out = Self::packed_output(&lhs);
+                let out = Self::packed_output(&lhs, &rhs);
                 Self::packed(client, lhs, rhs, out)
             }
         }
@@ -211,7 +211,7 @@ impl MatmulTensors {
     }
 
     /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch on `M`
-    /// reads them, written into `out`, `[batches.., rows, n]` in the lhs's element, which
+    /// reads them, written into `out`, `[batches.., rows, n]` in a float input's element, which
     /// the caller allocated as its product lies: a grouped one's slabs side by side, say. The
     /// lhs's batch dims broadcast against the table's. Under [`MatmulIndex::Slab`] the rhs
     /// is the stack: a float one `[slabs, k, n]`, read where it lies; a packed one read as its
@@ -303,7 +303,7 @@ impl MatmulTensors {
     }
 
     /// `out`, the output of `lhs` against one `[k, n]` matrix per batch of `table`, checked to be
-    /// `[batches.., rows, n]` in the lhs's element.
+    /// `[batches.., rows, n]` in a float input's element.
     ///
     /// # Errors
     ///
@@ -415,13 +415,13 @@ impl MatmulTensors {
         }
     }
 
-    /// The element a product beside a packed input is written in: the lhs's, or, for a
-    /// packed one, which names none, the element its words unpack into
+    /// The element a product beside a packed input is written in: a float input's, or, where
+    /// both are packed and name none, the element their words unpack into
     /// ([`PACKED`](MatmulRoutineProblem::PACKED)).
-    pub(super) fn packed_output(lhs: &StoredTensor) -> ElemType {
-        match lhs {
-            StoredTensor::Plain(lhs) => lhs.elem,
-            StoredTensor::Packed(_) => MatmulRoutineProblem::PACKED,
+    pub(super) fn packed_output(lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType {
+        match (lhs, rhs) {
+            (StoredTensor::Plain(input), _) | (_, StoredTensor::Plain(input)) => input.elem,
+            (StoredTensor::Packed(_), StoredTensor::Packed(_)) => MatmulRoutineProblem::PACKED,
         }
     }
 
@@ -541,7 +541,7 @@ impl MatmulTensors {
 impl MatmulTensors<Geometry> {
     /// The product of `lhs` and `rhs` as a launch on `M` reads it, handed to a sink the caller
     /// binds: nothing is allocated, and the output is laid out densely, row-major,
-    /// in the lhs's element, as rows where the launch reads every row whole.
+    /// in a float input's element, as rows where the launch reads every row whole.
     ///
     /// # Errors
     ///
@@ -771,7 +771,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                         MatmulTensors::rows_of(lhs, k),
                         rhs.extent([K, N], N),
                         k,
-                        self.out.element(lhs),
+                        self.out.element(lhs, rhs),
                         packings,
                     )
                 };

@@ -290,3 +290,86 @@ mod cube_staged {
         assert!(laid.contains(&RowChunks::Padded), "no setting padded");
     }
 }
+
+mod packed_lhs {
+    use super::*;
+    use crate::kernels::select::packed::nvfp4_scheme;
+    use crate::kernels::{
+        CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, DequantizedMatmulRoutine,
+        PlaneShuffleMatmulRoutine,
+    };
+    use cubecl::features::MmaConfig;
+    use cubek_std::devices;
+    use cubek_std::routine::Routine;
+
+    /// `m` rows of an `[m, k]` input packed in NVFP4 along `k`, against a float `[k, n]` one.
+    fn packed_lhs(m: usize) -> MatmulRoutineProblem {
+        let scheme = nvfp4_scheme();
+        let packing = Packing {
+            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("one axis a block"),
+            scheme,
+        };
+        MatmulRoutineProblem::packed(
+            m,
+            2048,
+            4096,
+            F16,
+            MatmulOperands {
+                lhs: Some(packing),
+                ..MatmulOperands::all(None)
+            },
+        )
+    }
+
+    /// A packed `[m, k]` input against a float `[k, n]` one is declined by the routines that
+    /// stream the `[k, n]` input, and served by the routine that decodes every packed input
+    /// first: the default a product with nothing chosen falls back to.
+    #[test]
+    fn a_packed_lhs_is_decoded_where_the_streaming_routines_decline_it() {
+        let hw = devices::offering_cmma(
+            devices::m2_pro(),
+            [MmaConfig {
+                a_type: F16,
+                b_type: F16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 8,
+                n: 8,
+                k: 8,
+            }],
+        );
+        for m in [1, 8] {
+            let problem = packed_lhs(m);
+            for settings in PlaneShuffleMatmulRoutine
+                .settings(&hw)
+                .into_iter()
+                .chain(PlaneShuffleMatmulRoutine.packed_settings())
+            {
+                assert!(
+                    PlaneShuffleMatmulRoutine
+                        .prepare(&hw, &problem, &settings)
+                        .is_err(),
+                    "plane shuffle at {settings}, {m} rows"
+                );
+            }
+            for settings in CubeShuffleMatmulRoutine.packed_settings(&hw) {
+                assert!(
+                    CubeShuffleMatmulRoutine
+                        .prepare(&hw, &problem, &settings)
+                        .is_err(),
+                    "cube shuffle at {settings}, {m} rows"
+                );
+            }
+        }
+        let problem = packed_lhs(512);
+        let decoded = DequantizedMatmulRoutine {
+            dense: CubeStagedMatmulRoutine,
+        };
+        assert!(
+            decoded
+                .settings(&hw)
+                .iter()
+                .any(|settings| decoded.prepare(&hw, &problem, settings).is_ok()),
+            "no setting decodes the packed lhs and runs the float product"
+        );
+    }
+}

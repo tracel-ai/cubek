@@ -28,8 +28,8 @@ pub trait MatmulOutput {
     /// The product of `lhs` and `rhs` landing here.
     fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem;
 
-    /// The element the product is written in, beside the `[m, k]` input `lhs`.
-    fn element(&self, lhs: &StoredTensor) -> ElemType;
+    /// The element the product of `lhs` and `rhs` is written in.
+    fn element(&self, lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType;
 }
 
 impl MatmulOutput for MatmulOutputBuffer {
@@ -43,7 +43,7 @@ impl MatmulOutput for MatmulOutputBuffer {
         MatmulRoutineProblem::new(lhs, rhs, &self.bound)
     }
 
-    fn element(&self, _lhs: &StoredTensor) -> ElemType {
+    fn element(&self, _lhs: &StoredTensor, _rhs: &StoredTensor) -> ElemType {
         self.bound.elem
     }
 }
@@ -59,7 +59,7 @@ impl MatmulOutput for Geometry {
         MatmulRoutineProblem::sink(lhs, rhs, self)
     }
 
-    fn element(&self, lhs: &StoredTensor) -> ElemType {
-        MatmulTensors::packed_output(lhs)
+    fn element(&self, lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType {
+        MatmulTensors::packed_output(lhs, rhs)
     }
 }
