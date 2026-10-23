@@ -9,7 +9,7 @@ use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::MatmulStep;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::stored::Packing;
-use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
+use cubek_microkernel::matmul::tile_order;
 use cubek_std::Hardware;
 use cubek_std::devices;
 use cubek_std::matmul_axes::{K, M, N, blocked};
@@ -58,8 +58,8 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
             N,
             words,
             Some((
-                &VALUES_AXES,
-                tile_order::values_storage((128, 8), words).tiles(),
+                &tile_order::values_axes(N),
+                tile_order::values_storage(N, (128, 8), words).tiles(),
             )),
             None,
         )

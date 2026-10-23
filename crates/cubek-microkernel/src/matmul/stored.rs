@@ -600,7 +600,7 @@ pub enum Walked {
 #[cfg(test)]
 mod tests {
     use crate::matmul::stored::Operand;
-    use crate::matmul::tile_order::{self, VALUES_AXES as VALUES};
+    use crate::matmul::tile_order;
     use cubek_std::matmul_axes::{K, KB, KI, N, NI};
 
     /// Words one 128-bit load holds.
@@ -615,9 +615,9 @@ mod tests {
     /// block a read stays inside, and its scales, in rows, a word of four blocks down one column.
     #[test]
     fn tile_order_is_read_a_load_of_each() {
-        let values = tile_order::values_storage((128, 8), WORDS);
+        let values = tile_order::values_storage(N, (128, 8), WORDS);
         let stored = nvfp4()
-            .stored(N, WORDS, Some((&VALUES, values.tiles())), None)
+            .stored(N, WORDS, Some((&tile_order::values_axes(N), values.tiles())), None)
             .expect("tile order is read");
         assert_eq!((stored.read(K), stored.read(N)), (16, 1));
         assert_eq!(stored.read_values(), 16);
@@ -637,14 +637,14 @@ mod tests {
     fn a_read_takes_whole_tiles_while_they_fit_one_load() {
         let one_level = [(KI, 8), (KI, 2), (NI, 16)];
         let stored = nvfp4()
-            .stored(N, WORDS, Some((&VALUES, &one_level)), None)
+            .stored(N, WORDS, Some((&tile_order::values_axes(N), &one_level)), None)
             .expect("tile order is read");
         assert_eq!((stored.read(K), stored.read(N)), (16, 1));
 
         for (columns, read) in [(1, 1), (2, 2), (4, 4), (8, 1)] {
             let tiles = [(KI, 8), (NI, columns)];
             let stored = nvfp4()
-                .stored(N, WORDS, Some((&VALUES, &tiles)), None)
+                .stored(N, WORDS, Some((&tile_order::values_axes(N), &tiles)), None)
                 .expect("columns beside a word are read");
             assert_eq!((stored.read(K), stored.read(N)), (8, read), "{columns}");
         }
@@ -657,7 +657,7 @@ mod tests {
     fn a_read_does_not_jump_to_the_next_block_inside_one() {
         let half_a_block_then_the_next = [(KI, 8), (KB, 2), (NI, 4)];
         assert_eq!(
-            nvfp4().stored(N, WORDS, Some((&VALUES, &half_a_block_then_the_next)), None),
+            nvfp4().stored(N, WORDS, Some((&tile_order::values_axes(N), &half_a_block_then_the_next)), None),
             None
         );
     }
@@ -670,7 +670,7 @@ mod tests {
         let interleaved = [(KI, 8), (NI, 2), (KI, 2)];
         for tiles in [&half_word[..], &interleaved[..]] {
             assert_eq!(
-                nvfp4().stored(N, WORDS, Some((&VALUES, tiles)), None),
+                nvfp4().stored(N, WORDS, Some((&tile_order::values_axes(N), tiles)), None),
                 None,
                 "{tiles:?}"
             );

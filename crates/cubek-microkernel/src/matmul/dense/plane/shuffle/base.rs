@@ -574,7 +574,7 @@ mod tests {
     use super::*;
     use crate::matmul::stored::Operand;
     use crate::matmul::stored::Packing;
-    use crate::matmul::tile_order::{self, VALUES_AXES as VALUES};
+    use crate::matmul::tile_order;
     use crate::matmul::{MatmulAxes, MatmulDestination};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
@@ -644,7 +644,7 @@ mod tests {
             .stored(
                 N,
                 4,
-                Some((&VALUES, tile_order::values_storage((128, 8), 4).tiles())),
+                Some((&tile_order::values_axes(N), tile_order::values_storage(N, (128, 8), 4).tiles())),
                 None,
             )
             .expect("tile order is read");

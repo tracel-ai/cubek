@@ -348,7 +348,7 @@ mod tests {
     use cubek_microkernel::matmul::dense::cube::CubeShufflePlaneSettings;
     use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
     use cubek_microkernel::matmul::stored::Operand;
-    use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
+    use cubek_microkernel::matmul::tile_order;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
 
@@ -490,8 +490,8 @@ mod tests {
                 N,
                 words,
                 Some((
-                    &VALUES_AXES,
-                    tile_order::values_storage((128, 8), words).tiles(),
+                    &tile_order::values_axes(N),
+                    tile_order::values_storage(N, (128, 8), words).tiles(),
                 )),
                 None,
             )

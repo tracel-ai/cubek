@@ -188,7 +188,7 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
     use cubek_microkernel::matmul::stored::{Operand, Packing};
-    use cubek_microkernel::matmul::tile_order::{self, VALUES_AXES};
+    use cubek_microkernel::matmul::tile_order;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, N};
 
@@ -208,8 +208,8 @@ mod tests {
                 N,
                 words,
                 Some((
-                    &VALUES_AXES,
-                    tile_order::values_storage((128, 8), words).tiles(),
+                    &tile_order::values_axes(N),
+                    tile_order::values_storage(N, (128, 8), words).tiles(),
                 )),
                 None,
             )
