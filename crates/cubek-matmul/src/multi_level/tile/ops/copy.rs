@@ -14,7 +14,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             TileKind::Register(t) => t.init_zero(ident),
             TileKind::PlaneVec(t) => t.init_zero(),
             TileKind::Interleaved(t) => t.init_zero(),
-            TileKind::RowWise(t) => t.init_zero(),
             _ => panic!("init_zero: unsupported tile variant"),
         }
     }

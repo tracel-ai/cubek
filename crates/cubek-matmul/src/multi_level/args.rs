@@ -161,13 +161,6 @@ pub trait MatmulArgs: Send + Sync + 'static + Clone {
     }
 }
 
-#[derive(Clone, Copy)]
-/// Identification of the tensor input.
-pub enum TensorInputIdent {
-    Lhs,
-    Rhs,
-}
-
 #[derive(Clone)]
 /// Type implementing [MatmulArgs] where all inputs and the output are materialized tensors.
 ///

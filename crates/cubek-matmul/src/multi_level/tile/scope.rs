@@ -62,11 +62,3 @@ pub fn assert_plane_scope(kind: ScopeKind) {
         _ => panic!("This Tile variant is only valid in Plane scope"),
     }
 }
-
-/// Comptime assertion that a tile-scope generic resolves to `Unit`.
-pub fn assert_unit_scope(kind: ScopeKind) {
-    match kind {
-        ScopeKind::Unit => {}
-        _ => panic!("This Tile variant is only valid in Unit scope"),
-    }
-}

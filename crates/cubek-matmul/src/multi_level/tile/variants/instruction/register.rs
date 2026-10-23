@@ -149,7 +149,6 @@ impl<N: Numeric> RegisterTile<N> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
             | TileKind::Partition(_)

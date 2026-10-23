@@ -6,7 +6,7 @@ use cubecl::prelude::*;
 
 use crate::multi_level::tile::{
     BounceTile, CmmaTile, InterleavedTile, MmaTile, PartitionTile, PipelinedTile, PlaneVecTile,
-    RegisterTile, RowWise, ScopeMarker, SharedTile, StageTile, TileScope, UnitTile,
+    RegisterTile, ScopeMarker, SharedTile, StageTile, TileScope, UnitTile,
     WhiteboxFragment, variants::stage::partition::partition_get_at_mut,
 };
 
@@ -43,8 +43,6 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope> {
     Unit(UnitTile<N>),
     /// Plane-exposed fragment with a visible layout. `Sc = Plane`.
     WhiteboxFragment(WhiteboxFragment<N>),
-    /// Per-row vector tile (softmax max/sum state). `Sc = Plane`.
-    RowWise(RowWise<N>),
 
     /// Rhs fragments for the partition matmul (1 = single-buffered, 2 = double).
     Pipelined(PipelinedTile<N, Sc>),
@@ -86,10 +84,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
         Self::from_kind(TileKind::new_None())
     }
 
-    pub fn new_RowWise(t: RowWise<N>) -> Tile<N, Sc> {
-        Self::from_kind(TileKind::new_RowWise(t))
-    }
-
     /// Mutable reference to the `(m, n)` element of a `Partition` tile.
     pub fn partition_tile_at_mut(
         &mut self,
@@ -107,7 +101,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Stage(_)
             | TileKind::Pipelined(_)

@@ -3,5 +3,5 @@ mod matmul;
 mod partition;
 mod setup;
 
-pub use partition::{ColMajorGlobalPartitionMatmul, RowMajorGlobalPartitionMatmul};
+pub use partition::RowMajorGlobalPartitionMatmul;
 pub use setup::PartitionedBatchMatmulFamily;

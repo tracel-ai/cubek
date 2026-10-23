@@ -251,25 +251,6 @@ pub fn validate_tma_with_problem(
     Ok(())
 }
 
-/// Dummy trait implementation
-pub struct NoLoadingValidation {}
-impl LoadingValidation for NoLoadingValidation {
-    fn validate_with_config(
-        _device_props: &DeviceProperties,
-        _config: &GlobalReaderConfig,
-    ) -> Result<(), InvalidConfigError> {
-        Ok(())
-    }
-
-    fn validate_with_problem(
-        _problem: &MatmulProblem,
-        _dtypes: &MatmulElems,
-        _ident: StageIdent,
-    ) -> Result<(), InvalidConfigError> {
-        Ok(())
-    }
-}
-
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Controls bounds checking for reader operations.
 ///

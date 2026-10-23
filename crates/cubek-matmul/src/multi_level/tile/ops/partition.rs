@@ -107,7 +107,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
-            | TileKind::RowWise(_)
             | TileKind::Bounce(_)
             | TileKind::Partition(_)
             | TileKind::Pipelined(_)

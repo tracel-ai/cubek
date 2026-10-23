@@ -63,15 +63,6 @@ pub enum TilingLayoutEnum {
     Other,
 }
 
-/// Overall config for tiling layout
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct TilingLayoutConfig {
-    pub lhs: TilingLayoutEnum,
-    pub rhs: TilingLayoutEnum,
-    pub acc: TilingLayoutEnum,
-    pub out: TilingLayoutEnum,
-}
-
 #[derive(CubeType, Clone, Copy)]
 /// Tiles laid out in row-major order.
 ///
