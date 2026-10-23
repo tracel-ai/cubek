@@ -3,9 +3,7 @@ mod matmul_plane_accelerated {
         use cubecl::{TestRuntime, client::Client};
         use cubek_matmul::{
             definition::MatmulProblem,
-            multi_level::{
-                Strategy as MultiLevel, definition::BatchMatmulBlueprint,
-            },
+            multi_level::{Strategy as MultiLevel, definition::BatchMatmulBlueprint},
             routine::BlueprintStrategy,
         };
 
@@ -18,39 +16,11 @@ mod matmul_plane_accelerated {
                 MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_simple_strided(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::SimpleStridedCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_simple_tilewise(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::SimpleTilewiseCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
         fn launch_double_buffering_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
                 p,
                 MultiLevel::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_double_buffering_tilewise(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_double_buffering_hybrid(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::DoubleHybridCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_ordered_double_buffering(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
@@ -67,14 +37,6 @@ mod matmul_plane_accelerated {
                 MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_specialized_strided(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::SpecializedStridedCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-
         include!("algorithm.rs");
     }
 
@@ -82,9 +44,7 @@ mod matmul_plane_accelerated {
         use cubecl::{TestRuntime, client::Client};
         use cubek_matmul::{
             definition::MatmulProblem,
-            multi_level::{
-                Strategy as MultiLevel, definition::BatchMatmulBlueprint,
-            },
+            multi_level::{Strategy as MultiLevel, definition::BatchMatmulBlueprint},
             routine::BlueprintStrategy,
         };
 
@@ -97,39 +57,11 @@ mod matmul_plane_accelerated {
                 MultiLevel::SimpleCyclicMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_simple_strided(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::SimpleStridedMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_simple_tilewise(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::SimpleTilewiseMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
         fn launch_double_buffering_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
                 p,
                 MultiLevel::DoubleCyclicMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_double_buffering_tilewise(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::DoubleTilewiseMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_double_buffering_hybrid(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::DoubleHybridMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_ordered_double_buffering(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
@@ -146,14 +78,6 @@ mod matmul_plane_accelerated {
                 MultiLevel::SpecializedCyclicMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_specialized_strided(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::SpecializedStridedMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-
         include!("algorithm.rs");
     }
 }

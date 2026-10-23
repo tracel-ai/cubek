@@ -21,4 +21,3 @@ pub mod sync_full_strided;
 pub mod sync_full_tilewise;
 
 pub mod sync_partial_cyclic;
-pub mod sync_partial_tilewise;

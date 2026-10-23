@@ -17,13 +17,6 @@ mod matmul_tma {
                 MultiLevel::SimpleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_double_buffering_tma(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::DoubleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
         fn launch_specialized_tma(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
@@ -49,13 +42,6 @@ mod matmul_tma {
                 c,
                 p,
                 MultiLevel::SimpleTmaMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_double_buffering_tma(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_strategy(
-                c,
-                p,
-                MultiLevel::DoubleTmaMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_specialized_tma(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {

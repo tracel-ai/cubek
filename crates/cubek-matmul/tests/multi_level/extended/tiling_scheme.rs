@@ -9,9 +9,7 @@
 
 use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize};
 use cubek_matmul::{
-    definition::MatmulProblem,
-    multi_level::Strategy as MultiLevel,
-    routine::BlueprintStrategy,
+    definition::MatmulProblem, multi_level::Strategy as MultiLevel, routine::BlueprintStrategy,
     strategy::Strategy,
 };
 use cubek_std::MatrixLayout;
@@ -185,15 +183,6 @@ fn double_unit_partition_1x2x1() {
 fn simple_tma_cmma_stage_2x2x1() {
     run_plane(
         |bp| MultiLevel::SimpleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
-        PartitionSize { m: 1, n: 1, k: 1 },
-        StageSize { m: 2, n: 2, k: 1 },
-    );
-}
-
-#[test]
-fn double_tma_cmma_stage_2x2x1() {
-    run_plane(
-        |bp| MultiLevel::DoubleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
