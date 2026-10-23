@@ -1,18 +1,18 @@
 use crate::kernels::{MatmulRoutineProblem, PlaneDequantizeMatmulRoutine};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
 
-/// `out = lhs · rhs` against a packed weight in two launches: the weight decoded into a float one
-/// in the activation's element ([`PlaneDequantizeMatmulRoutine`]), then the float product's routine
-/// `R` on it. The float weight is allocated and decoded on every launch, so an autotune that races
-/// it measures what it costs; nothing is cached.
+/// `out = lhs · rhs` of packed inputs in launches of their own: each packed input decoded into a
+/// float one ([`PlaneDequantizeMatmulRoutine`]), then the float product's routine `R` on them. The
+/// float inputs are allocated and decoded on every launch, so an autotune that races it measures
+/// what it costs; nothing is cached.
 ///
 /// Over the float product's routine that asks nothing of the hardware, it serves every packed
-/// weight in rows: the floor of a packed weight's autotune.
+/// input in rows: the floor of a packed product's autotune.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DequantizedMatmulRoutine<R> {
     pub dense: R,
@@ -31,17 +31,44 @@ impl<S: core::fmt::Display> core::fmt::Display for DequantizedMatmulRoutineSetti
 }
 
 impl<R> DequantizedMatmulRoutine<R> {
-    /// The float product the decoded weight runs: `problem`'s rows against a float `[k, n]` weight
-    /// in the activation's element, laid with `k` contiguous where the packed words run along it.
+    /// The float product the decoded inputs run: `problem`'s rows against `n` columns, `k` deep, at
+    /// the element the packed inputs decode into, each decoded input laid as the decode writes it.
     /// A packed problem states every row, its batches merged.
     fn dense_problem(problem: &MatmulRoutineProblem) -> MatmulRoutineProblem {
+        let element = MatmulOperand::INPUTS
+            .into_iter()
+            .find(|&input| problem.packings.get(input).is_none())
+            .map_or(problem.elements.out, |input| problem.elements.get(input));
         MatmulRoutineProblem::dense(
             problem.stated_rows,
             problem.n,
             problem.k,
-            problem.elements.get(MatmulOperand::Lhs),
+            element,
             problem.layouts.rhs,
         )
+    }
+
+    /// Each packed input of `problem` alone, as the decode places it: the `[k, n]` input of a
+    /// product of one row, a packed `[m, k]` input's rows as its `N`.
+    fn decodes(problem: &MatmulRoutineProblem) -> impl Iterator<Item = MatmulRoutineProblem> + '_ {
+        let element = Self::dense_problem(problem).elements.out;
+        MatmulOperand::INPUTS.into_iter().filter_map(move |input| {
+            let packing = problem.packings.get(input)?;
+            let across = match input {
+                MatmulOperand::Lhs => problem.stated_rows,
+                _ => problem.n,
+            };
+            Some(MatmulRoutineProblem::packed(
+                1,
+                across,
+                problem.k,
+                element,
+                MatmulOperands {
+                    rhs: Some(packing),
+                    ..MatmulOperands::all(None)
+                },
+            ))
+        })
     }
 }
 
@@ -90,19 +117,21 @@ where
             .estimate(&Self::dense_problem(problem), blueprint, grid, estimate);
     }
 
-    /// The float routine at `settings` over the float weight, where the decode at its lead
-    /// prepares too. The grid is the float routine's.
+    /// The float routine at `settings` over the decoded inputs, where the decode of each packed
+    /// input at its lead prepares too. The grid is the float routine's.
     fn prepare(
         &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        PlaneDequantizeMatmulRoutine.prepare(
-            hw,
-            problem,
-            &PlaneDequantizeMatmulRoutine::SETTINGS,
-        )?;
+        for decode in Self::decodes(problem) {
+            PlaneDequantizeMatmulRoutine.prepare(
+                hw,
+                &decode,
+                &PlaneDequantizeMatmulRoutine::SETTINGS,
+            )?;
+        }
         self.dense
             .prepare(hw, &Self::dense_problem(problem), &settings.dense)
     }
