@@ -7,6 +7,7 @@ use cubecl::bytes::Bytes;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
@@ -16,7 +17,7 @@ use cubek_matmul::kernels::{
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
-use cubek_test_utils::{HostData, HostDataType, client};
+use cubek_test_utils::{HostData, HostDataType, TestOutcome, ValidationResult, client};
 
 /// `values` uploaded as a dense tensor of `shape`.
 fn upload<E: CubeElement + Scalar>(client: &Client, shape: &[usize], values: &[E]) -> PlainTensor {
@@ -46,7 +47,8 @@ fn values(count: usize, seed: usize) -> Vec<f32> {
 }
 
 /// Every setting of `routine` that prepares on this device, launched on the tensors `inputs`
-/// makes and checked against `expected`; at least one prepares.
+/// makes and checked against `expected`; at least one prepares, unless every setting asks for a
+/// cube larger than the device holds (the CPU runtime's few units), which skips the test.
 fn check_every_setting<M, SM, R>(
     routine: R,
     inputs: impl Fn() -> (PlainTensor, PlainTensor, MatmulIndexTable),
@@ -58,6 +60,7 @@ fn check_every_setting<M, SM, R>(
     let client = client();
     let hw = Hardware::from_client(&client);
     let mut ran = 0;
+    let mut cubes_past_device = true;
     for settings in routine.settings(&hw) {
         let (lhs, rhs, table) = inputs();
         // `[batches.., rows, n]`: the table's dims, then the activation's rows and the weight's
@@ -82,7 +85,8 @@ fn check_every_setting<M, SM, R>(
             bound,
             &settings,
         );
-        if launched.is_err() {
+        if let Err(why) = launched {
+            cubes_past_device &= matches!(why, Refusal::CubePastDevice { .. });
             continue;
         }
         ran += 1;
@@ -94,6 +98,13 @@ fn check_every_setting<M, SM, R>(
                 "{settings:?}: element {i} is {have}, want {want}"
             );
         }
+    }
+    if ran == 0 && cubes_past_device {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "every setting asks for a cube larger than this device holds".to_string(),
+        ))
+        .enforce();
+        return;
     }
     assert!(ran > 0, "no setting prepared");
 }
