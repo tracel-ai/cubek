@@ -1,6 +1,5 @@
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
 use core::num::NonZeroUsize;
-use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
@@ -56,10 +55,6 @@ pub struct MatmulView<'a> {
 impl<'a> MatmulView<'a> {
     /// One cube a box of the output: the count every routine but the hypercube's distributes.
     pub const ONE_CUBE_A_BOX: NonZeroUsize = NonZeroUsize::MIN;
-
-    /// The element every microkernel sums in, whatever it reads and writes, and that an output its
-    /// cubes add into is held in.
-    pub const SUM: ElemType = ElemType::Float(FloatKind::F32);
 
     /// Why a problem a routine prepared has a view: `prepare` derives it first and declines what
     /// has none, so `estimate`, `time` and the launch read one that exists. Handing them a problem
@@ -286,14 +281,15 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// What every microkernel is handed, summing in [`SUM`](Self::SUM): its rows held whole, every
+    /// What every microkernel is handed, summing in the problem's
+    /// [`sum`](MatmulRoutineProblem::sum): its rows held whole, every
     /// one, or tiled. Against a packed operand, the operands' blocks ([`MatmulBlocks`]), over the
     /// axes inside a block.
     pub fn work_item(&self) -> MatmulWorkItem {
         let blocks = self.blocks();
         MatmulWorkItem {
             elements: self.problem.elements,
-            sum: Self::SUM,
+            sum: self.problem.sum(),
             layouts: self.problem.layouts,
             axes: match blocks {
                 None => MatmulAxes::MNK,

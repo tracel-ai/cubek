@@ -35,8 +35,8 @@ impl Display for Strategy {
 
 #[allow(clippy::result_large_err)]
 impl Strategy {
-    /// `lhs · rhs` written into `out`, all three of one float element: the routines read no
-    /// quantized operand, and contract in the operands' element, summing in `f32`.
+    /// `lhs · rhs` of one element written into `out`, in the element `dtypes` names for it: the
+    /// routines read no quantized operand, and cast their sum to the output's element as it drains.
     pub(crate) fn launch_ref(
         &self,
         client: &Client,
@@ -51,18 +51,12 @@ impl Strategy {
                 "{self} reads no quantized operand"
             ))));
         };
-        if dtypes.acc_global != lhs_elem {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "{self} writes the operands' element {lhs_elem:?}, not {:?}",
-                dtypes.acc_global
-            ))));
-        }
         let hw = Hardware::new(client.properties_shared(), client.target_properties());
         let (lhs, rhs) = (
             PlainTensor::new(lhs, lhs_elem),
             PlainTensor::new(rhs, rhs_elem),
         );
-        let out = PlainTensor::new(out, lhs_elem);
+        let out = PlainTensor::new(out, dtypes.acc_global);
         match self {
             Strategy::Cmma(settings) => {
                 CubeStagedMatmulRoutine.launch_into(&hw, client, lhs, rhs, out, settings)

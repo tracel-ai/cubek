@@ -68,7 +68,7 @@ impl PlaneDequantizeMatmulRoutine {
         element: ElemType,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<TensorHandle, Refusal> {
-        if !MatmulInputs::VERIFIED.contains(&element) {
+        if !MatmulInputs::FLOATS.contains(&element) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
         let problem = &MatmulRoutineProblem::packed(

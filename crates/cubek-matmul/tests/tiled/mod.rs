@@ -1,6 +1,7 @@
 //! Tests for the routines written on the tile DSL.
 
 mod cmma;
+mod elements;
 mod indexed;
 mod storage;
 

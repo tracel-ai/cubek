@@ -27,10 +27,10 @@ use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
-/// What a launch writing into its caller's output declines: an output of another shape or element
-/// than the product's, or one stored in tiles.
+/// What a launch writing into its caller's output declines: an output of another shape than the
+/// product's, of an element the routines do not write, or stored in tiles.
 pub const MATMUL_OUTPUT_UNREAD: Refusal = Refusal::Declined {
-    why: "the output handed in is not the product's shape and element, laid in rows",
+    why: "the output handed in is not the product's shape, in an element the routines write, laid in rows",
 };
 
 /// What a launch beside a packed input declines before preparing anything: a float operand of an
@@ -48,7 +48,7 @@ pub const MATMUL_STREAMED_INPUT_FLOAT: Refusal = Refusal::Declined {
 /// What a launch declines before preparing anything: operands of two elements, or of one the
 /// routines do not take.
 pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
-    why: "the microkernel matmul takes f32, f16 and bf16 operands of one element",
+    why: "the microkernel matmul takes f32, f16, bf16 and i32 operands of one element",
 };
 
 /// What a routed or grouped product declines before preparing anything: an operand stored in
@@ -171,14 +171,14 @@ impl MatmulTensors {
         Self::packed(client, lhs, rhs, out)
     }
 
-    /// The product of the float `lhs` and `rhs`, both on `client`'s device, as a launch on `M`
-    /// reads it, written into `out`, which the caller allocated in the operands' element at the
-    /// product's shape.
+    /// The product of the plain `lhs` and `rhs`, both on `client`'s device, as a launch on `M`
+    /// reads it, written into `out`, which the caller allocated at the product's shape, in any
+    /// element the routines write: the sum is cast to it as it drains.
     ///
     /// # Errors
     ///
-    /// As [`new`](Self::new) for float inputs, and [`MATMUL_OUTPUT_UNREAD`] for an output of
-    /// another shape or element.
+    /// As [`new`](Self::new) for plain inputs, and [`MATMUL_OUTPUT_UNREAD`] for an output of
+    /// another shape, of an element the routines do not write, or stored in tiles.
     ///
     /// # Panics
     ///
@@ -191,7 +191,7 @@ impl MatmulTensors {
     ) -> Result<Self, Refusal> {
         let operands = Operands::read(client, lhs, rhs, M::ROWS_KIND)?;
         if out.shape().as_slice() != operands.out_shape.as_slice()
-            || out.elem != operands.lhs.elem
+            || !MatmulInputs::VERIFIED.contains(&out.elem)
             || out.is_tiled()
         {
             return Err(MATMUL_OUTPUT_UNREAD);
@@ -370,7 +370,7 @@ impl MatmulTensors {
         axes: [Axis; 2],
         k: usize,
     ) -> Result<PlainTensor, Refusal> {
-        if !MatmulInputs::VERIFIED.contains(&tensor.elem) {
+        if !MatmulInputs::FLOATS.contains(&tensor.elem) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
         let tensor = tensor.into_contiguous(client);
@@ -1012,10 +1012,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         self.assert_tiled();
         let [lhs, rhs] = self.plain();
         let shape = Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
-        let (_, carry) = PlainTensor::empty(&self.client, shape.into(), MatmulView::SUM);
+        let sum = self.problem().sum();
+        let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
         MatmulRelayBinding {
             carry: launcher
-                .arg(carry.binding, MatmulView::SUM)
+                .arg(carry.binding, sum)
                 .axes(&[M, N])
                 .batches(&self.batch_axes())
                 .vectorize(blueprint.widths.out)
@@ -1053,14 +1054,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .copied()
             .chain([M, N])
             .collect();
-        let (_, slots) = PlainTensor::empty(
-            &self.client,
-            partitioning.arrival_slots(&axes),
-            MatmulView::SUM,
-        );
+        let sum = self.problem().sum();
+        let (_, slots) = PlainTensor::empty(&self.client, partitioning.arrival_slots(&axes), sum);
         MatmulLastArrivalBinding {
             slots: launcher
-                .arg(slots.binding, MatmulView::SUM)
+                .arg(slots.binding, sum)
                 .axes(&axes)
                 .vectorize(blueprint.widths.out)
                 .build()

@@ -1,7 +1,7 @@
 use crate::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex};
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::tile::launch::Refusal;
 
 /// A product's two operands, on one device and of one element the routines are
@@ -14,11 +14,20 @@ pub struct MatmulInputs {
 }
 
 impl MatmulInputs {
-    /// The elements the routines are verified at.
-    pub const VERIFIED: [ElemType; 3] = [
+    /// The float elements the routines are verified at: what a packed operand decodes into.
+    pub const FLOATS: [ElemType; 3] = [
         ElemType::Float(FloatKind::F32),
         ElemType::Float(FloatKind::F16),
         ElemType::Float(FloatKind::BF16),
+    ];
+
+    /// The elements the routines are verified at, inputs and output alike: the floats, and `i32`,
+    /// which sums in itself ([`MatmulRoutineProblem::sum`](crate::kernels::MatmulRoutineProblem::sum)).
+    pub const VERIFIED: [ElemType; 4] = [
+        ElemType::Float(FloatKind::F32),
+        ElemType::Float(FloatKind::F16),
+        ElemType::Float(FloatKind::BF16),
+        ElemType::Int(IntKind::I32),
     ];
 
     /// `lhs` and `rhs`, on `client`'s device, checked as every routine needs them.
