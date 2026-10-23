@@ -1,4 +1,5 @@
 use super::{PackedTensor, PlainTensor};
+use crate::kernels::select::problem::OperandKind;
 use cubecl::server::BufferBinding;
 use cubecl::tile::Axis;
 use cubecl::zspace::metadata::Metadata;
@@ -23,6 +24,14 @@ impl StoredTensor {
         match self {
             Self::Plain(tensor) => tensor,
             Self::Packed(tensor) => tensor.words(),
+        }
+    }
+
+    /// What the tensor is, as a key tells operands apart: float, or quantized under its scheme.
+    pub fn kind(&self) -> OperandKind {
+        match self {
+            Self::Plain(_) => OperandKind::Float,
+            Self::Packed(tensor) => OperandKind::Quantized(tensor.scheme()),
         }
     }
 

@@ -41,8 +41,8 @@ impl MatmulInputs {
     /// reads, by strides.
     pub fn addressable(self, client: &Client) -> Self {
         Self {
-            lhs: Self::without_self_aliasing(client, self.lhs),
-            rhs: Self::without_self_aliasing(client, self.rhs),
+            lhs: self.lhs.addressable(client),
+            rhs: self.rhs.addressable(client),
         }
     }
 
@@ -50,19 +50,6 @@ impl MatmulInputs {
     /// unchecked.
     pub fn into_parts(self) -> (PlainTensor, PlainTensor) {
         (self.lhs, self.rhs)
-    }
-
-    /// `tensor` where no two of its indices address one element, a row-major copy of it where they do.
-    ///
-    /// Neither a pitch nor gaps between rows stop a read by strides; the runtime pitches rows whose
-    /// bytes are not aligned, so a check on the buffer's size would copy those. A storage-tiled
-    /// operand is read through its tiling, stored as a launch reads it, so it stands: a copy would
-    /// lay it back in rows on every launch.
-    fn without_self_aliasing(client: &Client, tensor: PlainTensor) -> PlainTensor {
-        match tensor.is_tiled() || tensor.is_contiguous() || tensor.is_nonoverlapping() {
-            true => tensor,
-            false => tensor.into_contiguous(client),
-        }
     }
 }
 
