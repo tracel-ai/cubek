@@ -47,7 +47,7 @@ type SpecializedBatch<RC, L, AL> = PartitionedBatchMatmulFamily<
     RowMajorGlobalPartitionMatmul,
 >;
 
-/// Plane accelerated specialized matmul with TMA readers
+/// Plane accelerated specialized matmul with TMA readers.
 pub struct SpecializedAlgorithm<L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
     pub _phantom: PhantomData<(L, AL)>,
 }
