@@ -257,6 +257,20 @@ impl PlainTensor {
         is_nonoverlapping(&self.binding.shape, &self.binding.strides)
     }
 
+    /// This tensor where no two of its indices address one element, a row-major copy of it on
+    /// `client` where they do.
+    ///
+    /// Neither a pitch nor gaps between rows stop a read by strides; the runtime pitches rows whose
+    /// bytes are not aligned, so a check on the buffer's size would copy those. A storage-tiled
+    /// operand is read through its tiling, stored as a launch reads it, so it stands: a copy would
+    /// lay it back in rows on every launch.
+    pub fn addressable(self, client: &Client) -> Self {
+        match self.is_tiled() || self.is_contiguous() || self.is_nonoverlapping() {
+            true => self,
+            false => self.into_contiguous(client),
+        }
+    }
+
     /// This tensor row-major and gapless: as it is where it already is, restrided where only an
     /// axis of extent 1 is out of place, a copy otherwise. A storage-tiled one is laid back in
     /// rows first.

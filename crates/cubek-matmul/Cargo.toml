@@ -21,6 +21,9 @@ std = ["cubecl/std", "cubek-std/std"]
 tiled = ["cubecl/tile", "dep:cubek-quant", "dep:cubek-microkernel"]
 multi-level = []
 
+# Autotune compares every candidate's output against the first's: a debugging instrument.
+autotune-checks = ["cubecl/autotune-checks"]
+
 heavy = []
 extended = ["heavy"]
 full = ["extended", "benchmarks"]
