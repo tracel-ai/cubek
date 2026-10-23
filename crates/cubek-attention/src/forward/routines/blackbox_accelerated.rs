@@ -189,6 +189,7 @@ fn blueprint(
                 vector_sizes: device.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
+                sliding_window: AttentionBlueprint::sliding_window_of(&problem.options),
                 tiling_scheme,
                 check_bounds: tiling_scheme.check_bounds(&problem.dims),
             };

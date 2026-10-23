@@ -1,7 +1,9 @@
 use cubek_matmul::multi_level::TileSize;
 use cubek_std::cube_count::{Count3d, CubeCountPlan};
 
-use crate::forward::definition::{AttentionDims, AttentionVectorSizes, HypercubeBlueprint};
+use crate::forward::definition::{
+    AttentionDims, AttentionOptions, AttentionVectorSizes, HypercubeBlueprint,
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct AttentionBlueprint {
@@ -17,7 +19,25 @@ pub struct AttentionBlueprint {
     pub masked: bool,
     pub causal: bool,
 
+    /// Sliding window over the KV axis, as a comptime key count; `0` means no
+    /// window (every key at or before the query's own position is visible).
+    ///
+    /// This is the kernel-side encoding of
+    /// [`AttentionOptions::sliding_window`](crate::forward::definition::AttentionOptions::sliding_window),
+    /// which stays an `Option` at the public edge. `0` is not a meaningful
+    /// window — the smallest is `1`, "attend only yourself" — so it is a safe
+    /// sentinel, and the conversion happens once, in the routines' blueprint
+    /// validation.
+    pub sliding_window: u32,
+
     pub check_bounds: AttentionCheckBounds,
+}
+
+impl AttentionBlueprint {
+    /// The comptime window for a problem's options: `None` is no window.
+    pub fn sliding_window_of(options: &AttentionOptions) -> u32 {
+        options.sliding_window.unwrap_or(0)
+    }
 }
 
 impl AttentionBlueprint {

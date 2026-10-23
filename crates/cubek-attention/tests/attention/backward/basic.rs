@@ -63,6 +63,7 @@ fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> Atte
         ),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: Default::default(),

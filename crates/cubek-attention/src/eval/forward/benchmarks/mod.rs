@@ -65,6 +65,7 @@ impl cubek_test_utils::Category for Category {
             dims: problem.dims.clone(),
             masked: problem.masked,
             causal: problem.options.causal,
+            sliding_window: problem.options.sliding_window,
             types: AttentionGlobalTypes {
                 query: dtype,
                 key: dtype,

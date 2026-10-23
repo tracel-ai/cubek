@@ -12,9 +12,9 @@ use crate::{
     },
     forward::{
         definition::{
-            AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionPartitionSize,
-            AttentionProblem, AttentionSetupError, AttentionStageSize, AttentionTileSize,
-            AttentionTilingScheme, HypercubeBlueprint,
+            AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionProblem,
+            AttentionSetupError, AttentionStageSize, AttentionTileSize, AttentionTilingScheme,
+            HypercubeBlueprint,
         },
         launch::BlueprintStrategy,
         routines::{DeviceSettings, LaunchInfo, Routine},
@@ -45,15 +45,6 @@ impl Routine for UnitRoutine {
         device_settings: &DeviceSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
-        // The unit routine relies on plane-level parallelism;
-        // on devices with a plane size of 1 (e.g. CPU) the kernel currently
-        // produces zero output rather than correct results.
-        if device_settings.plane_dim < 2 {
-            return Err(AttentionSetupError::Unavailable(
-                AttentionAvailabilityError::PlaneOpsUnavailable,
-            ));
-        }
-
         let blueprint = blueprint(problem, device_settings, strategy)?;
 
         let dtypes = AttentionElems::from_global_types(
@@ -124,6 +115,7 @@ fn blueprint(
                 vector_sizes: launch_settings.vector_sizes.clone(),
                 masked: problem.masked,
                 causal: problem.options.causal,
+                sliding_window: AttentionBlueprint::sliding_window_of(&problem.options),
                 check_bounds: tiling_scheme.check_bounds(&problem.dims),
             };
 

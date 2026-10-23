@@ -16,6 +16,7 @@ fn very_small_problem_selector() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -44,6 +45,7 @@ fn small_problem_selector() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -72,6 +74,7 @@ fn hd_smaller_than_vd_problem_selector() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -100,6 +103,7 @@ fn hd_larger_than_vd_problem_selector() {
         global_dtypes: global_dtypes(&client),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),

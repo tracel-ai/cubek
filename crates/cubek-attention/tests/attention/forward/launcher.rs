@@ -122,6 +122,10 @@ fn test_launch_with_layouts(
             &problem_for_launch.global_dtypes,
             AttentionOptions {
                 causal: problem_for_launch.options.causal,
+                // Must be forwarded, not dropped: a windowed problem launched
+                // without it would compare against a windowed reference and
+                // pass while proving nothing.
+                sliding_window: problem_for_launch.options.sliding_window,
                 accumulator_precision: problem_for_launch.options.accumulator_precision,
             },
         )

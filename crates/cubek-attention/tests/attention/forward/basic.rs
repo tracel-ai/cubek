@@ -62,6 +62,7 @@ fn problem(
         global_dtypes,
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),

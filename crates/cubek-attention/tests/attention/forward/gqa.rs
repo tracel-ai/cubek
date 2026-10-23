@@ -57,6 +57,7 @@ fn gqa_problem(
         global_dtypes,
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -223,6 +224,7 @@ fn run_once(
         global_dtypes: global_dtypes.clone(),
         options: AttentionOptions {
             causal: false,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),
@@ -252,6 +254,7 @@ fn run_once(
             &global_dtypes,
             AttentionOptions {
                 causal: false,
+                sliding_window: None,
                 accumulator_precision: AccumulatorPrecision::default(),
             },
         )

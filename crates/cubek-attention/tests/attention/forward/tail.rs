@@ -95,6 +95,7 @@ fn problem_causal(
         global_dtypes,
         options: AttentionOptions {
             causal,
+            sliding_window: None,
             accumulator_precision: AccumulatorPrecision::default(),
         },
         address_type: AddressType::default(),

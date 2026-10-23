@@ -17,6 +17,11 @@ pub struct AttentionCost {
     pub masked: bool,
     /// Whether a causal mask skips the score matrix above its bottom-right diagonal.
     pub causal: bool,
+    /// Sliding window over the KV axis, as a key count. `None` is no window.
+    ///
+    /// Like [`causal`](Self::causal), this is a claim about work the kernel
+    /// *skips*, not just masks.
+    pub sliding_window: Option<u32>,
     /// Global element types of the operands.
     pub types: AttentionGlobalTypes,
 }
@@ -29,9 +34,42 @@ impl AttentionCost {
     /// the full rectangle minus the triangle above the diagonal. This is not a flat
     /// halving: a decode step (`seq_q = 1`) still visits the whole cache. Rows above
     /// the diagonal visit nothing, so they contract over nothing either.
+    /// With a window, the visited count is a clamped per-row interval rather
+    /// than a triangle, so there is no flat closed form: sum the rows.
+    fn visited_windowed(&self) -> (usize, usize) {
+        let AttentionDims { seq_q, seq_kv, .. } = self.dims;
+        let window = self.sliding_window.unwrap_or(0) as usize;
+        let diagonal = seq_q.min(seq_kv);
+
+        let (mut entries, mut rows) = (0, 0);
+        for i in 0..seq_q {
+            // Query `i` attends keys in `[i + d - (window - 1), i + d]`, where
+            // `d = seq_kv - seq_q` aligns the query's last row on the last key.
+            let right = (i + seq_kv - seq_q) as isize;
+            let left = (right - (window as isize - 1)).max(0);
+            let right = right.min(seq_kv as isize - 1);
+            if right < left {
+                continue;
+            }
+            rows += 1;
+            entries += (right - left + 1) as usize;
+        }
+
+        if self.causal {
+            let causal_entries = diagonal * seq_kv - diagonal * diagonal.saturating_sub(1) / 2;
+            debug_assert!(entries <= causal_entries);
+        }
+
+        (entries, rows)
+    }
+
     fn visited(&self) -> (usize, usize) {
         let AttentionDims { seq_q, seq_kv, .. } = self.dims;
         let diagonal = seq_q.min(seq_kv);
+
+        if self.sliding_window.is_some() {
+            return self.visited_windowed();
+        }
 
         match self.causal {
             true => (
@@ -144,6 +182,7 @@ impl From<&AttentionProblem> for AttentionCost {
             dims: problem.dims.clone(),
             masked: problem.masked,
             causal: problem.options.causal,
+            sliding_window: problem.options.sliding_window,
             types: problem.global_dtypes.clone(),
         }
     }
@@ -178,6 +217,7 @@ mod tests {
             },
             masked: false,
             causal: false,
+            sliding_window: None,
             types: f32_types(),
         }
     }
@@ -197,6 +237,7 @@ mod tests {
         // triangle the mask drops, so 100 of the 128 score entries are visited.
         let causal = AttentionCost {
             causal: true,
+            sliding_window: None,
             ..cost()
         };
 
@@ -319,10 +360,12 @@ mod tests {
         let masked = AttentionCost {
             masked: true,
             causal: true,
+            sliding_window: None,
             ..cost()
         };
         let causal = AttentionCost {
             causal: true,
+            sliding_window: None,
             ..cost()
         };
 
@@ -334,9 +377,124 @@ mod tests {
         // Q, K, and V tensors are fully read even with causal masking.
         let causal = AttentionCost {
             causal: true,
+            sliding_window: None,
             ..cost()
         };
 
         assert_eq!(causal.work().bytes, cost().work().bytes);
+    }
+
+    #[test]
+    fn a_window_visits_a_clamped_band() {
+        // Square 8 x 8 with a window of 5: rows 0-4 keep 1..5 keys each, rows
+        // 5-7 keep 5 each — 30 entries of the 64, not a flat fraction.
+        let cost = AttentionCost {
+            dims: AttentionDims {
+                seq_q: 8,
+                seq_kv: 8,
+                ..cost().dims
+            },
+            causal: true,
+            sliding_window: Some(5),
+            ..cost()
+        };
+
+        assert_eq!(cost.visited(), (30, 8));
+    }
+
+    #[test]
+    fn a_window_of_one_keeps_only_the_diagonal() {
+        let cost = AttentionCost {
+            dims: AttentionDims {
+                seq_q: 8,
+                seq_kv: 8,
+                ..cost().dims
+            },
+            causal: true,
+            sliding_window: Some(1),
+            ..cost()
+        };
+
+        assert_eq!(cost.visited(), (8, 8));
+    }
+
+    #[test]
+    fn a_decode_window_visits_only_the_newest_keys() {
+        // seq_q 1 against a 96-key cache with a window of 8: the 8 keys ending
+        // at the query's own position, which is the last key.
+        let cost = AttentionCost {
+            dims: AttentionDims {
+                seq_q: 1,
+                seq_kv: 96,
+                ..cost().dims
+            },
+            causal: true,
+            sliding_window: Some(8),
+            ..cost()
+        };
+
+        assert_eq!(cost.visited(), (8, 1));
+    }
+
+    #[test]
+    fn a_window_wider_than_the_sequence_is_the_causal_triangle() {
+        // The window never fires past max(seq_q, seq_kv), so the count must
+        // fall back to exactly what causal alone claims.
+        let wide = AttentionCost {
+            dims: AttentionDims {
+                seq_q: 8,
+                seq_kv: 8,
+                ..cost().dims
+            },
+            causal: true,
+            sliding_window: Some(100),
+            ..cost()
+        };
+        let causal = AttentionCost {
+            dims: AttentionDims {
+                seq_q: 8,
+                seq_kv: 8,
+                ..cost().dims
+            },
+            causal: true,
+            sliding_window: None,
+            ..cost()
+        };
+
+        assert_eq!(wide.visited(), causal.visited());
+    }
+
+    #[test]
+    fn a_window_subsumes_causal_in_the_cost() {
+        // The window's right edge is the query's own position — causal's edge —
+        // so adding the flag cannot shrink the visited set further.
+        for (seq_q, seq_kv, window) in [(8usize, 8usize, 5u32), (1, 96, 8), (4, 8, 2)] {
+            let causal = AttentionCost {
+                dims: AttentionDims {
+                    seq_q,
+                    seq_kv,
+                    ..cost().dims
+                },
+                causal: true,
+                sliding_window: Some(window),
+                ..cost()
+            };
+            let plain = AttentionCost {
+                dims: AttentionDims {
+                    seq_q,
+                    seq_kv,
+                    ..cost().dims
+                },
+                causal: false,
+                sliding_window: Some(window),
+                ..cost()
+            };
+
+            assert_eq!(
+                causal.visited(),
+                plain.visited(),
+                "{seq_q}x{seq_kv} w{window}"
+            );
+        }
     }
 }

@@ -46,6 +46,7 @@ pub fn strategy_result(
             &problem.global_dtypes,
             AttentionOptions {
                 causal: problem.options.causal,
+                sliding_window: problem.options.sliding_window,
                 accumulator_precision: problem.options.accumulator_precision,
             },
         )
@@ -312,7 +313,19 @@ pub fn flash_attention_v2_reference_with_lse(
                     // Bottom-right-aligned causality: the last query row
                     // attends the whole key sequence, so a short query block
                     // against a longer KV (cached decode) sees all past keys.
-                    let s_val = if problem.options.causal && j + seq_q > i + seq_kv {
+                    // The sliding window owns both edges: keys older than the
+                    // window ending at the query's own position are dropped,
+                    // and so are keys newer than that position — with or
+                    // without the causal flag.
+                    let future = j + seq_q > i + seq_kv;
+                    let too_old = match problem.options.sliding_window {
+                        Some(window) => j + seq_q + (window as usize - 1) < i + seq_kv,
+                        None => false,
+                    };
+                    let future_masked = (problem.options.causal
+                        || problem.options.sliding_window.is_some())
+                        && future;
+                    let s_val = if future_masked || too_old {
                         f32::NEG_INFINITY
                     } else if let Some(mask) = mask {
                         // The mask is indexed by query head, not kv head.
