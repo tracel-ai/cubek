@@ -347,7 +347,8 @@ mod tests {
                 k: 16,
             }],
         );
-        let problem = MatmulRoutineProblem::dense(128, 256, 512, F16, MatmulLayout::Col);
+        let problem = MatmulRoutineProblem::dense(128, 256, 512, F16)
+            .laid(MatmulOperand::Rhs, MatmulLayout::Col);
         let lead = HypercubeRelayMatmulRoutineSettings::DEFAULT;
         let cube = lead.microkernel.cube;
         for filling_planes in [0, 1] {
@@ -380,7 +381,7 @@ mod tests {
     #[test]
     fn every_setting_prepares_where_cubes_meet() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(37, 29, 300, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(37, 29, 300, F16);
         for settings in HypercubeRelayMatmulRoutine.settings(&hw) {
             let prepared = HypercubeRelayMatmulRoutine.prepare(&hw, &problem, &settings);
             assert!(prepared.is_ok(), "{settings}: {prepared:?}");
@@ -396,7 +397,7 @@ mod tests {
             devices::features(&mut hw).device_memory_scope = false;
             hw
         };
-        let problem = MatmulRoutineProblem::dense(64, 64, 512, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(64, 64, 512, F16);
         let declined = HypercubeRelayMatmulRoutine.prepare(
             &hw,
             &problem,
@@ -418,7 +419,7 @@ mod tests {
     #[test]
     fn every_setting_prepares_on_an_h100() {
         let hw = offering(devices::h100());
-        let problem = MatmulRoutineProblem::dense(37, 29, 300, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(37, 29, 300, F16);
         for settings in HypercubeRelayMatmulRoutine.settings(&hw) {
             let prepared = HypercubeRelayMatmulRoutine.prepare(&hw, &problem, &settings);
             assert!(prepared.is_ok(), "{settings}: {prepared:?}");
@@ -435,7 +436,7 @@ mod tests {
         let hw = offering(devices::strix_halo());
         let settings = HypercubeRelayMatmulRoutineSettings::DEFAULT;
         let prepared = |k| {
-            let problem = MatmulRoutineProblem::dense(512, 256, k, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(512, 256, k, F16);
             HypercubeRelayMatmulRoutine
                 .prepare(&hw, &problem, &settings)
                 .expect("the routine runs here")
@@ -450,7 +451,7 @@ mod tests {
             cubes_along_k: NonZeroUsize::new(8).unwrap(),
             ..settings
         };
-        let problem = MatmulRoutineProblem::dense(512, 256, 176, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(512, 256, 176, F16);
         let (blueprint, _) = HypercubeRelayMatmulRoutine
             .prepare(&hw, &problem, &eight)
             .expect("the routine runs here");
@@ -472,7 +473,7 @@ mod tests {
             },
             ..lead
         };
-        let problem = MatmulRoutineProblem::dense(256, 512, 256, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 256, F16);
         let (blueprint, _) = HypercubeRelayMatmulRoutine
             .prepare(&hw, &problem, &settings)
             .expect("the routine runs here");
@@ -484,7 +485,7 @@ mod tests {
     #[test]
     fn a_turn_moves_its_box_of_the_carry_in_the_sums_element() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(256, 512, 2048, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 2048, F16);
         let (blueprint, grid) = HypercubeRelayMatmulRoutine
             .prepare(&hw, &problem, &HypercubeRelayMatmulRoutineSettings::DEFAULT)
             .expect("the routine runs here");

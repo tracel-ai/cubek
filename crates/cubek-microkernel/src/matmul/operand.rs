@@ -60,6 +60,11 @@ impl<T: Copy> MatmulOperands<T> {
         }
     }
 
+    /// These values with `operand`'s replaced by `value`.
+    pub fn with(self, operand: MatmulOperand, value: T) -> Self {
+        self.map(|other, current| if other == operand { value } else { current })
+    }
+
     /// A value per operand, computed from each operand and its value here.
     pub fn map<U>(&self, f: impl Fn(MatmulOperand, T) -> U) -> MatmulOperands<U> {
         MatmulOperands {

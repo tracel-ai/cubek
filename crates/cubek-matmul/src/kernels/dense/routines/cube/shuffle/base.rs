@@ -360,7 +360,7 @@ mod tests {
 
     /// `m` rows against a `k × 2048` rhs laid as `rhs_layout`.
     fn projection(m: usize, k: usize, rhs_layout: MatmulLayout) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::dense(m, 2048, k, F16, rhs_layout)
+        MatmulRoutineProblem::dense(m, 2048, k, F16).laid(MatmulOperand::Rhs, rhs_layout)
     }
 
     /// The default leads the list and no setting is listed twice.

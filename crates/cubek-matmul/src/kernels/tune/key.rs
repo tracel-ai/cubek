@@ -26,7 +26,6 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_std::layout::contiguous;
 
 use cubek_std::layout;
-use cubek_std::matmul_axes::K;
 
 /// One input as the key tells problems apart: what it is, how it lies, and whether its batches
 /// read one matrix.
@@ -306,18 +305,12 @@ impl MatmulShape {
 }
 
 /// The problem a tuning **key** describes: dense operands of the key's element, the batch held by
-/// the output, and by each input unless the key says it is shared, the lhs and the output
-/// row-major and the rhs contiguous along the axis the key names. A col rhs, an `[n, k]` buffer
-/// behind a `[k, n]` view, is read where it lies
-/// ([`MatmulTensors`](crate::kernels::MatmulTensors)), so its widths are its own; a rhs the key
-/// names no axis for, a strided view, is aligned to one element.
+/// the output, and by each input unless the key says it is shared, the output row-major and each
+/// input contiguous along the axis the key names. A col input, its buffer the view's transpose,
+/// is read where it lies ([`MatmulTensors`](crate::kernels::MatmulTensors)), so its widths are
+/// its own; an input the key names no axis for, a strided view, is aligned to one element.
 impl From<&MatmulShape> for MatmulRoutineProblem {
     fn from(shape: &MatmulShape) -> Self {
-        let rhs_layout = match shape.rhs.layout.axis() {
-            Some(axis) if axis == K => MatmulLayout::Col,
-            Some(_) => MatmulLayout::Row,
-            None => MatmulLayout::Strided,
-        };
         let held = |batching| match batching {
             MatmulBatching::Shared => 1,
             MatmulBatching::Batched => shape.batch,
@@ -332,7 +325,15 @@ impl From<&MatmulShape> for MatmulRoutineProblem {
                 rhs: held(shape.rhs.batching),
                 out: shape.batch,
             },
-            ..Self::dense(shape.m, shape.n, shape.k, shape.elem, rhs_layout)
+            ..Self::dense(shape.m, shape.n, shape.k, shape.elem)
+                .laid(
+                    MatmulOperand::Lhs,
+                    MatmulLayout::along(shape.lhs.layout.axis(), MatmulOperand::Lhs),
+                )
+                .laid(
+                    MatmulOperand::Rhs,
+                    MatmulLayout::along(shape.rhs.layout.axis(), MatmulOperand::Rhs),
+                )
         }
     }
 }

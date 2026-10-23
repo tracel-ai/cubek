@@ -362,7 +362,8 @@ mod tests {
                 k: 16,
             }],
         );
-        let problem = MatmulRoutineProblem::dense(128, 256, 512, F16, MatmulLayout::Col);
+        let problem = MatmulRoutineProblem::dense(128, 256, 512, F16)
+            .laid(MatmulOperand::Rhs, MatmulLayout::Col);
         let lead = HypercubeLastArrivalMatmulRoutineSettings::DEFAULT;
         let cube = lead.microkernel.cube;
         for filling_planes in [0, 1] {
@@ -394,7 +395,7 @@ mod tests {
     /// `H100`, devices where one cube's stores reach another within a launch.
     #[test]
     fn every_setting_prepares_where_cubes_meet() {
-        let problem = MatmulRoutineProblem::dense(37, 29, 300, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(37, 29, 300, F16);
         for hw in [devices::strix_halo(), devices::h100()].map(offering) {
             for settings in HypercubeLastArrivalMatmulRoutine.settings(&hw) {
                 let prepared = HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings);
@@ -408,7 +409,7 @@ mod tests {
     /// workers it has, with its own.
     #[test]
     fn declines_where_cubes_cannot_meet_or_the_grid_has_no_size() {
-        let problem = MatmulRoutineProblem::dense(64, 64, 512, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(64, 64, 512, F16);
         let settings = HypercubeLastArrivalMatmulRoutineSettings::DEFAULT;
         let isolated = {
             let mut hw = offering(devices::strix_halo());
@@ -445,7 +446,7 @@ mod tests {
         let hw = offering(devices::strix_halo());
         let settings = HypercubeLastArrivalMatmulRoutineSettings::DEFAULT;
         for (m, n, k) in [(159 * 128, 256, 512), (2560, 2048, 256), (2048, 4096, 1024)] {
-            let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let (blueprint, grid) = HypercubeLastArrivalMatmulRoutine
                 .prepare(&hw, &problem, &settings)
                 .expect("the routine runs here");
@@ -465,7 +466,7 @@ mod tests {
     #[test]
     fn a_cube_is_estimated_by_its_run() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(4096, 2048, 1024, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(4096, 2048, 1024, F16);
         let (blueprint, grid) = HypercubeLastArrivalMatmulRoutine
             .prepare(
                 &hw,

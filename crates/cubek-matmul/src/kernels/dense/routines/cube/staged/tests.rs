@@ -28,7 +28,7 @@ mod base {
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
     };
     use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
-    use cubek_microkernel::matmul::{MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder};
+    use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulOrder};
     use cubek_microkernel::staging::StageRing;
     use cubek_std::Hardware;
     use cubek_std::devices;
@@ -90,7 +90,7 @@ mod base {
     }
 
     fn problem() -> MatmulRoutineProblem {
-        MatmulRoutineProblem::dense(37, 29, 19, F16, MatmulLayout::Row)
+        MatmulRoutineProblem::dense(37, 29, 19, F16)
     }
 
     /// The default, its microkernel's settings as `set` leaves them.
@@ -419,7 +419,7 @@ mod base {
     /// A row rhs is bound as the product names it whatever the instruction.
     #[test]
     fn a_row_rhs_is_bound_as_the_product_names_it() {
-        let problem = MatmulRoutineProblem::dense(128, 256, 512, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(128, 256, 512, F16);
         for hw in [
             offering(devices::strix_halo()),
             offering(devices::rdna_range()),
@@ -494,7 +494,7 @@ mod base {
             microkernel.plane.step_sum = PlaneFragmentStepSum::Narrow;
         });
         let elected = |hw: &Hardware, element| {
-            let problem = MatmulRoutineProblem::dense(37, 29, 19, element, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(37, 29, 19, element);
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(hw, &problem, &narrow)
                 .expect("the plane routine prepares here");
@@ -529,7 +529,7 @@ mod base {
         for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
             for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
                 for (m, n, k) in [(1, 128, 256), (37, 29, 19), (512, 4096, 4096)] {
-                    let problem = MatmulRoutineProblem::dense(m, n, k, F32, MatmulLayout::Row);
+                    let problem = MatmulRoutineProblem::dense(m, n, k, F32);
                     let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
                     let outgrown = matches!(
                         prepared,
@@ -558,7 +558,7 @@ mod base {
     #[test]
     fn the_multi_row_box_stacks_its_planes_along_m() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(1024, 1024, 256, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(1024, 1024, 256, F16);
         let multi_row = CubeStagedMatmulRoutine
             .settings(&hw)
             .into_iter()
@@ -586,7 +586,7 @@ mod base {
     #[test]
     fn a_double_ring_holds_two_stages() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let prepared = |ring| {
             let settings = default_with(|microkernel| microkernel.ring = ring);
             CubeStagedMatmulRoutine
@@ -612,7 +612,7 @@ mod base {
     #[test]
     fn a_register_prefetch_resolves_to_the_slots_past_a_units_registers() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let (blueprint, grid) = CubeStagedMatmulRoutine
             .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
             .expect("the routine runs here");
@@ -658,7 +658,7 @@ mod base {
                 .filter(|settings| settings.microkernel.ring.prefetch == Prefetch::InRegisters);
             for settings in prefetching {
                 for problem in [
-                    MatmulRoutineProblem::dense(2048, 2048, 2048, F16, MatmulLayout::Row),
+                    MatmulRoutineProblem::dense(2048, 2048, 2048, F16),
                     col_rhs(),
                     problem(),
                 ] {
@@ -714,18 +714,18 @@ mod base {
         let store = |hw: Hardware, problem: &MatmulRoutineProblem| {
             prepared(hw, problem, &settings).microkernel.store
         };
-        let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let blueprint = prepared(devices::h100(), &aligned, &settings);
         assert_eq!(blueprint.microkernel.store, CubeStagedStore::Tma);
         assert_eq!(blueprint.widths.out, 1);
 
-        let overhanging = MatmulRoutineProblem::dense(33, 512, 64, F16, MatmulLayout::Row);
+        let overhanging = MatmulRoutineProblem::dense(33, 512, 64, F16);
         let blueprint = prepared(devices::h100(), &overhanging, &settings);
         assert_eq!(blueprint.microkernel.store, CubeStagedStore::Tma);
         assert_eq!(blueprint.microkernel.scratch, Scratch::None);
 
         // Rows of 60 halves are 120 bytes, not whole 16-byte lines.
-        let misaligned = MatmulRoutineProblem::dense(256, 60, 64, F16, MatmulLayout::Row);
+        let misaligned = MatmulRoutineProblem::dense(256, 60, 64, F16);
         let batched = MatmulRoutineProblem {
             batches: vec![2],
             ..aligned.clone()
@@ -781,7 +781,7 @@ mod base {
                 &blueprint.microkernel.plane,
             )
         };
-        let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let aligned = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let blueprint = prepared(&software, &aligned);
         assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
         assert_eq!((blueprint.widths.lhs, blueprint.widths.rhs), (1, 1));
@@ -789,7 +789,7 @@ mod base {
             batches: vec![2],
             ..aligned.clone()
         };
-        let unaligned = MatmulRoutineProblem::dense(256, 512, 60, F16, MatmulLayout::Row);
+        let unaligned = MatmulRoutineProblem::dense(256, 512, 60, F16);
         let sliced = MatmulRoutineProblem {
             start_bytes: MatmulOperands {
                 lhs: 8,
@@ -927,7 +927,7 @@ mod base {
                 filling_planes: 1,
             };
         });
-        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let (blueprint, _) = CubeStagedMatmulRoutine
             .prepare(&devices::h100(), &problem, &settings)
             .expect("the routine runs here");
@@ -972,7 +972,7 @@ mod base {
                 grid.planes().count,
             )
         };
-        let covered = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let covered = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let computing = CubeStagedMatmulRoutineSettings::DEFAULT
             .microkernel
             .planes
@@ -1024,7 +1024,7 @@ mod base {
                 .fill
                 .delivery
         };
-        let covered = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let covered = MatmulRoutineProblem::dense(256, 512, 64, F16);
         for ring in [StageRing::DOUBLE, StageRing::SINGLE] {
             assert_eq!(
                 delivery(ring, devices::h100(), &covered),
@@ -1082,7 +1082,7 @@ mod base {
                 cube_order,
                 ..CubeStagedMatmulRoutineSettings::DEFAULT
             };
-            let problem = MatmulRoutineProblem::dense(512, 768, 64, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(512, 768, 64, F16);
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &settings)
                 .expect("the routine runs here");
@@ -1128,7 +1128,7 @@ mod base {
         let hw = offering(devices::strix_halo());
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         let scratch = |m, n, k| {
-            let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &settings)
                 .expect("the default prepares here");
@@ -1146,7 +1146,7 @@ mod base {
         let hw = offering(devices::strix_halo());
         let problem = MatmulRoutineProblem {
             destination: MatmulDestination::Sink,
-            ..MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row)
+            ..MatmulRoutineProblem::dense(256, 512, 64, F16)
         };
         let (blueprint, _) = CubeStagedMatmulRoutine
             .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
@@ -1166,7 +1166,7 @@ mod base {
         let hw = offering(devices::strix_halo());
         let widest = hw.vector_ceiling(F16);
         let widths = |m, n, k| {
-            let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &settings)
@@ -1255,7 +1255,7 @@ mod base {
         assert_eq!(bytes, 12288);
 
         let software = devices::wgpu_no_subgroups();
-        let f32_problem = MatmulRoutineProblem::dense(37, 29, 19, F32, MatmulLayout::Row);
+        let f32_problem = MatmulRoutineProblem::dense(37, 29, 19, F32);
         assert_eq!(
             prepared(&software, &f32_problem, &in_order),
             prepared(
@@ -1324,7 +1324,7 @@ mod base {
         let hw = offering(devices::strix_halo());
         let widest = hw.vector_ceiling(F16);
         let widths = |m, n, k| {
-            let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let settings = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &settings)

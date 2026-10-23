@@ -8,8 +8,8 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::stored::Packing;
 use cubek_microkernel::matmul::{
-    MatmulBuffers, MatmulDestination, MatmulLayout, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulStoredTile,
+    MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand, MatmulOperands,
+    MatmulOrder, MatmulStoredTile,
 };
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
@@ -221,64 +221,53 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// One unbatched product of dense operands of `element` throughout, the rhs laid as
-    /// `rhs_layout`: the problem a key of these extents describes.
-    pub fn dense(
-        m: usize,
-        n: usize,
-        k: usize,
-        element: ElemType,
-        rhs_layout: MatmulLayout,
-    ) -> Self {
-        let rhs_shape = [k, n];
-        let (rhs_alignment, rhs_buffer_alignment) = match rhs_layout.dense_strides(rhs_shape) {
-            Some(strides) => (
-                ElemAlignment::new(&rhs_shape, &strides),
-                rhs_layout.buffer_alignment(&rhs_shape, &strides),
-            ),
-            None => (ElemAlignment::ONE, ElemAlignment::ONE),
+    /// One unbatched product of dense operands of `element` throughout, every one in rows: the
+    /// problem a key of these extents describes. [`laid`](Self::laid) lays an input another way.
+    pub fn dense(m: usize, n: usize, k: usize, element: ElemType) -> Self {
+        let rows = MatmulOperands {
+            lhs: ElemAlignment::dense_rows(k),
+            rhs: ElemAlignment::dense_rows(n),
+            out: ElemAlignment::dense_rows(n),
         };
         Self {
             batches: Vec::new(),
             stated_rows: m,
             n,
             k,
-            elements: MatmulOperands {
-                lhs: element,
-                rhs: element,
-                out: element,
-            },
-            batches_held: MatmulOperands {
-                lhs: 1,
-                rhs: 1,
-                out: 1,
-            },
-            elem_alignments: MatmulOperands {
-                lhs: ElemAlignment::dense_rows(k),
-                rhs: rhs_alignment,
-                out: ElemAlignment::dense_rows(n),
-            },
+            elements: MatmulOperands::all(element),
+            batches_held: MatmulOperands::all(1),
+            elem_alignments: rows,
             // A key describes operands a launch allocates or views whole.
-            start_bytes: MatmulOperands {
-                lhs: 0,
-                rhs: 0,
-                out: 0,
-            },
-            layouts: MatmulOperands {
-                rhs: rhs_layout,
-                ..MatmulOperands::all(MatmulLayout::Row)
-            },
-            buffer_alignments: MatmulOperands {
-                lhs: ElemAlignment::dense_rows(k),
-                rhs: rhs_buffer_alignment,
-                out: ElemAlignment::dense_rows(n),
-            },
+            start_bytes: MatmulOperands::all(0),
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            buffer_alignments: rows,
             stored_tiles: MatmulOperands::all(None),
             // A launch the table times allocates its output.
             destination: MatmulDestination::Buffer,
             packings: MatmulOperands::all(None),
             index: None,
         }
+    }
+
+    /// This dense problem with `input` laid as `layout`, its alignments those of a dense buffer
+    /// so laid.
+    pub fn laid(mut self, input: MatmulOperand, layout: MatmulLayout) -> Self {
+        let shape = input.dims().map(|dim| match dim {
+            MatmulDim::M => self.stated_rows,
+            MatmulDim::N => self.n,
+            MatmulDim::K => self.k,
+        });
+        let (alignment, buffer_alignment) = match layout.dense_strides(shape) {
+            Some(strides) => (
+                ElemAlignment::new(&shape, &strides),
+                layout.buffer_alignment(&shape, &strides),
+            ),
+            None => (ElemAlignment::ONE, ElemAlignment::ONE),
+        };
+        self.layouts = self.layouts.with(input, layout);
+        self.elem_alignments = self.elem_alignments.with(input, alignment);
+        self.buffer_alignments = self.buffer_alignments.with(input, buffer_alignment);
+        self
     }
 
     /// `rows` rows of `element` against one slab of `stack`, its slabs `[slabs, k, n]` at
@@ -294,7 +283,7 @@ impl MatmulRoutineProblem {
         rhs_layout: MatmulLayout,
     ) -> Self {
         let [_, k, n] = slab_shape;
-        let dense = Self::dense(rows, n, k, element, rhs_layout);
+        let dense = Self::dense(rows, n, k, element).laid(MatmulOperand::Rhs, rhs_layout);
         Self {
             elements: MatmulOperands {
                 rhs: stack.elem,
@@ -374,7 +363,7 @@ impl MatmulRoutineProblem {
                 rhs: e2m1,
                 out,
             },
-            ..Self::dense(m, n, k, out, MatmulLayout::Col)
+            ..Self::dense(m, n, k, out).laid(MatmulOperand::Rhs, MatmulLayout::Col)
         }
     }
 
@@ -533,7 +522,8 @@ mod tests {
     fn the_rhs_aligns_in_the_order_it_is_bound() {
         let f16 = ElemType::Float(FloatKind::F16);
         let rhs = MatmulOperand::Rhs;
-        let col = MatmulRoutineProblem::dense(4, 48, 64, f16, MatmulLayout::Col);
+        let col =
+            MatmulRoutineProblem::dense(4, 48, 64, f16).laid(MatmulOperand::Rhs, MatmulLayout::Col);
         assert_eq!(
             col.alignment(rhs, MatmulOrder::InBufferOrder),
             col.buffer_alignments.rhs
@@ -542,7 +532,7 @@ mod tests {
             col.alignment(rhs, MatmulOrder::InBufferOrder),
             col.alignment(rhs, MatmulOrder::Stated)
         );
-        let row = MatmulRoutineProblem::dense(4, 48, 64, f16, MatmulLayout::Row);
+        let row = MatmulRoutineProblem::dense(4, 48, 64, f16);
         assert_eq!(
             row.alignment(rhs, MatmulOrder::InBufferOrder),
             row.alignment(rhs, MatmulOrder::Stated)

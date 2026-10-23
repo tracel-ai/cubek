@@ -333,7 +333,7 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::matmul::MatmulLayout;
+
     use cubek_microkernel::matmul::dense::plane::PlaneFragmentInstruction;
     use cubek_std::devices;
 
@@ -418,7 +418,7 @@ mod tests {
             for (position, settings) in PlaneFragmentMatmulRoutine.settings(&hw).iter().enumerate()
             {
                 for (m, n, k) in [(1, 128, 256), (37, 29, 19), (512, 4096, 4096)] {
-                    let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+                    let problem = MatmulRoutineProblem::dense(m, n, k, F16);
                     let prepared = PlaneFragmentMatmulRoutine.prepare(&hw, &problem, settings);
                     let outgrown = matches!(
                         prepared,
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn every_plane_stages_its_own_tile() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let settings = PlaneFragmentMatmulRoutineSettings::DEFAULT;
         let (blueprint, grid) = PlaneFragmentMatmulRoutine
             .prepare(&hw, &problem, &settings)
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn a_ring_is_resolved_against_one_planes_units() {
         let hw = offering(devices::strix_halo());
-        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16, MatmulLayout::Row);
+        let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let settings = PlaneFragmentMatmulRoutineSettings {
             ring: StageRing::DOUBLE_THROUGH_REGISTERS,
             ..PlaneFragmentMatmulRoutineSettings::DEFAULT
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn only_an_overhanging_fragment_output_drains_through_a_scratch() {
         let scratch = |hw: &Hardware, m, n, k| {
-            let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let (blueprint, _) = PlaneFragmentMatmulRoutine
                 .prepare(hw, &problem, &PlaneFragmentMatmulRoutineSettings::DEFAULT)
                 .expect("the default prepares here");
