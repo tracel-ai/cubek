@@ -96,8 +96,10 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
 
 /// `problem`'s step on `hw`, contracted one value at a time.
 fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
-    let packing = problem.packings.rhs.as_ref().expect("a packed problem");
-    MatmulStep::new(hw, &packing.operand, problem.elements.lhs)
+    let operands = problem
+        .packings
+        .map(|_, packing| packing.map_or(Operand::plain(), |packing| packing.operand));
+    MatmulStep::new(hw, operands, problem.elements)
 }
 
 /// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block axis

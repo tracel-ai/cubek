@@ -1,6 +1,6 @@
 use crate::kernels::dense::routines::cube::cube_shuffle_matmul_kernel;
 use crate::kernels::{
-    MATMUL_Q_RHS_NOT_PACKED, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulRoutine,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::tile::TileArgLaunch;
@@ -123,7 +123,7 @@ impl Routine for CubeTileGroupMatmulRoutine {
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
         let Some(packing) = problem.packings.rhs else {
-            return Err(MATMUL_Q_RHS_NOT_PACKED);
+            return Err(MATMUL_STREAMED_INPUT_FLOAT);
         };
         let view = MatmulView::of::<CubeTileGroupMicrokernel>(problem)?;
         view.check_steps(hw)?;

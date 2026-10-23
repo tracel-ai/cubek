@@ -166,7 +166,7 @@ impl PlaneFragmentMicrokernel {
         item: &MatmulWorkItem,
         settings: &PlaneFragmentMicrokernelSettings,
     ) -> impl Iterator<Item = Self> {
-        let (lhs, rhs, sum) = item.instruction_elements();
+        let (MatmulOperands { lhs, rhs, .. }, sum) = (item.elements, item.sum);
         let committed = hw.plane_dim().is_ok();
         let cmma = hw
             .properties
@@ -202,7 +202,7 @@ impl PlaneFragmentMicrokernel {
         };
         // Only the manual-mma instruction contracts a fragment deeper than itself.
         let deep = settings.fragment_depth == PlaneFragmentDepth::Stage;
-        let step = MatmulStep::new(hw, &Operand::plain(), item.elements.lhs);
+        let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements);
         instructions
             .into_iter()
             .filter(move |instruction| {

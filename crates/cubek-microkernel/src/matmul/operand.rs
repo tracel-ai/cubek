@@ -16,6 +16,9 @@ pub enum MatmulOperand {
 impl MatmulOperand {
     pub const ALL: [Self; 3] = [Self::Lhs, Self::Rhs, Self::Out];
 
+    /// The product's two inputs.
+    pub const INPUTS: [Self; 2] = [Self::Lhs, Self::Rhs];
+
     /// The dimensions the product names it by, in that order: `[m, k]`, `[k, n]` or `[m, n]`.
     pub fn dims(self) -> [MatmulDim; 2] {
         match self {

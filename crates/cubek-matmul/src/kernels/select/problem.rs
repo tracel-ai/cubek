@@ -6,6 +6,7 @@
 //! choice turns on.
 
 use cubecl::quant::scheme::QuantScheme;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use serde::{Deserialize, Serialize};
 
 use cubecl::zspace::Shape;
@@ -34,10 +35,8 @@ pub struct MatmulProblem {
     /// and the answer to a table that declines everything is the fallback
     /// rather than a kernel.
     pub streamed_rows: Option<usize>,
-    /// What the activation is: a float one, or one already quantized, which
-    /// makes both inputs of the product packed.
-    pub lhs: OperandKind,
-    pub rhs: OperandKind,
+    /// What each input is: float, or packed. The output is float.
+    pub operands: MatmulOperands<OperandKind>,
 }
 
 impl MatmulProblem {
@@ -60,9 +59,22 @@ impl MatmulProblem {
             n: rhs_shape[rank - 1],
             batches,
             streamed_rows: Self::streamed_rows_of(lhs_shape, rhs_shape),
-            lhs,
-            rhs,
+            operands: MatmulOperands {
+                lhs,
+                rhs,
+                out: OperandKind::Float,
+            },
         }
+    }
+
+    /// Each packed input and the scheme it is packed under.
+    pub fn packed_inputs(&self) -> impl Iterator<Item = (MatmulOperand, QuantScheme)> + '_ {
+        MatmulOperand::INPUTS
+            .into_iter()
+            .filter_map(|input| match self.operands.get(input) {
+                OperandKind::Quantized(scheme) => Some((input, scheme)),
+                OperandKind::Float => None,
+            })
     }
 
     /// The activation rows a memory-bound kernel would stream for `x @ weight`, or

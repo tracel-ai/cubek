@@ -1,6 +1,6 @@
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulContraction, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder,
     MatmulRows, MatmulWorkItem,
 };
 use crate::staging::StagedOperand;
@@ -82,7 +82,6 @@ impl AttentionWorkItem {
     /// contiguous along `D`, the contraction, as a col weight does.
     pub fn score(&self, score: ElemType) -> MatmulWorkItem {
         MatmulWorkItem {
-            contraction: MatmulContraction::AsStored,
             elements: MatmulOperands {
                 lhs: self.elements.query,
                 rhs: self.elements.key,
@@ -105,7 +104,6 @@ impl AttentionWorkItem {
     /// its owner keeps. The values lie contiguous along `DV`, the columns, as a row weight does.
     pub fn value(&self, probabilities: ElemType) -> MatmulWorkItem {
         MatmulWorkItem {
-            contraction: MatmulContraction::AsStored,
             elements: MatmulOperands {
                 lhs: probabilities,
                 rhs: self.elements.value,

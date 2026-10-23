@@ -39,9 +39,10 @@ pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
     why: "the packed routines are verified at f32, f16 or bf16 float operands",
 };
 
-/// What a packed routine declines: a problem whose rhs is not packed.
-pub const MATMUL_Q_RHS_NOT_PACKED: Refusal = Refusal::Declined {
-    why: "the packed routines read a packed, block-scaled rhs, beside an lhs float or packed",
+/// What a routine streaming the `[k, n]` input packed declines: a float one. A packed `[m, k]`
+/// input against it is decoded first.
+pub const MATMUL_STREAMED_INPUT_FLOAT: Refusal = Refusal::Declined {
+    why: "the packed placement walks the block-split space of the [k, n] input it streams, and this one is float",
 };
 
 /// What a launch declines before preparing anything: operands of two elements, or of one the

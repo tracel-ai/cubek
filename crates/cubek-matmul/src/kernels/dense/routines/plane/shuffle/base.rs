@@ -1,7 +1,7 @@
 use super::kernel::plane_shuffle_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::{
-    MATMUL_Q_RHS_NOT_PACKED, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
@@ -203,6 +203,7 @@ impl PlaneShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+        problem.check_plain()?;
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
@@ -263,7 +264,7 @@ impl PlaneShufflePackedPlacement {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_Q_RHS_NOT_PACKED`], for a float rhs; why `hw` cannot walk `problem`'s steps, or
+    /// [`MATMUL_STREAMED_INPUT_FLOAT`], for a float `[k, n]` input; why `hw` cannot walk `problem`'s steps, or
     /// run its microkernel at `settings`.
     pub fn new(
         hw: &Hardware,
@@ -271,7 +272,7 @@ impl PlaneShufflePackedPlacement {
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<Self, Refusal> {
         if problem.packings.rhs.is_none() {
-            return Err(MATMUL_Q_RHS_NOT_PACKED);
+            return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem)?;
         view.check_steps(hw)?;

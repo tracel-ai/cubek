@@ -471,7 +471,7 @@ impl Microkernel for CubeShuffleMicrokernel {
             CubeShufflePlane::Shuffle(_) => return,
             CubeShufflePlane::Fragment(plane) => return plane.vectorize(&(), vectorization),
         };
-        for operand in [MatmulOperand::Lhs, MatmulOperand::Rhs] {
+        for operand in MatmulOperand::INPUTS {
             vectorization.require(VectorRequirement::Access {
                 operand,
                 elements: plane.leaf_extent(plane.orders.innermost(operand)),

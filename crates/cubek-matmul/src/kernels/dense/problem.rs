@@ -8,7 +8,7 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::stored::Packing;
 use cubek_microkernel::matmul::{
-    MatmulBuffers, MatmulContraction, MatmulDestination, MatmulLayout, MatmulOperand,
+    MatmulBuffers, MatmulDestination, MatmulLayout, MatmulOperand,
     MatmulOperands, MatmulOrder, MatmulStoredTile,
 };
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
@@ -32,8 +32,6 @@ pub struct MatmulRoutineProblem {
     /// The element each operand is read at: a float operand's stored one, a packed one's the
     /// element its words unpack into ([`packings`](Self::packings) says how it is stored).
     pub elements: MatmulOperands<ElemType>,
-    /// The elements the instruction multiplies them at, where one is not its stored one.
-    pub contraction: MatmulContraction,
     /// Batches each operand holds: the output's, or fewer where an operand is broadcast.
     pub batches_held: MatmulOperands<usize>,
     /// The alignment of each operand's buffer in elements, over the axes the product names: the
@@ -190,7 +188,6 @@ impl MatmulRoutineProblem {
             stated_rows: lhs_shape[rank - 2],
             n: rhs_shape[rank - 1],
             k: lhs_shape[rank - 1],
-            contraction: MatmulContraction::AsStored,
             elements: MatmulOperands {
                 lhs: lhs.elem,
                 rhs: rhs.elem,
@@ -246,7 +243,6 @@ impl MatmulRoutineProblem {
             stated_rows: m,
             n,
             k,
-            contraction: MatmulContraction::AsStored,
             elements: MatmulOperands {
                 lhs: element,
                 rhs: element,
@@ -349,7 +345,6 @@ impl MatmulRoutineProblem {
             stated_rows: m,
             n,
             k,
-            contraction: MatmulContraction::AsStored,
             elements: packings.map(|_, packing| match packing {
                 Some(_) => Self::PACKED,
                 None => element,

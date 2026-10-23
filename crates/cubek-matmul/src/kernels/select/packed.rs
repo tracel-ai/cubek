@@ -1,21 +1,22 @@
-//! What the selection ([`super::selector::select`]) asks of a packed weight: the
-//! schemes the kernels stream ([`matmul_supported`]), and the line between the packed weight's
+//! What the selection ([`super::selector::select`]) asks of a packed input: the
+//! schemes the kernels stream ([`matmul_supported`]), and the line between a packed product's
 //! few-rows and many-rows tables ([`MatmulTable::packed`](super::selector::MatmulTable::packed)),
 //! [`QUANTIZED_FEW_ROWS`], a **rule** rather than a measurement, for the reason the float bound
 //! is one.
 
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
-use cubek_std::matmul_axes::{K, N};
 
-/// The weight a scheme describes, read before any tensor is in hand.
+/// `input` packed under `scheme`, read before any tensor is in hand.
 ///
 /// A rule runs ahead of the launch, so the strides that decide the axis
 /// everywhere else are not here and the scheme's own claim answers.
-fn scheme_operand(scheme: &QuantScheme) -> Option<Operand> {
-    Operand::of_scheme(scheme, Operand::axis_of(scheme, [K, N])?, [K, N])
+fn scheme_operand(scheme: &QuantScheme, input: MatmulOperand) -> Option<Operand> {
+    let axes = input.axes();
+    Operand::of_scheme(scheme, Operand::axis_of(scheme, axes)?, axes)
 }
 
 /// The most rows a packed product goes to the few-rows table with. Past it the staged routines win on
@@ -29,7 +30,7 @@ pub fn quantized_few_rows(rows: usize) -> bool {
     rows <= QUANTIZED_FEW_ROWS
 }
 
-/// Whether the packed kernels stream `scheme`: the packed int formats
+/// Whether the packed kernels stream `input` packed under `scheme`: the packed int formats
 /// (`q4f`/`q4s`/`q8f`/`q8s`), the fp4 one (`e2m1`) or the fp8 ones (`e4m3`/`e5m2`), in
 /// either packed-u32 form — `PackedU32(0)` with blocks along the output dimension (the
 /// framework's artifact form) or `PackedU32(1)` with blocks along the reduction (the
@@ -50,7 +51,7 @@ pub fn quantized_few_rows(rows: usize) -> bool {
 /// first, or on the framework's quantized matmul — it just never reaches one
 /// of the tiled kernels packed. This is the gate that decides which, so
 /// everything downstream may take the form, and the decode, for granted.
-pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme) -> bool {
+pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
     let value = matches!(
         scheme.value,
         QuantValue::Q4F
@@ -66,16 +67,16 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme) -> bool {
             | QuantValue::E4M3
             | QuantValue::E5M2
     );
-    value && scheme_operand(scheme).is_some()
+    value && scheme_operand(scheme, input).is_some()
 }
 
-/// Values of `k` one word of an NVFP4 weight's scales covers: four one-byte scales, a block each.
+/// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.
 pub const NVFP4_SCALE_WORD_SPAN: usize = NVFP4_BLOCK * 4;
 
-/// The scheme an activation is quantized under for the 4-bit tensor cores: `e2m1` values along
-/// its last axis, eight to a word, under a `ue4m3` scale every [`NVFP4_BLOCK`] and one `f32` over
-/// the whole of it.
-pub fn nvfp4_activation_scheme() -> QuantScheme {
+/// NVFP4 over a matrix stored with its contraction innermost: `e2m1` values along its last axis,
+/// eight to a word, under a `ue4m3` scale every [`NVFP4_BLOCK`] and one `f32` over the whole of
+/// it.
+pub fn nvfp4_scheme() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::E2M1)
         .per_block([NVFP4_BLOCK as u8], ScaleDtype::UE4M3)

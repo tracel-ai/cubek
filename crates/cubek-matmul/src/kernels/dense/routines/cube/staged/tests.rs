@@ -1343,7 +1343,7 @@ mod base {
     /// holds.
     #[test]
     fn an_nvfp4_product_read_as_stored_is_estimated() {
-        use crate::kernels::select::packed::nvfp4_activation_scheme;
+        use crate::kernels::select::packed::nvfp4_scheme;
         use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
         use cubek_microkernel::matmul::stored::Operand;
         use cubek_microkernel::matmul::stored::Packing;
@@ -1361,7 +1361,7 @@ mod base {
             256,
             ElemType::Float(FloatKind::F16),
             MatmulOperands {
-                lhs: Some(packing(nvfp4_activation_scheme(), [M, K])),
+                lhs: Some(packing(nvfp4_scheme(), [M, K])),
                 rhs: Some(packing(tile_order::scheme(), [K, N])),
                 out: None,
             },

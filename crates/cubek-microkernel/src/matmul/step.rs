@@ -1,49 +1,51 @@
 use crate::matmul::stored::Operand;
+use crate::matmul::{MatmulOperand, MatmulOperands};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Space};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_nvfp4, manual_mma};
 
-/// What a launch of this kind declines whatever the routine: a weight a read of which straddles
-/// two scale tiles, or an `n` or a `k` that is not a whole number of [steps](MatmulStep).
+/// What a launch of this kind declines whatever the routine: a packed input a read of which
+/// straddles two scale tiles, or an `n` or a `k` that is not a whole number of
+/// [steps](MatmulStep).
 pub const MATMUL_STEPS_UNCLOSED: Refusal = Refusal::Declined {
-    why: "the packed routines read a weight whose reads sit inside one scale tile, and whose n and k are whole steps: the least box every load of the activation, of the values and of the scales fills whole",
+    why: "the packed routines read packed inputs whose reads sit inside one scale tile, and whose n and k are whole steps: the least box every load of the inputs' values and of their scales fills whole",
 };
 
-/// What a product of a packed activation declines where the weight's read along `K` splits a word
-/// of it: the two are contracted a read of the weight at a time.
-pub const MATMUL_PACKED_LHS_SPLIT: Refusal = Refusal::Declined {
-    why: "a packed activation is contracted a read of the weight along k at a time, and this weight's read splits a word of the activation",
+/// What a product of two packed inputs declines where a read of one along `K` splits a word of
+/// the other: the two are contracted a read at a time.
+pub const MATMUL_PACKED_READS_SPLIT: Refusal = Refusal::Declined {
+    why: "two packed inputs are contracted a read along k at a time, and a read of one splits a word of the other",
 };
 
-/// The step of a product against a packed weight: the smallest box over `M`, `N` and `K` that
-/// every load it makes, and the instruction contracting it, fill whole. On each axis it is the
-/// least common multiple of what they cover, stated as a product: the instruction's extent times
-/// the fewest calls of it that every load fills, so a box made of whole steps loads whole: the
-/// activation at the device's width, the weight a whole read of its values and a whole read of its
-/// scales at a time.
+/// The step of a product of packed inputs: the smallest box over `M`, `N` and `K` that every load
+/// it makes, and the instruction contracting it, fill whole. On each axis it is the least common
+/// multiple of what they cover, stated as a product: the instruction's extent times the fewest
+/// calls of it that every load fills, so a box made of whole steps loads whole: a float input at
+/// the device's width, a packed one a whole read of its values and a whole read of its scales at a
+/// time.
 ///
-/// Every routine of this kind cuts its boxes as whole steps, whether the weight is in rows or in
-/// the tiles it is stored in: [`Operand::stored`] states what a read of a stored weight brings,
+/// Every routine of this kind cuts its boxes as whole steps, whether a packed input is in rows or
+/// in the tiles it is stored in: [`Operand::stored`] states what a read of a stored input brings,
 /// and the step is read off that.
 ///
-/// NVFP4 in tile order on a device of 128-bit loads: an `f16` activation loaded eight of `k` at a
-/// time, a word of four scales covering sixty-four of `k`, and its values two words, one block,
-/// down `k` a read: a step of one column by sixty-four of `k`, which takes eight loads of
-/// activation, one of scales and four of values. Under the block-scaled instruction, its stages
-/// filled by the TMA engine, it is two of the instruction's `16 × 8 × 64` calls deep, `128 × 8`;
-/// under an `8 × 8 × 8` instruction, `64 × 8`. A load stores the weight in the step its device
-/// takes, so a stored tile is whole steps by construction.
+/// NVFP4 in tile order against an `f16` input on a device of 128-bit loads: the `f16` input loaded
+/// eight of `k` at a time, a word of four scales covering sixty-four of `k`, and the values two
+/// words, one block, down `k` a read: a step of one column by sixty-four of `k`, which takes eight
+/// loads of the `f16` input, one of scales and four of values. Under the block-scaled instruction,
+/// its stages filled by the TMA engine, it is two of the instruction's `16 × 8 × 64` calls deep,
+/// `128 × 8`; under an `8 × 8 × 8` instruction, `64 × 8`. A load stores an input in the step its
+/// device takes, so a stored tile is whole steps by construction.
 ///
 /// A stage the TMA engine fills is one more load ([`filled_by_tma`](Self::filled_by_tma)): a box
-/// moves rows of [`TMA_ROW_BYTES`] along the axis the weight's words run along, the row it copies
-/// at full speed.
+/// moves rows of [`TMA_ROW_BYTES`] along the axis a packed input's words run along, the row it
+/// copies at full speed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulStep {
-    activation: Space,
-    scales: Space,
-    values: Space,
+    /// What one load brings, for every load the inputs take: a packed input's read of its values
+    /// and of its scales, a float one's load at the device's width.
+    loads: Vec<Space>,
     /// What one move of the fill brings: a TMA box's row, one value where the units fill.
     fill: Space,
     /// What one call of the instruction contracts; one value along every axis where nothing
@@ -55,19 +57,31 @@ pub struct MatmulStep {
 }
 
 impl MatmulStep {
-    /// The step of a product of a `lhs` activation against `rhs` on `hw`, contracted one value at
-    /// a time: the weight's read and its scales' as its operand states them, and the activation
-    /// one of the device's loads along `K` where the weight's words run along it, one value where
-    /// they run across it and each value of `k` meets a whole line of columns.
-    pub fn new(hw: &Hardware, rhs: &Operand, lhs: ElemType) -> Self {
-        let activation = match rhs.lined() == K {
-            true => hw.load_values(lhs),
-            false => 1,
-        };
+    /// The step of a product of inputs read as `operands` and loaded at `elements` on `hw`,
+    /// contracted one value at a time: each packed input's read and its scales' as its operand
+    /// states them, and each float input one of the device's loads along the axis the other
+    /// input's reads run along where it has that axis, one value where it does not and each of
+    /// its values meets a whole line of the other.
+    pub fn new(
+        hw: &Hardware,
+        operands: MatmulOperands<Operand>,
+        elements: MatmulOperands<ElemType>,
+    ) -> Self {
+        let [first, second] = MatmulOperand::INPUTS;
+        let mut loads = Vec::new();
+        for (input, other) in [(first, second), (second, first)] {
+            let operand = operands.get(input);
+            let lined = operands.get(other).lined();
+            match operand.scaled_along() {
+                Some(_) => loads.extend([operand.read_space()].into_iter().chain(operand.scale_read_space())),
+                None if input.axes().contains(&lined) => {
+                    loads.push(Space::new(&[(lined, hw.load_values(elements.get(input)))]))
+                }
+                None => {}
+            }
+        }
         Self::covering(Self {
-            activation: Space::new(&[(K, activation)]),
-            scales: rhs.scale_read_space().unwrap_or_else(|| Space::new(&[])),
-            values: rhs.read_space(),
+            loads,
             fill: Space::new(&[]),
             instruction: Space::new(&[]),
             calls: Space::new(&[]),
@@ -83,33 +97,34 @@ impl MatmulStep {
         })
     }
 
-    /// This step where the TMA engine fills the stages of a weight read as `rhs`, its values
+    /// This step where the TMA engine fills the stages of an input read as `operand`, its values
     /// `element`: a box moves rows of [`TMA_ROW_BYTES`] along the axis the words run along, so the
     /// step is that many bytes of values deep along it. NVFP4's `e2m1` rows are a hundred and
     /// twenty-eight values of `k`.
-    pub fn filled_by_tma(self, rhs: &Operand, element: ElemType) -> Self {
+    pub fn filled_by_tma(self, operand: &Operand, element: ElemType) -> Self {
         let row = (TMA_ROW_BYTES * 8 / element.size_bits().max(1)).max(1);
         Self::covering(Self {
-            fill: Space::new(&[(rhs.lined(), row)]),
+            fill: Space::new(&[(operand.lined(), row)]),
             ..self
         })
     }
 
-    /// The step a load stores a weight in on `hw`: a product of an `lhs` activation against the
-    /// weight read as `rhs`, its values `values`, under the largest instruction `hw` offers to
-    /// contract it, its stages filled by the TMA engine where `hw` has one. The decode routines
-    /// take no instruction, and their step is a whole number of times inside this one, so one
-    /// stored tile serves both.
+    /// The step a load stores `input` in on `hw`: `input` read as `operand`, its values `values`,
+    /// against the other input at `contracted`, the element the product is contracted at, under
+    /// the largest instruction `hw` offers to contract it, its stages filled by the TMA engine
+    /// where `hw` has one. The decode routines take no instruction, and their step is a whole
+    /// number of times inside this one, so one stored tile serves both.
     ///
     /// NVFP4 values on a device that contracts them as stored take the block-scaled instruction:
-    /// `128 × 8`. Under an `8 × 8 × 8` instruction an `f16` activation takes `64 × 8` of NVFP4
-    /// and `8 × 8` of a float weight. `None` on a device that offers no instruction to contract
-    /// it: there a tile would feed no fragment, and the weight stays as it was laid down.
+    /// `128 × 8`. Under an `8 × 8 × 8` instruction NVFP4 against an `f16` input takes `64 × 8`,
+    /// and a float input `8 × 8`. `None` on a device that offers no instruction to contract it:
+    /// there a tile would feed no fragment, and the input stays as it was laid down.
     pub fn stored_on(
         hw: &Hardware,
-        rhs: &Operand,
+        input: MatmulOperand,
+        operand: Operand,
         values: ElemType,
-        lhs: ElemType,
+        contracted: ElemType,
     ) -> Option<Self> {
         let f32 = ElemType::Float(FloatKind::F32);
         let shape = match values == ElemType::Float(FloatKind::E2M1) && block_scaled_nvfp4(hw) {
@@ -121,12 +136,17 @@ impl MatmulStep {
                 .cmma
                 .iter()
                 .copied()
-                .for_triple(lhs, lhs, f32)
+                .for_triple(contracted, contracted, f32)
                 .largest(),
         }?;
-        let step = Self::new(hw, rhs, lhs);
+        let stored = |other: MatmulOperand| other == input;
+        let operands = MatmulOperands::all(Operand::plain())
+            .map(|other, plain| if stored(other) { operand } else { plain });
+        let elements = MatmulOperands::all(contracted)
+            .map(|other, contracted| if stored(other) { values } else { contracted });
+        let step = Self::new(hw, operands, elements);
         let step = match hw.bulk_tensor_copy() {
-            true => step.filled_by_tma(rhs, values),
+            true => step.filled_by_tma(&operand, values),
             false => step,
         };
         Some(step.under(Space::new(&[
@@ -142,8 +162,9 @@ impl MatmulStep {
             let call = Self::reach(&step.instruction, axis);
             let calls = (1..)
                 .find(|&calls| {
-                    [&step.activation, &step.scales, &step.values, &step.fill]
-                        .into_iter()
+                    step.loads
+                        .iter()
+                        .chain([&step.fill])
                         .all(|load| (call * calls).is_multiple_of(Self::reach(load, axis)))
                 })
                 .expect("some count of calls fills every load");
@@ -173,21 +194,31 @@ impl MatmulStep {
         self.calls.extent(axis)
     }
 
-    /// Whether an `n × k` weight read as `rhs` is a whole number of steps, each read of it inside
-    /// one scale tile.
+    /// Whether a product of `n` columns and `k` deep, its inputs read as `operands`, is a whole
+    /// number of steps along both, each read of a packed input inside one scale tile, and two
+    /// packed inputs' reads along `K` whole words of each other.
     ///
     /// # Errors
     ///
-    /// [`MATMUL_STEPS_UNCLOSED`].
-    pub fn check(&self, rhs: &Operand, n: usize, k: usize) -> Result<(), Refusal> {
-        let lined = rhs.lined();
-        let straddles = rhs
-            .scale(lined)
-            .is_some_and(|tile| !tile.is_multiple_of(rhs.read(lined)));
+    /// [`MATMUL_STEPS_UNCLOSED`], and [`MATMUL_PACKED_READS_SPLIT`].
+    pub fn check(&self, operands: MatmulOperands<Operand>, n: usize, k: usize) -> Result<(), Refusal> {
+        let straddles = MatmulOperand::INPUTS.into_iter().any(|input| {
+            let operand = operands.get(input);
+            let lined = operand.lined();
+            operand
+                .scale(lined)
+                .is_some_and(|tile| !tile.is_multiple_of(operand.read(lined)))
+        });
         let closes = n.is_multiple_of(self.along(N)) && k.is_multiple_of(self.along(K));
-        match closes && !straddles {
-            true => Ok(()),
-            false => Err(MATMUL_STEPS_UNCLOSED),
+        if !closes || straddles {
+            return Err(MATMUL_STEPS_UNCLOSED);
+        }
+        let [first, second] = MatmulOperand::INPUTS.map(|input| operands.get(input));
+        let both_packed = first.scaled_along().is_some() && second.scaled_along().is_some();
+        let [short, long] = [first.read(K).min(second.read(K)), first.read(K).max(second.read(K))];
+        match both_packed && !long.is_multiple_of(short) {
+            true => Err(MATMUL_PACKED_READS_SPLIT),
+            false => Ok(()),
         }
     }
 }
@@ -204,16 +235,28 @@ mod tests {
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
-    /// How many loads of the activation, of the scales and of the values, and how many calls of
-    /// the instruction, one step takes.
-    fn counts(step: &MatmulStep) -> [usize; 4] {
-        [
-            &step.activation,
-            &step.scales,
-            &step.values,
-            &step.instruction,
-        ]
-        .map(|part| Space::new(&[M, N, K].map(|axis| (axis, step.along(axis)))).tiles(part))
+    /// A float `[m, k]` input of `element` against a `[k, n]` input read as `packed`.
+    fn against(packed: &Operand) -> MatmulOperands<Operand> {
+        MatmulOperands {
+            rhs: *packed,
+            ..MatmulOperands::all(Operand::plain())
+        }
+    }
+
+    /// The step of a float `[m, k]` input of `element` against a `[k, n]` input read as `packed`.
+    fn step_against(hw: &Hardware, packed: &Operand, element: ElemType) -> MatmulStep {
+        MatmulStep::new(hw, against(packed), MatmulOperands::all(element))
+    }
+
+    /// How many of each load one step takes, in the order the inputs take them (the float input's,
+    /// then the packed one's values and its scales), and how many calls of the instruction.
+    fn counts(step: &MatmulStep) -> Vec<usize> {
+        let box_ = Space::new(&[M, N, K].map(|axis| (axis, step.along(axis))));
+        step.loads
+            .iter()
+            .chain([&step.instruction])
+            .map(|part| box_.tiles(part))
+            .collect()
     }
 
     /// NVFP4 in tile order as the writer stores it for a 128-bit load.
@@ -247,13 +290,13 @@ mod tests {
     }
 
     /// NVFP4 in tile order on a device of 128-bit loads: a step of one word of scales, sixty-four
-    /// of `k`, by one column: eight loads of activation, one of scales and four of values, each
-    /// read inside one block.
+    /// of `k`, by one column: eight loads of the `f16` input, four of values and one of scales,
+    /// each read inside one block.
     #[test]
     fn an_nvfp4_step_is_one_word_of_scales_deep() {
-        let step = MatmulStep::new(&devices::m2_pro(), &tile_order(), F16);
+        let step = step_against(&devices::m2_pro(), &tile_order(), F16);
         assert_eq!([M, N, K].map(|axis| step.along(axis)), [1, 1, 64]);
-        assert_eq!(counts(&step), [8, 1, 4, 1]);
+        assert_eq!(counts(&step), [8, 4, 1, 1]);
     }
 
     /// MXFP4's blocks of thirty-two make the step twice as deep as NVFP4's in rows: a word of
@@ -261,23 +304,23 @@ mod tests {
     #[test]
     fn an_mxfp4_step_is_twice_as_deep() {
         let hw = devices::m2_pro();
-        let nvfp4 = MatmulStep::new(&hw, &Operand::packed(K, 8, K, 16, 4), F16);
-        let mxfp4 = MatmulStep::new(&hw, &Operand::packed(K, 8, K, 32, 4), F16);
+        let nvfp4 = step_against(&hw, &Operand::packed(K, 8, K, 16, 4), F16);
+        let mxfp4 = step_against(&hw, &Operand::packed(K, 8, K, 32, 4), F16);
         assert_eq!((nvfp4.along(K), mxfp4.along(K)), (64, 128));
-        assert_eq!(counts(&mxfp4), [16, 1, 16, 1]);
+        assert_eq!(counts(&mxfp4), [16, 16, 1, 1]);
     }
 
     /// Under an `8 × 8 × 8` instruction the NVFP4 step keeps its depth, eight calls down, and
     /// takes the instruction's rows and columns.
     #[test]
     fn an_instruction_joins_the_step_where_the_loads_leave_it() {
-        let step = MatmulStep::new(&devices::m2_pro(), &tile_order(), F16).under(Space::new(&[
+        let step = step_against(&devices::m2_pro(), &tile_order(), F16).under(Space::new(&[
             (M, 8),
             (N, 8),
             (K, 8),
         ]));
         assert_eq!([M, N, K].map(|axis| step.along(axis)), [8, 8, 64]);
-        assert_eq!(counts(&step), [8, 1, 4, 8]);
+        assert_eq!(counts(&step), [8, 4, 1, 8]);
         assert_eq!([M, N, K].map(|axis| step.calls(axis)), [1, 1, 8]);
     }
 
@@ -289,14 +332,65 @@ mod tests {
         let e2m1 = ElemType::Float(FloatKind::E2M1);
         let hw = devices::m2_pro();
         let one_block = Operand::packed(K, 8, K, 16, 1);
-        let shallow = MatmulStep::new(&hw, &one_block, F16);
+        let shallow = step_against(&hw, &one_block, F16);
         let filled = shallow.clone().filled_by_tma(&one_block, e2m1);
         assert_eq!((shallow.along(K), filled.along(K)), (16, 128));
         assert_eq!(filled.along(N), shallow.along(N));
 
-        let deep = MatmulStep::new(&hw, &tile_order(), F16);
+        let deep = step_against(&hw, &tile_order(), F16);
         let filled = deep.clone().filled_by_tma(&tile_order(), e2m1);
         assert_eq!((deep.along(K), filled.along(K)), (64, 128));
+    }
+
+    /// Which input is packed never changes the step along `K`: NVFP4 down the `k` of an `[m, k]`
+    /// input against a float `[k, n]` one steps as deep as NVFP4 down the `k` of a `[k, n]` input
+    /// against a float `[m, k]` one, and two NVFP4 inputs step alike.
+    #[test]
+    fn which_input_is_packed_never_changes_the_depth() {
+        let hw = devices::m2_pro();
+        let nvfp4 = Operand::packed(K, 8, K, 16, 4);
+        let float = MatmulOperands::all(F16);
+        let packed_rhs = MatmulStep::new(&hw, against(&nvfp4), float);
+        let packed_lhs = MatmulStep::new(
+            &hw,
+            MatmulOperands {
+                lhs: nvfp4,
+                ..MatmulOperands::all(Operand::plain())
+            },
+            float,
+        );
+        let both = MatmulStep::new(
+            &hw,
+            MatmulOperands {
+                lhs: nvfp4,
+                ..against(&nvfp4)
+            },
+            float,
+        );
+        assert_eq!(packed_lhs.along(K), packed_rhs.along(K));
+        assert_eq!(both.along(K), packed_rhs.along(K));
+    }
+
+    /// Two packed inputs are refused where a read of one along `K` splits a word of the other.
+    #[test]
+    fn two_packed_reads_that_split_a_word_are_refused() {
+        let hw = devices::m2_pro();
+        let (word, half) = (Operand::packed(K, 8, K, 16, 4), Operand::packed(K, 4, K, 16, 4));
+        let both = MatmulOperands {
+            lhs: half,
+            ..against(&word)
+        };
+        let step = MatmulStep::new(&hw, both, MatmulOperands::all(F16));
+        assert_eq!(step.check(both, 64, 64), Ok(()));
+        let split = MatmulOperands {
+            lhs: Operand::packed(K, 3, K, 24, 4),
+            ..against(&word)
+        };
+        let step = MatmulStep::new(&hw, split, MatmulOperands::all(F16));
+        assert_eq!(
+            step.check(split, 64, 1536),
+            Err(MATMUL_PACKED_READS_SPLIT)
+        );
     }
 
     /// A weight in rows steps a word of scales along the axis its words run along, and one read
@@ -304,9 +398,9 @@ mod tests {
     #[test]
     fn a_weight_in_rows_steps_a_word_of_scales_along_its_words() {
         let hw = devices::m2_pro();
-        let along_k = MatmulStep::new(&hw, &in_rows(QuantValue::Q4S, K), F16);
+        let along_k = step_against(&hw, &in_rows(QuantValue::Q4S, K), F16);
         assert_eq!((along_k.along(K), along_k.along(N)), (64, 1));
-        let along_n = MatmulStep::new(&hw, &in_rows(QuantValue::Q4S, N), F16);
+        let along_n = step_against(&hw, &in_rows(QuantValue::Q4S, N), F16);
         assert_eq!((along_n.along(K), along_n.along(N)), (1, 64));
     }
 
@@ -314,11 +408,11 @@ mod tests {
     #[test]
     fn a_weight_short_of_a_whole_step_is_refused() {
         let rhs = tile_order();
-        let step = MatmulStep::new(&devices::m2_pro(), &rhs, F16).under(block_scaled());
-        assert_eq!(step.check(&rhs, 4096, 4096), Ok(()));
+        let step = step_against(&devices::m2_pro(), &rhs, F16).under(block_scaled());
+        assert_eq!(step.check(against(&rhs), 4096, 4096), Ok(()));
         for (n, k) in [(4092, 4096), (4096, 4104)] {
             assert_eq!(
-                step.check(&rhs, n, k),
+                step.check(against(&rhs), n, k),
                 Err(MATMUL_STEPS_UNCLOSED),
                 "{n} × {k}"
             );
@@ -346,9 +440,9 @@ mod tests {
                         None,
                     )
                     .expect("tile order is read at every load");
-                let step = MatmulStep::new(&hw, &rhs, F16);
+                let step = step_against(&hw, &rhs, F16);
                 assert_eq!(
-                    step.check(&rhs, n, k),
+                    step.check(against(&rhs), n, k),
                     Ok(()),
                     "{k} × {n}, {load_width}-bit loads"
                 );
@@ -379,7 +473,7 @@ mod tests {
                 )
                 .expect("tile order is read at every load");
             for rhs in [in_rows, stored] {
-                let step = MatmulStep::new(&hw, &rhs, e2m1)
+                let step = step_against(&hw, &rhs, e2m1)
                     .filled_by_tma(&rhs, e2m1)
                     .under(block_scaled());
                 assert_eq!(
@@ -415,7 +509,7 @@ mod tests {
         let nvfp4 = Operand::packed(K, 8, K, tile_order::BLOCK, 4);
         let float = Operand::plain();
         let tile = |hw: &Hardware, rhs: &Operand, values| {
-            MatmulStep::stored_on(hw, rhs, values, F16).map(|step| (step.along(K), step.along(N)))
+            MatmulStep::stored_on(hw, MatmulOperand::Rhs, *rhs, values, F16).map(|step| (step.along(K), step.along(N)))
         };
         assert_eq!(tile(&block_scaled, &nvfp4, e2m1), Some((128, 8)));
         assert_eq!(tile(&simdgroup, &nvfp4, e2m1), Some((64, 8)));

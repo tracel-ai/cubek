@@ -1,9 +1,10 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::MatmulBinding;
-use crate::kernels::select::packed::nvfp4_activation_scheme;
+use crate::kernels::select::packed::nvfp4_scheme;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
@@ -190,8 +191,8 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// The step of an NVFP4 product on `hw` ([`MatmulStep`]): the least box every load of
-    /// both operands fills whole — a row of the TMA engine's box, a word of scales — under the
-    /// device's block-scaled instruction. `None` on a device that offers none. A weight in rows and
+    /// both inputs fills whole — a row of the TMA engine's box, a word of scales — under the
+    /// device's block-scaled instruction. `None` on a device that offers none. An input in rows and
     /// one in [tile order](cubek_microkernel::matmul::tile_order) step alike, and a load on such a device
     /// stores in this step.
     pub fn block_scaled_step(hw: &Hardware) -> Option<MatmulStep> {
@@ -199,48 +200,40 @@ impl CubeStagedMatmulRoutine {
         let instruction = manual_mma(hw)
             .for_triple(e2m1, e2m1, ElemType::Float(FloatKind::F32))
             .next()?;
-        let operand = Self::nvfp4_weight().operand;
+        let packings = Self::nvfp4_inputs();
+        let operands = packings.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
         let shape = Space::new(&[
             (M, instruction.m as usize),
             (N, instruction.n as usize),
             (K, instruction.k as usize),
         ]);
         Some(
-            MatmulStep::new(hw, &operand, e2m1)
-                .filled_by_tma(&operand, e2m1)
+            MatmulStep::new(hw, operands, MatmulOperands::all(e2m1))
+                .filled_by_tma(&operands.rhs, e2m1)
                 .under(shape),
         )
     }
 
-    /// An NVFP4 weight's packing over `[K, N]`, its words along `K`, as a checkpoint packs it and as
+    /// Both inputs packed in NVFP4, their words along `K`: the `[m, k]` one as a row-major
+    /// quantizer writes it ([`nvfp4_scheme`]), the `[k, n]` one as a checkpoint packs it and as
     /// tile order stores it.
-    fn nvfp4_weight() -> Packing {
-        let scheme = tile_order::scheme();
-        Packing {
-            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
+    fn nvfp4_inputs() -> MatmulOperands<Option<Packing>> {
+        let packing = |input: MatmulOperand, scheme: QuantScheme| Packing {
+            operand: Operand::of_scheme(&scheme, K, input.axes())
+                .expect("NVFP4 is one block along k"),
             scheme,
+        };
+        MatmulOperands {
+            lhs: Some(packing(MatmulOperand::Lhs, nvfp4_scheme())),
+            rhs: Some(packing(MatmulOperand::Rhs, tile_order::scheme())),
+            out: None,
         }
     }
 
-    /// `m` rows of an NVFP4 activation against an NVFP4 weight `k` deep and `n` wide, into an `f16`
-    /// output: what [`block_scaled_settings`](Self::block_scaled_settings) prepares its boxes on.
+    /// `m` rows by `n` columns `k` deep of two NVFP4 inputs, into an `f16` output: what
+    /// [`block_scaled_settings`](Self::block_scaled_settings) prepares its boxes on.
     fn block_scaled_problem(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        let scheme = nvfp4_activation_scheme();
-        let activation = Packing {
-            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("NVFP4 is one block along k"),
-            scheme,
-        };
-        MatmulRoutineProblem::packed(
-            m,
-            n,
-            k,
-            ElemType::Float(FloatKind::F16),
-            MatmulOperands {
-                lhs: Some(activation),
-                rhs: Some(Self::nvfp4_weight()),
-                out: None,
-            },
-        )
+        MatmulRoutineProblem::packed(m, n, k, ElemType::Float(FloatKind::F16), Self::nvfp4_inputs())
     }
 
     /// Registers the compiler adds around a plane's lower bound

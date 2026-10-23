@@ -262,7 +262,7 @@ impl PlaneShuffleMicrokernel {
         shared: usize,
     ) -> impl Iterator<Item = (usize, PlaneShuffleBlocks)> {
         let operand = space.operand(MatmulOperand::Rhs);
-        let step = MatmulStep::new(hw, &operand, item.elements.lhs);
+        let step = MatmulStep::new(hw, space.operands(), item.elements);
         let (depth, columns_a_step) = (step.along(K), step.along(N));
         let units_along_k = operand.units_distributing(K, space.k, shared);
         let groups_along_n = shared / units_along_k;
@@ -575,7 +575,7 @@ mod tests {
     use crate::matmul::stored::Operand;
     use crate::matmul::stored::Packing;
     use crate::matmul::tile_order::{self, VALUES_AXES as VALUES};
-    use crate::matmul::{MatmulAxes, MatmulContraction, MatmulDestination};
+    use crate::matmul::{MatmulAxes, MatmulDestination};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
@@ -587,7 +587,6 @@ mod tests {
         MatmulWorkItem {
             elements: MatmulOperands::all(F16),
             sum: F32,
-            contraction: MatmulContraction::AsStored,
             layouts: MatmulOperands {
                 rhs: MatmulLayout::Col,
                 ..MatmulOperands::all(MatmulLayout::Row)
@@ -656,7 +655,6 @@ mod tests {
                 out: F16,
             },
             sum: F32,
-            contraction: MatmulContraction::AsStored,
             layouts: MatmulOperands {
                 rhs: MatmulLayout::Col,
                 ..MatmulOperands::all(MatmulLayout::Row)

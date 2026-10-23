@@ -124,7 +124,13 @@ impl CubeTileGroupMicrokernel {
             return None;
         };
         let values = ElemType::Float(FloatKind::E2M1);
-        let step = MatmulStep::stored_on(hw, &packing.operand, values, item.elements.lhs)?;
+        let step = MatmulStep::stored_on(
+            hw,
+            MatmulOperand::Rhs,
+            packing.operand,
+            values,
+            item.elements.lhs,
+        )?;
         Some(step.along(N))
     }
 

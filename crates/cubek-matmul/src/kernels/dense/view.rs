@@ -7,8 +7,9 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::MatmulPartitioning;
+use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::{
-    MATMUL_PACKED_LHS_SPLIT, MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel,
+    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel,
     MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
@@ -263,31 +264,26 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// Whether a packed weight is a whole number of its [step](MatmulStep) on `hw`, each read of
-    /// it inside one scale tile, and a packed activation whole words of itself in each of the
-    /// weight's reads along `K`, the runs the two are contracted in. A float weight has no step to
+    /// Whether the product is a whole number of its [step](MatmulStep) on `hw`, each read of a
+    /// packed input inside one scale tile, and two packed inputs whole words of each other in
+    /// each read along `K`, the runs the two are contracted in. Float inputs have no step to
     /// close.
     ///
     /// # Errors
     ///
     /// [`MATMUL_STEPS_UNCLOSED`](cubek_microkernel::matmul::MATMUL_STEPS_UNCLOSED), and
-    /// [`MATMUL_PACKED_LHS_SPLIT`](cubek_microkernel::matmul::MATMUL_PACKED_LHS_SPLIT).
+    /// [`MATMUL_PACKED_READS_SPLIT`](cubek_microkernel::matmul::MATMUL_PACKED_READS_SPLIT).
     pub fn check_steps(&self, hw: &Hardware) -> Result<(), Refusal> {
-        let MatmulOperands { lhs, rhs, .. } = self.problem.packings;
-        let Some(rhs) = rhs else {
+        let packings = self.problem.packings;
+        if packings == MatmulOperands::all(None) {
             return Ok(());
-        };
-        MatmulStep::new(hw, &rhs.operand, self.problem.elements.lhs).check(
-            &rhs.operand,
+        }
+        let operands = packings.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
+        MatmulStep::new(hw, operands, self.problem.elements).check(
+            operands,
             self.problem.n,
             self.problem.k,
-        )?;
-        match lhs {
-            Some(lhs) if !rhs.operand.read(K).is_multiple_of(lhs.operand.read(K)) => {
-                Err(MATMUL_PACKED_LHS_SPLIT)
-            }
-            _ => Ok(()),
-        }
+        )
     }
 
     /// What every microkernel is handed, summing in [`SUM`](Self::SUM): its rows held whole, every
@@ -298,7 +294,6 @@ impl<'a> MatmulView<'a> {
         MatmulWorkItem {
             elements: self.problem.elements,
             sum: Self::SUM,
-            contraction: self.problem.contraction,
             layouts: self.problem.layouts,
             axes: match blocks {
                 None => MatmulAxes::MNK,

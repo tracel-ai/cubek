@@ -57,7 +57,7 @@ impl MatmulStage {
         orders: MatmulOperands<MatmulOrder>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        for operand in [MatmulOperand::Lhs, MatmulOperand::Rhs] {
+        for operand in MatmulOperand::INPUTS {
             vectorization.require(VectorRequirement::Access {
                 operand,
                 elements: self.run(operand, orders),
@@ -87,7 +87,7 @@ impl MatmulStage {
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<MatmulOrder>,
     ) -> [StagedOperand; 2] {
-        [MatmulOperand::Lhs, MatmulOperand::Rhs].map(|operand| StagedOperand {
+        MatmulOperand::INPUTS.map(|operand| StagedOperand {
             element: elements.get(operand),
             space: self
                 .space

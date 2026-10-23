@@ -109,7 +109,7 @@ impl CubeStagedAsyncCopyRefusal {
 
     /// Why lines `widths` wide, of `item`'s elements, are not ones the engine copies whole.
     fn of_widths(widths: &MatmulOperands<usize>, item: &MatmulWorkItem) -> Option<Self> {
-        [MatmulOperand::Lhs, MatmulOperand::Rhs]
+        MatmulOperand::INPUTS
             .into_iter()
             .find(|&operand| {
                 // Bits rather than bytes: an `e2m1` value is half of one.
@@ -178,7 +178,7 @@ impl CubeStagedTmaRefusal {
                     .get(operand)
                     .admits((TMA_ALIGNMENT_BYTES * 8 / bits(operand)).max(1))
         };
-        let staged = [MatmulOperand::Lhs, MatmulOperand::Rhs];
+        let staged = MatmulOperand::INPUTS;
         // Each operand's stage lands one cell the descriptor moves a line, as
         // `CubeStagedFill::vectorize` binds it.
         let landed = |operand: MatmulOperand| {
@@ -338,7 +338,7 @@ impl CubeStagedFill {
     /// TMA-filled stage reads both operands one element wide.
     pub fn vectorize(&self, vectorization: &mut Vectorization<MatmulOperand>) {
         if self.delivery == CubeStagedDelivery::Tma {
-            for operand in [MatmulOperand::Lhs, MatmulOperand::Rhs] {
+            for operand in MatmulOperand::INPUTS {
                 vectorization.require(VectorRequirement::Elementwise { operand });
             }
         }

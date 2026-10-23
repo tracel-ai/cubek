@@ -17,7 +17,6 @@ use cubek_std::matmul_axes::{K, M, N};
 pub struct MatmulWorkItem {
     pub elements: MatmulOperands<ElemType>,
     pub sum: ElemType,
-    pub contraction: MatmulContraction,
     pub layouts: MatmulOperands<MatmulLayout>,
     /// The block-split space a packed operand puts the product in, where the microkernel
     /// multiplies by its scales as it reads it: none for float operands, or packed ones decoded
@@ -52,11 +51,16 @@ impl MatmulBlocks {
             .map_or(Operand::plain(), |packing| packing.operand)
     }
 
+    /// What one read of each operand and of its scales brings.
+    pub fn operands(&self) -> MatmulOperands<Operand> {
+        MatmulOperands::all(()).map(|operand, ()| self.operand(operand))
+    }
+
     /// The two axes `axis` becomes: the blocks the scales of the operand grouping it make of it,
     /// and the position inside one. An axis no scale groups is one block over the whole of it.
     pub fn axes(&self, axis: Axis) -> [(Axis, usize); 2] {
         let extent = self.extent(axis);
-        let grouping = [MatmulOperand::Lhs, MatmulOperand::Rhs]
+        let grouping = MatmulOperand::INPUTS
             .map(|operand| self.operand(operand))
             .into_iter()
             .find(|operand| operand.grouping(axis, extent).is_some());
@@ -95,42 +99,17 @@ impl MatmulBlocks {
     }
 }
 
-/// The elements a matrix instruction multiplies a product's operands at, where one of them is not
-/// contracted at the element it is stored in. A 16-bit activation against an NVFP4 weight is
-/// either product, so the caller names which: the elements cannot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MatmulContraction {
-    /// Each operand at the element it is stored in.
-    AsStored,
-    /// The lhs, a 16-bit activation, rounded to NVFP4 as each plane loads it, against an NVFP4
-    /// rhs: the 4-bit product, on the device's block-scaled instruction.
-    LhsRoundedToNvfp4,
-    /// The rhs, NVFP4, decoded into the lhs's element as each plane loads it: the lhs's product,
-    /// on the instruction the lhs's element runs, the weight read in a quarter of the bytes.
-    RhsDecodedToLhs,
-}
-
 impl MatmulWorkItem {
-    /// The element types a matrix instruction multiplies this item at, as `(lhs, rhs, sum)`: the
-    /// stored ones, but for the operand its [`contraction`](MatmulContraction) loads at another.
-    pub fn instruction_elements(&self) -> (ElemType, ElemType, ElemType) {
-        let MatmulOperands { lhs, rhs, .. } = self.elements;
-        match self.contraction {
-            MatmulContraction::AsStored => (lhs, rhs, self.sum),
-            MatmulContraction::LhsRoundedToNvfp4 => {
-                (ElemType::Float(FloatKind::E2M1), rhs, self.sum)
-            }
-            MatmulContraction::RhsDecodedToLhs => (lhs, lhs, self.sum),
-        }
-    }
-
-    /// The element this item's packed inputs are decoded into to be contracted: the lhs's where
-    /// it is float, the output's where it is packed too.
+    /// The element this item's packed inputs are decoded into to be contracted: a float input's,
+    /// the output's where both are packed.
     pub fn decoded_element(&self) -> ElemType {
-        match self.blocks.and_then(|blocks| blocks.packings.lhs) {
-            Some(_) => self.elements.out,
-            None => self.elements.lhs,
-        }
+        let packings = self
+            .blocks
+            .map_or(MatmulOperands::all(None), |blocks| blocks.packings);
+        MatmulOperand::INPUTS
+            .into_iter()
+            .find(|&input| packings.get(input).is_none())
+            .map_or(self.elements.out, |input| self.elements.get(input))
     }
 
     /// How a microkernel that decodes this item's packed inputs reads each: a packed one
@@ -148,22 +127,24 @@ impl MatmulWorkItem {
 
     /// The product a cube's planes contract once it has decoded this item's packed inputs into
     /// its stages: both inputs at [`decoded_element`](Self::decoded_element), over the axes
-    /// inside a block, the rows tiled. A packed rhs runs along `K`, and so does the stage it
-    /// decodes into: a col rhs.
+    /// inside a block, the rows tiled. A packed input's stage lies as its words run, a float
+    /// one's as its buffer does.
     pub fn decoded(&self) -> Self {
         let element = self.decoded_element();
+        let packings = self
+            .blocks
+            .map_or(MatmulOperands::all(None), |blocks| blocks.packings);
         Self {
-            contraction: MatmulContraction::AsStored,
             elements: MatmulOperands {
                 lhs: element,
                 rhs: element,
                 out: self.elements.out,
             },
             sum: self.sum,
-            layouts: MatmulOperands {
-                rhs: MatmulLayout::Col,
-                ..self.layouts
-            },
+            layouts: self.layouts.map(|operand, layout| match packings.get(operand) {
+                Some(packing) => MatmulLayout::of_packing(&packing, operand),
+                None => layout,
+            }),
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,

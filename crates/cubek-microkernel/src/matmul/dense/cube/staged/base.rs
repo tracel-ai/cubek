@@ -170,7 +170,7 @@ impl CubeStagedMicrokernel {
     /// packed input's scales do not group `K`, or two packed inputs group it differently.
     pub fn block(item: &MatmulWorkItem) -> Option<usize> {
         let space = item.blocks?;
-        let mut blocks = [MatmulOperand::Lhs, MatmulOperand::Rhs]
+        let mut blocks = MatmulOperand::INPUTS
             .into_iter()
             .filter(|&operand| space.packings.get(operand).is_some())
             .map(|operand| {
@@ -253,7 +253,7 @@ impl CubeStagedMicrokernel {
         let (block, read) = (Self::block(item), item.decoded_element());
         let step = item
             .blocks
-            .map(|space| MatmulStep::new(hw, &space.operand(MatmulOperand::Rhs), read));
+            .map(|space| MatmulStep::new(hw, space.operands(), MatmulOperands::all(read)));
         PlaneFragmentMicrokernel::candidates(
             hw,
             &item.decoded(),
