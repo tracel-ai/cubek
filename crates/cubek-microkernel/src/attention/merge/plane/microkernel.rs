@@ -3,18 +3,21 @@ use cubecl::tile::{Monoid, Tile, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The slots of `slot_box`'s queries, laid out as `slots` states, merged into those queries of
-/// `out` by one plane, a query at a time (`MergedSlotRow::new`), the first `queries` of the box.
-/// A query whose every slot saw nothing stays zero.
+/// `out` by one plane, a query at a time (`MergedSlotRow::new`), the first `queries` of the box,
+/// and each query's logsumexp written where the caller asks for it. A query whose every slot saw
+/// nothing stays zero, its logsumexp the minimum value.
 ///
 /// The slots lie as [`AttentionSlotBox`] states; `out` is the attention's output,
-/// `[b, kv, g, q, dv]` at its own strides.
+/// `[b, kv, g, q, dv]` at its own strides, and `logsumexp` `[b, kv, g, q]` at its own.
 #[cube]
+#[allow(clippy::too_many_arguments)]
 pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     out: &mut Tensor<E>,
+    mut logsumexp: ComptimeOption<&mut Tensor<EA>>,
     slot_box: &AttentionSlotBox,
     #[comptime] slots: AttentionSlotShape,
     #[comptime] queries: usize,
@@ -27,14 +30,27 @@ pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
     #[unroll]
     for r in 0..queries {
         if r < slot_box.seq_q {
-            let merged = MergedSlotRow::<EA, N>::new(
+            let mut row = MergedSlotRow::<EA, N>::new(
                 slot_out,
                 slot_max,
                 slot_sum,
                 slot_box.first_row + r,
                 slots,
-            )
-            .normalized();
+            );
+            #[comptime]
+            match logsumexp {
+                ComptimeOption::Some(ref mut logsumexp) => {
+                    if lane == 0 {
+                        let at = slot_box.batch * logsumexp.stride(0)
+                            + slot_box.kv * logsumexp.stride(1)
+                            + slot_box.head * logsumexp.stride(2)
+                            + (slot_box.first_query + r) * logsumexp.stride(3);
+                        logsumexp[at] = row.logsumexp();
+                    }
+                }
+                ComptimeOption::None => {}
+            }
+            let merged = row.normalized();
             let row_start = slot_box.batch * out.stride(0)
                 + slot_box.kv * out.stride(1)
                 + slot_box.head * out.stride(2)
@@ -59,7 +75,8 @@ pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
 /// they left (`MergedSlotRow::new`) and written into `out`, normalized: of the group's first
 /// `queries` rows, which lie from row `first_row` of the slots as `slots` states, the plane
 /// merges each `r` whose remainder by the planes splitting the keys is `split`, its place among
-/// them. `out` is windowed to the group's rows. A row whose every slot saw nothing writes zeros.
+/// them. `out`, and `logsumexp` where the caller asks for each row's, are windowed to the group's
+/// rows. A row whose every slot saw nothing writes zeros, and the minimum value as its logsumexp.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
@@ -68,6 +85,7 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     slot_max: &mut [EA],
     slot_sum: &mut [EA],
     out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
     first_row: usize,
     split: usize,
     #[comptime] slots: AttentionSlotShape,
@@ -86,9 +104,21 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     #[unroll]
     for r in 0..queries {
         if r % splits == split {
-            let merged =
-                MergedSlotRow::<EA, N>::new(slot_out, slot_max, slot_sum, first_row + r, slots)
-                    .normalized();
+            let mut row =
+                MergedSlotRow::<EA, N>::new(slot_out, slot_max, slot_sum, first_row + r, slots);
+            #[comptime]
+            match logsumexp {
+                ComptimeOption::Some(logsumexp) => {
+                    if lane == 0 {
+                        let mut logsumexp = logsumexp.clone();
+                        logsumexp
+                            .flat_mut::<EA, Const<1>>()
+                            .write(r, Vector::cast_from(row.logsumexp()));
+                    }
+                }
+                ComptimeOption::None => {}
+            }
+            let merged = row.normalized();
             #[unroll]
             for e in 0..comptime!(lines_of_value.div_ceil(units)) {
                 let line = lane + e * units;
@@ -264,6 +294,15 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
             max: merged,
             sum: plane_sum(total),
         }
+    }
+
+    /// The row's logsumexp, `max + ln(sum)`: the minimum value where no slot saw a key.
+    fn logsumexp(&self) -> EA {
+        select(
+            self.sum > EA::from_int(0),
+            self.max + self.sum.ln(),
+            EA::min_value(),
+        )
     }
 
     /// The unit's lines divided by the row's sum: the row's output, zero where no slot saw a key.

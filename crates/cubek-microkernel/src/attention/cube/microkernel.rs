@@ -12,10 +12,12 @@ use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's box: its keys and values walked with planes that read its stage
 /// (`staged_walk`), then each plane's rows normalized and drained into the cube's
-/// output, which sums the planes that split the same rows' keys.
+/// output, which sums the planes that split the same rows' keys, and each row's logsumexp written
+/// where the caller asks for it.
 ///
 /// `cube` is the region the cube owns, its walk the stages of keys, of which it takes the first
-/// `steps`, each held as `storage`; `out`, `query`, `key`, `value` and `bias` are windowed to it.
+/// `steps`, each held as `storage`; `out`, `logsumexp`, `query`, `key`, `value` and `bias` are
+/// windowed to it.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_staged_attention_microkernel<
@@ -25,6 +27,7 @@ pub fn cube_staged_attention_microkernel<
 >(
     cube: &Region,
     out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
     query: &Tile,
     key: &Tile,
     value: &Tile,
@@ -46,6 +49,11 @@ pub fn cube_staged_attention_microkernel<
         storage,
     );
     planes.store_normalized(cube, out);
+    #[comptime]
+    match logsumexp {
+        ComptimeOption::Some(logsumexp) => planes.store_logsumexp(cube, logsumexp),
+        ComptimeOption::None => {}
+    }
 }
 
 /// A cube's planes over `walk`, the steps of keys it takes: its query staged once, its keys and
@@ -116,8 +124,10 @@ fn staged_walk<
 /// (`split_planes_in_slots`), and each merges its share of them into the output
 /// (`plane_merge_rows_microkernel`).
 ///
+/// Each row's logsumexp is written where the caller asks for it, by the plane that writes the row.
+///
 /// `cube` is the region the cube owns, its walk the steps of keys or the pages of them, of which
-/// it takes the first `steps`; `out` and `query` are windowed to it.
+/// it takes the first `steps`; `out`, `logsumexp` and `query` are windowed to it.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_unstaged_attention_microkernel<
@@ -138,6 +148,7 @@ pub fn cube_unstaged_attention_microkernel<
 >(
     cube: &Region,
     out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
     query: &Tile,
     key: &K,
     value: &L,
@@ -160,6 +171,11 @@ pub fn cube_unstaged_attention_microkernel<
     );
     if comptime!(microkernel.settings.planes_along_keys.get() == 1) {
         planes.store_normalized(cube, out);
+        #[comptime]
+        match logsumexp {
+            ComptimeOption::Some(logsumexp) => planes.store_logsumexp(cube, logsumexp),
+            ComptimeOption::None => {}
+        }
     } else {
         let shape = comptime!(microkernel.merge_shape(value_dim));
         let (mut slot_out, mut slot_max, mut slot_sum) =
@@ -178,6 +194,7 @@ pub fn cube_unstaged_attention_microkernel<
                 &mut slot_max,
                 &mut slot_sum,
                 &out.at(&plane),
+                &logsumexp.clone().map(|logsumexp| logsumexp.at(&plane)),
                 group * queries,
                 plane.coord(S),
                 shape,

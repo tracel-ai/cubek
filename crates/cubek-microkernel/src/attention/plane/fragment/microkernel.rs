@@ -98,6 +98,14 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         output.write();
     }
 
+    /// Each plane's rows' state, kept where its score is ([`OnlineSoftmax::store_logsumexp`]).
+    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
+        for plane in cube.planes() {
+            self.softmax
+                .store_logsumexp(&self.score.at(&plane).scores(), &mut logsumexp.at(&plane));
+        }
+    }
+
     /// The plane's sum drained, as it stands, into its window of a scratch of the walk's step,
     /// and its rows' softmax state into two more, a cell a row, each written by a unit that holds
     /// it ([`OnlineSoftmax::store_rows`]); then each row's elements copied from there into its
@@ -418,14 +426,16 @@ fn plane_fragment_attention_sum<EA: Float>(
 
 /// One plane's rows: the plane stages its query once and its keys and values a stage at a time,
 /// holding as many stages as `ring` says, runs the plane fragment microkernel on every stage of its
-/// first `steps` steps, and drains its rows into `out` normalized. `out`, `query`, `key`, `value`
-/// and `bias` are windowed to `rows`; `planes` is how many planes along the queries share the
-/// cube, which a score read through windows is placed under.
+/// first `steps` steps, drains its rows into `out` normalized, and writes each row's logsumexp
+/// where the caller asks for it. `out`, `logsumexp`, `query`, `key`, `value` and `bias` are
+/// windowed to `rows`; `planes` is how many planes along the queries share the cube, which a score
+/// read through windows is placed under.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     rows: &Region,
     out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
     query: &Tile,
     key: &Tile,
     value: &Tile,
@@ -475,4 +485,11 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
     });
     sum.along(DV).mul(&softmax.recip_l());
     sum.drained_into(out);
+    #[comptime]
+    match logsumexp {
+        ComptimeOption::Some(logsumexp) => {
+            softmax.store_logsumexp(&score.scores(), &mut logsumexp.clone())
+        }
+        ComptimeOption::None => {}
+    }
 }

@@ -75,6 +75,7 @@ impl HypercubeShuffleMerge for HypercubeLastArrivalShuffle {
                         key,
                         value,
                         tensors.out_arg(),
+                        tensors.logsumexp_arg().into(),
                         slots.out.binding().into_tensor_arg(),
                         slots.max.binding().into_tensor_arg(),
                         slots.sum.binding().into_tensor_arg(),

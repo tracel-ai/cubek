@@ -293,6 +293,19 @@ impl AttentionTuneInputs {
         })
     }
 
+    /// The same attention, writing beside its output each query's logsumexp
+    /// ([`AttentionTensors::with_logsumexp`]): every candidate writes it, so the winner's is the
+    /// call's.
+    pub fn with_logsumexp(mut self) -> Self {
+        self.tensors = self.tensors.with_logsumexp();
+        self
+    }
+
+    /// Each query's logsumexp, `[b, h, q]`, where the attention writes it.
+    pub fn logsumexp(&self) -> Option<TensorHandle> {
+        self.tensors.logsumexp()
+    }
+
     /// The key positions the buffers hold: a sequence's extent, or its pages' positions.
     fn keys(&self) -> usize {
         let positions = self.key.shape()[2];

@@ -1,8 +1,6 @@
 //! LSE oracle tier: host-only checks of the CPU reference's `lse = m + ln(l)`
-//! output against a direct (non-online) logsumexp. No kernel emits lse yet;
-//! these pin the convention the tile port's epilogue will be tested against:
-//! natural log, and exactly `-inf` on fully-masked rows (matching the
-//! backward reference).
+//! output against a direct (non-online) logsumexp: natural log, and exactly
+//! `-inf` on fully-masked rows.
 
 use cubecl::ir::AddressType;
 use cubecl::prelude::Scalar;

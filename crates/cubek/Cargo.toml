@@ -28,6 +28,7 @@ default = [
     "cubek-microkernel?/default",
     "cubek-convolution?/default",
     "cubek-attention?/default",
+    "cubek-attention-backward?/default",
     "cubek-interpolate?/default",
     "cubek-pool?/default",
     "cubek-fft?/default",
@@ -42,12 +43,15 @@ std = [
     "cubek-microkernel?/std",
     "cubek-convolution?/std",
     "cubek-attention?/std",
+    "cubek-attention-backward?/std",
     "cubek-interpolate?/std",
     "cubek-pool?/std",
     "cubek-fft?/std",
 ]
 
 attention = ["cubek-attention"]
+# Attention's backward pass, for training: its own crate, off unless a caller asks for it.
+attention-backward = ["cubek-attention-backward"]
 interpolate = ["cubek-interpolate"]
 pool = ["cubek-pool"]
 convolution = ["cubek-convolution"]
@@ -69,6 +73,7 @@ fft = ["cubek-fft"]
 [dependencies]
 cubecl = { workspace = true }
 cubek-attention = { workspace = true, optional = true }
+cubek-attention-backward = { workspace = true, optional = true }
 cubek-convolution = { workspace = true, optional = true }
 cubek-fft = { workspace = true, optional = true }
 cubek-interpolate = { workspace = true, optional = true }

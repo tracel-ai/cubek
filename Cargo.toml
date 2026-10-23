@@ -25,6 +25,7 @@ redundant_field_names = "allow"
 # repeating the path and version.
 cubek = { path = "crates/cubek", version = "0.4.0-pre.1", default-features = false }
 cubek-attention = { path = "crates/cubek-attention", version = "0.4.0-pre.1", default-features = false }
+cubek-attention-backward = { path = "crates/cubek-attention-backward", version = "0.4.0-pre.1", default-features = false }
 cubek-convolution = { path = "crates/cubek-convolution", version = "0.4.0-pre.1", default-features = false }
 cubek-fft = { path = "crates/cubek-fft", version = "0.4.0-pre.1", default-features = false }
 cubek-interpolate = { path = "crates/cubek-interpolate", version = "0.4.0-pre.1", default-features = false }
@@ -43,10 +44,10 @@ cubek-test-utils = { path = "crates/cubek-test-utils", version = "0.4.0-pre.1", 
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 # cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "81fc30920ccac85b6b6ce13d7d4afa3498a9c23d", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "81fc30920ccac85b6b6ce13d7d4afa3498a9c23d", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "81fc30920ccac85b6b6ce13d7d4afa3498a9c23d", default-features = false }
-cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "81fc30920ccac85b6b6ce13d7d4afa3498a9c23d", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "62781f97881f9e82c8ec58dc18b177bc93d39abb", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "62781f97881f9e82c8ec58dc18b177bc93d39abb", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "62781f97881f9e82c8ec58dc18b177bc93d39abb", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "62781f97881f9e82c8ec58dc18b177bc93d39abb", default-features = false }
 ### For releases ###
 # cubecl = { version = "0.12.0-pre.1", default-features = false }
 # cubecl-common = { version = "0.12.0-pre.1", default-features = false }

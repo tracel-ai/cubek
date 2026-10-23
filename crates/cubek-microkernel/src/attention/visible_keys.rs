@@ -52,6 +52,35 @@ impl VisibleKeys {
         .tile_in::<E>(partitioning)
     }
 
+    /// The bias over `partitioning`'s heads, keys and queries, the keys before the queries: as a
+    /// walk owned by the keys holds its scores.
+    pub fn keys_first_bias<E: Numeric>(&self, partitioning: &Partitioning) -> Tile {
+        Procedural::new::<E, VisibleKeys>(
+            comptime!(partitioning.space().subspace(&[G, S, Q])),
+            VisibleKeys {
+                attended: self.attended,
+                seq_q: self.seq_q,
+                visibility: comptime!(self.visibility),
+            },
+        )
+        .tile_in::<E>(partitioning)
+    }
+
+    /// Steps of `queries_per_step` queries before the first that sees `region`'s first key: what
+    /// a walk owned by the keys skips. Under a causal visibility a query sees no key past its own
+    /// position, so the queries before `s + queries − attended` see none of the region's; every
+    /// query may see a key otherwise.
+    pub fn first_query_step(&self, region: &Region, #[comptime] queries_per_step: usize) -> usize {
+        let mut first = 0usize;
+        if comptime!(self.visibility.is_causal()) {
+            let reach = region.origin(S) + self.seq_q as usize;
+            if reach > self.attended as usize {
+                first = reach - self.attended as usize;
+            }
+        }
+        first / queries_per_step
+    }
+
     /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the steps from
     /// `region`'s first key on, every `in_turns`-th of them where that many walkers take a walk's
     /// steps in turns. A step the last visible key falls in is taken whole; the bias masks its

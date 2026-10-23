@@ -4,7 +4,8 @@ use crate::attention::merge::plane::plane_merge_attention_microkernel;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The cube that stored its partial of `slot_box`'s queries counting itself in at the box, and the
-/// last of the box's cubes to count merging the box into `out`, by one plane
+/// last of the box's cubes to count merging the box into `out`, and into `logsumexp` where the
+/// caller asks for it, by one plane
 /// ([`plane_merge_attention_microkernel()`])
 /// ([`HypercubeMerge::LastArrival`](crate::attention::hypercube::HypercubeMerge::LastArrival)).
 ///
@@ -19,6 +20,7 @@ pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     out: &mut Tensor<E>,
+    logsumexp: ComptimeOption<&mut Tensor<EA>>,
     arrivals: &[Atomic<u32>],
     #[comptime] merge: HypercubeMergeShape,
 ) {
@@ -41,6 +43,7 @@ pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
             slot_max,
             slot_sum,
             out,
+            logsumexp,
             slot_box,
             merge.slots,
             merge.seq_q,

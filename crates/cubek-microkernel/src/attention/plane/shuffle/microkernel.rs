@@ -323,6 +323,21 @@ impl<EA: Float, E: Float, N: Size, K: StepLines<N>, L: StepLines<N>>
         }
     }
 
+    /// Each row's max and total, which [`store_normalized`](Self::store_normalized) merged across
+    /// the plane's teams, written by the plane's first unit.
+    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
+        let rows = comptime!(self.microkernel.seq_q());
+        let mut values = Array::<EA>::new(rows);
+        #[unroll]
+        for r in 0..rows {
+            let live = self.total[r] > EA::from_int(0);
+            values[r] = select(live, self.max[r] + self.total[r].ln(), EA::min_value());
+        }
+        for plane in cube.planes() {
+            logsumexp.at(&plane).set_cells(&values, rows);
+        }
+    }
+
     /// The teams merged (`close`), then the plane's rows written as they stand.
     #[allow(clippy::too_many_arguments)]
     fn store_partial(

@@ -3,11 +3,13 @@ use cubek_microkernel::attention::AttentionSlotBox;
 use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
 use cubek_microkernel::attention::merge::plane::plane_merge_attention_microkernel;
 
-/// A plane for every query merging the query's slots into the output: the query is `q = x`, head
-/// `g = y % group` of key head `kv = y / group`, batch `b = z` of the cube's position.
+/// A plane for every query merging the query's slots into the output, and into the query's
+/// logsumexp where the launch binds one: the query is `q = x`, head `g = y % group` of key head
+/// `kv = y / group`, batch `b = z` of the cube's position.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
     out: &mut Tensor<E>,
+    logsumexp: ComptimeOption<&mut Tensor<EA>>,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
@@ -33,6 +35,7 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         slot_max,
         slot_sum,
         out,
+        logsumexp,
         &slot_box,
         merge.slots,
         merge.seq_q,
