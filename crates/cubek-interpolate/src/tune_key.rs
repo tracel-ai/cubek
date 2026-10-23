@@ -1,3 +1,5 @@
+#![allow(clippy::redundant_field_names)]
+
 use crate::definition::InterpolateMode;
 use cubecl::{AutotuneKey, ir::ElemType, tune::anchor};
 use serde::{Deserialize, Serialize};
