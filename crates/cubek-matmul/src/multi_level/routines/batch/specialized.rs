@@ -17,7 +17,7 @@ use crate::{
                 BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
             },
             global::{
-                GlobalWriterFamily, InputLoadFlow, LoadFlows, PlaneWriterFamily, TmaWriterFamily,
+                InputLoadFlow, LoadFlows, PlaneWriterFamily,
                 multi_stage::specialized::SpecializedMatmulFamily,
                 read::{
                     AsyncPartialLoadingStrategy, FullLoadingStrategy,
@@ -41,24 +41,16 @@ use crate::{
 };
 
 /// The batch-matmul family powering [`SpecializedAlgorithm`].
-type SpecializedBatch<RC, L, AL, GW> = PartitionedBatchMatmulFamily<
+type SpecializedBatch<RC, L, AL> = PartitionedBatchMatmulFamily<
     RC,
-    SpecializedMatmulFamily<PlanePartitioner, RC, L, AL, GW>,
+    SpecializedMatmulFamily<PlanePartitioner, RC, L, AL, PlaneWriterFamily>,
     RowMajorGlobalPartitionMatmul,
 >;
 
-/// Plane accelerated specialized matmul with TMA readers, writing the output with `GW`.
-pub struct SpecializedAlgorithm<
-    L = AsyncPartialTmaLoading,
-    AL = SyncFullStridedLoading,
-    GW = PlaneWriterFamily,
-> {
-    pub _phantom: PhantomData<(L, AL, GW)>,
+/// Plane accelerated specialized matmul with TMA readers
+pub struct SpecializedAlgorithm<L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
+    pub _phantom: PhantomData<(L, AL)>,
 }
-
-/// [`SpecializedAlgorithm`] with TMA loads, writing the output with TMA stores.
-pub type SpecializedTmaStoreAlgorithm =
-    SpecializedAlgorithm<AsyncPartialTmaLoading, SyncFullStridedLoading, TmaWriterFamily>;
 
 #[derive(Clone)]
 pub struct SpecializedStrategy {
@@ -91,26 +83,24 @@ impl From<()> for SpecializedStrategy {
     }
 }
 
-impl<L, AL, GW> cubek_std::legacy::Routine for SpecializedAlgorithm<L, AL, GW> {
+impl<L, AL> cubek_std::legacy::Routine for SpecializedAlgorithm<L, AL> {
     type Strategy = SpecializedStrategy;
     type Blueprint = BatchMatmulBlueprint;
 }
 
-impl<RC, L, AL, GW> Routine<RC> for SpecializedAlgorithm<L, AL, GW>
+impl<RC, L, AL> Routine<RC> for SpecializedAlgorithm<L, AL>
 where
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC, Stage: StageFamily>,
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,
-    GW: GlobalWriterFamily,
 {
 }
 
-impl<RC, L, AL, GW> BatchMatmulRoutine<RC> for SpecializedAlgorithm<L, AL, GW>
+impl<RC, L, AL> BatchMatmulRoutine<RC> for SpecializedAlgorithm<L, AL>
 where
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC, Stage: StageFamily>,
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,
-    GW: GlobalWriterFamily,
 {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
@@ -128,7 +118,7 @@ where
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <SpecializedBatch<RC, L, AL, GW>>::launch_unchecked::<MA>(
+                <SpecializedBatch<RC, L, AL>>::launch_unchecked::<MA>(
                     client,
                     cube_dim,
                     cube_count,
@@ -154,7 +144,7 @@ where
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<SpecializedBatch<RC, L, AL, GW>, RC>(
+        batch_validate_blueprint::<SpecializedBatch<RC, L, AL>, RC>(
             client,
             blueprint,
             problem,
@@ -164,7 +154,7 @@ where
     }
 
     fn num_stages() -> NumStages {
-        SpecializedBatch::<RC, L, AL, GW>::num_stages()
+        SpecializedBatch::<RC, L, AL>::num_stages()
     }
 
     fn expand_blueprint(
@@ -198,8 +188,7 @@ where
                         minimum_stage_count: 8,
                     },
                     swizzled: tile_matmul.should_swizzle(&device_settings.client),
-                    stage_buffering: SpecializedBatch::<RC, L, AL, GW>::num_stages()
-                        .stage_buffering(),
+                    stage_buffering: SpecializedBatch::<RC, L, AL>::num_stages().stage_buffering(),
                     ..Default::default()
                 },
             )?,
@@ -222,7 +211,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = SpecializedBatch::<RC, L, AL, GW>::cubedim_resource(
+        let cubedim_resource = SpecializedBatch::<RC, L, AL>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,

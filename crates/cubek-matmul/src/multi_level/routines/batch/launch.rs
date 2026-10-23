@@ -6,7 +6,7 @@ use crate::{
         BatchMatmulRoutine,
         args::{
             ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg,
-            TensorArgs, TensorMapArgs, TensorMapStoreArgs,
+            TensorArgs, TensorMapArgs,
         },
         definition::BatchMatmulBlueprint,
         launch_kernel_concrete,
@@ -70,33 +70,6 @@ pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint
     let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
     let vector_sizes = AvailableVectorSizes::from_type_size_tma(client, dtypes.acc_global.size());
     launch_inner_ref::<TensorMapArgs, A>(
-        client,
-        lhs,
-        rhs,
-        out,
-        blueprint_strategy,
-        vector_sizes,
-        dtypes,
-    )
-}
-
-/// [`launch_ref_tma`], with the output written by TMA stores as well.
-#[allow(clippy::result_large_err)]
-pub fn launch_ref_tma_store<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint>>(
-    client: &Client,
-    lhs: InputBinding,
-    rhs: InputBinding,
-    out: TensorBinding,
-    blueprint_strategy: &BlueprintStrategy<A>,
-    dtypes: &mut MatmulElems,
-) -> Result<(), MatmulSetupError> {
-    let (lhs, rhs) = tma_inputs(client, lhs, rhs)?;
-    // A tensor map is read and written one element at a time.
-    let vector_sizes = AvailableVectorSizes {
-        out: vec![1],
-        ..AvailableVectorSizes::from_type_size_tma(client, dtypes.acc_global.size())
-    };
-    launch_inner_ref::<TensorMapStoreArgs, A>(
         client,
         lhs,
         rhs,

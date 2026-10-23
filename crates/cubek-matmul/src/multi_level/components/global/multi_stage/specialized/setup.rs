@@ -203,7 +203,6 @@ where
     ) -> Result<(), MatmulSetupError> {
         L::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         L::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
-        GW::validate_with_problem(problem, dtypes)?;
         SP::KIND.validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }
