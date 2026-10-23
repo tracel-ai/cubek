@@ -464,7 +464,7 @@ mod tests {
 
     /// A decode projection, `m` rows against a `2048 × 2048` rhs laid as `rhs_layout`.
     fn projection(m: usize, rhs_layout: MatmulLayout) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::dense(m, 2048, 2048, F16, rhs_layout)
+        MatmulRoutineProblem::dense(m, 2048, 2048, F16).laid(MatmulOperand::Rhs, rhs_layout)
     }
 
     /// The default leads the list and no setting is listed twice.
@@ -530,7 +530,9 @@ mod tests {
     #[test]
     fn a_col_rhs_needs_vectors_along_k() {
         let hw = devices::strix_halo();
-        let ragged = |rhs_layout| MatmulRoutineProblem::dense(1, 2048, 2040, F16, rhs_layout);
+        let ragged = |rhs_layout| {
+            MatmulRoutineProblem::dense(1, 2048, 2040, F16).laid(MatmulOperand::Rhs, rhs_layout)
+        };
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
         assert!(matches!(
             PlaneShuffleMatmulRoutine.prepare(&hw, &ragged(MatmulLayout::Col), &settings),
@@ -603,9 +605,10 @@ mod tests {
     fn a_transactions_worth_of_units_moves_with_the_depth() {
         let hw = devices::strix_halo();
         let units = |element, depth, rhs_layout| {
-            let item = MatmulView::of::<PlaneShuffleMicrokernel>(&MatmulRoutineProblem::dense(
-                1, 2048, 2048, element, rhs_layout,
-            ))
+            let item = MatmulView::of::<PlaneShuffleMicrokernel>(
+                &MatmulRoutineProblem::dense(1, 2048, 2048, element)
+                    .laid(MatmulOperand::Rhs, rhs_layout),
+            )
             .expect("an rhs lined along an axis")
             .work_item();
             let plane_width = 32;

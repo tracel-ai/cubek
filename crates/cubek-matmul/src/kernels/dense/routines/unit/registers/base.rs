@@ -255,7 +255,7 @@ impl MatmulRoutine<UnitRegistersMicrokernel> for UnitRegistersMatmulRoutine {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::matmul::MatmulLayout;
+
     use cubek_std::devices;
 
     /// A register block reads a col rhs along `K`, contracting each line of it with a line of the
@@ -306,7 +306,7 @@ mod tests {
         for hw in fixtures() {
             for settings in UnitRegistersMatmulRoutine.settings(&hw) {
                 for (m, n, k) in [(1, 128, 256), (37, 29, 19), (512, 4096, 4096)] {
-                    let problem = MatmulRoutineProblem::dense(m, n, k, f16, MatmulLayout::Row);
+                    let problem = MatmulRoutineProblem::dense(m, n, k, f16);
                     let prepared = UnitRegistersMatmulRoutine.prepare(&hw, &problem, &settings);
                     assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
                 }
@@ -350,13 +350,7 @@ mod tests {
     /// and of 64 compile the same kernel, and launch it that wide.
     #[test]
     fn the_plane_width_is_the_grids_alone() {
-        let problem = MatmulRoutineProblem::dense(
-            512,
-            4096,
-            4096,
-            ElemType::Float(FloatKind::F16),
-            MatmulLayout::Row,
-        );
+        let problem = MatmulRoutineProblem::dense(512, 4096, 4096, ElemType::Float(FloatKind::F16));
         let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
         let prepare = |hw: Hardware| {
             UnitRegistersMatmulRoutine
@@ -377,7 +371,7 @@ mod tests {
         let hw = devices::strix_halo();
         let f16 = ElemType::Float(FloatKind::F16);
         let widths = |m, n, k| {
-            let problem = MatmulRoutineProblem::dense(m, n, k, f16, MatmulLayout::Row);
+            let problem = MatmulRoutineProblem::dense(m, n, k, f16);
             let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
             let (blueprint, _) = UnitRegistersMatmulRoutine
                 .prepare(&hw, &problem, &settings)

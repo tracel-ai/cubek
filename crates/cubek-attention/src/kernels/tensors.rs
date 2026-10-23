@@ -10,7 +10,7 @@ use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Launcher, launch::Grid as LaunchGrid};
+use cubecl::tile::{Axis, Indexing, Launcher, TileArgLaunch, TileSpec, launch::Grid as LaunchGrid};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
@@ -532,17 +532,27 @@ impl AttentionTensors {
             .expect(ADMITTED_PLAN_RUNS);
         let cache = match &self.cache {
             AttentionCache::Float { key, value, pages } => {
-                // A pool of pages is read as the sequences its table names, the table riding the
-                // operand. It covers the launch: `paged` states the batch as its rows and the keys
-                // as its columns' positions.
+                // A pool of pages is placed by its table, keyed by the batch and the keys'
+                // positions: it covers the launch, its rows the batch and its columns the keys.
                 let read_cache = |tensor: &PlainTensor, axes: &'static [Axis], width: usize| {
-                    let arg = read_operand(tensor, axes, width);
+                    let arg = read_operand(tensor, axes, width)
+                        .build()
+                        .expect(ADMITTED_PLAN_RUNS)
+                        .arg();
                     match pages {
-                        Some(pages) => arg.paged_covering(pages.binding.clone(), B, S),
+                        Some(pages) => arg
+                            .indexed_covering(
+                                TileArgLaunch::new(
+                                    pages.binding.clone().into_tensor_arg(),
+                                    ElemType::UInt(UIntKind::U32),
+                                    1,
+                                    TileSpec::direct(&[B, S]),
+                                ),
+                                Indexing::Coordinate(B),
+                            )
+                            .expect(ADMITTED_PLAN_RUNS),
                         None => arg,
                     }
-                    .build()
-                    .expect(ADMITTED_PLAN_RUNS)
                 };
                 let key = match blueprint.microkernel.key_order() {
                     MatmulOrder::InBufferOrder => read_cache(key, &[B, KV, S, D], widths.key),

@@ -51,7 +51,7 @@ impl Strategy {
                 "{self} reads no quantized operand"
             ))));
         };
-        let hw = Hardware::new(client.properties_shared(), client.target_properties());
+        let hw = Hardware::from_client(client);
         let (lhs, rhs) = (
             PlainTensor::new(lhs, lhs_elem),
             PlainTensor::new(rhs, rhs_elem),

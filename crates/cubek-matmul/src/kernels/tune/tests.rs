@@ -280,7 +280,7 @@ mod candidate {
         use crate::kernels::{MatmulRoutine, MatmulRoutineProblem};
         use cubecl::features::MmaConfig;
         use cubecl::ir::{ElemType, FloatKind};
-        use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel};
+        use cubek_microkernel::matmul::MatmulMicrokernel;
         use cubek_std::Hardware;
         use cubek_std::devices;
         use cubek_std::microkernel::KernelEstimate;
@@ -314,7 +314,7 @@ mod candidate {
             let mut prepared = 0;
             for settings in routine.settings(hw) {
                 for (m, n, k) in [(2048, 2048, 6144), (37, 29, 19)] {
-                    let problem = MatmulRoutineProblem::dense(m, n, k, F16, MatmulLayout::Row);
+                    let problem = MatmulRoutineProblem::dense(m, n, k, F16);
                     let Ok((blueprint, grid)) = routine.prepare(hw, &problem, &settings) else {
                         continue;
                     };
@@ -351,7 +351,7 @@ mod candidate {
         use crate::kernels::PlaneShuffleMatmulRoutine;
         use crate::kernels::{MatmulRoutine, MatmulRoutineProblem};
         use cubecl::ir::{ElemType, FloatKind};
-        use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel};
+        use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand};
         use cubek_std::Hardware;
         use cubek_std::devices;
         use cubek_std::microkernel::KernelEstimate;
@@ -381,7 +381,8 @@ mod candidate {
             for settings in routine.settings(hw) {
                 for (m, n, k) in [(1, 2048, 6144), (8, 4096, 2048), (3, 29, 1024)] {
                     for rhs_layout in [MatmulLayout::Col, MatmulLayout::Row] {
-                        let problem = MatmulRoutineProblem::dense(m, n, k, F16, rhs_layout);
+                        let problem = MatmulRoutineProblem::dense(m, n, k, F16)
+                            .laid(MatmulOperand::Rhs, rhs_layout);
                         let Ok((blueprint, grid)) = routine.prepare(hw, &problem, &settings) else {
                             continue;
                         };

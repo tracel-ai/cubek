@@ -143,11 +143,8 @@ impl MatmulStep {
                 .for_triple(contracted, contracted, f32)
                 .largest(),
         }?;
-        let stored = |other: MatmulOperand| other == input;
-        let operands = MatmulOperands::all(Operand::plain())
-            .map(|other, plain| if stored(other) { operand } else { plain });
-        let elements = MatmulOperands::all(contracted)
-            .map(|other, contracted| if stored(other) { values } else { contracted });
+        let operands = MatmulOperands::all(Operand::plain()).with(input, operand);
+        let elements = MatmulOperands::all(contracted).with(input, values);
         let step = Self::new(hw, operands, elements);
         let step = match hw.bulk_tensor_copy() {
             true => step.filled_by_tma(&operand, values),

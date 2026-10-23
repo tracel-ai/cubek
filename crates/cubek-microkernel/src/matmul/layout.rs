@@ -106,9 +106,14 @@ impl MatmulLayout {
     /// The layout of `operand` stated by `meta`, its batch dims leading: the axis it is contiguous
     /// along, in rows or in tiles alike ([`contiguous`]).
     pub fn new(meta: &Metadata, operand: MatmulOperand) -> Self {
-        let [first, second] = operand.axes();
-        match contiguous(meta, [first, second]) {
-            Some(axis) if axis == first => Self::Col,
+        Self::along(contiguous(meta, operand.axes()), operand)
+    }
+
+    /// The layout of `operand` contiguous along `axis`: col along the first of its axes, row
+    /// along the second, strided along neither.
+    pub fn along(axis: Option<Axis>, operand: MatmulOperand) -> Self {
+        match axis {
+            Some(axis) if axis == operand.axes()[0] => Self::Col,
             Some(_) => Self::Row,
             None => Self::Strided,
         }

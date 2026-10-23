@@ -388,7 +388,7 @@ mod tests {
     use crate::kernels::MatmulIndex;
     use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands, MatmulRows};
+    use cubek_microkernel::matmul::{MatmulOperands, MatmulRows};
     use cubek_std::matmul_axes::{EXPERT, batch_axis};
 
     fn shape(batch: usize, batching: MatmulBatching) -> MatmulShape {
@@ -480,13 +480,7 @@ mod tests {
     /// A routed product: 5 tokens, each routed to 3 of 4 slabs, batches `[5, 3]` of one row, the
     /// lhs broadcast along the picks.
     fn routed() -> MatmulRoutineProblem {
-        let problem = MatmulRoutineProblem::dense(
-            1,
-            48,
-            64,
-            ElemType::Float(FloatKind::F16),
-            MatmulLayout::Row,
-        );
+        let problem = MatmulRoutineProblem::dense(1, 48, 64, ElemType::Float(FloatKind::F16));
         MatmulRoutineProblem {
             batches: vec![5, 3],
             batches_held: MatmulOperands {

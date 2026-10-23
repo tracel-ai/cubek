@@ -235,7 +235,7 @@ mod tests {
 
     /// A decode projection of `m` rows, `k` deep and `n` wide, its rhs laid as `rhs_layout`.
     fn decode(m: usize, n: usize, k: usize, rhs_layout: MatmulLayout) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::dense(m, n, k, F16, rhs_layout)
+        MatmulRoutineProblem::dense(m, n, k, F16).laid(MatmulOperand::Rhs, rhs_layout)
     }
 
     /// A table on a device that commits to a plane width pays nothing for it: the shuffles serve

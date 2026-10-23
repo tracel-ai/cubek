@@ -64,7 +64,7 @@ pub fn launch_tuned(
 ) -> TensorHandle {
     let client = inputs.client.clone();
     let id = CubeTuneId::new(&client, device);
-    let hw = Hardware::new(client.properties_shared(), client.target_properties());
+    let hw = Hardware::from_client(&client);
     match positions {
         QueryPositions::Many => {
             // Named rather than `module_path!()`, so the cached winners stay this autotune's
@@ -233,10 +233,7 @@ where
         + Copy,
 {
     let settings = candidate.strategy();
-    let hw = Hardware::new(
-        inputs.client.properties_shared(),
-        inputs.client.target_properties(),
-    );
+    let hw = Hardware::from_client(&inputs.client);
     candidate
         .routine()
         .launch_on(&hw, inputs.tensors, settings)
@@ -515,10 +512,7 @@ impl AttentionTuneInputs {
     fn many_queries_roofline(key: &AttentionKey, inputs: &Self) -> Roofline {
         let elem = key.elem();
         let accumulate = ElemType::Float(FloatKind::F32);
-        let hw = Hardware::new(
-            inputs.client.properties_shared(),
-            inputs.client.target_properties(),
-        );
+        let hw = Hardware::from_client(&inputs.client);
         let instruction = hw
             .properties
             .features

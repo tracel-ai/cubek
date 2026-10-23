@@ -39,13 +39,9 @@ impl<R> DequantizedMatmulRoutine<R> {
             .into_iter()
             .find(|&input| problem.packings.get(input).is_none())
             .map_or(problem.elements.out, |input| problem.elements.get(input));
-        MatmulRoutineProblem::dense(
-            problem.stated_rows,
-            problem.n,
-            problem.k,
-            element,
-            problem.layouts.rhs,
-        )
+        MatmulRoutineProblem::dense(problem.stated_rows, problem.n, problem.k, element)
+            .laid(MatmulOperand::Lhs, problem.layouts.lhs)
+            .laid(MatmulOperand::Rhs, problem.layouts.rhs)
     }
 
     /// Each packed input of `problem` alone, as the decode places it: the `[k, n]` input of a
