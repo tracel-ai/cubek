@@ -51,6 +51,11 @@ impl Hardware {
         }
     }
 
+    /// The device `client` runs on, compiling for its target.
+    pub fn from_client(client: &Client) -> Self {
+        Self::new(client.properties_shared(), client.target_properties())
+    }
+
     /// The exact plane width, for a kernel whose correctness depends on one.
     ///
     /// The only way a routine reaches a plane width, and fallible, because both shortcuts are

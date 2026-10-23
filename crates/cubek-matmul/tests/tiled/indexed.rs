@@ -56,7 +56,7 @@ fn check_every_setting<M, SM, R>(
     R: MatmulRoutine<M, SM>,
 {
     let client = client();
-    let hw = Hardware::new(client.properties_shared(), client.target_properties());
+    let hw = Hardware::from_client(&client);
     let mut ran = 0;
     for settings in routine.settings(&hw) {
         let (lhs, rhs, table) = inputs();
