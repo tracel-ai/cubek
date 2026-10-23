@@ -218,7 +218,7 @@ impl MatmulTensors {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
             .addressable(client)
             .into_parts();
-        let matrix = Self::matrix_of(&rhs, &table.index);
+        let matrix = Self::matrix_of(&rhs, table.index);
         let matrix_shape = matrix.shape();
         let out = Self::indexed_output(&lhs, matrix_shape[0], matrix_shape[1], &table, out)?;
         Ok(Self {
@@ -297,13 +297,13 @@ impl MatmulTensors {
     /// # Panics
     ///
     /// On a stack of other than `[slabs, k, n]`.
-    fn matrix_of(rhs: &PlainTensor, index: &MatmulIndex) -> PlainTensor {
+    fn matrix_of(rhs: &PlainTensor, index: MatmulIndex) -> PlainTensor {
         match index {
             MatmulIndex::Slab { slabs } => {
                 let (shape, strides) = (&rhs.binding.shape, &rhs.binding.strides);
                 assert_eq!(
                     shape.as_slice()[..1],
-                    [*slabs],
+                    [slabs],
                     "a stack is `[slabs, k, n]`: {shape:?}"
                 );
                 rhs.viewed(Metadata::new(shape[1..].to_vec(), strides[1..].to_vec()))
@@ -483,14 +483,12 @@ impl MatmulTensors {
         grid: &Grid,
     ) -> MatmulBinding<Bound, TileArgLaunch, TileArgLaunch> {
         let launcher = self.packed_launcher(blueprint, grid);
-        let (out, out_axes) = self
-            .out
-            .bound
-            .restated(&self.blocks(), M, N, &self.table_batches());
+        let batches = self.table_batches();
+        let (out, out_axes) = self.out.bound.restated(&self.blocks(), M, N, &batches);
         let out = launcher
             .arg(out.binding, out.elem)
             .axes(&out_axes)
-            .batches(&self.table_batches())
+            .batches(&batches)
             .vectorize(blueprint.widths.out)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -777,7 +775,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         table: &MatmulIndexTable,
     ) -> MatmulRoutineProblem {
         let rank = table.entries.shape().rank() + 2;
-        let matrix = MatmulTensors::matrix_of(rhs, &table.index);
+        let matrix = MatmulTensors::matrix_of(rhs, table.index);
         let problem = self
             .out
             .problem(&lhs.broadcast_to(rank), &matrix.broadcast_to(rank));
@@ -855,8 +853,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
         let rhs = bind(&self.rhs, [K, N], blueprint.widths.rhs);
-        let lhs = self.read_through_table(MatmulOperand::Lhs, lhs, &batches);
-        let rhs = self.read_through_table(MatmulOperand::Rhs, rhs, &batches);
+        let lhs = self.read_through_table(MatmulOperand::Lhs, lhs);
+        let rhs = self.read_through_table(MatmulOperand::Rhs, rhs);
         MatmulBinding {
             launcher,
             lhs,
@@ -896,10 +894,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// The batches a table's dims are, which a packed product keeps apart; none without a table.
     fn table_batches(&self) -> Vec<Axis> {
-        match &self.table {
-            Some(table) => MatmulRoutineProblem::batch_axes_of(table.entries.shape().rank()),
-            None => Vec::new(),
-        }
+        self.table.as_ref().map_or_else(Vec::new, |table| {
+            MatmulRoutineProblem::batch_axes_of(table.entries.shape().rank())
+        })
     }
 
     /// The rows a work item of the launch they were read for holds.
@@ -1090,26 +1087,21 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .vectorize(widths.rhs)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
-        let lhs = self.read_through_table(MatmulOperand::Lhs, lhs.arg(), &batch_axes);
-        let rhs = self.read_through_table(MatmulOperand::Rhs, rhs.arg(), &batch_axes);
+        let lhs = self.read_through_table(MatmulOperand::Lhs, lhs.arg());
+        let rhs = self.read_through_table(MatmulOperand::Rhs, rhs.arg());
         (launcher, [lhs, rhs])
     }
 
     /// `operand`, bound, reading its entry of the table where it is one of its readers, the
-    /// table's dims the `batches`; as bound otherwise.
-    fn read_through_table(
-        &self,
-        operand: MatmulOperand,
-        bound: TileArgLaunch,
-        batches: &[Axis],
-    ) -> TileArgLaunch {
+    /// table's dims the batches; as bound otherwise.
+    fn read_through_table(&self, operand: MatmulOperand, bound: TileArgLaunch) -> TileArgLaunch {
         match &self.table {
             Some(table) if table.index.readers().get(operand) => {
                 let entries = TileArgLaunch::new(
                     table.entries.binding.clone().into_tensor_arg(),
                     table.entries.elem,
                     1,
-                    TileSpec::direct(batches),
+                    TileSpec::direct(&self.table_batches()),
                 );
                 bound
                     .indexed(entries, table.index.indexing())

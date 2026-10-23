@@ -76,7 +76,7 @@ pub enum MatmulIndex {
 
 impl MatmulIndex {
     /// The inputs that read the table.
-    pub fn readers(&self) -> MatmulOperands<bool> {
+    pub fn readers(self) -> MatmulOperands<bool> {
         match self {
             Self::Slab { .. } => MatmulOperands {
                 lhs: false,
@@ -92,7 +92,7 @@ impl MatmulIndex {
     }
 
     /// What an entry places in the input that reads it.
-    pub fn indexing(&self) -> Indexing {
+    pub fn indexing(self) -> Indexing {
         match self {
             Self::Slab { .. } => Indexing::Coordinate(EXPERT),
             Self::RunOfK => Indexing::Run(K),
@@ -101,9 +101,9 @@ impl MatmulIndex {
 
     /// The axis the index adds to the product's space, with its extent: the stack's slabs, which
     /// an entry picks one of.
-    pub fn axis(&self) -> Option<(Axis, usize)> {
+    pub fn axis(self) -> Option<(Axis, usize)> {
         match self {
-            Self::Slab { slabs } => Some((EXPERT, *slabs)),
+            Self::Slab { slabs } => Some((EXPERT, slabs)),
             Self::RunOfK => None,
         }
     }

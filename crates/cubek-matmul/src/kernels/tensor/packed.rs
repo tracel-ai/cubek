@@ -178,19 +178,19 @@ impl PackedTensor {
     /// or a word of block scales.
     pub fn stacked(self, slabs: usize, along: Axis) -> Result<Self, Refusal> {
         let extent = self.extent(along);
-        let slab = extent / slabs.max(1);
+        if self.laid != WordsLaid::InRows || slabs == 0 || !extent.is_multiple_of(slabs) {
+            return Err(PACKED_STACK_UNREAD);
+        }
+        let slab = extent / slabs;
         let operand = &self.operand;
-        let whole = |unit: usize| unit > 0 && slab.is_multiple_of(unit);
         let blocks_whole = match operand.grouping(along, extent) {
-            Some(block) => whole(block) && (slab / block).is_multiple_of(operand.scales_per_word()),
+            Some(block) => {
+                slab.is_multiple_of(block)
+                    && (slab / block).is_multiple_of(operand.scales_per_word())
+            }
             None => true,
         };
-        if self.laid != WordsLaid::InRows
-            || slabs == 0
-            || !extent.is_multiple_of(slabs)
-            || !whole(operand.read(along))
-            || !blocks_whole
-        {
+        if !slab.is_multiple_of(operand.read(along)) || !blocks_whole {
             return Err(PACKED_STACK_UNREAD);
         }
         let axes = self
