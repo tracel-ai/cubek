@@ -7,6 +7,7 @@ use crate::attention::{
     CubePlaneMicrokernel, DV, G, GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, StepLines,
     StepLinesExpand, VisibleKeys,
 };
+use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -242,15 +243,62 @@ fn unstaged_walk<
                 }
             }
         }
-        false => {
-            for i in 0..steps.min(walk.total()) {
-                for plane in walk.region(i) {
-                    planes.step(&plane, key, value, visible, scale);
-                }
-            }
-        }
+        false => walk_reading_ahead::<EA, E, N, K, L, P>(
+            &mut planes,
+            walk,
+            steps,
+            key,
+            value,
+            visible,
+            scale,
+        ),
     }
     planes
+}
+
+/// `steps` of `walk` run by `planes`, each cut with the page table entry read during the step
+/// before it, so the table load overlaps that step's compute. Keys and values read one page
+/// table, so the key's entry serves both.
+#[cube]
+fn walk_reading_ahead<
+    EA: Float,
+    E: Float,
+    N: Size,
+    K: StepLines<N>,
+    L: StepLines<N>,
+    P: CubePlaneAttention<EA, E, K, L, VisibleKeys, Opening = GlobalPlaneOperands>,
+>(
+    planes: &mut P,
+    walk: &Walk,
+    steps: usize,
+    key: &K,
+    value: &L,
+    visible: &VisibleKeys,
+    scale: EA,
+) {
+    let count = steps.min(walk.total());
+    if count > 0 {
+        let last = walk.total() - 1;
+        let mut entry = plane_page_entry::<N, K>(walk, key, 0);
+        for i in 0..count {
+            let next = plane_page_entry::<N, K>(walk, key, (i + 1).min(last));
+            let (keys, values) = (key.with_page_entry(&entry), value.with_page_entry(&entry));
+            for plane in walk.region(i) {
+                planes.step(&plane, &keys, &values, visible, scale);
+            }
+            entry = next;
+        }
+    }
+}
+
+/// The entry `key` is cut with at step `index` of `walk`, for the plane this worker runs there.
+#[cube]
+fn plane_page_entry<N: Size, K: StepLines<N>>(walk: &Walk, key: &K, index: usize) -> PageEntry {
+    let mut entry = PageEntry::unlisted();
+    for plane in walk.region(index) {
+        entry = key.read_page_entry(&plane);
+    }
+    entry
 }
 
 /// One cube's part of its box: its run of the keys walked with planes `P` that read their keys

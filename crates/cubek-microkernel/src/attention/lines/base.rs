@@ -1,4 +1,5 @@
 use cubecl::tile::Region;
+use cubecl::tile::layout::PageEntry;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// Where one unit stands in a step: its team and its lane in the team, the keys attended, and
@@ -35,4 +36,13 @@ pub trait StepLines<N: Size>: CubeType + Sized {
     /// These lines cut to `region`'s window, so the steps inside it are cut from there rather
     /// than from the operand's top.
     fn at(&self, region: &Region) -> Self;
+
+    /// The page table entry `region`'s window is cut with, read ahead of the step that cuts it
+    /// and handed to that step's lines ([`with_page_entry`](Self::with_page_entry)).
+    /// [`PageEntry::unlisted`] where these lines are not paged.
+    fn read_page_entry(&self, region: &Region) -> PageEntry;
+
+    /// These lines taking their pages from `entry` where a cut names its sequence and column.
+    /// `entry` must come from lines reading the same page table, as keys and values do.
+    fn with_page_entry(&self, entry: &PageEntry) -> Self;
 }
