@@ -13,7 +13,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             TileKind::Mma(t) => t.init_zero::<L, R>(),
             TileKind::Register(t) => t.init_zero(ident),
             TileKind::PlaneVec(t) => t.init_zero(),
-            TileKind::Interleaved(t) => t.init_zero(),
             _ => panic!("init_zero: unsupported tile variant"),
         }
     }
@@ -31,7 +30,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             TileKind::Mma(t) => t.copy_from::<SE, SS, L, R, A, Sc>(source, ident),
             TileKind::Register(t) => t.copy_from::<SE, SS, Sc>(source, ident),
             TileKind::PlaneVec(t) => t.copy_from::<SE, SS, Sc>(source, ident),
-            TileKind::Interleaved(t) => t.copy_from::<SE, SS, Sc>(source, ident),
             TileKind::SharedTile(shared) => {
                 shared.copy_from::<SE, SS, L, R, Sc>(source);
             }

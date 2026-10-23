@@ -52,7 +52,6 @@ pub type SimpleTmaAlgorithm = SimpleAlgorithm<
     AsyncFullTmaLoading,
     SyncFullCyclicLoading<RowMajorTilingOrder>,
 >;
-pub type SimpleBarrierAlgorithm<L> = SimpleAlgorithm<L, L>;
 
 #[derive(Debug, Clone)]
 pub struct SimpleArgs {

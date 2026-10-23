@@ -104,7 +104,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             | TileKind::Mma(_)
             | TileKind::Register(_)
             | TileKind::PlaneVec(_)
-            | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)

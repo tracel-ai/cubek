@@ -5,9 +5,9 @@ use std::marker::PhantomData;
 use cubecl::prelude::*;
 
 use crate::multi_level::tile::{
-    BounceTile, CmmaTile, InterleavedTile, MmaTile, PartitionTile, PipelinedTile, PlaneVecTile,
-    RegisterTile, ScopeMarker, SharedTile, StageTile, TileScope, UnitTile,
-    WhiteboxFragment, variants::stage::partition::partition_get_at_mut,
+    BounceTile, CmmaTile, MmaTile, PartitionTile, PipelinedTile, PlaneVecTile, RegisterTile,
+    ScopeMarker, SharedTile, StageTile, TileScope, UnitTile, WhiteboxFragment,
+    variants::stage::partition::partition_get_at_mut,
 };
 
 /// Public tile type. Wraps a [`TileKind`] payload; the inner enum is
@@ -37,8 +37,6 @@ pub(crate) enum TileKind<N: Numeric, Sc: TileScope> {
     Register(RegisterTile<N>),
     /// Plane-vector matmul tile.
     PlaneVec(PlaneVecTile<N>),
-    /// Plane-interleaved-on-k matmul tile.
-    Interleaved(InterleavedTile<N>),
     /// Per-unit register array. `Sc = Unit`.
     Unit(UnitTile<N>),
     /// Plane-exposed fragment with a visible layout. `Sc = Plane`.
@@ -98,7 +96,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             | TileKind::Mma(_)
             | TileKind::Register(_)
             | TileKind::PlaneVec(_)
-            | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)

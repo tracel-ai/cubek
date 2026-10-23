@@ -25,9 +25,6 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             (TileKind::Mma(l), TileKind::Mma(r), TileKind::Mma(a)) => a.mma(l, r),
             (TileKind::Register(l), TileKind::Register(r), TileKind::Register(a)) => a.mma(l, r),
             (TileKind::PlaneVec(l), TileKind::PlaneVec(r), TileKind::PlaneVec(a)) => a.mma(l, r),
-            (TileKind::Interleaved(l), TileKind::Interleaved(r), TileKind::Interleaved(a)) => {
-                a.mma(l, r)
-            }
             (TileKind::Stage(_), TileKind::Stage(_), TileKind::Partition(_)) => {
                 panic!(
                     "Tile::mma: (Stage, Stage, Partition) requires extra context: call \

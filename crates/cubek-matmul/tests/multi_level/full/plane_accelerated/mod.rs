@@ -4,12 +4,12 @@ mod matmul_plane_accelerated {
         use cubek_matmul::{
             definition::MatmulProblem,
             multi_level::{
-                Strategy as MultiLevel, definition::BatchMatmulBlueprint, test_only::TestStrategy,
+                Strategy as MultiLevel, definition::BatchMatmulBlueprint,
             },
             routine::BlueprintStrategy,
         };
 
-        use crate::harness::{test_matmul_strategy, test_matmul_test_strategy};
+        use crate::harness::test_matmul_strategy;
 
         fn launch_simple_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
@@ -30,24 +30,6 @@ mod matmul_plane_accelerated {
                 c,
                 p,
                 MultiLevel::SimpleTilewiseCmma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_simple_barrier_cooperative(
-            c: Client,
-            p: MatmulProblem,
-            bp: BatchMatmulBlueprint,
-        ) {
-            test_matmul_test_strategy(
-                c,
-                p,
-                TestStrategy::SimpleBarrierCooperativeCmma(BlueprintStrategy::Forced(bp)),
-            );
-        }
-        fn launch_simple_barrier_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_test_strategy(
-                c,
-                p,
-                TestStrategy::SimpleBarrierCyclicCmma(BlueprintStrategy::Forced(bp)),
             );
         }
         fn launch_double_buffering_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
@@ -101,12 +83,12 @@ mod matmul_plane_accelerated {
         use cubek_matmul::{
             definition::MatmulProblem,
             multi_level::{
-                Strategy as MultiLevel, definition::BatchMatmulBlueprint, test_only::TestStrategy,
+                Strategy as MultiLevel, definition::BatchMatmulBlueprint,
             },
             routine::BlueprintStrategy,
         };
 
-        use crate::harness::{test_matmul_strategy, test_matmul_test_strategy};
+        use crate::harness::test_matmul_strategy;
 
         fn launch_simple_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
@@ -127,24 +109,6 @@ mod matmul_plane_accelerated {
                 c,
                 p,
                 MultiLevel::SimpleTilewiseMma(BlueprintStrategy::Forced(bp)).into(),
-            );
-        }
-        fn launch_simple_barrier_cooperative(
-            c: Client,
-            p: MatmulProblem,
-            bp: BatchMatmulBlueprint,
-        ) {
-            test_matmul_test_strategy(
-                c,
-                p,
-                TestStrategy::SimpleBarrierCooperativeMma(BlueprintStrategy::Forced(bp)),
-            );
-        }
-        fn launch_simple_barrier_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-            test_matmul_test_strategy(
-                c,
-                p,
-                TestStrategy::SimpleBarrierCyclicMma(BlueprintStrategy::Forced(bp)),
             );
         }
         fn launch_double_buffering_cyclic(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {

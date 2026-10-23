@@ -19,20 +19,6 @@ mod simple_tilewise {
     include!("precision.rs");
 }
 
-mod simple_barrier_cooperative {
-    use super::*;
-    use super::launch_simple_barrier_cooperative as launch;
-
-    include!("precision.rs");
-}
-
-mod simple_barrier_cyclic {
-    use super::*;
-    use super::launch_simple_barrier_cyclic as launch;
-
-    include!("precision.rs");
-}
-
 mod double_buffering_cyclic {
     use super::*;
     use super::launch_double_buffering_cyclic as launch;

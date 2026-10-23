@@ -10,7 +10,7 @@
 use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize};
 use cubek_matmul::{
     definition::MatmulProblem,
-    multi_level::{Strategy as MultiLevel, test_only::TestStrategy},
+    multi_level::Strategy as MultiLevel,
     routine::BlueprintStrategy,
     strategy::Strategy,
 };
@@ -18,7 +18,6 @@ use cubek_std::MatrixLayout;
 
 use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem, row_row};
 use crate::harness::test_matmul_strategy;
-use crate::multi_level::extended::test_matmul_test_strategy;
 
 fn run_plane(
     strategy: impl FnOnce(cubek_matmul::multi_level::definition::BatchMatmulBlueprint) -> Strategy,
@@ -29,17 +28,6 @@ fn run_plane(
     let p = problem(256, 256, 256, row_row(), f16_elems());
     let bp = plane_blueprint(&c, &p, default_tile_size(), partition, stage);
     test_matmul_strategy(c, p, strategy(bp));
-}
-
-fn run_plane_test_only(
-    strategy: impl FnOnce(cubek_matmul::multi_level::definition::BatchMatmulBlueprint) -> TestStrategy,
-    partition: PartitionSize,
-    stage: StageSize,
-) {
-    let c = client();
-    let p = problem(256, 256, 256, row_row(), f16_elems());
-    let bp = plane_blueprint(&c, &p, default_tile_size(), partition, stage);
-    test_matmul_test_strategy(c, p, strategy(bp));
 }
 
 // Unit-partitioned routines need the number of units inside a stage to be a
@@ -188,53 +176,6 @@ fn double_unit_partition_1x2x1() {
         c,
         p,
         MultiLevel::DoubleUnit(BlueprintStrategy::Forced(bp)).into(),
-    );
-}
-
-// -- Interleaved (test-only) -------------------------------------------------
-//
-// Interleaved tile matmul is picky: `tile.k` must be a multiple of plane_dim
-// (typically 32), and the k-local chunk (`tile.k / plane_dim`) must in turn be
-// a multiple of the lhs vector size (typically 4). That pushes tile.k to 128
-// on a plane_dim=32 runtime.
-
-#[test]
-fn interleaved_partition_1x1x1() {
-    let c = client();
-    let p = problem(64, 64, 128, row_row(), f16_elems());
-    let bp = plane_blueprint(
-        &c,
-        &p,
-        TileSize { m: 4, n: 4, k: 128 },
-        PartitionSize { m: 1, n: 1, k: 1 },
-        StageSize { m: 1, n: 1, k: 1 },
-    );
-    test_matmul_test_strategy(
-        c,
-        p,
-        TestStrategy::Interleaved(BlueprintStrategy::Forced(bp)),
-    );
-}
-
-// -- Simple barrier cooperative (test-only) ----------------------------------
-
-#[test]
-fn simple_barrier_cooperative_cmma_partition_1x1x1() {
-    run_plane_test_only(
-        |bp| TestStrategy::SimpleBarrierCooperativeCmma(BlueprintStrategy::Forced(bp)),
-        PartitionSize { m: 1, n: 1, k: 1 },
-        StageSize { m: 1, n: 1, k: 1 },
-    );
-}
-
-// -- Simple barrier cyclic (test-only) ---------------------------------------
-
-#[test]
-fn simple_barrier_cyclic_cmma_stage_2x2x1() {
-    run_plane_test_only(
-        |bp| TestStrategy::SimpleBarrierCyclicCmma(BlueprintStrategy::Forced(bp)),
-        PartitionSize { m: 1, n: 1, k: 1 },
-        StageSize { m: 2, n: 2, k: 1 },
     );
 }
 

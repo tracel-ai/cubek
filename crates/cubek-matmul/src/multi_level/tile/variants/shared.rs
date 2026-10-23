@@ -10,7 +10,6 @@ use crate::multi_level::{
     stage::{StageMemoryConfig, as_swizzle_object},
     tile::variants::instruction::{
         cmma::cmma_write_to_shared,
-        interleaved::interleaved_write_to_shared,
         mma::{MmaFragment, MmaFragmentExpand, mma_write_to_shared},
         plane_vec::planevec_write_to_shared,
         register::register_write_to_shared,
@@ -255,9 +254,6 @@ impl<E: Numeric> SharedTile<E> {
                     t.tile_size,
                     t.reduce_vector_size,
                 );
-            }
-            TileKind::Interleaved(t) => {
-                interleaved_write_to_shared::<E, SS, SE>(self, &t.data, t.tile_size);
             }
             _ => panic!("SharedTile::copy_from: unsupported source variant"),
         }

@@ -2,13 +2,11 @@ mod matmul_unit {
     use cubecl::{TestRuntime, client::Client};
     use cubek_matmul::{
         definition::MatmulProblem,
-        multi_level::{
-            Strategy as MultiLevel, definition::BatchMatmulBlueprint, test_only::TestStrategy,
-        },
+        multi_level::{Strategy as MultiLevel, definition::BatchMatmulBlueprint},
         routine::BlueprintStrategy,
     };
 
-    use crate::harness::{test_matmul_strategy, test_matmul_test_strategy};
+    use crate::harness::test_matmul_strategy;
 
     fn launch_simple(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
         test_matmul_strategy(
@@ -23,14 +21,6 @@ mod matmul_unit {
             c,
             p,
             MultiLevel::DoubleUnit(BlueprintStrategy::Forced(bp)).into(),
-        );
-    }
-
-    fn launch_interleaved(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
-        test_matmul_test_strategy(
-            c,
-            p,
-            TestStrategy::Interleaved(BlueprintStrategy::Forced(bp)),
         );
     }
 

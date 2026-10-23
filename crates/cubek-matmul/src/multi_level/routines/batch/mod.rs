@@ -4,7 +4,6 @@
 pub mod double_buffering;
 pub mod double_unit;
 pub mod gemv_innerproduct;
-pub mod interleaved;
 pub mod ordered_double_buffering;
 pub mod simple;
 pub mod simple_unit;

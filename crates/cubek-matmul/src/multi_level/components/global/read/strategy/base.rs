@@ -112,15 +112,6 @@ pub fn validate_async_copy(
     Ok(())
 }
 
-/// Validates if swizzling is disabled, for loaders that can't support it.
-pub fn validate_noswizzle(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {
-    if config.swizzle != SwizzleMode::None {
-        return Err(Box::new("This loader doesn't support swizzling"));
-    }
-
-    Ok(())
-}
-
 /// Validates if swizzling is valid with the vector size, for sync readers that read in terms of full
 /// vectors
 pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), InvalidConfigError> {

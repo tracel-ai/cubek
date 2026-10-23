@@ -119,7 +119,6 @@ impl<N: Numeric> PlaneVecTile<N> {
             | TileKind::Mma(_)
             | TileKind::Register(_)
             | TileKind::PlaneVec(_)
-            | TileKind::Interleaved(_)
             | TileKind::Unit(_)
             | TileKind::WhiteboxFragment(_)
             | TileKind::Bounce(_)
