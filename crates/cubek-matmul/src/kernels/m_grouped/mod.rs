@@ -8,6 +8,9 @@ mod settings;
 mod tensors;
 mod tune;
 
+#[cfg(test)]
+mod tests;
+
 pub use row_source::*;
 pub use settings::*;
 pub use tensors::*;

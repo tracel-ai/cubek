@@ -6,5 +6,8 @@
 mod launch;
 mod tensors;
 
+#[cfg(test)]
+mod tests;
+
 pub use launch::*;
 pub use tensors::*;

@@ -6,6 +6,9 @@ mod kernel;
 mod layout;
 mod padded_rows;
 
+#[cfg(test)]
+mod tests;
+
 pub use layout::{GroupedRows, RouteSort};
 pub use padded_rows::PaddedRows;
 
