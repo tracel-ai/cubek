@@ -55,15 +55,6 @@ impl MaskLayout {
 }
 
 #[cube]
-/// Returns how many units in a plane participate in the same row.
-pub fn mask_layout_num_units_per_row(#[comptime] layout: MaskLayout) -> comptime_type!(u32) {
-    match layout {
-        MaskLayout::Unit(_) => 1u32,
-        MaskLayout::WhiteboxFragment(l) => comptime!(l.total_size.1 / l.unit_size.1),
-    }
-}
-
-#[cube]
 /// Maps a per-unit `(row, col)` to its absolute position within the tile.
 pub fn mask_layout_absolute_pos(#[comptime] layout: MaskLayout, local_pos: Coords2d) -> Coords2d {
     match layout {

@@ -4,21 +4,19 @@
 //! Each tile-kind owns its config struct, validator, and `expand` constructor
 //! in its own module and implements [`TileVariant`]. This file holds *only*
 //! dispatch: the enums themselves, accessor methods that read fields of the
-//! carried struct, and per-method 5-arm matches that forward into the
+//! carried struct, and per-method 4-arm matches that forward into the
 //! variant's [`TileVariant`] impl. The `allocate_*` dispatchers at the bottom
 //! follow the same shape, unpacking each matmul-config into the primitive
 //! comptime fields the [`crate::multi_level::tile`] allocators take.
 
 mod cmma;
 mod common;
-mod interleaved;
 mod mma;
 mod plane_vec;
 mod register;
 mod variant;
 
 pub use cmma::CmmaMatmul;
-pub use interleaved::InterleavedMatmul;
 pub use mma::MmaMatmul;
 pub use plane_vec::PlaneVecMatInnerProduct;
 pub use register::RegisterMatmul;
@@ -34,7 +32,6 @@ use crate::{
         definition::BatchMatmulBlueprint,
         tile::{
             Tile, TileScope, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
-            interleaved_allocate_acc, interleaved_allocate_lhs, interleaved_allocate_rhs,
             mma_allocate_acc, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_acc,
             planevec_allocate_lhs, planevec_allocate_rhs, register_allocate_acc,
             register_allocate_lhs, register_allocate_rhs,
@@ -51,7 +48,6 @@ pub enum TileMatmul {
     Mma(MmaMatmul),
     Register(RegisterMatmul),
     PlaneVec(PlaneVecMatInnerProduct),
-    Interleaved(InterleavedMatmul),
 }
 
 impl TileMatmul {
@@ -61,7 +57,6 @@ impl TileMatmul {
             TileMatmul::Mma(c) => c.tile_size.m(),
             TileMatmul::Register(c) => c.tile_size.m(),
             TileMatmul::PlaneVec(c) => c.tile_size.m(),
-            TileMatmul::Interleaved(c) => c.tile_size.m(),
         }
     }
 
@@ -71,7 +66,6 @@ impl TileMatmul {
             TileMatmul::Mma(c) => c.tile_size.n(),
             TileMatmul::Register(c) => c.tile_size.n(),
             TileMatmul::PlaneVec(c) => c.tile_size.n(),
-            TileMatmul::Interleaved(c) => c.tile_size.n(),
         }
     }
 
@@ -81,14 +75,13 @@ impl TileMatmul {
             TileMatmul::Mma(c) => c.tile_size.k(),
             TileMatmul::Register(c) => c.tile_size.k(),
             TileMatmul::PlaneVec(c) => c.tile_size.k(),
-            TileMatmul::Interleaved(c) => c.tile_size.k(),
         }
     }
 }
 
 /// Selector for the tile-level matmul kind, used before per-kind config exists.
 ///
-/// All methods on this enum are pure 5-arm dispatchers that forward to the
+/// All methods on this enum are pure 4-arm dispatchers that forward to the
 /// matching variant's [`TileVariant`] impl.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum TileMatmulKind {
@@ -96,7 +89,6 @@ pub enum TileMatmulKind {
     Mma,
     Register,
     PlaneVec,
-    Interleaved,
 }
 
 impl TileMatmulKind {
@@ -106,7 +98,6 @@ impl TileMatmulKind {
             TileMatmulKind::Mma => MmaMatmul::requires_accelerator(),
             TileMatmulKind::Register => RegisterMatmul::requires_accelerator(),
             TileMatmulKind::PlaneVec => PlaneVecMatInnerProduct::requires_accelerator(),
-            TileMatmulKind::Interleaved => InterleavedMatmul::requires_accelerator(),
         }
     }
 
@@ -116,7 +107,6 @@ impl TileMatmulKind {
             TileMatmulKind::Mma => MmaMatmul::can_cast_stage_element(),
             TileMatmulKind::Register => RegisterMatmul::can_cast_stage_element(),
             TileMatmulKind::PlaneVec => PlaneVecMatInnerProduct::can_cast_stage_element(),
-            TileMatmulKind::Interleaved => InterleavedMatmul::can_cast_stage_element(),
         }
     }
 
@@ -126,7 +116,6 @@ impl TileMatmulKind {
             TileMatmulKind::Mma => MmaMatmul::should_swizzle(client),
             TileMatmulKind::Register => RegisterMatmul::should_swizzle(client),
             TileMatmulKind::PlaneVec => PlaneVecMatInnerProduct::should_swizzle(client),
-            TileMatmulKind::Interleaved => InterleavedMatmul::should_swizzle(client),
         }
     }
 
@@ -136,7 +125,6 @@ impl TileMatmulKind {
             TileMatmulKind::Mma => MmaMatmul::cubedim_resource(),
             TileMatmulKind::Register => RegisterMatmul::cubedim_resource(),
             TileMatmulKind::PlaneVec => PlaneVecMatInnerProduct::cubedim_resource(),
-            TileMatmulKind::Interleaved => InterleavedMatmul::cubedim_resource(),
         }
     }
 
@@ -146,7 +134,6 @@ impl TileMatmulKind {
             TileMatmulKind::Mma => MmaMatmul::is_supported(client, config),
             TileMatmulKind::Register => RegisterMatmul::is_supported(client, config),
             TileMatmulKind::PlaneVec => PlaneVecMatInnerProduct::is_supported(client, config),
-            TileMatmulKind::Interleaved => InterleavedMatmul::is_supported(client, config),
         }
     }
 
@@ -165,9 +152,6 @@ impl TileMatmulKind {
             }
             TileMatmulKind::PlaneVec => {
                 PlaneVecMatInnerProduct::supported_sizes(client, lhs_ty, rhs_ty, acc_ty)
-            }
-            TileMatmulKind::Interleaved => {
-                InterleavedMatmul::supported_sizes(client, lhs_ty, rhs_ty, acc_ty)
             }
         }
     }
@@ -204,12 +188,6 @@ impl TileMatmulKind {
                 dtypes,
                 vector_sizes,
             )),
-            TileMatmulKind::Interleaved => TileMatmul::Interleaved(InterleavedMatmul::expand(
-                device_props,
-                blueprint,
-                dtypes,
-                vector_sizes,
-            )),
         })
     }
 
@@ -228,9 +206,6 @@ impl TileMatmulKind {
             }
             TileMatmulKind::PlaneVec => {
                 PlaneVecMatInnerProduct::validate(client, blueprint, dtypes, vector_sizes)
-            }
-            TileMatmulKind::Interleaved => {
-                InterleavedMatmul::validate(client, blueprint, dtypes, vector_sizes)
             }
         }
     }
@@ -259,9 +234,6 @@ pub fn allocate_lhs<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScop
         TileMatmul::PlaneVec(c) => {
             planevec_allocate_lhs::<LhsRE, Sc>(layout, c.tile_size, c.reduce_vector_size)
         }
-        TileMatmul::Interleaved(c) => {
-            interleaved_allocate_lhs::<LhsRE, Sc>(layout, c.tile_size, c.plane_dim)
-        }
     }
 }
 
@@ -283,9 +255,6 @@ pub fn allocate_rhs<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScop
         TileMatmul::PlaneVec(c) => {
             planevec_allocate_rhs::<RhsRE, Sc>(layout, c.tile_size, c.reduce_vector_size)
         }
-        TileMatmul::Interleaved(c) => {
-            interleaved_allocate_rhs::<RhsRE, Sc>(layout, c.tile_size, c.plane_dim)
-        }
     }
 }
 
@@ -306,9 +275,6 @@ pub fn allocate_acc<LhsRE: Numeric, RhsRE: Numeric, AccRE: Numeric, Sc: TileScop
         }
         TileMatmul::PlaneVec(c) => {
             planevec_allocate_acc::<AccRE, Sc>(layout, c.tile_size, c.reduce_vector_size)
-        }
-        TileMatmul::Interleaved(c) => {
-            interleaved_allocate_acc::<AccRE, Sc>(layout, c.tile_size, c.plane_dim)
         }
     }
 }

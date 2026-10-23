@@ -25,7 +25,6 @@ impl<E: Float> Tile<E, Plane> {
             TileKind::Bounce(b) => b.fill_zero(),
             TileKind::Cmma(t) => t.fill_zero(),
             TileKind::Register(t) => t.fill_zero(),
-            TileKind::RowWise(t) => t.init_zero(),
             _ => panic!("fill_zero: unsupported tile variant"),
         }
     }

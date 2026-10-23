@@ -39,22 +39,6 @@ impl<E: Numeric> StageTile<E> {
 
 #[cube]
 impl<E: Numeric> StageTile<E> {
-    pub fn wrap_mut<NS: Size, T: TilingLayout>(
-        stage: &mut StridedStageMemory<E, NS, T>,
-    ) -> StageTile<E> {
-        let typed = stage.as_slice_mut::<NS>();
-        let erased = unsafe { typed.downcast_mut_unchecked::<E>() };
-        StageTile::<E> {
-            smem: unsafe { erased.as_boxed_unchecked() },
-            swizzle: stage.swizzle,
-            config: comptime!(stage.config),
-            tiling_layout: comptime!(T::to_enum()),
-        }
-    }
-}
-
-#[cube]
-impl<E: Numeric> StageTile<E> {
     /// [`SharedTile`] view of the tile at `coord`. Dispatches on the
     /// comptime [`TilingLayoutEnum`].
     pub fn get_tile(&self, coord: Coords2d) -> SharedTile<E> {

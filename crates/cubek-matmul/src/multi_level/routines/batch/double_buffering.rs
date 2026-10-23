@@ -16,16 +16,8 @@ use crate::{
                 PlaneWriterFamily,
                 multi_stage::double_buffering::DoubleBufferingMatmulFamily,
                 read::{
-                    async_full_cyclic::AsyncFullCyclicLoading,
-                    async_full_strided::AsyncFullStridedLoading,
-                    async_full_tma::AsyncFullTmaLoading,
-                    async_partial_cyclic::AsyncPartialCyclicLoading,
-                    async_partial_strided::AsyncPartialStridedLoading,
-                    async_partial_tma::AsyncPartialTmaLoading,
                     sync_full_cyclic::SyncFullCyclicLoading,
-                    sync_full_tilewise::SyncFullTilewiseLoading,
                     sync_partial_cyclic::SyncPartialCyclicLoading,
-                    sync_partial_tilewise::SyncPartialTilewiseLoading,
                 },
             },
             stage::{NumStages, PlanePartitioner},
@@ -36,28 +28,13 @@ use crate::{
             TilingArgs,
             selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
         },
-        tile::{ColMajorTilingOrder, RowMajorTilingOrder},
+        tile::RowMajorTilingOrder,
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm;
-
-/// Plane accelerated double buffered matmul with cyclic readers
-pub struct AsyncCyclicDoubleBufferingAlgorithm;
-
-/// Plane accelerated double buffered matmul with tilewise readers
-pub struct TilewiseDoubleBufferingAlgorithm;
-
-/// Plane accelerated double buffered matmul with tilewise reader on Lhs and cyclic on Rhs
-pub struct HybridDoubleBufferingAlgorithm;
-
-/// Plane accelerated double buffered matmul with TMA readers
-pub struct TmaDoubleBufferingAlgorithm;
-
-/// Plane accelerated double buffered matmul with cyclic readers
-pub struct AsyncStridedDoubleBufferingAlgorithm;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DoubleBufferingArgs {
@@ -86,235 +63,153 @@ impl Display for DoubleBufferingArgs {
     }
 }
 
-macro_rules! double_buffering_impl {
-    ($algo:ident, $batch:ty) => {
-        impl cubek_std::legacy::Routine for $algo {
-            type Strategy = DoubleBufferingArgs;
-            type Blueprint = BatchMatmulBlueprint;
-        }
+/// The batch-matmul family powering [`CyclicDoubleBufferingAlgorithm`].
+type CyclicDoubleBufferingBatch<RC> = PartitionedBatchMatmulFamily<
+    RC,
+    DoubleBufferingMatmulFamily<
+        PlanePartitioner,
+        RC,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncFullCyclicLoading<RowMajorTilingOrder>,
+        PlaneWriterFamily,
+    >,
+    RowMajorGlobalPartitionMatmul,
+>;
 
-        impl<RC> Routine<RC> for $algo where RC: RuntimeConfig {}
-
-        impl<RC> BatchMatmulRoutine<RC> for $algo
-        where
-            RC: RuntimeConfig,
-        {
-            #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-            fn launch<MA: MatmulArgs<Config = RC>>(
-                client: &Client,
-                cube_dim: CubeDim,
-                cube_count: CubeCount,
-                address_type: AddressType,
-                input: InputRuntimeArg<MA>,
-                output: OutputRuntimeArg<MA>,
-                config: ConfigRuntimeArg<MA>,
-                cube_count_input: CubeMappingLaunch,
-                blueprint: Self::Blueprint,
-                dtypes: &MatmulElems,
-                vector_sizes: &MatmulVectorSizes,
-            ) -> Result<(), MatmulSetupError> {
-                {
-                    unsafe {
-                        <$batch>::launch_unchecked::<MA>(
-                            client,
-                            cube_dim,
-                            cube_count,
-                            address_type,
-                            input,
-                            output,
-                            config,
-                            cube_count_input,
-                            blueprint,
-                            dtypes,
-                            vector_sizes,
-                        )?
-                    }
-                    Ok(())
-                }
-            }
-
-            #[allow(clippy::result_large_err)]
-            fn validate_blueprint(
-                client: &Client,
-                blueprint: &Self::Blueprint,
-                problem: &MatmulProblem,
-                dtypes: &MatmulElems,
-                vector_sizes: &MatmulVectorSizes,
-            ) -> Result<(), MatmulSetupError> {
-                batch_validate_blueprint::<$batch, RC>(
-                    client,
-                    blueprint,
-                    problem,
-                    dtypes,
-                    vector_sizes,
-                )
-            }
-
-            fn num_stages() -> NumStages {
-                <$batch>::num_stages()
-            }
-
-            fn expand_blueprint(
-                problem: &MatmulProblem,
-                device_settings: &DeviceSettings,
-                strategy: &BlueprintStrategy<Self>,
-            ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
-                let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-
-                let tile_matmul = match strategy {
-                    BlueprintStrategy::Forced(blueprint) => blueprint.tile_matmul,
-                    BlueprintStrategy::Inferred(args) => args.tile_matmul,
-                };
-
-                if tile_matmul.can_cast_stage_element() {
-                    dtypes.adjust_stage_dtypes();
-                }
-
-                let (blueprint, dtypes) = match strategy {
-                    BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-                    BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane(
-                        tile_matmul,
-                        &device_settings.client,
-                        problem,
-                        device_settings.plane_dim,
-                        dtypes,
-                        &device_settings.vector_sizes,
-                        PlaneTilingBlueprintOptions {
-                            specialized: strategy.specialized,
-                            multi_row_strategy: MultiRowStrategy::Adaptive {
-                                minimum_stage_count: 8,
-                            },
-                            swizzled: tile_matmul.should_swizzle(&device_settings.client),
-                            stage_buffering: <$batch>::num_stages().stage_buffering(),
-                            ..Default::default()
-                        },
-                    )?,
-                };
-                Ok(ExpandInfo { blueprint, dtypes })
-            }
-
-            fn prepare(
-                problem: &MatmulProblem,
-                device_settings: &DeviceSettings,
-                expand_info: ExpandInfo<Self::Blueprint>,
-            ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
-                let ExpandInfo { blueprint, dtypes } = expand_info;
-
-                <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
-                    &device_settings.client,
-                    &blueprint,
-                    problem,
-                    &dtypes,
-                    &device_settings.vector_sizes,
-                )?;
-
-                let cubedim_resource =
-                    <$batch>::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
-
-                LaunchInfo::new(
-                    blueprint,
-                    dtypes,
-                    problem,
-                    cubedim_resource,
-                    device_settings,
-                )
-            }
-        }
-    };
+impl cubek_std::legacy::Routine for CyclicDoubleBufferingAlgorithm {
+    type Strategy = DoubleBufferingArgs;
+    type Blueprint = BatchMatmulBlueprint;
 }
 
-double_buffering_impl!(
-    CyclicDoubleBufferingAlgorithm,
-    PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncFullCyclicLoading<RowMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >
-);
+impl<RC> Routine<RC> for CyclicDoubleBufferingAlgorithm where RC: RuntimeConfig {}
 
-double_buffering_impl!(
-    AsyncCyclicDoubleBufferingAlgorithm,
-    PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            AsyncPartialCyclicLoading<RowMajorTilingOrder>,
-            AsyncPartialCyclicLoading<RowMajorTilingOrder>,
-            AsyncFullCyclicLoading<RowMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >
-);
+impl<RC> BatchMatmulRoutine<RC> for CyclicDoubleBufferingAlgorithm
+where
+    RC: RuntimeConfig,
+{
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>>(
+        client: &Client,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                CyclicDoubleBufferingBatch::<RC>::launch_unchecked::<MA>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
 
-double_buffering_impl!(
-    TilewiseDoubleBufferingAlgorithm,
-    PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            SyncPartialTilewiseLoading<RowMajorTilingOrder>,
-            SyncPartialTilewiseLoading<ColMajorTilingOrder>,
-            SyncFullTilewiseLoading<ColMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >
-);
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint(
+        client: &Client,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<CyclicDoubleBufferingBatch<RC>, RC>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
 
-double_buffering_impl!(
-    HybridDoubleBufferingAlgorithm,
-    PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            SyncPartialTilewiseLoading<RowMajorTilingOrder>,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncFullCyclicLoading<RowMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >
-);
+    fn num_stages() -> NumStages {
+        CyclicDoubleBufferingBatch::<RC>::num_stages()
+    }
 
-double_buffering_impl!(
-    TmaDoubleBufferingAlgorithm,
-    PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            AsyncPartialTmaLoading,
-            AsyncPartialTmaLoading,
-            AsyncFullTmaLoading,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >
-);
+    fn expand_blueprint(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings,
+        strategy: &BlueprintStrategy<Self>,
+    ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
+        let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
 
-double_buffering_impl!(
-    AsyncStridedDoubleBufferingAlgorithm,
-    PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            AsyncPartialStridedLoading,
-            AsyncPartialStridedLoading,
-            AsyncFullStridedLoading,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >
-);
+        let tile_matmul = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint.tile_matmul,
+            BlueprintStrategy::Inferred(args) => args.tile_matmul,
+        };
+
+        if tile_matmul.can_cast_stage_element() {
+            dtypes.adjust_stage_dtypes();
+        }
+
+        let (blueprint, dtypes) = match strategy {
+            BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
+            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane(
+                tile_matmul,
+                &device_settings.client,
+                problem,
+                device_settings.plane_dim,
+                dtypes,
+                &device_settings.vector_sizes,
+                PlaneTilingBlueprintOptions {
+                    specialized: strategy.specialized,
+                    multi_row_strategy: MultiRowStrategy::Adaptive {
+                        minimum_stage_count: 8,
+                    },
+                    swizzled: tile_matmul.should_swizzle(&device_settings.client),
+                    stage_buffering: CyclicDoubleBufferingBatch::<RC>::num_stages()
+                        .stage_buffering(),
+                    ..Default::default()
+                },
+            )?,
+        };
+        Ok(ExpandInfo { blueprint, dtypes })
+    }
+
+    fn prepare(
+        problem: &MatmulProblem,
+        device_settings: &DeviceSettings,
+        expand_info: ExpandInfo<Self::Blueprint>,
+    ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
+        let ExpandInfo { blueprint, dtypes } = expand_info;
+
+        <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
+            &device_settings.client,
+            &blueprint,
+            problem,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
+
+        let cubedim_resource = CyclicDoubleBufferingBatch::<RC>::cubedim_resource(
+            &blueprint,
+            &dtypes,
+            &device_settings.vector_sizes,
+        )?;
+
+        LaunchInfo::new(
+            blueprint,
+            dtypes,
+            problem,
+            cubedim_resource,
+            device_settings,
+        )
+    }
+}

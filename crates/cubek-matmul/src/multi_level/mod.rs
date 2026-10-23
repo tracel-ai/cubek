@@ -24,8 +24,6 @@ mod select_kernel;
 mod size;
 #[allow(clippy::module_inception)]
 mod strategy;
-#[cfg(feature = "extended")]
-pub mod test_only;
 
 pub use cube_dim_resource::*;
 pub use instruction::*;

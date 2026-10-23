@@ -5,25 +5,6 @@ use crate::multi_level::{
     definition::MatmulTypes,
 };
 
-/// Asynchronous barrier for `async_memcpy`
-pub struct AsyncBarrier {}
-
-#[cube]
-impl SyncStrategy for AsyncBarrier {
-    type Barrier = Shared<Barrier>;
-
-    fn create_barrier() -> Self::Barrier {
-        Barrier::shared(CUBE_DIM, UNIT_POS == 0)
-    }
-
-    fn sync<MP: MatmulTypes>(
-        barrier: &Self::Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig,
-    ) {
-        barrier.arrive_and_wait();
-    }
-}
-
 /// Asynchronous barrier for `async_copy`
 pub struct AsyncCopy {}
 

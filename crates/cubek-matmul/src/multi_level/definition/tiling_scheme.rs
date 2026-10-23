@@ -24,7 +24,6 @@ pub struct TilingSchemeBuilder {
     tile_size: Option<TileSize>,
     partition_size: Option<PartitionSize>,
     stage_size: Option<StageSize>,
-    global_partition_size: Option<GlobalPartitionSize>,
 }
 
 impl TilingSchemeBuilder {
@@ -49,26 +48,13 @@ impl TilingSchemeBuilder {
         self
     }
 
-    /// Optional: specify global partition size for tiling scheme
-    ///
-    /// If not specified, will default to (1, 1, 1)
-    pub fn with_global_partition_size(
-        mut self,
-        global_partition_size: GlobalPartitionSize,
-    ) -> Self {
-        self.global_partition_size = Some(global_partition_size);
-        self
-    }
-
     /// Finish building
     pub fn build(self) -> Result<TilingScheme, &'static str> {
         Ok(TilingScheme {
             tile_size: self.tile_size.ok_or("Missing tile_size")?,
             partition_size: self.partition_size.ok_or("Missing tiles_per_partition")?,
             stage_size: self.stage_size.ok_or("Missing partitions_per_stage")?,
-            global_partition_size: self
-                .global_partition_size
-                .unwrap_or(GlobalPartitionSize::new(1, 1, 1)),
+            global_partition_size: GlobalPartitionSize::new(1, 1, 1),
         })
     }
 }

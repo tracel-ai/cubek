@@ -23,24 +23,6 @@ fn simple_tma_mma() {
 }
 
 #[test]
-fn double_tma_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleTmaCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_tma_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleTmaMma(Default::default()).into(),
-    );
-}
-
-#[test]
 fn specialized_tma_cmma() {
     test_matmul_strategy(
         client(),
@@ -55,23 +37,5 @@ fn specialized_tma_mma() {
         client(),
         square(256, f16_elems()),
         MultiLevel::SpecializedTmaMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn specialized_tma_mma_tma_store() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SpecializedTmaMmaTmaStore(Default::default()).into(),
-    );
-}
-
-#[test]
-fn specialized_tma_mma_tma_store_many_tiles() {
-    test_matmul_strategy(
-        client(),
-        square(1024, f16_elems()),
-        MultiLevel::SpecializedTmaMmaTmaStore(Default::default()).into(),
     );
 }

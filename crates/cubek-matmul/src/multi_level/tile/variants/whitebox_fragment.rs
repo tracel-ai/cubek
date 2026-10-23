@@ -257,22 +257,6 @@ pub fn whitebox_fragment_absolute_pos(
     (abs_row_index, abs_col_index)
 }
 
-/// Zeroes a slice giving responsibility to units following `layout`.
-#[cube]
-pub fn whitebox_fragment_zero_slice<E: Numeric>(
-    #[comptime] layout: WhiteboxFragmentLayout,
-    slice: &mut [E],
-) {
-    for r in 0..layout.unit_size.0 {
-        for c in 0..layout.unit_size.1 {
-            let (row, col) = whitebox_fragment_absolute_pos(layout, (r, c));
-            let index = row * layout.total_size.1 + col;
-
-            slice[index as usize] = E::from_int(0);
-        }
-    }
-}
-
 // ===========================================================================
 // Cross-plane row reduction
 //
