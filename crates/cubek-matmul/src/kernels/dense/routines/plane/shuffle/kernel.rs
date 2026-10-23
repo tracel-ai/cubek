@@ -4,12 +4,12 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::dense::plane::plane_shuffle_microkernel;
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
-/// Every plane of the launch, running its run of the output. The weight is read at the element it
+/// Every plane of the launch, running its run of the output. Each input is read at the element it
 /// is bound at, under the scales it carries, none where it is plain, which ride every read the
 /// body makes. `O` is how the output is reached: a buffer, or a sink.
 ///
-/// The walk is within the weight: where it reads a table, a batch whose entry names no slab holds
-/// nothing, so its plane takes no step and writes zeros; a plain weight is walked whole.
+/// The walk is within the `[k, n]` input: where it reads a table, a batch whose entry names no
+/// slab holds nothing, so its plane takes no step and writes zeros; a plain one is walked whole.
 #[cube(launch_unchecked)]
 pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileArg<'_>,
@@ -24,6 +24,7 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
     let c = O::tile::<E, VO>(out, &partitioning);
     for plane in &partitioning {
         let (mut c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
+        let (a, a_factor) = a.factor(c.space(), instruction);
         let (b, b_factor) = b.factor(c.space(), instruction);
         let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
         sum.zero();
@@ -36,6 +37,6 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
                 comptime!(MatmulOperands::all(MatmulRead::AsBound)),
             );
         }
-        c.dequantize_from(&sum.scaled(&b_factor));
+        c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
     }
 }
