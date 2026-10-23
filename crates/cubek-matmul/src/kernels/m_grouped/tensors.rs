@@ -119,6 +119,7 @@ impl MGroupedMatmulTensors {
     }
 
     /// Each group's cumulative end row, `u32`.
+    #[cfg(test)]
     pub(crate) fn ends(&self) -> &PlainTensor {
         &self.ends
     }
