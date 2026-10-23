@@ -1,8 +1,9 @@
 use super::counters::ZeroedCounters;
 use crate::kernels::tensor::{PACKED_STACK_UNREAD, PackedTensor, PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex, MatmulInputs,
-    MatmulOutput, MatmulOutputBuffer, MatmulRoutineProblem, MatmulView,
+    MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex,
+    MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer, MatmulRoutineProblem,
+    MatmulView,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -107,14 +108,6 @@ pub struct MatmulTensors<Out = MatmulOutputBuffer> {
     out: Out,
     rows_kind: MatmulRowsKind,
     table: Option<MatmulIndexTable>,
-}
-
-/// A table a product's inputs read one entry of per batch, and what its entries say: `u32`
-/// entries, its dims the product's batches.
-#[derive(Debug, Clone)]
-pub struct MatmulIndexTable {
-    pub index: MatmulIndex,
-    pub entries: PlainTensor,
 }
 
 impl<Out: core::fmt::Debug> core::fmt::Debug for MatmulTensors<Out> {
@@ -783,7 +776,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 };
                 match &self.table {
                     None => problem,
-                    Some(table) => Self::batched_packed(problem, lhs, table),
+                    Some(table) => Self::indexed_packed_problem(problem, lhs, table),
                 }
             }
         }
@@ -791,7 +784,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// `problem`, a packed one over every row of `lhs`, restated over the batches of `table`, each
     /// holding its own rows and reading its entry.
-    fn batched_packed(
+    fn indexed_packed_problem(
         problem: MatmulRoutineProblem,
         lhs: &StoredTensor,
         table: &MatmulIndexTable,

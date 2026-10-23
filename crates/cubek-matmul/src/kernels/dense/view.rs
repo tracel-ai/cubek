@@ -109,8 +109,8 @@ impl<'a> MatmulView<'a> {
                 return Err(MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH);
             }
             let batches: usize = problem.batches.iter().product();
-            let folds = problem.batches_held.lhs == batches && problem.batches_held.out == batches;
-            if problem.index.is_none() && !folds {
+            let merges = problem.batches_held.lhs == batches && problem.batches_held.out == batches;
+            if problem.index.is_none() && !merges {
                 return Err(MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED);
             }
         }
@@ -333,7 +333,7 @@ impl<'a> MatmulView<'a> {
     }
 
     /// Every row of one batch held whole, each batch handed to the cubes: a table read per batch
-    /// tells the batches apart, so none folds into another's rows.
+    /// tells the batches apart, so none merges into another's rows.
     fn read_per_batch(&self) -> RowsReading {
         RowsReading {
             rows: self.problem.stated_rows,
@@ -508,7 +508,7 @@ mod tests {
         }
     }
 
-    /// Under a table, a launch holding rows whole keeps each batch's row apart instead of folding
+    /// Under a table, a launch holding rows whole keeps each batch's row apart instead of merging
     /// the batches into rows, so a broadcast activation is no refusal, and the rows are one batch's.
     #[test]
     fn a_table_keeps_the_batches_apart_where_rows_are_held_whole() {

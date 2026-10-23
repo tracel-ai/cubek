@@ -1,5 +1,5 @@
-use crate::kernels::MATMUL_ELEMENT_UNVERIFIED;
 use crate::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
+use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -64,4 +64,12 @@ impl MatmulInputs {
             false => tensor.into_contiguous(client),
         }
     }
+}
+
+/// A table a product's inputs read one entry of per batch, and what its entries say: `u32`
+/// entries, its dims the product's batches.
+#[derive(Debug, Clone)]
+pub struct MatmulIndexTable {
+    pub index: MatmulIndex,
+    pub entries: PlainTensor,
 }

@@ -178,7 +178,7 @@ impl PlainTensor {
     /// This tensor, dense rows along `rows` by `columns`, restated over the axes each is in the
     /// block-split space of `blocks`, and those axes: the same bytes, a dim an axis, which the
     /// tile engine stages and masks as it lies ([`MatmulBlocks::restated_dims`]). Its leading
-    /// dims fold into the rows, unless they are `batches`, which stay dims of their own ahead of
+    /// dims merge into the rows, unless they are `batches`, which stay dims of their own ahead of
     /// the block-split ones, for the binding to read as batches (`Arg::batches`), broadcast where
     /// one is a single entry.
     pub fn restated(
