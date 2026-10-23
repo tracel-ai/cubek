@@ -12,8 +12,8 @@
 //!   combine because there is nothing to combine.
 //! - `workspace`: `K` spelled as two axes, `(KB, KI)`, with the output bound over `[KB, M, N]` so
 //!   it *spans* the split. Nothing is partial, at the price of a `splits × m × n` buffer and a
-//!   second pass to fold it away. Both launches are timed, because both are the cost.
-//! - `atomic`: `K` cut at cube scope and the drain folding each cube's slice into the output
+//!   second pass to sum it away. Both launches are timed, because both are the cost.
+//! - `atomic`: `K` cut at cube scope and the drain merging each cube's slice into the output
 //!   atomically. One launch, one buffer, and a result that is not bit-identical run to run.
 //!
 //! What the numbers are for: `workspace` and `atomic` compute the same thing and differ only in
@@ -48,7 +48,7 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 /// Columns each cube owns. Held at one so the mappings differ only in what they do with `K`.
 const COLS: usize = 1;
 /// The reduce pass's output tile: one row by this many columns, inside the leaf's unroll budget.
-const FOLD_COLS: usize = 32;
+const SUM_COLS: usize = 32;
 
 #[cube(launch)]
 fn plain_matmul(a: &TileArg<'_>, b: &TileArg<'_>, c: &TileArg<'_>, space: Partitioning) {
@@ -63,7 +63,7 @@ fn plain_matmul(a: &TileArg<'_>, b: &TileArg<'_>, c: &TileArg<'_>, space: Partit
     }
 }
 
-/// This cube's slice of `K` contracted into a register block, drained through the atomic fold.
+/// This cube's slice of `K` contracted into a register block, drained through the atomic merge.
 #[cube(launch)]
 fn atomic_matmul<E: Numeric>(
     a: &TileArg<'_>,
@@ -126,7 +126,7 @@ fn atomic_matmul_units<E: Numeric>(
 }
 
 #[cube(launch)]
-fn fold_splits(partials: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
+fn sum_splits(partials: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
     let partials = partials.tile(&space);
     let out = out.tile(&space);
     for region in space {
@@ -139,13 +139,13 @@ fn fold_splits(partials: &TileArg<'_>, out: &TileArg<'_>, space: Partitioning) {
 pub enum Mapping {
     /// Each cube walks the whole `K`.
     DataParallel,
-    /// `K` as `(KB, KI)`, the output spanning `KB`, then a second pass folds it away.
+    /// `K` as `(KB, KI)`, the output spanning `KB`, then a second pass merges it away.
     Workspace { splits: usize },
-    /// `K` cut at cube scope, the drain folding atomically.
+    /// `K` cut at cube scope, the drain summing atomically.
     Atomic { splits: usize },
     /// [`Atomic`](Mapping::Atomic) with the units given work of their own: each cube's slice of
     /// `K` is cut again across the plane, so the units contract disjoint slices and combine in
-    /// registers before one fold per cube reaches memory.
+    /// registers before one sum per cube reaches memory.
     ///
     /// The other mappings put nothing on the units, and a cube launches a full plane whatever the
     /// nest says, so their 32 units all run the same code over the same numbers and 31 of them
@@ -217,7 +217,7 @@ impl Mapping {
             }
             // The cube's slice of K cut again across the plane: each unit contracts its own
             // sixteenth (or whatever the unit count makes it), the plane combines in registers,
-            // and one fold per cube reaches memory.
+            // and one sum per cube reaches memory.
             Mapping::AtomicUnits { .. } => {
                 let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
@@ -233,13 +233,13 @@ impl Mapping {
         }
     }
 
-    /// The fold pass's nest, for the mapping that has one.
-    fn fold_space(self, client: &Client, problem: Problem) -> Launcher {
+    /// The sum pass's nest, for the mapping that has one.
+    fn sum_space(self, client: &Client, problem: Problem) -> Launcher {
         let Problem { m, n, .. } = problem;
         {
             let partitioning = Partitioning::new(
                 Space::new(&[(M, m), (N, n), (KB, self.splits())]),
-                Levels::leaf(&[(M, 1), (N, FOLD_COLS)])
+                Levels::leaf(&[(M, 1), (N, SUM_COLS)])
                     .cubes(&[M, N])
                     .build(),
             );
@@ -299,17 +299,17 @@ struct Bound {
     mapping: Mapping,
     samples: usize,
     launcher: Launcher,
-    fold_space: Launcher,
+    sum_space: Launcher,
     cube_count: CubeCount,
     cube_dim: CubeDim,
-    fold_cube_count: CubeCount,
-    fold_cube_dim: CubeDim,
+    sum_cube_count: CubeCount,
+    sum_cube_dim: CubeDim,
     a: TileInput,
     b: TileInput,
     /// The destination the contraction writes: the output itself, or the partials buffer.
     c: TileInput,
     /// The final output, for the mapping whose contraction wrote partials.
-    folded: TileInput,
+    summed: TileInput,
     lhs_spec: TileSpec,
     rhs_spec: TileSpec,
     out_spec: TileSpec,
@@ -327,7 +327,7 @@ impl Bound {
         let splits = mapping.splits();
         let inside = k / splits;
         let launcher = mapping.launcher(client, problem, plane_units);
-        let fold_space = mapping.fold_space(client, problem);
+        let sum_space = mapping.sum_space(client, problem);
 
         let a = TileInput::builder(client, Space::new(&[(M, m), (K, k)]))
             .untiled()
@@ -348,7 +348,7 @@ impl Bound {
                 .untiled()
                 .zeros(),
         };
-        let folded = TileInput::builder(client, Space::new(&[(M, m), (N, n)]))
+        let summed = TileInput::builder(client, Space::new(&[(M, m), (N, n)]))
             .untiled()
             .zeros();
 
@@ -359,14 +359,14 @@ impl Bound {
             samples: 1,
             cube_count: launcher.cube_count(),
             cube_dim: launcher.cube_dim(),
-            fold_cube_count: fold_space.cube_count(),
-            fold_cube_dim: fold_space.cube_dim(),
+            sum_cube_count: sum_space.cube_count(),
+            sum_cube_dim: sum_space.cube_dim(),
             launcher: launcher.clone(),
-            fold_space,
+            sum_space,
             a,
             b,
             c,
-            folded,
+            summed,
             lhs_spec: mapping.lhs_spec(inside),
             rhs_spec: mapping.rhs_spec(inside),
             out_spec: TileSpec::direct(&[M, N]),
@@ -380,7 +380,7 @@ impl Bound {
         self
     }
 
-    /// One full run of the mapping: the contraction, and the fold pass where there is one. Both
+    /// One full run of the mapping: the contraction, and the merge pass where there is one. Both
     /// launches, because the second pass is part of what the workspace mapping costs.
     fn launch(&self) {
         let dtype = f32::elem_type_native();
@@ -435,10 +435,10 @@ impl Bound {
                     ),
                     self.launcher.partitioning_arg(),
                 );
-                fold_splits::launch(
+                sum_splits::launch(
                     &self.client,
-                    self.fold_cube_count.clone(),
-                    self.fold_cube_dim,
+                    self.sum_cube_count.clone(),
+                    self.sum_cube_dim,
                     TileArgLaunch::new(
                         self.c.tensor_arg(1),
                         dtype,
@@ -446,12 +446,12 @@ impl Bound {
                         TileSpec::direct(&[KB, M, N]),
                     ),
                     TileArgLaunch::new(
-                        self.folded.tensor_arg(1),
+                        self.summed.tensor_arg(1),
                         dtype,
                         1,
                         TileSpec::direct(&[M, N]),
                     ),
-                    self.fold_space.partitioning_arg(),
+                    self.sum_space.partitioning_arg(),
                 );
             }
         }
@@ -460,7 +460,7 @@ impl Bound {
     /// Where this mapping's answer ends up.
     fn result(&self) -> &TileInput {
         match self.mapping {
-            Mapping::Workspace { .. } => &self.folded,
+            Mapping::Workspace { .. } => &self.summed,
             _ => &self.c,
         }
     }
@@ -501,7 +501,7 @@ fn verify(client: &Client, mapping: Mapping) -> Result<(), String> {
     let plane_units = client.properties().hardware.plane_size_max as usize;
     // Big enough that every mapping's cuts divide it: each cube's slice of `K` has to survive
     // being cut again across the plane.
-    let (m, n, k) = (2usize, FOLD_COLS, mapping.splits() * plane_units * 2);
+    let (m, n, k) = (2usize, SUM_COLS, mapping.splits() * plane_units * 2);
     let problem = Problem { m, n, k };
     let bound = Bound::new(client, mapping, problem);
     bound.launch();
@@ -552,9 +552,9 @@ pub fn bench(
             problem.k / splits
         ));
     }
-    if !problem.n.is_multiple_of(FOLD_COLS) {
+    if !problem.n.is_multiple_of(SUM_COLS) {
         return Err(format!(
-            "n ({}) must be a multiple of the fold pass's {FOLD_COLS}-column tile",
+            "n ({}) must be a multiple of the fold pass's {SUM_COLS}-column tile",
             problem.n
         ));
     }

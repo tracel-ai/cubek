@@ -62,71 +62,70 @@ impl Strategy {
             Strategy::Tiled(s) => s.launch_ref(client, lhs, rhs, out, dtypes),
             #[cfg(feature = "multi-level")]
             Strategy::MultiLevel(s) => s.launch_ref(client, lhs, rhs, out, dtypes),
-            Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
+            Strategy::Auto => Self::launch_auto(client, lhs, rhs, out, dtypes),
         }
     }
-}
 
-/// Accelerated first, falling back to the routine that needs no accelerator. A storage-tiled
-/// operand is a fact of the data, not a knob: it was stored in tiles for the tiled cmma routine, which
-/// stages to its tiles, so it goes there (the multi-level routines refuse it).
-#[cfg(feature = "multi-level")]
-fn auto(
-    client: &Client,
-    lhs: InputBinding,
-    rhs: InputBinding,
-    out: TensorBinding,
-    dtypes: &mut MatmulElems,
-) -> Result<(), MatmulSetupError> {
-    #[cfg(feature = "tiled")]
-    if lhs.data().tiling.is_tiled() || rhs.data().tiling.is_tiled() {
-        return tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
-            .launch_ref(client, lhs, rhs, out, dtypes);
+    /// Accelerated first, falling back to the routine that needs no accelerator. A storage-tiled
+    /// operand is a fact of the data, not a knob: it was stored in tiles for the tiled cmma
+    /// routine, which stages to its tiles, so it goes there (the multi-level routines refuse it).
+    #[cfg(feature = "multi-level")]
+    fn launch_auto(
+        client: &Client,
+        lhs: InputBinding,
+        rhs: InputBinding,
+        out: TensorBinding,
+        dtypes: &mut MatmulElems,
+    ) -> Result<(), MatmulSetupError> {
+        #[cfg(feature = "tiled")]
+        if lhs.data().tiling.is_tiled() || rhs.data().tiling.is_tiled() {
+            return tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
+                .launch_ref(client, lhs, rhs, out, dtypes);
+        }
+        if let Err(err) = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
+            client,
+            lhs.clone(),
+            rhs.clone(),
+            out.clone(),
+            dtypes,
+        ) {
+            match err {
+                MatmulSetupError::Unavailable(_) => {
+                    multi_level::Strategy::SimpleUnit(Default::default())
+                        .launch_ref(client, lhs, rhs, out, dtypes)?;
+                }
+                _ => panic!("{err:?}"),
+            }
+        }
+
+        Ok(())
     }
-    if let Err(err) = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
-        client,
-        lhs.clone(),
-        rhs.clone(),
-        out.clone(),
-        dtypes,
-    ) {
-        match err {
-            MatmulSetupError::Unavailable(_) => {
-                multi_level::Strategy::SimpleUnit(Default::default())
+
+    /// The tiled-only pair. `CpuGemm` takes the fallback slot as the one tiled routine with no
+    /// hardware requirement; it was tuned for CPU and has never been measured as a GPU fallback.
+    #[cfg(all(feature = "tiled", not(feature = "multi-level")))]
+    fn launch_auto(
+        client: &Client,
+        lhs: InputBinding,
+        rhs: InputBinding,
+        out: TensorBinding,
+        dtypes: &mut MatmulElems,
+    ) -> Result<(), MatmulSetupError> {
+        if let Err(err) =
+            tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
+                .launch_ref(client, lhs.clone(), rhs.clone(), out.clone(), dtypes)
+        {
+            match err {
+                MatmulSetupError::Unavailable(_) => {
+                    tiled::Strategy::CpuGemm(
+                        crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
+                    )
                     .launch_ref(client, lhs, rhs, out, dtypes)?;
+                }
+                _ => panic!("{err:?}"),
             }
-            _ => panic!("{err:?}"),
         }
+
+        Ok(())
     }
-
-    Ok(())
-}
-
-/// The tiled-only pair. `CpuGemm` takes the fallback slot as the one tiled routine with no
-/// hardware requirement; it was tuned for CPU and has never been measured as a GPU fallback.
-#[cfg(all(feature = "tiled", not(feature = "multi-level")))]
-fn auto(
-    client: &Client,
-    lhs: InputBinding,
-    rhs: InputBinding,
-    out: TensorBinding,
-    dtypes: &mut MatmulElems,
-) -> Result<(), MatmulSetupError> {
-    if let Err(err) = tiled::Strategy::Cmma(
-        crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT,
-    )
-    .launch_ref(client, lhs.clone(), rhs.clone(), out.clone(), dtypes)
-    {
-        match err {
-            MatmulSetupError::Unavailable(_) => {
-                tiled::Strategy::CpuGemm(
-                    crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
-                )
-                .launch_ref(client, lhs, rhs, out, dtypes)?;
-            }
-            _ => panic!("{err:?}"),
-        }
-    }
-
-    Ok(())
 }

@@ -13,7 +13,7 @@
 //! function.
 
 use crate::kernels::MatmulRoutineProblem;
-use crate::kernels::select::problem::OperandKind;
+use crate::kernels::select::problem::{MatmulProblem, OperandKind};
 use cubecl::ir::ElemType;
 use cubecl::tile::Axis;
 use cubecl::{self as cubecl, AutotuneKey};
@@ -55,7 +55,7 @@ pub struct OperandKey {
 /// the axis a caller varies freely (batch × sequence), and it is the axis the
 /// crossovers actually live on, so its buckets are where candidates trade
 /// places. `batches` is anchored for the same reason and is 1 almost
-/// everywhere: `Linear` folds before projecting.
+/// everywhere: `Linear` merges before projecting.
 ///
 /// **The family anchors, not the derive.** cubecl's anchor attribute scales
 /// its base by the autotune level, and that level is set for how close to
@@ -68,7 +68,7 @@ pub struct OperandKey {
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulTuneKey {
     /// The element the product is written in, the activation's or the one a packed activation
-    /// stands for: it decides the vector widths, whether a gemm routine can reach a tensor-core
+    /// stands for: it decides the vector widths, whether a staged routine can reach a tensor-core
     /// leaf, and what the memory-bound kernels accumulate from.
     elem: ElemType,
     /// Reduction length.
@@ -201,7 +201,7 @@ impl OperandKey {
 
 /// Whether an operand's batches read one matrix. A batch count alone does not say: a projection
 /// of batched activations and a product of batched operands count the same batches, and only the
-/// first can fold them into rows of one weight.
+/// first can merge them into rows of one weight.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MatmulBatching {
     /// Every batch reads its one matrix, so the batches are more rows against it.
@@ -234,14 +234,14 @@ pub struct CubeBlock {
     pub k: usize,
 }
 
-/// What a product is, as one candidate's cube meets it: whether a **candidate's
+/// How a grid of one candidate's cubes covers a product: whether a **candidate's
 /// cuts are cuts this problem affords**.
 ///
 /// Not a property of the problem alone — a block that tiles one product masks
 /// another — and every arm is arithmetic over the extents and the block. How
 /// much a masked cube or a lone one *costs* is a measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatmulKind {
+pub enum GridCoverage {
     /// One cube covers the whole product: the grid is the batch and nothing
     /// else, so no device spreads this candidate over more than one worker per
     /// batch.
@@ -274,33 +274,33 @@ impl MatmulShape {
     /// Where a candidate whose cube covers `block` is tried on this problem —
     /// the priority both arms are written in.
     ///
-    /// [`Tiled`](MatmulKind::Tiled) candidates go first. A
-    /// [`Masked`](MatmulKind::Masked) candidate falls one priority level per doubling of
+    /// [`Tiled`](GridCoverage::Tiled) candidates go first. A
+    /// [`Masked`](GridCoverage::Masked) candidate falls one priority level per doubling of
     /// what its grid covers against what the problem asks for. A
-    /// [`Whole`](MatmulKind::Whole) candidate goes last: a grid that cannot
+    /// [`Whole`](GridCoverage::Whole) candidate goes last: a grid that cannot
     /// spread is the one claim about a launch that needs no clock — and even
     /// that says only where to try it, since how much it costs is still a
     /// measurement.
     pub fn priority(&self, block: CubeBlock) -> CandidatePriority {
-        match self.kind(block) {
-            MatmulKind::Tiled => CandidatePriority::FIRST,
-            MatmulKind::Masked => CandidatePriority::FIRST
+        match self.coverage(block) {
+            GridCoverage::Tiled => CandidatePriority::FIRST,
+            GridCoverage::Masked => CandidatePriority::FIRST
                 .lowered((self.covered(block) / self.work().max(1)).max(1).ilog2()),
-            MatmulKind::Whole => CandidatePriority::LAST,
+            GridCoverage::Whole => CandidatePriority::LAST,
         }
     }
 
-    /// What this product is as a cube of `block` meets it. The arms are
-    /// ordered by how much they take away and the first that holds is the kind:
+    /// How a grid of `block` cubes covers this product. The arms are
+    /// ordered by how much they take away and the first that holds is the coverage:
     /// a block covering the product has no second cube to be masked against.
-    pub fn kind(&self, block: CubeBlock) -> MatmulKind {
+    pub fn coverage(&self, block: CubeBlock) -> GridCoverage {
         let (block_m, block_n) = (block.m.max(1), block.n.max(1));
         if block_m >= self.m && block_n >= self.n {
-            return MatmulKind::Whole;
+            return GridCoverage::Whole;
         }
         match self.m.is_multiple_of(block_m) && self.n.is_multiple_of(block_n) {
-            true => MatmulKind::Tiled,
-            false => MatmulKind::Masked,
+            true => GridCoverage::Tiled,
+            false => GridCoverage::Masked,
         }
     }
 }
@@ -355,16 +355,11 @@ pub fn create_key(
         rhs_shape.rank(),
         "the batch dims are read pairwise off operands of one rank"
     );
-    let m = lhs_shape[rank - 2];
-    let k = lhs_shape[rank - 1];
-    let n = rhs_shape[rhs_shape.rank() - 1];
-    // The broadcast batch volume — one number, since the tuner only needs to
-    // know how much work rides the leading axes, not how it is spread.
-    let batches: usize = lhs_shape.as_slice()[..rank - 2]
-        .iter()
-        .zip(rhs_shape.as_slice()[..rank - 2].iter())
-        .map(|(l, r)| *l.max(r))
-        .product();
+    // The broadcast batch volume is one number, since the tuner only needs to know how much work
+    // rides the leading axes, not how it is spread.
+    let MatmulProblem {
+        m, k, n, batches, ..
+    } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
     // An operand keys by the axis it is contiguous along and the tile it is stored in, so a
     // winner elected on one layout is never served to another, which its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {

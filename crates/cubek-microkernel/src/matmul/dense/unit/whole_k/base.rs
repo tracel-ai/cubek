@@ -79,14 +79,14 @@ impl UnitWholeKMicrokernel {
         why: "the unit whole-K microkernel reads a weight lined along `K` or `N`",
     };
 
-    /// What a col weight bound one element at a time is declined with: cubek reads it in vectors
-    /// of at least two.
+    /// What a col weight bound one element at a time is declined with: the tile DSL reads it in
+    /// vectors of at least two.
     pub const COL_RHS_NEEDS_VECTORS_ALONG_K: Refusal = Refusal::Declined {
         why: "the unit whole-K microkernel reads a col weight and the lhs beside it in vectors of at least two elements along `K`",
     };
 
-    /// What a col weight is declined with where a unit holds more than one column: cubek folds its
-    /// partials correctly only for one.
+    /// What a col weight is declined with where a unit holds more than one column: the tile DSL
+    /// sums its partials correctly only for one.
     pub const COL_RHS_ONE_COLUMN_A_UNIT: Refusal = Refusal::Declined {
         why: "the unit whole-K microkernel reads a col weight one column a unit, each folding its line of partials",
     };
@@ -100,7 +100,7 @@ impl UnitWholeKMicrokernel {
         }
     }
 
-    /// Whether the operands bound at `widths` are read in vectors this microkernel folds.
+    /// Whether the operands bound at `widths` are read in vectors this microkernel merges.
     ///
     /// # Errors
     ///
@@ -163,7 +163,7 @@ impl UnitWholeKMicrokernel {
     }
 
     /// Scalars one unit's accumulator holds: a cell per row and column, which for a col weight is
-    /// a line of partials folded on drain.
+    /// a line of partials summed on drain.
     fn accumulator_scalars(&self) -> usize {
         let cell = match self.orders.rhs {
             MatmulOrder::InBufferOrder => self.rhs_vector_ceiling,
@@ -249,7 +249,7 @@ impl Microkernel for UnitWholeKMicrokernel {
 
     /// Each operand's step is the leaf's extent along the axis it is bound innermost along: the lhs
     /// down `K`, the weight along its own contiguous axis, the output along `N`. A col weight's
-    /// step folds with the lhs's, a line of each at a time; a row weight's lands in the output's
+    /// step is contracted with the lhs's, a line of each at a time; a row weight's lands in the output's
     /// cells, lined with it.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         for operand in MatmulOperand::ALL {

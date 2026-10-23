@@ -27,12 +27,12 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 ///
 /// It sums a float weight in cols only: a float row weight's step lies along `N`, so each of a
 /// unit's cells is a vector of the weight, and the shared accumulator the planes add their partial
-/// sums into takes one element a cell, which cubek does not drain a wider vector into. A plane
-/// shuffle reads a float row weight whole.
+/// sums into takes one element a cell, which the tile DSL does not drain a wider vector into. A
+/// plane shuffle reads a float row weight whole.
 ///
 /// Against a packed weight its planes split `K`'s scale blocks, each taking whole turns of its
 /// plane's units, or whole windows of its fragments, so no two planes share a block's scale. A
-/// unit's cell is then a read of the weight's values along `K` whichever way its words lie, folded
+/// unit's cell is then a read of the weight's values along `K` whichever way its words lie, merged
 /// on drain as a col weight's is, so a packed weight in rows sums too.
 ///
 /// Atomic adds land in no fixed order, and `f32` addition does not associate, so two launches on
@@ -147,7 +147,7 @@ impl core::fmt::Display for CubeShufflePlaneSettings {
 impl CubeShuffleMicrokernel {
     /// What a row weight is declined with: its step lies along `N`, so each of a unit's cells is
     /// a vector of the weight, and the shared accumulator the planes add their partial sums into
-    /// takes one element a cell, which cubek does not drain a wider vector into.
+    /// takes one element a cell, which the tile DSL does not drain a wider vector into.
     pub const ROW_RHS_UNSUPPORTED: Refusal = Refusal::Declined {
         why: "the cube shuffle sums a float weight in cols only: a row weight's vectors along `N` do not drain into the shared accumulator's one-element cells",
     };
@@ -228,8 +228,8 @@ impl CubeShuffleMicrokernel {
     }
 
     /// Bytes of shared memory one cube holds over its box in `partitioning`: the accumulator over
-    /// its run, one sum per cell of each copy its planes meet in ([`CubeMeet::copies`]). cubek
-    /// sizes that buffer itself, dense over the cube's box of the output at one `sum` element a
+    /// its run, one sum per cell of each copy its planes meet in ([`CubeMeet::copies`]). The tile
+    /// DSL sizes that buffer itself, dense over the cube's box of the output at one `sum` element a
     /// cell, which is what this counts; its sizing is not exposed to read.
     pub fn shared_memory(&self, item: &MatmulWorkItem, partitioning: &MatmulPartitioning) -> usize {
         let cells = (partitioning.rows() * partitioning.columns()) as usize;
@@ -333,7 +333,7 @@ impl CubeShufflePlane {
         }
     }
 
-    /// Whether the operands bound at `widths` are read in vectors the plane folds: the software
+    /// Whether the operands bound at `widths` are read in vectors the plane merges: the software
     /// plane's check ([`PlaneShuffleMicrokernel::check_vectors`]); a tensor-core plane states its
     /// widths as it vectorizes.
     ///
@@ -459,7 +459,7 @@ impl Microkernel for CubeShuffleMicrokernel {
             .chain(fragment.into_iter().flatten())
     }
 
-    /// Its planes read as the plane microkernel's: a col weight's step down `K`, folded with the
+    /// Its planes read as the plane microkernel's: a col weight's step down `K`, merged with the
     /// lhs's a vector of each at a time. The cube copies the output out of the accumulator's
     /// atomics one element at a time.
     ///

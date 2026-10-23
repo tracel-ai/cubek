@@ -2,8 +2,8 @@
 //! its rules are unit-tested with no GPU.
 //!
 //! The selector runs first. What it answers is how the call reads its cache, and then how the
-//! kernel is chosen: by measurement on one of two autotune tables, by rule, or by the caller's pin.
-//! Each routine then chooses its own setting, the table's candidates being its settings.
+//! kernel is chosen: by measurement on one of two autotunes, by rule, or by the caller's pin.
+//! Each routine then chooses its own setting, the autotune's candidates being its settings.
 
 use super::{AttentionKernel, AttentionOpStrategy};
 use crate::kernels::{AttentionTensors, CubeAttentionKernel, HypercubeAttentionKernel};
@@ -11,7 +11,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 
-/// How many query positions a call has: what the rules and the tables tell calls apart by.
+/// How many query positions a call has: what the rules and autotune tell calls apart by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryPositions {
     One,
@@ -41,7 +41,7 @@ pub enum KvKind {
 pub enum AttentionSelection {
     /// A float cache, read by the kernel `choice` gives.
     Float(AttentionChoice),
-    /// A packed cache rebuilt as floats, the QJL fix-up folded into the keys, then read by the
+    /// A packed cache rebuilt as floats, the QJL fix-up merged into the keys, then read by the
     /// kernel `choice` gives.
     DequantizeThen(AttentionChoice),
     /// A packed cache read as it lies, decoded by the hypercube shuffle `read` gives. Where it
@@ -56,7 +56,7 @@ pub enum AttentionSelection {
 /// How a float attention's kernel is chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttentionChoice {
-    /// The fastest candidate of the autotune table of calls of these query positions.
+    /// The fastest candidate of the autotune of calls of these query positions.
     Autotune(QueryPositions),
     /// A kernel named by rule or by the caller.
     Kernel(KernelChoice),
@@ -94,21 +94,10 @@ impl KernelChoice {
 const ONE_POSITION_RULE: AttentionKernel =
     AttentionKernel::Hypercube(HypercubeAttentionKernel::LastArrivalShuffle);
 
-/// Whether `kernel` reads a packed cache as it lies: the hypercube shuffles, either merge.
-fn reads_packed(kernel: AttentionKernel) -> bool {
-    matches!(
-        kernel,
-        AttentionKernel::Hypercube(
-            HypercubeAttentionKernel::LastArrivalShuffle
-                | HypercubeAttentionKernel::SecondLaunchShuffle
-        )
-    )
-}
-
 /// How a call of `queries` positions over a `cache` runs under `strategy`.
 ///
-/// A measuring strategy measures: a call of one query position on the one-position table, any
-/// other on the many-positions table. A rule runs the hypercube shuffle merged on the last arrival
+/// A measuring strategy measures: a call of one query position on the one-position autotune, any
+/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last arrival
 /// at one position, and the cube fragment routine elsewhere. A pin runs its kernel.
 ///
 /// A packed cache is decoded inline at one position under every policy, by the hypercube shuffle
@@ -135,7 +124,7 @@ pub fn select(
     match (cache, choice) {
         (KvKind::Float, choice) => Ok(AttentionSelection::Float(choice)),
         (KvKind::Packed, AttentionChoice::Kernel(KernelChoice::Pin(kernel)))
-            if reads_packed(kernel) =>
+            if kernel.reads_packed() =>
         {
             Ok(AttentionSelection::Packed {
                 read: KernelChoice::Pin(kernel),
@@ -153,5 +142,133 @@ pub fn select(
             ))),
         }),
         (KvKind::Packed, choice) => Ok(AttentionSelection::DequantizeThen(choice)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::select::selector::*;
+    use crate::kernels::*;
+    use AttentionChoice::{Autotune as Measured, Kernel};
+    use AttentionKernelHeuristic as H;
+    use AttentionOpStrategy::{Autotune, Heuristic, Specific};
+    use AttentionSelection::{DequantizeThen, Float, Packed};
+    use KernelChoice::{Pin, Rule};
+    use QueryPositions::{Many, One};
+
+    const KINDS: [KvKind; 2] = [KvKind::Float, KvKind::Packed];
+    const LAST_ARRIVAL_SHUFFLE: AttentionKernel =
+        AttentionKernel::Hypercube(HypercubeAttentionKernel::LastArrivalShuffle);
+    const SECOND_LAUNCH_SHUFFLE: AttentionKernel =
+        AttentionKernel::Hypercube(HypercubeAttentionKernel::SecondLaunchShuffle);
+    const CUBE_FRAGMENT: AttentionKernel = AttentionKernel::Cube(CubeAttentionKernel::Fragment);
+
+    /// What a packed cache of one query position reads under every policy: the hypercube shuffle
+    /// merged on the last arrival by rule, then the unit routine over the rebuilt cache.
+    const PACKED_BY_RULE: AttentionSelection = Packed {
+        read: Rule(LAST_ARRIVAL_SHUFFLE),
+        otherwise: Some(Kernel(Rule(AttentionKernel::Unit))),
+    };
+
+    /// The tile ceiling: over a float cache the hypercube by rule at one query position and the
+    /// cube elsewhere; over a packed one the hypercube decoding inline at one position, the unit
+    /// routine after it, and the cache rebuilt before the cube elsewhere. Nothing measured
+    /// anywhere.
+    #[test]
+    fn the_tile_ceiling_rules() {
+        let tile = Heuristic(H::Tile);
+        assert_eq!(
+            select(tile, One, KvKind::Float),
+            Ok(Float(Kernel(Rule(LAST_ARRIVAL_SHUFFLE))))
+        );
+        assert_eq!(
+            select(tile, Many, KvKind::Float),
+            Ok(Float(Kernel(Rule(CUBE_FRAGMENT)))),
+            "many query positions are never measured below the burn ceiling"
+        );
+        assert_eq!(select(tile, One, KvKind::Packed), Ok(PACKED_BY_RULE));
+        assert_eq!(
+            select(tile, Many, KvKind::Packed),
+            Ok(DequantizeThen(Kernel(Rule(CUBE_FRAGMENT))))
+        );
+    }
+
+    /// Where a kernel a rule named declines, the cube's plane unit groups run after its plane
+    /// fragments, the hypercube shuffle merged by a second launch after the one merged on the last
+    /// arrival, and the unit routine after any other: every kernel reaches the unit routine,
+    /// and nothing follows it.
+    #[test]
+    fn every_rule_ends_at_the_unit_routine() {
+        assert_eq!(
+            CUBE_FRAGMENT.instead_by_rule(),
+            Some(AttentionKernel::Cube(CubeAttentionKernel::UnitGroup))
+        );
+        assert_eq!(
+            LAST_ARRIVAL_SHUFFLE.instead_by_rule(),
+            Some(SECOND_LAUNCH_SHUFFLE)
+        );
+        for kernel in AttentionKernel::all() {
+            let last = std::iter::successors(Some(kernel), AttentionKernel::instead_by_rule).last();
+            assert_eq!(last, Some(AttentionKernel::Unit), "{kernel:?}");
+        }
+        assert_eq!(AttentionKernel::Unit.instead_by_rule(), None);
+    }
+
+    /// `Autotune` measures every float call, on the autotune of its query positions; a packed call
+    /// of one position has one kernel and nothing to race, and a packed call of many is rebuilt
+    /// and measured as a float one.
+    #[test]
+    fn autotune_measures_every_float_call() {
+        for queries in [One, Many] {
+            assert_eq!(
+                select(Autotune, queries, KvKind::Float),
+                Ok(Float(Measured(queries)))
+            );
+        }
+        assert_eq!(select(Autotune, One, KvKind::Packed), Ok(PACKED_BY_RULE));
+        assert_eq!(
+            select(Autotune, Many, KvKind::Packed),
+            Ok(DequantizeThen(Measured(Many)))
+        );
+    }
+
+    /// Every candidate of the family is measured, so the `Cubek` ceiling and `Autotune` name the
+    /// same set.
+    #[test]
+    fn the_cubek_ceiling_and_autotune_agree_while_every_candidate_is_measured() {
+        for cache in KINDS {
+            for queries in [One, Many] {
+                assert_eq!(
+                    select(Heuristic(H::Cubek), queries, cache),
+                    select(Autotune, queries, cache),
+                    "{queries:?} over {cache:?}"
+                );
+            }
+        }
+    }
+
+    /// A routine's pin runs that routine at any query length over a float cache; over a packed
+    /// one only the two hypercube shuffles' run.
+    #[test]
+    fn a_routine_pin_runs_its_routine() {
+        for kernel in AttentionKernel::all() {
+            for queries in [One, Many] {
+                assert_eq!(
+                    select(Specific(kernel), queries, KvKind::Float),
+                    Ok(Float(Kernel(Pin(kernel))))
+                );
+            }
+            let packed = select(Specific(kernel), One, KvKind::Packed);
+            match kernel {
+                LAST_ARRIVAL_SHUFFLE | SECOND_LAUNCH_SHUFFLE => assert_eq!(
+                    packed,
+                    Ok(Packed {
+                        read: Pin(kernel),
+                        otherwise: None
+                    })
+                ),
+                _ => assert!(packed.is_err(), "{kernel:?}"),
+            }
+        }
     }
 }

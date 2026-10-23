@@ -32,4 +32,4 @@ pub use cubek_microkernel::attention::AttentionVisibility;
 pub use select::{AttentionKernel, AttentionKernelHeuristic, AttentionOpStrategy};
 
 #[cfg(test)]
-mod tests;
+mod test_support;

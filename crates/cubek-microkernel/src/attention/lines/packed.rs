@@ -1,34 +1,8 @@
-use crate::attention::packed_cache::KeyFixup;
 use crate::attention::packed_cache::packed_fields;
+use crate::attention::packed_cache::{KeyFixup, PackedCacheArg};
 use crate::attention::{B, KV, S, StepLines, StepLinesExpand, StepWalk};
 use cubecl::tile::Region;
 use cubecl::{self as cubecl, cube, prelude::*};
-
-/// A packed cache as a kernel is handed it: the keys' and the values' words, norms and codebooks,
-/// the keys' fix-up, and what reading them compiles to. Each operand's vectors hold `coords`
-/// coordinates, each a `bits`-wide index into the operand's codebook, packed low first into the
-/// u32 words `[b, kv, s, w]`, the vector scaled by its entry of the norms `[b, kv, s, 1]`.
-#[derive(CubeType, CubeLaunch)]
-pub struct PackedCacheArg {
-    pub key_words: OwnedTensor<u32>,
-    pub key_norms: OwnedTensor<f32>,
-    pub key_codebook: OwnedTensor<f32>,
-    /// Without a fix-up, any tensor: a kernel's arguments are fixed, and these are never read.
-    pub key_errs: OwnedTensor<f32>,
-    pub key_sign_codebook: OwnedTensor<f32>,
-    pub value_words: OwnedTensor<u32>,
-    pub value_norms: OwnedTensor<f32>,
-    pub value_codebook: OwnedTensor<f32>,
-    #[cube(comptime)]
-    pub coords: usize,
-    #[cube(comptime)]
-    pub key_bits: u32,
-    #[cube(comptime)]
-    pub value_bits: u32,
-    /// The fix-up the keys carry.
-    #[cube(comptime)]
-    pub fixup: KeyFixup,
-}
 
 /// The keys or the values of a packed cache, read as lines ([`PackedCacheArg`]).
 ///

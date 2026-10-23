@@ -10,6 +10,5 @@ pub mod components;
 pub mod eval;
 /// FlashAttention forward pass.
 pub mod forward;
-/// The tiled attention: its problem, tensors, routines, selection and tuning key.
 #[cfg(feature = "tiled")]
 pub mod kernels;

@@ -241,7 +241,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             shared_memory: microkernel.shared_memory(hw, &item, &storage)
                 + M::MERGE.shared_memory(),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         M::validate(
             hw,
             problem,

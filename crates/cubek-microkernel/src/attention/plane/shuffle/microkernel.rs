@@ -315,7 +315,7 @@ impl<EA: Float, E: Float, N: Size, K: StepLines<N>, L: StepLines<N>>
 
     /// The teams merged (`close`), then each plane's rows divided and written where it holds
     /// them. Planes that split the same rows' keys are never stored this way: the cube merges
-    /// them from what each leaves in slots ([`store_partial`](Self::store_partial)).
+    /// them from what each leaves in slots ([`store_partial`](crate::attention::CubePlaneAttention::store_partial)).
     fn store_normalized(&mut self, cube: &Region, out: &Tile) {
         self.close();
         for plane in cube.planes() {

@@ -22,13 +22,13 @@ pub struct MatmulProblem {
     pub k: usize,
     pub n: usize,
     /// Product of the broadcast batch extents (`1` when unbatched, and always
-    /// `1` for a quantized operand, whose rows are folded by the frontend).
+    /// `1` for a quantized operand, whose rows the caller merges into one).
     pub batches: usize,
     /// The activation rows a memory-bound kernel would stream, or `None` where
     /// none of them serves this product. [`new`](Self::new) is where the number comes from,
     /// and every candidate counts the same way.
     ///
-    /// Not `m`. Every memory-bound candidate folds the left-hand side's leading
+    /// Not `m`. Every memory-bound candidate merges the left-hand side's leading
     /// extents and reads the weight once, so routing on the trailing extent
     /// sends a batched product to a table whose every candidate declines it,
     /// and the answer to a table that declines everything is the fallback
@@ -59,10 +59,32 @@ impl MatmulProblem {
             k: lhs_shape[rank - 1],
             n: rhs_shape[rank - 1],
             batches,
-            streamed_rows: streamed_rows_of(lhs_shape, rhs_shape),
+            streamed_rows: Self::streamed_rows_of(lhs_shape, rhs_shape),
             lhs,
             rhs,
         }
+    }
+
+    /// The activation rows a memory-bound kernel would stream for `x @ weight`, or
+    /// `None` where none of them serves the product at all.
+    ///
+    /// Every one of them merges `x`'s leading extents into one row count and reads the
+    /// weight exactly once, so this — not `x`'s trailing extent — is the number
+    /// they all work from, and the number routing has to ask. Reading the trailing
+    /// extent instead calls `[64, 8, k] @ [1, k, n]` an 8-row product and sends a
+    /// 512-row one to a table whose every candidate declines it.
+    ///
+    /// `None` is a batched weight, which is one weight per product where these
+    /// kernels stream a single one, or a left-hand side whose feature extent is not the
+    /// weight's reduction: neither merges.
+    fn streamed_rows_of(x_shape: &Shape, w_shape: &Shape) -> Option<usize> {
+        let w_rank = w_shape.rank();
+        let d_in = w_shape[w_rank - 2];
+        let unbatched = w_shape.as_slice()[..w_rank - 2]
+            .iter()
+            .all(|&extent| extent == 1);
+        let reduces = x_shape[x_shape.rank() - 1] == d_in;
+        (unbatched && reduces && d_in > 0).then(|| x_shape.num_elements() / d_in)
     }
 }
 
@@ -75,26 +97,4 @@ pub enum OperandKind {
     /// kernel's plan serves the
     /// problem on the device are the selector's to ask.
     Quantized(QuantScheme),
-}
-
-/// The activation rows a memory-bound kernel would stream for `x @ weight`, or
-/// `None` where none of them serves the product at all.
-///
-/// Every one of them folds `x`'s leading extents into one row count and reads the
-/// weight exactly once, so this — not `x`'s trailing extent — is the number
-/// they all work from, and the number routing has to ask. Reading the trailing
-/// extent instead calls `[64, 8, k] @ [1, k, n]` an 8-row product and sends a
-/// 512-row one to a table whose every candidate declines it.
-///
-/// `None` is a batched weight, which is one weight per product where these
-/// kernels stream a single one, or a left-hand side whose feature extent is not the
-/// weight's reduction: neither folds.
-fn streamed_rows_of(x_shape: &Shape, w_shape: &Shape) -> Option<usize> {
-    let w_rank = w_shape.rank();
-    let d_in = w_shape[w_rank - 2];
-    let unbatched = w_shape.as_slice()[..w_rank - 2]
-        .iter()
-        .all(|&extent| extent == 1);
-    let reduces = x_shape[x_shape.rank() - 1] == d_in;
-    (unbatched && reduces && d_in > 0).then(|| x_shape.num_elements() / d_in)
 }

@@ -21,7 +21,7 @@ pub struct MatmulRoutineProblem {
     /// The output's batch extents, outermost first. An operand of extent one there is broadcast.
     pub batches: Vec<usize>,
     /// The lhs's rows as the problem was stated, which mean one batch's rows for a problem read
-    /// off a tuning key, and every row, its batches already folded, for one read off tensors that
+    /// off a tuning key, and every row, its batches already merged, for one read off tensors that
     /// hold every row whole. A launch reads it through
     /// [`MatmulView::rows`](crate::kernels::MatmulView::rows); only what is right for both forms
     /// reads it as stated: a problem that states no batches (the grouped and routed cases), and the
@@ -325,7 +325,7 @@ impl MatmulRoutineProblem {
 
     /// `m` rows by `n` columns, `k` deep, each operand of `element` or packed as `packings` says,
     /// a packed one read at [`PACKED`](Self::PACKED): one unbatched product, its rows every row
-    /// of the activation, its leading dims folded, since each of them reads the same weight. Its
+    /// of the activation, its leading dims merged, since each of them reads the same weight. Its
     /// operands are whole and dense, as a key describes them; the packed routines read none of
     /// a packed operand's buffer facts.
     pub fn packed(

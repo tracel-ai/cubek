@@ -72,7 +72,7 @@ impl PlainTensor {
     }
 
     /// The *logical* shape: a storage-tiled buffer stores each matrix dim as two physical dims,
-    /// and its metadata folds them back. The physical shape for a buffer in rows.
+    /// and its metadata merges them back. The physical shape for a buffer in rows.
     pub fn shape(&self) -> Shape {
         self.meta()
             .logical_shape()

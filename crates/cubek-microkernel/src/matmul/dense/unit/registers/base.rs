@@ -14,7 +14,7 @@ use cubek_std::{Hardware, UNIT_REGISTERS};
 /// size it. It asks nothing of the hardware, so it is its settings and the order it reads the rhs
 /// in.
 ///
-/// It reads the rhs along the axis its buffer runs: a col rhs down `K`, a line of it folded with a
+/// It reads the rhs along the axis its buffer runs: a col rhs down `K`, a line of it merged with a
 /// line of the lhs into each cell, and a row rhs, or one lined along neither axis, along `N`,
 /// lined with the output's cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,7 +150,7 @@ impl Microkernel for UnitRegistersMicrokernel {
     }
 
     /// The lhs's step is the block's depth down `K`, and the rhs's its extent along its own
-    /// contiguous axis. A col rhs's step folds with the lhs's, a line of each summed into a cell
+    /// contiguous axis. A col rhs's step is contracted with the lhs's, a line of each summed into a cell
     /// one value wide, so the output is written a value at a time; a row rhs's lands in the
     /// output's cells, lined with them, and the output is written the block's columns at a time.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {

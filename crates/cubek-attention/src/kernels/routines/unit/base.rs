@@ -155,7 +155,7 @@ impl Routine for UnitAttentionRoutine {
             plane_width,
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
@@ -258,8 +258,7 @@ mod tests {
         }
     }
 
-    /// A unit reads the keys along the head dim, where they lie contiguous, with the query it
-    /// folds them with; its output is lined with the values. None of them is lined along the
+    /// A unit reads the keys along the head dim, where they lie contiguous, with the query it    /// contracts them with; its output is lined with the values. None of them is lined along the
     /// attended keys, so each binds wider than one element.
     #[test]
     fn every_operand_binds_wider_than_one_element() {

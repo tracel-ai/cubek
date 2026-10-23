@@ -9,7 +9,7 @@ use core::num::NonZeroUsize;
 use cubek_std::Hardware;
 
 /// The settings of the cube every cube of the hypercube runs, over planes of the plane
-/// microkernel `P`: its own walk of its run of the keys is a cube's ([`CubeAttentionMicrokernel`]),
+/// microkernel `P`: its own walk of its run of the keys is a cube's ([`CubeAttentionMicrokernel`](crate::attention::cube::CubeAttentionMicrokernel)),
 /// with every knob a cube has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAttentionMicrokernelSettings<P> {

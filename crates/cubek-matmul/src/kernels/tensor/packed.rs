@@ -7,7 +7,6 @@ use super::PlainTensor;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::QuantScheme;
-use cubecl::server::BufferBinding;
 use cubecl::tile::launch::{Arg, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
@@ -24,76 +23,6 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
-
-/// A tensor as it is stored, which is how a kernel reads it: its values where they lie, or packed
-/// under its scales. Each binds as one tile, so a kernel reads whichever it is handed.
-#[derive(Debug, Clone)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one per product's tensors, moved once into them and read there"
-)]
-pub enum StoredTensor {
-    /// Its values as they are.
-    Plain(PlainTensor),
-    /// Packed words under their scales.
-    Packed(PackedTensor),
-}
-
-impl StoredTensor {
-    /// The tensor holding its values: itself, or a packed one's words.
-    pub fn values(&self) -> &PlainTensor {
-        match self {
-            Self::Plain(tensor) => tensor,
-            Self::Packed(tensor) => &tensor.words,
-        }
-    }
-
-    /// What `axis` measures, of the two `axes` it states last.
-    ///
-    /// # Panics
-    ///
-    /// On an axis not among them.
-    pub fn extent(&self, axes: [Axis; 2], axis: Axis) -> usize {
-        match self {
-            Self::Plain(tensor) => {
-                let shape = tensor.shape();
-                let position = axes
-                    .iter()
-                    .position(|&own| own == axis)
-                    .unwrap_or_else(|| panic!("{axis:?} is not one of {axes:?}"));
-                shape[shape.rank() - 2 + position]
-            }
-            Self::Packed(tensor) => tensor.extent(axis),
-        }
-    }
-
-    /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
-    /// block scales and its per-tensor scale. What a kept binding is rebound to, in place of the
-    /// buffers it was made over ([`TileArgLaunch::rebound`]).
-    pub fn buffers(&self) -> Vec<BufferBinding> {
-        self.tensors()
-            .map(|tensor| tensor.binding.handle.clone())
-            .collect()
-    }
-
-    /// How each of [`buffers`](Self::buffers) lies, in its order: what a binding derived over them
-    /// reads of them, so a kept binding is reused only over buffers that lie the same.
-    pub fn layouts(&self) -> impl Iterator<Item = Metadata> + '_ {
-        self.tensors().map(PlainTensor::meta)
-    }
-
-    /// The tensors behind [`buffers`](Self::buffers), in its order.
-    fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
-        let (values, scales) = match self {
-            Self::Plain(tensor) => (tensor, None),
-            Self::Packed(tensor) => (
-                &tensor.words,
-                Some(core::iter::once(&tensor.block_scales).chain(&tensor.global_scale)),
-            ),
-        };
-        core::iter::once(values).chain(scales.into_iter().flatten())
-    }
-}
 
 /// A packed matrix as a kernel reads it: its words, in the order their buffer steps, its block
 /// scales, and its per-tensor scale where its scheme has one, over two axes, each with its extent.
@@ -236,6 +165,17 @@ impl PackedTensor {
     /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
     pub fn slabs(&self) -> Option<usize> {
         self.stack.map(|stack| stack.slabs)
+    }
+
+    /// The tensor holding its words.
+    pub fn words(&self) -> &PlainTensor {
+        &self.words
+    }
+
+    /// The tensors holding its scales: the block scales, then the per-tensor scale where its
+    /// scheme has one.
+    pub fn scales(&self) -> impl Iterator<Item = &PlainTensor> {
+        core::iter::once(&self.block_scales).chain(&self.global_scale)
     }
 
     /// How its values are packed and scaled.

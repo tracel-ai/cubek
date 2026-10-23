@@ -217,7 +217,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
                 * (Self::stage_bytes(hw, &microkernel, problem, &ring)
                     + microkernel.window_bytes(&item)),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
@@ -461,8 +461,8 @@ mod tests {
         assert_eq!(microkernel.window_bytes(&problems()[2].work_item()), 0);
     }
 
-    /// Where a device offers both, the transport setting says where the score is kept: cubek's
-    /// own in the fragments, the lead; the vendor's through the windows, raced beside it.
+    /// Where a device offers both, the transport setting says where the score is kept: the tile
+    /// DSL's own in the fragments, the lead; the vendor's through the windows, raced beside it.
     #[test]
     fn the_transport_says_where_the_score_is_kept() {
         let manual = offering_manual(devices::h100(), &[16, 8]);

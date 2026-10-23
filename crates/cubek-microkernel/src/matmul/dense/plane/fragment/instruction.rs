@@ -24,9 +24,9 @@ pub enum PlaneFragmentInstruction {
     /// A matrix instruction of the device, through cubecl's fragment operations (`wmma` on CUDA;
     /// on HIP, cubecl's LLVM lowering to the AMDGPU `wmma` intrinsics).
     Cmma { shape: MmaConfig },
-    /// A matrix instruction of the device, through cubek's own fragment transport, as cubek
-    /// chooses it ([`MmaIo::default`]): an operand through `ldmatrix` where the device offers it
-    /// and the stage serves it, and every unit its own cells elsewhere and for the store.
+    /// A matrix instruction of the device, through the tile DSL's own fragment transport, as the
+    /// tile DSL chooses it ([`MmaIo::default`]): an operand through `ldmatrix` where the device
+    /// offers it and the stage serves it, and every unit its own cells elsewhere and for the store.
     Mma { shape: MmaConfig },
     /// The software instruction: [`SOFTWARE_UNITS`](Self::SOFTWARE_UNITS) units, each holding
     /// one cell of the tile in registers and contracting
@@ -275,7 +275,7 @@ impl PlaneFragmentInstruction {
 pub enum PlaneFragmentTransport {
     /// The vendor's fragment API first ([`PlaneFragmentInstruction::Cmma`]).
     Cmma,
-    /// cubek's own transport first ([`PlaneFragmentInstruction::Mma`]).
+    /// The tile DSL's own transport first ([`PlaneFragmentInstruction::Mma`]).
     Mma,
     /// The warpgroup MMA alone ([`PlaneFragmentInstruction::Wgmma`]), where it runs, and nothing
     /// where it does not: a setting that asks for it is laid out for it, a plane group's one

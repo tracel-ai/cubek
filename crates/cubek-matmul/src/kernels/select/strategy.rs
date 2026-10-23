@@ -17,19 +17,19 @@ pub enum MatmulOpStrategy {
     /// Pick by measurement: every kernel that can serve the problem joins an
     /// autotune table and the fastest runs, per problem and per device.
     ///
-    /// The default, and what production runs. The rules cannot know where the
+    /// The default. The rules cannot know where the
     /// crossover between a streaming kernel and a staged one falls on a device
     /// nobody has run yet — it moves in *sign*, not just in size — so the
     /// answer is measured.
     ///
     /// Only kernels are measured. There is no framework op among the
-    /// candidates: burn's `matmul` runs an autotune of its own, so a table
+    /// candidates: a framework's `matmul` runs an autotune of its own, so an autotune
     /// holding it would be a tuner inside a tuner whose winning candidate names
-    /// a wrapper. cubek's legacy routines are named and launched directly
+    /// a wrapper. The multi-level routines are named and launched directly
     /// instead, which is what makes every candidate a kernel.
     ///
-    /// Which kernels join, and in what order, is the table's own answer,
-    /// because a table's candidate set is built once per process and no
+    /// Which kernels join, and in what order, is the autotune's own answer,
+    /// because its candidate set is built once per process and no
     /// strategy passed per call could change it.
     #[default]
     Autotune,
@@ -45,39 +45,40 @@ pub enum MatmulOpStrategy {
 ///
 /// A **ceiling**, not an exclusive choice: `Tile ⊂ Cubek`, ordered by
 /// distance from the kernels a caller would rather run. The two answer the
-/// question the groups of an [`Autotune`](MatmulOpStrategy::Autotune) table
+/// question the groups of an [`Autotune`](MatmulOpStrategy::Autotune) candidate list
 /// answer, `microkernel` and `cubek`: reaching a ceiling and racing a group
 /// are two ways of asking it about the same set of kernels.
 ///
 /// Nothing here measures. A heuristic that ran out of rules hands the problem
-/// to *cubek's* selector, not to a table of ours: that is a rule-based answer
-/// from the code that owns those routines, which is what the ceiling promised.
+/// to the multi-level routines' own selection ([`Strategy::Auto`](crate::strategy::Strategy::Auto)),
+/// not to an autotune: that is a rule-based answer from the code that owns those routines, which
+/// is what the ceiling promised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MatmulKernelHeuristic {
-    /// This crate's kernels only: a branch runs one, and another of this
-    /// crate's where it declines (the plane shuffle the fixed gemm, the quantized gemv
-    /// the dequantized float pair). The one foreign kernel it reaches is burn's
+    /// The routines in [`kernels`](crate::kernels) only: a branch runs one, and another of them
+    /// where it declines (the plane shuffle its fixed fallback, the packed plane shuffle the
+    /// dequantized float pair). The one foreign kernel it reaches is the framework's
     /// dequantize, where a quantized weight is materialized.
     Tile,
-    /// Everything, cubek's own routines included. The rules still pick the
+    /// Everything, the multi-level routines included. The rules still pick the
     /// memory-bound kernel where one serves; what they have no rule for —
     /// which staged routine suits a shape — goes to
-    /// [`CubekAuto`](MatmulKernel::CubekAuto), cubek's selector.
+    /// [`CubekAuto`](MatmulKernel::CubekAuto), the multi-level routines' selection.
     Cubek,
 }
 
 /// The kernels themselves, named for what they are.
 ///
 /// This is the vocabulary a [`Specific`](MatmulOpStrategy::Specific) pin
-/// speaks, so a benchmark can drive one kernel *through* the high-level `nn`
-/// component instead of reaching past it.
+/// speaks, so a benchmark can drive one kernel *through* a framework's matmul
+/// instead of reaching past it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MatmulKernel {
     /// The float routine that asks nothing of the hardware,
     /// `UnitRegistersMatmulRoutine`, at its default setting: every unit owns a
     /// block of the output, so it serves any row count on any device, and is
     /// the pin a reference names where a float product of any shape must run.
-    /// It binds its operands through cubek's projection, so it reads an operand
+    /// It binds its operands through the tile DSL's projection, so it reads an operand
     /// stored in row-first tiles as well as in rows, and takes the elements
     /// every routine takes.
     UnitRegisters,
@@ -89,8 +90,8 @@ pub enum MatmulKernel {
     // A strategy written down under the pin's earlier name still reads as this one.
     #[serde(alias = "PlaneFold")]
     PlaneShuffle,
-    /// cubek's own selection over its own routines — its rules, no measurement
-    /// of ours, a quantized weight read as stored. The baseline the groups are
+    /// The multi-level routines' own selection ([`Strategy::Auto`](crate::strategy::Strategy::Auto))
+    /// — its rules, no autotune, a quantized weight read as stored. The baseline the groups are
     /// measured against, and what [`Heuristic(Cubek)`](MatmulKernelHeuristic::Cubek)
     /// falls through to.
     CubekAuto,

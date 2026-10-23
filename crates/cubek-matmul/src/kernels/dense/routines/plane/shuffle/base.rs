@@ -216,7 +216,7 @@ impl PlaneShuffleMatmulRoutine {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 
@@ -243,14 +243,14 @@ impl PlaneShuffleMatmulRoutine {
             shared_memory: 0,
         };
         let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 }
 
-/// Where the plane gemv places a packed product: its microkernel, the axis its columns land on,
+/// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
 /// and the planes one cube holds side by side along it, a target snapped to what the runs of
-/// columns divide, so no cube overhangs. The gemv deals the planes the launch's columns; the
+/// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns; the
 /// decode into a float weight places the same planes in cubes, each cube copying its box.
 pub struct PlaneShufflePackedPlacement {
     pub microkernel: PlaneShuffleMicrokernel,

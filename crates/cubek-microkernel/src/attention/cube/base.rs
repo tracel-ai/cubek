@@ -36,7 +36,7 @@ pub struct CubeAttentionMicrokernel<M: CubePlaneMicrokernel> {
     /// where planes split the same rows' keys.
     pub units: usize,
     /// Steps of keys a page of the cache holds, where the cube walks its keys a page at a time
-    /// ([`over_pages`](Self::over_pages)).
+    /// (`over_pages`).
     pub page_steps: Option<NonZeroUsize>,
 }
 

@@ -101,7 +101,7 @@ impl HypercubeLastArrivalMatmulRoutine {
     /// `partitioning` with one cube's box stretched to its run of the line: the tiles' steps of
     /// `K`, end to end, shared between `cubes`, the longest run as one tile's contraction.
     fn one_run(partitioning: &MatmulPartitioning, cubes: usize) -> MatmulPartitioning {
-        let space = partitioning.as_cubek().space();
+        let space = partitioning.as_tile().space();
         let (boxes_m, boxes_n) = partitioning.cubes();
         let batches: usize = partitioning
             .batch_axes()
@@ -114,7 +114,7 @@ impl HypercubeLastArrivalMatmulRoutine {
         let line = tiles * cube.extent(K).div_ceil(depth);
         let run = line.div_ceil(cubes) * depth;
         MatmulPartitioning::new(
-            partitioning.as_cubek().clone(),
+            partitioning.as_tile().clone(),
             Space::new(&[(M, cube.extent(M)), (N, cube.extent(N)), (K, run)]),
             partitioning.batch_axes().to_vec(),
             partitioning.rows_kind(),
@@ -221,7 +221,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         vectorization.require(VectorRequirement::Access {

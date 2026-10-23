@@ -156,7 +156,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             plane_width: hw.plane_dim()?,
             shared_memory: microkernel.shared_memory(hw, &item, &storage),
         };
-        let grid = Grid::new(hw, partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let shape = microkernel.merge_shape(&item, &partitioning, HypercubeMerge::SecondLaunch);
         HypercubeSecondLaunch::new(problem, shape).validate(hw)?;
         let mut vectorization = Vectorization::new();

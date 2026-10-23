@@ -189,7 +189,7 @@ impl CubeShuffleMatmulRoutine {
             plane_width: microkernel.plane.plane_width() as u32,
             shared_memory: microkernel.shared_memory(&item, &blueprint.partitioning),
         };
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 
@@ -218,7 +218,7 @@ impl CubeShuffleMatmulRoutine {
             shared_memory: microkernel.shared_memory(&item, &partitioning),
         };
         let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 }
@@ -318,7 +318,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
         let [sum, _, _, out] = item.kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
-        // its tiles; its shared memory is the accumulator cubek sizes to the cube's run.
+        // its tiles; its shared memory is the accumulator the tile DSL sizes to the cube's run.
         unsafe {
             cube_shuffle_matmul_kernel::launch_unchecked::<O>(
                 tensors.client(),

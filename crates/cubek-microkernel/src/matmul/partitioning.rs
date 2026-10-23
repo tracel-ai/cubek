@@ -7,9 +7,9 @@ use cubecl::tile::{
 };
 use cubek_std::matmul_axes::{K, KB, M, MB, MI, N, NB, NI};
 
-/// How a matmul product places its microkernel's work items over a problem: cubek's levels, which
-/// the kernel launches and walks, and the box each cube is handed. Each product builds one from
-/// its problem; a cube microkernel reads its box and stage off it. Stated along matmul's own
+/// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
+/// which the kernel launches and walks, and the box each cube is handed. Each product builds one
+/// from its problem; a cube microkernel reads its box and stage off it. Stated along matmul's own
 /// `M`, `N` and `K`, or over a packed product's block-split space ([`MatmulSpace`]).
 ///
 /// Its outermost level is the cubes, and the one inside it the walk a cube takes through its box;
@@ -297,8 +297,8 @@ impl MatmulPartitioning {
             })
     }
 
-    /// cubek's partitioning, for what the tile engine reads of it: the launch and the binding.
-    pub fn as_cubek(&self) -> &Partitioning {
+    /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
+    pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning
     }
 }

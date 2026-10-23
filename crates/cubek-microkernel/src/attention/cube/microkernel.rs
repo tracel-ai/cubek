@@ -114,7 +114,7 @@ fn staged_walk<
 /// (`unstaged_walk`), then each plane's rows normalized and written into the cube's output.
 /// Planes that split the same rows' keys leave their rows in slots of shared memory instead
 /// (`split_planes_in_slots`), and each merges its share of them into the output
-/// ([`plane_merge_rows_microkernel`]).
+/// (`plane_merge_rows_microkernel`).
 ///
 /// `cube` is the region the cube owns, its walk the steps of keys or the pages of them, of which
 /// it takes the first `steps`; `out` and `query` are windowed to it.

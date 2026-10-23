@@ -1,4 +1,6 @@
-//! Matmul routines written on the tile DSL.
+//! The tile DSL routines' launch strategy ([`Strategy`]), the storage relayout their tiled operands
+//! are laid in ([`storage`]) and their benchmarks. The routines themselves are
+//! [`kernels`](crate::kernels).
 
 pub mod storage;
 

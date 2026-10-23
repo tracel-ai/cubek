@@ -54,7 +54,7 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         }
     }
 
-    /// [`unit_attention_step()`] on each unit's rows of the plane's region of the stage.
+    /// `unit_attention_step` on each unit's rows of the plane's region of the stage.
     fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
         for rows in plane {
             unit_attention_step::<EA>(

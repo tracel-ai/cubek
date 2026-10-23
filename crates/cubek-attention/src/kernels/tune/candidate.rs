@@ -1,4 +1,4 @@
-//! The tune candidates the attention tables race, the prompt's and the single position's.
+//! The tune candidates attention's autotunes race, the prompt's and the single position's.
 
 use crate::kernels::tune::key::AttentionKey;
 use crate::kernels::{AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem};
@@ -9,8 +9,8 @@ use cubek_std::autotune::short_of_the_device;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::routine::{Grid, Routine};
 
-/// One candidate of an attention table's autotune: a routine of this kind at one of its
-/// settings, prepared for the device the table is built for.
+/// One candidate of an attention autotune: a routine of this kind at one of its
+/// settings, prepared for the device the autotune is built for.
 ///
 /// Its priority is the attention family's one term, how far the prepared launch's grid falls
 /// short of filling the device ([`short_of_the_device`]).
@@ -22,7 +22,7 @@ pub struct AttentionRoutineCandidate<R: Routine> {
 }
 
 impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
-    /// Every setting `routine` lists on `hw`, as candidates of the table, its default first.
+    /// Every setting `routine` lists on `hw`, as autotune candidates, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
         routine
             .settings(hw)

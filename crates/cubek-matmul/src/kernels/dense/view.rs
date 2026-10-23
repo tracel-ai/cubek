@@ -15,7 +15,7 @@ use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 
 /// What a launch holding every row whole declines whatever the device: an activation or an output
-/// that does not hold every batch, whose batches no fold makes rows of one matrix.
+/// that does not hold every batch, whose batches no merge makes rows of one matrix.
 pub const MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED: Refusal = Refusal::Declined {
     why: "the microkernel gemv folds an activation's batches into rows, so it reads an lhs and an output holding every batch",
 };
@@ -35,7 +35,7 @@ pub const MATMUL_PACKED_BLOCKS_DISAGREE: Refusal = Refusal::Declined {
 
 /// A [`MatmulRoutineProblem`] as a launch holding its rows as its [`MatmulRowsKind`] says reads
 /// it: the rows tiled and the batches distributed over cubes, or every row whole, the batches
-/// folded into the rows, since each of them reads the same weight.
+/// merged into the rows, since each of them reads the same weight.
 ///
 /// Against a packed operand, the launch reads the problem in its block-split
 /// [`space`](Self::space): each of `m`, `n` and `k` the tiles its scales are constant inside and
@@ -45,7 +45,7 @@ pub const MATMUL_PACKED_BLOCKS_DISAGREE: Refusal = Refusal::Declined {
 /// carried in a blueprint. [`rows`](Self::rows) is what the work item holds, and the one reading of
 /// the rows to take: a problem read off a tuning key states one batch's rows in `stated_rows`
 /// beside its batches, while one read off tensors that hold every row whole states them all there,
-/// its batches already folded.
+/// its batches already merged.
 #[derive(Debug, Clone, Copy)]
 pub struct MatmulView<'a> {
     problem: &'a MatmulRoutineProblem,
@@ -117,7 +117,7 @@ impl<'a> MatmulView<'a> {
         Ok(Self { problem, rows_kind })
     }
 
-    /// The rows a work item holds: every row, the batches folded in, or one batch's.
+    /// The rows a work item holds: every row, the batches merged in, or one batch's.
     pub fn rows(&self) -> usize {
         self.read().rows
     }
@@ -125,13 +125,13 @@ impl<'a> MatmulView<'a> {
     /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes` and taking
     /// their boxes in `order`, and `cubes_along_k` of them sharing every box
     /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of its `K`
-    /// walk (cubek's [`Levels::across`]). A box's cubes ride the grid's third dimension beside the
-    /// batches, so an order still strips the first two. Where every row is held whole, `inside`
-    /// holds them all and there are no batches left to distribute, so the cubes cut only the
-    /// columns.
+    /// walk (the tile DSL's [`Levels::across`]). A box's cubes ride the grid's third dimension
+    /// beside the batches, so an order still strips the first two. Where every row is held whole,
+    /// `inside` holds them all and there are no batches left to distribute, so the cubes cut only
+    /// the columns.
     ///
-    /// The count is the one asked for, whatever the walk: it is part of what a kernel compiles,
-    /// and one fitted to each problem's steps would compile a kernel per `K`. cubek distributes
+    /// The count is the one asked for, whatever the walk: it is part of what a kernel compiles, and
+    /// one fitted to each problem's steps would compile a kernel per `K`. The tile DSL distributes
     /// each cube the walk's steps over the count rounded up, so where the count does not divide the
     /// steps the trailing cubes' runs come up short or empty; an empty one sums nothing and skips
     /// its drain.
@@ -201,9 +201,9 @@ impl<'a> MatmulView<'a> {
 
     /// The problem partitioned with `inside` a cube's box, the cubes cutting `axes`, every box's
     /// steps of `K` laid end to end and shared between `cubes` cubes, each taking a run of them
-    /// that may start inside one box and end inside another (cubek's [`Levels::shared_by`]). A
-    /// cube's box holds the whole of `K`. The runs follow the boxes in the order of the line, so no
-    /// cube order applies.
+    /// that may start inside one box and end inside another (the tile DSL's [`Levels::shared_by`]).
+    /// A cube's box holds the whole of `K`. The runs follow the boxes in the order of the line, so
+    /// no cube order applies.
     pub fn shared_partitioning(
         &self,
         inside: Levels,
@@ -341,7 +341,7 @@ impl<'a> MatmulView<'a> {
         }
     }
 
-    /// Every row held whole: the batches folded into the rows, and none left for the cubes.
+    /// Every row held whole: the batches merged into the rows, and none left for the cubes.
     fn read_folded(&self) -> RowsReading {
         let rows = self.problem.stated_rows * self.problem.batches.iter().product::<usize>();
         RowsReading {
@@ -367,7 +367,7 @@ impl<'a> MatmulView<'a> {
     }
 
     /// The batch axes the cubes are handed one of, with their extents: in a tiled launch those
-    /// longer than one; a launch holding every row whole has folded them into its rows. Under a
+    /// longer than one; a launch holding every row whole has merged them into its rows. Under a
     /// table, every one, of one batch too: the table's dims are the batches, all cut at the level
     /// that reads its entry.
     fn distributed_batches(&self) -> Vec<(Axis, usize)> {
@@ -385,7 +385,7 @@ impl<'a> MatmulView<'a> {
 }
 
 /// What a launch reads of a problem's rows: the rows a work item holds, every one with the batches
-/// folded in or one batch's, and the rows the microkernel is told it holds.
+/// merged in or one batch's, and the rows the microkernel is told it holds.
 struct RowsReading {
     rows: usize,
     work_item_rows: MatmulRows,
@@ -412,7 +412,7 @@ mod tests {
         }
     }
 
-    /// Batches that share the weight fold into its rows where every row is held whole; batches
+    /// Batches that share the weight merge into its rows where every row is held whole; batches
     /// that each hold one are no matrix such a launch reads, and a single batch is the same product
     /// either way. Tiled, the rows stay one batch's.
     #[test]
@@ -467,8 +467,8 @@ mod tests {
         );
     }
 
-    /// An activation broadcast along the batches holds fewer rows than the output, so no fold
-    /// makes them one matrix of rows; tiled, the batch is a grid axis and nothing folds.
+    /// An activation broadcast along the batches holds fewer rows than the output, so no merge
+    /// makes them one matrix of rows; tiled, the batch is a grid axis and nothing merges.
     #[test]
     fn a_broadcast_activation_does_not_fold() {
         let problem = MatmulRoutineProblem::from(&shape(4, MatmulBatching::Shared));

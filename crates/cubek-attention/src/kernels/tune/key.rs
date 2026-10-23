@@ -1,16 +1,16 @@
-//! How an attention is told apart from another, for the tables and for the
-//! rows they are built from.
+//! How an attention is told apart from another, for autotune and for the
+//! candidates it measures.
 //!
 //! A key describes the *problem* — the head shape, the extents, which keys a
 //! query sees and the scale its scores take — so it lives beside the plans
-//! rather than beside the tables that consume it, the way
-//! [`cubek_matmul::kernels::tune::key`] does. A caller builds the tables; it is
+//! rather than beside the autotune that consumes it, the way
+//! [`cubek_matmul::kernels::tune::key`] does. A caller builds the autotune; it is
 //! this crate that knows what makes two attentions the same attention.
 //!
 //! One key for a prompt, a chunk of one and a decode step: the microkernel
-//! family serves all three, so one key states the queries and the keys a table
+//! family serves all three, so one key states the queries and the keys an autotune
 //! is asked about, and each routine reads the problem it serves off it,
-//! [`AttentionRoutineProblem`](crate::kernels::AttentionRoutineProblem). It reads the key alone,
+//! [`crate::kernels::AttentionRoutineProblem`]. It reads the key alone,
 //! because the key is the whole of what cubecl hands a priority function.
 
 use crate::kernels::{
@@ -36,12 +36,12 @@ use serde::{Deserialize, Serialize};
 /// call in hand, so the candidates that collapse at some length inside a bucket
 /// collapse together.
 ///
-/// Three shapes reach the tables, and the key states each by its extents:
+/// Three shapes reach autotune, and the key states each by its extents:
 ///
 /// - **A whole prompt**: its length is both the queries and the keys.
 /// - **A chunk** of a prompt prefilled in chunks, attended against the cache
 ///   the chunks before it filled: `queries` of the last of a longer prefix.
-///   That is where a served prompt spends its attention, every chunk after
+///   That is where a long prompt spends its attention, every chunk after
 ///   the first, and the walk an environment build takes lands every
 ///   `(queries, prefix)` bucket a context can produce, so a chunk's key stands
 ///   for [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over
@@ -70,10 +70,10 @@ pub struct AttentionKey {
     #[autotune(anchor(exp(min = 1, max = 64, base = 2)))]
     batch: usize,
     /// Which keys a query sees: a causal mask and a window are part of the
-    /// computation, not a detail of it, and cubek's flash routines serve
+    /// computation, not a detail of it, and the flash routines ([`forward`](crate::forward)) serve
     /// neither a window nor a chunk's alignment.
     visibility: AttentionVisibility,
-    /// Which scale the scores take: cubek's flash routines apply
+    /// Which scale the scores take: the flash routines apply
     /// `1 / sqrt(head_dim)` and no other, so a winner measured at one cannot
     /// serve the other.
     scale: ScoreScale,
@@ -83,8 +83,8 @@ pub struct AttentionKey {
 }
 
 impl AttentionKey {
-    /// The queries a chunk key stands for: the narrowest chunk a served prompt is cut into, the
-    /// floor a server's prefill chunks are held to. A device that cuts its prompts wider is keyed
+    /// The queries a chunk key stands for: the narrowest chunk a prompt is cut into when it is
+    /// prefilled in chunks. A device that cuts its prompts wider is keyed
     /// here all the same, so its chunks run what this chunk elected.
     pub const CHUNK_QUERIES: usize = 512;
 
@@ -95,12 +95,11 @@ impl AttentionKey {
     /// Whether the queries are the tail of a longer attended prefix rather
     /// than the whole of it: a chunk, or a decode step.
     ///
-    /// cubek's flash routines serve only a whole prompt: they take no attended
-    /// length, and their causal mask is top-left aligned, where a chunk's
-    /// queries sit at the bottom right of the prefix. On a chunk they would be
-    /// measuring a different function, so the table's flash candidates decline
-    /// it. Both extents are anchored alike, so a whole prompt's are equal in
-    /// every bucket.
+    /// The flash routines ([`forward`](crate::forward)) serve only a whole prompt: they take no
+    /// attended length, and their causal mask is top-left aligned, where a chunk's queries sit at
+    /// the bottom right of the prefix. On a chunk they would be measuring a different function, so
+    /// the flash candidates decline it. Both extents are anchored alike, so a whole prompt's are
+    /// equal in every bucket.
     pub fn chunk(&self) -> bool {
         self.queries != self.keys
     }

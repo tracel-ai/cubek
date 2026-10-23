@@ -18,8 +18,7 @@ pub struct KvBitWidths {
 ///
 /// Two different algorithms rather than a flag: [`Qjl`](Self::Qjl) emits three extra `O(d²)`
 /// passes, writes a second scalar buffer, and shifts every packed index up by one bit. Naming them
-/// keeps the choice legible at a call site, where a bare `true` said nothing about which of those
-/// it selected.
+/// keeps the choice legible at a call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyFixup {
     /// Round-only (Q_mse): the packed field is entirely the centroid index.
@@ -38,6 +37,32 @@ impl KeyFixup {
             KeyFixup::Qjl => 1,
         }
     }
+}
+
+/// A packed cache as a kernel is handed it: the keys' and the values' words, norms and codebooks,
+/// the keys' fix-up, and what reading them compiles to. Each operand's vectors hold `coords`
+/// coordinates, each a `bits`-wide index into the operand's codebook, packed low first into the
+/// u32 words `[b, kv, s, w]`, the vector scaled by its entry of the norms `[b, kv, s, 1]`.
+#[derive(CubeType, CubeLaunch)]
+pub struct PackedCacheArg {
+    pub key_words: OwnedTensor<u32>,
+    pub key_norms: OwnedTensor<f32>,
+    pub key_codebook: OwnedTensor<f32>,
+    /// Without a fix-up, any tensor: a kernel's arguments are fixed, and these are never read.
+    pub key_errs: OwnedTensor<f32>,
+    pub key_sign_codebook: OwnedTensor<f32>,
+    pub value_words: OwnedTensor<u32>,
+    pub value_norms: OwnedTensor<f32>,
+    pub value_codebook: OwnedTensor<f32>,
+    #[cube(comptime)]
+    pub coords: usize,
+    #[cube(comptime)]
+    pub key_bits: u32,
+    #[cube(comptime)]
+    pub value_bits: u32,
+    /// The fix-up the keys carry.
+    #[cube(comptime)]
+    pub fixup: KeyFixup,
 }
 
 /// The `N` consecutive coordinates from `first_coord` of the packed row starting at word

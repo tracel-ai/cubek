@@ -1,9 +1,9 @@
 use cubecl::prelude::{ComptimeOptionArgs, Tensor, TensorArg};
 use cubecl::tile::Launcher;
 use cubecl::tile::launch::Bound;
-use cubek_microkernel::attention::PackedCacheArgLaunch;
+use cubek_microkernel::attention::packed_cache::PackedCacheArgLaunch;
 
-/// The arguments of one launch, its operands bound under its launcher. Not `Debug`: cubek's
+/// The arguments of one launch, its operands bound under its launcher. Not `Debug`: the tile DSL's
 /// `Launcher` is not.
 pub struct AttentionBinding {
     pub launcher: Launcher,

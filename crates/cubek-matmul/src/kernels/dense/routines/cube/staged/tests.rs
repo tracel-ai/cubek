@@ -235,7 +235,8 @@ mod base {
         (blueprint.microkernel.plane.instruction, grid.planes().width)
     }
 
-    /// The vendor's transport, then cubek's for the same shape, then the software instruction.
+    /// The vendor's transport, then the tile DSL's for the same shape, then the software
+    /// instruction.
     #[test]
     fn the_candidates_are_the_matrix_instructions_then_the_software_one() {
         let hw = devices::offering_mma(offering(devices::strix_halo()), [SHAPE]);
@@ -258,7 +259,7 @@ mod base {
         );
     }
 
-    /// A setting asking for cubek's transport first reaches the shape through it before the
+    /// A setting asking for the tile DSL's transport first reaches the shape through it before the
     /// vendor's, and still ends in the software instruction.
     #[test]
     fn a_transport_setting_orders_the_two_transports() {
@@ -285,7 +286,7 @@ mod base {
         );
     }
 
-    /// A device offering its shape only under cubek's transport runs it there.
+    /// A device offering its shape only under the tile DSL's transport runs it there.
     #[test]
     fn a_shape_offered_only_to_mma_runs_through_it() {
         let hw = devices::offering_mma(devices::strix_halo(), [SHAPE]);
@@ -551,8 +552,8 @@ mod base {
         }
     }
 
-    /// cubek's multi-row box on the `16×16×16` instruction: four planes stacked along `m`, each
-    /// holding two rows of eight fragments, so one plane owns `32 × 128` and the cube's box is
+    /// The tile DSL's multi-row box on the `16×16×16` instruction: four planes stacked along `m`,
+    /// each holding two rows of eight fragments, so one plane owns `32 × 128` and the cube's box is
     /// `128 × 128`, walked two instruction steps of `K` a stage, the cubes in strips along `m`.
     #[test]
     fn the_multi_row_box_stacks_its_planes_along_m() {
@@ -605,9 +606,9 @@ mod base {
         assert_eq!(single.microkernel.ring, StageRing::SINGLE);
     }
 
-    /// A ring prefetching into registers holds each unit's share of a stage there: past cubek's
-    /// bound it prefetches into its slots instead, and a ring prefetching into its slots is left as
-    /// it is.
+    /// A ring prefetching into registers holds each unit's share of a stage there: past the tile
+    /// DSL's bound it prefetches into its slots instead, and a ring prefetching into its slots is
+    /// left as it is.
     #[test]
     fn a_register_prefetch_resolves_to_the_slots_past_a_units_registers() {
         let hw = offering(devices::strix_halo());
@@ -638,9 +639,10 @@ mod base {
     }
 
     /// Every listed setting prefetching into registers, where its ring keeps that prefetch, holds
-    /// no more of both operands a unit than cubek fetches, at the widths the blueprint settled:
-    /// what cubek checks at expansion, where a refusal is a launch that writes nothing. On devices
-    /// of three plane widths, over a row weight, a col weight and a ragged problem.
+    /// no more of both operands a unit than the tile DSL fetches, at the widths the blueprint
+    /// settled: what the tile DSL checks at expansion, where a refusal is a launch that writes
+    /// nothing. On devices of three plane widths, over a row weight, a col weight and a ragged
+    /// problem.
     #[test]
     fn every_kept_register_prefetch_fits_what_cubek_fetches() {
         use cubecl::tile::stage::Prefetch;
@@ -878,7 +880,7 @@ mod base {
 
     /// A col weight bound in its buffer's order stages whole rows of `K` under either matrix
     /// transport, so a box lands both operands' stages: in order for `cmma`, which reads a row off
-    /// a pointer and a stride, swizzled as the descriptor swizzles them for cubek's `mma`.
+    /// a pointer and a stride, swizzled as the descriptor swizzles them for the tile DSL's `mma`.
     #[test]
     fn a_col_weights_stages_land_by_tma_under_a_matrix_instruction() {
         let settings = default_with(|microkernel| {
@@ -944,8 +946,8 @@ mod base {
         assert_eq!(launched.leaf(), placed.leaf());
         assert_eq!(launched.overhangs_output(), placed.overhangs_output());
         assert_eq!(
-            launched.as_cubek().planes_per_cube(),
-            placed.as_cubek().planes_per_cube() + 1
+            launched.as_tile().planes_per_cube(),
+            placed.as_tile().planes_per_cube() + 1
         );
     }
 

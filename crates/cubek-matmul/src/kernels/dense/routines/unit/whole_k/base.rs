@@ -21,7 +21,7 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// `out = lhs · rhs` with every unit owning every row of a run of the output's columns, walking
-/// all of `K` alone. The gemv of a device that commits to no plane width: a plane's units share
+/// all of `K` alone. The routine that does not stage on a device that commits to no plane width: a plane's units share
 /// nothing, so any width is correct.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitWholeKMatmulRoutine;
@@ -185,7 +185,7 @@ impl Routine for UnitWholeKMatmulRoutine {
             plane_width,
             shared_memory: 0,
         };
-        let grid = Grid::new(hw, blueprint.partitioning.as_cubek(), cube)?;
+        let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
     }
 }
@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    /// It holds from one row to its bound and declines past it, so the selector's float gemv
+    /// It holds from one row to its bound and declines past it, so the selector's float few-rows
     /// bound is its own as much as the plane shuffle's.
     #[test]
     fn it_holds_its_rows_and_declines_past_them() {
@@ -326,7 +326,7 @@ mod tests {
         );
     }
 
-    /// A col weight is read in vectors along `K`, folded with the lhs's, never one element at a
+    /// A col weight is read in vectors along `K`, contracted with the lhs's, never one element at a
     /// time: the read the unit floor makes of the same weight.
     #[test]
     fn a_col_weight_is_read_in_vectors_along_k() {
