@@ -53,7 +53,7 @@ where
     R: Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>,
 {
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
-    /// key's weight is packed, which a float routine does not read, or the routine declines the
+    /// key names a packed input, which a float routine does not read, or the routine declines the
     /// problem on this device.
     fn prepared(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, SM>, CubeDim)> {
         match key.is_packed() {
@@ -63,7 +63,7 @@ where
     }
 
     /// The launch this candidate prepares for the float product of `key`'s extents, whatever its
-    /// weight: what a packed key's product becomes once its weight is decoded.
+    /// packing: what a packed key's product becomes once its inputs are decoded.
     pub fn prepared_float(&self, key: &MatmulTuneKey) -> Option<(MatmulBlueprint<M, SM>, CubeDim)> {
         let problem = MatmulRoutineProblem::from(&key.shape());
         let (blueprint, grid) = self

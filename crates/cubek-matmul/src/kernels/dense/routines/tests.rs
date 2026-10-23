@@ -16,7 +16,7 @@ use cubek_std::matmul_axes::{K, M, N, blocked};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-/// `value` packed along `axis` of a `[k, n]` weight, `block` values a scale of `scale`.
+/// `value` packed along `axis` of a `[k, n]` rhs, `block` values a scale of `scale`.
 fn scheme(value: QuantValue, axis: Axis, block: u8, scale: ScaleDtype) -> QuantScheme {
     let (block, store) = match axis {
         K => (vec![block, 1], QuantStore::PackedU32(1)),
@@ -28,7 +28,7 @@ fn scheme(value: QuantValue, axis: Axis, block: u8, scale: ScaleDtype) -> QuantS
         .with_store(store)
 }
 
-/// `m` rows against a `4096 × 2048` weight under `scheme`, read as `operand` states.
+/// `m` rows against a `4096 × 2048` rhs under `scheme`, read as `operand` states.
 fn problem(m: usize, scheme: QuantScheme, operand: Operand) -> MatmulRoutineProblem {
     let packing = Packing { operand, scheme };
     MatmulRoutineProblem::packed(
@@ -194,7 +194,7 @@ mod cube_staged {
 
     /// Every setting's cube box is whole steps under the instruction its planes run, at a
     /// prompt's rows, where its stages fit the device's shared memory: a stage is whole scale
-    /// blocks of `K`, as many as the step covers. A weight whose scales do not group `K` is
+    /// blocks of `K`, as many as the step covers. An rhs whose scales do not group `K` is
     /// declined by name, and tile order prepares.
     #[test]
     fn every_box_is_whole_steps() {
@@ -235,12 +235,12 @@ mod cube_staged {
         assert!(tile_order_prepared > 0, "no setting prepared tile order");
     }
 
-    /// A swizzled stage is read a chunk a unit, so the weight decoding into one binds a line no
+    /// A swizzled stage is read a chunk a unit, so the rhs decoding into one binds a line no
     /// wider than a chunk; a padded one takes a whole instruction step of `K` a line, so one unit
     /// decodes a whole scale block. Every packed box through each transport, on a device offering
     /// `f16` to `cmma` and to `mma`.
     #[test]
-    fn a_weight_decoding_into_a_swizzled_stage_binds_a_chunk_a_line() {
+    fn a_packed_rhs_decoding_into_a_swizzled_stage_binds_a_chunk_a_line() {
         let f16_into_f32 = |m, n, k| MmaConfig {
             a_type: F16,
             b_type: F16,

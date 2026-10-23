@@ -245,7 +245,7 @@ fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
 
 /// The heuristic decode projection takes the packed plane routine at one row, and dequantizes
 /// otherwise — onto this crate's float pair below the cubek ceiling, and onto cubek's own
-/// selector at it, reading the weight as stored rather than materializing it.
+/// selector at it, reading the packed input as stored rather than materializing it.
 #[test]
 fn heuristic_quantized_rules() {
     let hw = devices::strix_halo();
@@ -281,7 +281,7 @@ fn heuristic_quantized_rules() {
 }
 
 /// The packed plane routine binds the per-tensor scale too, as a second scale level on the
-/// weight's tile.
+/// packed input's tile.
 #[test]
 fn a_two_level_scheme_reaches_the_plane_routine() {
     let hw = devices::strix_halo();
@@ -364,7 +364,7 @@ fn an_unsupported_scheme_never_reaches_a_quantized_kernel_at_all() {
 /// The fp4 value type reaches the packed plane routine on every device, because its decode is
 /// software: `e2m1` unpacks the way the integer formats do, two codes a byte through
 /// shifts and a table, and nothing about it asks the runtime to name a type. A device
-/// that refused it would dequantize the default weight format on every step.
+/// that refused it would dequantize the default packed format on every step.
 ///
 /// Pinned on the one hardware that used to be refused, so a decode gate that comes back
 /// under another name fails here rather than routing a fleet dequantized.
@@ -380,7 +380,7 @@ fn the_fp4_value_reaches_the_plane_routine_on_every_device() {
 
 /// The fp8 value types reach the packed plane routine on every device, for the reason
 /// `e2m1`'s does: a code is a byte of a word, decoded in software. MXFP8 is `e4m3` under
-/// `ue8m0` blocks, so a device that refused it would dequantize every MXFP8 weight.
+/// `ue8m0` blocks, so a device that refused it would dequantize every MXFP8 input.
 #[test]
 fn the_fp8_values_reach_the_plane_routine_on_every_device() {
     let hw = devices::m2_pro();
@@ -400,7 +400,7 @@ fn the_fp8_values_reach_the_plane_routine_on_every_device() {
 
 /// A narrow (minifloat) scale dtype is served as it is stored: the launch binds the bytes
 /// as words and the kernel decodes one scale a read. `ue8m0` is MXFP4's scale level, so
-/// declining it would dequantize every MXFP4 weight.
+/// declining it would dequantize every MXFP4 input.
 #[test]
 fn a_narrow_scale_dtype_reaches_the_plane_routine() {
     let hw = devices::strix_halo();
@@ -422,14 +422,14 @@ fn the_quantized_bound_holds_its_edges() {
     assert!(!quantized_few_rows(QUANTIZED_FEW_ROWS + 1));
 }
 
-/// A packed weight reaches its few-rows table by its own row ceiling, past the float one: the packed
+/// A packed input reaches its few-rows table by its own row ceiling, past the float one: the packed
 /// kernels stream to [`QUANTIZED_FEW_ROWS`], a float one to [`FLOAT_FEW_ROWS`].
 ///
 /// The two being different numbers is the property. Routing a float width past the float bound to
 /// the few-rows table would put it on a table whose every candidate declines it, and the widths between
 /// the bounds would be answered by the floor rather than a kernel.
 #[test]
-fn a_packed_weight_reaches_its_table_by_its_own_row_ceiling() {
+fn a_packed_input_reaches_its_table_by_its_own_row_ceiling() {
     let hw = devices::strix_halo();
     const { assert!(FLOAT_FEW_ROWS < QUANTIZED_FEW_ROWS, "the ceilings coincide") };
     assert_eq!(
@@ -463,7 +463,7 @@ fn a_policy_never_names_a_kernel_that_can_decline() {
         .into_iter()
         .filter(MatmulOpStrategy::is_policy)
     {
-        // A weight stored in tiles is the exception, and not checked here: only the packed
+        // An input stored in tiles is the exception, and not checked here: only the packed
         // routines read one, so they are what every strategy runs. A pin's kernel
         // declines on what these rules cannot see: the plane shuffle on strides, cubek's selector on
         // "no accelerated path on this device" at the launch, the packed plane routine on a
@@ -555,15 +555,15 @@ mod float {
     use cubek_std::devices;
 
     /// The kernel `strategy` chooses for the float `problem`: the selection, which reads a float
-    /// weight on any device alike.
+    /// input on any device alike.
     fn select(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<F, Refusal> {
         match super::super::selector::select(strategy, problem, &devices::cpu_12())? {
             MatmulSelection::Float(choice) => Ok(choice),
-            other => panic!("a float weight is read as it is: {other:?}"),
+            other => panic!("a float input is read as it is: {other:?}"),
         }
     }
 
-    /// A product against an unbatched weight, so the left-hand side's extents
+    /// A product against an unbatched rhs, so the left-hand side's extents
     /// merge: `m` rows in each of `batches` of them is what one memory-bound
     /// launch streams.
     fn float(m: usize, batches: usize) -> MatmulProblem {
@@ -577,9 +577,9 @@ mod float {
         }
     }
 
-    /// The same shape against a weight of its own per batch — nothing merges,
-    /// and no memory-bound kernel here reads more than one weight.
-    fn batched_weight(m: usize, batches: usize) -> MatmulProblem {
+    /// The same shape against an rhs of its own per batch — nothing merges,
+    /// and no memory-bound kernel here reads more than one rhs.
+    fn batched_rhs(m: usize, batches: usize) -> MatmulProblem {
         MatmulProblem {
             streamed_rows: None,
             ..float(m, batches)
@@ -639,7 +639,7 @@ mod float {
         ] {
             assert_eq!(select(strategy, &problem), expected, "{strategy:?}");
         }
-        // The 4-bit kernel reads a packed weight: there is no float product for it to serve, at
+        // The 4-bit kernel reads a packed input: there is no float product for it to serve, at
         // any row count.
         for m in [1, 2, 512] {
             assert_eq!(
@@ -666,7 +666,7 @@ mod float {
         assert!(!float_few_rows(FLOAT_FEW_ROWS + 1));
     }
 
-    /// A row count picks the table, and nothing else does: no weight layout narrows what reaches
+    /// A row count picks the table, and nothing else does: no rhs layout narrows what reaches
     /// the few-rows table.
     #[test]
     fn the_row_count_alone_picks_the_table() {
@@ -690,7 +690,7 @@ mod float {
     /// trailing extent.
     ///
     /// `[b, m, k] @ [1, k, n]` is one product of `b·m` rows to every memory-bound
-    /// candidate — they all merge the leading extents and read the weight once.
+    /// candidate — they all merge the leading extents and read the rhs once.
     /// Routing on `m` alone calls a 512-row product an 8-row one and sends it
     /// to a table on which the float kernel rejects the plane shuffle, cubek's vec-mats
     /// reject anything past one row, and the answer is whatever is left. This
@@ -708,8 +708,8 @@ mod float {
             Ok(F::Autotune(MatmulTable::ManyRows))
         );
 
-        // A weight per batch merges nothing, at any row count.
-        for problem in [batched_weight(1, 64), batched_weight(8, 64)] {
+        // An rhs per batch merges nothing, at any row count.
+        for problem in [batched_rhs(1, 64), batched_rhs(8, 64)] {
             assert_eq!(
                 select(Autotune, &problem),
                 Ok(F::Autotune(MatmulTable::ManyRows)),

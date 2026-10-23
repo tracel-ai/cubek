@@ -22,15 +22,15 @@ use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine}
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
-/// ([`PlaneShuffleMicrokernel`]), or, against a packed weight, on the tensor cores, where an NVFP4
-/// weight against a 16-bit activation holds up to a fragment's sixteen rows at the cost of
-/// reading the weight
+/// ([`PlaneShuffleMicrokernel`]), or, against a packed rhs, on the tensor cores, where an NVFP4
+/// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
+/// reading the rhs
 /// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel)).
 ///
 /// What a product whose runs of columns are too few to fill the device with planes wants: a
-/// narrow `N` on a device of many compute units. Declines a float row weight, a col weight whose
+/// narrow `N` on a device of many compute units. Declines a float row rhs, a col rhs whose
 /// `K` a step of its planes does not tile, and a device that commits to no plane width; against a
-/// packed weight, what its microkernel declines
+/// packed rhs, what its microkernel declines
 /// ([`CubeShuffleMicrokernel::decline`](cubek_std::microkernel::Microkernel::decline)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeShuffleMatmulRoutine;
@@ -45,7 +45,7 @@ impl CubeShuffleMatmulRoutineSettings {
         microkernel: CubeShuffleMicrokernelSettings::DEFAULT,
     };
 
-    /// The lead against a packed weight: the software planes one read a step, four planes a cube.
+    /// The lead against a packed rhs: the software planes one read a step, four planes a cube.
     pub const PACKED: Self = Self {
         microkernel: CubeShuffleMicrokernelSettings::PACKED,
     };
@@ -60,9 +60,9 @@ impl core::fmt::Display for CubeShuffleMatmulRoutineSettings {
 pub type CubeShuffleMatmulRoutineBlueprint = MatmulBlueprint<CubeShuffleMicrokernel>;
 
 impl CubeShuffleMatmulRoutine {
-    /// The settings worth racing against a packed weight
+    /// The settings worth racing against a packed rhs
     /// ([`CubeShuffleMicrokernel::packed_settings`]): what the packed few-rows table races, and
-    /// what a caller naming the routine and no setting runs against a packed weight, in this
+    /// what a caller naming the routine and no setting runs against a packed rhs, in this
     /// order.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
         CubeShuffleMicrokernel::packed_settings(hw)
@@ -71,8 +71,8 @@ impl CubeShuffleMatmulRoutine {
             .collect()
     }
 
-    /// [`Routine::estimate`] against a float weight: each group of units, across the cube's
-    /// planes, reads the lhs's rows along the whole of `K` and the weight's columns it owns,
+    /// [`Routine::estimate`] against a float rhs: each group of units, across the cube's
+    /// planes, reads the lhs's rows along the whole of `K` and the rhs's columns it owns,
     /// straight from global memory, once; a step's planes read neighbouring slices, so a column is
     /// still read down all of `K`. Its drain, every plane adding its partial run into the
     /// accumulator atomically before the cube copies it out. Then its microkernel, for the work.
@@ -114,7 +114,7 @@ impl CubeShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
-    /// [`Routine::estimate`] against `packing`, a packed weight: each group of units, across the
+    /// [`Routine::estimate`] against `packing`, a packed rhs: each group of units, across the
     /// cube's planes, reads the lhs's rows along the whole of `K` and the words and scales of the
     /// columns it owns, straight from global memory, once; a turn's planes read neighbouring scale
     /// blocks. Its drain, every plane adding its partial run into the accumulator. Then its
@@ -163,7 +163,7 @@ impl CubeShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
-    /// [`Routine::prepare`] against a float weight.
+    /// [`Routine::prepare`] against a float rhs.
     fn prepare_float(
         &self,
         hw: &Hardware,
@@ -193,7 +193,7 @@ impl CubeShuffleMatmulRoutine {
         Ok((blueprint, grid))
     }
 
-    /// [`Routine::prepare`] against `packing`, a packed weight: every row in each cube, the cubes
+    /// [`Routine::prepare`] against `packing`, a packed rhs: every row in each cube, the cubes
     /// side by side along the axis its planes' columns land on.
     fn prepare_packed(
         &self,
@@ -238,8 +238,8 @@ impl Routine for CubeShuffleMatmulRoutine {
             .collect()
     }
 
-    /// The first of the settings for the weight `problem` states that prepares a launch on this
-    /// device: [`settings`](Routine::settings) against a float weight,
+    /// The first of the settings for the rhs `problem` states that prepares a launch on this
+    /// device: [`settings`](Routine::settings) against a float rhs,
     /// [`packed_settings`](CubeShuffleMatmulRoutine::packed_settings) against a packed one.
     ///
     /// # Errors
@@ -274,7 +274,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         microkernel.vectorize(&(), vectorization);
     }
 
-    /// Its walk's reads and its drain, against a float weight or a packed one; then its
+    /// Its walk's reads and its drain, against a float rhs or a packed one; then its
     /// microkernel, for the work.
     fn estimate(
         &self,
@@ -289,7 +289,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         }
     }
 
-    /// Against a float weight, the cubes over `M` and `N`; against a packed one, over its
+    /// Against a float rhs, the cubes over `M` and `N`; against a packed one, over its
     /// block-split space, every row in each cube.
     fn prepare(
         &self,
@@ -358,7 +358,7 @@ mod tests {
     /// for `down`.
     const PROJECTION_KS: [usize; 2] = [2048, 6144];
 
-    /// `m` rows against a `k × 2048` weight laid as `rhs_layout`.
+    /// `m` rows against a `k × 2048` rhs laid as `rhs_layout`.
     fn projection(m: usize, k: usize, rhs_layout: MatmulLayout) -> MatmulRoutineProblem {
         MatmulRoutineProblem::dense(m, 2048, k, F16, rhs_layout)
     }
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(names.len(), settings.len());
     }
 
-    /// Every setting prepares every decode projection's col weight where the device commits to a
+    /// Every setting prepares every decode projection's col rhs where the device commits to a
     /// plane width, on a wave32 plane and on a wave64 one, its planes meeting atomically or in
     /// turns, and declines with its reason everywhere else.
     #[test]
@@ -431,10 +431,10 @@ mod tests {
         );
     }
 
-    /// A col weight is read down `K` beside the lhs in vectors, and the output copied out of the
-    /// accumulator an element at a time; a row weight is declined with its reason.
+    /// A col rhs is read down `K` beside the lhs in vectors, and the output copied out of the
+    /// accumulator an element at a time; a row rhs is declined with its reason.
     #[test]
-    fn a_col_weight_is_read_in_vectors_and_a_row_weight_declined() {
+    fn a_col_rhs_is_read_in_vectors_and_a_row_rhs_declined() {
         let hw = devices::strix_halo();
         let settings = CubeShuffleMatmulRoutineSettings::DEFAULT;
         let (blueprint, _) = CubeShuffleMatmulRoutine
@@ -480,7 +480,7 @@ mod tests {
         devices::offering_mma(devices::h100(), [shape])
     }
 
-    /// `m` rows against an NVFP4 `k × n` weight in tile order, read as `hw` loads it.
+    /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
         let scheme = tile_order::scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
@@ -535,7 +535,7 @@ mod tests {
         }
     }
 
-    /// Against a packed weight the packed lead leads, and no setting is listed twice, software or
+    /// Against a packed rhs the packed lead leads, and no setting is listed twice, software or
     /// tensor-core.
     #[test]
     fn the_packed_lead_leads_and_no_packed_setting_repeats() {
@@ -581,7 +581,7 @@ mod tests {
     }
 
     /// Past a fragment's sixteen rows a tensor-core setting declines before anything is sized to
-    /// it, and from nine rows on only the tensor-core planes serve a packed weight.
+    /// it, and from nine rows on only the tensor-core planes serve a packed rhs.
     #[test]
     fn the_rows_of_a_fragment_bound_a_packed_product() {
         let hw = tensor_cores();
@@ -607,11 +607,11 @@ mod tests {
     /// Two fragments a plane narrow to one where `n` is an odd number of eights, and the planes
     /// along `K` to the windows a short `K` holds.
     #[test]
-    fn the_fragment_settings_narrow_to_what_the_weight_closes() {
+    fn the_fragment_settings_narrow_to_what_the_rhs_closes() {
         let hw = tensor_cores();
         let (blueprint, _) = CubeShuffleMatmulRoutine
             .prepare(&hw, &nvfp4(&hw, 8, 8 * 3, 512), &fragments(2, 16))
-            .expect("a narrow weight prepares");
+            .expect("a narrow rhs prepares");
         assert_eq!(blueprint.microkernel.plane.columns(), 8);
         assert_eq!(blueprint.microkernel.planes_along_k.get(), 4);
     }

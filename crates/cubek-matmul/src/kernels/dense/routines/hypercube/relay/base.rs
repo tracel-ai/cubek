@@ -86,7 +86,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
     /// planes at two, three and four cubes on a box: how many cubes share a box is what decides
     /// whether that box's grid fills the device, so each box is listed at every count. Then the
     /// default's grid two and four fragments deep on two by two and two by one planes, at two and
-    /// four cubes on a box: a col weight runs along `K`, which a stage one fragment deep reads in
+    /// four cubes on a box: a col rhs runs along `K`, which a stage one fragment deep reads in
     /// short runs. Then the four deep grid on two by two planes, and the deep box along `m` at four
     /// cubes, with their stages' rows in order. Every box is one its microkernel lists
     /// ([`HypercubeStagedMicrokernel::settings`]). Nothing where one cube's stores do not reach

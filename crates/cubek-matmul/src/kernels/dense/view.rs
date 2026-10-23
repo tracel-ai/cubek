@@ -15,17 +15,17 @@ use cubek_microkernel::matmul::{
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 
-/// What a launch holding every row whole declines whatever the device: an activation or an output
+/// What a launch holding every row whole declines whatever the device: an lhs or an output
 /// that does not hold every batch, whose batches no merge makes rows of one matrix.
 pub const MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED: Refusal = Refusal::Declined {
-    why: "the microkernel gemv folds an activation's batches into rows, so it reads an lhs and an output holding every batch",
+    why: "the microkernel gemv merges an lhs's batches into rows, so it reads an lhs and an output holding every batch",
 };
 
-/// What a launch holding every row whole declines whatever the device: a weight held per batch,
-/// since such a launch reads one weight matrix against every row, and none has a batch axis to
+/// What a launch holding every row whole declines whatever the device: an rhs held per batch,
+/// since such a launch reads one rhs matrix against every row, and none has a batch axis to
 /// step through several.
 pub const MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH: Refusal = Refusal::Declined {
-    why: "a launch holding every row whole reads one weight matrix against every row, so it reads no weight held per batch",
+    why: "a launch holding every row whole reads one rhs matrix against every row, so it reads no rhs held per batch",
 };
 
 /// What a launch declines whatever the device: two packed operands whose scales group `K` in
@@ -36,7 +36,7 @@ pub const MATMUL_PACKED_BLOCKS_DISAGREE: Refusal = Refusal::Declined {
 
 /// A [`MatmulRoutineProblem`] as a launch holding its rows as its [`MatmulRowsKind`] says reads
 /// it: the rows tiled and the batches distributed over cubes, or every row whole, the batches
-/// merged into the rows, since each of them reads the same weight.
+/// merged into the rows, since each of them reads the same rhs.
 ///
 /// Against a packed operand, the launch reads the problem in its block-split
 /// [`space`](Self::space): each of `m`, `n` and `k` the tiles its scales are constant inside and
@@ -82,8 +82,8 @@ impl<'a> MatmulView<'a> {
     ///
     /// [`MATMUL_PACKED_BLOCKS_DISAGREE`], for two packed operands whose scales cut `K` apart.
     /// Where every row is held whole: [`MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED`], for a
-    /// weight lined along neither axis; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
-    /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED`], for an activation or an output that does not
+    /// rhs lined along neither axis; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
+    /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED`], for an lhs or an output that does not
     /// hold every batch, unless a table is read per batch, which keeps the batches apart.
     pub fn new(
         problem: &'a MatmulRoutineProblem,
@@ -407,11 +407,11 @@ mod tests {
         }
     }
 
-    /// Batches that share the weight merge into its rows where every row is held whole; batches
+    /// Batches that share the rhs merge into its rows where every row is held whole; batches
     /// that each hold one are no matrix such a launch reads, and a single batch is the same product
     /// either way. Tiled, the rows stay one batch's.
     #[test]
-    fn only_a_shared_weight_folds_its_batches_into_rows() {
+    fn only_a_shared_rhs_merges_its_batches_into_rows() {
         let rows = |batch, batching, rows_kind| {
             let problem = MatmulRoutineProblem::from(&shape(batch, batching));
             MatmulView::new(&problem, rows_kind).map(|view| view.rows())
@@ -441,7 +441,7 @@ mod tests {
         let problem = MatmulRoutineProblem::from(&shape(4, MatmulBatching::Shared));
         let kernel = |rows_kind| {
             MatmulView::new(&problem, rows_kind)
-                .expect("a shared weight folds")
+                .expect("a shared rhs merges")
                 .partitioning(
                     Levels::leaf(&[(M, 2), (N, 16), (K, 16)]),
                     &[M, N],
@@ -462,10 +462,10 @@ mod tests {
         );
     }
 
-    /// An activation broadcast along the batches holds fewer rows than the output, so no merge
+    /// An lhs broadcast along the batches holds fewer rows than the output, so no merge
     /// makes them one matrix of rows; tiled, the batch is a grid axis and nothing merges.
     #[test]
-    fn a_broadcast_activation_does_not_fold() {
+    fn a_broadcast_lhs_does_not_merge() {
         let problem = MatmulRoutineProblem::from(&shape(4, MatmulBatching::Shared));
         let broadcast = MatmulRoutineProblem {
             batches_held: MatmulOperands {
@@ -482,7 +482,7 @@ mod tests {
     }
 
     /// A routed product: 5 tokens, each routed to 3 of 4 slabs, batches `[5, 3]` of one row, the
-    /// activation broadcast along the picks.
+    /// lhs broadcast along the picks.
     fn routed() -> MatmulRoutineProblem {
         let problem = MatmulRoutineProblem::dense(
             1,
@@ -504,7 +504,7 @@ mod tests {
     }
 
     /// Under a table, a launch holding rows whole keeps each batch's row apart instead of merging
-    /// the batches into rows, so a broadcast activation is no refusal, and the rows are one batch's.
+    /// the batches into rows, so a broadcast lhs is no refusal, and the rows are one batch's.
     #[test]
     fn a_table_keeps_the_batches_apart_where_rows_are_held_whole() {
         let problem = routed();

@@ -32,10 +32,10 @@ use cubek_std::matmul_axes::K;
 /// read one matrix.
 ///
 /// The scheme is part of the identity because it decides what each candidate actually reads: a
-/// q4 and a q8 weight of the same shape are different problems with different winners. So is the
+/// q4 and a q8 input of the same shape are different problems with different winners. So is the
 /// layout: two problems of identical shape whose operands are laid out differently are different
 /// problems, and sharing a record between them would hand one of them the other's winner. The
-/// production weight is `[n, k]` behind a `[k, n]` view — contiguous along `K` — and its artifact
+/// production rhs is `[n, k]` behind a `[k, n]` view — contiguous along `K` — and its artifact
 /// form is contiguous along `N`; the plane shuffle reads the two in opposite orders. The
 /// backward's products arrive with the left-hand side transposed, which the engine serves by its
 /// strides, and a strided or broadcast view is a third thing again: one the kernels stage through
@@ -67,7 +67,7 @@ pub struct OperandKey {
 /// it tiles the shapes inside the bucket — a power of two, at every level.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulTuneKey {
-    /// The element the product is written in, the activation's or the one a packed activation
+    /// The element the product is written in, the lhs's or the one a packed lhs
     /// stands for: it decides the vector widths, whether a staged routine can reach a tensor-core
     /// leaf, and what the memory-bound kernels accumulate from.
     elem: ElemType,
@@ -79,7 +79,7 @@ pub struct MatmulTuneKey {
     pub m: usize,
     /// Broadcast batches, anchored the same way. Whether each input's batches read one matrix
     /// is its own ([`OperandKey`]): two products of one shape differ there in what they move and
-    /// in which kernels serve them, a shared weight read once for every batch, a batched one once
+    /// in which kernels serve them, a shared input read once for every batch, a batched one once
     /// per batch.
     batches: usize,
     lhs: OperandKey,
@@ -200,8 +200,8 @@ impl OperandKey {
 }
 
 /// Whether an operand's batches read one matrix. A batch count alone does not say: a projection
-/// of batched activations and a product of batched operands count the same batches, and only the
-/// first can merge them into rows of one weight.
+/// of a batched lhs and a product of batched operands count the same batches, and only the
+/// first can merge them into rows against one rhs.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MatmulBatching {
     /// Every batch reads its one matrix, so the batches are more rows against it.
@@ -307,7 +307,7 @@ impl MatmulShape {
 
 /// The problem a tuning **key** describes: dense operands of the key's element, the batch held by
 /// the output, and by each input unless the key says it is shared, the lhs and the output
-/// row-major and the rhs contiguous along the axis the key names. A col weight, an `[n, k]` buffer
+/// row-major and the rhs contiguous along the axis the key names. A col rhs, an `[n, k]` buffer
 /// behind a `[k, n]` view, is read where it lies
 /// ([`MatmulTensors`](crate::kernels::MatmulTensors)), so its widths are its own; a rhs the key
 /// names no axis for, a strided view, is aligned to one element.
@@ -392,7 +392,7 @@ pub fn create_key(
 ///
 /// The few-rows tables' are such candidates: a plane shuffle lays its units out by the rows, and
 /// what is left to the units along `K` follows, so a setting that serves eight rows may decline
-/// five: against a float weight the vectors its units read along `K` narrow below two, and against
+/// five: against a float rhs the vectors its units read along `K` narrow below two, and against
 /// a packed one the turns a cube's planes take along `K` fall below two. A few rows is all those
 /// tables take, so keying each count adds few records.
 pub fn create_exact_rows_key(
@@ -454,17 +454,17 @@ mod tests {
         }
     }
 
-    /// A weight broadcast along the batch dims is shared, however many batches the activation
+    /// An input broadcast along the batch dims is shared, however many batches the other one
     /// holds; one holding a matrix per batch is batched.
     #[test]
-    fn a_weight_is_shared_where_its_batch_dims_hold_one_matrix() {
+    fn an_input_is_shared_where_its_batch_dims_hold_one_matrix() {
         assert_eq!(MatmulBatching::new(&[]), MatmulBatching::Shared);
         assert_eq!(MatmulBatching::new(&[1, 1]), MatmulBatching::Shared);
         assert_eq!(MatmulBatching::new(&[4]), MatmulBatching::Batched);
         assert_eq!(MatmulBatching::new(&[1, 8]), MatmulBatching::Batched);
     }
 
-    /// The keys of a decode projection against a float col weight and against a q4 weight
+    /// The keys of a decode projection against a float col rhs and against a q4 rhs
     /// packed along `k`, as they stand: a key is what a saved table is looked up by, so a change
     /// that moves one re-tunes every machine, and is made on purpose or not at all.
     #[test]

@@ -25,12 +25,12 @@ pub struct MatmulProblem {
     /// Product of the broadcast batch extents (`1` when unbatched, and always
     /// `1` for a quantized operand, whose rows the caller merges into one).
     pub batches: usize,
-    /// The activation rows a memory-bound kernel would stream, or `None` where
+    /// The lhs rows a memory-bound kernel would stream, or `None` where
     /// none of them serves this product. [`new`](Self::new) is where the number comes from,
     /// and every candidate counts the same way.
     ///
     /// Not `m`. Every memory-bound candidate merges the left-hand side's leading
-    /// extents and reads the weight once, so routing on the trailing extent
+    /// extents and reads the rhs once, so routing on the trailing extent
     /// sends a batched product to a table whose every candidate declines it,
     /// and the answer to a table that declines everything is the fallback
     /// rather than a kernel.
@@ -77,18 +77,18 @@ impl MatmulProblem {
             })
     }
 
-    /// The activation rows a memory-bound kernel would stream for `x @ weight`, or
+    /// The lhs rows a memory-bound kernel would stream for `x @ w`, or
     /// `None` where none of them serves the product at all.
     ///
     /// Every one of them merges `x`'s leading extents into one row count and reads the
-    /// weight exactly once, so this — not `x`'s trailing extent — is the number
+    /// rhs exactly once, so this — not `x`'s trailing extent — is the number
     /// they all work from, and the number routing has to ask. Reading the trailing
     /// extent instead calls `[64, 8, k] @ [1, k, n]` an 8-row product and sends a
     /// 512-row one to a table whose every candidate declines it.
     ///
-    /// `None` is a batched weight, which is one weight per product where these
+    /// `None` is a batched rhs, which is one rhs per product where these
     /// kernels stream a single one, or a left-hand side whose feature extent is not the
-    /// weight's reduction: neither merges.
+    /// rhs's reduction: neither merges.
     fn streamed_rows_of(x_shape: &Shape, w_shape: &Shape) -> Option<usize> {
         let w_rank = w_shape.rank();
         let d_in = w_shape[w_rank - 2];

@@ -66,7 +66,7 @@ pub struct CubeStagedMicrokernel {
 pub enum CubeStagedDepth {
     /// Its planes' steps of `K`.
     Steps,
-    /// This many scale blocks of a packed weight along `KB`, its planes' steps walking inside each
+    /// This many scale blocks of a packed input along `KB`, its planes' steps walking inside each
     /// one: the stage of a product over a block-split space.
     ScaleBlocks(NonZeroUsize),
 }
@@ -85,14 +85,14 @@ pub enum CubeStagedDrain {
 impl CubeStagedMicrokernel {
     /// What a packed item whose scales do not group `K` is declined with.
     pub const UNGROUPED_K: Refusal = Refusal::Declined {
-        why: "the packed staged gemm stages K a scale block at a time, and this weight's scales do not group K",
+        why: "the packed staged gemm stages K a scale block at a time, and this packed input's scales do not group K",
     };
 
-    /// Boxes against a packed weight several steps of `M` a plane, `(steps, planes)` as
+    /// Boxes against a packed input several steps of `M` a plane, `(steps, planes)` as
     /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them: the float staged routine's. A
-    /// cube decodes every block of the weight it stages once, for all its rows, so the boxes more
+    /// cube decodes every block of the rhs it stages once, for all its rows, so the boxes more
     /// planes high give that decode more rows to serve, and the box four steps wide along `N`
-    /// serves each row of the activation it stages to more columns.
+    /// serves each row of the lhs it stages to more columns.
     const PACKED_BOXES: [((usize, usize), (usize, usize)); 9] = [
         ((4, 2), (2, 4)),
         ((4, 4), (2, 2)),
@@ -105,9 +105,9 @@ impl CubeStagedMicrokernel {
         ((8, 1), (4, 2)),
     ];
 
-    /// Boxes against a packed weight one step of `M` and `N` a plane, which holds every row of a
+    /// Boxes against a packed input one step of `M` and `N` a plane, which holds every row of a
     /// product of a handful of rows, on planes side by side along `N`. A box no taller than the
-    /// rows leaves no instruction idle, and a narrow one puts many cubes on the weight, which so
+    /// rows leaves no instruction idle, and a narrow one puts many cubes on the rhs, which so
     /// few rows stream once.
     const PACKED_ONE_STEP_BOXES: [((usize, usize), (usize, usize)); 3] =
         [((1, 1), (1, 1)), ((1, 1), (1, 2)), ((1, 1), (1, 4))];
@@ -117,7 +117,7 @@ impl CubeStagedMicrokernel {
     /// a stage of `K` that many planes deep outgrows shared memory.
     const PACKED_ONE_STEP_PLANES_ALONG_K: [usize; 2] = [4, 8];
 
-    /// The settings a product of a handful of rows against a packed weight races: one step of `M`
+    /// The settings a product of a handful of rows against a packed input races: one step of `M`
     /// and `N` a plane, on one, two or four planes along `N`, split four or eight ways along `K`,
     /// one stage at a time or three in flight. Measured on Qwen3-4B's projections at one to sixteen
     /// rows on an RTX PRO 6000: these were the fastest of every box, split and ring tried. The
@@ -138,7 +138,7 @@ impl CubeStagedMicrokernel {
         settings
     }
 
-    /// The settings a product against a packed weight races on `hw`: the lead, the boxes several
+    /// The settings a product against a packed input races on `hw`: the lead, the boxes several
     /// steps tall the float staged routine races, one stage at a time and with a second in flight,
     /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)).
     /// Planes splitting `K` only on a device whose shared memory takes the atomic `f32` add they
@@ -578,11 +578,11 @@ impl Microkernel for CubeStagedMicrokernel {
     type Operand = MatmulOperand;
     type Partitioning = MatmulPartitioning;
 
-    const DECLINE: &'static str = "this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed weight a plane runs a matrix instruction the device offers for the activation's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
+    const DECLINE: &'static str = "this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
 
     /// A star around the default, one axis a setting names at a time: the fragment grid, the plane
     /// layout. Then the named boxes a star moving one axis never reaches — the deep ones, two
-    /// instruction steps of `K` a stage, which read longer runs of a col weight's rows; the small
+    /// instruction steps of `K` a stage, which read longer runs of a col rhs's rows; the small
     /// ones a short problem fills the device with; the small cubes, one to four planes on a line
     /// each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix, or
     /// the software instruction) contracts more per shared read and more cubes fit a core; the tile
@@ -591,8 +591,8 @@ impl Microkernel for CubeStagedMicrokernel {
     /// reaches its instruction.
     ///
     /// Then the default's grid on two by two planes and the small cube four fragments deep on two
-    /// planes, each with its stage's rows in order ([`CubeStagedRows::InOrder`]): a col weight's
-    /// fragments load down `K`, where the padding that spreads a row weight's loads across banks
+    /// planes, each with its stage's rows in order ([`CubeStagedRows::InOrder`]): a col rhs's
+    /// fragments load down `K`, where the padding that spreads a row rhs's loads across banks
     /// can cost more than the conflicts it saves.
     ///
     /// Then the planes splitting `K`
@@ -792,8 +792,8 @@ impl Microkernel for CubeStagedMicrokernel {
             .collect()
     }
 
-    /// Items on matmul's own axes, which it places and stages in; a packed one, against a weight
-    /// whose scales group `K`, which it stages a block at a time.
+    /// Items on matmul's own axes, which it places and stages in; a packed one, against a packed
+    /// input whose scales group `K`, which it stages a block at a time.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.blocks {
             None => MatmulPartitioning::admits(item),
@@ -882,7 +882,7 @@ impl Microkernel for CubeStagedMicrokernel {
 
     /// Its ring, staging a step of `K` at a time for all its planes: rows of the lhs contiguous
     /// along the whole of `K` a cube walks, of the rhs along the stage's `n`, or along the whole of
-    /// `K` for a col weight bound in its buffer's order. Its drain: each plane writing its tile a
+    /// `K` for a col rhs bound in its buffer's order. Its drain: each plane writing its tile a
     /// row of it at a time, or every plane adding its whole partial box into the accumulator
     /// atomically before the cube copies it out a row at a time; into an output the cubes relay,
     /// each turn reads the carry back. Then its planes' microkernel, for the work.
@@ -950,7 +950,7 @@ mod tests {
     use super::*;
     use cubek_std::devices;
 
-    /// Planes splitting `K` against a packed weight merge through an atomic `f32` add in shared
+    /// Planes splitting `K` against a packed input merge through an atomic `f32` add in shared
     /// memory, so a device without one lists none of them: a listed setting it cannot run would be
     /// tried and declined, and the merge without the atomic loses partial sums.
     #[test]

@@ -37,7 +37,7 @@ pub struct MatmulWorkItem {
 pub struct MatmulBlocks {
     pub packings: MatmulOperands<Option<Packing>>,
     /// Rows of the lhs, all of them: a microkernel that does not stage holds every one, so the
-    /// weight is read once; one that stages cuts them into boxes.
+    /// rhs is read once; one that stages cuts them into boxes.
     pub m: usize,
     pub n: usize,
     pub k: usize,
@@ -191,9 +191,9 @@ impl MatmulWorkItem {
     }
 }
 
-/// How a launch holds a product's rows: every row whole, compiled into the kernel beside a weight
+/// How a launch holds a product's rows: every row whole, compiled into the kernel beside an rhs
 /// read once, or tiled, the rows one more extent the launch reads: the kind of rows a work item
-/// holds ([`MatmulRows`]). What a launch compiles in and how it binds the activation both follow
+/// holds ([`MatmulRows`]). What a launch compiles in and how it binds the lhs both follow
 /// from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MatmulRowsKind {
@@ -220,7 +220,7 @@ impl MatmulRowsKind {
 pub enum MatmulRows {
     /// As many as the routine's box cuts: the work item is a tile of them.
     Tiled,
-    /// Every row, this many of them, held in registers beside each step of the weight.
+    /// Every row, this many of them, held in registers beside each step of the rhs.
     Whole(usize),
 }
 

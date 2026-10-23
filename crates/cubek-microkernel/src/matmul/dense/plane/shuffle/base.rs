@@ -14,7 +14,7 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// Bytes one stored word of a packed weight holds: it binds one `u32` per line whatever it packs.
+/// Bytes one stored word of a packed rhs holds: it binds one `u32` per line whatever it packs.
 const WORD_BYTES: usize = core::mem::size_of::<u32>();
 
 /// Every row of a run of the output's columns, owned by one plane: its units split `K` between
@@ -25,16 +25,16 @@ const WORD_BYTES: usize = core::mem::size_of::<u32>();
 /// side along `M` split the rows: they read the same columns and the same share of `K`, so the
 /// plane's loads are the same addresses, and only their sums are their own.
 ///
-/// A unit's step is a block of the output's columns and of `K`, counted in the reads the weight
+/// A unit's step is a block of the output's columns and of `K`, counted in the reads the rhs
 /// is loaded in: along the axis its buffer runs a read is one vector, across it one line. So a
-/// col weight's block is one column, a run of vectors down `K` merged into its cell, and a row
-/// weight's is a few vectors of columns, each read at a few rows of `K`.
+/// col rhs's block is one column, a run of vectors down `K` merged into its cell, and a row
+/// rhs's is a few vectors of columns, each read at a few rows of `K`.
 ///
-/// Against a packed weight ([`PlaneShuffleBlocks`]) the units multiply each read by its block's
-/// scale, and a step is the weight's ([`MatmulStep`]). Where the scales group `K`, a unit takes
+/// Against a packed rhs ([`PlaneShuffleBlocks`]) the units multiply each read by its block's
+/// scale, and a step is the rhs's ([`MatmulStep`]). Where the scales group `K`, a unit takes
 /// a word of scales a turn and the units take turns, so a unit holds whole blocks and the walk
 /// over them sits above the units; where they do not, each unit takes a contiguous run of `K`. A
-/// unit's columns are whole reads of the weight, or whole words of scales where the scales group
+/// unit's columns are whole reads of the rhs, or whole words of scales where the scales group
 /// `N`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleMicrokernel {
@@ -43,7 +43,7 @@ pub struct PlaneShuffleMicrokernel {
     /// product, or the settings' share of them.
     ///
     /// An extent a blueprint holds, an exception to the crate's rule: every row sits in registers
-    /// beside each step of the weight, so each row count is a kernel of its own whatever the
+    /// beside each step of the rhs, so each row count is a kernel of its own whatever the
     /// binding says.
     pub rows: usize,
     /// Units side by side along `M`, each holding its own `rows`: one where a unit holds every
@@ -57,31 +57,31 @@ pub struct PlaneShuffleMicrokernel {
     /// `N`: the rest of the width the device commits to, so the groups and their units fill the
     /// plane exactly.
     pub groups_along_n: usize,
-    /// The widest vector the device reads the weight's element in, which sizes a read along the
-    /// weight's axis and the accumulator's register budget: a col weight's cell holds a vector of
+    /// The widest vector the device reads the rhs's element in, which sizes a read along the
+    /// rhs's axis and the accumulator's register budget: a col rhs's cell holds a vector of
     /// partials, and the widths are settled after the microkernel, so the budget covers the widest
     /// vector it could bind. A narrower bound vector inlines inside it.
     pub rhs_vector_ceiling: usize,
-    /// The order each operand is read in. The weight's is the axis each unit's step runs along:
-    /// [`InBufferOrder`](MatmulOrder::InBufferOrder) for a col weight, contiguous along `K`,
-    /// and [`Stated`](MatmulOrder::Stated) for a row weight, contiguous along `N`; the others are
+    /// The order each operand is read in. The rhs's is the axis each unit's step runs along:
+    /// [`InBufferOrder`](MatmulOrder::InBufferOrder) for a col rhs, contiguous along `K`,
+    /// and [`Stated`](MatmulOrder::Stated) for a row rhs, contiguous along `N`; the others are
     /// read as the product names them.
     pub orders: MatmulOperands<MatmulOrder>,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
-    /// The weight's scale blocks and the step a unit moves in, where it is packed; none for a
-    /// float weight.
+    /// The rhs's scale blocks and the step a unit moves in, where it is packed; none for a
+    /// float rhs.
     pub blocks: Option<PlaneShuffleBlocks>,
 }
 
-/// A packed weight as the plane shuffle reads it: its blocks, and the step a unit's columns and its
+/// A packed rhs as the plane shuffle reads it: its blocks, and the step a unit's columns and its
 /// share of `K` move in.
 ///
 /// Its levels are stated over the problem's block-split space: the digits of `N` and `K` the
 /// blocks make, and the position inside a block of `M`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleBlocks {
-    /// The space the weight's blocks cut.
+    /// The space the rhs's blocks cut.
     pub space: MatmulBlocks,
     /// Elements of `N` one unit reads: the settings' steps of `N`, narrowed until `n` closes in
     /// them.
@@ -98,22 +98,22 @@ impl PlaneShuffleMicrokernel {
     /// microkernel stages nothing in shared memory, and loads a step once the last is summed.
     pub const STAGES_IN_FLIGHT: usize = 1;
 
-    /// The most rows a plane holds: every row is summed against each step of the weight in
-    /// registers, so past this many the registers, not the weight, bound the kernel.
+    /// The most rows a plane holds: every row is summed against each step of the rhs in
+    /// registers, so past this many the registers, not the rhs, bound the kernel.
     pub const MAX_ROWS: usize = 8;
 
     /// What a product of no rows, or of more than [`MAX_ROWS`](Self::MAX_ROWS), is declined with.
     pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
-        why: "the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the weight",
+        why: "the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs",
     };
 
-    /// What a weight lined along neither of its axes is declined with.
+    /// What an rhs lined along neither of its axes is declined with.
     pub const STRIDED_RHS: Refusal = Refusal::Declined {
-        why: "the plane shuffle reads a weight lined along `K` or `N`",
+        why: "the plane shuffle reads an rhs lined along `K` or `N`",
     };
 
-    /// The order this microkernel reads a weight `layout` lies as in, where it reads it: a col
-    /// weight in its buffer's order, a row weight as the product names it, and none for a weight
+    /// The order this microkernel reads an rhs `layout` lies as in, where it reads it: a col
+    /// rhs in its buffer's order, a row rhs as the product names it, and none for an rhs
     /// lined along neither axis.
     fn order_of(layout: MatmulLayout) -> Option<MatmulOrder> {
         match layout {
@@ -123,28 +123,28 @@ impl PlaneShuffleMicrokernel {
         }
     }
 
-    /// What a col weight is declined with where it binds one element at a time: the tile DSL merges
+    /// What a col rhs is declined with where it binds one element at a time: the tile DSL merges
     /// a vector of it with a vector of the lhs into one cell, so it reads both in vectors of at
     /// least two, and a `K` the steps overhang, or either buffer aligned to one element, gives
     /// none.
     pub const COL_RHS_NEEDS_VECTORS_ALONG_K: Refusal = Refusal::Declined {
-        why: "the plane shuffle reads a col weight and the lhs beside it in vectors of at least two elements along `K`",
+        why: "the plane shuffle reads a col rhs and the lhs beside it in vectors of at least two elements along `K`",
     };
 
-    /// What a col weight is declined with where a unit's block holds more than one column: the tile
-    /// DSL sums a col weight's line of partials into its cell correctly only for a block of one
+    /// What a col rhs is declined with where a unit's block holds more than one column: the tile
+    /// DSL sums a col rhs's line of partials into its cell correctly only for a block of one
     /// column.
     pub const COL_RHS_ONE_COLUMN_A_UNIT: Refusal = Refusal::Declined {
-        why: "the plane shuffle reads a col weight one column a unit, each folding its line of partials",
+        why: "the plane shuffle reads a col rhs one column a unit, each summing its line of partials",
     };
 
     /// Whether the operands bound at `widths` are read in vectors this microkernel merges.
     ///
     /// # Errors
     ///
-    /// [`COL_RHS_NEEDS_VECTORS_ALONG_K`](Self::COL_RHS_NEEDS_VECTORS_ALONG_K), for a col weight
+    /// [`COL_RHS_NEEDS_VECTORS_ALONG_K`](Self::COL_RHS_NEEDS_VECTORS_ALONG_K), for a col rhs
     /// bound one element at a time, and
-    /// [`COL_RHS_ONE_COLUMN_A_UNIT`](Self::COL_RHS_ONE_COLUMN_A_UNIT), for a col weight under a
+    /// [`COL_RHS_ONE_COLUMN_A_UNIT`](Self::COL_RHS_ONE_COLUMN_A_UNIT), for a col rhs under a
     /// block of more than one column.
     pub fn check_vectors(&self, widths: &MatmulOperands<usize>) -> Result<(), Refusal> {
         match (self.orders.rhs, widths.rhs, self.settings.columns.get()) {
@@ -155,7 +155,7 @@ impl PlaneShuffleMicrokernel {
     }
 
     /// Elements of the output's columns one unit reads a step: its block's columns, each a vector
-    /// where the weight runs along `N`, or a packed weight's steps of them.
+    /// where the rhs runs along `N`, or a packed rhs's steps of them.
     pub fn columns(&self) -> usize {
         if let Some(blocks) = &self.blocks {
             return blocks.columns;
@@ -167,8 +167,8 @@ impl PlaneShuffleMicrokernel {
             }
     }
 
-    /// Elements of `K` one unit reads a step: its block's depth, each a vector where the weight
-    /// runs along `K`, or a packed weight's step of it.
+    /// Elements of `K` one unit reads a step: its block's depth, each a vector where the rhs
+    /// runs along `K`, or a packed rhs's step of it.
     pub fn depth(&self) -> usize {
         if let Some(blocks) = &self.blocks {
             return blocks.depth;
@@ -180,8 +180,8 @@ impl PlaneShuffleMicrokernel {
             }
     }
 
-    /// The turns the plane's units take through a packed weight's `K`, a word of scale blocks a
-    /// unit a turn, which a cube's planes divide between them. `None` for a float weight, and
+    /// The turns the plane's units take through a packed rhs's `K`, a word of scale blocks a
+    /// unit a turn, which a cube's planes divide between them. `None` for a float rhs, and
     /// where the scales group no `K`.
     pub fn turns(&self) -> Option<usize> {
         let space = &self.blocks?.space;
@@ -198,7 +198,7 @@ impl PlaneShuffleMicrokernel {
 
     /// The levels inside one plane, which a routine states the rest of the partitioning around:
     /// [`step_levels`](Self::step_levels), then the walk through all of `K`, above the units where
-    /// they take `K` in turns, below them where each takes a run of a packed weight's `K`.
+    /// they take `K` in turns, below them where each takes a run of a packed rhs's `K`.
     pub fn tiling(&self) -> Levels {
         let Some(blocks) = &self.blocks else {
             return self.float_step_levels().walk_every(&[self.axes.k]);
@@ -213,7 +213,7 @@ impl PlaneShuffleMicrokernel {
     /// What one step of the plane covers where its units take `K` in turns: one unit's step, and
     /// the plane's units over `K` in turns, over `M` and over `N` beside each other. A cube whose
     /// planes share a step states them around this. `None` where each unit walks a run of a packed
-    /// weight's `K` of its own, which planes cannot split without splitting the run.
+    /// rhs's `K` of its own, which planes cannot split without splitting the run.
     pub fn step_levels(&self) -> Option<Levels> {
         let Some(blocks) = &self.blocks else {
             return Some(self.float_step_levels());
@@ -222,7 +222,7 @@ impl PlaneShuffleMicrokernel {
         matches!(spread.walk, Walked::Above(_)).then(|| self.in_turns(blocks, &spread))
     }
 
-    /// [`step_levels`](Self::step_levels) for a float weight.
+    /// [`step_levels`](Self::step_levels) for a float rhs.
     ///
     /// An axis the units do not spread over is not stated: the tile DSL reads a stated level of one
     /// as a level the accumulator has to shape itself to.
@@ -245,7 +245,7 @@ impl PlaneShuffleMicrokernel {
         }
     }
 
-    /// The columns a unit reads of a packed weight, whose blocks cut `space`, and the units along
+    /// The columns a unit reads of a packed rhs, whose blocks cut `space`, and the units along
     /// `K` that spread it, for each count of steps of `N` ([`MatmulStep`]) from the settings' down
     /// to one whose columns close `n` in one digit and leave `shared` units, the plane's share
     /// left by the units along `M`, whole groups along `N`.
@@ -297,7 +297,7 @@ impl PlaneShuffleMicrokernel {
     }
 
     /// The axis a unit's columns land on, and how many of it a unit holds: the digit of `N` a
-    /// packed weight's blocks make it.
+    /// packed rhs's blocks make it.
     pub fn column_cut(&self) -> (Axis, usize) {
         let Some(blocks) = &self.blocks else {
             return (self.axes.n, self.columns());
@@ -312,7 +312,7 @@ impl PlaneShuffleMicrokernel {
         cut
     }
 
-    /// The cut of `M` a unit's rows land on in a packed weight's space, where units along `M`
+    /// The cut of `M` a unit's rows land on in a packed rhs's space, where units along `M`
     /// split them.
     fn row_cut(&self) -> Option<(Axis, usize)> {
         (self.units_along_m > 1).then(|| (blocked(M).1, self.rows))
@@ -351,7 +351,7 @@ impl PlaneShuffleMicrokernel {
         leaf.walk(&[walk]).units(&self.block_units(spread))
     }
 
-    /// How the plane's units spread a packed weight's `K`.
+    /// How the plane's units spread a packed rhs's `K`.
     fn spread(&self, blocks: &PlaneShuffleBlocks) -> Spread {
         let space = &blocks.space;
         space
@@ -360,7 +360,7 @@ impl PlaneShuffleMicrokernel {
             .expect("candidates hold the units to a spread of K")
     }
 
-    /// The plane's units over a packed weight's space: its groups side by side along `N`, the
+    /// The plane's units over a packed rhs's space: its groups side by side along `N`, the
     /// units of each along `M`, and along `K`.
     fn block_units(&self, spread: &Spread) -> Vec<(Axis, usize)> {
         [(self.column_cut().0, self.groups_along_n)]
@@ -380,7 +380,7 @@ impl PlaneShuffleMicrokernel {
     }
 
     /// 32-bit registers one unit keeps: its accumulator, summed in `item.sum`, and one step's
-    /// block of the lhs and the weight, a packed weight's a word a column. The compiler adds
+    /// block of the lhs and the rhs, a packed rhs's a word a column. The compiler adds
     /// addressing and loop state on top.
     pub fn registers_per_unit(&self, item: &MatmulWorkItem) -> u32 {
         let [rows, columns] = [self.rows, self.columns()];
@@ -399,8 +399,8 @@ impl PlaneShuffleMicrokernel {
         bytes.div_ceil(4) as u32
     }
 
-    /// Scalars one unit's accumulator holds: a cell per row and column, which for a col weight is
-    /// a line of partials summed on drain, a packed weight's a read of its values along `K`.
+    /// Scalars one unit's accumulator holds: a cell per row and column, which for a col rhs is
+    /// a line of partials summed on drain, a packed rhs's a read of its values along `K`.
     fn accumulator_scalars(&self) -> usize {
         let cell = match (&self.blocks, self.orders.rhs) {
             (Some(blocks), _) => blocks.space.operand(MatmulOperand::Rhs).read(K),
@@ -419,7 +419,7 @@ impl PlaneShuffleMicrokernel {
     }
 }
 
-/// Its rows, its settings, and how the weight lies.
+/// Its rows, its settings, and how the rhs lies.
 impl core::fmt::Display for PlaneShuffleMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let weight = match self.orders.rhs {
@@ -436,10 +436,10 @@ impl Microkernel for PlaneShuffleMicrokernel {
     type Operand = MatmulOperand;
     type Partitioning = ();
 
-    const DECLINE: &'static str = "the plane shuffle needs a plane width the device commits to, and against a packed weight unit columns that close n";
+    const DECLINE: &'static str = "the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n";
 
     /// The default, then one axis off it at a time, then the blocks a star never reaches: deep
-    /// reads by units that own their columns, the row weight's wide blocks, and the default at two
+    /// reads by units that own their columns, the row rhs's wide blocks, and the default at two
     /// rows a unit. Sixteen columns is the accumulator's bound, not the device's: at eight rows a
     /// wider block outgrows a unit's registers and spills, unless units split the rows.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
@@ -456,7 +456,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
         ]
     }
 
-    /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, and a weight lined
+    /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, and an rhs lined
     /// along one of its axes.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.rows {
@@ -471,8 +471,8 @@ impl Microkernel for PlaneShuffleMicrokernel {
 
     /// The one the settings size, where the device commits to a plane width: its units merge their
     /// partials across the plane, so a guessed width sums the wrong units. It holds every row of
-    /// the product, one to [`MAX_ROWS`](Self::MAX_ROWS), and reads a weight lined along one of its
-    /// axes. Against a packed weight, one for each count of steps of `N` from the settings' down
+    /// the product, one to [`MAX_ROWS`](Self::MAX_ROWS), and reads an rhs lined along one of its
+    /// axes. Against a packed rhs, one for each count of steps of `N` from the settings' down
     /// to one (its packed steps).
     fn candidates(
         hw: &Hardware,
@@ -518,11 +518,11 @@ impl Microkernel for PlaneShuffleMicrokernel {
     }
 
     /// Each operand's step is the leaf's extent along the axis it is bound innermost along: the lhs
-    /// down `K`, the weight along its own contiguous axis, the output along `N`. A col weight's
-    /// step is contracted with the lhs's, a line of each at a time; a row weight's lands in the output's
-    /// cells, lined with it.
+    /// down `K`, the rhs along its own contiguous axis, the output along `N`. A col rhs's
+    /// step is contracted with the lhs's, a line of each at a time; a row rhs's lands in the
+    /// output's cells, lined with it.
     ///
-    /// Nothing against a packed weight: every width follows from its packing, and a count of a
+    /// Nothing against a packed rhs: every width follows from its packing, and a count of a
     /// float element's vectors means nothing for words.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         if self.blocks.is_some() {
@@ -561,7 +561,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
 }
 
 impl MatmulMicrokernel for PlaneShuffleMicrokernel {
-    /// It holds every row, compiled in, against each step of the weight.
+    /// It holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
     fn orders(&self) -> MatmulOperands<MatmulOrder> {
@@ -582,7 +582,7 @@ mod tests {
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
-    /// `rows` rows of `f16` against a col weight, every row held whole.
+    /// `rows` rows of `f16` against a col rhs, every row held whole.
     fn item(rows: usize) -> MatmulWorkItem {
         MatmulWorkItem {
             elements: MatmulOperands::all(F16),
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(whole.accumulator_scalars(), 4 * split.accumulator_scalars());
     }
 
-    /// `rows` rows against a `4096 × 4096` NVFP4 weight in tile order, read at four words a load:
+    /// `rows` rows against a `4096 × 4096` NVFP4 rhs in tile order, read at four words a load:
     /// values a block down `k` a read, scales a word of four blocks.
     fn tile_order(rows: usize) -> MatmulWorkItem {
         let rhs = Operand::packed(K, 8, K, tile_order::BLOCK, 4)
@@ -677,7 +677,7 @@ mod tests {
         }
     }
 
-    /// The lead plane against the packed weight at `rows` rows and `rows_per_unit` rows a unit,
+    /// The lead plane against the packed rhs at `rows` rows and `rows_per_unit` rows a unit,
     /// on a 32-wide plane.
     fn packed(rows: usize, rows_per_unit: usize) -> PlaneShuffleMicrokernel {
         let settings = PlaneShuffleMicrokernelSettings::stepping(1, Some(rows_per_unit));
@@ -686,7 +686,7 @@ mod tests {
             .expect("the lead plane is sized")
     }
 
-    /// Eight rows at two a unit against a packed weight: four units along `M`, which leave eight
+    /// Eight rows at two a unit against a packed rhs: four units along `M`, which leave eight
     /// of the plane's units to share `K`; the step is one column by a word of scales, sixty-four
     /// of `k`.
     #[test]
@@ -700,7 +700,7 @@ mod tests {
         assert_eq!((plane.columns(), plane.depth()), (1, 64));
     }
 
-    /// Rows a unit's share cannot split stay whole against a packed weight too: one row, and three
+    /// Rows a unit's share cannot split stay whole against a packed rhs too: one row, and three
     /// rows the plane's width does not divide.
     #[test]
     fn packed_rows_no_unit_split_divides_stay_whole() {
@@ -708,10 +708,10 @@ mod tests {
         assert_eq!(packed(3, 1).units_along_m, 1);
     }
 
-    /// A packed weight is read a step of `K` a turn by the whole plane: a setting stating a deeper
+    /// A packed rhs is read a step of `K` a turn by the whole plane: a setting stating a deeper
     /// block, or another split of `K`, sizes no plane against it.
     #[test]
-    fn a_packed_weight_is_read_one_step_a_turn() {
+    fn a_packed_rhs_is_read_one_step_a_turn() {
         for settings in [
             PlaneShuffleMicrokernelSettings::DEFAULT,
             PlaneShuffleMicrokernelSettings::ONE_READ_ONE_TRANSACTION,

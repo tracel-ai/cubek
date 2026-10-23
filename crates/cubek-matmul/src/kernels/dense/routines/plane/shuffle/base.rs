@@ -46,8 +46,8 @@ impl PlaneShuffleMatmulRoutineSettings {
         planes: NonZeroUsize::new(4).unwrap(),
     };
 
-    /// One step a unit, four planes a cube: the lead against a packed weight, whose decode the
-    /// weight dequantized first (its caller's dequantize routine) places its planes at.
+    /// One step a unit, four planes a cube: the lead against a packed rhs, whose decode the
+    /// rhs dequantized first (its caller's dequantize routine) places its planes at.
     pub const PACKED: Self = Self {
         microkernel: PlaneShuffleMicrokernelSettings::stepping(1, None),
         planes: NonZeroUsize::new(4).unwrap(),
@@ -67,13 +67,13 @@ impl core::fmt::Display for PlaneShuffleMatmulRoutineSettings {
 pub type PlaneShuffleMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
 
 impl PlaneShuffleMatmulRoutine {
-    /// The settings worth racing against a packed weight: the lead
+    /// The settings worth racing against a packed rhs: the lead
     /// ([`PACKED`](PlaneShuffleMatmulRoutineSettings::PACKED)), then the settings measured best, or
     /// within five percent of it, on the Qwen3-4B projections at one, four and eight rows on an
-    /// RTX PRO 6000, the weight in rows and in tile order: each a count of steps and of rows a unit
+    /// RTX PRO 6000, the rhs in rows and in tile order: each a count of steps and of rows a unit
     /// ([`PlaneShuffleMicrokernelSettings::stepping`]) on a count of planes a cube. What the
     /// packed few-rows table races, and what a caller naming the routine and no setting runs
-    /// against a packed weight, in this order.
+    /// against a packed rhs, in this order.
     pub fn packed_settings(&self) -> Vec<PlaneShuffleMatmulRoutineSettings> {
         use PlaneShuffleMicrokernelSettings as Block;
         let on = |microkernel, planes| PlaneShuffleMatmulRoutineSettings {
@@ -109,7 +109,7 @@ impl PlaneShuffleMatmulRoutine {
         Ok(blueprint)
     }
 
-    /// [`Routine::estimate`] against a float weight.
+    /// [`Routine::estimate`] against a float rhs.
     fn float_estimate(
         &self,
         problem: &MatmulRoutineProblem,
@@ -132,7 +132,7 @@ impl PlaneShuffleMatmulRoutine {
                 run_bytes: (run * size) as usize,
             }
         };
-        // A col weight's run is a column down all of `K`; a row weight's, one plane's columns.
+        // A col rhs's run is a column down all of `K`; a row rhs's, one plane's columns.
         let rhs_run = match microkernel.orders.rhs {
             MatmulOrder::InBufferOrder => k,
             MatmulOrder::Stated => columns / grid.planes().count as u64,
@@ -151,7 +151,7 @@ impl PlaneShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
-    /// [`Routine::estimate`] against `packing`, a packed weight.
+    /// [`Routine::estimate`] against `packing`, a packed rhs.
     fn packed_estimate(
         &self,
         problem: &MatmulRoutineProblem,
@@ -196,7 +196,7 @@ impl PlaneShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
-    /// [`Routine::prepare`] against a float weight.
+    /// [`Routine::prepare`] against a float rhs.
     fn prepare_float(
         &self,
         hw: &Hardware,
@@ -221,7 +221,7 @@ impl PlaneShuffleMatmulRoutine {
         Ok((blueprint, grid))
     }
 
-    /// [`Routine::prepare`] against `packing`, a packed weight.
+    /// [`Routine::prepare`] against `packing`, a packed rhs.
     fn prepare_packed(
         &self,
         hw: &Hardware,
@@ -252,7 +252,7 @@ impl PlaneShuffleMatmulRoutine {
 /// Where the plane shuffle places a packed product: its microkernel, the axis its columns land on,
 /// and the planes one cube holds side by side along it, a target snapped to what the runs of
 /// columns divide, so no cube overhangs. The plane shuffle deals the planes the launch's columns; the
-/// decode into a float weight places the same planes in cubes, each cube copying its box.
+/// decode into a float rhs places the same planes in cubes, each cube copying its box.
 pub struct PlaneShufflePackedPlacement {
     pub microkernel: PlaneShuffleMicrokernel,
     pub columns: Axis,
@@ -307,9 +307,10 @@ impl Routine for PlaneShuffleMatmulRoutine {
     /// for the device's compute units against a cube's size, and last a cube as full as the device
     /// holds ([`Hardware::full_cube_planes`]). The default sits on the deepest step
     /// whose step of `K` still divides a decode projection's (2048, 6144) on a wave64 plane. The
-    /// blocks a row weight wins with run on one to eight planes, and the deep block on one; a col
-    /// weight declines every one of those. The default at two rows a unit runs on four planes.
-    /// Against a packed weight it races [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings).
+    /// blocks a row rhs wins with run on one to eight planes, and the deep block on one; a col
+    /// rhs declines every one of those. The default at two rows a unit runs on four planes.
+    /// Against a packed rhs it races
+    /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings).
     ///
     /// The order is also what a caller naming the routine and no setting runs: the `PlaneShuffle` pin
     /// and the `Tile` policy launch the first setting that serves the product
@@ -340,8 +341,8 @@ impl Routine for PlaneShuffleMatmulRoutine {
         ]
     }
 
-    /// The first of the settings for the weight `problem` states that prepares a launch on this
-    /// device: [`settings`](Routine::settings) against a float weight,
+    /// The first of the settings for the rhs `problem` states that prepares a launch on this
+    /// device: [`settings`](Routine::settings) against a float rhs,
     /// [`packed_settings`](PlaneShuffleMatmulRoutine::packed_settings) against a packed one.
     ///
     /// # Errors
@@ -377,7 +378,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
     }
 
     /// Its units' steps: each group of units reads the lhs's rows along the whole of `K`, and the
-    /// weight's columns it owns, straight from global memory, once: its values, or its words and
+    /// rhs's columns it owns, straight from global memory, once: its values, or its words and
     /// scales where it is packed. Then its microkernel, for the work.
     fn estimate(
         &self,
@@ -392,7 +393,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         }
     }
 
-    /// Against a float weight, the launch's planes in cubes side by side along `n`; against a
+    /// Against a float rhs, the launch's planes in cubes side by side along `n`; against a
     /// packed one, over its block-split space, as many planes a cube as divide the runs of columns
     /// its microkernel reads (`PlaneShufflePackedPlacement`).
     fn prepare(
@@ -461,7 +462,7 @@ mod tests {
         ]
     }
 
-    /// A decode projection, `m` rows against a `2048 × 2048` weight laid as `weight`.
+    /// A decode projection, `m` rows against a `2048 × 2048` rhs laid as `rhs_layout`.
     fn projection(m: usize, rhs_layout: MatmulLayout) -> MatmulRoutineProblem {
         MatmulRoutineProblem::dense(m, 2048, 2048, F16, rhs_layout)
     }
@@ -477,7 +478,7 @@ mod tests {
     }
 
     /// Every setting prepares wherever the device commits to a plane width, and declines with its
-    /// reason wherever it does not; a block of more than one column declines a col weight.
+    /// reason wherever it does not; a block of more than one column declines a col rhs.
     #[test]
     fn a_setting_runs_where_the_device_commits_to_a_width() {
         let problem = projection(1, MatmulLayout::Col);
@@ -503,11 +504,11 @@ mod tests {
         }
     }
 
-    /// A col weight is read down `K` beside the lhs, a line of each at a time, and written a
-    /// column at a time; a row weight is read along `N` and written a line at a time, the lhs a
+    /// A col rhs is read down `K` beside the lhs, a line of each at a time, and written a
+    /// column at a time; a row rhs is read along `N` and written a line at a time, the lhs a
     /// line of the block's depth at a time.
     #[test]
-    fn the_weight_is_read_along_the_axis_its_buffer_runs() {
+    fn the_rhs_is_read_along_the_axis_its_buffer_runs() {
         let hw = devices::strix_halo();
         let widths = |rhs_layout| {
             let (blueprint, _) = PlaneShuffleMatmulRoutine
@@ -524,10 +525,10 @@ mod tests {
         assert_eq!(widths(MatmulLayout::Row), (4, 8, 8));
     }
 
-    /// A col weight whose `K` the plane's steps overhang would bind one element at a time, which
-    /// the plane shuffle cannot read; a row weight of the same shape runs.
+    /// A col rhs whose `K` the plane's steps overhang would bind one element at a time, which
+    /// the plane shuffle cannot read; a row rhs of the same shape runs.
     #[test]
-    fn a_col_weight_needs_vectors_along_k() {
+    fn a_col_rhs_needs_vectors_along_k() {
         let hw = devices::strix_halo();
         let ragged = |rhs_layout| MatmulRoutineProblem::dense(1, 2048, 2040, F16, rhs_layout);
         let settings = PlaneShuffleMatmulRoutineSettings::DEFAULT;
@@ -542,7 +543,7 @@ mod tests {
         );
     }
 
-    /// A cube holds every row of the product, so the weight is read once whatever the rows.
+    /// A cube holds every row of the product, so the rhs is read once whatever the rows.
     #[test]
     fn a_cube_holds_every_row() {
         let hw = devices::strix_halo();
@@ -597,7 +598,7 @@ mod tests {
 
     /// A transaction's worth of units along `K` is as many col steps as one transaction holds:
     /// fewer for a deeper block, the same at every element, since a block counts reads; and one
-    /// for a row weight, whose units beside each other fill it.
+    /// for a row rhs, whose units beside each other fill it.
     #[test]
     fn a_transactions_worth_of_units_moves_with_the_depth() {
         let hw = devices::strix_halo();
@@ -605,7 +606,7 @@ mod tests {
             let item = MatmulView::of::<PlaneShuffleMicrokernel>(&MatmulRoutineProblem::dense(
                 1, 2048, 2048, element, rhs_layout,
             ))
-            .expect("a weight lined along an axis")
+            .expect("an rhs lined along an axis")
             .work_item();
             let plane_width = 32;
             PlaneShuffleKSplit::OneTransaction.units(&hw, &item, depth, plane_width)
@@ -618,7 +619,7 @@ mod tests {
         assert_eq!(units(F16, reads(1), MatmulLayout::Row), 1);
     }
 
-    /// `m` rows against a `k × n` weight of `value` whose words run `along`, under `f16` block
+    /// `m` rows against a `k × n` rhs of `value` whose words run `along`, under `f16` block
     /// scales of 32 along the same axis.
     fn packed(
         m: usize,
@@ -636,7 +637,7 @@ mod tests {
             .per_block(block, ScaleDtype::F16)
             .with_store(store);
         let packing = Packing {
-            operand: Operand::of_scheme(&scheme, along, [K, N]).expect("a packed weight"),
+            operand: Operand::of_scheme(&scheme, along, [K, N]).expect("a packed rhs"),
             scheme,
         };
         MatmulRoutineProblem::packed(
@@ -651,7 +652,7 @@ mod tests {
         )
     }
 
-    /// A q4 decode projection, `m` rows against a packed `4096 × 4096` weight read along `k`.
+    /// A q4 decode projection, `m` rows against a packed `4096 × 4096` rhs read along `k`.
     fn packed_projection(m: usize) -> MatmulRoutineProblem {
         packed(m, 4096, 4096, K, QuantValue::Q4S)
     }
@@ -669,7 +670,7 @@ mod tests {
     /// Every setting prepares wherever the device commits to a plane width, and declines with its
     /// reason wherever it does not.
     #[test]
-    fn a_setting_runs_on_a_packed_weight_where_the_device_commits_to_a_width() {
+    fn a_setting_runs_on_a_packed_rhs_where_the_device_commits_to_a_width() {
         let problem = packed_projection(1);
         for hw in committed()
             .into_iter()
@@ -721,7 +722,7 @@ mod tests {
     }
 
     /// A product of no rows, or of more than a work item holds, is declined before anything is
-    /// sized to it; a two-level weight prepares as a one-level one does.
+    /// sized to it; a two-level rhs prepares as a one-level one does.
     #[test]
     fn the_rows_a_work_item_holds_bound_a_packed_product() {
         let hw = devices::strix_halo();

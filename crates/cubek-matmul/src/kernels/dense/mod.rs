@@ -1,6 +1,6 @@
 //! The float product's seam: the one problem every matmul routine reads, how a launch reads it,
 //! the tensors, blueprint and routine trait, the routines by scope in `routines`, and the product
-//! that decodes a packed weight ahead of one of them ([`DequantizedMatmulRoutine`]).
+//! that decodes a packed input ahead of one of them ([`DequantizedMatmulRoutine`]).
 
 mod blueprint;
 mod counters;

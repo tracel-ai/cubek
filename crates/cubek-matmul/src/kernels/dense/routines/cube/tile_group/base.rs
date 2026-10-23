@@ -14,11 +14,11 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// `out = lhs · rhs` against a packed weight, with every cube owning every row of one stored tile
+/// `out = lhs · rhs` against a packed rhs, with every cube owning every row of one stored tile
 /// group's columns, its planes taking the group's steps along `K` in turns
 /// ([`CubeTileGroupMicrokernel`]).
 ///
-/// What a weight stored in tiles wants at a few rows: each cube reads its group front to back,
+/// What an rhs stored in tiles wants at a few rows: each cube reads its group front to back,
 /// whole tiles a step. Declines what its microkernel does.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CubeTileGroupMatmulRoutine;
@@ -198,7 +198,7 @@ mod tests {
     const QWEN3_8B: [(usize, usize); 4] =
         [(24576, 4096), (4096, 12288), (6144, 4096), (4096, 4096)];
 
-    /// `m` rows against an NVFP4 `k × n` weight in tile order, read as `hw` loads it.
+    /// `m` rows against an NVFP4 `k × n` rhs in tile order, read as `hw` loads it.
     fn nvfp4(hw: &Hardware, m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
         let scheme = tile_order::scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
@@ -275,7 +275,7 @@ mod tests {
                     &nvfp4(&hw, 1, 256, k),
                     &CubeTileGroupMatmulRoutineSettings::DEFAULT,
                 )
-                .expect("a short weight prepares");
+                .expect("a short rhs prepares");
             blueprint.microkernel.planes_along_k.get()
         };
         assert_eq!(planes(10 * 256), 8);

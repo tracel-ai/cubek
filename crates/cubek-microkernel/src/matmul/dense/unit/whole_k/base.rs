@@ -21,11 +21,11 @@ pub struct UnitWholeKMicrokernel {
     /// Every row of the product, held in registers. An extent in a blueprint, an exception to the
     /// crate's rule, since each row count compiles a kernel of its own.
     pub rows: usize,
-    /// The widest vector the device reads the weight in, which sizes the accumulator's register
+    /// The widest vector the device reads the rhs in, which sizes the accumulator's register
     /// budget before the bound width is known.
     pub rhs_vector_ceiling: usize,
-    /// The order each operand is read in: the weight along `K` for a col weight, along `N` for a
-    /// row weight; the others as the product names them.
+    /// The order each operand is read in: the rhs along `K` for a col rhs, along `N` for a
+    /// row rhs; the others as the product names them.
     pub orders: MatmulOperands<MatmulOrder>,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
@@ -71,27 +71,27 @@ impl UnitWholeKMicrokernel {
 
     /// What a product of no rows, or of more than [`MAX_ROWS`](Self::MAX_ROWS), is declined with.
     pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
-        why: "the unit whole-K microkernel holds from one row to `UnitWholeKMicrokernel::MAX_ROWS`, every one against one read of the weight",
+        why: "the unit whole-K microkernel holds from one row to `UnitWholeKMicrokernel::MAX_ROWS`, every one against one read of the rhs",
     };
 
-    /// What a weight lined along neither of its axes is declined with.
+    /// What an rhs lined along neither of its axes is declined with.
     pub const STRIDED_RHS: Refusal = Refusal::Declined {
-        why: "the unit whole-K microkernel reads a weight lined along `K` or `N`",
+        why: "the unit whole-K microkernel reads an rhs lined along `K` or `N`",
     };
 
-    /// What a col weight bound one element at a time is declined with: the tile DSL reads it in
+    /// What a col rhs bound one element at a time is declined with: the tile DSL reads it in
     /// vectors of at least two.
     pub const COL_RHS_NEEDS_VECTORS_ALONG_K: Refusal = Refusal::Declined {
-        why: "the unit whole-K microkernel reads a col weight and the lhs beside it in vectors of at least two elements along `K`",
+        why: "the unit whole-K microkernel reads a col rhs and the lhs beside it in vectors of at least two elements along `K`",
     };
 
-    /// What a col weight is declined with where a unit holds more than one column: the tile DSL
+    /// What a col rhs is declined with where a unit holds more than one column: the tile DSL
     /// sums its partials correctly only for one.
     pub const COL_RHS_ONE_COLUMN_A_UNIT: Refusal = Refusal::Declined {
-        why: "the unit whole-K microkernel reads a col weight one column a unit, each folding its line of partials",
+        why: "the unit whole-K microkernel reads a col rhs one column a unit, each summing its line of partials",
     };
 
-    /// The order a weight lying as `layout` is read in, none for one lined along neither axis.
+    /// The order an rhs lying as `layout` is read in, none for one lined along neither axis.
     fn order_of(layout: MatmulLayout) -> Option<MatmulOrder> {
         match layout {
             MatmulLayout::Col => Some(MatmulOrder::InBufferOrder),
@@ -104,9 +104,9 @@ impl UnitWholeKMicrokernel {
     ///
     /// # Errors
     ///
-    /// [`COL_RHS_NEEDS_VECTORS_ALONG_K`](Self::COL_RHS_NEEDS_VECTORS_ALONG_K), for a col weight
+    /// [`COL_RHS_NEEDS_VECTORS_ALONG_K`](Self::COL_RHS_NEEDS_VECTORS_ALONG_K), for a col rhs
     /// bound one element at a time, and
-    /// [`COL_RHS_ONE_COLUMN_A_UNIT`](Self::COL_RHS_ONE_COLUMN_A_UNIT), for a col weight under a
+    /// [`COL_RHS_ONE_COLUMN_A_UNIT`](Self::COL_RHS_ONE_COLUMN_A_UNIT), for a col rhs under a
     /// block of more than one column.
     pub fn check_vectors(&self, widths: &MatmulOperands<usize>) -> Result<(), Refusal> {
         match (self.orders.rhs, widths.rhs, self.settings.columns.get()) {
@@ -117,7 +117,7 @@ impl UnitWholeKMicrokernel {
     }
 
     /// Elements of the output's columns one unit reads a step: its block's columns, each a vector
-    /// where the weight runs along `N`.
+    /// where the rhs runs along `N`.
     pub fn columns(&self) -> usize {
         self.settings.columns.get()
             * match self.orders.rhs {
@@ -126,7 +126,7 @@ impl UnitWholeKMicrokernel {
             }
     }
 
-    /// Elements of `K` one unit reads a step: its block's depth, each a vector where the weight
+    /// Elements of `K` one unit reads a step: its block's depth, each a vector where the rhs
     /// runs along `K`.
     pub fn depth(&self) -> usize {
         self.settings.depth.get()
@@ -153,7 +153,7 @@ impl UnitWholeKMicrokernel {
     }
 
     /// 32-bit registers one unit keeps: its accumulator, summed in `item.sum`, and one step's
-    /// block of the lhs and the weight. The compiler adds addressing and loop state on top.
+    /// block of the lhs and the rhs. The compiler adds addressing and loop state on top.
     pub fn registers_per_unit(&self, item: &MatmulWorkItem) -> u32 {
         let [rows, columns, depth] = [self.rows, self.columns(), self.depth()];
         let bytes = self.accumulator_scalars() * item.sum.size()
@@ -162,7 +162,7 @@ impl UnitWholeKMicrokernel {
         bytes.div_ceil(4) as u32
     }
 
-    /// Scalars one unit's accumulator holds: a cell per row and column, which for a col weight is
+    /// Scalars one unit's accumulator holds: a cell per row and column, which for a col rhs is
     /// a line of partials summed on drain.
     fn accumulator_scalars(&self) -> usize {
         let cell = match self.orders.rhs {
@@ -180,7 +180,7 @@ impl UnitWholeKMicrokernel {
     }
 }
 
-/// Its rows, its settings, and how the weight lies.
+/// Its rows, its settings, and how the rhs lies.
 impl core::fmt::Display for UnitWholeKMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let weight = match self.orders.rhs {
@@ -209,7 +209,7 @@ impl Microkernel for UnitWholeKMicrokernel {
         ]
     }
 
-    /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, and a weight lined
+    /// From one row to [`MAX_ROWS`](Self::MAX_ROWS), every one held whole, and an rhs lined
     /// along one of its axes.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.rows {
@@ -223,7 +223,7 @@ impl Microkernel for UnitWholeKMicrokernel {
     }
 
     /// The one the settings size. Its units share nothing, so it asks nothing of the hardware
-    /// but the width it reads the weight in.
+    /// but the width it reads the rhs in.
     fn candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -248,9 +248,9 @@ impl Microkernel for UnitWholeKMicrokernel {
     }
 
     /// Each operand's step is the leaf's extent along the axis it is bound innermost along: the lhs
-    /// down `K`, the weight along its own contiguous axis, the output along `N`. A col weight's
-    /// step is contracted with the lhs's, a line of each at a time; a row weight's lands in the output's
-    /// cells, lined with it.
+    /// down `K`, the rhs along its own contiguous axis, the output along `N`. A col rhs's
+    /// step is contracted with the lhs's, a line of each at a time; a row rhs's lands in the
+    /// output's cells, lined with it.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         for operand in MatmulOperand::ALL {
             vectorization.require(VectorRequirement::Access {
@@ -285,7 +285,7 @@ impl Microkernel for UnitWholeKMicrokernel {
 }
 
 impl MatmulMicrokernel for UnitWholeKMicrokernel {
-    /// It holds every row, compiled in, against each step of the weight.
+    /// It holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
     fn orders(&self) -> MatmulOperands<MatmulOrder> {

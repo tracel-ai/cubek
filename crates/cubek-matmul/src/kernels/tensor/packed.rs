@@ -98,7 +98,7 @@ impl PackedTensor {
     }
 
     /// This matrix read as `slabs` matrices laid end to end along `along`, each its extent there
-    /// divided by `slabs`: a stacked weight one slab of which a table's entry picks
+    /// divided by `slabs`: a stacked input one slab of which a table's entry picks
     /// ([`MatmulIndex::Slab`](crate::kernels::MatmulIndex::Slab)).
     ///
     /// # Errors

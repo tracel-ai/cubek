@@ -271,7 +271,7 @@ mod tests {
             .expect("tile order is read")
     }
 
-    /// `value` packed along `axis` of a `[k, n]` weight under `f16` scales of 32 along it.
+    /// `value` packed along `axis` of a `[k, n]` rhs under `f16` scales of 32 along it.
     fn in_rows(value: QuantValue, axis: Axis) -> Operand {
         let (block, store) = match axis {
             K => (vec![32, 1], QuantStore::PackedU32(1)),
@@ -393,10 +393,10 @@ mod tests {
         );
     }
 
-    /// A weight in rows steps a word of scales along the axis its words run along, and one read
+    /// An rhs in rows steps a word of scales along the axis its words run along, and one read
     /// across it: `q4` under `f16` scales of 32, two to a word, steps sixty-four of `k` or of `n`.
     #[test]
-    fn a_weight_in_rows_steps_a_word_of_scales_along_its_words() {
+    fn an_rhs_in_rows_steps_a_word_of_scales_along_its_words() {
         let hw = devices::m2_pro();
         let along_k = step_against(&hw, &in_rows(QuantValue::Q4S, K), F16);
         assert_eq!((along_k.along(K), along_k.along(N)), (64, 1));
@@ -404,9 +404,9 @@ mod tests {
         assert_eq!((along_n.along(K), along_n.along(N)), (1, 64));
     }
 
-    /// A weight is refused where `n` or `k` cuts a step short, and served where both are whole.
+    /// An rhs is refused where `n` or `k` cuts a step short, and served where both are whole.
     #[test]
-    fn a_weight_short_of_a_whole_step_is_refused() {
+    fn an_rhs_short_of_a_whole_step_is_refused() {
         let rhs = tile_order();
         let step = step_against(&devices::m2_pro(), &rhs, F16).under(block_scaled());
         assert_eq!(step.check(against(&rhs), 4096, 4096), Ok(()));
@@ -419,7 +419,7 @@ mod tests {
         }
     }
 
-    /// A weight stored in tile order is a whole number of steps on every load width a device
+    /// An rhs stored in tile order is a whole number of steps on every load width a device
     /// offers, at each tile a load picks: the step under the block-scaled instruction with TMA
     /// rows, under an `8 × 8 × 8` instruction, and under none. A stored tile never cuts one.
     #[test]
@@ -486,9 +486,9 @@ mod tests {
         }
     }
 
-    /// A load stores a weight in its step under the device's largest instruction. NVFP4 takes
+    /// A load stores an rhs in its step under the device's largest instruction. NVFP4 takes
     /// `128 × 8` under the block-scaled one with TMA rows and `64 × 8` under an `8 × 8 × 8` one; a
-    /// float weight `8 × 8`. Under none, neither is stored in tiles.
+    /// float rhs `8 × 8`. Under none, neither is stored in tiles.
     #[test]
     fn a_load_stores_in_the_step_under_the_largest_instruction() {
         let e2m1 = ElemType::Float(FloatKind::E2M1);

@@ -9,7 +9,7 @@ use cubek_std::layout::contiguous;
 
 /// The order an operand is bound in: the axes the product names, or the order its buffer steps.
 ///
-/// A col weight (an `[n, k]` buffer behind a `[k, n]` view) bound over the axes the product names
+/// A col rhs (an `[n, k]` buffer behind a `[k, n]` view) bound over the axes the product names
 /// steps its innermost bound axis by `k`, so it is read one element at a time; bound in its
 /// buffer's order, the same bytes are read in lines. Only a fragment that loads its `B` col-major
 /// reads an operand so, and the two orders compile two kernels, so the microkernel states which
@@ -18,7 +18,7 @@ use cubek_std::layout::contiguous;
 pub enum MatmulOrder {
     /// As the product names its axes: `[k, n]` for the rhs.
     Stated,
-    /// As its buffer steps them: `[n, k]` for a col weight.
+    /// As its buffer steps them: `[n, k]` for a col rhs.
     InBufferOrder,
 }
 
@@ -61,9 +61,9 @@ impl MatmulOrder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MatmulLayout {
     /// Contiguous along the second of its axes: its buffer steps in the order the product names
-    /// them. A row weight, an activation in rows.
+    /// them. A row rhs, an lhs in rows.
     Row,
-    /// Contiguous along the first: its buffer is the view's transpose. A col weight, an `[n, k]`
+    /// Contiguous along the first: its buffer is the view's transpose. A col rhs, an `[n, k]`
     /// buffer behind the view.
     Col,
     /// Contiguous along neither: read one element at a time in either order.
@@ -175,7 +175,7 @@ mod tests {
     use cubek_std::matmul_axes::{K, N};
 
     /// A rhs's layout is the tuning key's reading of its strides: a pitched, batched or broadcast
-    /// col weight included, and a `[k, 1]` rhs whose one column strides by anything.
+    /// col rhs included, and a `[k, 1]` rhs whose one column strides by anything.
     #[test]
     fn the_layout_is_the_keys_reading() {
         let (k, n) = (64, 48);
@@ -200,10 +200,10 @@ mod tests {
         }
     }
 
-    /// Over its buffer's order a pitched col weight is aligned to what its pitch divides, which
+    /// Over its buffer's order a pitched col rhs is aligned to what its pitch divides, which
     /// its stated alignment, one element, does not show.
     #[test]
-    fn a_col_weights_buffer_alignment_reads_its_pitch() {
+    fn a_col_rhs_buffer_alignment_reads_its_pitch() {
         let (k, n) = (64, 48);
         let (shape, strides) = ([k, n], [1, k + 8]);
         let pitched = MatmulLayout::Col.buffer_alignment(&shape, &strides);

@@ -5,16 +5,16 @@ use cubek_std::Hardware;
 /// One unit's step, `columns × depth`, and how the plane's units share `K`.
 ///
 /// The block is counted in reads rather than elements, so one setting loads the same bytes a step
-/// at every element size and on every device: a read along the axis the weight runs is a vector
+/// at every element size and on every device: a read along the axis the rhs runs is a vector
 /// as wide as the device reads its element, and a read across it is one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleMicrokernelSettings {
-    /// The output's columns one unit reads a step: vectors of them for a row weight, and one
-    /// column for a col weight, which declines more.
+    /// The output's columns one unit reads a step: vectors of them for a row rhs, and one
+    /// column for a col rhs, which declines more.
     pub columns: NonZeroUsize,
     /// The steps of `K` one unit reads a step, whose loads are issued together rather than left
-    /// to the compiler's unrolling: vectors down `K` for a col weight, single rows of `K` for a
-    /// row weight, which the lhs is read beside in one vector.
+    /// to the compiler's unrolling: vectors down `K` for a col rhs, single rows of `K` for a
+    /// row rhs, which the lhs is read beside in one vector.
     pub depth: NonZeroUsize,
     /// How the plane's units split `K`: how many of them share one run of columns.
     pub k_split: PlaneShuffleKSplit,
@@ -46,7 +46,7 @@ impl PlaneShuffleMicrokernelSettings {
         ..Self::DEFAULT
     };
 
-    /// Two columns a unit, which a col weight declines.
+    /// Two columns a unit, which a col rhs declines.
     pub const TWO_COLUMNS: Self = Self {
         columns: NonZeroUsize::new(2).unwrap(),
         ..Self::DEFAULT
@@ -58,7 +58,7 @@ impl PlaneShuffleMicrokernelSettings {
         ..Self::DEFAULT
     };
 
-    /// One column eight reads deep by units that each own their columns: a row weight's columns
+    /// One column eight reads deep by units that each own their columns: a row rhs's columns
     /// read at eight rows of `K` with the lhs beside them in one vector.
     pub const EIGHT_READS_ONE_TRANSACTION: Self = Self {
         depth: NonZeroUsize::new(8).unwrap(),
@@ -66,7 +66,7 @@ impl PlaneShuffleMicrokernelSettings {
         ..Self::DEFAULT
     };
 
-    /// One read deep by a transaction's worth of units: on a col weight, the most units that
+    /// One read deep by a transaction's worth of units: on a col rhs, the most units that
     /// share a column, so the most columns a plane.
     pub const ONE_READ_ONE_TRANSACTION: Self = Self {
         depth: NonZeroUsize::MIN,
@@ -75,7 +75,7 @@ impl PlaneShuffleMicrokernelSettings {
     };
 
     /// Sixteen columns a unit at `f16` where a read is 16 bytes, one row of `K` deep, by the whole
-    /// plane: the block a row weight wins with.
+    /// plane: the block a row rhs wins with.
     pub const TWO_ROW_VECTORS: Self = Self {
         columns: NonZeroUsize::new(2).unwrap(),
         depth: NonZeroUsize::MIN,
@@ -97,8 +97,8 @@ impl PlaneShuffleMicrokernelSettings {
     };
 
     /// `columns` steps of `N` a unit and one step of `K` a turn, by the whole plane,
-    /// `rows_per_unit` rows a unit or every row where `None`: what a packed weight is read in, its
-    /// step the weight's ([`MatmulStep`](crate::matmul::MatmulStep)).
+    /// `rows_per_unit` rows a unit or every row where `None`: what a packed rhs is read in, its
+    /// step the rhs's ([`MatmulStep`](crate::matmul::MatmulStep)).
     ///
     /// # Panics
     ///
@@ -149,15 +149,15 @@ pub enum PlaneShuffleKSplit {
     /// The whole plane: one run of columns a plane, its units reading `K` together.
     WholePlane,
     /// The fewest units whose steps fill one memory transaction between them, and the rest of the
-    /// plane beside them along `N`. A col weight's columns run down `K`, so it takes as many units
-    /// as one transaction holds a column's step; a row weight's run along `N`, where the units
+    /// plane beside them along `N`. A col rhs's columns run down `K`, so it takes as many units
+    /// as one transaction holds a column's step; a row rhs's run along `N`, where the units
     /// beside each other already fill it, so it takes one.
     OneTransaction,
 }
 
 impl PlaneShuffleKSplit {
     /// Units along `K` on `hw`, a plane `plane_width` units wide, for a block `depth` reads deep of
-    /// `item`'s weight: a divisor of the plane, since the rest of it lies along `N`.
+    /// `item`'s rhs: a divisor of the plane, since the rest of it lies along `N`.
     pub fn units(
         self,
         hw: &Hardware,

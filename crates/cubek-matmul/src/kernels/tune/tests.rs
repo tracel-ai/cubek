@@ -96,11 +96,11 @@ mod candidate {
         );
     }
 
-    /// A col weight is read where it lies, so the key that names one prepares the launch its
+    /// A col rhs is read where it lies, so the key that names one prepares the launch its
     /// tensors will: the cube routine's cmma fragment and the unit routine's register block both
     /// bind it in its buffer's order, in vectors along `K`.
     #[test]
-    fn a_col_weight_key_prepares_the_launch_its_tensors_will() {
+    fn a_col_rhs_key_prepares_the_launch_its_tensors_will() {
         let col = MatmulTuneKey::new(
             F16,
             256,
@@ -169,7 +169,7 @@ mod candidate {
         assert_ne!(single.0.partitioning, batched.0.partitioning);
     }
 
-    /// The few-rows table's candidates: the shuffle routines, every quantized weight launched as stored.
+    /// The few-rows table's candidates: the shuffle routines, every packed rhs launched as stored.
     mod few_rows {
         use super::*;
         use crate::kernels::CubeShuffleMatmulRoutine;
@@ -178,7 +178,7 @@ mod candidate {
         use cubecl::tile::Axis;
         use cubek_std::devices;
 
-        /// A key over an `f16` product of `batch` batches of `m` rows against a `k × n` weight whose
+        /// A key over an `f16` product of `batch` batches of `m` rows against a `k × n` rhs whose
         /// buffer runs along `rhs`, or along neither axis for `None`.
         fn key(batch: usize, m: usize, n: usize, k: usize, rhs: Option<Axis>) -> MatmulTuneKey {
             MatmulTuneKey::new(
@@ -192,7 +192,7 @@ mod candidate {
             )
         }
 
-        /// A key over `m` rows of `f16` against a `k × n` q4 weight packed along `K`.
+        /// A key over `m` rows of `f16` against a `k × n` q4 rhs packed along `K`.
         fn quantized_key(m: usize, n: usize, k: usize) -> MatmulTuneKey {
             let scheme = QuantScheme::default()
                 .with_value(QuantValue::Q4S)
@@ -222,8 +222,8 @@ mod candidate {
             assert_eq!(listed, PlaneShuffleMatmulRoutine.settings(&hw));
         }
 
-        /// A key's batches are read as rows against one weight, as the whole-rows tensors merge an
-        /// activation's leading dims.
+        /// A key's batches are read as rows against one rhs, as the whole-rows tensors merge an
+        /// lhs's leading dims.
         #[test]
         fn a_keys_batches_are_read_as_rows() {
             let plane =
@@ -231,12 +231,12 @@ mod candidate {
                     .swap_remove(0);
             let (blueprint, _) = plane
                 .blueprint(&key(2, 4, 2048, 2048, Some(K)))
-                .expect("eight rows against a col weight run here");
+                .expect("eight rows against a col rhs run here");
             assert_eq!(blueprint.microkernel.rows, 8);
         }
 
         /// Where no shuffle routine serves such a product, or the device runs none of it, a candidate
-        /// is tried last and claims no launch: a quantized weight, a weight lined along neither axis,
+        /// is tried last and claims no launch: a quantized rhs, an rhs lined along neither axis,
         /// more rows than a work item holds, a device that commits to no plane width.
         #[test]
         fn a_candidate_serving_nothing_is_tried_last_and_claims_no_launch() {

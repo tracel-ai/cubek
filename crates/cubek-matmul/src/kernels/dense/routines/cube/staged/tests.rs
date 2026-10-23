@@ -112,12 +112,12 @@ mod base {
         settings
     }
 
-    /// Every setting prepares on a row and a col weight, padded stages and all, but a ring whose
+    /// Every setting prepares on a row and a col rhs, padded stages and all, but a ring whose
     /// stages the device's shared memory cannot hold; the default always prepares.
     #[test]
     fn every_setting_prepares_where_the_instruction_is_offered() {
         let hw = offering(devices::strix_halo());
-        for problem in [problem(), col_weight()] {
+        for problem in [problem(), col_rhs()] {
             for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
                 let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
                 let outgrown = matches!(prepared, Err(Refusal::SharedMemoryPastDevice { .. }));
@@ -155,7 +155,7 @@ mod base {
             hw
         };
         let prepared =
-            |hw: &Hardware, settings| CubeStagedMatmulRoutine.prepare(hw, &col_weight(), &settings);
+            |hw: &Hardware, settings| CubeStagedMatmulRoutine.prepare(hw, &col_rhs(), &settings);
         assert!(prepared(&small, one_stage).is_ok());
         assert!(matches!(
             prepared(&small, two_stages),
@@ -317,7 +317,7 @@ mod base {
     }
 
     /// On a device with a warpgroup MMA, only the setting that asks for it runs it, on a col
-    /// weight, and declines a row weight it cannot read; every other setting prepares as it does
+    /// rhs, and declines a row rhs it cannot read; every other setting prepares as it does
     /// without one, on any other instruction.
     #[test]
     fn only_the_setting_that_asks_for_it_runs_the_warpgroup_mma() {
@@ -327,7 +327,7 @@ mod base {
             settings.microkernel.plane.transport == PlaneFragmentTransport::Wgmma
         };
         assert_eq!(settings.iter().filter(|s| asks(s)).count(), 1);
-        for (problem, col) in [(problem(), false), (col_weight(), true)] {
+        for (problem, col) in [(problem(), false), (col_rhs(), true)] {
             for (position, settings) in settings.iter().enumerate() {
                 let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
                 match (asks(settings), col, prepared) {
@@ -344,15 +344,15 @@ mod base {
                         "{settings}"
                     ),
                     (false, _, Err(Refusal::SharedMemoryPastDevice { .. })) if position > 0 => {}
-                    (_, _, prepared) => panic!("{settings} on a col weight {col}: {prepared:?}"),
+                    (_, _, prepared) => panic!("{settings} on a col rhs {col}: {prepared:?}"),
                 }
             }
         }
     }
 
-    /// A `128 × 256 × 512` `f16` product whose rhs is a col weight: an `[n, k]` buffer behind the
+    /// A `128 × 256 × 512` `f16` product whose rhs is a col rhs: an `[n, k]` buffer behind the
     /// `[k, n]` view.
-    fn col_weight() -> MatmulRoutineProblem {
+    fn col_rhs() -> MatmulRoutineProblem {
         use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
         MatmulRoutineProblem::from(&MatmulShape {
             m: 128,
@@ -365,15 +365,15 @@ mod base {
         })
     }
 
-    /// Both matrix transports load their `B` col-major, so a col weight is bound in its buffer's
+    /// Both matrix transports load their `B` col-major, so a col rhs is bound in its buffer's
     /// order and read in lines along `K`; the software instruction reads the order the product
-    /// names, so the same weight is read one element at a time.
+    /// names, so the same rhs is read one element at a time.
     #[test]
-    fn the_matrix_transports_bind_a_col_weight_in_its_buffers_order() {
+    fn the_matrix_transports_bind_a_col_rhs_in_its_buffers_order() {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         let prepared = |hw: Hardware| {
             CubeStagedMatmulRoutine
-                .prepare(&hw, &col_weight(), &settings)
+                .prepare(&hw, &col_rhs(), &settings)
                 .expect("the routine runs here")
                 .0
         };
@@ -403,22 +403,22 @@ mod base {
     }
 
     /// The software instruction's register block lines its accumulator with the rhs, so under a
-    /// col weight read one element at a time the output is written one element at a time too.
+    /// col rhs read one element at a time the output is written one element at a time too.
     #[test]
     fn the_software_instruction_lines_its_output_with_the_rhs() {
         let (blueprint, _) = CubeStagedMatmulRoutine
             .prepare(
                 &devices::strix_halo(),
-                &col_weight(),
+                &col_rhs(),
                 &CubeStagedMatmulRoutineSettings::DEFAULT,
             )
             .expect("the software instruction runs everywhere");
         assert_eq!((blueprint.widths.rhs, blueprint.widths.out), (1, 1));
     }
 
-    /// A row weight is bound as the product names it whatever the instruction.
+    /// A row rhs is bound as the product names it whatever the instruction.
     #[test]
-    fn a_row_weight_is_bound_as_the_product_names_it() {
+    fn a_row_rhs_is_bound_as_the_product_names_it() {
         let problem = MatmulRoutineProblem::dense(128, 256, 512, F16, MatmulLayout::Row);
         for hw in [
             offering(devices::strix_halo()),
@@ -641,7 +641,7 @@ mod base {
     /// Every listed setting prefetching into registers, where its ring keeps that prefetch, holds
     /// no more of both operands a unit than the tile DSL fetches, at the widths the blueprint
     /// settled: what the tile DSL checks at expansion, where a refusal is a launch that writes
-    /// nothing. On devices of three plane widths, over a row weight, a col weight and a ragged
+    /// nothing. On devices of three plane widths, over a row rhs, a col rhs and a ragged
     /// problem.
     #[test]
     fn every_kept_register_prefetch_fits_what_cubek_fetches() {
@@ -659,7 +659,7 @@ mod base {
             for settings in prefetching {
                 for problem in [
                     MatmulRoutineProblem::dense(2048, 2048, 2048, F16, MatmulLayout::Row),
-                    col_weight(),
+                    col_rhs(),
                     problem(),
                 ] {
                     let Ok((blueprint, grid)) =
@@ -798,7 +798,7 @@ mod base {
             },
             ..aligned.clone()
         };
-        // A weight stored in tiles no partitioning describes, read one element at a time: no
+        // An rhs stored in tiles no partitioning describes, read one element at a time: no
         // descriptor box addresses a tile, whatever its piece.
         let stored = MatmulRoutineProblem {
             elem_alignments: MatmulOperands {
@@ -862,7 +862,7 @@ mod base {
                 &stored,
                 CubeStagedTmaRefusal::StoredInTiles(MatmulOperand::Rhs),
             ),
-            // A fragment reads a row weight's stage in blocks of its tile along `n`, which split
+            // A fragment reads a row rhs's stage in blocks of its tile along `n`, which split
             // the rows a box lands whole.
             (
                 offering(devices::h100()),
@@ -878,11 +878,11 @@ mod base {
         }
     }
 
-    /// A col weight bound in its buffer's order stages whole rows of `K` under either matrix
+    /// A col rhs bound in its buffer's order stages whole rows of `K` under either matrix
     /// transport, so a box lands both operands' stages: in order for `cmma`, which reads a row off
     /// a pointer and a stride, swizzled as the descriptor swizzles them for the tile DSL's `mma`.
     #[test]
-    fn a_col_weights_stages_land_by_tma_under_a_matrix_instruction() {
+    fn a_col_rhs_stages_land_by_tma_under_a_matrix_instruction() {
         let settings = default_with(|microkernel| {
             microkernel.ring = StageRing::DOUBLE;
             microkernel.fill = CubeStagedFill {
@@ -896,7 +896,7 @@ mod base {
             (through_mma, RowChunks::Swizzled),
         ] {
             let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &col_weight(), &settings)
+                .prepare(&hw, &col_rhs(), &settings)
                 .expect("the routine runs here");
             assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
             assert_eq!(
@@ -1189,7 +1189,7 @@ mod base {
     #[test]
     fn a_stage_counts_a_chunk_after_every_block_row_only_when_padded() {
         let hw = offering(devices::strix_halo());
-        for problem in [problem(), col_weight()] {
+        for problem in [problem(), col_rhs()] {
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
                 .expect("the default prepares");
@@ -1339,8 +1339,8 @@ mod base {
 
     /// Two NVFP4 inputs the block-scaled instruction reads as stored are estimated like any staged
     /// product. An estimate is what a table ranks a routine's candidates by, and one that took
-    /// them for a weight its stages decode would ask for the scale blocks a stage of steps never
-    /// holds.
+    /// them for a packed input its stages decode would ask for the scale blocks a stage of steps
+    /// never holds.
     #[test]
     fn an_nvfp4_product_read_as_stored_is_estimated() {
         use crate::kernels::select::packed::nvfp4_scheme;
@@ -1378,10 +1378,11 @@ mod base {
         assert!(estimate.work.is_some());
     }
 
-    /// A weight its stages decode is estimated a stage of scale blocks at a time: as many stages
-    /// as `K` holds stages of the microkernel's blocks, split between the planes sharing `K`.
+    /// A packed input its stages decode is estimated a stage of scale blocks at a time: as many
+    /// stages as `K` holds stages of the microkernel's blocks, split between the planes sharing
+    /// `K`.
     #[test]
-    fn a_decoded_weight_is_estimated_in_stages_of_its_blocks() {
+    fn a_decoded_input_is_estimated_in_stages_of_its_blocks() {
         use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
         use cubek_microkernel::matmul::stored::Operand;
         use cubek_microkernel::matmul::stored::Packing;
@@ -1425,7 +1426,7 @@ mod base {
                 continue;
             };
             let CubeStagedDepth::ScaleBlocks(blocks) = blueprint.microkernel.depth else {
-                panic!("{settings}: a decoded weight is staged in scale blocks");
+                panic!("{settings}: a decoded input is staged in scale blocks");
             };
             let block = blueprint.partitioning.cube_box().extent(KI);
             let planes_along_k = blueprint.microkernel.planes_along_k.get();

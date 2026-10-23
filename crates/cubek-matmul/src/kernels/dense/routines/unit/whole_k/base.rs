@@ -46,7 +46,7 @@ pub struct UnitWholeKMatmulRoutineSettings {
 }
 
 impl UnitWholeKMatmulRoutineSettings {
-    /// The setting that reads a col weight, the layout weights are stored in, fastest.
+    /// The setting that reads a col rhs, the layout an rhs is most often stored in, fastest.
     pub const DEFAULT: Self = Self {
         microkernel: UnitWholeKMicrokernelSettings::DEFAULT,
         planes: NonZeroUsize::new(4).unwrap(),
@@ -110,7 +110,7 @@ impl Routine for UnitWholeKMatmulRoutine {
         microkernel.vectorize(&(), vectorization);
     }
 
-    /// Each unit reads every row of the lhs along all of `K`, and its own columns of the weight
+    /// Each unit reads every row of the lhs along all of `K`, and its own columns of the rhs
     /// once, from global memory. Then its microkernel, for the work.
     fn estimate(
         &self,
@@ -233,7 +233,7 @@ mod tests {
         [devices::rdna_range(), devices::wgpu_no_subgroups()]
     }
 
-    /// A decode projection of `m` rows, `k` deep and `n` wide, its weight laid as `rhs_layout`.
+    /// A decode projection of `m` rows, `k` deep and `n` wide, its rhs laid as `rhs_layout`.
     fn decode(m: usize, n: usize, k: usize, rhs_layout: MatmulLayout) -> MatmulRoutineProblem {
         MatmulRoutineProblem::dense(m, n, k, F16, rhs_layout)
     }
@@ -266,7 +266,7 @@ mod tests {
     }
 
     /// Where the shuffles decline, it serves every decode projection: one to eight rows of `qkv` to
-    /// `down`, against a weight laid either way, at its default.
+    /// `down`, against an rhs laid either way, at its default.
     #[test]
     fn the_default_prepares_every_few_row_projection_where_the_shuffles_decline() {
         let settings = UnitWholeKMatmulRoutineSettings::DEFAULT;
@@ -286,7 +286,7 @@ mod tests {
         }
     }
 
-    /// Every setting it lists serves a decode projection, against a weight laid either way.
+    /// Every setting it lists serves a decode projection, against an rhs laid either way.
     #[test]
     fn every_setting_serves_both_layouts() {
         for hw in uncommitted() {
@@ -326,10 +326,10 @@ mod tests {
         );
     }
 
-    /// A col weight is read in vectors along `K`, contracted with the lhs's, never one element at a
-    /// time: the read the unit floor makes of the same weight.
+    /// A col rhs is read in vectors along `K`, contracted with the lhs's, never one element at a
+    /// time: the read the unit floor makes of the same rhs.
     #[test]
-    fn a_col_weight_is_read_in_vectors_along_k() {
+    fn a_col_rhs_is_read_in_vectors_along_k() {
         for hw in uncommitted() {
             let (blueprint, _) = UnitWholeKMatmulRoutine
                 .prepare(
@@ -337,7 +337,7 @@ mod tests {
                     &decode(1, 2048, 2048, MatmulLayout::Col),
                     &UnitWholeKMatmulRoutineSettings::DEFAULT,
                 )
-                .expect("the default serves a col weight");
+                .expect("the default serves a col rhs");
             assert!(blueprint.widths.rhs > 1, "{hw:?}");
             assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs, "{hw:?}");
         }
@@ -352,7 +352,7 @@ mod tests {
         let prepare = |hw: Hardware| {
             UnitWholeKMatmulRoutine
                 .prepare(&hw, &problem, &settings)
-                .expect("the default serves a row weight")
+                .expect("the default serves a row rhs")
         };
         let (wave32, wave32_grid) = prepare(devices::strix_halo());
         let (wave64, wave64_grid) = prepare({

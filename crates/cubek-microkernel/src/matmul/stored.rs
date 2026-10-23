@@ -13,9 +13,9 @@ use cubek_std::matmul_axes::{K, blocked};
 /// The shape of the smallest indivisible tile of something: one value on every
 /// axis but the ones it names.
 ///
-/// A read of a `q4` weight brings eight values along the axis its words run
+/// A read of a `q4` input brings eight values along the axis its words run
 /// along and one of every other, so its tile is `{k: 8}`. A scale of that
-/// weight covers thirty-two along the same axis and one column, so its tile is
+/// input covers thirty-two along the same axis and one column, so its tile is
 /// `{k: 32}`. Nothing here names a matmul axis, so an attention operand states
 /// its own the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]

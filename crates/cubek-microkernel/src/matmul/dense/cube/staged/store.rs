@@ -42,8 +42,8 @@ pub enum CubeStagedTmaStoreRefusal {
     UnalignedStart,
     /// The box's edge is past what one descriptor's box holds.
     BoxPastDescriptor,
-    /// The product is a packed one's, its box stated in the blocks the weight's scales cut and
-    /// the positions inside one, where a descriptor's box is the output's rows and columns.
+    /// The product is a packed one's, its box stated in the blocks the packed input's scales cut
+    /// and the positions inside one, where a descriptor's box is the output's rows and columns.
     BlockSplit,
 }
 

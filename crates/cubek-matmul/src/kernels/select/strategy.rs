@@ -58,7 +58,7 @@ pub enum MatmulKernelHeuristic {
     /// The routines in [`kernels`](crate::kernels) only: a branch runs one, and another of them
     /// where it declines (the plane shuffle its fixed fallback, the packed plane shuffle the
     /// dequantized float pair). The one foreign kernel it reaches is the framework's
-    /// dequantize, where a quantized weight is materialized.
+    /// dequantize, where a quantized input is materialized.
     Tile,
     /// Everything, the multi-level routines included. The rules still pick the
     /// memory-bound kernel where one serves; what they have no rule for —
@@ -82,24 +82,24 @@ pub enum MatmulKernel {
     /// stored in row-first tiles as well as in rows, and takes the elements
     /// every routine takes.
     UnitRegisters,
-    /// The memory-bound plane routine: few enough rows to read the weight about
+    /// The memory-bound plane routine: few enough rows to read the rhs about
     /// once, every row held against each read while a plane's units split the
-    /// contraction. `PlaneShuffleMatmulRoutine`, on a float weight or on a
+    /// contraction. `PlaneShuffleMatmulRoutine`, on a float rhs or on a
     /// packed one read as stored. Runs the first of its settings that serves
     /// the product.
     // A strategy written down under the pin's earlier name still reads as this one.
     #[serde(alias = "PlaneFold")]
     PlaneShuffle,
     /// The multi-level routines' own selection ([`Strategy::Auto`](crate::strategy::Strategy::Auto))
-    /// — its rules, no autotune, a quantized weight read as stored. The baseline the groups are
+    /// — its rules, no autotune, a quantized input read as stored. The baseline the groups are
     /// measured against, and what [`Heuristic(Cubek)`](MatmulKernelHeuristic::Cubek)
     /// falls through to.
     CubekAuto,
-    /// An NVFP4 weight multiplied on the GPU's 4-bit tensor cores: the activation is rounded to
-    /// NVFP4 first, since the 4-bit instruction takes 4-bit numbers on both sides, and the weight
-    /// is read as it is stored. Rounding the activation changes what the product computes, so no
-    /// policy runs it: an NVFP4 weight multiplies a 16-bit activation everywhere else. Named
-    /// here for a benchmark or a test; an NVFP4 weight only, on a GPU with the instruction.
+    /// An NVFP4 input multiplied on the GPU's 4-bit tensor cores: a float input is rounded to
+    /// NVFP4 first, since the 4-bit instruction takes 4-bit numbers on both sides, and the packed
+    /// one is read as it is stored. Rounding the float input changes what the product computes, so
+    /// no policy runs it: an NVFP4 input multiplies a 16-bit one everywhere else. Named
+    /// here for a benchmark or a test; NVFP4 inputs only, on a GPU with the instruction.
     Nvfp4TensorCores,
 }
 

@@ -181,7 +181,7 @@ impl Routine for PlaneFragmentMatmulRoutine {
 
     /// Each plane's ring, staging a step of its own tile's `K` at a time: rows of the lhs
     /// contiguous along the whole of `K` a cube walks, of the rhs along the tile's `n`, or along
-    /// the whole of `K` for a col weight bound in its buffer's order, every element read once per
+    /// the whole of `K` for a col rhs bound in its buffer's order, every element read once per
     /// plane that reads it. Its drain, each plane writing its tile a
     /// row of it at a time. Then its microkernel, for the work.
     fn estimate(

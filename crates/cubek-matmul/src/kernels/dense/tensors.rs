@@ -53,7 +53,7 @@ pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
 
 /// What a routed or grouped product declines before preparing anything: an operand stored in
 /// tiles that its routines would read in rows, a slab at a time. That is either grouped operand,
-/// and the routed product's stack; a routed activation is laid back in rows instead.
+/// and the routed product's stack; a routed lhs is laid back in rows instead.
 pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Refusal = Refusal::Declined {
     why: "the routed and grouped products read their operands in rows, slab by slab; store \
               them untiled",
@@ -72,10 +72,10 @@ pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
     why: "the microkernel gemm's operands share a rank",
 };
 
-/// What a launch holding every row whole declines before preparing anything: a weight contiguous
+/// What a launch holding every row whole declines before preparing anything: an rhs contiguous
 /// along neither of its axes, or one stored in tiles, which no routine holding every row whole reads in vectors.
 pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the microkernel gemv reads one weight matrix contiguous along `k` or `n`",
+    why: "the microkernel gemv reads one rhs matrix contiguous along `k` or `n`",
 };
 
 /// The tensors of one product, the output among them, from which the problem they state is read
@@ -90,15 +90,15 @@ pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined 
 /// - **Rows tiled.** An operand is read where it lies whenever no two of its indices address one
 ///   element, a transposed or row-pitched one included; only a broadcast or a view aliasing itself
 ///   is copied row-major first. Copying the rest would move all of it on every launch.
-/// - **Every row whole.** The activation's leading dims are merged into rows at the step it really
-///   has, and copied first only where they do not merge; the weight is read as the one matrix it
-///   holds, where it lies, since copying it would move the whole weight on every launch, which is
+/// - **Every row whole.** The lhs's leading dims are merged into rows at the step it really
+///   has, and copied first only where they do not merge; the rhs is read as the one matrix it
+///   holds, where it lies, since copying it would move the whole rhs on every launch, which is
 ///   the whole cost of a product of few rows; the output is bound as its rows.
 ///
 /// Each input is read as it is stored ([`StoredTensor`]): float ones as above, or, where either is
 /// packed, each packed one bound as one tile of its words under its scales over the problem's
 /// block-split space, the float ones restated over the same space. Against a packed input every
-/// row is held whole, the activation's leading dims merged: the problem it states has no batches,
+/// row is held whole, the lhs's leading dims merged: the problem it states has no batches,
 /// so a tiled launch reads it alike. Either way every input binds as one tile, so a kernel reads
 /// it as the tile it is.
 #[derive(Clone)]
@@ -126,7 +126,7 @@ impl<Out: core::fmt::Debug> core::fmt::Debug for MatmulTensors<Out> {
 
 impl MatmulTensors {
     /// The product of `lhs` and `rhs`, both on `client`'s device, as a launch on `M` reads it, its
-    /// output allocated in the activation's element: float inputs holding the rows as `M`'s
+    /// output allocated in the lhs's element: float inputs holding the rows as `M`'s
     /// [`ROWS_KIND`](MatmulMicrokernel::ROWS_KIND) says, a packed one every row whole.
     ///
     /// # Errors
@@ -156,7 +156,7 @@ impl MatmulTensors {
         }
     }
 
-    /// [`new`](Self::new) into an output of `out`: what a product whose activation is packed, and
+    /// [`new`](Self::new) into an output of `out`: what a product whose lhs is packed, and
     /// so names no float element, is written in.
     ///
     /// # Errors
@@ -211,9 +211,9 @@ impl MatmulTensors {
     }
 
     /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch on `M`
-    /// reads them, written into `out`, `[batches.., rows, n]` in the activation's element, which
+    /// reads them, written into `out`, `[batches.., rows, n]` in the lhs's element, which
     /// the caller allocated as its product lies: a grouped one's slabs side by side, say. The
-    /// activation's batch dims broadcast against the table's. Under [`MatmulIndex::Slab`] the rhs
+    /// lhs's batch dims broadcast against the table's. Under [`MatmulIndex::Slab`] the rhs
     /// is the stack: a float one `[slabs, k, n]`, read where it lies; a packed one read as its
     /// slabs ([`PackedTensor::stacked`]), every row of a batch then held whole.
     ///
@@ -303,7 +303,7 @@ impl MatmulTensors {
     }
 
     /// `out`, the output of `lhs` against one `[k, n]` matrix per batch of `table`, checked to be
-    /// `[batches.., rows, n]` in the activation's element.
+    /// `[batches.., rows, n]` in the lhs's element.
     ///
     /// # Errors
     ///
@@ -311,7 +311,7 @@ impl MatmulTensors {
     ///
     /// # Panics
     ///
-    /// On an activation whose contraction is not `k`.
+    /// On an lhs whose contraction is not `k`.
     fn indexed_output(
         lhs: &PlainTensor,
         k: usize,
@@ -415,7 +415,7 @@ impl MatmulTensors {
         }
     }
 
-    /// The element a product beside a packed input is written in: the activation's, or, for a
+    /// The element a product beside a packed input is written in: the lhs's, or, for a
     /// packed one, which names none, the element its words unpack into
     /// ([`PACKED`](MatmulRoutineProblem::PACKED)).
     pub(super) fn packed_output(lhs: &StoredTensor) -> ElemType {
@@ -462,7 +462,7 @@ impl MatmulTensors {
             StoredTensor::Plain(lhs) => lhs.shape().to_vec(),
             StoredTensor::Packed(lhs) => vec![lhs.extent(M), k],
         };
-        *shape.last_mut().expect("an activation has a rank") = rhs.extent([K, N], N);
+        *shape.last_mut().expect("the lhs has a rank") = rhs.extent([K, N], N);
         let (tensor, bound) = PlainTensor::empty(client, shape.into(), out);
         let tensor = Some(tensor);
         Ok(Self {
@@ -541,7 +541,7 @@ impl MatmulTensors {
 impl MatmulTensors<Geometry> {
     /// The product of `lhs` and `rhs` as a launch on `M` reads it, handed to a sink the caller
     /// binds: nothing is allocated, and the output is laid out densely, row-major,
-    /// in the activation's element, as rows where the launch reads every row whole.
+    /// in the lhs's element, as rows where the launch reads every row whole.
     ///
     /// # Errors
     ///
@@ -924,7 +924,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     }
 
     /// The axes the problem's batch dims are labelled with, read off the operands' rank without
-    /// stating the whole problem ([`MatmulRoutineProblem::batch_axes`]): the activation's, or a
+    /// stating the whole problem ([`MatmulRoutineProblem::batch_axes`]): the lhs's, or a
     /// table's dims, which are the batches.
     fn batch_axes(&self) -> Vec<Axis> {
         let dims = match &self.table {
@@ -957,7 +957,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// The lhs's and the rhs's tensor maps, each descriptor moving `stage`'s box of its operand,
     /// one matrix of it read one element wide, so it lands as `storage` holds the stage: the rhs
-    /// described in `rhs` order, a col weight as the `[n, k]` matrix its buffer is, and each box
+    /// described in `rhs` order, a col rhs as the `[n, k]` matrix its buffer is, and each box
     /// swizzled as the tile DSL says the stage keeps its rows (`StageStorage::tma_swizzle`). What a
     /// routine binds where the TMA engine fills its stages.
     ///
@@ -1248,7 +1248,7 @@ impl Operands {
         })
     }
 
-    /// The activation merged into `[m, k]` rows, the weight its one `[k, n]` matrix, the output
+    /// The lhs merged into `[m, k]` rows, the rhs its one `[k, n]` matrix, the output
     /// allocated as `[.., n]` and bound as `[m, n]` rows.
     fn whole(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
@@ -1274,7 +1274,7 @@ impl Operands {
         );
         let m = lhs_shape.num_elements() / k.max(1);
         let mut out_shape = lhs_shape.to_vec();
-        *out_shape.last_mut().expect("an activation has a rank") = n;
+        *out_shape.last_mut().expect("the lhs has a rank") = n;
         Ok(Self {
             lhs: lhs.as_rows(m, k),
             rhs: weight,
@@ -1284,7 +1284,7 @@ impl Operands {
     }
 
     /// The rows and the line the output is bound as, where the launch reads every row whole: the
-    /// activation's rows, the weight's columns.
+    /// lhs's rows, the rhs's columns.
     fn out_rows(&self) -> Option<[usize; 2]> {
         match self.rows_kind {
             MatmulRowsKind::Whole => Some([self.lhs.shape()[0], self.rhs.shape()[1]]),
@@ -1318,7 +1318,7 @@ impl Operands {
     }
 
     /// `lhs` where its leading dims merge into rows of its last at one step, a row-major copy of it
-    /// where they do not: an activation the launch reads as rows either way.
+    /// where they do not: an lhs the launch reads as rows either way.
     fn with_mergeable_rows(client: &Client, lhs: PlainTensor) -> PlainTensor {
         let (shape, strides) = (lhs.shape(), lhs.binding.strides.to_vec());
         let rank = shape.rank();
@@ -1411,12 +1411,12 @@ mod tests {
         }
     }
 
-    /// A row weight with a pitch along `K` has one alignment whichever order binds it: its buffer
+    /// A row rhs with a pitch along `K` has one alignment whichever order binds it: its buffer
     /// steps in the order the product names it. That holds for one matrix, a pitched one and every
-    /// slab view of a stack, so the shuffle microkernels, which bind a row weight as stated, read it
+    /// slab view of a stack, so the shuffle microkernels, which bind a row rhs as stated, read it
     /// at the widths its buffer gives.
     #[test]
-    fn a_row_weight_aligns_alike_in_either_order() {
+    fn a_row_rhs_aligns_alike_in_either_order() {
         let (k, n, slabs, pitch) = (64, 48, 4, 3);
         for strides in [[n, 1], [n + pitch, 1]] {
             assert_eq!(

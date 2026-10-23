@@ -32,8 +32,8 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 ///
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
 /// dispatches, and the launch around those is written once, here, whether the microkernel holds
-/// every row whole or tiles them, and however the weight is stored: its kernel reads the weight
-/// as the tile it is bound as. A routine declines a problem whose weight it does not read.
+/// every row whole or tiles them, and however each input is stored: its kernel reads each input
+/// as the tile it is bound as. A routine declines a problem whose inputs it does not read.
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
 {
@@ -157,7 +157,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     }
 
     /// [`launch_first_served_on`](Self::launch_first_served_on) into an output of `out`: what a
-    /// caller naming the routine and no setting runs on a packed activation
+    /// caller naming the routine and no setting runs on a packed lhs
     /// ([`MatmulTensors::written_in`]).
     ///
     /// # Errors

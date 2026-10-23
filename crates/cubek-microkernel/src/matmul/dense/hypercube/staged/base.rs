@@ -69,7 +69,7 @@ impl HypercubeStagedMicrokernelSettings {
     }
 
     /// The default's grid `depth` instruction steps of `K` a stage on each of `planes`: a col
-    /// weight runs along `K`, which a stage one fragment deep reads in short runs.
+    /// rhs runs along `K`, which a stage one fragment deep reads in short runs.
     pub const fn deep(depth: usize, planes: (usize, usize)) -> Self {
         Self::boxed(PlaneFragmentMicrokernelSettings::grid(2, 4, depth), planes)
     }

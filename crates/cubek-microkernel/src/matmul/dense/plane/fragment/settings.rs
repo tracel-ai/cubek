@@ -31,7 +31,7 @@ pub enum PlaneFragmentDepth {
     /// Every step of a stage: one grid of fragments as deep as the plane's steps, which the
     /// instruction contracts one step after another into the same sum, each step's registers
     /// loaded out of the stage as an instruction-deep fragment's are. A packed operand decodes in
-    /// registers as each fragment loads, which is what lets an NVFP4 weight be staged as it is
+    /// registers as each fragment loads, which is what lets an NVFP4 input be staged as it is
     /// stored under a 16-bit instruction, or read straight from memory a window of `K` at a time.
     /// Only the manual-mma instruction offers it.
     Stage,
@@ -59,7 +59,7 @@ impl PlaneFragmentMicrokernelSettings {
 
     /// `along_n` fragments a plane along `n` and one along `m`, each a window `depth` steps of `K`
     /// deep, reached through the tile DSL's transport: the grid a plane holds against a packed
-    /// weight it reads straight from memory, decoding it as each fragment loads.
+    /// rhs it reads straight from memory, decoding it as each fragment loads.
     ///
     /// # Panics
     ///

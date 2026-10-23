@@ -25,7 +25,7 @@ pub const KI: Axis = Axis(17);
 pub const NB: Axis = Axis(18);
 /// The position inside a block of [`N`]. See [`NB`].
 pub const NI: Axis = Axis(19);
-/// [`KB`]'s twin on the activation's rows: which block of [`M`] a position falls in. A per-token
+/// [`KB`]'s twin on the lhs's rows: which block of [`M`] a position falls in. A per-token
 /// scale spans `MB` at a block of one.
 pub const MB: Axis = Axis(20);
 /// The position inside a block of [`M`]. See [`MB`].
@@ -35,7 +35,7 @@ pub const MI: Axis = Axis(21);
 pub const GROUP: Axis = batch_axis(0);
 /// Which of a row's selected experts: a routed matmul's second output axis.
 pub const SLOT: Axis = Axis(22);
-/// Which expert of a stacked weight: a routed walk visits the one a row's slot names.
+/// Which expert of a stacked rhs: a routed walk visits the one a row's slot names.
 pub const EXPERT: Axis = Axis(23);
 
 /// The label of the `index`th batch dim, outermost first.

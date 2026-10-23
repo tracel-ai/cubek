@@ -151,9 +151,9 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// The order this instruction reads operands laid out as `layouts` in: a col weight in its
+    /// The order this instruction reads operands laid out as `layouts` in: a col rhs in its
     /// buffer's order where the fragment loads `B` col-major, which both matrix transports do, so
-    /// the stage is filled along the weight's own lines; the others as the product names them. The
+    /// the stage is filled along the rhs's own lines; the others as the product names them. The
     /// software instruction reads the role's own order, and under it a transposed tile would be a
     /// wrong answer rather than a slow one.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<MatmulOrder> {
@@ -184,7 +184,7 @@ impl PlaneFragmentInstruction {
     ///
     /// Measured against padding: an L4's shared loads go from conflicted to conflict-free at a
     /// level time; gfx1151's bank conflicts fall to zero, 8 to 20% faster on four of six boxes,
-    /// the others within noise (a stage 64 deep along a col weight's `K` up to about 10% slower).
+    /// the others within noise (a stage 64 deep along a col rhs's `K` up to about 10% slower).
     ///
     /// A block-scaled instruction's stage holds the stored words in the same swizzled tiles: a
     /// row of its tile is the instruction's `k` of words, read eight rows at a time as a 16-bit
@@ -287,7 +287,7 @@ pub enum PlaneFragmentTransport {
 ///
 /// An explicit opt-in, never a tune candidate in a race: [`Narrow`](Self::Narrow) is faster where
 /// the device runs packed `f16` quickly and changes what the product computes, and a race weighs
-/// time alone. The caller that states it owns the trade: its models' activations must keep a step's
+/// time alone. The caller that states it owns the trade: its inputs must keep a step's
 /// partial inside `f16`'s range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneFragmentStepSum {

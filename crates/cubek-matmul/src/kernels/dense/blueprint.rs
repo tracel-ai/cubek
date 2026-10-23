@@ -86,9 +86,9 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
 }
 
 impl<M> MatmulBlueprint<M> {
-    /// `microkernel` placed by `partitioning` for a product against a weight packed as `rhs`
+    /// `microkernel` placed by `partitioning` for a product against an rhs packed as `rhs`
     /// says, each operand bound at the width the packing reads it at: a vector count of a float
-    /// element means nothing for words. In values: the weight's a whole read, every axis it spans,
+    /// element means nothing for words. In values: the rhs's a whole read, every axis it spans,
     /// the lhs and the output that read's run along the axis they share with it, one value across
     /// it. A packed lhs is contracted in those runs too, whole words of it
     /// ([`MatmulView::check_steps`](crate::kernels::MatmulView::check_steps)).

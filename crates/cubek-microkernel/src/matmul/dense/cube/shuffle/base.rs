@@ -21,19 +21,19 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 ///
 /// What a product whose columns give too few runs to fill the device with planes wants: each run
 /// gets a cube's planes rather than one. Its planes are a [`CubeShufflePlane`]: the software plane
-/// shuffle, whose units sum their slice in registers, or, against a packed weight, the
-/// tensor-core plane fragment, which contracts fragments over windows of `K`, decoding the weight
+/// shuffle, whose units sum their slice in registers, or, against a packed rhs, the
+/// tensor-core plane fragment, which contracts fragments over windows of `K`, decoding the rhs
 /// as each fragment loads.
 ///
-/// It sums a float weight in cols only: a float row weight's step lies along `N`, so each of a
-/// unit's cells is a vector of the weight, and the shared accumulator the planes add their partial
+/// It sums a float rhs in cols only: a float row rhs's step lies along `N`, so each of a
+/// unit's cells is a vector of the rhs, and the shared accumulator the planes add their partial
 /// sums into takes one element a cell, which the tile DSL does not drain a wider vector into. A
-/// plane shuffle reads a float row weight whole.
+/// plane shuffle reads a float row rhs whole.
 ///
-/// Against a packed weight its planes split `K`'s scale blocks, each taking whole turns of its
+/// Against a packed rhs its planes split `K`'s scale blocks, each taking whole turns of its
 /// plane's units, or whole windows of its fragments, so no two planes share a block's scale. A
-/// unit's cell is then a read of the weight's values along `K` whichever way its words lie, merged
-/// on drain as a col weight's is, so a packed weight in rows sums too.
+/// unit's cell is then a read of the rhs's values along `K` whichever way its words lie, merged
+/// on drain as a col rhs's is, so a packed rhs in rows sums too.
 ///
 /// Atomic adds land in no fixed order, and `f32` addition does not associate, so two launches on
 /// the same operands may differ in the last bits of a cell.
@@ -52,8 +52,8 @@ pub struct CubeShuffleMicrokernel {
 pub enum CubeShufflePlane {
     /// The software plane: its units take `K` in turns, each summing its share in registers.
     Shuffle(PlaneShuffleMicrokernel),
-    /// The tensor-core plane, against a packed weight: it contracts fragments over windows of
-    /// `K`, decoding the weight as each fragment loads.
+    /// The tensor-core plane, against a packed rhs: it contracts fragments over windows of
+    /// `K`, decoding the rhs as each fragment loads.
     Fragment(PlaneFragmentMicrokernel),
 }
 
@@ -110,7 +110,7 @@ impl CubeShuffleMicrokernelSettings {
         4,
     );
 
-    /// The lead against a packed weight: software planes one read a step, four planes a cube.
+    /// The lead against a packed rhs: software planes one read a step, four planes a cube.
     pub const PACKED: Self = Self::new(
         CubeShufflePlaneSettings::Shuffle(PlaneShuffleMicrokernelSettings::stepping(1, None)),
         4,
@@ -145,15 +145,15 @@ impl core::fmt::Display for CubeShufflePlaneSettings {
 }
 
 impl CubeShuffleMicrokernel {
-    /// What a row weight is declined with: its step lies along `N`, so each of a unit's cells is
-    /// a vector of the weight, and the shared accumulator the planes add their partial sums into
+    /// What a row rhs is declined with: its step lies along `N`, so each of a unit's cells is
+    /// a vector of the rhs, and the shared accumulator the planes add their partial sums into
     /// takes one element a cell, which the tile DSL does not drain a wider vector into.
     pub const ROW_RHS_UNSUPPORTED: Refusal = Refusal::Declined {
-        why: "the cube shuffle sums a float weight in cols only: a row weight's vectors along `N` do not drain into the shared accumulator's one-element cells",
+        why: "the cube shuffle sums a float rhs in cols only: a row rhs's vectors along `N` do not drain into the shared accumulator's one-element cells",
     };
 
     /// What a cube of tensor-core planes declines.
-    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit 16x8x16 manual mma on a 32-unit plane, a packed weight, columns whole fragments of eight, and K whole windows each unit reads in whole loads";
+    pub const FRAGMENT_DECLINE: &'static str = "the cube shuffle's plane fragment needs the device's 16-bit 16x8x16 manual mma on a 32-unit plane, a packed rhs, columns whole fragments of eight, and K whole windows each unit reads in whole loads";
 
     /// The fewest planes a cube holds: a run one plane owns is the plane routine's.
     const FEWEST_PLANES: usize = 2;
@@ -163,9 +163,9 @@ impl CubeShuffleMicrokernel {
     /// order's depth.
     const WINDOW_STEPS: usize = 8;
 
-    /// The settings worth racing against a packed weight, the lead first. The software planes:
+    /// The settings worth racing against a packed rhs, the lead first. The software planes:
     /// the lead, then the counts of planes along `K` measured best, or within five percent of it,
-    /// on the Qwen3-4B projections at one, four and eight rows on an RTX PRO 6000, the weight in
+    /// on the Qwen3-4B projections at one, four and eight rows on an RTX PRO 6000, the rhs in
     /// rows and in tile order. A cube's planes split `K` for the few long columns a plane alone
     /// would leave the device idle on, and its units take more columns and fewer rows as the rows
     /// grow. Sixteen planes along `K` split the narrow projections of a 4B model at one row best
@@ -216,7 +216,7 @@ impl CubeShuffleMicrokernel {
             .planes_across(self.split(), self.planes_along_k.get())
     }
 
-    /// The axis its planes split `K` along: `K` itself, or a packed weight's scale blocks.
+    /// The axis its planes split `K` along: `K` itself, or a packed rhs's scale blocks.
     pub fn split(&self) -> Axis {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => match plane.blocks {
@@ -236,8 +236,8 @@ impl CubeShuffleMicrokernel {
         cells * self.meet.copies(self.planes_along_k.get()) * item.sum.size()
     }
 
-    /// The cubes of software planes `settings` names, for a col float weight or a packed one.
-    /// Against a packed weight the planes are capped at the turns its plane's units take
+    /// The cubes of software planes `settings` names, for a col float rhs or a packed one.
+    /// Against a packed rhs the planes are capped at the turns its plane's units take
     /// ([`PlaneShuffleMicrokernel::turns`]), and a plane whose units take no turns, or too few
     /// for two planes, is not offered.
     fn shuffle_cubes(
@@ -266,7 +266,7 @@ impl CubeShuffleMicrokernel {
         })
     }
 
-    /// The cubes of tensor-core planes `settings` names, against a packed weight its plane
+    /// The cubes of tensor-core planes `settings` names, against a packed rhs its plane
     /// admits, the planes capped at the windows of `K` it takes.
     fn fragment_cubes(
         hw: &Hardware,
@@ -316,7 +316,7 @@ impl CubeShufflePlane {
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both digits of a packed weight's `K`, or a fragment's depth.
+    /// units sharing a step, over both digits of a packed rhs's `K`, or a fragment's depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {
@@ -365,7 +365,7 @@ impl CubeShufflePlane {
     }
 
     /// How the plane's units read each input: as bound in software, the units summing a packed
-    /// weight decoded at `f32`; every packed input dequantized at the element it decodes into on
+    /// rhs decoded at `f32`; every packed input dequantized at the element it decodes into on
     /// the tensor cores, a fragment's two operands being one element
     /// ([`MatmulWorkItem::decoding_reads`]).
     pub fn reads(&self, item: &MatmulWorkItem) -> MatmulOperands<MatmulRead> {
@@ -391,14 +391,14 @@ impl Microkernel for CubeShuffleMicrokernel {
     type Operand = MatmulOperand;
     type Partitioning = ();
 
-    const DECLINE: &'static str = "the cube shuffle needs a plane width the device commits to, and against a packed weight one whose scales group K and two turns of K or more for its planes";
+    const DECLINE: &'static str = "the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes";
 
     /// Never one plane: a run one plane owns is the plane routine's. Every setting's step of `K`,
     /// its planes' step times their count, divides a decode projection's `K` (2048, 6144) on a
     /// wave32 plane and on a wave64 one: the default, one column one read deep across four planes;
     /// two reads deep across two, the same step of `K` in longer runs; and a transaction's worth of
     /// units beside more columns a cube, with four planes along `K` and eight. Against a packed
-    /// weight a routine races [`packed_settings`](Self::packed_settings).
+    /// rhs a routine races [`packed_settings`](Self::packed_settings).
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         use CubeShufflePlaneSettings::Shuffle;
         use PlaneShuffleMicrokernelSettings as Plane;
@@ -410,8 +410,8 @@ impl Microkernel for CubeShuffleMicrokernel {
         ]
     }
 
-    /// Its planes' items: of a float weight on matmul's own axes and in cols
-    /// ([`ROW_RHS_UNSUPPORTED`](Self::ROW_RHS_UNSUPPORTED)), or of a packed weight on its
+    /// Its planes' items: of a float rhs on matmul's own axes and in cols
+    /// ([`ROW_RHS_UNSUPPORTED`](Self::ROW_RHS_UNSUPPORTED)), or of a packed rhs on its
     /// block-split space, either way its words lie, which one of its planes admits.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         let None = item.blocks else {
@@ -459,11 +459,11 @@ impl Microkernel for CubeShuffleMicrokernel {
             .chain(fragment.into_iter().flatten())
     }
 
-    /// Its planes read as the plane microkernel's: a col weight's step down `K`, merged with the
+    /// Its planes read as the plane microkernel's: a col rhs's step down `K`, merged with the
     /// lhs's a vector of each at a time. The cube copies the output out of the accumulator's
     /// atomics one element at a time.
     ///
-    /// Nothing against a packed weight under software planes: every width follows from its
+    /// Nothing against a packed rhs under software planes: every width follows from its
     /// packing. A tensor-core plane states its own.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         let plane = match self.plane {
@@ -513,7 +513,7 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
     /// Its planes each hold every row.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
-    /// Its planes' orders: a float weight's as the plane shuffle binds it, a packed weight's
+    /// Its planes' orders: a float rhs's as the plane shuffle binds it, a packed rhs's
     /// words over the axes the product names.
     fn orders(&self) -> MatmulOperands<MatmulOrder> {
         match self.plane {

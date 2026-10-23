@@ -52,7 +52,7 @@ impl CubeStagedMicrokernelSettings {
     };
 
     /// The tile DSL's multi-row box: one column of four planes, each holding two rows of fragments
-    /// across the cube's `n`, reached through the tile DSL's transport. Under `cmma` a row weight's
+    /// across the cube's `n`, reached through the tile DSL's transport. Under `cmma` a row rhs's
     /// `B` fragment is read in scalar loads and spills two steps deep, where the tile DSL's
     /// transport does not.
     pub const MULTI_ROW: Self = Self::boxed(
@@ -60,12 +60,12 @@ impl CubeStagedMicrokernelSettings {
         MatmulPlaneLayout::new(4, 1),
     );
 
-    /// A box against a packed weight, counted in steps of the packed product
+    /// A box against a packed input, counted in steps of the packed product
     /// ([`MatmulStep`](crate::matmul::MatmulStep)): `steps` of `M` and `N` on each
     /// plane, on `planes` (along `m` by along `n`), holding its stages in `ring`. A step's box is
-    /// whole loads of the weight's words and scales, so every load filling a stage is whole; the
-    /// stage holds the step's scale blocks, decoded by the units that fill it, and each plane drains
-    /// its own tile.
+    /// whole loads of the packed input's words and scales, so every load filling a stage is
+    /// whole; the stage holds the step's scale blocks, decoded by the units that fill it, and each
+    /// plane drains its own tile.
     ///
     /// # Panics
     ///

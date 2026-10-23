@@ -90,22 +90,22 @@ impl CubeStagedMatmulRoutine {
     /// fills the stages.
     ///
     /// For a prompt's rows, filled by the TMA engine through the tile DSL's transport: four by
-    /// eight steps on four by two planes, the box a long weight fills the device with; two by
-    /// eight, the one a narrower weight at a prompt's chunk of rows leaves fewer cores idle with;
+    /// eight steps on four by two planes, the box a long rhs fills the device with; two by
+    /// eight, the one a narrower rhs at a prompt's chunk of rows leaves fewer cores idle with;
     /// two by four on two by two planes, the small box the narrowest projections take; each two
     /// stages in flight, its planes storing their fragments. Then four by four on two by four
     /// planes, and two by four on four by two or two by four planes, three stages in flight and the
     /// box stored by the TMA engine in one bulk copy, which a contraction of a few thousand
-    /// finishes sooner with. A stage one step deep is one tile of a weight in [tile
+    /// finishes sooner with. A stage one step deep is one tile of an input in [tile
     /// order](cubek_microkernel::matmul::tile_order), which a box lands as it lands rows. Filled by
     /// the cube's units asynchronously: four by four on two by four planes, three stages in flight,
     /// and two by four on four by two planes, two.
     ///
     /// For a decode's rows, one step of rows (the instruction's sixteen, every row a decode
-    /// holds) by one or two steps of columns, so a weight of a few thousand columns is hundreds
+    /// holds) by one or two steps of columns, so an rhs of a few thousand columns is hundreds
     /// of boxes and every core reads its share of it. Filled by the TMA engine, a stage one step
     /// deep, the most one box lands, with three or four stages in flight to keep enough of the
-    /// weight in the air. Filled by the units asynchronously, deeper stages: four steps on four
+    /// rhs in the air. Filled by the units asynchronously, deeper stages: four steps on four
     /// planes side by side, or planes sharing each step of `K`, which a projection with few
     /// columns and a long `K` keeps busy with, one step deep on four planes where `K` divides no
     /// deeper stage.
@@ -116,7 +116,7 @@ impl CubeStagedMatmulRoutine {
     /// with no block-scaled instruction has no step, and races the default alone.
     ///
     /// Every box is the one measured best for some Qwen3-4B projection on an RTX PRO 6000, the
-    /// weight read back to back from memory as a model step reads it: the prompt's at 512 and
+    /// rhs read back to back from memory as a model step reads it: the prompt's at 512 and
     /// 2048 rows, the decode's at one and eight, in rows and in tile order. A setting asking for
     /// the TMA engine whose stage one box cannot land is filled by the units instead, so each
     /// list holds only what its fill lands.
@@ -305,7 +305,7 @@ impl CubeStagedMatmulRoutine {
         registers + Self::ADDRESSING_REGISTERS <= UNIT_REGISTERS
     }
 
-    /// The settings a product against a packed weight races on `hw`
+    /// The settings a product against a packed input races on `hw`
     /// ([`CubeStagedMicrokernel::packed_settings`]), its cubes in the grid's order.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
         CubeStagedMicrokernel::packed_settings(hw)
@@ -314,7 +314,7 @@ impl CubeStagedMatmulRoutine {
             .collect()
     }
 
-    /// The settings a product of a handful of rows against a packed weight races
+    /// The settings a product of a handful of rows against a packed input races
     /// ([`CubeStagedMicrokernel::packed_one_step_settings`]), its cubes in the grid's order.
     pub fn packed_one_step_settings(&self) -> Vec<CubeStagedMatmulRoutineSettings> {
         CubeStagedMicrokernel::packed_one_step_settings()

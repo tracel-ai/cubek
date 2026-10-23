@@ -28,7 +28,7 @@ pub trait MatmulOutput {
     /// The product of `lhs` and `rhs` landing here.
     fn problem(&self, lhs: &PlainTensor, rhs: &PlainTensor) -> MatmulRoutineProblem;
 
-    /// The element the product is written in, beside the activation `lhs`.
+    /// The element the product is written in, beside the `[m, k]` input `lhs`.
     fn element(&self, lhs: &StoredTensor) -> ElemType;
 }
 

@@ -13,10 +13,10 @@ use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// Every row of one stored tile group of a packed weight, owned by one cube: the columns one
+/// Every row of one stored tile group of a packed rhs, owned by one cube: the columns one
 /// stored tile holds, read as one stream.
 ///
-/// A load stores an NVFP4 weight in tiles of the step its device contracts in
+/// A load stores an NVFP4 rhs in tiles of the step its device contracts in
 /// ([`MatmulStep::stored_on`]), each tile a run of `K` for a few columns, its columns side by side
 /// and the tiles of a group one after the other along `K`. Each plane covers the group's columns
 /// with its units, a few units a column taking `K`'s scale words in turns, so one step of the plane
@@ -25,7 +25,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 /// column sum across the plane, and the planes add their partials into one accumulator in shared
 /// memory, as the device lets them meet ([`CubeMeet`]).
 ///
-/// What a weight stored in tiles wants at a few rows: a plane that owns one column reads a few
+/// What an rhs stored in tiles wants at a few rows: a plane that owns one column reads a few
 /// bytes of each tile and steps over the rest, which its neighbours read later.
 ///
 /// The work below the cube is the plane shuffle's: its units and their reads
@@ -70,10 +70,10 @@ impl core::fmt::Display for CubeTileGroupMicrokernelSettings {
 }
 
 impl CubeTileGroupMicrokernel {
-    /// What a weight is declined with where the device stores it in no tile: a group is the
+    /// What an rhs is declined with where the device stores it in no tile: a group is the
     /// columns one stored tile holds.
     pub const NO_STORED_TILE: Refusal = Refusal::Declined {
-        why: "the tile group cube reads a weight of `e2m1` values the device stores in tiles",
+        why: "the tile group cube reads an rhs of `e2m1` values the device stores in tiles",
     };
 
     /// The fewest planes a cube holds: a group one plane owns reads it alone.
@@ -102,7 +102,7 @@ impl CubeTileGroupMicrokernel {
         leaf.extent(blocks) * leaf.extent(inside) * self.plane.units_along_k
     }
 
-    /// The axis its planes split `K` along: the weight's scale blocks.
+    /// The axis its planes split `K` along: the rhs's scale blocks.
     pub fn split(&self) -> Axis {
         blocked(K).0
     }
@@ -115,8 +115,8 @@ impl CubeTileGroupMicrokernel {
         cells * self.meet.copies(self.planes_along_k.get()) * item.sum.size()
     }
 
-    /// The columns of one stored tile of `item`'s weight on `hw`: the step a load stores its
-    /// `e2m1` values in. `None` for a weight of other values, or a device that stores none in
+    /// The columns of one stored tile of `item`'s rhs on `hw`: the step a load stores its
+    /// `e2m1` values in. `None` for an rhs of other values, or a device that stores none in
     /// tiles.
     fn group_columns(hw: &Hardware, item: &MatmulWorkItem) -> Option<usize> {
         let packing = item.blocks?.packings.rhs?;
@@ -169,14 +169,14 @@ impl Microkernel for CubeTileGroupMicrokernel {
     type Operand = MatmulOperand;
     type Partitioning = MatmulPartitioning;
 
-    const DECLINE: &'static str = "the tile group cube needs a plane width the device commits to, a weight of `e2m1` values it stores in tiles whose scales group K, and two turns of K or more for its planes";
+    const DECLINE: &'static str = "the tile group cube needs a plane width the device commits to, an rhs of `e2m1` values it stores in tiles whose scales group K, and two turns of K or more for its planes";
 
     /// Planes a group, its one knob: eight, then four and sixteen.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         [8, 4, 16].map(Self::Settings::new).into()
     }
 
-    /// Its planes' items, a packed weight's.
+    /// Its planes' items, a packed rhs's.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         if item.blocks.and_then(|blocks| blocks.packings.rhs).is_none() {
             return Err(Self::NO_STORED_TILE);
@@ -208,7 +208,7 @@ impl Microkernel for CubeTileGroupMicrokernel {
             })
     }
 
-    /// Nothing: against a packed weight every width follows from its packing.
+    /// Nothing: against a packed rhs every width follows from its packing.
     fn vectorize(&self, _: &MatmulPartitioning, _: &mut Vectorization<MatmulOperand>) {}
 
     /// Its planes' work: the plane shuffle's.
@@ -238,7 +238,7 @@ impl MatmulMicrokernel for CubeTileGroupMicrokernel {
     /// Its planes hold every row.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
-    /// The packed weight is bound over the axes the product names, its words where they lie.
+    /// The packed rhs is bound over the axes the product names, its words where they lie.
     fn orders(&self) -> MatmulOperands<MatmulOrder> {
         MatmulOperands::all(MatmulOrder::Stated)
     }

@@ -24,56 +24,56 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 /// instruction is the device's matrix instruction where it offers one, and the software
 /// instruction where it does not.
 ///
-/// Against a packed weight ([`blocks`](Self::blocks)) the plane reads the weight straight from
+/// Against a packed rhs ([`blocks`](Self::blocks)) the plane reads the rhs straight from
 /// memory and holds every row: one fragment of rows, its settings' fragments along `n`, each a
-/// window of `K` its steps deep, so each unit reads its run of `K` in whole loads and the weight
-/// decodes into the activation's element as each fragment loads (the tile DSL's lane runs); the
-/// fragments share the activation the plane loads ([`step_levels`](Self::step_levels)).
+/// window of `K` its steps deep, so each unit reads its run of `K` in whole loads and the rhs
+/// decodes into the lhs's element as each fragment loads (the tile DSL's lane runs); the
+/// fragments share the lhs the plane loads ([`step_levels`](Self::step_levels)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentMicrokernel {
     /// What its fragments contract through.
     pub instruction: PlaneFragmentInstruction,
-    /// The order its tiles of each operand are laid in: a col weight's buffer order where the
+    /// The order its tiles of each operand are laid in: a col rhs's buffer order where the
     /// instruction's fragment loads `B` col-major, the order the product names otherwise.
     pub orders: MatmulOperands<MatmulOrder>,
     pub settings: PlaneFragmentMicrokernelSettings,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
-    /// The block-split space a packed weight it reads straight from memory puts the product in:
-    /// none for a float weight, or one decoded into a stage before the plane reads it.
+    /// The block-split space a packed rhs it reads straight from memory puts the product in:
+    /// none for a float rhs, or one decoded into a stage before the plane reads it.
     pub blocks: Option<MatmulBlocks>,
 }
 
 impl PlaneFragmentMicrokernel {
-    /// The most rows a plane holds against a packed weight: one fragment's, the decoding
+    /// The most rows a plane holds against a packed rhs: one fragment's, the decoding
     /// instruction's `m`, every row held whole.
     pub const MAX_PACKED_ROWS: usize = 16;
 
-    /// The one instruction whose fragments decode a packed weight as they load, as `(m, n, k)`: the
+    /// The one instruction whose fragments decode a packed rhs as they load, as `(m, n, k)`: the
     /// 16-bit `16 × 8 × 16`, whose `B` fragment's lanes the tile DSL's lane runs are laid over.
     const DECODING_SHAPE: (u32, u32, u32) = (16, 8, 16);
 
     /// Units of a plane the decoding instruction's lane runs are laid over: the only width a
-    /// plane against a packed weight runs at.
+    /// plane against a packed rhs runs at.
     pub const DECODING_PLANE_UNITS: usize = 32;
 
-    /// The scale block along `K` a packed weight's fragments decode under: NVFP4's, sixteen
+    /// The scale block along `K` a packed rhs's fragments decode under: NVFP4's, sixteen
     /// values.
     const DECODED_BLOCK: usize = 16;
 
     /// What a packed item of no rows, or of more than [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS),
     /// is declined with.
     pub const ROWS_OUT_OF_RANGE: Refusal = Refusal::Declined {
-        why: "the plane fragment holds from one row to `PlaneFragmentMicrokernel::MAX_PACKED_ROWS` against a packed weight, the rows of one fragment",
+        why: "the plane fragment holds from one row to `PlaneFragmentMicrokernel::MAX_PACKED_ROWS` against a packed rhs, the rows of one fragment",
     };
 
-    /// What a packed item whose operands are not a 16-bit activation against a weight of
+    /// What a packed item whose operands are not a 16-bit lhs against an rhs of
     /// sixteen-value blocks along `K`, read along `K` alone, is declined with.
     pub const OPERANDS_UNSERVED: Refusal = Refusal::Declined {
-        why: "the plane fragment contracts a packed weight against a 16-bit activation, the weight read along K alone, in blocks of sixteen",
+        why: "the plane fragment contracts a packed rhs against a 16-bit lhs, the rhs read along K alone, in blocks of sixteen",
     };
 
-    /// The decoding instruction over an activation of `lhs`, summed in `sum`.
+    /// The decoding instruction over an lhs of element `lhs`, summed in `sum`.
     fn decoding_instruction(lhs: ElemType, sum: ElemType) -> MmaConfig {
         let (m, n, k) = Self::DECODING_SHAPE;
         MmaConfig {
@@ -86,7 +86,7 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// Whether `hw` runs a plane against a packed weight for an activation of `lhs`, summed in
+    /// Whether `hw` runs a plane against a packed rhs for an lhs of element `lhs`, summed in
     /// `sum`: it offers the decoding instruction over `lhs` on a plane of thirty-two, which no
     /// element but a 16-bit float has.
     fn decodes(hw: &Hardware, lhs: ElemType, sum: ElemType) -> bool {
@@ -94,7 +94,7 @@ impl PlaneFragmentMicrokernel {
             && hw.plane_size().ok() == Some(Self::DECODING_PLANE_UNITS as u32)
     }
 
-    /// Whether `hw` runs a plane against a packed weight for any activation: for one of the
+    /// Whether `hw` runs a plane against a packed rhs for any lhs: for one of the
     /// 16-bit floats, summed in `f32`.
     pub fn decodes_on(hw: &Hardware) -> bool {
         let f32 = ElemType::Float(FloatKind::F32);
@@ -103,8 +103,8 @@ impl PlaneFragmentMicrokernel {
             .any(|kind| Self::decodes(hw, ElemType::Float(kind), f32))
     }
 
-    /// Whether a packed `item`'s operands are what the fragments contract: a 16-bit activation,
-    /// and a packed weight read along `K` alone, under scales of sixteen-value blocks along `K`.
+    /// Whether a packed `item`'s operands are what the fragments contract: a 16-bit lhs,
+    /// and a packed rhs read along `K` alone, under scales of sixteen-value blocks along `K`.
     fn serves(item: &MatmulWorkItem, space: &MatmulBlocks) -> bool {
         let rhs = &space.operand(MatmulOperand::Rhs);
         let sixteen_bits = matches!(
@@ -117,13 +117,13 @@ impl PlaneFragmentMicrokernel {
             && rhs.grouping(K, space.k) == Some(Self::DECODED_BLOCK)
     }
 
-    /// The planes against the packed weight of `space`: one fragment of the decoding instruction's
+    /// The planes against the packed rhs of `space`: one fragment of the decoding instruction's
     /// rows, the settings' fragments along `n` and then every narrower count down to one, each
     /// where its columns close `n`, each fragment a window of the settings' steps of `K` through
     /// the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it, one of
-    /// the four quads of `k` its fragment's units split, whole reads of the weight. Only settings
+    /// the four quads of `k` its fragment's units split, whole reads of the rhs. Only settings
     /// stating such a grid size one ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on
-    /// a device offering the decoding instruction over the activation's element.
+    /// a device offering the decoding instruction over the lhs's element.
     fn packed_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -158,7 +158,7 @@ impl PlaneFragmentMicrokernel {
             })
     }
 
-    /// The planes against a float weight: every matrix instruction this device offers for the
+    /// The planes against a float rhs: every matrix instruction this device offers for the
     /// item's elements, through the transport the settings ask for first, then the software
     /// instruction ([`candidates`](Microkernel::candidates)).
     fn float_candidates(
@@ -344,12 +344,12 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// What one step of the plane covers against a packed weight: its fragments over a window of
-    /// `K`, split into the weight's scale blocks, the instruction's rows walked over every row so
+    /// What one step of the plane covers against a packed rhs: its fragments over a window of
+    /// `K`, split into the rhs's scale blocks, the instruction's rows walked over every row so
     /// a decode's few overhang the fragment rather than shrink it, and a unit level that cuts
     /// nothing, so the plane contracts its whole grid of fragments at once and loads the
-    /// activation once for all of them. A cube whose planes share a step states them around this.
-    /// `None` for a float weight.
+    /// lhs once for all of them. A cube whose planes share a step states them around this.
+    /// `None` for a float rhs.
     pub fn step_levels(&self) -> Option<Levels> {
         let space = self.blocks?;
         let block = space.operand(MatmulOperand::Rhs).grouping(K, space.k)?;
@@ -557,7 +557,7 @@ impl PlaneFragmentMicrokernel {
 
     /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the
     /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide
-    /// as a warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the weight lies
+    /// as a warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies
     /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form `along_n`
     /// granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
     /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
@@ -637,7 +637,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     /// the most per call first; then the software instruction, which every device runs. A matrix
     /// instruction spreads its fragment across the plane, so it is offered only where the device
     /// commits to one plane width. Where the settings ask for the warpgroup MMA, that alone, where
-    /// it runs. Against a packed weight, the planes that decode it as they load, at the grids
+    /// it runs. Against a packed rhs, the planes that decode it as they load, at the grids
     /// [`windowed`](PlaneFragmentMicrokernelSettings::windowed) names, narrowed until their columns
     /// close `n`.
     fn candidates(
@@ -664,7 +664,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     /// stretches of the leaf's extent along the axis its tiles lie along. It writes only its
     /// accumulator; the drain into the output is its walker's.
     ///
-    /// Nothing against a packed weight: every width follows from its packing.
+    /// Nothing against a packed rhs: every width follows from its packing.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         if self.blocks.is_some() {
             return;

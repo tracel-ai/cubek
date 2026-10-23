@@ -281,7 +281,7 @@ mod tests {
     /// two values share one. A restatement that misplaced a fragment would have the kernel read
     /// another column's block.
     #[test]
-    fn the_weight_and_the_kernel_state_one_memory() {
+    fn the_rhs_and_the_kernel_state_one_memory() {
         let (k, n) = (128, 48);
         for (tile, words_per_load) in TILES.iter().flat_map(|&tile| LOADS.map(|w| (tile, w))) {
             let kernel = kernel_values_read(k, (N, n), tile, words_per_load);
@@ -308,23 +308,23 @@ mod tests {
         }
     }
 
-    /// The kernel recovers its own statement from the one the weight carries, fragment for
-    /// fragment, so the weight is the only place the layout travels: a reader matches the tiles
+    /// The kernel recovers its own statement from the one the rhs carries, fragment for
+    /// fragment, so the rhs is the only place the layout travels: a reader matches the tiles
     /// it is stored in, and two statements of one memory need not match.
     #[test]
-    fn the_kernel_reads_back_what_the_weight_states() {
+    fn the_kernel_reads_back_what_the_rhs_states() {
         let (k, n) = (128, 48);
         for (tile, words_per_load) in TILES.iter().flat_map(|&tile| LOADS.map(|w| (tile, w))) {
             let kernel = kernel_values_read(k, (N, n), tile, words_per_load);
             let restated = kernel_values(&matrix_values(&kernel))
-                .expect("a tile-order weight closes its blocks");
+                .expect("a tile-order rhs closes its blocks");
             assert_eq!(restated, kernel, "{tile:?}, {words_per_load} words a load");
         }
     }
 
     /// Every load width stores the same bytes: the read is a statement, not a layout. A writer
     /// that moved a value for a wider load would hand a reader built for a narrower one another
-    /// weight.
+    /// rhs.
     #[test]
     fn every_load_width_stores_the_same_bytes() {
         let (k, n) = (128, 48);
@@ -369,7 +369,7 @@ mod tests {
         }
     }
 
-    /// The values restated as rows of `k` send every value where the weight's statement does.
+    /// The values restated as rows of `k` send every value where the rhs's statement does.
     #[test]
     fn the_rows_of_k_state_the_same_memory() {
         let (k, n) = (128, 48);
@@ -384,18 +384,18 @@ mod tests {
         }
     }
 
-    /// A weight in rows is not mistaken for tile order.
+    /// An rhs in rows is not mistaken for tile order.
     #[test]
-    fn a_weight_in_rows_has_no_kernel_statement() {
+    fn an_rhs_in_rows_has_no_kernel_statement() {
         let rows = Metadata::new(Shape::new([64, 48]), vec![48, 1]);
         assert!(kernel_values(&rows).is_none());
         assert!(tile(&rows).is_none());
     }
 
-    /// The tile a weight states is the one it was stored in, at every load width, read off it in
+    /// The tile an rhs states is the one it was stored in, at every load width, read off it in
     /// one pass as the kernel's statement would give it.
     #[test]
-    fn a_weight_states_the_tile_it_was_stored_in() {
+    fn an_rhs_states_the_tile_it_was_stored_in() {
         let (k, n) = (128, 48);
         for (stored, words_per_load) in TILES.iter().flat_map(|&tile| LOADS.map(|w| (tile, w))) {
             let weight = matrix_values(&kernel_values_read(k, (N, n), stored, words_per_load));
