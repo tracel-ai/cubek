@@ -1,7 +1,7 @@
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder,
-    MatmulRows, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulRows,
+    MatmulWorkItem,
 };
 use crate::staging::StagedOperand;
 use cubecl::ir::{ElemType, FloatKind};

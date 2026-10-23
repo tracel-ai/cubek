@@ -9,8 +9,8 @@ use cubecl::tile::{
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel,
-    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRows,
+    MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};

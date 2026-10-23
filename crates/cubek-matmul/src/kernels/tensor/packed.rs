@@ -159,7 +159,12 @@ impl PackedTensor {
         let words = hw.load_values(WORD);
         let values = tile_order::values_storage(across, tile, words);
         operand
-            .stored(across, words, Some((&tile_order::values_axes(across), values.tiles())), None)
+            .stored(
+                across,
+                words,
+                Some((&tile_order::values_axes(across), values.tiles())),
+                None,
+            )
             .ok_or(STORED_TILES_UNREAD)
     }
 

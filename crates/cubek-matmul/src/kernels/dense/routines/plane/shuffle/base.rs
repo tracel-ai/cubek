@@ -1,8 +1,8 @@
 use super::kernel::plane_shuffle_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::{
-    MATMUL_STREAMED_INPUT_FLOAT, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBlueprint, MatmulOutput, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::DestinationLaunch;

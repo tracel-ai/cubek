@@ -233,7 +233,13 @@ impl CubeStagedMatmulRoutine {
     /// `m` rows by `n` columns `k` deep of two NVFP4 inputs, into an `f16` output: what
     /// [`block_scaled_settings`](Self::block_scaled_settings) prepares its boxes on.
     fn block_scaled_problem(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        MatmulRoutineProblem::packed(m, n, k, ElemType::Float(FloatKind::F16), Self::nvfp4_inputs())
+        MatmulRoutineProblem::packed(
+            m,
+            n,
+            k,
+            ElemType::Float(FloatKind::F16),
+            Self::nvfp4_inputs(),
+        )
     }
 
     /// Registers the compiler adds around a plane's lower bound

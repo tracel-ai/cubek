@@ -617,7 +617,12 @@ mod tests {
     fn tile_order_is_read_a_load_of_each() {
         let values = tile_order::values_storage(N, (128, 8), WORDS);
         let stored = nvfp4()
-            .stored(N, WORDS, Some((&tile_order::values_axes(N), values.tiles())), None)
+            .stored(
+                N,
+                WORDS,
+                Some((&tile_order::values_axes(N), values.tiles())),
+                None,
+            )
             .expect("tile order is read");
         assert_eq!((stored.read(K), stored.read(N)), (16, 1));
         assert_eq!(stored.read_values(), 16);
@@ -637,7 +642,12 @@ mod tests {
     fn a_read_takes_whole_tiles_while_they_fit_one_load() {
         let one_level = [(KI, 8), (KI, 2), (NI, 16)];
         let stored = nvfp4()
-            .stored(N, WORDS, Some((&tile_order::values_axes(N), &one_level)), None)
+            .stored(
+                N,
+                WORDS,
+                Some((&tile_order::values_axes(N), &one_level)),
+                None,
+            )
             .expect("tile order is read");
         assert_eq!((stored.read(K), stored.read(N)), (16, 1));
 
@@ -657,7 +667,12 @@ mod tests {
     fn a_read_does_not_jump_to_the_next_block_inside_one() {
         let half_a_block_then_the_next = [(KI, 8), (KB, 2), (NI, 4)];
         assert_eq!(
-            nvfp4().stored(N, WORDS, Some((&tile_order::values_axes(N), &half_a_block_then_the_next)), None),
+            nvfp4().stored(
+                N,
+                WORDS,
+                Some((&tile_order::values_axes(N), &half_a_block_then_the_next)),
+                None
+            ),
             None
         );
     }

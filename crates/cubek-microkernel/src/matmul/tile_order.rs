@@ -175,7 +175,12 @@ pub fn words_in_tiles(k: usize, lines: usize, tile: (usize, usize)) -> Metadata 
     let tile_words = words_per_line * tile_lines;
     let k_tiles = k / tile_k;
     Metadata::new(
-        Shape::from(vec![lines / tile_lines, k_tiles, tile_lines, words_per_line]),
+        Shape::from(vec![
+            lines / tile_lines,
+            k_tiles,
+            tile_lines,
+            words_per_line,
+        ]),
         Strides::from(vec![k_tiles * tile_words, tile_words, words_per_line, 1]),
     )
 }
@@ -316,8 +321,8 @@ mod tests {
         let (k, n) = (128, 48);
         for (tile, words_per_load) in TILES.iter().flat_map(|&tile| LOADS.map(|w| (tile, w))) {
             let kernel = kernel_values_read(k, (N, n), tile, words_per_load);
-            let restated = kernel_values(&matrix_values(&kernel))
-                .expect("a tile-order rhs closes its blocks");
+            let restated =
+                kernel_values(&matrix_values(&kernel)).expect("a tile-order rhs closes its blocks");
             assert_eq!(restated, kernel, "{tile:?}, {words_per_load} words a load");
         }
     }

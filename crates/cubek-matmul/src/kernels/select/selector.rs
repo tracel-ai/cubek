@@ -32,8 +32,8 @@
 use super::packed::{NVFP4_SCALE_WORD_SPAN, matmul_supported, nvfp4_scheme, quantized_few_rows};
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-use cubecl::tile::launch::Refusal;
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_std::Hardware;

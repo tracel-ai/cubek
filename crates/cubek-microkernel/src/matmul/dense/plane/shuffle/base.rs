@@ -644,7 +644,10 @@ mod tests {
             .stored(
                 N,
                 4,
-                Some((&tile_order::values_axes(N), tile_order::values_storage(N, (128, 8), 4).tiles())),
+                Some((
+                    &tile_order::values_axes(N),
+                    tile_order::values_storage(N, (128, 8), 4).tiles(),
+                )),
                 None,
             )
             .expect("tile order is read");

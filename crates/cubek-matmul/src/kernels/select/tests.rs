@@ -151,8 +151,16 @@ fn which_input_is_packed_never_changes_the_selection() {
             let packed_lhs = with_float_rhs(with_packed_lhs(packed_rhs, q4()));
             let both = with_packed_lhs(packed_rhs, nvfp4_lhs());
             let selection = select(strategy, &packed_rhs, &hw);
-            assert_eq!(select(strategy, &packed_lhs, &hw), selection, "{strategy:?}, {rows} rows");
-            assert_eq!(select(strategy, &both, &hw), selection, "{strategy:?}, {rows} rows");
+            assert_eq!(
+                select(strategy, &packed_lhs, &hw),
+                selection,
+                "{strategy:?}, {rows} rows"
+            );
+            assert_eq!(
+                select(strategy, &both, &hw),
+                selection,
+                "{strategy:?}, {rows} rows"
+            );
         }
     }
 }
@@ -173,7 +181,10 @@ fn an_unread_scheme_on_either_input_is_dequantized_by_the_framework() {
     };
     let unread_rhs = quantized(8, per_tensor());
     assert!(burn(&unread_rhs));
-    assert!(burn(&with_float_rhs(with_packed_lhs(unread_rhs, per_tensor()))));
+    assert!(burn(&with_float_rhs(with_packed_lhs(
+        unread_rhs,
+        per_tensor()
+    ))));
     assert!(burn(&with_packed_lhs(quantized(8, q4()), per_tensor())));
 }
 
@@ -389,7 +400,10 @@ fn the_fp8_values_reach_the_plane_routine_on_every_device() {
             .with_value(value)
             .per_block([32], ScaleDtype::UE8M0)
             .with_store(QuantStore::PackedU32(0));
-        assert!(matmul_supported(&hw, &mxfp8, MatmulOperand::Rhs), "{value:?}");
+        assert!(
+            matmul_supported(&hw, &mxfp8, MatmulOperand::Rhs),
+            "{value:?}"
+        );
         assert_eq!(
             select(Specific(K::PlaneShuffle), &quantized(1, mxfp8), &hw),
             Ok(packed(P::Pin(K::PlaneShuffle))),
@@ -549,9 +563,9 @@ mod float {
     use MatmulChoice as F;
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
-    use cubek_microkernel::matmul::MatmulOperands;
     use MatmulOpStrategy::*;
     use cubecl::tile::launch::Refusal;
+    use cubek_microkernel::matmul::MatmulOperands;
     use cubek_std::devices;
 
     /// The kernel `strategy` chooses for the float `problem`: the selection, which reads a float

@@ -73,7 +73,11 @@ impl MatmulStep {
             let operand = operands.get(input);
             let lined = operands.get(other).lined();
             match operand.scaled_along() {
-                Some(_) => loads.extend([operand.read_space()].into_iter().chain(operand.scale_read_space())),
+                Some(_) => loads.extend(
+                    [operand.read_space()]
+                        .into_iter()
+                        .chain(operand.scale_read_space()),
+                ),
                 None if input.axes().contains(&lined) => {
                     loads.push(Space::new(&[(lined, hw.load_values(elements.get(input)))]))
                 }
@@ -201,7 +205,12 @@ impl MatmulStep {
     /// # Errors
     ///
     /// [`MATMUL_STEPS_UNCLOSED`], and [`MATMUL_PACKED_READS_SPLIT`].
-    pub fn check(&self, operands: MatmulOperands<Operand>, n: usize, k: usize) -> Result<(), Refusal> {
+    pub fn check(
+        &self,
+        operands: MatmulOperands<Operand>,
+        n: usize,
+        k: usize,
+    ) -> Result<(), Refusal> {
         let straddles = MatmulOperand::INPUTS.into_iter().any(|input| {
             let operand = operands.get(input);
             let lined = operand.lined();
@@ -215,7 +224,10 @@ impl MatmulStep {
         }
         let [first, second] = MatmulOperand::INPUTS.map(|input| operands.get(input));
         let both_packed = first.scaled_along().is_some() && second.scaled_along().is_some();
-        let [short, long] = [first.read(K).min(second.read(K)), first.read(K).max(second.read(K))];
+        let [short, long] = [
+            first.read(K).min(second.read(K)),
+            first.read(K).max(second.read(K)),
+        ];
         match both_packed && !long.is_multiple_of(short) {
             true => Err(MATMUL_PACKED_READS_SPLIT),
             false => Ok(()),
@@ -265,7 +277,10 @@ mod tests {
             .stored(
                 N,
                 4,
-                Some((&tile_order::values_axes(N), tile_order::values_storage(N, (128, 8), 4).tiles())),
+                Some((
+                    &tile_order::values_axes(N),
+                    tile_order::values_storage(N, (128, 8), 4).tiles(),
+                )),
                 None,
             )
             .expect("tile order is read")
@@ -375,7 +390,10 @@ mod tests {
     #[test]
     fn two_packed_reads_that_split_a_word_are_refused() {
         let hw = devices::m2_pro();
-        let (word, half) = (Operand::packed(K, 8, K, 16, 4), Operand::packed(K, 4, K, 16, 4));
+        let (word, half) = (
+            Operand::packed(K, 8, K, 16, 4),
+            Operand::packed(K, 4, K, 16, 4),
+        );
         let both = MatmulOperands {
             lhs: half,
             ..against(&word)
@@ -387,10 +405,7 @@ mod tests {
             ..against(&word)
         };
         let step = MatmulStep::new(&hw, split, MatmulOperands::all(F16));
-        assert_eq!(
-            step.check(split, 64, 1536),
-            Err(MATMUL_PACKED_READS_SPLIT)
-        );
+        assert_eq!(step.check(split, 64, 1536), Err(MATMUL_PACKED_READS_SPLIT));
     }
 
     /// An rhs in rows steps a word of scales along the axis its words run along, and one read
@@ -436,7 +451,10 @@ mod tests {
                     .stored(
                         N,
                         words,
-                        Some((&tile_order::values_axes(N), tile_order::values_storage(N, (k, n), words).tiles())),
+                        Some((
+                            &tile_order::values_axes(N),
+                            tile_order::values_storage(N, (k, n), words).tiles(),
+                        )),
                         None,
                     )
                     .expect("tile order is read at every load");
@@ -468,7 +486,10 @@ mod tests {
                 .stored(
                     N,
                     words,
-                    Some((&tile_order::values_axes(N), tile_order::values_storage(N, (128, 8), words).tiles())),
+                    Some((
+                        &tile_order::values_axes(N),
+                        tile_order::values_storage(N, (128, 8), words).tiles(),
+                    )),
                     None,
                 )
                 .expect("tile order is read at every load");
@@ -509,7 +530,8 @@ mod tests {
         let nvfp4 = Operand::packed(K, 8, K, tile_order::BLOCK, 4);
         let float = Operand::plain();
         let tile = |hw: &Hardware, rhs: &Operand, values| {
-            MatmulStep::stored_on(hw, MatmulOperand::Rhs, *rhs, values, F16).map(|step| (step.along(K), step.along(N)))
+            MatmulStep::stored_on(hw, MatmulOperand::Rhs, *rhs, values, F16)
+                .map(|step| (step.along(K), step.along(N)))
         };
         assert_eq!(tile(&block_scaled, &nvfp4, e2m1), Some((128, 8)));
         assert_eq!(tile(&simdgroup, &nvfp4, e2m1), Some((64, 8)));

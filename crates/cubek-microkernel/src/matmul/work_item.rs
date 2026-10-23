@@ -141,10 +141,12 @@ impl MatmulWorkItem {
                 out: self.elements.out,
             },
             sum: self.sum,
-            layouts: self.layouts.map(|operand, layout| match packings.get(operand) {
-                Some(packing) => MatmulLayout::of_packing(&packing, operand),
-                None => layout,
-            }),
+            layouts: self
+                .layouts
+                .map(|operand, layout| match packings.get(operand) {
+                    Some(packing) => MatmulLayout::of_packing(&packing, operand),
+                    None => layout,
+                }),
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
