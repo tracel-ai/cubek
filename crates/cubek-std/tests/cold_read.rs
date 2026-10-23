@@ -38,8 +38,10 @@ fn the_cold_read_reads_every_vector_of_its_scratch_once() {
     let written = output.shape()[0];
     let sums: Vec<f32> = client
         .read_one_unchecked(output.handle)
-        .chunks_exact(4)
-        .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|word| f32::from_le_bytes(*word))
         .collect();
 
     assert!(written * SUMMED >= elements);

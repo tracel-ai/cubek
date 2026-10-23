@@ -39,7 +39,7 @@ where
     R: MatmulRoutine<M, SM> + Copy,
 {
     let client = cubecl::test_device().client();
-    let hw = Hardware::new(client.properties_shared(), client.target_properties());
+    let hw = Hardware::from_client(&client);
     let (lhs_host, rhs_host) = (values(m * k, 3), values(k * n, 5));
     let expected = product(&lhs_host, &rhs_host, [m, n, k]);
     let upload = |shape, data: &[i32]| {
@@ -68,9 +68,11 @@ where
         served += 1;
         let written: Vec<i32> = client
             .read_one_unchecked(out.handle)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .take(m * n)
-            .map(|word| i32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .map(|word| i32::from_le_bytes(*word))
             .collect();
         assert_eq!(
             written,
