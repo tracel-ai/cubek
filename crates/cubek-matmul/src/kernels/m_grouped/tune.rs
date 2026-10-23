@@ -209,3 +209,96 @@ fn evenly_spread(
     };
     tensors.with_rows(source, ends)
 }
+
+#[cfg(test)]
+mod tests {
+    use cubecl::client::Client;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::prelude::*;
+    use cubecl::server::CopyDescriptor;
+    use cubecl::std::tensor::TensorHandle;
+
+    use super::evenly_spread;
+    use crate::kernels::grouped_rows::{GroupedRows, PaddedRows, RouteSort, upload};
+    use crate::kernels::m_grouped::{MGroupedMatmulTensors, MGroupedRowSource};
+    use crate::kernels::stack::SlabAxis;
+    use crate::kernels::tensor::{PlainTensor, StoredTensor};
+
+    /// `tensor`, `u32`, read back.
+    fn read(client: &Client, tensor: &PlainTensor) -> Vec<u32> {
+        let bytes = client.read_one_unchecked_tensor(CopyDescriptor::new(
+            tensor.binding.handle.clone(),
+            tensor.binding.shape.clone(),
+            tensor.binding.strides.clone(),
+            tensor.elem.size(),
+        ));
+        u32::from_bytes(&bytes).to_vec()
+    }
+
+    /// Ends and places far out of range, as a discarded sort leaves them, replaced for every
+    /// source by ends spreading the rows evenly, places naming the rows' own tokens, and a
+    /// gated source's layout built on those ends.
+    #[test]
+    fn evenly_spread_replaces_a_discarded_sorts_garbage() {
+        let client = cubek_test_utils::client();
+        let (tokens, slots, experts, k, n, align) = (5, 3, 4, 8, 4, 4);
+        let rows = tokens * slots;
+        let floats = |[height, width]: [usize; 2]| {
+            PlainTensor::of_handle(TensorHandle::zeros(
+                &client,
+                [height, width],
+                ElemType::Float(FloatKind::F32),
+            ))
+        };
+        let garbage = |len: usize| PlainTensor::of_handle(upload(&client, &vec![0xF000_0000; len]));
+        let garbage_layout = GroupedRows::uploaded(&client, &[0xF000_0000; 4], rows, align);
+        let sources = [
+            MGroupedRowSource::Sorted(floats([rows, k])),
+            MGroupedRowSource::Routed {
+                tokens: floats([tokens, k]),
+                sort: RouteSort {
+                    route_at_place: garbage(rows),
+                    slots,
+                },
+            },
+            MGroupedRowSource::Gated(PaddedRows::new(
+                TensorHandle::zeros(
+                    &client,
+                    [garbage_layout.padded_rows(), 2 * k],
+                    ElemType::Float(FloatKind::F32),
+                ),
+                garbage_layout,
+            )),
+        ];
+        for source in sources {
+            let tensors = MGroupedMatmulTensors::new(
+                &client,
+                source,
+                StoredTensor::Plain(floats([k, experts * n])),
+                garbage(experts),
+                SlabAxis::Output,
+            )
+            .expect("float operands the routines read");
+            let spread = evenly_spread(&tensors.key(), &tensors);
+            assert_eq!(read(&client, spread.ends()), vec![3, 7, 11, 15]);
+            match spread.source() {
+                MGroupedRowSource::Sorted(_) => {}
+                MGroupedRowSource::Routed { sort, .. } => {
+                    assert!(
+                        read(&client, &sort.route_at_place)
+                            .iter()
+                            .all(|&route| (route as usize) < rows)
+                    );
+                }
+                MGroupedRowSource::Gated(both) => {
+                    let layout = both.layout();
+                    let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align);
+                    let read_handle =
+                        |handle: TensorHandle| read(&client, &PlainTensor::of_handle(handle));
+                    assert_eq!(read_handle(layout.starts()), read_handle(launched.starts()));
+                    assert_eq!(read_handle(layout.table()), read_handle(launched.table()));
+                }
+            }
+        }
+    }
+}

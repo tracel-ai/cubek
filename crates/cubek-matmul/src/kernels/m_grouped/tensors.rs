@@ -118,6 +118,11 @@ impl MGroupedMatmulTensors {
         }
     }
 
+    /// Each group's cumulative end row, `u32`.
+    pub(crate) fn ends(&self) -> &PlainTensor {
+        &self.ends
+    }
+
     /// The client the operands live on.
     pub fn client(&self) -> &Client {
         &self.client
