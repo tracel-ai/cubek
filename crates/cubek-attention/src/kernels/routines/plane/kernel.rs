@@ -16,7 +16,6 @@ pub fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     value: &TileArg<'_>,
     out: &TileArg<'_>,
     len: &Tensor<u32>,
-    pages: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -27,8 +26,8 @@ pub fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let q = query.tile(&partitioning);
-    let key = key.tile_paged(&partitioning, pages);
-    let value = value.tile_paged(&partitioning, pages);
+    let key = key.tile(&partitioning);
+    let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     for plane in &partitioning {
         let visible = VisibleKeys::new(len, plane.origin(B), queries, visibility);

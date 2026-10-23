@@ -80,7 +80,6 @@ impl HypercubeShuffleMerge for HypercubeLastArrivalShuffle {
                         slots.sum.binding().into_tensor_arg(),
                         arrivals.binding.into_tensor_arg().into_buffer_arg(),
                         binding.lengths,
-                        binding.pages,
                         queries,
                         scale,
                         partitioning,

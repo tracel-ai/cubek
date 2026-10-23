@@ -188,7 +188,6 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 value.arg(),
                 binding.out.arg(),
                 binding.lengths,
-                binding.pages,
                 problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),

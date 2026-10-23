@@ -20,7 +20,6 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     len: &Tensor<u32>,
-    pages: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -30,11 +29,11 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let key = TileLines::<E> {
-        tile: key.tile_paged(&partitioning, pages),
+        tile: key.tile(&partitioning),
         element: PhantomData,
     };
     let value = TileLines::<E> {
-        tile: value.tile_paged(&partitioning, pages),
+        tile: value.tile(&partitioning),
         element: PhantomData,
     };
     // The cube level's walk: this cube's run of the steps, or pages, of keys.

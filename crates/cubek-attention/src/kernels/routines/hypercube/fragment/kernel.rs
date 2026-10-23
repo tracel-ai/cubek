@@ -21,7 +21,6 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     len: &Tensor<u32>,
-    pages: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -38,10 +37,10 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     let visible = VisibleKeys::new(len, first_step.origin(B), queries, visibility);
     let q = query.tile(&partitioning);
     let k = key
-        .tile_paged(&partitioning, pages)
+        .tile(&partitioning)
         .within(S, 0, visible.attended as usize);
     let v = value
-        .tile_paged(&partitioning, pages)
+        .tile(&partitioning)
         .within(S, 0, visible.attended as usize);
     let o = out.tile(&partitioning);
     let bias = visible.bias::<EA>(&partitioning);

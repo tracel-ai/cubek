@@ -74,7 +74,6 @@ impl HypercubeShuffleMerge for HypercubeSecondLaunchShuffle {
                         slots.max.clone().binding().into_tensor_arg(),
                         slots.sum.clone().binding().into_tensor_arg(),
                         binding.lengths,
-                        binding.pages,
                         queries,
                         scale,
                         partitioning,

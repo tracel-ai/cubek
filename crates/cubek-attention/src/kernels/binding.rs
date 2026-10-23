@@ -1,5 +1,5 @@
 use crate::kernels::PackedCacheBinding;
-use cubecl::prelude::{ComptimeOptionArgs, Tensor, TensorArg};
+use cubecl::prelude::TensorArg;
 use cubecl::tile::Launcher;
 use cubecl::tile::launch::Bound;
 
@@ -12,9 +12,6 @@ pub struct AttentionBinding {
     pub out: Bound,
     /// The attended length of each sequence.
     pub lengths: TensorArg,
-    /// The page table where the keys and values lie in pools of pages, which the kernel reads
-    /// them through.
-    pub pages: ComptimeOptionArgs<&'static Tensor<u32>>,
 }
 
 /// How a launch's keys and values are bound.

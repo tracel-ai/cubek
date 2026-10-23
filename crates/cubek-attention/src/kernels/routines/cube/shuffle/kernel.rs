@@ -17,7 +17,6 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     value: &TileArg<'_>,
     out: &TileArg<'_>,
     len: &Tensor<u32>,
-    pages: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -28,11 +27,11 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
 ) {
     let q = query.tile(&partitioning);
     let k = TileLines::<E> {
-        tile: key.tile_paged(&partitioning, pages),
+        tile: key.tile(&partitioning),
         element: PhantomData,
     };
     let v = TileLines::<E> {
-        tile: value.tile_paged(&partitioning, pages),
+        tile: value.tile(&partitioning),
         element: PhantomData,
     };
     let o = out.tile(&partitioning);

@@ -211,7 +211,6 @@ impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
                 slots.max.clone().binding().into_tensor_arg(),
                 slots.sum.clone().binding().into_tensor_arg(),
                 binding.lengths,
-                binding.pages,
                 problem.seq_q as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),

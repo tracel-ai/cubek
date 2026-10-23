@@ -4,8 +4,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::unit::{UnitAttentionMicrokernel, unit_attention_microkernel};
 use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
 
-/// Every unit of the launch running its rows, the keys and values read through `pages` where they
-/// are pools of pages.
+/// Every unit of the launch running its rows.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn unit_attention_kernel<EA: Float>(
@@ -14,7 +13,6 @@ pub fn unit_attention_kernel<EA: Float>(
     value: &TileArg<'_>,
     out: &TileArg<'_>,
     len: &Tensor<u32>,
-    pages: ComptimeOption<&Tensor<u32>>,
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
@@ -23,8 +21,8 @@ pub fn unit_attention_kernel<EA: Float>(
     #[define(EA)] _sum: ElemType,
 ) {
     let q = query.tile(&partitioning);
-    let key = key.tile_paged(&partitioning, pages);
-    let value = value.tile_paged(&partitioning, pages);
+    let key = key.tile(&partitioning);
+    let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     for unit in &partitioning {
         let visible = VisibleKeys::new(len, unit.origin(B), queries, visibility);
