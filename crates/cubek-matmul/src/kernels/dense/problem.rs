@@ -451,6 +451,13 @@ pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
 };
 
+/// What a launch over a packed input declines where its levels reach past the end of `K`: the
+/// input is bound a whole read wide along `K`, and no mask checks a vector line of its words.
+pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
+    why: "a packed input is read a whole read wide along k, which no mask checks, and this \
+          launch's levels reach past the end of k",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
