@@ -95,11 +95,33 @@ impl From<VectorizationError> for MatmulSetupError {
     }
 }
 
-/// A launch the tile engine refused is a configuration the routine cannot run.
+/// A launch the tile engine refused past what the device holds is a feature the device lacks, so
+/// a caller falls back as it would without the feature; any other refusal is a configuration the
+/// routine cannot run.
 #[cfg(feature = "tiled")]
 impl From<cubecl::tile::launch::Refusal> for MatmulSetupError {
     fn from(refusal: cubecl::tile::launch::Refusal) -> Self {
-        Self::InvalidConfig(Box::new(refusal))
+        use cubecl::tile::launch::Refusal;
+        match refusal {
+            Refusal::CubePastDevice { units, .. } => {
+                MatmulAvailabilityError::CubeDimTooBig(CubeDim::new_1d(units)).into()
+            }
+            Refusal::CubeShapePastDevice {
+                shape: (x, y, z), ..
+            } => MatmulAvailabilityError::CubeDimTooBig(CubeDim::new_3d(x, y, z)).into(),
+            Refusal::GridPastDevice {
+                count: (x, y, z), ..
+            } => MatmulAvailabilityError::CubeCountTooBig(CubeCount::new_3d(x, y, z)).into(),
+            Refusal::SharedMemoryPastDevice { bytes, most } => {
+                MatmulAvailabilityError::SharedMemoryTooBig {
+                    requested: bytes,
+                    available: most,
+                }
+                .into()
+            }
+            Refusal::PlanesUnavailable => MatmulAvailabilityError::PlaneOpsUnavailable.into(),
+            refusal => Self::InvalidConfig(Box::new(refusal)),
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::kernels::tensor::PlainTensor;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
@@ -384,6 +384,16 @@ impl MatmulRoutineProblem {
             alignments: orders.map(|operand, order| self.alignment(operand, order)),
             start_bytes: self.start_bytes,
             stored_tiles: self.stored_tiles,
+        }
+    }
+
+    /// The element the product sums in, whatever it reads and writes: an integer product its own
+    /// integer, which sums exactly, and a float one `f32`. An output its cubes add into is held in
+    /// it too.
+    pub fn sum(&self) -> ElemType {
+        match self.elements.lhs {
+            integer @ ElemType::Int(_) => integer,
+            _ => ElemType::Float(FloatKind::F32),
         }
     }
 

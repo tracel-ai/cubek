@@ -208,7 +208,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
         vectorization.require(VectorRequirement::Access {
             operand: MatmulOperand::Out,
-            elements: hw.vector_ceiling(MatmulView::SUM),
+            elements: hw.vector_ceiling(problem.sum()),
         });
         let mut blueprint = MatmulBlueprint::new(
             hw,
