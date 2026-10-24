@@ -111,9 +111,10 @@ impl HypercubeAttentionPlaneSettings for PlaneShuffleAttentionMicrokernelSetting
 
 impl HypercubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
     /// Its default, then the cube's swizzled boxes of fragments over its heads, the score kept in
-    /// the fragments: a cube of the cube routine's at its widest, on a run of the keys. Every one
-    /// holds one plane along its run, as a staging cube does; the swizzled ones decline where the
-    /// device reads the score through windows alone.
+    /// the fragments: a cube of the cube routine's at its widest, on a run of the keys; then the
+    /// one-by-eight box on two planes along a head's queries. Every one holds one plane along its
+    /// run, as a staging cube does; the swizzled ones decline where the device reads the score
+    /// through windows alone.
     fn hypercube_settings(_hw: &Hardware) -> Vec<HypercubeAttentionMicrokernelSettings<Self>> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let cube = CubeAttentionMicrokernelSettings::<Self>::DEFAULT;
@@ -129,9 +130,19 @@ impl HypercubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettin
                     ..cube
                 },
             });
+        // A prompt of few heads leaves the device short of cubes. Two planes along the queries,
+        // the keys split four ways across cubes, take Qwen3-0.6B's and Qwen3-1.7B's prompt of 512
+        // on an RTX PRO 6000 to 43 µs, from the cube routine's 49 on the same planes and 74 on one.
+        let split = HypercubeAttentionMicrokernelSettings {
+            cube: CubeAttentionMicrokernelSettings {
+                planes_along_queries: count(2),
+                ..swizzled[0].cube
+            },
+        };
         [HypercubeAttentionMicrokernelSettings::<Self>::DEFAULT]
             .into_iter()
             .chain(swizzled)
+            .chain([split])
             .collect()
     }
 }

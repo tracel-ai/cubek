@@ -84,9 +84,10 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
     /// a cube with eight and sixteen fragments along its keys, or with two, four and eight planes
     /// along them, so a step reaches the hundreds of keys, with the default's others; then the
     /// larger boxes again in swizzled tiles, which a plane keeping its score in fragments reads
-    /// without bank conflicts and a cmma plane declines. The wide steps hold one head because a
-    /// step's stages and the heads' windows share one budget; one that still does not fit the
-    /// device's shared memory declines there.
+    /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on two
+    /// planes along a head's queries. The wide steps hold one head because a step's
+    /// stages and the heads' windows share one budget; one that still does not fit the device's
+    /// shared memory declines there.
     fn cube_settings(_hw: &Hardware) -> Vec<CubeAttentionMicrokernelSettings<Self>> {
         let lead = CubeAttentionMicrokernelSettings::<Self>::DEFAULT;
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
@@ -160,6 +161,15 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
                 layout: CubeAttentionStageLayout::SwizzledBlocks,
                 ..fragments(rows, keys)
             });
+        // A prompt of few heads leaves the device short of cubes, one a box of queries for every
+        // four heads: more planes on each box are what it has left to run. On Qwen3-0.6B's prompt
+        // of 512 on an RTX PRO 6000, two planes along the queries take the one-by-eight box from
+        // 74 to 49 µs; on Qwen3-8B, whose cubes already fill the device, they cost 4%. Four were
+        // slower than two on both.
+        let swizzled_split = CubeAttentionMicrokernelSettings {
+            planes_along_queries: count(2),
+            ..swizzled[2]
+        };
         [lead, fragments(2, 2), fragments(2, 4)]
             .into_iter()
             .chain(wide)
@@ -170,6 +180,7 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
             .chain([whole, rectangular])
             .chain(along_keys)
             .chain(swizzled)
+            .chain([swizzled_split])
             .collect()
     }
 }
