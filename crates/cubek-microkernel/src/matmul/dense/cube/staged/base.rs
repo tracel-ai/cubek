@@ -748,8 +748,11 @@ impl Microkernel for CubeStagedMicrokernel {
         // box beside a filling plane, stored by the TMA engine, which a projection with few
         // columns needs to fill the device at all: a 512-row chunk of Qwen3-0.6B's output projection
         // is 128 of the `64 × 128` boxes for 188 cores, and on the `64 × 64` it takes 16.4 µs
-        // against 22.5, what cuBLAS takes. Every one of them fits two stages in 64 KB and its own
-        // ring and box in 99 KB.
+        // against 22.5, what cuBLAS takes; and the `128 × 128` box on two by four planes, each
+        // four by four fragments four steps deep, beside a filling plane, which the long
+        // projections of Qwen3-8B want: its output projection takes 73.7 µs against the deep box's
+        // 86.0, its down projection 184.3 against 227.3. Every one of them fits two stages in
+        // 64 KB and its own ring and box in 99 KB.
         let filled_by_tma = |grid, planes, ring, filling_planes| {
             boxed(grid, planes)
                 .ringed(ring)
@@ -769,6 +772,7 @@ impl Microkernel for CubeStagedMicrokernel {
                 filled_by_tma((2, 16, 2), (8, 1), double, 0),
                 filled_by_tma((2, 16, 2), (4, 2), StageRing::TRIPLE, 0),
                 stored_by_tma(filled_by_tma((2, 4, 4), (2, 2), StageRing::TRIPLE, 1)),
+                filled_by_tma((4, 4, 4), (2, 4), StageRing::TRIPLE, 1),
             ]
         });
         let wgmma = (hw.bulk_tensor_copy()
