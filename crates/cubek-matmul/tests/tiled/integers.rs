@@ -20,7 +20,7 @@ fn values(len: usize, seed: i32) -> Vec<i32> {
 }
 
 /// `lhs · rhs` on the host, both row-major.
-fn product(lhs: &[i32], rhs: &[i32], [m, n, k]: [usize; 3]) -> Vec<i32> {
+fn product(lhs: &[i32], rhs: &[i32], [m, k, n]: [usize; 3]) -> Vec<i32> {
     (0..m * n)
         .map(|at| {
             let (row, column) = (at / n, at % n);
@@ -33,7 +33,7 @@ fn product(lhs: &[i32], rhs: &[i32], [m, n, k]: [usize; 3]) -> Vec<i32> {
 /// that serve it write the exact product. How many served, so a caller can say a routine must.
 fn every_setting_is_exact<R, M: MatmulMicrokernel, SM: PartialEq + Clone + 'static>(
     routine: R,
-    [m, n, k]: [usize; 3],
+    [m, k, n]: [usize; 3],
 ) -> usize
 where
     R: MatmulRoutine<M, SM> + Copy,
@@ -41,7 +41,7 @@ where
     let client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
     let (lhs_host, rhs_host) = (values(m * k, 3), values(k * n, 5));
-    let expected = product(&lhs_host, &rhs_host, [m, n, k]);
+    let expected = product(&lhs_host, &rhs_host, [m, k, n]);
     let upload = |shape, data: &[i32]| {
         let data = data.iter().map(|&value| value as f32).collect();
         TestInput::builder(client.clone(), shape)
@@ -84,27 +84,28 @@ where
     served
 }
 
+/// Unit registers is the routine that serves any product on any device, so it must serve this one.
 #[test]
 fn unit_registers_sums_i32_exactly() {
-    assert!(every_setting_is_exact(UnitRegistersMatmulRoutine, [32, 24, 40]) > 0);
+    assert!(every_setting_is_exact(UnitRegistersMatmulRoutine, [32, 40, 24]) > 0);
 }
 
 #[test]
 fn unit_whole_k_sums_i32_exactly() {
-    every_setting_is_exact(UnitWholeKMatmulRoutine, [4, 24, 40]);
+    every_setting_is_exact(UnitWholeKMatmulRoutine, [4, 40, 24]);
 }
 
 #[test]
 fn plane_shuffle_sums_i32_exactly() {
-    every_setting_is_exact(PlaneShuffleMatmulRoutine, [4, 24, 40]);
+    every_setting_is_exact(PlaneShuffleMatmulRoutine, [4, 40, 24]);
 }
 
 #[test]
 fn cube_shuffle_sums_i32_exactly() {
-    every_setting_is_exact(CubeShuffleMatmulRoutine, [4, 24, 40]);
+    every_setting_is_exact(CubeShuffleMatmulRoutine, [4, 40, 24]);
 }
 
 #[test]
 fn cube_staged_sums_i32_exactly() {
-    every_setting_is_exact(CubeStagedMatmulRoutine, [32, 24, 40]);
+    every_setting_is_exact(CubeStagedMatmulRoutine, [32, 40, 24]);
 }

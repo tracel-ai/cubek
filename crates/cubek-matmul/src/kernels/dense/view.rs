@@ -281,10 +281,9 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// What every microkernel is handed, summing in the problem's
-    /// [`sum`](MatmulRoutineProblem::sum): its rows held whole, every
-    /// one, or tiled. Against a packed operand, the operands' blocks ([`MatmulBlocks`]), over the
-    /// axes inside a block.
+    /// What every microkernel is handed, summing in the problem's [`sum`](MatmulRoutineProblem::sum):
+    /// its rows held whole, every one, or tiled. Against a packed operand, the operands' blocks
+    /// ([`MatmulBlocks`]), over the axes inside a block.
     pub fn work_item(&self) -> MatmulWorkItem {
         let blocks = self.blocks();
         MatmulWorkItem {
