@@ -3,7 +3,6 @@
 //! product's batches of one row ([`RoutedMatmulTensors`]), keyed by the stack's shape and a row's
 //! slots. What no routine serves is the caller's to run another way.
 
-use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -157,8 +156,7 @@ where
     R::Settings: Send + Sync + 'static,
 {
     Tunable::new(&settings.to_string(), move |inputs: RoutedMatmulInputs| {
-        let client: &Client = inputs.tensors.client();
-        let hw = Hardware::from_client(client);
+        let hw = Hardware::from_client(inputs.tensors.client());
         inputs
             .tensors
             .launch_into(&hw, &routine, &settings, &inputs.out)

@@ -6,10 +6,12 @@ use crate::kernels::tensor::PlainTensor;
 
 /// Where a grouped product's rows come from: what its launch pads into tiles a cube high before
 /// the product reads them, each source in the pass it makes anyway.
-// Built once per launch and moved into it: boxing the wide variant would add an allocation per
-// launch to save a copy on the stack.
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "built once per launch and moved into it: boxing the wide variant would add an \
+              allocation per launch to save a copy on the stack"
+)]
 pub enum MGroupedRowSource {
     /// `[rows, k]`, already in grouped order.
     Sorted(PlainTensor),

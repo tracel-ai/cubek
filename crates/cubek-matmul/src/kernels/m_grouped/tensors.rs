@@ -112,9 +112,11 @@ impl MGroupedMatmulTensors {
     /// measured on when the call's own layout cannot be trusted.
     pub(crate) fn with_rows(&self, source: MGroupedRowSource, ends: PlainTensor) -> Self {
         Self {
+            client: self.client.clone(),
             source,
+            rhs: self.rhs.clone(),
             ends,
-            ..self.clone()
+            along: self.along,
         }
     }
 
@@ -211,9 +213,9 @@ impl MGroupedMatmulTensors {
             .pad(&self.client, self.ends.clone(), chunk_rows)
             .into_parts();
         let [k, n] = self.slab_shape();
-        let chunks = lhs.shape()[0] / chunk_rows;
+        let (chunks, elem) = (lhs.shape()[0] / chunk_rows, lhs.dtype);
         // Each chunk is a batch of its rows, every one against the slab of the group it holds.
-        let rows = PlainTensor::of_handle(lhs.clone())
+        let rows = PlainTensor::of_handle(lhs)
             .as_rows(chunks * chunk_rows, k)
             .viewed(Metadata::new(
                 [chunks, chunk_rows, k],
@@ -225,11 +227,8 @@ impl MGroupedMatmulTensors {
             },
             entries: PlainTensor::of_handle(layout.table()),
         };
-        let (out, bound) = PlainTensor::empty_contiguous(
-            &self.client,
-            Shape::new([chunks * chunk_rows, n]),
-            lhs.dtype,
-        );
+        let (out, bound) =
+            PlainTensor::empty_contiguous(&self.client, Shape::new([chunks * chunk_rows, n]), elem);
         let bound = bound.viewed(Metadata::new(
             [chunks, chunk_rows, n],
             [chunk_rows * n, n, 1],
