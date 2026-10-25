@@ -330,19 +330,14 @@ impl<'a> MatmulView<'a> {
     /// Every row of one batch held whole, each batch handed to the cubes: a table read per batch
     /// tells the batches apart, so none merges into another's rows.
     fn read_per_batch(&self) -> RowsReading {
-        RowsReading {
-            rows: self.problem.stated_rows,
-            work_item_rows: MatmulRows::Whole(self.problem.stated_rows),
-        }
+        RowsReading::whole(self.problem.stated_rows)
     }
 
     /// Every row held whole: the batches merged into the rows, and none left for the cubes.
     fn read_folded(&self) -> RowsReading {
-        let rows = self.problem.stated_rows * self.problem.batches.iter().product::<usize>();
-        RowsReading {
-            rows,
-            work_item_rows: MatmulRows::Whole(rows),
-        }
+        RowsReading::whole(
+            self.problem.stated_rows * self.problem.batches.iter().product::<usize>(),
+        )
     }
 
     /// The rows tiled: one batch's rows, and each batch longer than one handed to the cubes.
@@ -384,6 +379,23 @@ impl<'a> MatmulView<'a> {
 struct RowsReading {
     rows: usize,
     work_item_rows: MatmulRows,
+}
+
+impl RowsReading {
+    /// `rows` held whole: a work item holds the power of two at or above them, so every count in
+    /// one such bucket lays the microkernel out alike, is served or declined alike, and runs the
+    /// one kernel, the rows past the product's masked. No rows hold none, which every
+    /// microkernel declines.
+    fn whole(rows: usize) -> Self {
+        let held = match rows {
+            0 => 0,
+            rows => rows.next_power_of_two(),
+        };
+        Self {
+            rows,
+            work_item_rows: MatmulRows::Whole(held),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -434,8 +446,8 @@ mod tests {
         );
     }
 
-    /// A launch holding every row whole compiles its rows in and reads the rest at launch; a tiled
-    /// one reads every extent at launch, its batch included.
+    /// A launch holding every row whole compiles the rows its work item holds in and reads the
+    /// rest at launch; a tiled one reads every extent at launch, its batch included.
     #[test]
     fn a_kernel_frees_the_extents_its_rows_kind_leaves_to_the_launch() {
         let problem = MatmulRoutineProblem::from(&shape(4, MatmulBatching::Shared));

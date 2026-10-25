@@ -64,6 +64,15 @@ impl MatmulSpace {
         }
     }
 
+    /// The axis the product's rows lie along inside a block: `M`, or the rows inside its one
+    /// block.
+    pub fn rows_axis(self) -> Axis {
+        match self {
+            Self::Plain => M,
+            Self::BlockSplit => MI,
+        }
+    }
+
     /// The axes the output's rows and columns are cut short along at the problem's edge.
     pub fn output_axes(self) -> [Axis; 2] {
         match self {
@@ -146,7 +155,11 @@ impl MatmulPartitioning {
 
     /// The partitioning a launch compiles: this one with every extent its rows' kind leaves to the
     /// launch freed, so one kernel serves every product those extents tell apart. A block-split
-    /// space frees none: its blocks are compiled in.
+    /// space compiles its blocks in, and frees only the rows inside the one block no scale cuts
+    /// `M` into, where its rows' kind leaves them to the launch: a prompt's rows change with every
+    /// call, and no factor is windowed along them. A launch holding every row whole compiles in the
+    /// rows its cube's box holds rather than the product's, so every count a box holds alike runs
+    /// one kernel, the rows past the product's masked against the lhs and the output as stored.
     pub fn kernel(&self) -> Partitioning {
         self.kernel_compiling(&[])
     }
@@ -164,12 +177,37 @@ impl MatmulPartitioning {
                 .copied()
                 .filter(|axis| !compiled.contains(axis))
                 .collect(),
-            MatmulSpace::BlockSplit => Vec::new(),
+            MatmulSpace::BlockSplit => {
+                let rows_free = self.rows_kind.dynamic_axes().contains(&M)
+                    && self.partitioning.space().extent(MB) == 1
+                    && !compiled.contains(&MI);
+                rows_free.then_some(MI).into_iter().collect()
+            }
         };
         Partitioning::new(
-            self.partitioning.space().clone().with_dynamic(&dynamic),
+            self.compiled_space().with_dynamic(&dynamic),
             self.partitioning.levels().to_vec(),
         )
+    }
+
+    /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
+    /// cube's box holds where every row is held whole.
+    fn compiled_space(&self) -> Space {
+        let space = self.partitioning.space();
+        match self.rows_kind {
+            MatmulRowsKind::Tiled => space.clone(),
+            MatmulRowsKind::Whole => {
+                let rows = self.space.rows_axis();
+                let held = self.cube_box.extent(rows);
+                Space::new(
+                    &space
+                        .extents()
+                        .into_iter()
+                        .map(|(axis, extent)| (axis, if axis == rows { held } else { extent }))
+                        .collect::<Vec<_>>(),
+                )
+            }
+        }
     }
 
     /// The batch axes a cube is handed one of: the problem's longer than one.

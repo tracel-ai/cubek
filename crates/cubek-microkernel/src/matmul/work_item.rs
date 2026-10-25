@@ -199,7 +199,8 @@ impl MatmulWorkItem {
 /// from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MatmulRowsKind {
-    /// Every row held whole: the rows compiled in, every other extent read at launch.
+    /// Every row held whole: the power of two at or above them compiled in, the rows past the
+    /// product's masked, every other extent read at launch.
     Whole,
     /// The rows tiled: every extent read at launch.
     Tiled,

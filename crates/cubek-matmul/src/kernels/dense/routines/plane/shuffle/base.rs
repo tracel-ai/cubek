@@ -545,7 +545,8 @@ mod tests {
         );
     }
 
-    /// A cube holds every row of the product, so the rhs is read once whatever the rows.
+    /// A cube holds every row of the product, so the rhs is read once whatever the rows: the power
+    /// of two at or above them, so every count it rounds to alike runs one kernel.
     #[test]
     fn a_cube_holds_every_row() {
         let hw = devices::strix_halo();
@@ -563,7 +564,8 @@ mod tests {
             )
         };
         for m in 1..=PlaneShuffleMicrokernel::MAX_ROWS {
-            assert_eq!(rows(m), (m, m));
+            let held = m.next_power_of_two();
+            assert_eq!(rows(m), (held, held));
         }
     }
 

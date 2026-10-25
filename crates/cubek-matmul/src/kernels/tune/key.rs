@@ -387,30 +387,6 @@ pub fn create_key(
     )
 }
 
-/// [`create_key`] keyed by the call's own rows, not the power of two above them: the key of a
-/// table whose candidates serve or decline by the exact row count, so a winner measured at its
-/// key's rows serves every call under it.
-///
-/// The few-rows tables' are such candidates: a plane shuffle lays its units out by the rows, and
-/// what is left to the units along `K` follows, so a setting that serves eight rows may decline
-/// five: against a float rhs the vectors its units read along `K` narrow below two, and against
-/// a packed one the turns a cube's planes take along `K` fall below two. A few rows is all those
-/// tables take, so keying each count adds few records.
-pub fn create_exact_rows_key(
-    elem: ElemType,
-    lhs: (&Metadata, OperandKind),
-    rhs: (&Metadata, OperandKind),
-) -> MatmulTuneKey {
-    let shape = lhs
-        .0
-        .logical_shape()
-        .expect("a tensor's tiling describes its own rank");
-    MatmulTuneKey {
-        m: shape[shape.rank() - 2].max(1),
-        ..create_key(elem, lhs, rhs)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,29 +406,6 @@ mod tests {
         assert_eq!(MatmulTuneKey::anchored(65, 8192), 128);
         assert_eq!(MatmulTuneKey::anchored(100_000, 8192), 8192);
         assert_eq!(MatmulTuneKey::anchored(0, 64), 1);
-    }
-
-    /// A key by exact rows keeps the call's rows where the anchored key keeps the power of two
-    /// above them, and is the anchored key in every other part.
-    #[test]
-    fn an_exact_rows_key_keeps_the_calls_rows() {
-        let (k, n) = (256, 64);
-        let rhs = Metadata::new([k, n], vec![1, k]);
-        for (m, anchored) in [(1, 1), (5, 8), (13, 16), (32, 32)] {
-            let lhs = Metadata::new([m, k], vec![k, 1]);
-            let inputs = || ((&lhs, OperandKind::Float), (&rhs, OperandKind::Float));
-            let exact = create_exact_rows_key(F16, inputs().0, inputs().1);
-            let key = create_key(F16, inputs().0, inputs().1);
-            assert_eq!(exact.m, m);
-            assert_eq!(key.m, anchored);
-            assert_eq!(
-                MatmulTuneKey {
-                    m: anchored,
-                    ..exact
-                },
-                key
-            );
-        }
     }
 
     /// An input broadcast along the batch dims is shared, however many batches the other one
