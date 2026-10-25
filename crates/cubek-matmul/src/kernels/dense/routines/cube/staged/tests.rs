@@ -3,7 +3,7 @@
 mod base {
     use super::super::*;
     use crate::kernels::CUBE_STRIPS;
-    use crate::kernels::{MatmulRoutineProblem, MatmulView};
+    use crate::kernels::{MATMUL_PACKED_WALK_PAST_K, MatmulRoutineProblem, MatmulView};
     use core::num::NonZeroUsize;
     use cubecl::features::MmaConfig;
     use cubecl::features::{WgmmaConfig, WgmmaElems};
@@ -1441,5 +1441,67 @@ mod base {
             estimated += 1;
         }
         assert!(estimated > 0, "no packed setting prepared");
+    }
+    /// A packed input is bound a whole read wide along `K`, which no mask checks, so a setting
+    /// whose levels reach past the end of `K` declines rather than prepare a launch its binding
+    /// refuses: a q4 activation against a q4 weight, one row, where a deep stage holds more blocks
+    /// of `K` than the problem has, and at a `K` every stage closes.
+    #[test]
+    fn a_packed_input_prepares_no_walk_past_k() {
+        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubek_microkernel::matmul::stored::Operand;
+        use cubek_microkernel::matmul::stored::Packing;
+        use cubek_std::matmul_axes::{KB, KI};
+
+        let f16 = ElemType::Float(FloatKind::F16);
+        // An L4's instruction: `16 × 8 × 16` over `f16` into `f32`, on 32-unit planes.
+        let hw = devices::offering_mma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: f16,
+                b_type: f16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 8,
+                k: 16,
+            }],
+        );
+        let q4 = |block: [u8; 2], axes| {
+            let scheme = QuantScheme::default()
+                .with_value(QuantValue::Q4S)
+                .per_block(block, ScaleDtype::F16)
+                .with_store(QuantStore::PackedU32(1));
+            Packing {
+                operand: Operand::of_scheme(&scheme, K, axes).expect("q4 is one block along k"),
+                scheme,
+            }
+        };
+        let packings = MatmulOperands {
+            lhs: Some(q4([1, 32], [M, K])),
+            rhs: Some(q4([32, 1], [K, N])),
+            out: None,
+        };
+        let mut past_k = 0;
+        for k in [256, 8192] {
+            for element in [f16, ElemType::Float(FloatKind::F32)] {
+                let problem = MatmulRoutineProblem::packed(1, 64, k, element, packings);
+                for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
+                    match CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings) {
+                        Ok((blueprint, _)) => {
+                            let reaches_past = [KB, KI]
+                                .into_iter()
+                                .any(|axis| blueprint.partitioning.as_tile().overhangs(axis));
+                            assert!(!reaches_past, "{settings} at k = {k} walks past k");
+                        }
+                        Err(refusal) if refusal == MATMUL_PACKED_WALK_PAST_K => {
+                            assert_eq!(k, 256, "{settings}: no stage reaches past a k of {k}");
+                            past_k += 1;
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+        assert!(past_k > 0, "no setting's stage reaches past a k of 256");
     }
 }

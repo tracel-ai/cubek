@@ -23,8 +23,8 @@ use cubek_std::{Hardware, Instructions};
 use cubek_std::{UNIT_REGISTERS, manual_mma};
 
 use crate::kernels::{
-    MATMUL_INDEX_UNREAD_BY_TMA, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView,
+    MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{
@@ -607,6 +607,16 @@ impl Routine for CubeStagedMatmulRoutine {
             return Err(MATMUL_INDEX_UNREAD_BY_TMA);
         }
         let partitioning = place(microkernel.launch_tiling());
+        // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
+        // masks its reads past it.
+        let past_k = || {
+            [KB, KI]
+                .into_iter()
+                .any(|axis| partitioning.as_tile().overhangs(axis))
+        };
+        if item.blocks.is_some() && past_k() {
+            return Err(MATMUL_PACKED_WALK_PAST_K);
+        }
         let cube = CubeResources {
             plane_width: resolved.plane_width,
             shared_memory: resolved.shared_memory,
