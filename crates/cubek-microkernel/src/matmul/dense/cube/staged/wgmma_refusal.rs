@@ -43,7 +43,7 @@ impl From<CubeStagedWgmmaRefusal> for Refusal {
                  of their own to fill them"
             }
             CubeStagedWgmmaRefusal::Merged => {
-                "a warpgroup MMA's sum drains straight into its output, which no fold reaches"
+                "a warpgroup MMA's sum drains straight into its output, which no merge of the planes' sums reaches"
             }
         };
         Refusal::Declined { why: details }

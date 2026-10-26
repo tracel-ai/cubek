@@ -279,7 +279,7 @@ impl QueryAxis {
 mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
-    use cubek_microkernel::attention::plane::{
+    use cubek_microkernel::attention::output::plane::{
         PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
     };
     use cubek_microkernel::attention::{AttentionMicrokernel, S};
@@ -443,8 +443,8 @@ mod tests {
         }
         let hw = offering(devices::h100(), 16);
         let layout = PackedLayout {
-            bits: cubek_microkernel::attention::packed_cache::KvBitWidths { key: 4, value: 4 },
-            fixup: cubek_microkernel::attention::packed_cache::KeyFixup::RoundOnly,
+            bits: crate::kernels::KvBitWidths { key: 4, value: 4 },
+            fixup: crate::kernels::KeyFixup::RoundOnly,
         };
         let packed = AttentionRoutineProblem {
             cache: AttentionCacheLayout::Packed(layout),

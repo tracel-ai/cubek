@@ -3,8 +3,8 @@ use core::marker::PhantomData;
 use super::base::CubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::cube::cube_unstaged_attention_microkernel;
-use cubek_microkernel::attention::plane::PlaneShuffleAttention;
+use cubek_microkernel::attention::output::cube::cube_unstaged_attention_microkernel;
+use cubek_microkernel::attention::output::plane::PlaneShuffleAttention;
 use cubek_microkernel::attention::{AttentionVisibility, B, TileLines, VisibleKeys};
 
 /// Every cube running the cube microkernel on its box with planes of shuffles, each reading its keys

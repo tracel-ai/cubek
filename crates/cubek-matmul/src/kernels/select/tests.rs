@@ -710,7 +710,7 @@ mod float {
     /// reject anything past one row, and the answer is whatever is left. This
     /// reaches the attention score product and every backward.
     #[test]
-    fn a_folded_batch_is_routed_by_the_rows_a_memory_bound_kernel_would_stream() {
+    fn a_merged_batch_is_routed_by_the_rows_a_memory_bound_kernel_would_stream() {
         let merged = float(8, 64);
         assert_eq!(
             merged.m, 8,

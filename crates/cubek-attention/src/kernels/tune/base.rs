@@ -23,7 +23,7 @@ use cubecl::zspace::{Shape, metadata::Metadata};
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
 use cubek_std::Hardware;

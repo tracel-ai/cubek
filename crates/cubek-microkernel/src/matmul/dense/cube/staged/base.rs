@@ -85,7 +85,7 @@ pub enum CubeStagedDrain {
 impl CubeStagedMicrokernel {
     /// What a packed item whose scales do not group `K` is declined with.
     pub const UNGROUPED_K: Refusal = Refusal::Declined {
-        why: "the packed staged gemm stages K a scale block at a time, and this packed input's scales do not group K",
+        why: "the packed staged matmul stages K a scale block at a time, and this packed input's scales do not group K",
     };
 
     /// Boxes against a packed input several steps of `M` a plane, `(steps, planes)` as

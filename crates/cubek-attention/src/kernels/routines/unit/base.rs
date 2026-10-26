@@ -7,7 +7,7 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::UnitCube;
-use cubek_microkernel::attention::unit::{
+use cubek_microkernel::attention::output::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{

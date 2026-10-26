@@ -163,12 +163,12 @@ impl PlaneShuffleMatmulRoutine {
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let [rows, k] = [view.rows(), problem.k].map(|extent| extent as u64);
-        // A step of the plane: one unit's block of `K`, over both its digits, by the units
+        // A step of the plane: one unit's block of `K`, over both axes it is split into, by the units
         // sharing it.
         let leaf = blueprint.partitioning.leaf();
         let (blocks, inside) = blocked(K);
         let step_k = (leaf.extent(blocks) * leaf.extent(inside) * microkernel.units_along_k) as u64;
-        // The columns of a cube's box, over both digits of `N`: the planes its order groups.
+        // The columns of a cube's box, over both axes `N` is split into: the planes its order groups.
         let columns = blueprint.partitioning.columns();
         let groups = columns / microkernel.columns() as u64;
         let size = |operand: MatmulOperand| item.elements.get(operand).size() as u64;

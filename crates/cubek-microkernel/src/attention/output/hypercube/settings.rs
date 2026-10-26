@@ -1,6 +1,6 @@
 use crate::attention::CubeAttentionStageLayout;
-use crate::attention::cube::CubeAttentionMicrokernelSettings;
-use crate::attention::plane::{
+use crate::attention::output::cube::CubeAttentionMicrokernelSettings;
+use crate::attention::output::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
 };
 use crate::matmul::dense::plane::PlaneFragmentTransport;
@@ -9,7 +9,7 @@ use core::num::NonZeroUsize;
 use cubek_std::Hardware;
 
 /// The settings of the cube every cube of the hypercube runs, over planes of the plane
-/// microkernel `P`: its own walk of its run of the keys is a cube's ([`CubeAttentionMicrokernel`](crate::attention::cube::CubeAttentionMicrokernel)),
+/// microkernel `P`: its own walk of its run of the keys is a cube's ([`CubeAttentionMicrokernel`](crate::attention::output::cube::CubeAttentionMicrokernel)),
 /// with every knob a cube has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAttentionMicrokernelSettings<P> {

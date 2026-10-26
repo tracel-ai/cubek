@@ -1,12 +1,12 @@
 use crate::attention::AttentionSlotBox;
-use crate::attention::hypercube::HypercubeMergeShape;
 use crate::attention::merge::plane::plane_merge_attention_microkernel;
+use crate::attention::output::hypercube::HypercubeMergeShape;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The cube that stored its partial of `slot_box`'s queries counting itself in at the box, and the
 /// last of the box's cubes to count merging the box into `out`, by one plane
 /// ([`plane_merge_attention_microkernel()`])
-/// ([`HypercubeMerge::LastArrival`](crate::attention::hypercube::HypercubeMerge::LastArrival)).
+/// ([`HypercubeMerge::LastArrival`](crate::attention::output::hypercube::HypercubeMerge::LastArrival)).
 ///
 /// `arrivals` holds a counter for every box, the head's index times the boxes along the queries
 /// plus the box's, at zero; the box's last cube leaves it at zero again. The cube meets on

@@ -3,9 +3,9 @@ use core::marker::PhantomData;
 use crate::kernels::HypercubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
-use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
-use cubek_microkernel::attention::plane::PlaneShuffleAttention;
+use cubek_microkernel::attention::output::cube::cube_unstaged_attention_partial_microkernel;
+use cubek_microkernel::attention::output::hypercube::HypercubeMergeShape;
+use cubek_microkernel::attention::output::plane::PlaneShuffleAttention;
 use cubek_microkernel::attention::{AttentionVisibility, B, PackedLines, TileLines, VisibleKeys};
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the

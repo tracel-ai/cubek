@@ -1,9 +1,9 @@
 use crate::attention::CubeAttentionStageLayout;
-use crate::attention::plane::{
+use crate::attention::output::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernelSettings,
 };
-use crate::attention::unit::UnitAttentionMicrokernelSettings;
+use crate::attention::output::unit::UnitAttentionMicrokernelSettings;
 use crate::matmul::dense::plane::PlaneFragmentTransport;
 use crate::staging::StageRing;
 use core::num::NonZeroUsize;

@@ -8,7 +8,7 @@ use crate::kernels::{
 };
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::attention::hypercube::{HypercubeMerge, HypercubeMergeShape};
+use cubek_microkernel::attention::output::hypercube::{HypercubeMerge, HypercubeMergeShape};
 use cubek_std::Hardware;
 use cubek_std::routine::Grid;
 

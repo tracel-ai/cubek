@@ -8,7 +8,7 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{
@@ -281,7 +281,7 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::plane::ScoreHolder;
+    use cubek_microkernel::attention::output::plane::ScoreHolder;
     use cubek_microkernel::attention::{D, G};
     use cubek_microkernel::matmul::MatmulDim;
     use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;

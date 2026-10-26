@@ -4,8 +4,8 @@
 use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
-use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::cube::CubeAttentionMicrokernelSettings;
+use cubek_microkernel::attention::output::plane::{
     PlaneFragmentAttentionMicrokernel, SWIZZLED_STAGE_UNREAD,
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, CubeAttentionStageLayout, Q, S};

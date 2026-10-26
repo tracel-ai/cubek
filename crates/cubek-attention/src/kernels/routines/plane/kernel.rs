@@ -1,6 +1,6 @@
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::plane::{
     PlaneFragmentAttentionMicrokernel, plane_fragment_attention_microkernel,
 };
 use cubek_microkernel::attention::{AttentionVisibility, B, CubePlaneMicrokernel, S, VisibleKeys};

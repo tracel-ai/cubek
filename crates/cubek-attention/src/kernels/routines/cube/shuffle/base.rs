@@ -6,10 +6,10 @@ use crate::kernels::{
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::attention::cube::{
+use cubek_microkernel::attention::output::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{AttentionOperand, AttentionPartitioning, QueryOrder};

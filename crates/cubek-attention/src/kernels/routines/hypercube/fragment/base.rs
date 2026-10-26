@@ -8,10 +8,10 @@ use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::attention::hypercube::{
+use cubek_microkernel::attention::output::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings, HypercubeMerge,
 };
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{
