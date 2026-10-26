@@ -219,7 +219,8 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// ask for. The cubes sharing a box are its settings' count, whatever the keys
     /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and where
     /// the buffers hold too few keys for every cube to walk some
-    /// ([`AttentionPartitioning::every_cube_walks`]).
+    /// ([`AttentionPartitioning::every_cube_walks`]) or one cube a box already fills the device
+    /// ([`AttentionPartitioning::boxes_leave_workers_idle`]).
     fn prepare(
         &self,
         hw: &Hardware,
@@ -245,6 +246,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
                 + M::MERGE.shared_memory(),
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        partitioning.boxes_leave_workers_idle(hw, &grid.launch)?;
         M::validate(
             hw,
             problem,
@@ -302,7 +304,9 @@ mod tests {
     };
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::attention::output::hypercube::HYPERCUBE_CUBES_UNMET;
-    use cubek_microkernel::attention::{ATTENTION_CUBES_WITHOUT_KEYS, Q, S};
+    use cubek_microkernel::attention::{
+        ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS, Q, S,
+    };
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -366,6 +370,22 @@ mod tests {
             assert_eq!(
                 routine.prepare(&hw, &one_key, &settings).err(),
                 Some(ATTENTION_CUBES_WITHOUT_KEYS),
+                "{settings}"
+            );
+        }
+    }
+
+    /// A prompt whose boxes of queries already fill the device declines whatever the setting:
+    /// the cubes sharing a box would find no idle worker and only add a merge.
+    #[test]
+    fn a_prompt_filling_the_device_declines() {
+        let hw = devices::h100();
+        let prompt = AttentionRoutineProblem::dense((1, 32, 32), (4096, 4096), (128, 128), F16);
+        let routine = HypercubeSecondLaunchShuffleAttentionRoutine::new();
+        for settings in routine.settings(&hw) {
+            assert_eq!(
+                routine.prepare(&hw, &prompt, &settings).err(),
+                Some(ATTENTION_BOXES_FILL_THE_DEVICE),
                 "{settings}"
             );
         }
