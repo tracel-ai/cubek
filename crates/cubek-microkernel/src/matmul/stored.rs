@@ -106,30 +106,30 @@ impl MicroTile {
             return Some(self);
         };
         let per_word = self.extent(along);
-        // The word starts at an axis's finest digit; a tile above it continues the run along an axis
-        // at that digit, or at the blocks once `read` holds a whole one of `inside`: before then the
-        // next block's values are not the next ones along the axis.
-        let axis_of = |digit: Axis, read: &MicroTile| {
+        // The word starts at the finer of the axes an axis is split into; a tile above it continues
+        // the run along an axis on that same split axis, or on the blocks once `read` holds a whole
+        // one of `inside`: before then the next block's values are not the next ones along the axis.
+        let axis_of = |tile_axis: Axis, read: &MicroTile| {
             [along, across].into_iter().find(|&axis| {
                 let (groups, within) = blocked(axis);
                 let block = inside.extent(axis);
-                Self::finest_digit(axes, axis) == Some(digit)
-                    || (digit == groups
+                Self::finest_axis(axes, axis) == Some(tile_axis)
+                    || (tile_axis == groups
                         && axes.contains(&within)
                         && block > 1
                         && read.extent(axis) == block)
             })
         };
-        let (&(digit, first), above) = tiles.split_first()?;
-        let word_along = axis_of(digit, &MicroTile::unit()).filter(|_| first == per_word)?;
+        let (&(tile_axis, first), above) = tiles.split_first()?;
+        let word_along = axis_of(tile_axis, &MicroTile::unit()).filter(|_| first == per_word)?;
         let mut read = MicroTile::along(word_along, per_word);
         let mut taken = 1;
         let mut last = word_along;
-        for &(digit, count) in above.iter().filter(|&&(_, count)| count > 1) {
+        for &(tile_axis, count) in above.iter().filter(|&&(_, count)| count > 1) {
             if taken * count > words {
                 break;
             }
-            let axis = axis_of(digit, &read)?;
+            let axis = axis_of(tile_axis, &read)?;
             let bound = inside.extent(axis);
             if bound > 1 && read.extent(axis) * count > bound {
                 break;
@@ -143,13 +143,13 @@ impl MicroTile {
         Some(read)
     }
 
-    /// The finer of `axis`'s two digits ([`blocked`]) a buffer over `axes` carries: the position
-    /// inside a block where it has it, the blocks where it omits it (as scales do).
-    fn finest_digit(axes: &[Axis], axis: Axis) -> Option<Axis> {
+    /// The finer of the two axes `axis` is split into ([`blocked`]) a buffer over `axes` carries:
+    /// the position inside a block where it has it, the blocks where it omits it (as scales do).
+    fn finest_axis(axes: &[Axis], axis: Axis) -> Option<Axis> {
         let (groups, within) = blocked(axis);
         [within, groups]
             .into_iter()
-            .find(|digit| axes.contains(digit))
+            .find(|split| axes.contains(split))
     }
 }
 
@@ -338,7 +338,7 @@ impl Operand {
             .filter(|&scale| scale > 1 && scale < extent)
     }
 
-    /// Which digits of `axis` a `width`-wide cut goes on, and how wide it is on
+    /// Which of the axes `axis` is split into a `width`-wide cut goes on, and how wide it is on
     /// each: the groups where a scale groups the axis, the position inside one
     /// where it does not — and **both** where the width is narrower than a
     /// group, which is one group and part of it.
@@ -358,12 +358,12 @@ impl Operand {
         }
     }
 
-    /// The digits of `axis` a `width`-wide box spans, each with its extent: whole groups and the
+    /// The axes `axis` is split into that a `width`-wide box spans, each with its extent: whole groups and the
     /// whole of each where `width` covers whole groups a scale makes of the axis, the position
     /// inside one where it does not, and the position alone where no scale groups the axis.
     ///
     /// Where a [`cut`](Self::cut) states what a level counts, the groups alone, a box states
-    /// every digit it covers, so whole groups bring the position inside each with them.
+    /// every split axis it covers, so whole groups bring the position inside each with them.
     pub fn span(&self, axis: Axis, extent: usize, width: usize) -> Vec<(Axis, usize)> {
         let (groups, inside) = blocked(axis);
         match self.grouping(axis, extent) {
@@ -376,18 +376,18 @@ impl Operand {
     }
 
     /// How many `tile`-wide tiles of `axis` one `span`-wide tile holds, per
-    /// digit: the counts a level states, the level below it covering `tile`
+    /// split axis: the counts a level states, the level below it covering `tile`
     /// and this one `span`.
     ///
     /// Both widths are ones this operand's scales admit ([`cut`](Self::cut)).
-    /// A digit that multiplies by one is left out, a level stating only what
+    /// A split axis that multiplies by one is left out, a level stating only what
     /// it multiplies.
     pub fn tiles(&self, axis: Axis, extent: usize, tile: usize, span: usize) -> Vec<(Axis, usize)> {
         let (groups, inside) = blocked(axis);
         let Some(scale) = self.grouping(axis, extent) else {
             return vec![(inside, span / tile)];
         };
-        // Whole blocks of the axis, or part of one block: the two digits any
+        // Whole blocks of the axis, or part of one block: the two split axes any
         // width this operand admits covers.
         let covered = |width: usize| match width >= scale {
             true => (width / scale, scale),
@@ -566,20 +566,20 @@ impl Packing {
 }
 
 /// One axis of an operand, stated from the leaf up for the units that spread
-/// it: what one unit holds at the bottom, how many of it each digit distributes to
-/// the units, which digits they take in turns, and the walk over what they do
+/// it: what one unit holds at the bottom, how many of it each split axis distributes
+/// to the units, which split axes they take in turns, and the walk over what they do
 /// not cover between them.
 ///
-/// The two digits are the axis's own ([`blocked`]): the scale groups, and the
+/// The two split axes are the axis's own ([`blocked`]): the scale groups, and the
 /// position inside one. An axis no scale groups names only the second.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Spread {
-    /// The tile one unit holds at the bottom, per digit.
+    /// The tile one unit holds at the bottom, per split axis.
     pub leaf: Vec<(Axis, usize)>,
-    /// How many of the thing below each digit distributes to the units. Empty where
+    /// How many of the thing below each split axis distributes to the units. Empty where
     /// the units take none of this axis and every one of them walks it whole.
     pub units: Vec<(Axis, usize)>,
-    /// Digits the units take in turns rather than in runs.
+    /// Split axes the units take in turns rather than in runs.
     pub interleaved: Vec<Axis>,
     /// The walk over what the units do not hold between them.
     pub walk: Walked,
@@ -588,7 +588,7 @@ pub struct Spread {
 /// Where the walk over an axis sits, relative to the units that spread it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Walked {
-    /// Above the units, taking every tile of these digits the level over it
+    /// Above the units, taking every tile of these split axes the level over it
     /// hands down: a grouped axis, whose scales and reads the units take in
     /// turns.
     Above(Vec<Axis>),

@@ -69,13 +69,13 @@ pub const MATMUL_COLUMN_FIRST_TILES: Refusal = Refusal::Declined {
 /// What a launch tiling the rows declines before preparing anything: operands of two ranks, which
 /// the routines do not broadcast.
 pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
-    why: "the microkernel gemm's operands share a rank",
+    why: "a matmul tiling its rows reads operands of one rank",
 };
 
 /// What a launch holding every row whole declines before preparing anything: an rhs contiguous
 /// along neither of its axes, or one stored in tiles, which no routine holding every row whole reads in vectors.
 pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
-    why: "the microkernel gemv reads one rhs matrix contiguous along `k` or `n`",
+    why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
 
 /// The tensors of one product, the output among them, from which the problem they state is read

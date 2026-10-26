@@ -32,7 +32,7 @@ impl UnitWholeKMatmulRoutine {
     fn blocks_per_plane(partitioning: &MatmulPartitioning) -> usize {
         partitioning
             .distributed(N)
-            .expect("the whole-K gemv distributes its blocks to a plane's units")
+            .expect("the unit whole-K routine distributes its blocks to a plane's units")
     }
 }
 

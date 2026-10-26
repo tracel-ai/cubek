@@ -77,8 +77,8 @@ pub struct PlaneShuffleMicrokernel {
 /// A packed rhs as the plane shuffle reads it: its blocks, and the step a unit's columns and its
 /// share of `K` move in.
 ///
-/// Its levels are stated over the problem's block-split space: the digits of `N` and `K` the
-/// blocks make, and the position inside a block of `M`.
+/// Its levels are stated over the problem's block-split space: the axes the
+/// blocks split `N` and `K` into, and the position inside a block of `M`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleBlocks {
     /// The space the rhs's blocks cut.
@@ -247,7 +247,7 @@ impl PlaneShuffleMicrokernel {
 
     /// The columns a unit reads of a packed rhs, whose blocks cut `space`, and the units along
     /// `K` that spread it, for each count of steps of `N` ([`MatmulStep`]) from the settings' down
-    /// to one whose columns close `n` in one digit and leave `shared` units, the plane's share
+    /// to one whose columns close `n` on one split axis and leave `shared` units, the plane's share
     /// left by the units along `M`, whole groups along `N`.
     ///
     /// A unit reads one step of `K` a turn by the whole share, the units as many as the scales'
@@ -296,8 +296,8 @@ impl PlaneShuffleMicrokernel {
             })
     }
 
-    /// The axis a unit's columns land on, and how many of it a unit holds: the digit of `N` a
-    /// packed rhs's blocks make it.
+    /// The axis a unit's columns land on, and how many of it a unit holds: the one of the axes a
+    /// packed rhs's blocks split `N` into.
     pub fn column_cut(&self) -> (Axis, usize) {
         let Some(blocks) = &self.blocks else {
             return (self.axes.n, self.columns());
@@ -307,7 +307,7 @@ impl PlaneShuffleMicrokernel {
             .operand(MatmulOperand::Rhs)
             .cut(N, blocks.space.n, blocks.columns)[..]
         else {
-            unreachable!("candidates hold the columns to one digit");
+            unreachable!("candidates hold the columns to one split axis");
         };
         cut
     }

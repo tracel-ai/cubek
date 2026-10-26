@@ -16,8 +16,8 @@ use cubek_std::matmul_axes::{K, M, N};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
 /// that does not hold every batch, whose batches no merge makes rows of one matrix.
-pub const MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED: Refusal = Refusal::Declined {
-    why: "the microkernel gemv merges an lhs's batches into rows, so it reads an lhs and an output holding every batch",
+pub const MATMUL_WHOLE_ROWS_BATCHES_UNMERGED: Refusal = Refusal::Declined {
+    why: "a matmul holding every row whole merges an lhs's batches into rows, so it reads an lhs and an output holding every batch",
 };
 
 /// What a launch holding every row whole declines whatever the device: an rhs held per batch,
@@ -78,7 +78,7 @@ impl<'a> MatmulView<'a> {
     /// [`MATMUL_PACKED_BLOCKS_DISAGREE`], for two packed operands whose scales cut `K` apart.
     /// Where every row is held whole: [`MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED`], for a
     /// rhs lined along neither axis; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
-    /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED`], for an lhs or an output that does not
+    /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNMERGED`], for an lhs or an output that does not
     /// hold every batch, unless a table is read per batch, which keeps the batches apart.
     pub fn new(
         problem: &'a MatmulRoutineProblem,
@@ -107,7 +107,7 @@ impl<'a> MatmulView<'a> {
             let batches: usize = problem.batches.iter().product();
             let merges = problem.batches_held.lhs == batches && problem.batches_held.out == batches;
             if problem.index.is_none() && !merges {
-                return Err(MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED);
+                return Err(MATMUL_WHOLE_ROWS_BATCHES_UNMERGED);
             }
         }
         Ok(Self { problem, rows_kind })
@@ -316,7 +316,7 @@ impl<'a> MatmulView<'a> {
     /// microkernel is told.
     fn read(&self) -> RowsReading {
         match (self.rows_kind, self.problem.index) {
-            (MatmulRowsKind::Whole, None) => self.read_folded(),
+            (MatmulRowsKind::Whole, None) => self.read_merged(),
             (MatmulRowsKind::Whole, Some(_)) => self.read_per_batch(),
             (MatmulRowsKind::Tiled, _) => self.read_tiled(),
         }
@@ -329,7 +329,7 @@ impl<'a> MatmulView<'a> {
     }
 
     /// Every row held whole: the batches merged into the rows, and none left for the cubes.
-    fn read_folded(&self) -> RowsReading {
+    fn read_merged(&self) -> RowsReading {
         RowsReading::whole(
             self.problem.stated_rows * self.problem.batches.iter().product::<usize>(),
         )
@@ -508,7 +508,7 @@ mod tests {
         };
         assert_eq!(
             MatmulView::new(&broadcast, MatmulRowsKind::Whole).map(|view| view.rows()),
-            Err(MATMUL_WHOLE_ROWS_BATCHES_UNFOLDED)
+            Err(MATMUL_WHOLE_ROWS_BATCHES_UNMERGED)
         );
         assert!(MatmulView::new(&broadcast, MatmulRowsKind::Tiled).is_ok());
     }

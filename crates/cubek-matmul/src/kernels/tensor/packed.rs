@@ -280,7 +280,7 @@ impl PackedTensor {
             .build();
         let across = self.other_axis(K);
         let values_axes = tile_order::values_axes(across);
-        // The axes the bound words carry: every digit of both axes in rows, the stored dims'
+        // The axes the bound words carry: every split axis of both axes in rows, the stored dims'
         // in tiles.
         let (words_axes, words): (Vec<Axis>, _) = match self.laid {
             WordsLaid::InRows => (
@@ -437,7 +437,7 @@ impl PackedTensor {
         }
     }
 
-    /// `axis` of the matrix as one dim over its two digits, the blocks and the position inside
+    /// `axis` of the matrix as one dim over the two axes it is split into, the blocks and the position inside
     /// one.
     fn dim(&self, axis: Axis) -> PhysicalAxisMap {
         split(&self.operand.axes(axis, self.extent(axis)))

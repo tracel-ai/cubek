@@ -299,7 +299,7 @@ impl CubeShufflePlane {
         .expect("candidates hold a plane whose steps walk K")
     }
 
-    /// The digit of `N` the plane's columns land on.
+    /// The one of the axes `N` is split into that the plane's columns land on.
     pub fn column_axis(&self) -> Axis {
         match self {
             CubeShufflePlane::Shuffle(plane) => plane.column_cut().0,
@@ -316,7 +316,7 @@ impl CubeShufflePlane {
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both digits of a packed rhs's `K`, or a fragment's depth.
+    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {

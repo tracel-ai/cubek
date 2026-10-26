@@ -226,7 +226,7 @@ impl MatmulPartitioning {
         self.space
     }
 
-    /// The output's rows one cube's box covers, over both digits of `M` in a block-split space.
+    /// The output's rows one cube's box covers, over both axes `M` is split into in a block-split space.
     pub fn rows(&self) -> u64 {
         let rows = match self.space {
             MatmulSpace::Plain => self.cube_box.extent(M),
@@ -235,7 +235,7 @@ impl MatmulPartitioning {
         rows as u64
     }
 
-    /// The output's columns one cube's box covers, over both digits of `N` in a block-split space.
+    /// The output's columns one cube's box covers, over both axes `N` is split into in a block-split space.
     pub fn columns(&self) -> u64 {
         let columns = match self.space {
             MatmulSpace::Plain => self.cube_box.extent(N),
