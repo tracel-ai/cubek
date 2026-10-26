@@ -1,8 +1,16 @@
 use crate::attention::{B, G, KV, Q, S};
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, Coverage, PlaneOrder, UnitCube},
+};
+
+/// What a partitioning declines where the buffers hold fewer steps of the keys, or pages, than
+/// the cubes sharing a box ([`AttentionPartitioning::every_cube_walks`]).
+pub const ATTENTION_CUBES_WITHOUT_KEYS: Refusal = Refusal::Declined {
+    why: "the buffers hold fewer steps of the keys than the cubes sharing a box: the cubes past \
+          them would walk no key whatever prefix is attended",
 };
 
 /// How a routine of this kind places its microkernel's work items over a problem: cubes for
@@ -164,6 +172,25 @@ impl AttentionPartitioning {
     /// Cubes sharing every box of rows, each on its own run of `S`.
     pub fn cubes_along_keys(&self) -> NonZeroUsize {
         self.cubes_along_keys
+    }
+
+    /// Whether every cube sharing a box has a step of the keys, or a page, to walk.
+    ///
+    /// The cubes take the steps of the buffers' keys in turns, so where the buffers hold fewer
+    /// than the cubes, the cubes past them walk nothing for any attended prefix, and still leave
+    /// a partial for the merge to read: the same setting on fewer cubes runs the same steps with
+    /// less to merge.
+    ///
+    /// # Errors
+    ///
+    /// [`ATTENTION_CUBES_WITHOUT_KEYS`] where some cube has none.
+    pub fn every_cube_walks(&self) -> Result<(), Refusal> {
+        let walked = self.partitioning.box_of(ComputeScope::Cube).extent(S);
+        let steps = self.partitioning.space().extent(S).div_ceil(walked);
+        match steps < self.cubes_along_keys.get() {
+            true => Err(ATTENTION_CUBES_WITHOUT_KEYS),
+            false => Ok(()),
+        }
     }
 
     /// The box one step of the walk through `S` covers: what a staged routine stages at once.

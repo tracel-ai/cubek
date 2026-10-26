@@ -127,7 +127,9 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     /// The best hypercube of plane fragments at the settings, its settings' cubes on every box
     /// whatever the keys ([`AttentionPartitioning::new`]), each holding its planes along the keys
     /// and the shared memory its microkernel asks for, its stages held as its planes read them;
-    /// merged by a second launch, that launch checked against the device too.
+    /// merged by a second launch, that launch checked against the device too. Declines where the
+    /// buffers hold too few keys for every cube to walk some
+    /// ([`AttentionPartitioning::every_cube_walks`]).
     fn prepare(
         &self,
         hw: &Hardware,
@@ -151,6 +153,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             settings.cubes_along_keys,
             QueryOrder::InOrder,
         );
+        partitioning.every_cube_walks()?;
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
         let cube = CubeResources {
             plane_width: hw.plane_dim()?,
