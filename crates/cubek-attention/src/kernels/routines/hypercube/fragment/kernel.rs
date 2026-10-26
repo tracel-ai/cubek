@@ -1,9 +1,9 @@
 use super::base::HypercubeFragmentAttentionMicrokernel;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
-use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
-use cubek_microkernel::attention::plane::PlaneFragmentAttention;
+use cubek_microkernel::attention::output::cube::cube_staged_attention_partial_microkernel;
+use cubek_microkernel::attention::output::hypercube::HypercubeMergeShape;
+use cubek_microkernel::attention::output::plane::PlaneFragmentAttention;
 use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
 
 /// Every cube walking its run of its box with plane fragments that read its stage, over the keys

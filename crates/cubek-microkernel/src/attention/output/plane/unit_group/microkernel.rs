@@ -1,5 +1,5 @@
 use super::base::PlaneUnitGroupAttentionMicrokernel;
-use crate::attention::unit::unit_attention_step;
+use crate::attention::output::unit::unit_attention_step;
 use crate::attention::{
     B, CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, DV, G, KV, Q, S,
     StagedPlaneOperands,

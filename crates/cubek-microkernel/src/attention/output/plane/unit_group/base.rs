@@ -1,6 +1,6 @@
 use super::microkernel::PlaneUnitGroupAttention;
 use crate::attention::CubeAttentionStageLayout;
-use crate::attention::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings};
+use crate::attention::output::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem,
     CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane, Q,

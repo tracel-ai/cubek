@@ -1,4 +1,6 @@
-use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings};
+use crate::attention::output::cube::{
+    CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
+};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
     AttentionSlotShape, AttentionStagingCount, AttentionWorkItem, CubePlaneKeys, CubePlaneLayout,

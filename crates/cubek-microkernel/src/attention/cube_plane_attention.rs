@@ -1,5 +1,5 @@
 use crate::attention::CubeAttentionStageLayout;
-use crate::attention::cube::CubeAttentionPlaneSettings;
+use crate::attention::output::cube::CubeAttentionPlaneSettings;
 use crate::attention::{AttentionMicrokernel, AttentionWorkItem};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Region, Space, StageStorage, Tile, Walk};

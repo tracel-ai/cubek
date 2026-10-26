@@ -4,7 +4,7 @@ use crate::kernels::{
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::attention::plane::{
+use cubek_microkernel::attention::output::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
 use cubek_std::Hardware;

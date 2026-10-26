@@ -70,7 +70,7 @@ mod tests {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::attention::AttentionMicrokernel;
-    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_microkernel::attention::output::plane::PlaneFragmentAttentionMicrokernel;
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::microkernel::KernelEstimate;
