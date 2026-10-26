@@ -13,7 +13,6 @@ mod lines;
 pub mod merge;
 mod operand;
 pub mod output;
-pub mod packed_cache;
 mod partitioning;
 mod slots;
 mod stage_layout;
