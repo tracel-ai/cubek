@@ -6,7 +6,7 @@ use cubek_matmul::{
     strategy::Strategy,
     tiled::Strategy as Tiled,
 };
-use cubek_std::MatrixLayout;
+use cubek_std::{Hardware, MatrixLayout};
 use cubek_test_utils::skip_unless_cpu;
 
 type TestRuntime = cubecl::TestRuntime;
@@ -20,6 +20,36 @@ struct Dims {
     m: usize,
     n: usize,
     k: usize,
+}
+
+/// [`UnitRegistersMatmulRoutineSettings::cpu`] on a 1x1 convolution's layout, a col rhs beside a
+/// row lhs, at the depths it was measured on: `K` of 24 and 56, which its eight-deep block divides
+/// and sixteen would not, and 272, seventeen runs of sixteen. `m` is not a whole number of its
+/// cubes' rows, so the last cube along `m` is masked, and the strips along `m` are uneven.
+#[test]
+fn the_cpu_settings_read_a_col_rhs_at_the_convolutions_depths() {
+    let client = cubecl::test_device().client();
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let settings = UnitRegistersMatmulRoutineSettings::cpu(&Hardware::from_client(&client));
+    for (m, n, k) in [(200, 48, 24), (200, 48, 56), (200, 64, 272)] {
+        let problem = MatmulProblem::from_parameters(
+            m,
+            n,
+            k,
+            shape![1],
+            shape![1],
+            MatrixLayout::RowMajor,
+            MatrixLayout::ColMajor,
+            MatrixLayout::RowMajor,
+            None,
+            None,
+            MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
+            AddressType::U32,
+        );
+        test_matmul_strategy(client.clone(), problem, Tiled::CpuGemm(settings).into());
+    }
 }
 
 #[test]

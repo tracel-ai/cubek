@@ -76,6 +76,16 @@ impl UnitRegistersMicrokernel {
         }
     }
 
+    /// [`tile_instruction`](Self::tile_instruction) for a sum nothing reads before it drains, as a
+    /// matmul's output: a col rhs's run along `K` is kept a partial a lane in its cell and summed
+    /// once at the drain, rather than summed into a one-value cell every step. An attention's
+    /// score is read by its softmax before then, so it opens on the plain instruction.
+    pub fn drained_instruction(&self) -> Instruction {
+        Instruction::Registers {
+            config: RegisterBlock::new(UNIT_REGISTERS as usize).partials(),
+        }
+    }
+
     /// The extent along `dim` of one step of the block.
     fn extent(&self, dim: MatmulDim) -> usize {
         let [rows, columns, depth] = self.extents();
