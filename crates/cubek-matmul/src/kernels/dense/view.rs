@@ -474,6 +474,31 @@ mod tests {
         );
     }
 
+    /// Every row count one power of two holds runs one kernel holding its rows whole, and a count
+    /// past it another: the work item holds the power of two, and the kernel compiles it in.
+    #[test]
+    fn whole_rows_of_one_power_of_two_compile_one_kernel() {
+        let kernel = |m| {
+            let problem = MatmulRoutineProblem::from(&MatmulShape {
+                m,
+                ..shape(1, MatmulBatching::Shared)
+            });
+            let view = MatmulView::new(&problem, MatmulRowsKind::Whole).expect("one batch merges");
+            let MatmulRows::Whole(held) = view.work_item().rows else {
+                unreachable!("a launch holding every row whole holds a count of them")
+            };
+            view.partitioning(
+                Levels::leaf(&[(M, held), (N, 16), (K, 16)]),
+                &[M, N],
+                CubeOrder::RowMajor,
+                MatmulView::ONE_CUBE_A_BOX,
+            )
+            .kernel()
+        };
+        assert_eq!(kernel(5), kernel(8));
+        assert_ne!(kernel(8), kernel(9));
+    }
+
     /// An lhs broadcast along the batches holds fewer rows than the output, so no merge
     /// makes them one matrix of rows; tiled, the batch is a grid axis and nothing merges.
     #[test]

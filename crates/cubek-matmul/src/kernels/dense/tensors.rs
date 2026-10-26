@@ -732,7 +732,8 @@ impl<Out> MatmulTensors<Out> {
         &self.client
     }
 
-    /// The launcher over the blueprint's partitioning, every extent compiled in.
+    /// The launcher over the blueprint's partitioning, as its kernel compiles it: the blocks in,
+    /// and the rows inside the one block along `M` read at launch where they are tiled.
     fn packed_launcher<Mk, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,

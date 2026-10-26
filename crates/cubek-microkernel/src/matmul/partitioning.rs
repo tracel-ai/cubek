@@ -340,3 +340,42 @@ impl MatmulPartitioning {
         &self.partitioning
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::tile::Levels;
+    use cubek_std::matmul_axes::KI;
+
+    /// A packed product of `rows` in `row_blocks` blocks along `M`, its rows tiled.
+    fn packed(row_blocks: usize, rows: usize) -> MatmulPartitioning {
+        let space = Space::new(&[
+            (MB, row_blocks),
+            (MI, rows),
+            (NB, 4),
+            (NI, 16),
+            (KB, 8),
+            (KI, 16),
+        ]);
+        let levels = Levels::leaf(&[(MI, 16), (NI, 16), (KI, 16)])
+            .cubes(&[MI, NI])
+            .ordered(CubeOrder::RowMajor)
+            .batches(&[])
+            .build();
+        MatmulPartitioning::of_cubes(
+            Partitioning::new(space, levels),
+            Vec::new(),
+            MatmulRowsKind::Tiled,
+        )
+    }
+
+    /// Tiled rows inside the one block along `M` are read at launch, so every prompt length runs
+    /// one kernel; rows over several blocks, which a factor windows along, stay compiled in.
+    #[test]
+    fn a_packed_kernel_reads_the_rows_of_its_one_block_at_launch() {
+        assert!(packed(1, 33).kernel().space().is_dynamic(MI));
+        assert_eq!(packed(1, 33).kernel(), packed(1, 34).kernel());
+        assert!(!packed(2, 33).kernel().space().is_dynamic(MI));
+        assert!(!packed(1, 33).kernel_compiling(&[MI]).space().is_dynamic(MI));
+    }
+}
