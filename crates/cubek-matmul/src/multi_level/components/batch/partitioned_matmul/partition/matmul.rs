@@ -41,10 +41,6 @@ pub trait GlobalPartitionMatmul: 'static + Send + Sync {
 /// Iterates on global matmuls in a row major fashion
 pub struct RowMajorGlobalPartitionMatmul {}
 
-#[derive(CubeType)]
-/// Iterates on global matmuls in a col major fashion
-pub struct ColMajorGlobalPartitionMatmul {}
-
 #[cube]
 impl PartitionRanges {
     /// Create a new [PartitionRanges]
@@ -97,40 +93,6 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
                 #[unroll(num_steps_col == 1)]
                 for col in 0..num_steps_col {
                     let col_offset = ranges.col.start + col * ranges.col.step;
-
-                    execute_global_matmul::<Args, MP, GMM>(
-                        state, batch_iter, row_offset, col_offset, k_range, config,
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[cube]
-impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
-    fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
-        ranges: PartitionRanges,
-        k_range: (u32, u32),
-        #[comptime] config: GMM::Config,
-    ) {
-        // Needed for the unroll macro to work.
-        let num_steps_batch = ranges.batch.num_steps.comptime();
-        let num_steps_row = ranges.row.num_steps.comptime();
-        let num_steps_col = ranges.col.num_steps.comptime();
-
-        #[unroll(num_steps_batch == 1)]
-        for batch in 0..num_steps_batch {
-            let batch_iter = ranges.batch.start + batch * ranges.batch.step;
-
-            #[unroll(num_steps_col == 1)]
-            for col in 0..num_steps_col {
-                let col_offset = ranges.col.start + col * ranges.col.step;
-
-                #[unroll(num_steps_row == 1)]
-                for row in 0..num_steps_row {
-                    let row_offset = ranges.row.start + row * ranges.row.step;
 
                     execute_global_matmul::<Args, MP, GMM>(
                         state, batch_iter, row_offset, col_offset, k_range, config,

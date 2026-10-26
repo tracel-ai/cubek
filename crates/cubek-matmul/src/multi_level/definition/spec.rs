@@ -62,14 +62,10 @@ pub type LhsS<MT> = Vector<Stage<Lhs<MT>>, StageSize<Lhs<MT>>>;
 pub type LhsR<MT> = Vector<Register<Lhs<MT>>, RegisterSize<Lhs<MT>>>;
 
 // Element / Size splits
-pub type LhsGE<MT> = <Lhs<MT> as MatrixTypes>::Global;
-pub type LhsGS<MT> = <Lhs<MT> as MatrixTypes>::GlobalSize;
-
 pub type LhsSE<MT> = <Lhs<MT> as MatrixTypes>::Stage;
 pub type LhsSS<MT> = <Lhs<MT> as MatrixTypes>::StageSize;
 
 pub type LhsRE<MT> = <Lhs<MT> as MatrixTypes>::Register;
-pub type LhsRS<MT> = <Lhs<MT> as MatrixTypes>::RegisterSize;
 
 // ==================== RHS ====================
 
@@ -79,14 +75,10 @@ pub type RhsS<MT> = Vector<Stage<Rhs<MT>>, StageSize<Rhs<MT>>>;
 pub type RhsR<MT> = Vector<Register<Rhs<MT>>, RegisterSize<Rhs<MT>>>;
 
 // Element / Size splits
-pub type RhsGE<MT> = <Rhs<MT> as MatrixTypes>::Global;
-pub type RhsGS<MT> = <Rhs<MT> as MatrixTypes>::GlobalSize;
-
 pub type RhsSE<MT> = <Rhs<MT> as MatrixTypes>::Stage;
 pub type RhsSS<MT> = <Rhs<MT> as MatrixTypes>::StageSize;
 
 pub type RhsRE<MT> = <Rhs<MT> as MatrixTypes>::Register;
-pub type RhsRS<MT> = <Rhs<MT> as MatrixTypes>::RegisterSize;
 
 // ==================== ACC ====================
 
@@ -96,14 +88,10 @@ pub type AccS<MT> = Vector<Stage<Acc<MT>>, StageSize<Acc<MT>>>;
 pub type AccR<MT> = Vector<Register<Acc<MT>>, RegisterSize<Acc<MT>>>;
 
 // Element / Size splits
-pub type AccGE<MT> = <Acc<MT> as MatrixTypes>::Global;
-pub type AccGS<MT> = <Acc<MT> as MatrixTypes>::GlobalSize;
-
 pub type AccSE<MT> = <Acc<MT> as MatrixTypes>::Stage;
 pub type AccSS<MT> = <Acc<MT> as MatrixTypes>::StageSize;
 
 pub type AccRE<MT> = <Acc<MT> as MatrixTypes>::Register;
-pub type AccRS<MT> = <Acc<MT> as MatrixTypes>::RegisterSize;
 
 impl MatmulIdent {
     pub fn view_direction(&self) -> ViewDirection {

@@ -8,7 +8,7 @@ use crate::{
         routines::{
             TileSizeSelection,
             batch::{
-                double_buffering::DoubleBufferingArgs, double_unit::DoubleUnitSelectionArgs,
+                double_unit::DoubleUnitSelectionArgs,
                 ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
                 simple_unit::SimpleUnitSelectionArgs,
             },
@@ -35,24 +35,6 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "SimpleCyclicCmma (multi rows)",
             MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: true,
-                ..Default::default()
-            }))
-            .into(),
-        ),
-        CatalogEntry::new(
-            "double_tilewise_cmma",
-            "DoubleTilewiseCmma",
-            MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
-                specialized: false,
-                ..Default::default()
-            }))
-            .into(),
-        ),
-        CatalogEntry::new(
-            "double_tilewise_cmma_specialized",
-            "DoubleTilewiseCmma (specialized)",
-            MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
-                specialized: true,
                 ..Default::default()
             }))
             .into(),
@@ -106,19 +88,9 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             MultiLevel::SpecializedTmaMma(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
-            "specialized_tma_mma_tma_store",
-            "Specialized TMA (mma, TMA store)",
-            MultiLevel::SpecializedTmaMmaTmaStore(BlueprintStrategy::Inferred(().into())).into(),
-        ),
-        CatalogEntry::new(
             "specialized_cyclic_mma",
             "Specialized Cyclic (mma)",
             MultiLevel::SpecializedCyclicMma(BlueprintStrategy::Inferred(().into())).into(),
-        ),
-        CatalogEntry::new(
-            "specialized_strided_mma",
-            "Specialized Strided (mma)",
-            MultiLevel::SpecializedStridedMma(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
             "gemm",

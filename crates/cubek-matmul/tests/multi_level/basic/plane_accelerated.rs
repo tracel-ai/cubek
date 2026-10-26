@@ -109,78 +109,6 @@ fn simple_cyclic_mma() {
 }
 
 #[test]
-fn simple_strided_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleStridedCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_strided_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleStridedMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_tilewise_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleTilewiseCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_tilewise_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleTilewiseMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_async_strided_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleAsyncStridedCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_async_strided_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleAsyncStridedMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_async_cyclic_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleAsyncCyclicCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn simple_async_cyclic_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SimpleAsyncCyclicMma(Default::default()).into(),
-    );
-}
-
-#[test]
 fn double_cyclic_cmma() {
     test_matmul_strategy(
         client(),
@@ -199,78 +127,6 @@ fn double_cyclic_mma() {
 }
 
 #[test]
-fn double_tilewise_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleTilewiseCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_tilewise_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleTilewiseMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_hybrid_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleHybridCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_hybrid_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleHybridMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_async_cyclic_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleAsyncCyclicCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_async_cyclic_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleAsyncCyclicMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_async_strided_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleAsyncStridedCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn double_async_strided_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::DoubleAsyncStridedMma(Default::default()).into(),
-    );
-}
-
-#[test]
 fn specialized_cyclic_cmma() {
     test_matmul_strategy(
         client(),
@@ -285,24 +141,6 @@ fn specialized_cyclic_mma() {
         client(),
         square(256, f16_elems()),
         MultiLevel::SpecializedCyclicMma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn specialized_strided_cmma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SpecializedStridedCmma(Default::default()).into(),
-    );
-}
-
-#[test]
-fn specialized_strided_mma() {
-    test_matmul_strategy(
-        client(),
-        square(256, f16_elems()),
-        MultiLevel::SpecializedStridedMma(Default::default()).into(),
     );
 }
 

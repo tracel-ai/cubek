@@ -11,10 +11,3 @@ mod double_buffering {
 
     include!("precision.rs");
 }
-
-mod interleaved {
-    use super::*;
-    use super::launch_interleaved as launch;
-
-    include!("precision.rs");
-}

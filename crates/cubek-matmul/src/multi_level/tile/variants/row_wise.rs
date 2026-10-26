@@ -54,10 +54,6 @@ impl<E: Numeric> RowWise<E> {
         }
     }
 
-    pub fn init_zero(&mut self) {
-        self.fill(E::from_int(0));
-    }
-
     pub fn new_min_value(#[comptime] num_rows: usize) -> RowWise<E> {
         Self::new_filled(num_rows, E::min_value())
     }
@@ -110,10 +106,6 @@ impl<E: Numeric> RowWise<E> {
         for i in 0..self.num_rows {
             self.vals[i] = max(self.vals[i], other.vals[i]);
         }
-    }
-
-    pub fn replace_at(&mut self, i: usize, new_val: E) {
-        self.vals[i] = new_val;
     }
 
     pub fn cast_from<E2: Float>(row_wise: &RowWise<E>) -> RowWise<E2> {
