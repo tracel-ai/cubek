@@ -1,5 +1,6 @@
 use crate::matmul::stored::BlockScales;
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem};
+use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
 use cubek_std::microkernel::Microkernel;
 
@@ -27,5 +28,12 @@ pub trait MatmulMicrokernel:
     /// [`Fields`](BlockScales::Fields) for one that decodes them.
     fn block_scales(&self) -> BlockScales {
         BlockScales::Fields
+    }
+
+    /// The element its fill decodes its inputs into, where its stages hold another than they are
+    /// stored in: a float input read so, an `f32` one read at tf32, is bound as its words, which
+    /// the fill decodes. `None` for one that stages its inputs as they lie.
+    fn decoded_stage(&self) -> Option<ElemType> {
+        None
     }
 }

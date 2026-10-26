@@ -16,6 +16,7 @@ use crate::matmul::{
 };
 use crate::staging::StageRing;
 use core::num::NonZeroUsize;
+use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
@@ -184,13 +185,15 @@ impl CubeStagedMicrokernel {
         blocks.all(|other| other == Some(block)).then_some(block)
     }
 
-    /// The item its planes contract, of `item`: `item` itself where every input is float; its
-    /// packed inputs decoded where its fill decodes them into the stages
+    /// The item its planes contract, of `item`: `item` itself where every input is float, or its
+    /// inputs read at the element its fill rounds them to; its packed inputs decoded where its
+    /// fill decodes them into the stages
     /// ([`MatmulWorkItem::decoded`]); read as stored where it stages them as they lie
     /// ([`MatmulWorkItem::as_stored`]).
     pub fn contracted(&self, item: &MatmulWorkItem) -> MatmulWorkItem {
         match (item.blocks, self.walk().decoded()) {
-            (None, _) => *item,
+            (None, None) => *item,
+            (None, Some(read)) => item.read_as(read),
             (Some(_), Some(_)) => item.decoded(),
             (Some(_), None) => item
                 .as_stored()
@@ -198,26 +201,54 @@ impl CubeStagedMicrokernel {
         }
     }
 
-    /// The planes of an item it stages as it lies, a float one or one read as stored: every
+    /// The planes of an item it stages as it lies, a float one or one read as stored: where its
+    /// inputs may be rounded ([`MatmulWorkItem::rounded`]), first every plane on a matrix
+    /// instruction over the rounded inputs, which the fill decodes into its stages; then every
     /// plane microkernel this device offers for `item`, at the settings' layout and requests.
+    ///
+    /// Rounded first, as the multi-level routines promote an `f32` product to tf32 where they
+    /// may: on a device whose matrix instructions take no `f32`, the exact planes run the
+    /// software instruction, which a matrix instruction outruns many times over.
     fn as_stored_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
-    ) -> impl Iterator<Item = Self> {
-        let requested = *settings;
-        PlaneFragmentMicrokernel::candidates(hw, item, &settings.plane).map(move |plane| Self {
+    ) -> Vec<Self> {
+        let staging = |plane, reads| Self {
             plane,
-            planes: requested.planes,
-            planes_along_k: requested.planes_along_k,
-            scratch: requested.scratch,
-            ring: requested.ring,
-            fill: requested.fill,
-            stage_rows: requested.stage_rows,
-            store: requested.store,
+            planes: settings.planes,
+            planes_along_k: settings.planes_along_k,
+            scratch: settings.scratch,
+            ring: settings.ring,
+            fill: settings.fill,
+            stage_rows: settings.stage_rows,
+            store: settings.store,
             depth: CubeStagedDepth::Steps,
-            reads: MatmulOperands::all(MatmulRead::AsBound),
-        })
+            reads,
+        };
+        let mut candidates = Vec::new();
+        if let Some(read) = item.rounded() {
+            let reads = MatmulOperands {
+                lhs: MatmulRead::Dequantized(read),
+                rhs: MatmulRead::Dequantized(read),
+                out: MatmulRead::AsBound,
+            };
+            candidates.extend(
+                PlaneFragmentMicrokernel::candidates(hw, &item.read_as(read), &settings.plane)
+                    .filter(|plane| {
+                        !matches!(
+                            plane.instruction,
+                            PlaneFragmentInstruction::Registers { .. }
+                        )
+                    })
+                    .map(|plane| staging(plane, reads)),
+            );
+        }
+        candidates.extend(
+            PlaneFragmentMicrokernel::candidates(hw, item, &settings.plane)
+                .map(|plane| staging(plane, MatmulOperands::all(MatmulRead::AsBound))),
+        );
+        candidates
     }
 
     /// The planes over the block-split space of `item`: first those reading its packed inputs as
@@ -230,7 +261,7 @@ impl CubeStagedMicrokernel {
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
         let mut candidates: Vec<Self> = match item.as_stored() {
-            Some(stored) => Self::as_stored_candidates(hw, &stored, settings).collect(),
+            Some(stored) => Self::as_stored_candidates(hw, &stored, settings),
             None => Vec::new(),
         };
         candidates.extend(Self::decoding_candidates(hw, item, settings));
@@ -833,7 +864,7 @@ impl Microkernel for CubeStagedMicrokernel {
         let merges = settings.planes_along_k.get() > 1;
         let atomic = hw.shared_f32_atomic_add();
         let candidates: Vec<Self> = match item.blocks {
-            None => Self::as_stored_candidates(hw, item, settings).collect(),
+            None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
         };
         candidates.into_iter().filter(move |_| !merges || atomic)
@@ -952,12 +983,64 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
             false => BlockScales::Fields,
         }
     }
+
+    /// Its walk's ([`CubeStagedWalk::decoded`]).
+    fn decoded_stage(&self) -> Option<ElemType> {
+        self.walk().decoded()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::matmul::{MatmulLayout, MatmulReading, MatmulRows};
+    use cubecl::features::MmaConfig;
+    use cubecl::ir::FloatKind;
     use cubek_std::devices;
+
+    /// An `f32` product read rounded runs its planes on the tf32 matrix instruction a device
+    /// offers, its inputs staged decoded from their words; read as stored, the software
+    /// instruction, its inputs staged as they lie. A rounded product that ran the software
+    /// instruction would be the many-times-slower kernel the multi-level routines never run.
+    #[test]
+    fn a_rounded_f32_product_runs_the_tf32_instruction() {
+        let (f32, tf32) = (
+            ElemType::Float(FloatKind::F32),
+            ElemType::Float(FloatKind::TF32),
+        );
+        let hw = devices::offering_mma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: tf32,
+                b_type: tf32,
+                cd_type: f32,
+                m: 16,
+                n: 8,
+                k: 8,
+            }],
+        );
+        let item = |reading| MatmulWorkItem {
+            elements: MatmulOperands::all(f32),
+            sum: f32,
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: None,
+            rows: MatmulRows::Tiled,
+            destination: MatmulDestination::Buffer,
+            axes: MatmulAxes::MNK,
+            reading,
+        };
+        let settings = CubeStagedMicrokernelSettings::DEFAULT;
+        let rounded =
+            CubeStagedMicrokernel::best(&hw, &item(MatmulReading::Rounded), &settings).unwrap();
+        assert_eq!(rounded.decoded_stage(), Some(tf32));
+        assert!(!matches!(
+            rounded.plane.instruction,
+            PlaneFragmentInstruction::Registers { .. }
+        ));
+        let exact =
+            CubeStagedMicrokernel::best(&hw, &item(MatmulReading::AsStored), &settings).unwrap();
+        assert_eq!(exact.decoded_stage(), None);
+    }
 
     /// Planes splitting `K` against a packed input merge through an atomic `f32` add in shared
     /// memory, so a device without one lists none of them: a listed setting it cannot run would be

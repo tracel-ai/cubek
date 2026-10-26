@@ -8,10 +8,11 @@ use cubecl::tile::{
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRows,
-    MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
+    MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
+use cubek_std::config::MatmulConfig;
 use cubek_std::matmul_axes::{K, M, N};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
@@ -283,10 +284,16 @@ impl<'a> MatmulView<'a> {
 
     /// What every microkernel is handed, summing in the problem's [`sum`](MatmulRoutineProblem::sum):
     /// its rows held whole, every one, or tiled. Against a packed operand, the operands' blocks
-    /// ([`MatmulBlocks`]), over the axes inside a block.
+    /// ([`MatmulBlocks`]), over the axes inside a block. Its float inputs may be read rounded where
+    /// the process allows tf32 ([`MatmulConfig::allow_tf32`]), as the multi-level routines read
+    /// them.
     pub fn work_item(&self) -> MatmulWorkItem {
         let blocks = self.blocks();
         MatmulWorkItem {
+            reading: match MatmulConfig::get().allow_tf32 {
+                true => MatmulReading::Rounded,
+                false => MatmulReading::AsStored,
+            },
             elements: self.problem.elements,
             sum: self.problem.sum(),
             layouts: self.problem.layouts,
