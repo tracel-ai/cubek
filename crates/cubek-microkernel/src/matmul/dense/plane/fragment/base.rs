@@ -727,3 +727,59 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
         self.orders
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matmul::stored::Packing;
+    use crate::matmul::{MatmulDestination, MatmulReading, tile_order};
+
+    /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
+    /// long along `k`.
+    fn against_blocks_of(block: usize) -> (MatmulWorkItem, MatmulBlocks) {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let packings = MatmulOperands {
+            lhs: None,
+            rhs: Some(Packing {
+                operand: Operand::packed(K, 8, K, block, 4),
+                scheme: tile_order::scheme(),
+            }),
+            out: None,
+        };
+        let space = MatmulBlocks {
+            packings,
+            m: 16,
+            n: 4096,
+            k: 4096,
+        };
+        let item = MatmulWorkItem {
+            elements: MatmulOperands {
+                lhs: f16,
+                rhs: ElemType::Float(FloatKind::E2M1),
+                out: f16,
+            },
+            sum: ElemType::Float(FloatKind::F32),
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: Some(space),
+            rows: MatmulRows::Whole(16),
+            destination: MatmulDestination::Buffer,
+            axes: MatmulAxes::MNK,
+            reading: MatmulReading::AsStored,
+        };
+        (item, space)
+    }
+
+    /// The fragments decode a packed rhs under NVFP4's sixteen-value blocks and MXFP4's
+    /// thirty-two, each a whole number of the sixteen a lane run looks one scale up for, and under
+    /// no block shorter than that.
+    #[test]
+    fn the_fragments_decode_under_blocks_a_whole_number_of_sixteen_long() {
+        let serves = |block| {
+            let (item, space) = against_blocks_of(block);
+            PlaneFragmentMicrokernel::serves(&item, &space)
+        };
+        assert!(serves(16));
+        assert!(serves(32));
+        assert!(!serves(8));
+    }
+}
