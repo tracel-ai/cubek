@@ -241,6 +241,36 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
     }
 }
 
+impl HypercubeLastArrivalMatmulRoutine {
+    /// Cubes a worker the settings against a packed input race.
+    const PACKED_CUBES_PER_WORKER: [usize; 3] = [1, 2, 4];
+
+    /// The settings a product against a packed input races on `hw`: each box the cube staged
+    /// microkernel races against one ([`CubeStagedMicrokernel::packed_settings`]) whose planes
+    /// each drain their own tile and set none aside to fill, which is what a hypercube's cubes run,
+    /// at one, two and four cubes a worker. None where the routine's own list is empty: on a
+    /// device whose cubes do not meet within a launch, or that reports no workers.
+    pub fn packed_settings(&self, hw: &Hardware) -> Vec<HypercubeLastArrivalMatmulRoutineSettings> {
+        if self.settings(hw).is_empty() {
+            return Vec::new();
+        }
+        CubeStagedMicrokernel::packed_settings(hw)
+            .into_iter()
+            .filter(|cube| {
+                cube.planes_along_k == NonZeroUsize::MIN && cube.fill.filling_planes == 0
+            })
+            .flat_map(|cube| {
+                Self::PACKED_CUBES_PER_WORKER.map(|cubes| {
+                    HypercubeLastArrivalMatmulRoutineSettings {
+                        microkernel: HypercubeStagedMicrokernelSettings { cube },
+                        cubes_per_worker: NonZeroUsize::new(cubes).expect("a count of cubes"),
+                    }
+                })
+            })
+            .collect()
+    }
+}
+
 impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastArrivalMatmulRoutine {
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::LastArrival;
 
