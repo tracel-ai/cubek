@@ -77,6 +77,17 @@ impl UnitRegistersMicrokernel {
         }
     }
 
+    /// [`tile_instruction`](Self::tile_instruction) with partials: with a col rhs, each cell keeps
+    /// one partial sum per lane of a `K` line and reduces them once at the drain, instead of a
+    /// horizontal sum every step. Only for an accumulator read solely at its drain, like a
+    /// matmul's output; an attention score is read by its softmax first and uses
+    /// `tile_instruction`.
+    pub fn drained_instruction(&self) -> Instruction {
+        Instruction::Registers {
+            config: RegisterBlock::new(UNIT_REGISTERS as usize).partials(),
+        }
+    }
+
     /// The extent along `dim` of one step of the block.
     fn extent(&self, dim: MatmulDim) -> usize {
         let [rows, columns, depth] = self.extents();
