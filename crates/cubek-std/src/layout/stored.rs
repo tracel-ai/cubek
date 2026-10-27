@@ -507,7 +507,6 @@ impl Operand {
     ///
     /// The two axes are usually the same one, and the shape where they are not
     /// is the one no scheme writes today.
-    #[cfg(test)]
     pub fn packed(
         lined: Axis,
         read: usize,

@@ -121,8 +121,8 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::{Axis, Space};
-    use cubek_std::devices;
-    use cubek_std::matmul_axes::{K, M, N};
+    use crate::devices;
+    use crate::matmul_axes::{K, M, N};
 
     /// A small stage of both operands of a product in `f16`, which fits in registers.
     fn small_stage() -> [StagedOperand; 2] {
