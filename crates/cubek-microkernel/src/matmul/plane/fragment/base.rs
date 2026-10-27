@@ -731,8 +731,9 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::stored::Packing;
-    use crate::matmul::{MatmulDestination, MatmulReading, tile_order};
+    use crate::matmul::{MatmulDestination, MatmulReading};
+    use cubek_std::layout::stored::Packing;
+    use cubek_std::layout::tile_order;
 
     /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
     /// long along `k`.
