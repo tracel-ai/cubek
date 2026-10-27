@@ -3,15 +3,15 @@ use cubecl::tile::launch::Output;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
-use cubek_microkernel::attention_backward::delta::unit::unit_delta_microkernel;
+use cubek_microkernel::attention_backward::delta::plane::plane_delta_microkernel;
 use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, hypercube_key_gradient_microkernel,
 };
 use cubek_std::microkernel::StageRing;
 
-/// Every unit of the launch writing its queries' dot product of the output with its gradient.
+/// Every plane of the launch writing its queries' dot product of the output with its gradient.
 #[cube(launch_unchecked)]
-pub fn unit_delta_kernel<EA: Float>(
+pub fn plane_delta_kernel<EA: Float>(
     out: &TileArg<'_>,
     out_gradient: &TileArg<'_>,
     delta: &TileArg<'_>,
@@ -20,8 +20,8 @@ pub fn unit_delta_kernel<EA: Float>(
 ) {
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let delta = delta.tile(&partitioning);
-    for unit in &partitioning {
-        unit_delta_microkernel::<EA>(&delta.at(&unit), &d_o.at(&unit), &o.at(&unit));
+    for plane in &partitioning {
+        plane_delta_microkernel::<EA>(&delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
     }
 }
 
@@ -89,7 +89,7 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     }
 }
 
-/// Every unit of the launch casting its queries' gradient out of the sum every cube added into.
+/// Every plane of the launch casting its queries' gradient out of the sum every cube added into.
 #[cube(launch_unchecked)]
 pub fn cast_query_gradient_kernel(
     sum: &TileArg<'_>,
@@ -97,8 +97,8 @@ pub fn cast_query_gradient_kernel(
     partitioning: Partitioning,
 ) {
     let (sum, d_q) = (sum.tile(&partitioning), query_gradient.tile(&partitioning));
-    for unit in &partitioning {
-        let mut d_q = d_q.at(&unit);
-        d_q.copy_cast_from(&sum.at(&unit));
+    for plane in &partitioning {
+        let mut d_q = d_q.at(&plane);
+        d_q.copy_cast_from(&sum.at(&plane));
     }
 }

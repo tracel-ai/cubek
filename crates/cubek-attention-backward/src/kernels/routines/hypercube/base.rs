@@ -1,4 +1,6 @@
-use super::kernel::{cast_query_gradient_kernel, hypercube_key_gradient_kernel, unit_delta_kernel};
+use super::kernel::{
+    cast_query_gradient_kernel, hypercube_key_gradient_kernel, plane_delta_kernel,
+};
 use crate::kernels::{
     AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
     AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk,
@@ -7,13 +9,13 @@ use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::space::UnitCube;
+use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Partitioning, StageStorage};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
-use cubek_microkernel::attention_backward::delta::unit::{
-    UnitDeltaMicrokernel, UnitDeltaMicrokernelSettings,
+use cubek_microkernel::attention_backward::delta::plane::{
+    PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings,
 };
 use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
@@ -35,15 +37,15 @@ pub const ATTENTION_BACKWARD_NO_ATOMIC_ADD: Refusal = Refusal::Declined {
 /// second walk does, and also adds its share of the gradient of each query it sees into one `f32`
 /// sum every such cube adds into. Five multiplications a tile instead of seven.
 ///
-/// The first walk only writes each query's dot product of the output with its gradient, a unit a
-/// query; the last casts the sum into the query's gradient. The atomic adds land in no set order,
+/// The first walk only writes each query's dot product of the output with its gradient, a plane a
+/// box of queries; the last casts the sum into the query's gradient under the same planes. The atomic adds land in no set order,
 /// so the query's gradient may differ from one run to the next in its last bits.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HypercubeAttentionBackwardRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAttentionBackwardRoutineSettings {
-    pub delta: UnitDeltaMicrokernelSettings,
+    pub delta: PlaneDeltaMicrokernelSettings,
     pub key_gradient: HypercubeKeyGradientMicrokernelSettings,
     /// How a cube holds its stages.
     pub ring: StageRing,
@@ -51,7 +53,7 @@ pub struct HypercubeAttentionBackwardRoutineSettings {
 
 impl HypercubeAttentionBackwardRoutineSettings {
     pub const DEFAULT: Self = Self {
-        delta: UnitDeltaMicrokernelSettings::DEFAULT,
+        delta: PlaneDeltaMicrokernelSettings::DEFAULT,
         key_gradient: HypercubeKeyGradientMicrokernelSettings::DEFAULT,
         ring: StageRing::SINGLE,
     };
@@ -69,7 +71,7 @@ impl core::fmt::Display for HypercubeAttentionBackwardRoutineSettings {
 
 impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
     type Settings = HypercubeAttentionBackwardRoutineSettings;
-    type QueryGradient = UnitDeltaMicrokernel;
+    type QueryGradient = PlaneDeltaMicrokernel;
     type KeyGradient = HypercubeKeyGradientMicrokernel;
     /// The settings' ring as this device holds a cube's stages; the first walk holds none.
     type SharedMemory = StageRing;
@@ -90,8 +92,8 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         core::iter::once(lead).chain(keys).chain(rings).collect()
     }
 
-    /// The first walk's units take the queries of every head, a cube of one plane's width each;
-    /// the second's cubes the keys of every key head, as the cube staged routine places them.
+    /// The first walk's planes take the queries of every head, a plane a cube; the second's cubes
+    /// the keys of every key head, as the cube staged routine places them.
     ///
     /// # Errors
     ///
@@ -112,20 +114,17 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             return Err(ATTENTION_BACKWARD_NO_ATOMIC_ADD);
         }
         let item = problem.work_item();
-        let delta = UnitDeltaMicrokernel::best(hw, &item, &settings.delta)?;
+        let delta = PlaneDeltaMicrokernel::best(hw, &item, &settings.delta)?;
         let key_gradient =
             HypercubeKeyGradientMicrokernel::best(hw, &item, &settings.key_gradient)?;
-        let plane_width = hw.dispatch_plane_size();
+        let plane_width = hw.plane_dim()?;
         let delta_partitioning = Partitioning::new(
             problem.space(),
             delta
                 .tiling()
-                .launch_units(
+                .launch_planes(
                     &[Q, G, B, KV],
-                    UnitCube {
-                        plane_width: plane_width as usize,
-                        planes: 1,
-                    },
+                    PlaneOrder::new(&[(Q, 1)], CubeOrder::RowMajor),
                 )
                 .build(),
         );
@@ -145,13 +144,13 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         let ring = settings.ring.resolve(
             hw,
             &stage,
-            key_gradient.plane_count() * hw.plane_dim()? as usize,
+            key_gradient.plane_count() * plane_width as usize,
         );
         let key_grid = Grid::new(
             hw,
             &key_partitioning,
             CubeResources {
-                plane_width: hw.plane_dim()?,
+                plane_width,
                 shared_memory: ring.bytes(Self::stage_bytes(hw, &stage))
                     + key_gradient.window_bytes(&item),
             },
@@ -203,9 +202,9 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
         let operands = binding.operands;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
-        // its tiles. Each unit writes only its own queries' dot products.
+        // its tiles. Each plane writes only its own queries' dot products.
         unsafe {
-            unit_delta_kernel::launch_unchecked(
+            plane_delta_kernel::launch_unchecked(
                 client,
                 walk.grid.launch.cube_count.clone(),
                 walk.grid.launch.cube_dim,
@@ -260,7 +259,7 @@ impl AttentionBackwardRoutine for HypercubeAttentionBackwardRoutine {
             &sum,
             AttentionBackwardOperand::QueryGradient,
         );
-        // SAFETY: as the first walk's; each unit writes only its own queries' gradient, out of the
+        // SAFETY: as the first walk's; each plane writes only its own queries' gradient, out of the
         // sum the key walk finished adding into, which the launches' order sees done.
         unsafe {
             cast_query_gradient_kernel::launch_unchecked(

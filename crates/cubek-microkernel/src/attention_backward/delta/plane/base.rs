@@ -6,35 +6,35 @@ use cubecl::tile::{Levels, Partitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// Queries of one head a unit owns whole: their dot product of the output with its gradient, read
-/// a line of each at a time along the whole value dim. It asks nothing of the hardware.
+/// Queries of one head a plane owns: their dot product of the output with its gradient, its units
+/// sharing the queries' rows a line of each at a time along the whole value dim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitDeltaMicrokernel {
-    pub settings: UnitDeltaMicrokernelSettings,
+pub struct PlaneDeltaMicrokernel {
+    pub settings: PlaneDeltaMicrokernelSettings,
     /// The value dim a row of the output spans.
     pub val_dim: NonZeroUsize,
 }
 
-/// The queries a unit owns.
+/// The queries a plane owns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnitDeltaMicrokernelSettings {
+pub struct PlaneDeltaMicrokernelSettings {
     pub seq_q: NonZeroUsize,
 }
 
-impl UnitDeltaMicrokernelSettings {
+impl PlaneDeltaMicrokernelSettings {
     pub const DEFAULT: Self = Self {
-        seq_q: NonZeroUsize::MIN,
+        seq_q: NonZeroUsize::new(16).unwrap(),
     };
 }
 
-impl core::fmt::Display for UnitDeltaMicrokernelSettings {
+impl core::fmt::Display for PlaneDeltaMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "queries={}", self.seq_q)
     }
 }
 
-impl UnitDeltaMicrokernel {
-    /// The levels inside one unit's queries, which a routine states the rest of the partitioning
+impl PlaneDeltaMicrokernel {
+    /// The levels inside one plane's queries, which a routine states the rest of the partitioning
     /// around: its queries of one head, the whole value dim.
     pub fn tiling(&self) -> Levels {
         Levels::leaf(&[
@@ -46,21 +46,22 @@ impl UnitDeltaMicrokernel {
 }
 
 /// Its queries.
-impl core::fmt::Display for UnitDeltaMicrokernel {
+impl core::fmt::Display for PlaneDeltaMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.settings.fmt(f)
     }
 }
 
-impl Microkernel for UnitDeltaMicrokernel {
+impl Microkernel for PlaneDeltaMicrokernel {
     type WorkItem = AttentionBackwardWorkItem;
-    type Settings = UnitDeltaMicrokernelSettings;
+    type Settings = PlaneDeltaMicrokernelSettings;
     type Operand = AttentionBackwardOperand;
     type Partitioning = Partitioning;
 
-    const DECLINE: &'static str = "the unit dot product asks nothing of the hardware";
+    const DECLINE: &'static str = "the plane dot product runs on a device that commits to one plane \
+         width";
 
-    /// A query a unit.
+    /// Sixteen queries a plane.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![Self::Settings::DEFAULT]
     }
@@ -94,7 +95,7 @@ impl Microkernel for UnitDeltaMicrokernel {
         });
     }
 
-    /// No multiplication: its reads are its routine's to count, which places its units.
+    /// No multiplication: its reads are its routine's to count, which places its planes.
     fn estimate(
         &self,
         _item: &AttentionBackwardWorkItem,
