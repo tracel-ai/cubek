@@ -10,10 +10,10 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
-use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
+use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::stored::Packing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
@@ -25,7 +25,7 @@ use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine}
 /// ([`PlaneShuffleMicrokernel`]), or, against a packed rhs, on the tensor cores, where an NVFP4
 /// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
 /// reading the rhs
-/// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel)).
+/// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel)).
 ///
 /// What a product whose runs of columns are too few to fill the device with planes wants: a
 /// narrow `N` on a device of many compute units. Declines a float row rhs, a col rhs whose
@@ -345,8 +345,8 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
-    use cubek_microkernel::matmul::dense::cube::CubeShufflePlaneSettings;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
+    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
     use cubek_microkernel::matmul::stored::Operand;
     use cubek_microkernel::matmul::tile_order;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};

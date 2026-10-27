@@ -1,5 +1,5 @@
 use crate::matmul::MatmulAxes;
-use crate::matmul::dense::plane::PlaneFragmentMicrokernel;
+use crate::matmul::plane::PlaneFragmentMicrokernel;
 use cubecl::tile::{Axis, Level, Region, Semiring, Space, StageStorage, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 

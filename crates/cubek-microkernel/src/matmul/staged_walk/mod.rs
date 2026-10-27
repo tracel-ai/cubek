@@ -1,6 +1,6 @@
 //! What a staged walk through `K` shares: the stage it fills, how its planes lie, what an estimate
 //! counts of it, and how its cubes reach the output. The ring that holds its stages is
-//! [`crate::staging`]'s.
+//! [`crate::StageRing`].
 
 mod cube_write;
 mod plane_layout;

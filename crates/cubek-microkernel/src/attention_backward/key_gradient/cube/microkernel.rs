@@ -2,7 +2,7 @@ use super::base::CubeKeyGradientMicrokernel;
 use crate::attention::{Q, S};
 use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{KeyGradientSums, plane_key_gradient_step};
-use crate::staging::StageRing;
+use crate::StageRing;
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 

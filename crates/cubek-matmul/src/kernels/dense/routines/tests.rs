@@ -187,8 +187,8 @@ mod cube_staged {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_microkernel::matmul::dense::cube::CubeStagedMicrokernel;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 

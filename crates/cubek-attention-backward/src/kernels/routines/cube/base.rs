@@ -12,7 +12,7 @@ use cubek_microkernel::attention_backward::key_gradient::cube::{
 use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
 };
-use cubek_microkernel::staging::{StageRing, StagedOperand};
+use cubek_microkernel::{StageRing, StagedOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{CubeResources, Grid};

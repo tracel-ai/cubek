@@ -8,7 +8,7 @@ use cubek_microkernel::attention_backward::key_gradient::plane::{
 use cubek_microkernel::attention_backward::query_gradient::plane::{
     PlaneQueryGradientMicrokernel, plane_fragment_query_gradient_microkernel,
 };
-use cubek_microkernel::staging::StageRing;
+use cubek_microkernel::StageRing;
 
 /// Every plane of the launch running its queries through stages of its own: their dot product of
 /// the output with its gradient, and their gradient, over the keys they see.

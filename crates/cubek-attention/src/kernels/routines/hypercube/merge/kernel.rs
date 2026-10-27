@@ -1,7 +1,7 @@
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::AttentionSlotBox;
-use cubek_microkernel::attention::merge::plane::plane_merge_attention_microkernel;
-use cubek_microkernel::attention::output::hypercube::HypercubeMergeShape;
+use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
+use cubek_microkernel::split_keys_merge::SlotBox;
+use cubek_microkernel::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 
 /// A plane for every query merging the query's slots into the output, and into the query's
 /// logsumexp where the launch binds one: the query is `q = x`, head `g = y % group` of key head
@@ -22,7 +22,7 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         CUBE_POS_Y as usize,
         CUBE_POS_X as usize,
     );
-    let slot_box = AttentionSlotBox::new::<EA>(
+    let slot_box = SlotBox::new::<EA>(
         slot_max,
         batch,
         query_head / group,
@@ -30,7 +30,7 @@ pub fn hypercube_attention_merge_kernel<EA: Float, E: Float, N: Size>(
         query,
         comptime!(merge.seq_q),
     );
-    plane_merge_attention_microkernel::<EA, E, N>(
+    plane_split_keys_merge_microkernel::<EA, E, N>(
         slot_out,
         slot_max,
         slot_sum,

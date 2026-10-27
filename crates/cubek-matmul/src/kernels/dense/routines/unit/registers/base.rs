@@ -11,10 +11,8 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::unit::{
-    UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings,
-};
 use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
+use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};

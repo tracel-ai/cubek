@@ -4,7 +4,7 @@ use crate::attention_backward::query_gradient::plane::{
     plane_query_gradient_step, query_gradient_sum,
 };
 use crate::attention_backward::{ScoreWindows, drain_scaled};
-use crate::staging::StageRing;
+use crate::StageRing;
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 

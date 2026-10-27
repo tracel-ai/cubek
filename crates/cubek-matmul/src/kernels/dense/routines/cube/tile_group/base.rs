@@ -6,7 +6,7 @@ use crate::kernels::{
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeTileGroupMicrokernel, CubeTileGroupMicrokernelSettings,
 };
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulRead};

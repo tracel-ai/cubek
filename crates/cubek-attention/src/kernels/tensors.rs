@@ -215,7 +215,7 @@ impl AttentionTensors {
     ///
     /// Where the keys carry a QJL fix-up, `query` is the query followed along its head dim by its
     /// projection, `d` twice the cache's head dim: the keys' lines run as far, their second half
-    /// the fix-up ([`PackedLines`](cubek_microkernel::attention::PackedLines)).
+    /// the fix-up ([`PackedStepReads`](cubek_microkernel::attention::plane::PackedStepReads)).
     ///
     /// # Errors
     ///

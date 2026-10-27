@@ -17,7 +17,7 @@ use cubek_attention::kernels::{
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionVisibility};

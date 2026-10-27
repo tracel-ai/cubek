@@ -8,7 +8,7 @@ use cubek_microkernel::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S};
 use cubek_microkernel::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardOperands, AttentionBackwardWorkItem,
 };
-use cubek_microkernel::staging::StagedOperand;
+use cubek_microkernel::StagedOperand;
 
 /// What a backward pass declines before preparing anything: query heads that do not split
 /// evenly over the key heads.

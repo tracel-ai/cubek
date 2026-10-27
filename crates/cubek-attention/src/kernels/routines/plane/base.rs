@@ -8,14 +8,14 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::StageRing;
+use cubek_microkernel::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
     AttentionStagingCount, CubePlaneMicrokernel, Q, S,
 };
-use cubek_microkernel::staging::StageRing;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -282,10 +282,10 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::output::plane::ScoreHolder;
+    use cubek_microkernel::attention::plane::ScoreHolder;
     use cubek_microkernel::attention::{D, G};
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

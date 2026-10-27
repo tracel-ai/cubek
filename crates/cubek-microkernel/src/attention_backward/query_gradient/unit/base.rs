@@ -2,7 +2,7 @@ use crate::attention::{D, DV, G, Q, S};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::dense::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
+use crate::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, Partitioning};

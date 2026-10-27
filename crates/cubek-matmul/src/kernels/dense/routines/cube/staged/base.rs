@@ -9,6 +9,7 @@ use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
+use cubek_microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulStep;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::stored::Packing;
@@ -16,7 +17,6 @@ use cubek_microkernel::matmul::tile_order;
 use cubek_microkernel::matmul::{
     MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
 };
-use cubek_microkernel::staging::StageRing;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::{Hardware, Instructions};
@@ -31,13 +31,11 @@ use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedRows, CubeStagedStore,
 };
-use cubek_microkernel::matmul::dense::plane::{
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
-};
+use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -243,7 +241,7 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// Registers the compiler adds around a plane's lower bound
-    /// ([`registers_per_unit`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel::registers_per_unit)):
+    /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
     /// addressing, loop state and the scale registers. A margin rather than a derivation, since
     /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.

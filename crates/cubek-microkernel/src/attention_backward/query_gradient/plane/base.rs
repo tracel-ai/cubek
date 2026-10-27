@@ -2,7 +2,7 @@ use crate::attention::{DV, G, Q, S};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::dense::plane::{
+use crate::matmul::plane::{
     PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
     PlaneFragmentTransport,
 };

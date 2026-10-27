@@ -1,7 +1,7 @@
 use super::base::UnitQueryGradientMicrokernel;
 use crate::attention::S;
 use crate::attention_backward::drain_scaled;
-use crate::matmul::dense::unit::unit_registers_microkernel;
+use crate::matmul::unit::unit_registers_microkernel;
 use cubecl::tile::{Region, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 

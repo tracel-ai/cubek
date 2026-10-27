@@ -13,23 +13,23 @@ mod base {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
+    use cubek_microkernel::StageRing;
     use cubek_microkernel::matmul::MatmulOperand;
     use cubek_microkernel::matmul::MatmulPartitioning;
-    use cubek_microkernel::matmul::dense::cube::{
+    use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
         CubeStagedStore,
     };
-    use cubek_microkernel::matmul::dense::cube::{
+    use cubek_microkernel::matmul::cube::{
         CubeStagedFill, CubeStagedFillingRefusal, CubeStagedTmaRefusal,
     };
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
-    use cubek_microkernel::matmul::dense::plane::{
+    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
     };
     use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
     use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulOrder};
-    use cubek_microkernel::staging::StageRing;
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};
@@ -1344,7 +1344,7 @@ mod base {
     #[test]
     fn an_nvfp4_product_read_as_stored_is_estimated() {
         use crate::kernels::select::packed::nvfp4_scheme;
-        use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
+        use cubek_microkernel::matmul::cube::CubeStagedDepth;
         use cubek_microkernel::matmul::stored::Operand;
         use cubek_microkernel::matmul::stored::Packing;
         use cubek_microkernel::matmul::tile_order;
@@ -1383,7 +1383,7 @@ mod base {
     /// `K`.
     #[test]
     fn a_decoded_input_is_estimated_in_stages_of_its_blocks() {
-        use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
+        use cubek_microkernel::matmul::cube::CubeStagedDepth;
         use cubek_microkernel::matmul::stored::Operand;
         use cubek_microkernel::matmul::stored::Packing;
         use cubek_microkernel::matmul::tile_order;
