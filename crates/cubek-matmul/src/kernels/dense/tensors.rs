@@ -9,7 +9,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Arg, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
     launch::TmaBox, launch::TmaOperand, launch::Unbound,
@@ -1098,10 +1098,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         );
         let (batch_axes, widths) = (self.batch_axes(), blueprint.widths);
         let delivery = blueprint.microkernel.delivery();
+        let decoded = blueprint.microkernel.decoded_stage();
         let source = |tensor: &PlainTensor, axes: &'static [Axis]| {
-            launcher
-                .arg(tensor.binding.clone(), tensor.elem)
-                .axes(axes)
+            Self::float_arg(&launcher, tensor, axes, decoded)
                 .batches(&batch_axes)
                 .delivery(delivery)
         };
@@ -1113,10 +1112,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .and_then(|table| table.index.axis())
             .map(|(stacked, _)| [stacked, K, N]);
         let rhs_source = match &stack_axes {
-            Some(axes) => launcher
-                .arg(rhs.binding.clone(), rhs.elem)
-                .axes(axes)
-                .delivery(delivery),
+            Some(axes) => Self::float_arg(&launcher, rhs, axes, decoded).delivery(delivery),
             None => source(rhs, &[K, N]),
         };
         let lhs = orders
@@ -1134,6 +1130,24 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs.arg());
         let rhs = self.read_through_table(MatmulOperand::Rhs, rhs.arg());
         (launcher, [lhs, rhs])
+    }
+
+    /// A float input's argument under `launcher`: at its own element, or, where the stages it is
+    /// read through hold `decoded`, another element than it is stored in, as its `u32` words, each
+    /// one value of its float, which the fill decodes.
+    fn float_arg<'a>(
+        launcher: &'a Launcher,
+        tensor: &PlainTensor,
+        axes: &'a [Axis],
+        decoded: Option<ElemType>,
+    ) -> Arg<'a, Labelled> {
+        match (tensor.elem, decoded) {
+            (ElemType::Float(kind), Some(decoded)) if decoded != tensor.elem => launcher
+                .arg(tensor.binding.clone(), ElemType::UInt(UIntKind::U32))
+                .axes(axes)
+                .packed(kind),
+            _ => launcher.arg(tensor.binding.clone(), tensor.elem).axes(axes),
+        }
     }
 
     /// `operand`, bound, reading its entry of the table where it is one of its readers, the

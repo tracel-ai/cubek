@@ -575,7 +575,7 @@ mod tests {
     use crate::matmul::stored::Operand;
     use crate::matmul::stored::Packing;
     use crate::matmul::tile_order;
-    use crate::matmul::{MatmulAxes, MatmulDestination};
+    use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
 
@@ -595,6 +595,7 @@ mod tests {
             rows: MatmulRows::Whole(rows),
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes::MNK,
+            reading: MatmulReading::AsStored,
         }
     }
 
@@ -677,6 +678,7 @@ mod tests {
             rows: MatmulRows::Whole(rows),
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes::INSIDE_BLOCKS,
+            reading: MatmulReading::AsStored,
         }
     }
 

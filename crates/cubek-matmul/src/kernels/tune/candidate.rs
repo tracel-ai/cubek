@@ -1,13 +1,17 @@
 //! The tune candidate the many-rows and few-rows tables race a float routine as.
 
+use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::{CubeBlock, MatmulTuneKey};
-use crate::kernels::{MatmulBlueprint, MatmulRoutineProblem};
+use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
 use cubecl::CubeDim;
+use cubecl::client::Client;
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::matmul_axes::{K, M, N};
-use cubek_std::routine::Routine;
+use cubek_std::routine::{PreparedLaunches, Routine};
+use std::sync::Arc;
 
 /// One candidate of a matmul table's autotune: a float routine at one of its settings,
 /// prepared for the device the table is built for.
@@ -21,6 +25,9 @@ pub struct MatmulRoutineCandidate<R: Routine> {
     routine: R,
     settings: R::Settings,
     hw: Hardware,
+    /// The launches this candidate prepared, shared by its clones: they launch the same routine
+    /// at the same setting on the same device.
+    prepared: Arc<PreparedLaunches<R>>,
 }
 
 impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
@@ -33,6 +40,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
                 routine,
                 settings,
                 hw: hw.clone(),
+                prepared: Arc::default(),
             })
             .collect()
     }
@@ -45,6 +53,32 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     /// The routine this candidate launches.
     pub fn routine(&self) -> R {
         self.routine
+    }
+
+    /// `lhs · rhs` on `client`'s device written into `out`, which the caller allocated, by this
+    /// candidate's routine at its setting: [`MatmulRoutine::launch_into`] on the device the
+    /// candidate was listed for, each problem prepared once ([`PreparedLaunches`]).
+    ///
+    /// # Errors
+    ///
+    /// What [`MatmulTensors::writing_into`] declines, and why the routine cannot run the product
+    /// at this setting.
+    pub fn launch_into<M: MatmulMicrokernel, SM>(
+        &self,
+        client: &Client,
+        lhs: PlainTensor,
+        rhs: PlainTensor,
+        out: PlainTensor,
+    ) -> Result<(), Refusal>
+    where
+        R: MatmulRoutine<M, SM>,
+    {
+        let tensors = MatmulTensors::writing_into::<M>(client, lhs, rhs, out)?;
+        let (blueprint, grid) =
+            self.prepared
+                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
+        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+        Ok(())
     }
 }
 
