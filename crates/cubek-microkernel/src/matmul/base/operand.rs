@@ -1,6 +1,7 @@
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulOrder};
+use crate::matmul::{MatmulAxes, MatmulDim};
 use cubecl::tile::{Axis, Tile};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
+use cubek_std::layout::BindingOrder;
 
 /// One of the three operands of `out = lhs · rhs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,6 +26,16 @@ impl MatmulOperand {
             Self::Lhs => [MatmulDim::M, MatmulDim::K],
             Self::Rhs => [MatmulDim::K, MatmulDim::N],
             Self::Out => [MatmulDim::M, MatmulDim::N],
+        }
+    }
+
+    /// The dimension it is bound innermost along in `order`: the one its lines run along, the
+    /// last the product names it by, or the first where it is bound as its buffer steps.
+    pub fn innermost(self, order: BindingOrder) -> MatmulDim {
+        let [outer, inner] = self.dims();
+        match order {
+            BindingOrder::Stated => inner,
+            BindingOrder::InBufferOrder => outer,
         }
     }
 
@@ -75,10 +86,10 @@ impl<T: Copy> MatmulOperands<T> {
     }
 }
 
-impl MatmulOperands<MatmulOrder> {
+impl MatmulOperands<BindingOrder> {
     /// The dimension `operand` is bound innermost along, in the order it is bound in.
     pub fn innermost(&self, operand: MatmulOperand) -> MatmulDim {
-        self.get(operand).innermost(operand)
+        operand.innermost(self.get(operand))
     }
 }
 

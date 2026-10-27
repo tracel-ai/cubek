@@ -1,10 +1,11 @@
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulReading,
-    MatmulRows, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulWorkItem,
 };
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{Axis, Space};
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StagedOperand;
 
 /// A work item of this kind as its microkernels see it: the elements it reads and writes, the
@@ -125,7 +126,7 @@ impl AttentionWorkItem {
 
     /// One stage of `keys` keys and their values, each over its own axes and bound innermost
     /// along the axis its lines run along, the keys in `key_order`.
-    pub fn stage(&self, keys: usize, key_order: MatmulOrder) -> [StagedOperand; 2] {
+    pub fn stage(&self, keys: usize, key_order: BindingOrder) -> [StagedOperand; 2] {
         let operand = |operand: AttentionOperand, row: Axis, extent: usize| StagedOperand {
             element: self.elements.get(operand),
             space: Space::new(&[(S, keys), (row, extent)]),

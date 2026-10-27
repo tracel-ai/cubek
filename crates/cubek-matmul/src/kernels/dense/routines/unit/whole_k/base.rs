@@ -12,8 +12,9 @@ use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::MatmulStagingCount;
 use cubek_microkernel::matmul::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulOrder};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -126,8 +127,8 @@ impl Routine for UnitWholeKMatmulRoutine {
         let (cube, block) = (partitioning.cube_box(), partitioning.leaf());
         let plane_row = block.extent(N) * Self::blocks_per_plane(partitioning);
         let rhs_run = match blueprint.microkernel.orders.rhs {
-            MatmulOrder::InBufferOrder => cube.extent(K),
-            MatmulOrder::Stated => plane_row,
+            BindingOrder::InBufferOrder => cube.extent(K),
+            BindingOrder::Stated => plane_row,
         };
         let staging = MatmulStagingCount {
             depth: block.extent(K),

@@ -1,6 +1,7 @@
-use crate::matmul::{MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem};
+use crate::matmul::{MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::microkernel::Microkernel;
 
@@ -16,7 +17,7 @@ pub trait MatmulMicrokernel:
     const ROWS_KIND: MatmulRowsKind;
 
     /// The order it reads each operand's tiles in, which the launch binds the operand in.
-    fn orders(&self) -> MatmulOperands<MatmulOrder>;
+    fn orders(&self) -> MatmulOperands<BindingOrder>;
 
     /// How the lhs and the rhs it binds are moved into its stages, which the launch states on
     /// both: [`SyncPerUnit`](Delivery::SyncPerUnit) for one that stages nothing.

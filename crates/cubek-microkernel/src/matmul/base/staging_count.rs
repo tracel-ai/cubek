@@ -1,6 +1,7 @@
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulStage;
-use crate::matmul::{MatmulOperand, MatmulOperands, MatmulOrder, MatmulWorkItem};
+use crate::matmul::{MatmulOperand, MatmulOperands, MatmulWorkItem};
+use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
@@ -35,7 +36,7 @@ impl MatmulStagingCount {
     pub fn new(
         partitioning: &MatmulPartitioning,
         stage: &MatmulStage,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
         ring: &StageRing,
         out_run: usize,
     ) -> Self {

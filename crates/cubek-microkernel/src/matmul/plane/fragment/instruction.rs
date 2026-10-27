@@ -1,8 +1,7 @@
-use crate::matmul::{
-    MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulOrder, MatmulWorkItem,
-};
+use crate::matmul::{MatmulAxes, MatmulDim, MatmulLayout, MatmulOperands, MatmulWorkItem};
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::{ElemType, FloatKind};
@@ -11,7 +10,7 @@ use cubecl::tile::{
     stage::RowChunks,
 };
 use cubecl::wgmma::WARPGROUP_UNITS;
-use cubek_std::microkernel::ArithmeticInstruction;
+use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
 /// by either transport, or the software instruction every device runs.
@@ -156,31 +155,31 @@ impl PlaneFragmentInstruction {
     /// the stage is filled along the rhs's own lines; the others as the product names them. The
     /// software instruction reads the role's own order, and under it a transposed tile would be a
     /// wrong answer rather than a slow one.
-    pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<MatmulOrder> {
+    pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
         let rhs = match (self, layouts.rhs) {
             (Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. }, MatmulLayout::Col) => {
-                MatmulOrder::InBufferOrder
+                BindingOrder::InBufferOrder
             }
             (
                 Self::Cmma { .. } | Self::Mma { .. } | Self::Registers { .. } | Self::Wgmma { .. },
                 _,
-            ) => MatmulOrder::Stated,
+            ) => BindingOrder::Stated,
         };
         MatmulOperands {
             rhs,
-            ..MatmulOperands::all(MatmulOrder::Stated)
+            ..MatmulOperands::all(BindingOrder::Stated)
         }
     }
 
-    /// How a stage the instruction reads holds its cells: in tiles of a matrix instruction, one
-    /// of every batch axis in `batches`, so a fragment loads one contiguous tile; as the operand
-    /// lies for the software instruction, whose units read their cells where they are.
+    /// The layout a stage the instruction reads lies in: `setting`'s, or the instruction's own
+    /// where it states none; strided for the software instruction, whose units read their cells
+    /// where they are, whatever it states.
     ///
-    /// Both matrix instructions keep the rows a fragment load reads at once on distinct banks,
-    /// each the way its transport can read. `cmma` reads a tile off a pointer and a stride, so its
-    /// rows are padded by a chunk: a padded row is still a run a stride from the next. The manual
-    /// `mma` hands every row its own address, so its rows' chunks are swizzled instead, which
-    /// spends no shared memory.
+    /// Both matrix instructions' own keep the rows a fragment load reads at once on distinct
+    /// banks, each the way its transport can read. `cmma` reads a tile off a pointer and a stride,
+    /// so its rows are padded by a chunk: a padded row is still a run a stride from the next. The
+    /// manual `mma` hands every row its own address, so its rows' chunks are swizzled instead,
+    /// which spends no shared memory.
     ///
     /// Measured against padding: an L4's shared loads go from conflicted to conflict-free at a
     /// level time; gfx1151's bank conflicts fall to zero, 8 to 20% faster on four of six boxes,
@@ -189,20 +188,29 @@ impl PlaneFragmentInstruction {
     /// A block-scaled instruction's stage holds the stored words in the same swizzled tiles: a
     /// row of its tile is the instruction's `k` of words, read eight rows at a time as a 16-bit
     /// instruction's are.
-    pub fn stage_storage(self, batches: &[Axis], axes: MatmulAxes) -> StageStorage {
-        let chunks = match self {
-            Self::Cmma { .. } => RowChunks::Padded,
-            Self::Mma { .. } | Self::Wgmma { .. } => RowChunks::Swizzled,
-            Self::Registers { .. } => return StageStorage::Strided,
-        };
-        StageStorage::Tiled {
-            block: batches
-                .iter()
-                .map(|&axis| (axis, 1))
-                .chain(axes.name(self.shape()))
-                .collect(),
-            chunks,
+    ///
+    /// # Errors
+    ///
+    /// Swizzled tiles under `cmma`, which has no stride to read them by.
+    pub fn stage_layout(self, setting: Option<StageLayout>) -> Result<StageLayout, Refusal> {
+        match (self, setting) {
+            (Self::Registers { .. }, _) => Ok(StageLayout::Strided),
+            (Self::Cmma { .. }, Some(StageLayout::SwizzledBlocks)) => Err(SWIZZLED_STAGE_UNREAD),
+            (_, Some(layout)) => Ok(layout),
+            (Self::Cmma { .. }, None) => Ok(StageLayout::PaddedBlocks),
+            (Self::Mma { .. } | Self::Wgmma { .. }, None) => Ok(StageLayout::SwizzledBlocks),
         }
+    }
+
+    /// The tile a fragment loads from a stage the instruction reads: the instruction's shape, and
+    /// one of every batch axis in `batches`, so a fragment loads one contiguous tile where the
+    /// stage is blocked.
+    pub fn stage_tile(self, batches: &[Axis], axes: MatmulAxes) -> Vec<(Axis, usize)> {
+        batches
+            .iter()
+            .map(|&axis| (axis, 1))
+            .chain(axes.name(self.shape()))
+            .collect()
     }
 
     /// How a stage the instruction reads holds its cells where one TMA box lands each operand's
@@ -210,7 +218,7 @@ impl PlaneFragmentInstruction {
     /// the whole stage deep along `K`, so the tiles stack whole rows one after another as a box
     /// lands them, and one of every batch axis in `batches`. The manual `mma`'s rows swizzled as
     /// the descriptor swizzles them, which keeps the rows a fragment load reads at once on
-    /// distinct banks as [`stage_storage`](Self::stage_storage)'s do; `cmma`'s in order, since a
+    /// distinct banks as its own [`stage_layout`](Self::stage_layout) does; `cmma`'s in order, since a
     /// box lands no padding; the software instruction's as the operand lies, as ever. The
     /// warpgroup MMA's swizzled as the manual `mma`'s are: a row one swizzle span long lies as the
     /// instruction's descriptor reads it.

@@ -1,9 +1,10 @@
 use crate::matmul::MatmulPartitioning;
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulOrder};
+use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StagedOperand;
 
 /// The box one step of a walk through `K` stages of both operands: a cube's, or a plane's own.
@@ -33,19 +34,19 @@ impl MatmulStage {
     pub fn operand_space(
         &self,
         operand: MatmulOperand,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
     ) -> Space {
         let [outer, inner] = operand.dims();
         let dims = match orders.get(operand) {
-            MatmulOrder::Stated => [outer, inner],
-            MatmulOrder::InBufferOrder => [inner, outer],
+            BindingOrder::Stated => [outer, inner],
+            BindingOrder::InBufferOrder => [inner, outer],
         };
         self.space.subspace(&dims.map(|dim| self.axes.of(dim)))
     }
 
     /// Elements of `operand` a stage holds consecutively, bound in the order `orders` says: the
     /// stage's extent along the axis the operand is bound innermost along.
-    pub fn run(&self, operand: MatmulOperand, orders: MatmulOperands<MatmulOrder>) -> usize {
+    pub fn run(&self, operand: MatmulOperand, orders: MatmulOperands<BindingOrder>) -> usize {
         self.extent(self.axes.of(orders.innermost(operand)))
     }
 
@@ -54,7 +55,7 @@ impl MatmulStage {
     /// contiguous axis.
     pub fn require_runs(
         &self,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
         for operand in MatmulOperand::INPUTS {
@@ -72,7 +73,7 @@ impl MatmulStage {
         &self,
         partitioning: &MatmulPartitioning,
         operand: MatmulOperand,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         match orders.innermost(operand) {
             MatmulDim::K => partitioning.cube_box().extent(self.axes.k),
@@ -85,7 +86,7 @@ impl MatmulStage {
     pub fn operands(
         &self,
         elements: MatmulOperands<ElemType>,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
     ) -> [StagedOperand; 2] {
         MatmulOperand::INPUTS.map(|operand| StagedOperand {
             element: elements.get(operand),
@@ -104,7 +105,7 @@ impl MatmulStage {
         hw: &Hardware,
         elements: MatmulOperands<ElemType>,
         storage: &StageStorage,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         let block: usize = self
             .operands(elements, orders)

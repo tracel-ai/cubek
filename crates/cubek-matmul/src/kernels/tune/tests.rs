@@ -10,10 +10,10 @@ mod candidate {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::MatmulMicrokernel;
-    use cubek_microkernel::matmul::MatmulOrder;
     use cubek_std::Hardware;
     use cubek_std::autotune::{CandidatePriority, TuneCandidate};
     use cubek_std::devices;
+    use cubek_std::layout::BindingOrder;
     use cubek_std::matmul_axes::{K, N};
     use cubek_std::routine::Routine;
 
@@ -115,13 +115,13 @@ mod candidate {
         let (in_buffer_order, _) = cube.blueprint(&col).expect("runs here");
         assert_eq!(
             in_buffer_order.microkernel.orders().rhs,
-            MatmulOrder::InBufferOrder
+            BindingOrder::InBufferOrder
         );
         assert!(in_buffer_order.widths.rhs > 1);
 
         let unit = MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, &hw).swap_remove(0);
         let (merged, _) = unit.blueprint(&col).expect("runs here");
-        assert_eq!(merged.microkernel.orders().rhs, MatmulOrder::InBufferOrder);
+        assert_eq!(merged.microkernel.orders().rhs, BindingOrder::InBufferOrder);
         assert!(merged.widths.rhs > 1);
     }
 

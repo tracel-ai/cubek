@@ -1,59 +1,9 @@
-use crate::matmul::MatmulDim;
 use crate::matmul::MatmulOperand;
-use cubecl::tile::launch::{Arg, Labelled};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::layout::contiguous;
 use cubek_std::layout::stored::Packing;
-
-/// The order an operand is bound in: the axes the product names, or the order its buffer steps.
-///
-/// A col rhs (an `[n, k]` buffer behind a `[k, n]` view) bound over the axes the product names
-/// steps its innermost bound axis by `k`, so it is read one element at a time; bound in its
-/// buffer's order, the same bytes are read in lines. Only a fragment that loads its `B` col-major
-/// reads an operand so, and the two orders compile two kernels, so the microkernel states which
-/// ([`MatmulMicrokernel::orders`](crate::matmul::MatmulMicrokernel::orders)).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MatmulOrder {
-    /// As the product names its axes: `[k, n]` for the rhs.
-    Stated,
-    /// As its buffer steps them: `[n, k]` for a col rhs.
-    InBufferOrder,
-}
-
-impl core::fmt::Display for MatmulOrder {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Stated => write!(f, "stated"),
-            Self::InBufferOrder => write!(f, "in-buffer-order"),
-        }
-    }
-}
-
-impl MatmulOrder {
-    /// `operand` bound in this order: as the product names it, or in the order its buffer steps.
-    /// The one place a binding reads the order, which a blueprint's widths read through
-    /// [`innermost`](Self::innermost) and a problem's alignment through
-    /// `MatmulRoutineProblem::alignment`.
-    pub fn applied(self, operand: Arg<'_, Labelled>) -> Arg<'_, Labelled> {
-        match self {
-            Self::Stated => operand,
-            Self::InBufferOrder => operand.in_stride_order(),
-        }
-    }
-
-    /// The dimension `operand` is bound innermost along under this order: the one its lines run
-    /// along, the last the product names it by, or the first where it is bound as its buffer
-    /// steps.
-    pub fn innermost(self, operand: MatmulOperand) -> MatmulDim {
-        let [outer, inner] = operand.dims();
-        match self {
-            Self::Stated => inner,
-            Self::InBufferOrder => outer,
-        }
-    }
-}
 
 /// How an operand's buffer lies under the view the product names it by (`[k, n]` for the rhs), as
 /// the tuning key reads its strides ([`contiguous`]), so a key and the tensors it was made from

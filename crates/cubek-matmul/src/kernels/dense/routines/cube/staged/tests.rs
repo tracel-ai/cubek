@@ -17,8 +17,7 @@ mod base {
     use cubek_microkernel::matmul::MatmulPartitioning;
     use cubek_microkernel::matmul::MatmulPlaneLayout;
     use cubek_microkernel::matmul::cube::{
-        CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
-        CubeStagedStore,
+        CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
     };
     use cubek_microkernel::matmul::cube::{
         CubeStagedFill, CubeStagedFillingRefusal, CubeStagedTmaRefusal,
@@ -28,12 +27,13 @@ mod base {
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
     };
-    use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulOrder};
+    use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands};
     use cubek_std::Hardware;
     use cubek_std::devices;
+    use cubek_std::layout::BindingOrder;
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::Microkernel;
-    use cubek_std::microkernel::StageRing;
+    use cubek_std::microkernel::{StageLayout, StageRing};
     use cubek_std::routine::Routine;
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.
@@ -382,7 +382,7 @@ mod base {
         for blueprint in [cmma, mma] {
             assert_eq!(
                 blueprint.microkernel.plane.orders.rhs,
-                MatmulOrder::InBufferOrder,
+                BindingOrder::InBufferOrder,
                 "{}",
                 blueprint.microkernel.plane.instruction
             );
@@ -394,7 +394,7 @@ mod base {
         for blueprint in [software, no_subgroups] {
             assert_eq!(
                 blueprint.microkernel.plane.orders.rhs,
-                MatmulOrder::Stated,
+                BindingOrder::Stated,
                 "{}",
                 blueprint.microkernel.plane.instruction
             );
@@ -427,7 +427,7 @@ mod base {
             let (blueprint, _) = CubeStagedMatmulRoutine
                 .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
                 .expect("the routine runs here");
-            assert_eq!(blueprint.microkernel.plane.orders.rhs, MatmulOrder::Stated);
+            assert_eq!(blueprint.microkernel.plane.orders.rhs, BindingOrder::Stated);
         }
     }
 
@@ -901,7 +901,7 @@ mod base {
             assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
             assert_eq!(
                 blueprint.microkernel.plane.orders.rhs,
-                MatmulOrder::InBufferOrder
+                BindingOrder::InBufferOrder
             );
             let depth = blueprint.partitioning.stage().extent(K);
             assert!(
@@ -1225,7 +1225,7 @@ mod base {
     fn rows_in_order_lay_a_matrix_instructions_stage_and_leave_the_software_ones_alone() {
         let in_order = CubeStagedMatmulRoutineSettings {
             microkernel: CubeStagedMicrokernelSettings {
-                stage_rows: CubeStagedRows::InOrder,
+                stage_layout: Some(StageLayout::Blocks),
                 ..CubeStagedMatmulRoutineSettings::DEFAULT.microkernel
             },
             ..CubeStagedMatmulRoutineSettings::DEFAULT

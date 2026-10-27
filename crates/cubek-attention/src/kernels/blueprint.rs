@@ -5,8 +5,8 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, AttentionPartitioning, S};
-use cubek_microkernel::matmul::MatmulOrder;
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its work
 /// items, the width each operand binds at, and how the routine lays out shared memory.
@@ -45,7 +45,7 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
         for operand in AttentionOperand::ALL {
             let alignment = match (operand, key_order) {
                 // The keys bound along `S` are a stride over their buffer.
-                (AttentionOperand::Key, MatmulOrder::Stated) => ElemAlignment::ONE,
+                (AttentionOperand::Key, BindingOrder::Stated) => ElemAlignment::ONE,
                 _ => problem.elem_alignments.get(operand),
             };
             vectorization.require(VectorRequirement::Aligned { operand, alignment });

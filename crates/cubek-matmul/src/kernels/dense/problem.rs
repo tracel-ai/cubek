@@ -8,8 +8,9 @@ use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{
     MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand, MatmulOperands,
-    MatmulOrder, MatmulStoredTile,
+    MatmulStoredTile,
 };
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
@@ -370,16 +371,16 @@ impl MatmulRoutineProblem {
     /// `operand`'s alignment bound in `order`: over its buffer's order, or as the product names
     /// it. Which order a launch binds it in is its microkernel's choice
     /// ([`MatmulMicrokernel::orders`](cubek_microkernel::matmul::MatmulMicrokernel::orders)).
-    pub fn alignment(&self, operand: MatmulOperand, order: MatmulOrder) -> ElemAlignment {
+    pub fn alignment(&self, operand: MatmulOperand, order: BindingOrder) -> ElemAlignment {
         match order {
-            MatmulOrder::InBufferOrder => self.buffer_alignments.get(operand),
-            MatmulOrder::Stated => self.elem_alignments.get(operand),
+            BindingOrder::InBufferOrder => self.buffer_alignments.get(operand),
+            BindingOrder::Stated => self.elem_alignments.get(operand),
         }
     }
 
     /// Where each operand's buffer starts and how it is aligned over the order `orders` binds it
     /// in ([`alignment`](Self::alignment)).
-    pub fn buffers(&self, orders: MatmulOperands<MatmulOrder>) -> MatmulBuffers {
+    pub fn buffers(&self, orders: MatmulOperands<BindingOrder>) -> MatmulBuffers {
         MatmulBuffers {
             alignments: orders.map(|operand, order| self.alignment(operand, order)),
             start_bytes: self.start_bytes,
@@ -542,17 +543,17 @@ mod tests {
         let col =
             MatmulRoutineProblem::dense(4, 48, 64, f16).laid(MatmulOperand::Rhs, MatmulLayout::Col);
         assert_eq!(
-            col.alignment(rhs, MatmulOrder::InBufferOrder),
+            col.alignment(rhs, BindingOrder::InBufferOrder),
             col.buffer_alignments.rhs
         );
         assert_ne!(
-            col.alignment(rhs, MatmulOrder::InBufferOrder),
-            col.alignment(rhs, MatmulOrder::Stated)
+            col.alignment(rhs, BindingOrder::InBufferOrder),
+            col.alignment(rhs, BindingOrder::Stated)
         );
         let row = MatmulRoutineProblem::dense(4, 48, 64, f16);
         assert_eq!(
-            row.alignment(rhs, MatmulOrder::InBufferOrder),
-            row.alignment(rhs, MatmulOrder::Stated)
+            row.alignment(rhs, BindingOrder::InBufferOrder),
+            row.alignment(rhs, BindingOrder::Stated)
         );
     }
 

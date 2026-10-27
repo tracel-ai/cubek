@@ -17,11 +17,12 @@ use cubecl::tile::{
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulRowsKind, MatmulWorkItem,
+    MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind,
+    MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -1026,7 +1027,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         &self,
         stage: &MatmulStage,
         storage: &StageStorage,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
     ) -> (TileArgLaunch, TileArgLaunch) {
         self.assert_tiled();
         let problem = self.problem();
@@ -1045,8 +1046,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             landing(lhs, MatmulOperand::Lhs),
         );
         let rhs = match orders.rhs {
-            MatmulOrder::Stated => Self::tma_matrix(rhs, [(K, problem.k), (N, problem.n)], landed),
-            MatmulOrder::InBufferOrder => Self::tma_matrix(
+            BindingOrder::Stated => Self::tma_matrix(rhs, [(K, problem.k), (N, problem.n)], landed),
+            BindingOrder::InBufferOrder => Self::tma_matrix(
                 &rhs.clone().in_buffer_order(),
                 [(N, problem.n), (K, problem.k)],
                 landed,

@@ -17,8 +17,8 @@ use cubek_std::layout::stored::Operand;
 use cubek_std::layout::stored::Packing;
 use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
-use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
+use cubek_std::microkernel::{StageLayout, StageRing};
 use cubek_std::{Hardware, Instructions};
 use cubek_std::{UNIT_REGISTERS, manual_mma};
 
@@ -34,7 +34,7 @@ use cubecl::tile::{
 use cubek_microkernel::matmul::MatmulPlaneLayout;
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedRows, CubeStagedStore,
+    CubeStagedStore,
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_std::matmul_axes::{M, N};
@@ -505,7 +505,7 @@ impl Routine for CubeStagedMatmulRoutine {
                 },
             });
         let rows_in_order_on_2x2 = CubeStagedMicrokernelSettings {
-            stage_rows: CubeStagedRows::InOrder,
+            stage_layout: Some(StageLayout::Blocks),
             ..CubeStagedMicrokernelSettings::boxed(
                 PlaneFragmentMicrokernelSettings::DEFAULT,
                 MatmulPlaneLayout::new(2, 2),

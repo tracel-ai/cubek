@@ -1,10 +1,11 @@
 use crate::matmul::{
     MatmulAxes, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands,
-    MatmulOrder, MatmulRowsKind, MatmulWorkItem,
+    MatmulRowsKind, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Instruction, Levels, RegisterBlock};
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
@@ -21,7 +22,7 @@ use cubek_std::{Hardware, UNIT_REGISTERS};
 pub struct UnitRegistersMicrokernel {
     pub settings: UnitRegistersMicrokernelSettings,
     /// The order each operand is read in.
-    pub orders: MatmulOperands<MatmulOrder>,
+    pub orders: MatmulOperands<BindingOrder>,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
 }
@@ -136,14 +137,14 @@ impl Microkernel for UnitRegistersMicrokernel {
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let rhs = match item.layouts.rhs {
-            MatmulLayout::Col => MatmulOrder::InBufferOrder,
-            MatmulLayout::Row | MatmulLayout::Strided => MatmulOrder::Stated,
+            MatmulLayout::Col => BindingOrder::InBufferOrder,
+            MatmulLayout::Row | MatmulLayout::Strided => BindingOrder::Stated,
         };
         core::iter::once(Self {
             settings: *settings,
             orders: MatmulOperands {
                 rhs,
-                ..MatmulOperands::all(MatmulOrder::Stated)
+                ..MatmulOperands::all(BindingOrder::Stated)
             },
             axes: item.axes,
         })
@@ -155,8 +156,8 @@ impl Microkernel for UnitRegistersMicrokernel {
     /// output's cells, lined with them, and the output is written the block's columns at a time.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
         let (rhs_partner, out) = match self.orders.rhs {
-            MatmulOrder::InBufferOrder => (MatmulOperand::Lhs, 1),
-            MatmulOrder::Stated => (MatmulOperand::Out, self.extent(MatmulDim::N)),
+            BindingOrder::InBufferOrder => (MatmulOperand::Lhs, 1),
+            BindingOrder::Stated => (MatmulOperand::Out, self.extent(MatmulDim::N)),
         };
         for (operand, elements) in [
             (MatmulOperand::Lhs, self.extent(MatmulDim::K)),
@@ -194,7 +195,7 @@ impl MatmulMicrokernel for UnitRegistersMicrokernel {
     /// A unit owns a block of the rows.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
     }
 }

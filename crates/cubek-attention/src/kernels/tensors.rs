@@ -16,7 +16,7 @@ use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperands, B, D, DV, G, KV, Q, S,
 };
-use cubek_microkernel::matmul::MatmulOrder;
+use cubek_std::layout::BindingOrder;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
@@ -606,8 +606,8 @@ impl AttentionTensors {
                     }
                 };
                 let key = match blueprint.microkernel.key_order() {
-                    MatmulOrder::InBufferOrder => read_cache(key, &[B, KV, S, D], widths.key),
-                    MatmulOrder::Stated => {
+                    BindingOrder::InBufferOrder => read_cache(key, &[B, KV, S, D], widths.key),
+                    BindingOrder::Stated => {
                         read_cache(&key.transposed(), &[B, KV, D, S], widths.key)
                     }
                 };

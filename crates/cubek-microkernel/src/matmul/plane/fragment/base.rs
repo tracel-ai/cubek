@@ -1,8 +1,9 @@
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulOrder, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubecl::tile::launch::Refusal;
+use cubek_std::layout::BindingOrder;
 use cubek_std::{Hardware, Instructions, manual_mma};
 
 use crate::matmul::MatmulStage;
@@ -17,7 +18,7 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N, blocked};
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The
@@ -35,7 +36,7 @@ pub struct PlaneFragmentMicrokernel {
     pub instruction: PlaneFragmentInstruction,
     /// The order its tiles of each operand are laid in: a col rhs's buffer order where the
     /// instruction's fragment loads `B` col-major, the order the product names otherwise.
-    pub orders: MatmulOperands<MatmulOrder>,
+    pub orders: MatmulOperands<BindingOrder>,
     pub settings: PlaneFragmentMicrokernelSettings,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
@@ -286,15 +287,16 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// How a stage it reads holds its cells, filled by its units: in its instruction's tiles
-    /// ([`PlaneFragmentInstruction::stage_storage`]), each one step deep along every axis `K` is
-    /// stated over.
-    pub fn stage_storage(&self, stage: &MatmulStage) -> StageStorage {
+    /// How a stage it reads holds its cells, filled by its units, laid out as `layout`: where it
+    /// blocks the stage, in its instruction's tiles ([`PlaneFragmentInstruction::stage_tile`]),
+    /// each one step deep along every axis `K` is stated over.
+    pub fn stage_storage(&self, layout: StageLayout, stage: &MatmulStage) -> StageStorage {
         let beside: Vec<Axis> = stage.beside().collect();
-        Self::over_k(
-            self.instruction.stage_storage(&beside, stage.axes()),
-            self.k_axes(1),
-        )
+        let tile = Self::over_k(
+            self.instruction.stage_tile(&beside, stage.axes()),
+            &self.k_axes(1),
+        );
+        layout.storage(stage.space(), tile)
     }
 
     /// How a stage it reads holds its cells where one TMA box lands it whole
@@ -302,38 +304,36 @@ impl PlaneFragmentMicrokernel {
     /// every axis `K` is stated over.
     pub fn landed_stage_storage(&self, stage: &MatmulStage) -> StageStorage {
         let (beside, axes): (Vec<Axis>, _) = (stage.beside().collect(), stage.axes());
-        let whole_k = self
+        let whole_k: Vec<_> = self
             .k_axes(1)
             .into_iter()
             .map(|(axis, _)| (axis, stage.extent(axis)))
             .collect();
-        Self::over_k(
-            self.instruction
-                .landed_stage_storage(&beside, axes, stage.extent(axes.k)),
-            whole_k,
-        )
-    }
-
-    /// `storage` with its tiles' extents along `K` restated as `k_axes`: an instruction tiles `K`
-    /// as one axis, where a block-scaled plane states it as its scale blocks and the position
-    /// inside one, which the stage lays beside its other axes.
-    fn over_k(storage: StageStorage, k_axes: Vec<(Axis, usize)>) -> StageStorage {
-        match storage {
+        match self
+            .instruction
+            .landed_stage_storage(&beside, axes, stage.extent(axes.k))
+        {
             StageStorage::Tiled { block, chunks } => StageStorage::Tiled {
-                block: block
-                    .into_iter()
-                    .map(|(axis, extent)| {
-                        k_axes
-                            .iter()
-                            .copied()
-                            .find(|&(k_axis, _)| k_axis == axis)
-                            .unwrap_or((axis, extent))
-                    })
-                    .collect(),
+                block: Self::over_k(block, &whole_k),
                 chunks,
             },
             storage => storage,
         }
+    }
+
+    /// `tile` with its extents along `K` restated as `k_axes`: an instruction tiles `K` as one
+    /// axis, where a block-scaled plane states it as its scale blocks and the position inside
+    /// one, which the stage lays beside its other axes.
+    fn over_k(tile: Vec<(Axis, usize)>, k_axes: &[(Axis, usize)]) -> Vec<(Axis, usize)> {
+        tile.into_iter()
+            .map(|(axis, extent)| {
+                k_axes
+                    .iter()
+                    .copied()
+                    .find(|&(k_axis, _)| k_axis == axis)
+                    .unwrap_or((axis, extent))
+            })
+            .collect()
     }
 
     /// The axis its steps of `K` walk: `K` itself, or the blocks a block-scaled plane steps across.
@@ -713,7 +713,7 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
     /// A plane owns a tile of the along_m.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
     }
 }
