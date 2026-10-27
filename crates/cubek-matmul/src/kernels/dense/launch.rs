@@ -97,8 +97,8 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         &self,
         hw: &Hardware,
         client: &Client,
-        lhs: PlainTensor,
-        rhs: PlainTensor,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
         out: PlainTensor,
         settings: &Self::Settings,
     ) -> Result<(), Refusal> {

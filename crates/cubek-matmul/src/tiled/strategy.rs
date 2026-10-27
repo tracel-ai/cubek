@@ -12,7 +12,8 @@ use crate::{
     definition::{MatmulElems, MatmulSetupError},
     kernels::{
         CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
-        UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings, tensor::PlainTensor,
+        UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
+        tensor::{PlainTensor, StoredTensor},
     },
 };
 
@@ -73,8 +74,8 @@ impl Strategy {
         };
         let hw = Hardware::from_client(client);
         let (lhs, rhs) = (
-            PlainTensor::new(lhs, lhs_elem),
-            PlainTensor::new(rhs, rhs_elem),
+            StoredTensor::Plain(PlainTensor::new(lhs, lhs_elem)),
+            StoredTensor::Plain(PlainTensor::new(rhs, rhs_elem)),
         );
         let out = PlainTensor::new(out, dtypes.acc_global);
         match self {
