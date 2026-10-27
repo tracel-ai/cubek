@@ -11,7 +11,7 @@ use cubecl::tile::launch::{Bound, Grid as LaunchGrid, Refusal};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::AttentionVisibility;
-use cubek_microkernel::attention_backward::AttentionBackwardOperands;
+use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardOperands};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// What a backward pass declines before preparing anything: an element the routines do not
@@ -240,6 +240,29 @@ impl AttentionBackwardTensors {
                 .expect(ADMITTED_PLAN_RUNS)
         });
         AttentionBackwardBinding { launcher, operands }
+    }
+
+    /// `tensor`, `[b, h, q, ·]` like the query's gradient, bound under `binding`'s launcher as
+    /// `operand` is under `walk`: a buffer a routine allocates beside the pass's own, such as a sum
+    /// it adds into.
+    pub(crate) fn bind_beside<M, SM>(
+        &self,
+        binding: &AttentionBackwardBinding,
+        walk: &AttentionBackwardWalk<M, SM>,
+        tensor: &PlainTensor,
+        operand: AttentionBackwardOperand,
+    ) -> Bound
+    where
+        M: AttentionBackwardMicrokernel,
+    {
+        let view = Self::grouped(tensor, self.problem().group);
+        binding
+            .launcher
+            .arg(view.binding.clone(), view.elem)
+            .axes(operand.axes())
+            .vectorize(walk.widths.get(operand))
+            .build()
+            .expect(ADMITTED_PLAN_RUNS)
     }
 }
 

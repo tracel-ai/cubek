@@ -5,7 +5,6 @@ use crate::attention_backward::key_gradient::plane::PlaneKeyGradientMicrokernel;
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
-use crate::matmul::MatmulDim;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Level, Levels, Partitioning};
@@ -143,7 +142,8 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
         candidates.into_iter()
     }
 
-    /// Its cube's, and the query's gradient's: it reads the keys and adds along `D`.
+    /// Its cube's, and the query's gradient's: it reads the keys, and adds into the sum a value at
+    /// a time, as an atomic element is added.
     fn vectorize(
         &self,
         partitioning: &Partitioning,
@@ -158,9 +158,8 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
             out: Some(Operand::QueryGradient),
         }
         .restate(vectorization);
-        vectorization.require(VectorRequirement::Access {
+        vectorization.require(VectorRequirement::Elementwise {
             operand: Operand::QueryGradient,
-            elements: self.query_gradient.leaf_extent(MatmulDim::N),
         });
     }
 
@@ -175,7 +174,10 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
         self.cube.estimate(item, partitioning, planes, estimate);
         let cube = estimate.work.take();
         estimate_beside(
-            [(self.query_gradient, item.summed_query_gradient(item.element))],
+            [(
+                self.query_gradient,
+                item.summed_query_gradient(item.element),
+            )],
             planes,
             estimate,
         );
