@@ -1,9 +1,10 @@
 use super::base::PlaneShuffleAttentionMicrokernel;
 use super::step_reads::{StepReads, StepReadsExpand, StepWalk};
-use crate::attention::{
-    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel, D,
-    GlobalPlaneOperands, Q, S, VisibleKeys,
+use crate::attention::plane::{
+    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel,
+    GlobalPlaneOperands,
 };
+use crate::attention::{D, Q, S, VisibleKeys};
 use cubecl::tile::{Monoid, Region, Tile, Walk, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -316,7 +317,7 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
 
     /// The teams merged (`close`), then each plane's rows divided and written where it holds
     /// them. Planes that split the same rows' keys are never stored this way: the cube merges
-    /// them from what each leaves in slots ([`store_partial`](crate::attention::CubePlaneAttention::store_partial)).
+    /// them from what each leaves in slots ([`store_partial`](crate::attention::plane::CubePlaneAttention::store_partial)).
     fn store_normalized(&mut self, cube: &Region, out: &Tile) {
         self.close();
         for plane in cube.planes() {

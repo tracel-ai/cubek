@@ -1,9 +1,11 @@
 use super::microkernel::PlaneUnitGroupAttention;
 use crate::attention::CubeAttentionStageLayout;
+use crate::attention::plane::{
+    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
+};
 use crate::attention::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings};
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem,
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane, Q,
+    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, Q,
 };
 use crate::matmul::MatmulOrder;
 use cubecl::tile::launch::Vectorization;

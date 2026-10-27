@@ -1,6 +1,6 @@
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
 use cubek_microkernel::split_keys_merge::SlotBox;
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_microkernel::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 
 /// A plane for every query merging the query's slots into the output, and into the query's

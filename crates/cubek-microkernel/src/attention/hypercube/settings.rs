@@ -1,4 +1,3 @@
-use crate::StageRing;
 use crate::attention::CubeAttentionStageLayout;
 use crate::attention::cube::CubeAttentionMicrokernelSettings;
 use crate::attention::plane::{
@@ -7,6 +6,7 @@ use crate::attention::plane::{
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubek_std::Hardware;
+use cubek_std::microkernel::StageRing;
 
 /// The settings of the cube every cube of the hypercube runs, over planes of the plane
 /// microkernel `P`: its own walk of its run of the keys is a cube's ([`CubeAttentionMicrokernel`](crate::attention::cube::CubeAttentionMicrokernel)),

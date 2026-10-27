@@ -1,11 +1,11 @@
 use super::base::PlaneQueryGradientMicrokernel;
-use crate::StageRing;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::{ScoreWindows, contract_into_window, drain_scaled};
 use crate::matmul::plane::plane_fragment_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_std::microkernel::StageRing;
 
 /// One plane's queries of one head: `delta = Σ_dv out_gradient · out`, then
 /// `query_gradient = scale · Σ_s probabilities ⊙ (out_gradient · valueᵀ − delta) · key` over the

@@ -4,11 +4,11 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Space};
-use cubek_microkernel::StagedOperand;
 use cubek_microkernel::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S};
 use cubek_microkernel::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardOperands, AttentionBackwardWorkItem,
 };
+use cubek_std::microkernel::StagedOperand;
 
 /// What a backward pass declines before preparing anything: query heads that do not split
 /// evenly over the key heads.

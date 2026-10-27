@@ -1,7 +1,7 @@
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use cubecl::tile::launch::Bound;
 use cubecl::tile::{Launcher, TileArgLaunch};
-use cubek_microkernel::matmul::stored::BlockScales;
+use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 

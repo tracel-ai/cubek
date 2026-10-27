@@ -1,10 +1,10 @@
 use super::base::CubeKeyGradientMicrokernel;
-use crate::StageRing;
 use crate::attention::{Q, S};
 use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{KeyGradientSums, plane_key_gradient_step};
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_std::microkernel::StageRing;
 
 /// One cube's keys of one key head: each plane's keys' and values' gradients, over every head of
 /// the group, each head walking its steps of queries from `first_step` on, each plane taking every

@@ -5,12 +5,12 @@
 //! a `[k, n]` input and `M` for an `[m, k]` one.
 //!
 //! The tile is the writer's: a load picks it for the device from the step of the product
-//! ([`MatmulStep`]), a whole number of blocks along `k`. Under the block-scaled
+//! (`MatmulStep`), a whole number of blocks along `k`. Under the block-scaled
 //! instruction, its stages filled by the TMA engine, that step is `128 × 8`: two of the
 //! instruction's `16 × 8 × 64` calls deep, so a column's row in a tile is the 64 bytes a box copies
 //! at full speed, and the instruction's eight columns wide. A descriptor over the tiles lands a
 //! stage of them as it lands rows ([`words_in_tiles`]). A reader takes the tile off the matrix
-//! ([`tile`](cubek_std::layout::tile)), never a constant.
+//! ([`tile`](crate::layout::tile)), never a constant.
 //!
 //! One memory, stated two ways. The matrix states its values over its own `[k, n]`, as every
 //! tensor states its storage; the kernel states them over `[n, k/16, 16]` (`NI`, `KB`, `KI`), or
@@ -18,15 +18,14 @@
 //! Both are tilings of the same bytes, and a reader takes the order off the strides, so a
 //! restatement moves nothing.
 //!
-//! [`MatmulStep`]: crate::matmul::MatmulStep
 
+use crate::layout::{Fragments, assemble, fragments_of};
+use crate::matmul_axes::{KB, KI, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::Axis;
 use cubecl::tile::layout::{StorageLevels, StoragePartitioning};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
-use cubek_std::layout::{Fragments, assemble, fragments_of};
-use cubek_std::matmul_axes::{KB, KI, blocked};
 
 /// NVFP4's block: sixteen values along `k` under one scale.
 pub const BLOCK: usize = 16;
@@ -252,8 +251,8 @@ fn block_split(k: &[(usize, usize)]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubek_std::layout::{self, fragments};
-    use cubek_std::matmul_axes::N;
+    use crate::layout::{self, fragments};
+    use crate::matmul_axes::N;
 
     /// The address `meta` stores logical `coords` at: each coordinate spread over its dim's
     /// fragments, coarsest first.

@@ -1,5 +1,4 @@
 use super::base::CubeQueryGradientMicrokernel;
-use crate::StageRing;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::query_gradient::plane::{
     plane_query_gradient_step, query_gradient_sum,
@@ -7,6 +6,7 @@ use crate::attention_backward::query_gradient::plane::{
 use crate::attention_backward::{ScoreWindows, drain_scaled};
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_std::microkernel::StageRing;
 
 /// One cube's queries of some heads: each plane's dot products of the output with its gradient,
 /// then its queries' gradient over the first `steps` steps of the cube's walk through `S`, each

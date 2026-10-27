@@ -4,15 +4,17 @@ use crate::kernels::HypercubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
-use cubek_microkernel::attention::hypercube::{HypercubeMergeShape, hypercube_attention_arrive};
 use cubek_microkernel::attention::plane::PlaneShuffleAttention;
 use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
 use cubek_microkernel::attention::{AttentionVisibility, B, VisibleKeys};
+use cubek_microkernel::split_keys_merge::hypercube::{
+    HypercubeMergeShape, hypercube_split_keys_merge_microkernel,
+};
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
 /// keys and values from tiles, leaving its partial in its slot, then counting itself in at the
-/// box, the last merging it ([`hypercube_attention_arrive()`]), with each query's logsumexp where
-/// the launch binds one.
+/// box, the last merging it ([`hypercube_split_keys_merge_microkernel()`]), with each query's
+/// logsumexp where the launch binds one.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
@@ -76,7 +78,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         comptime!(merge.slots.splits),
         comptime!(merge.slots.val_dim),
     );
-    hypercube_attention_arrive::<EA, E, N>(
+    hypercube_split_keys_merge_microkernel::<EA, E, N>(
         &slot_box, slot_out, slot_max, slot_sum, out, logsumexp, arrivals, merge,
     );
 }
@@ -147,7 +149,7 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
         comptime!(merge.slots.val_dim),
     );
     // A packed cache is read for inference: no backward pass reads its logsumexp.
-    hypercube_attention_arrive::<EA, E, N>(
+    hypercube_split_keys_merge_microkernel::<EA, E, N>(
         &slot_box,
         slot_out,
         slot_max,

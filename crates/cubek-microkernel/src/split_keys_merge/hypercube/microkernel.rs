@@ -1,5 +1,5 @@
-use crate::attention::hypercube::HypercubeMergeShape;
 use crate::split_keys_merge::SlotBox;
+use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -12,7 +12,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// `sync_storage` before it counts, and on one `sync_cube`.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
+pub fn hypercube_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     slot_box: &SlotBox,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,

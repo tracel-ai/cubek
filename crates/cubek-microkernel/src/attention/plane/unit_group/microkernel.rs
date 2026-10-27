@@ -1,9 +1,9 @@
 use super::base::PlaneUnitGroupAttentionMicrokernel;
-use crate::attention::unit::unit_attention_step;
-use crate::attention::{
-    B, CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, DV, G, KV, Q, S,
-    StagedPlaneOperands,
+use crate::attention::plane::{
+    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, StagedPlaneOperands,
 };
+use crate::attention::unit::unit_attention_step;
+use crate::attention::{B, DV, G, KV, Q, S};
 use core::marker::PhantomData;
 
 use cubecl::tile::{Region, Semiring, StageStorage, Tile, Walk, ops::softmax::OnlineSoftmax};

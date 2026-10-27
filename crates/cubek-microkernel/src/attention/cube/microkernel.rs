@@ -1,9 +1,10 @@
 use super::base::CubeAttentionMicrokernel;
-use crate::attention::plane::{StepReads, StepReadsExpand};
-use crate::attention::{
-    B, CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneMicrokernel, DV, G,
-    GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, VisibleKeys,
+use crate::attention::plane::{
+    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneMicrokernel, GlobalPlaneOperands,
+    StagedPlaneOperands,
 };
+use crate::attention::plane::{StepReads, StepReadsExpand};
+use crate::attention::{B, DV, G, KV, Q, S, VisibleKeys};
 use crate::split_keys_merge::plane::{
     plane_merge_rows_microkernel, plane_merge_rows_partial_microkernel,
 };

@@ -3,9 +3,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, cube_staged_attention_microkernel,
 };
-use cubek_microkernel::attention::{
-    AttentionVisibility, B, CubePlaneMicrokernel, CubeStagedPlane, S, VisibleKeys,
-};
+use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
+use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
 
 /// Every cube running the cube microkernel on its box with planes that read its stage, held as
 /// `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
