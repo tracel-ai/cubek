@@ -3,13 +3,12 @@ use crate::attention::hypercube::{
     HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings,
 };
 use crate::attention::plane::{CubePlaneMicrokernel, CubePlaneReads};
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, G, Q,
-};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, G, Q};
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
-use cubecl::tile::StageStorage;
+use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
+use cubecl::tile::{Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
@@ -38,7 +37,7 @@ where
     type WorkItem = AttentionWorkItem;
     type Settings = HypercubeAttentionMicrokernelSettings<M::Settings>;
     type Operand = AttentionOperand;
-    type Partitioning = AttentionPartitioning;
+    type Placed = Space;
 
     const DECLINE: &'static str = "the hypercube attention needs a cube microkernel the device \
          runs and a plane width the device commits to; cubes that stage hold one plane along the \
@@ -67,12 +66,8 @@ where
     }
 
     /// Its cube's: the slots and the output are written whole lines at a time.
-    fn vectorize(
-        &self,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        self.cube.vectorize(partitioning, vectorization);
+    fn vectorize(&self, cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+        self.cube.vectorize(cube, vectorization);
     }
 
     /// Its cube's, walking a cube's run of the keys as it would walk them all; then its own: the
@@ -81,12 +76,11 @@ where
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        partitioning: &AttentionPartitioning,
+        cube: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.cube.estimate(item, partitioning, planes, estimate);
-        let cube = partitioning.cube_box();
+        self.cube.estimate(item, cube, planes, estimate);
         let rows = (cube.extent(Q) * cube.extent(G)) as u64;
         let size = item.sum.size();
         let partial = GlobalStream {
@@ -113,16 +107,16 @@ impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
             + self.cube.plane.partial_bytes(item, self.cube.layout())
     }
 
-    /// What a merge is compiled for, over `item`'s value dim and the cubes `partitioning` shares a
-    /// box between: a slot for every cube, its planes along the keys merged into it before it is
+    /// What a merge is compiled for, over `item`'s value dim and the `cubes_along_keys` sharing a
+    /// box: a slot for every cube, its planes along the keys merged into it before it is
     /// stored, the merging plane's units, and the `seq_q` queries one merging plane holds.
     pub fn merge_shape(
         &self,
         item: &AttentionWorkItem,
-        partitioning: &AttentionPartitioning,
+        cubes_along_keys: NonZeroUsize,
         seq_q: usize,
     ) -> HypercubeMergeShape {
-        let cubes = partitioning.cubes_along_keys().get();
+        let cubes = cubes_along_keys.get();
         HypercubeMergeShape {
             slots: SlotShape {
                 units: self.cube.units,

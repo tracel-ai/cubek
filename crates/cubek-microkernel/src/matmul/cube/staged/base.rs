@@ -1,10 +1,10 @@
-use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulStage;
-use crate::matmul::cube::MatmulCubeWrite;
+use crate::matmul::MatmulStagingCount;
 use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedStore,
     CubeStagedWalk, CubeStagedWgmmaRefusal,
 };
+use crate::matmul::cube::{MatmulCubeBox, MatmulCubeWrite, MatmulPlaneLayout};
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
@@ -13,7 +13,6 @@ use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
-use crate::matmul::{MatmulPlaneLayout, MatmulStagingCount};
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
@@ -411,7 +410,7 @@ impl CubeStagedMicrokernel {
         self.tiling().filled_by(self.fill.filling_planes)
     }
 
-    /// This microkernel as `hw` runs it for `item` over `buffers`, placed in `partitioning` (its
+    /// This microkernel as `hw` runs it for `item` over `buffers`, handed the box `placed` (of its
     /// [`tiling`](Self::tiling) placed over the problem), its cubes reaching the output as
     /// `write`: its ring, scratch and fill decided, how its stages hold their cells, the width of
     /// its planes and the shared memory a cube holds. The routine launches it over its
@@ -438,28 +437,23 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         write: MatmulCubeWrite,
-        partitioning: &MatmulPartitioning,
+        placed: &MatmulCubeBox,
     ) -> Result<CubeStagedResolved, Refusal> {
-        assert_eq!(
-            partitioning.as_tile().fillers(),
-            0,
-            "a cube resolves against its tiling's placement, which sets no plane aside"
-        );
-        let stage = partitioning.stage();
+        let stage = &placed.stage;
         let plane_width = self.plane.instruction.units(hw)?;
         let units = self.contracting_planes() * plane_width as usize;
         let ring = self
             .ring
             .resolve(hw, &stage.operands(item.elements, self.plane.orders), units);
         let instruction = self.plane.instruction;
-        let landed = self.plane.landed_stage_storage(&stage);
+        let landed = self.plane.landed_stage_storage(stage);
         let merges = self.drain() == CubeStagedDrain::Merged || write.accumulates();
         let store = self
             .store
-            .resolve(hw, item, buffers, partitioning, write, self.planes_along_k);
+            .resolve(hw, item, buffers, placed, write, self.planes_along_k);
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
-        let cut_short = partitioning.overhangs_output() && store == CubeStagedStore::Fragments;
+        let cut_short = placed.overhangs_output && store == CubeStagedStore::Fragments;
         let window = match self.plane.instruction.drain() {
             PlaneFragmentDrain::Bounce => {
                 let bouncing = true;
@@ -476,8 +470,7 @@ impl CubeStagedMicrokernel {
             hw,
             item,
             buffers,
-            partitioning,
-            &stage,
+            placed,
             &landed,
             &ring,
             &self.plane,
@@ -498,7 +491,7 @@ impl CubeStagedMicrokernel {
             CubeStagedDelivery::Tma => (landed, None),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
                 let layout = instruction.stage_layout(self.stage_layout)?;
-                (self.plane.stage_storage(layout, &stage), Some(layout))
+                (self.plane.stage_storage(layout, stage), Some(layout))
             }
         };
         let microkernel = Self {
@@ -509,7 +502,7 @@ impl CubeStagedMicrokernel {
             store,
             ..self
         };
-        let shared_memory = microkernel.shared_memory(hw, item, write, &stage, &storage, window);
+        let shared_memory = microkernel.shared_memory(hw, item, write, stage, &storage, window);
         Ok(CubeStagedResolved {
             microkernel,
             storage,
@@ -607,7 +600,7 @@ impl Microkernel for CubeStagedMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = CubeStagedMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = MatmulPartitioning;
+    type Placed = MatmulCubeBox;
 
     const DECLINE: &'static str = "this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
 
@@ -836,7 +829,7 @@ impl Microkernel for CubeStagedMicrokernel {
     /// input whose scales group `K`, which it stages a block at a time.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.blocks {
-            None => MatmulPartitioning::admits(item),
+            None => MatmulCubeBox::admits(item),
             Some(_) => Self::block(item).map(|_| ()).ok_or(Self::UNGROUPED_K),
         }
     }
@@ -877,26 +870,15 @@ impl Microkernel for CubeStagedMicrokernel {
     /// planes on the software instruction drain their register block, which holds the rhs's lines,
     /// so the rhs is read one element at a time too. Its planes' reads are the plane
     /// microkernel's.
-    fn vectorize(
-        &self,
-        partitioning: &MatmulPartitioning,
-        vectorization: &mut Vectorization<MatmulOperand>,
-    ) {
-        assert_eq!(
-            partitioning.as_tile().fillers() as usize,
-            self.fill.filling_planes,
-            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
-        );
-        partitioning
-            .stage()
-            .require_runs(self.plane.orders, vectorization);
+    fn vectorize(&self, placed: &MatmulCubeBox, vectorization: &mut Vectorization<MatmulOperand>) {
+        placed.stage.require_runs(self.plane.orders, vectorization);
         self.fill.vectorize(vectorization);
         self.store.vectorize(vectorization);
         match self.drain() {
             CubeStagedDrain::EachPlane => {
                 vectorization.require(VectorRequirement::Access {
                     operand: MatmulOperand::Out,
-                    elements: partitioning.leaf().extent(
+                    elements: placed.leaf.extent(
                         MatmulAxes::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
                     ),
                 });
@@ -929,12 +911,12 @@ impl Microkernel for CubeStagedMicrokernel {
     fn estimate(
         &self,
         item: &MatmulWorkItem,
-        partitioning: &MatmulPartitioning,
+        placed: &MatmulCubeBox,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let extents = &partitioning.cube_box();
-        let stage = partitioning.stage();
+        let extents = &placed.cube;
+        let stage = &placed.stage;
         let (out_run, drain_atomics) = match self.drain() {
             CubeStagedDrain::EachPlane => (self.plane.tile_extent(N), 0),
             CubeStagedDrain::Merged => (
@@ -944,9 +926,9 @@ impl Microkernel for CubeStagedMicrokernel {
         };
         let staging = MatmulStagingCount {
             drain_atomics,
-            ..MatmulStagingCount::new(partitioning, &stage, self.plane.orders, &self.ring, out_run)
+            ..MatmulStagingCount::new(&placed.cube, stage, self.plane.orders, &self.ring, out_run)
         };
-        staging.count(item, partitioning, estimate);
+        staging.count(item, &placed.cube, estimate);
         self.plane.estimate(item, &(), planes, estimate);
     }
 }

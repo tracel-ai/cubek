@@ -59,7 +59,7 @@ pub struct MatmulBlocks {
 impl MatmulBlocks {
     /// The axes inside the blocks that some packed input's scales vary along: the tile engine
     /// windows a factor through extents it knows at expansion, so a launch compiles these in
-    /// ([`MatmulPartitioning::kernel_compiling`](crate::matmul::MatmulPartitioning::kernel_compiling)).
+    /// (the kernels' `MatmulPartitioning::kernel_compiling`).
     /// A packed lhs's scales vary along its rows, a packed rhs's along its columns, and both along
     /// `K`.
     pub fn scaled_axes(&self) -> Vec<Axis> {

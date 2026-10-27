@@ -1,16 +1,15 @@
-use crate::matmul::MatmulStage;
-use crate::matmul::{MatmulAxes, MatmulRowsKind, MatmulWorkItem};
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::{
     Axis, Partitioning, Space, TileSpec,
     space::{ComputeScope, Count, Coverage, CubeOrder, PlaneOrder},
 };
-use cubek_std::matmul_axes::{K, KB, M, MB, MI, N, NB, NI};
+use cubek_microkernel::matmul::cube::MatmulCubeBox;
+use cubek_microkernel::matmul::{MatmulRowsKind, MatmulSpace, MatmulStage};
+use cubek_std::matmul_axes::{M, MB, MI, N, NB, NI};
 
 /// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
 /// which the kernel launches and walks, and the box each cube is handed. Each product builds one
-/// from its problem; a cube microkernel reads its box and stage off it. Stated along matmul's own
-/// `M`, `N` and `K`, or over a packed product's block-split space ([`MatmulSpace`]).
+/// from its problem; a cube microkernel is handed its box ([`placed`](Self::placed)). Stated along
+/// matmul's own `M`, `N` and `K`, or over a packed product's block-split space ([`MatmulSpace`]).
 ///
 /// Its outermost level is the cubes, and the one inside it the walk a cube takes through its box;
 /// or, for a routine whose planes share nothing, the launch's planes, which a plane order groups
@@ -26,81 +25,7 @@ pub struct MatmulPartitioning {
     space: MatmulSpace,
 }
 
-/// The space a partitioning is stated over, which its walk, its stage and its output's axes are
-/// read in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MatmulSpace {
-    /// Matmul's own `M`, `N` and `K`, and the batches beside them.
-    Plain,
-    /// A packed product's: each axis as the blocks its rhs's scales make of it and the position
-    /// inside one ([`MatmulBlocks`](crate::matmul::MatmulBlocks)), every extent
-    /// compiled in.
-    BlockSplit,
-}
-
-impl MatmulSpace {
-    /// The space `space` is: block-split where it carries `K`'s blocks.
-    fn of(space: &Space) -> Self {
-        match space.contains(KB) {
-            true => Self::BlockSplit,
-            false => Self::Plain,
-        }
-    }
-
-    /// The axes a stage of a product over this space lies along: matmul's own, or those inside a
-    /// block.
-    pub fn stage_axes(self) -> MatmulAxes {
-        match self {
-            Self::Plain => MatmulAxes::MNK,
-            Self::BlockSplit => MatmulAxes::INSIDE_BLOCKS,
-        }
-    }
-
-    /// The axis a cube's walk steps through `K` along: `K`, or its blocks.
-    pub fn walked(self) -> Axis {
-        match self {
-            Self::Plain => K,
-            Self::BlockSplit => KB,
-        }
-    }
-
-    /// The axis the product's rows lie along inside a block: `M`, or the rows inside its one
-    /// block.
-    pub fn rows_axis(self) -> Axis {
-        match self {
-            Self::Plain => M,
-            Self::BlockSplit => MI,
-        }
-    }
-
-    /// The axes the output's rows and columns are cut short along at the problem's edge.
-    pub fn output_axes(self) -> [Axis; 2] {
-        match self {
-            Self::Plain => [M, N],
-            Self::BlockSplit => [MI, NI],
-        }
-    }
-}
-
 impl MatmulPartitioning {
-    /// What a cube microkernel declines an item on other axes with: it places and stages in
-    /// matmul's own `M`, `N` and `K`.
-    pub const OTHER_AXES: Refusal = Refusal::Declined {
-        why: "a cube microkernel works in matmul's own M, N and K",
-    };
-
-    /// Whether `item` lies along matmul's own axes, which cube scope works in.
-    ///
-    /// # Errors
-    ///
-    /// [`OTHER_AXES`](Self::OTHER_AXES), for an item on other axes.
-    pub fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
-        match item.axes == MatmulAxes::MNK {
-            true => Ok(()),
-            false => Err(Self::OTHER_AXES),
-        }
-    }
-
     /// `partitioning`, its cubes each handed `cube_box`, one batch along each of `batch_axes`, the
     /// rows held as `rows_kind` says.
     pub fn new(
@@ -221,9 +146,32 @@ impl MatmulPartitioning {
         self.cube_box.clone()
     }
 
+    /// The box a cube microkernel is handed: its cube's box, the stage it walks, and what of this
+    /// placement its refusals read.
+    ///
+    /// # Panics
+    ///
+    /// A partitioning that walks no `K` inside its cubes.
+    pub fn placed(&self) -> MatmulCubeBox {
+        MatmulCubeBox {
+            cube: self.cube_box(),
+            stage: self.stage(),
+            leaf: self.leaf(),
+            space: self.space,
+            overhangs_output: self.overhangs_output(),
+            batched: !self.batch_axes.is_empty(),
+        }
+    }
+
     /// The space it is stated over.
     pub fn space(&self) -> MatmulSpace {
         self.space
+    }
+
+    /// The output's cells one cube's box covers: its [`rows`](Self::rows) by its
+    /// [`columns`](Self::columns).
+    pub fn cells(&self) -> usize {
+        (self.rows() * self.columns()) as usize
     }
 
     /// The output's rows one cube's box covers, over both axes `M` is split into in a block-split space.
@@ -345,7 +293,7 @@ impl MatmulPartitioning {
 mod tests {
     use super::*;
     use cubecl::tile::Levels;
-    use cubek_std::matmul_axes::KI;
+    use cubek_std::matmul_axes::{KB, KI};
 
     /// A packed product of `rows` in `row_blocks` blocks along `M`, its rows tiled.
     fn packed(row_blocks: usize, rows: usize) -> MatmulPartitioning {

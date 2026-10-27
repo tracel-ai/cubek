@@ -7,8 +7,8 @@ use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of every matmul product: handed a [`MatmulWorkItem`], and read by a routine for
 /// the order it binds each operand in and how it moves its stages. A cube microkernel that stages is
-/// placed in a [`MatmulPartitioning`](crate::matmul::MatmulPartitioning); a
-/// cube shuffle, a plane or a unit one reads only its own tiling, so its partitioning is `()`.
+/// handed its box ([`MatmulCubeBox`](crate::matmul::cube::MatmulCubeBox)); a cube shuffle, a tile
+/// group, a plane or a unit one reads only its own tiling, so what it is placed on is `()`.
 pub trait MatmulMicrokernel:
     Microkernel<WorkItem = MatmulWorkItem, Operand = MatmulOperand> + core::fmt::Display + 'static
 {

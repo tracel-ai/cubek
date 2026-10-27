@@ -3,8 +3,8 @@ use crate::attention::plane::{
     CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads,
 };
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
-    AttentionStagingCount, AttentionWorkItem, G, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
+    AttentionWorkItem, G, Q, S,
 };
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
@@ -65,8 +65,8 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
         self.seq_kv() * self.page_steps.map_or(1, NonZeroUsize::get)
     }
 
-    /// The levels inside one step of the cube's walk through `S`, which its partitioning states
-    /// ([`AttentionPartitioning::new`]): its heads and the planes along their queries and keys,
+    /// The levels inside one step of the cube's walk through `S`, which its routine's placement
+    /// states: its heads and the planes along their queries and keys,
     /// each running the plane microkernel's box.
     pub fn tiling(&self) -> Levels {
         self.plane.tiling().planes(&[
@@ -191,7 +191,7 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     type WorkItem = AttentionWorkItem;
     type Settings = CubeAttentionMicrokernelSettings<M::Settings>;
     type Operand = AttentionOperand;
-    type Partitioning = AttentionPartitioning;
+    type Placed = Space;
 
     const DECLINE: &'static str = M::DECLINE;
 
@@ -235,12 +235,8 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     }
 
     /// Its planes', whose reads its ring copies where it stages them.
-    fn vectorize(
-        &self,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        self.plane.vectorize(partitioning, vectorization);
+    fn vectorize(&self, cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+        self.plane.vectorize(cube, vectorization);
     }
 
     /// Its plane microkernel's work, and the staging, which it places: its box of the query, and
@@ -249,12 +245,12 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        partitioning: &AttentionPartitioning,
+        cube: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.plane.estimate(item, partitioning, planes, estimate);
-        self.staging(item).count(item, partitioning, estimate);
+        self.plane.estimate(item, cube, planes, estimate);
+        self.staging(item).count(item, cube, estimate);
     }
 }
 

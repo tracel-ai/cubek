@@ -3,6 +3,7 @@
 mod base {
     use super::super::*;
     use crate::kernels::CUBE_STRIPS;
+    use crate::kernels::MatmulPartitioning;
     use crate::kernels::{MATMUL_PACKED_WALK_PAST_K, MatmulRoutineProblem, MatmulView};
     use core::num::NonZeroUsize;
     use cubecl::features::MmaConfig;
@@ -14,8 +15,7 @@ mod base {
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
     use cubek_microkernel::matmul::MatmulOperand;
-    use cubek_microkernel::matmul::MatmulPartitioning;
-    use cubek_microkernel::matmul::MatmulPlaneLayout;
+    use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
     use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
     };
@@ -51,8 +51,7 @@ mod base {
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &problem.buffers(plane.orders),
-            partitioning,
-            &partitioning.stage(),
+            &partitioning.placed(),
             storage,
             ring,
             plane,

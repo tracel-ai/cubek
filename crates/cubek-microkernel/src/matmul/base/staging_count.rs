@@ -1,6 +1,6 @@
-use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulStage;
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulWorkItem};
+use cubecl::tile::Space;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::StageRing;
@@ -29,12 +29,12 @@ pub struct MatmulStagingCount {
 }
 
 impl MatmulStagingCount {
-    /// What a cube staging the box `partitioning` hands it through `ring` a step of `stage` at a
+    /// What a cube staging its box `cube` through `ring` a step of `stage` at a
     /// time counts, bound in the order `orders` says: both operands read once a cube, in runs along
     /// their contiguous axis over the whole walk, and the output written once in runs of `out_run`
     /// elements.
     pub fn new(
-        partitioning: &MatmulPartitioning,
+        cube: &Space,
         stage: &MatmulStage,
         orders: MatmulOperands<BindingOrder>,
         ring: &StageRing,
@@ -44,8 +44,8 @@ impl MatmulStagingCount {
             depth: stage.extent(K),
             stages_in_flight: ring.stages_in_flight.get() as u32,
             runs: MatmulOperands {
-                lhs: stage.walk_run(partitioning, MatmulOperand::Lhs, orders),
-                rhs: stage.walk_run(partitioning, MatmulOperand::Rhs, orders),
+                lhs: stage.walk_run(cube, MatmulOperand::Lhs, orders),
+                rhs: stage.walk_run(cube, MatmulOperand::Rhs, orders),
                 out: out_run,
             },
             readers: MatmulOperands {
@@ -57,18 +57,12 @@ impl MatmulStagingCount {
         }
     }
 
-    /// Set `estimate`'s staging to what one cube staging the box `partitioning` hands it this way
+    /// Set `estimate`'s staging to what one cube staging its box `cube` this way
     /// moves and computes for `item`: it reads its box's rows of the lhs and columns of the rhs
     /// over the `K` its stages cover, as many times over as each has readers, and passes over its
     /// box of the output as many times as the output has readers. A box the problem's edge cuts
     /// short is still read, computed and written whole, since that is what its cube spends.
-    pub fn count(
-        &self,
-        item: &MatmulWorkItem,
-        partitioning: &MatmulPartitioning,
-        estimate: &mut KernelEstimate,
-    ) {
-        let cube = &partitioning.cube_box();
+    pub fn count(&self, item: &MatmulWorkItem, cube: &Space, estimate: &mut KernelEstimate) {
         let (rows, columns) = (cube.extent(M) as u64, cube.extent(N) as u64);
         let stages = cube.extent(K).div_ceil(self.depth.max(1)) as u64;
         let depth = stages * self.depth as u64;

@@ -1,5 +1,6 @@
 use super::cube_shuffle_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
@@ -9,7 +10,6 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
@@ -187,7 +187,7 @@ impl CubeShuffleMatmulRoutine {
         microkernel.plane.check_vectors(&blueprint.widths)?;
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &blueprint.partitioning),
+            shared_memory: microkernel.shared_memory(&item, blueprint.partitioning.cells()),
         };
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
@@ -215,7 +215,7 @@ impl CubeShuffleMatmulRoutine {
         );
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &partitioning),
+            shared_memory: microkernel.shared_memory(&item, partitioning.cells()),
         };
         let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;

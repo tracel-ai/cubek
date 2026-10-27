@@ -1,5 +1,4 @@
-use crate::matmul::MatmulPartitioning;
-use crate::matmul::MatmulStage;
+use crate::matmul::cube::MatmulCubeBox;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
 use crate::matmul::{MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use core::num::NonZeroUsize;
@@ -141,8 +140,8 @@ pub enum CubeStagedFillingRefusal {
 }
 
 impl CubeStagedTmaRefusal {
-    /// Why `hw` cannot deliver the `stage` of `item`'s product, over buffers as `buffers` states
-    /// them, held as `storage` (the instruction's
+    /// Why `hw` cannot deliver the stage of `item`'s product a cube handed `placed` walks, over
+    /// buffers as `buffers` states them, held as `storage` (the instruction's
     /// [`landed_stage_storage`](crate::matmul::plane::PlaneFragmentInstruction::landed_stage_storage)),
     /// by the TMA engine, to `microkernel`'s fragments through `ring`; `None` where it can.
     #[allow(clippy::too_many_arguments)]
@@ -150,12 +149,12 @@ impl CubeStagedTmaRefusal {
         hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
-        partitioning: &MatmulPartitioning,
-        stage: &MatmulStage,
+        placed: &MatmulCubeBox,
         storage: &StageStorage,
         ring: &StageRing,
         microkernel: &PlaneFragmentMicrokernel,
     ) -> Option<Self> {
+        let stage = &placed.stage;
         // Bits rather than bytes: an `e2m1` value is half of one.
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits().max(1);
         // A stage of whole stored tiles along its rows, bound rows first, `K` along them, at most
@@ -198,7 +197,7 @@ impl CubeStagedTmaRefusal {
             Some(Self::NoBulkTensorCopy)
         } else if ring.prefetch == Prefetch::InRegisters {
             Some(Self::PrefetchInRegisters)
-        } else if !partitioning.batch_axes().is_empty() {
+        } else if placed.batched {
             Some(Self::Batched)
         } else if item.layouts.rhs == MatmulLayout::Strided {
             Some(Self::StridedWeight)
@@ -265,7 +264,7 @@ impl CubeStagedFill {
         filling_planes: 0,
     };
 
-    /// This fill as `hw` runs it for `item` over `buffers`, a cube staging `stage` through
+    /// This fill as `hw` runs it for `item` over `buffers`, a cube handed `placed` staging through
     /// `ring` into `microkernel`'s fragments, which drain through `scratch`, its planes split
     /// `planes_along_k` ways along `K`: the TMA engine where nothing refuses it a stage held as
     /// `landed` ([`CubeStagedTmaRefusal`]), the units elsewhere; the planes set aside where nothing
@@ -276,8 +275,7 @@ impl CubeStagedFill {
         hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
-        partitioning: &MatmulPartitioning,
-        stage: &MatmulStage,
+        placed: &MatmulCubeBox,
         landed: &StageStorage,
         ring: &StageRing,
         microkernel: &PlaneFragmentMicrokernel,
@@ -290,8 +288,7 @@ impl CubeStagedFill {
                     hw,
                     item,
                     buffers,
-                    partitioning,
-                    stage,
+                    placed,
                     landed,
                     ring,
                     microkernel,

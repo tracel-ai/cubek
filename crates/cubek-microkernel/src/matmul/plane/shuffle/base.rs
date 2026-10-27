@@ -435,7 +435,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = PlaneShuffleMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = ();
+    type Placed = ();
 
     const DECLINE: &'static str = "the plane shuffle needs a plane width the device commits to, and against a packed rhs unit columns that close n";
 

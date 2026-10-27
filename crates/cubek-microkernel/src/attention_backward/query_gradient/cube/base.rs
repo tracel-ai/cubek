@@ -123,7 +123,7 @@ impl Microkernel for CubeQueryGradientMicrokernel {
     type WorkItem = AttentionBackwardWorkItem;
     type Settings = CubeQueryGradientMicrokernelSettings;
     type Operand = AttentionBackwardOperand;
-    type Partitioning = Partitioning;
+    type Placed = Partitioning;
 
     const DECLINE: &'static str = PlaneQueryGradientMicrokernel::DECLINE;
 

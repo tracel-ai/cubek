@@ -1,12 +1,10 @@
 use crate::attention::AttentionMicrokernel;
-use crate::attention::{
-    AttentionOperand, AttentionPartitioning, AttentionWorkItem, D, DV, G, Q, S,
-};
+use crate::attention::{AttentionOperand, AttentionWorkItem, D, DV, G, Q, S};
 use crate::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
-use cubecl::tile::Levels;
 use cubecl::tile::launch::Vectorization;
+use cubecl::tile::{Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
@@ -122,7 +120,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
     type Settings = UnitAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
-    type Partitioning = AttentionPartitioning;
+    type Placed = Space;
 
     const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware";
 
@@ -172,11 +170,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     /// along `D`, where the keys lie contiguous, summing a line of each into every score; the
     /// value reads the values along `DV` and writes the output along `DV`, lining its block with
     /// both. The score's block, a value a cell, is the value's lhs, read in registers.
-    fn vectorize(
-        &self,
-        _partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
+    fn vectorize(&self, _cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
         let mut score = Vectorization::new();
         self.score.vectorize(&(), &mut score);
         vectorization.restate(score, |operand| match operand {
@@ -199,7 +193,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        _partitioning: &AttentionPartitioning,
+        _cube: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {

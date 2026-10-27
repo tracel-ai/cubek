@@ -109,7 +109,7 @@ impl Microkernel for UnitRegistersMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = UnitRegistersMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = ();
+    type Placed = ();
 
     const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware";
 

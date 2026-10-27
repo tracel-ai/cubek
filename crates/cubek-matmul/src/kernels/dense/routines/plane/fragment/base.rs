@@ -1,8 +1,8 @@
 use super::kernel::plane_fragment_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 
@@ -12,10 +12,11 @@ use crate::kernels::{
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubek_microkernel::matmul::MatmulStagingCount;
+use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
-use cubek_microkernel::matmul::{MatmulPlaneLayout, MatmulStagingCount};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -200,14 +201,14 @@ impl Routine for PlaneFragmentMatmulRoutine {
         let staging = MatmulStagingCount {
             readers: Self::readers(partitioning),
             ..MatmulStagingCount::new(
-                partitioning,
+                &partitioning.cube_box(),
                 &partitioning.stage(),
                 blueprint.microkernel.orders,
                 &blueprint.shared_memory.ring,
                 blueprint.microkernel.tile_extent(N),
             )
         };
-        staging.count(&item, partitioning, estimate);
+        staging.count(&item, &partitioning.cube_box(), estimate);
         blueprint
             .microkernel
             .estimate(&item, &(), grid.planes(), estimate);

@@ -1,4 +1,4 @@
-use crate::matmul::MatmulPartitioning;
+use crate::matmul::cube::MatmulCubeBox;
 use crate::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
     PlaneShuffleMicrokernelSettings,
@@ -228,12 +228,11 @@ impl CubeShuffleMicrokernel {
         }
     }
 
-    /// Bytes of shared memory one cube holds over its box in `partitioning`: the accumulator over
-    /// its run, one sum per cell of each copy its planes meet in ([`CubeMeet::copies`]). The tile
-    /// DSL sizes that buffer itself, dense over the cube's box of the output at one `sum` element a
-    /// cell, which is what this counts; its sizing is not exposed to read.
-    pub fn shared_memory(&self, item: &MatmulWorkItem, partitioning: &MatmulPartitioning) -> usize {
-        let cells = (partitioning.rows() * partitioning.columns()) as usize;
+    /// Bytes of shared memory one cube holds over a box of `cells` of the output: the accumulator
+    /// over its run, one sum per cell of each copy its planes meet in ([`CubeMeet::copies`]). The
+    /// tile DSL sizes that buffer itself, dense over the cube's box of the output at one `sum`
+    /// element a cell, which is what this counts; its sizing is not exposed to read.
+    pub fn shared_memory(&self, item: &MatmulWorkItem, cells: usize) -> usize {
         cells * self.meet.copies(self.planes_along_k.get()) * item.sum.size()
     }
 
@@ -390,7 +389,7 @@ impl Microkernel for CubeShuffleMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = CubeShuffleMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = ();
+    type Placed = ();
 
     const DECLINE: &'static str = "the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes";
 
@@ -422,7 +421,7 @@ impl Microkernel for CubeShuffleMicrokernel {
                 Err(_) => shuffle,
             };
         };
-        MatmulPartitioning::admits(item)?;
+        MatmulCubeBox::admits(item)?;
         PlaneShuffleMicrokernel::admits(item)?;
         match item.layouts.rhs {
             MatmulLayout::Row => Err(Self::ROW_RHS_UNSUPPORTED),

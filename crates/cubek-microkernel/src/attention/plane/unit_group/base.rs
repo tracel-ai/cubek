@@ -3,9 +3,7 @@ use crate::attention::plane::{
     CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
 };
 use crate::attention::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings};
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, Q,
-};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, Q};
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubecl::{self as cubecl, prelude::*};
@@ -47,7 +45,7 @@ impl Microkernel for PlaneUnitGroupAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
     type Settings = UnitAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
-    type Partitioning = AttentionPartitioning;
+    type Placed = Space;
 
     const DECLINE: &'static str = "the plane unit group lays a block of rows on each of its units, \
          which needs a plane width the device commits to";
@@ -77,23 +75,19 @@ impl Microkernel for PlaneUnitGroupAttentionMicrokernel {
     }
 
     /// Its unit's.
-    fn vectorize(
-        &self,
-        partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
-        self.unit.vectorize(partitioning, vectorization);
+    fn vectorize(&self, cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+        self.unit.vectorize(cube, vectorization);
     }
 
     /// Its unit's: every unit holds its blocks, beside the softmax state of its rows.
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        partitioning: &AttentionPartitioning,
+        cube: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.unit.estimate(item, partitioning, planes, estimate);
+        self.unit.estimate(item, cube, planes, estimate);
     }
 }
 

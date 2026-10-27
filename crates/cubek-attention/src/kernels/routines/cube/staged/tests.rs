@@ -4,8 +4,8 @@
 mod fragment {
     use super::super::*;
     use crate::kernels::AttentionRoutineProblem;
+    use crate::kernels::QueryOrder;
     use cubecl::tile::launch::Refusal;
-    use cubek_microkernel::attention::QueryOrder;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;

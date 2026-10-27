@@ -1,4 +1,3 @@
-use crate::matmul::MatmulPartitioning;
 use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
@@ -66,17 +65,17 @@ impl MatmulStage {
         }
     }
 
-    /// Elements of `operand` a plane reads contiguously over a cube's whole walk of `cube`, bound
+    /// Elements of `operand` a plane reads contiguously over a cube's whole walk of its box `cube`, bound
     /// in the order `orders` says: the whole of `K` a cube walks for an operand bound innermost
     /// along it, whose stages continue each other's rows, and one stage's extent otherwise.
     pub fn walk_run(
         &self,
-        partitioning: &MatmulPartitioning,
+        cube: &Space,
         operand: MatmulOperand,
         orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         match orders.innermost(operand) {
-            MatmulDim::K => partitioning.cube_box().extent(self.axes.k),
+            MatmulDim::K => cube.extent(self.axes.k),
             dim => self.extent(self.axes.of(dim)),
         }
     }

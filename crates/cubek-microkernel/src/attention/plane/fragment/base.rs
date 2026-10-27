@@ -4,8 +4,7 @@ use crate::attention::plane::{
 };
 use crate::attention::plane::{InstructionShape, PlaneFragmentAttentionMicrokernelSettings};
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, B, D, DV, G,
-    KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
@@ -250,7 +249,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
     type Settings = PlaneFragmentAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
-    type Partitioning = AttentionPartitioning;
+    type Placed = Space;
 
     const DECLINE: &'static str = "the plane microkernel runs on a cmma instruction, or a 16-bit \
          manual mma whose accumulator the device lays out as its A operand, beside one as deep as \
@@ -295,11 +294,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     /// and the keys, the value's the values. Its windows of scores and probabilities are its own,
     /// and its drain writes a fragment's row of the output at a time, or a manual fragment's cells
     /// one at a time.
-    fn vectorize(
-        &self,
-        _partitioning: &AttentionPartitioning,
-        vectorization: &mut Vectorization<AttentionOperand>,
-    ) {
+    fn vectorize(&self, _cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
         let mut score = Vectorization::new();
         self.score.vectorize(&(), &mut score);
         vectorization.restate(score, |operand| match operand {
@@ -332,7 +327,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        _partitioning: &AttentionPartitioning,
+        _cube: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {

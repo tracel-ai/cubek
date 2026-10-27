@@ -1,5 +1,6 @@
 use super::kernel::hypercube_last_arrival_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
@@ -9,7 +10,6 @@ use cubecl::tile::launch::VectorRequirement;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::CubeStagedDelivery;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_microkernel::matmul::hypercube::{
@@ -162,7 +162,12 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        assert_eq!(
+            partitioning.as_tile().fillers() as usize,
+            microkernel.cube.fill.filling_planes,
+            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+        );
+        microkernel.vectorize(&partitioning.placed(), vectorization);
     }
 
     /// Its cubes' microkernel's, over one cube's run as if it were one tile's contraction: a run
@@ -182,7 +187,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
-            &Self::one_run(partitioning, cubes as usize),
+            &Self::one_run(partitioning, cubes as usize).placed(),
             grid.planes(),
             estimate,
         );
@@ -209,7 +214,9 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             &item,
             &problem.buffers(microkernel.cube.plane.orders),
             <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
-            &view.shared_partitioning(microkernel.cube.tiling(), &[M, N], target),
+            &view
+                .shared_partitioning(microkernel.cube.tiling(), &[M, N], target)
+                .placed(),
         )?;
         let partitioning =
             view.shared_partitioning(resolved.microkernel.launch_tiling(), &[M, N], target);

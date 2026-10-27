@@ -1,15 +1,13 @@
-use crate::attention::{AttentionOperand, AttentionPartitioning, AttentionWorkItem};
+use crate::attention::{AttentionOperand, AttentionWorkItem};
+use cubecl::tile::Space;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of this kind, as its routines and their blueprint read it beside what every
 /// microkernel states.
 pub trait AttentionMicrokernel:
-    Microkernel<
-        WorkItem = AttentionWorkItem,
-        Operand = AttentionOperand,
-        Partitioning = AttentionPartitioning,
-    > + core::fmt::Display
+    Microkernel<WorkItem = AttentionWorkItem, Operand = AttentionOperand, Placed = Space>
+    + core::fmt::Display
 {
     /// The order its score reads its rhs, the keys, in, which the launch binds them in:
     /// [`InBufferOrder`](BindingOrder::InBufferOrder), `[s, d]` as they lie, or

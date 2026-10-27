@@ -17,7 +17,7 @@ pub trait AttentionBackwardMicrokernel:
     Microkernel<
         WorkItem = AttentionBackwardWorkItem,
         Operand = AttentionBackwardOperand,
-        Partitioning = Partitioning,
+        Placed = Partitioning,
     > + core::fmt::Display
 {
 }
@@ -26,7 +26,7 @@ impl<M> AttentionBackwardMicrokernel for M where
     M: Microkernel<
             WorkItem = AttentionBackwardWorkItem,
             Operand = AttentionBackwardOperand,
-            Partitioning = Partitioning,
+            Placed = Partitioning,
         > + core::fmt::Display
 {
 }

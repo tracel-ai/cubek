@@ -1,4 +1,3 @@
-use crate::attention::{B, G, KV, Q, S};
 use core::num::NonZeroUsize;
 use cubecl::CubeCount;
 use cubecl::tile::launch::Refusal;
@@ -6,6 +5,7 @@ use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, Coverage, PlaneOrder, UnitCube},
 };
+use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_std::Hardware;
 use cubek_std::routine::LaunchSettings;
 

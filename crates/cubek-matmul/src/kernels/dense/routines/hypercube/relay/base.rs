@@ -1,5 +1,6 @@
 use super::kernel::hypercube_relay_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
@@ -11,7 +12,6 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::CubeStagedDelivery;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_microkernel::matmul::hypercube::{
@@ -144,7 +144,12 @@ impl Routine for HypercubeRelayMatmulRoutine {
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        assert_eq!(
+            partitioning.as_tile().fillers() as usize,
+            microkernel.cube.fill.filling_planes,
+            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+        );
+        microkernel.vectorize(&partitioning.placed(), vectorization);
     }
 
     /// Nothing of its own: its cubes' microkernel walks each cube's run of `K`, and drains into
@@ -161,7 +166,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
             &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
-            &blueprint.partitioning,
+            &blueprint.partitioning.placed(),
             grid.planes(),
             estimate,
         );
@@ -190,7 +195,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
             &item,
             &problem.buffers(microkernel.cube.plane.orders),
             <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
-            &place(microkernel.cube.tiling()),
+            &place(microkernel.cube.tiling()).placed(),
         )?;
         let (partitioning, storage) = (
             place(resolved.microkernel.launch_tiling()),

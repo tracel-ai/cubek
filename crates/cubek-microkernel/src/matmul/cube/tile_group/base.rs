@@ -1,8 +1,7 @@
 use crate::matmul::cube::CubeMeet;
 use crate::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use crate::matmul::{
-    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulRowsKind,
-    MatmulStep, MatmulWorkItem,
+    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -108,11 +107,10 @@ impl CubeTileGroupMicrokernel {
         blocked(K).0
     }
 
-    /// Bytes of shared memory one cube holds over its group: the accumulator, one sum a cell of
-    /// the cube's box of the output for each copy its planes meet in ([`CubeMeet::copies`]),
-    /// which the tile DSL sizes itself.
-    pub fn shared_memory(&self, item: &MatmulWorkItem, partitioning: &MatmulPartitioning) -> usize {
-        let cells = (partitioning.rows() * partitioning.columns()) as usize;
+    /// Bytes of shared memory one cube holds over its group, a box of `cells` of the output: the
+    /// accumulator, one sum a cell for each copy its planes meet in ([`CubeMeet::copies`]), which
+    /// the tile DSL sizes itself.
+    pub fn shared_memory(&self, item: &MatmulWorkItem, cells: usize) -> usize {
         cells * self.meet.copies(self.planes_along_k.get()) * item.sum.size()
     }
 
@@ -168,7 +166,7 @@ impl Microkernel for CubeTileGroupMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = CubeTileGroupMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = MatmulPartitioning;
+    type Placed = ();
 
     const DECLINE: &'static str = "the tile group cube needs a plane width the device commits to, an rhs of `e2m1` values it stores in tiles whose scales group K, and two turns of K or more for its planes";
 
@@ -210,13 +208,13 @@ impl Microkernel for CubeTileGroupMicrokernel {
     }
 
     /// Nothing: against a packed rhs every width follows from its packing.
-    fn vectorize(&self, _: &MatmulPartitioning, _: &mut Vectorization<MatmulOperand>) {}
+    fn vectorize(&self, _: &(), _: &mut Vectorization<MatmulOperand>) {}
 
     /// Its planes' work: the plane shuffle's.
     fn estimate(
         &self,
         item: &MatmulWorkItem,
-        _: &MatmulPartitioning,
+        _: &(),
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {

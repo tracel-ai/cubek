@@ -1,5 +1,6 @@
 use super::kernel::unit_whole_k_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
@@ -9,7 +10,6 @@ use cubecl::tile::launch::DestinationLaunch;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::MatmulStagingCount;
 use cubek_microkernel::matmul::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
@@ -145,7 +145,7 @@ impl Routine for UnitWholeKMatmulRoutine {
             },
             drain_atomics: 0,
         };
-        staging.count(&item, partitioning, estimate);
+        staging.count(&item, &cube, estimate);
         blueprint
             .microkernel
             .estimate(&item, &(), grid.planes(), estimate);
