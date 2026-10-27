@@ -1,7 +1,7 @@
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Axis, Instruction, Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::dense::cube::{CubeMeet, cube_shuffle_microkernel};
+use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every cube, running its run of the output, its units reading each operand as `reads` says,

@@ -10,14 +10,14 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
 use cubek_microkernel::matmul::MatmulStep;
-use cubek_microkernel::matmul::stored::Operand;
-use cubek_microkernel::matmul::stored::Packing;
-use cubek_microkernel::matmul::tile_order;
 use cubek_microkernel::matmul::{
     MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
 };
-use cubek_microkernel::staging::StageRing;
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::Packing;
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::{Hardware, Instructions};
 use cubek_std::{UNIT_REGISTERS, manual_mma};
@@ -31,14 +31,12 @@ use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::MatmulPlaneLayout;
+use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedRows, CubeStagedStore,
 };
-use cubek_microkernel::matmul::dense::plane::{
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
-};
-use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
+use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -97,7 +95,7 @@ impl CubeStagedMatmulRoutine {
     /// planes, and two by four on four by two or two by four planes, three stages in flight and the
     /// box stored by the TMA engine in one bulk copy, which a contraction of a few thousand
     /// finishes sooner with. A stage one step deep is one tile of an input in [tile
-    /// order](cubek_microkernel::matmul::tile_order), which a box lands as it lands rows. Filled by
+    /// order](cubek_std::layout::tile_order), which a box lands as it lands rows. Filled by
     /// the cube's units asynchronously: four by four on two by four planes, three stages in flight,
     /// and two by four on four by two planes, two.
     ///
@@ -193,7 +191,7 @@ impl CubeStagedMatmulRoutine {
     /// The step of an NVFP4 product on `hw` ([`MatmulStep`]): the least box every load of
     /// both inputs fills whole — a row of the TMA engine's box, a word of scales — under the
     /// device's block-scaled instruction. `None` on a device that offers none. An input in rows and
-    /// one in [tile order](cubek_microkernel::matmul::tile_order) step alike, and a load on such a device
+    /// one in [tile order](cubek_std::layout::tile_order) step alike, and a load on such a device
     /// stores in this step.
     pub fn block_scaled_step(hw: &Hardware) -> Option<MatmulStep> {
         let e2m1 = ElemType::Float(FloatKind::E2M1);
@@ -243,7 +241,7 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// Registers the compiler adds around a plane's lower bound
-    /// ([`registers_per_unit`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel::registers_per_unit)):
+    /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
     /// addressing, loop state and the scale registers. A margin rather than a derivation, since
     /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.

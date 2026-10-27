@@ -15,25 +15,25 @@ mod base {
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
     use cubek_microkernel::matmul::MatmulOperand;
     use cubek_microkernel::matmul::MatmulPartitioning;
-    use cubek_microkernel::matmul::dense::cube::{
+    use cubek_microkernel::matmul::MatmulPlaneLayout;
+    use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
         CubeStagedStore,
     };
-    use cubek_microkernel::matmul::dense::cube::{
+    use cubek_microkernel::matmul::cube::{
         CubeStagedFill, CubeStagedFillingRefusal, CubeStagedTmaRefusal,
     };
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
-    use cubek_microkernel::matmul::dense::plane::{
+    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
     };
-    use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
     use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulOrder};
-    use cubek_microkernel::staging::StageRing;
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::Microkernel;
+    use cubek_std::microkernel::StageRing;
     use cubek_std::routine::Routine;
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.
@@ -1344,10 +1344,10 @@ mod base {
     #[test]
     fn an_nvfp4_product_read_as_stored_is_estimated() {
         use crate::kernels::select::packed::nvfp4_scheme;
-        use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
-        use cubek_microkernel::matmul::stored::Operand;
-        use cubek_microkernel::matmul::stored::Packing;
-        use cubek_microkernel::matmul::tile_order;
+        use cubek_microkernel::matmul::cube::CubeStagedDepth;
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::tile_order;
         use cubek_std::microkernel::KernelEstimate;
 
         let hw = devices::offering_nvfp4(devices::h100());
@@ -1383,10 +1383,10 @@ mod base {
     /// `K`.
     #[test]
     fn a_decoded_input_is_estimated_in_stages_of_its_blocks() {
-        use cubek_microkernel::matmul::dense::cube::CubeStagedDepth;
-        use cubek_microkernel::matmul::stored::Operand;
-        use cubek_microkernel::matmul::stored::Packing;
-        use cubek_microkernel::matmul::tile_order;
+        use cubek_microkernel::matmul::cube::CubeStagedDepth;
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::tile_order;
         use cubek_std::matmul_axes::KI;
         use cubek_std::microkernel::KernelEstimate;
 
@@ -1449,8 +1449,8 @@ mod base {
     #[test]
     fn a_packed_input_prepares_no_walk_past_k() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-        use cubek_microkernel::matmul::stored::Operand;
-        use cubek_microkernel::matmul::stored::Packing;
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::layout::stored::Packing;
         use cubek_std::matmul_axes::{KB, KI};
 
         let f16 = ElemType::Float(FloatKind::F16);

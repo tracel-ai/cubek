@@ -9,7 +9,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
-use cubek_microkernel::matmul::dense::cube::CubeShufflePlaneSettings;
+use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;

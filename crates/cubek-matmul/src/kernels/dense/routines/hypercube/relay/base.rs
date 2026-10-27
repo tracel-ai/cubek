@@ -13,14 +13,14 @@ use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::cube::CubeStagedDelivery;
-use cubek_microkernel::matmul::dense::hypercube::{
+use cubek_microkernel::matmul::cube::CubeStagedDelivery;
+use cubek_microkernel::matmul::cube::MatmulCubeWrite;
+use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
-use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
-use cubek_microkernel::staging::StageRing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{KB, KI};
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
@@ -307,8 +307,8 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::space::CubeOrder;
     use cubek_microkernel::matmul::MatmulLayout;
-    use cubek_microkernel::matmul::dense::cube::CubeStagedMicrokernelSettings;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
+    use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
+    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
     use cubek_std::devices;
     use cubek_std::matmul_axes::K;
     use cubek_std::matmul_axes::{M, N};
@@ -337,9 +337,9 @@ mod tests {
     #[test]
     fn declines_the_warpgroup_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
-        use cubek_microkernel::matmul::dense::cube::{CubeStagedDelivery, CubeStagedFill};
-        use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
-        use cubek_microkernel::staging::StageRing;
+        use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
+        use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
+        use cubek_std::microkernel::StageRing;
 
         let hw = devices::offering_wgmma(
             offering(devices::h100()),

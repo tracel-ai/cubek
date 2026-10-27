@@ -1,7 +1,7 @@
 use crate::kernels::{CubeStagedMatmulRoutine, MatmulBlueprint, MatmulRoutineProblem};
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubek_microkernel::matmul::dense::hypercube::HypercubeStagedMicrokernel;
+use cubek_microkernel::matmul::hypercube::HypercubeStagedMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulPartitioning, MatmulWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
