@@ -7,9 +7,9 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::StageRing;
+use cubek_microkernel::matmul::MatmulPlaneLayout;
 use cubek_microkernel::matmul::cube::{CubeStagedFill, CubeStagedMicrokernelSettings};
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
-use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_std::Hardware;
 
 use crate::kernels::indexed::k_grouped::KGroupedMatmulTensors;

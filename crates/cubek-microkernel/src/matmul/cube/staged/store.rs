@@ -1,4 +1,5 @@
-use crate::matmul::staged_walk::{MatmulCubeWrite, MatmulStage};
+use crate::matmul::MatmulStage;
+use crate::matmul::cube::MatmulCubeWrite;
 use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
 use crate::matmul::{MatmulPartitioning, MatmulSpace};
 use core::num::NonZeroUsize;

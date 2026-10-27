@@ -31,12 +31,12 @@ use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
+use cubek_microkernel::matmul::MatmulPlaneLayout;
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedRows, CubeStagedStore,
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
-use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

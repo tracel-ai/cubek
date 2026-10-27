@@ -5,7 +5,7 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
-use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
+use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_std::Hardware;
 
 use crate::kernels::{

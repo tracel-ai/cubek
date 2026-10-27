@@ -5,11 +5,11 @@ use crate::matmul::{
 use cubecl::tile::launch::Refusal;
 use cubek_std::{Hardware, Instructions, manual_mma};
 
+use crate::matmul::MatmulStage;
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
 };
-use crate::matmul::staged_walk::MatmulStage;
 use crate::matmul::stored::Operand;
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
