@@ -12,8 +12,8 @@
 //! it reads the key alone because the key is the whole of what cubecl hands a priority
 //! function.
 
-use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::select::problem::{MatmulProblem, OperandKind};
+use crate::kernels::{MatmulIndex, MatmulRoutineProblem};
 use cubecl::ir::ElemType;
 use cubecl::tile::Axis;
 use cubecl::{self as cubecl, AutotuneKey};
@@ -207,6 +207,9 @@ pub enum MatmulBatching {
     Shared,
     /// It holds a matrix per batch.
     Batched,
+    /// It is a stack of `slabs` matrices, and each batch reads the one its entry of the product's
+    /// table names ([`MatmulIndex::Slab`]).
+    Slabs { slabs: usize },
 }
 
 impl MatmulBatching {
@@ -312,8 +315,12 @@ impl MatmulShape {
 impl From<&MatmulShape> for MatmulRoutineProblem {
     fn from(shape: &MatmulShape) -> Self {
         let held = |batching| match batching {
-            MatmulBatching::Shared => 1,
+            MatmulBatching::Shared | MatmulBatching::Slabs { .. } => 1,
             MatmulBatching::Batched => shape.batch,
+        };
+        let index = match shape.rhs.batching {
+            MatmulBatching::Slabs { slabs } => Some(MatmulIndex::Slab { slabs }),
+            MatmulBatching::Shared | MatmulBatching::Batched => None,
         };
         Self {
             batches: (shape.batch > 1)
@@ -325,6 +332,7 @@ impl From<&MatmulShape> for MatmulRoutineProblem {
                 rhs: held(shape.rhs.batching),
                 out: shape.batch,
             },
+            index,
             ..Self::dense(shape.m, shape.n, shape.k, shape.elem)
                 .laid(
                     MatmulOperand::Lhs,
@@ -392,6 +400,7 @@ mod tests {
     use super::*;
     use cubecl::ir::FloatKind;
     use cubecl::quant::scheme::QuantScheme;
+    use cubek_std::matmul_axes::K;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -416,6 +425,27 @@ mod tests {
         assert_eq!(MatmulBatching::new(&[1, 1]), MatmulBatching::Shared);
         assert_eq!(MatmulBatching::new(&[4]), MatmulBatching::Batched);
         assert_eq!(MatmulBatching::new(&[1, 8]), MatmulBatching::Batched);
+    }
+
+    /// A key whose rhs is a stack of slabs states a problem every batch of which reads one slab
+    /// through the table: the stack is held once, not once a batch.
+    #[test]
+    fn a_stacked_rhs_states_a_problem_read_through_the_slab_table() {
+        let slabs = MatmulBatching::Slabs { slabs: 8 };
+        let key = MatmulTuneKey::new(
+            F16,
+            256,
+            64,
+            1,
+            32,
+            OperandKey::float(Some(K), MatmulBatching::Batched),
+            OperandKey::float(Some(K), slabs),
+        );
+        let problem = MatmulRoutineProblem::from(&key.shape());
+        assert_eq!(problem.index, Some(MatmulIndex::Slab { slabs: 8 }));
+        assert_eq!(problem.batches, vec![32]);
+        assert_eq!(problem.batches_held.lhs, 32);
+        assert_eq!(problem.batches_held.rhs, 1);
     }
 
     /// The keys of a decode projection against a float col rhs and against a q4 rhs
