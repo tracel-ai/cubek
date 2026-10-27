@@ -1,7 +1,10 @@
 use super::base::PlaneShuffleAttentionMicrokernel;
 use super::step_reads::{StepReads, StepReadsExpand, StepWalk};
+use crate::attention::plane::{
+    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel,
+    GlobalPlaneOperands,
+};
 use crate::attention::{D, Q, S, VisibleKeys};
-use crate::attention::plane::{CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel, GlobalPlaneOperands};
 use cubecl::tile::{Monoid, Region, Tile, Walk, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
 

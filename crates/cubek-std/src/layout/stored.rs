@@ -5,10 +5,10 @@
 //! reads one value and is constant inside nothing, and the same reads serve it without asking
 //! whether anything is quantized at all.
 
+use crate::matmul_axes::{K, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Space, kind::Field};
-use crate::matmul_axes::{K, blocked};
 
 /// The shape of the smallest indivisible tile of something: one value on every
 /// axis but the ones it names.

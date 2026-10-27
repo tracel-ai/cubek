@@ -1,9 +1,9 @@
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
 use crate::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::Axis;
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
 
 /// What a microkernel is handed to choose by: the elements it reads and writes and the one it

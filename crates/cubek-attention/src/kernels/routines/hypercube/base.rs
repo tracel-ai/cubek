@@ -5,8 +5,8 @@ use crate::kernels::{
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
+use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
 

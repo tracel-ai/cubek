@@ -35,8 +35,8 @@ use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_std::layout::stored::Operand;
 use cubek_std::Hardware;
+use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
 use cubek_std::{NVFP4_BLOCK, block_scaled_nvfp4};
 

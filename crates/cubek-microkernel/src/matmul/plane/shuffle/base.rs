@@ -1,5 +1,4 @@
 use crate::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
-use cubek_std::layout::stored::{Spread, Walked};
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
     MatmulOperands, MatmulOrder, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
@@ -9,6 +8,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::{Spread, Walked};
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
@@ -572,12 +572,12 @@ impl MatmulMicrokernel for PlaneShuffleMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubek_std::layout::stored::Operand;
-    use cubek_std::layout::stored::Packing;
-    use cubek_std::layout::tile_order;
     use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
+    use cubek_std::layout::stored::Operand;
+    use cubek_std::layout::stored::Packing;
+    use cubek_std::layout::tile_order;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);

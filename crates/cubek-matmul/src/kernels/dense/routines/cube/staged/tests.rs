@@ -13,7 +13,6 @@ mod base {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
-    use cubek_std::microkernel::StageRing;
     use cubek_microkernel::matmul::MatmulOperand;
     use cubek_microkernel::matmul::MatmulPartitioning;
     use cubek_microkernel::matmul::MatmulPlaneLayout;
@@ -34,6 +33,7 @@ mod base {
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::Microkernel;
+    use cubek_std::microkernel::StageRing;
     use cubek_std::routine::Routine;
 
     /// Why `hw` cannot deliver `problem`'s stages under `partitioning` by the TMA engine.

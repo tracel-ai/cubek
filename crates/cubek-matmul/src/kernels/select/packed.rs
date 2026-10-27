@@ -6,9 +6,9 @@
 
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_std::layout::stored::Operand;
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
+use cubek_std::layout::stored::Operand;
 
 /// `input` packed under `scheme`, read before any tensor is in hand.
 ///

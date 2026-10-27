@@ -8,12 +8,14 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::hypercube::{HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings};
-use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
+use cubek_microkernel::attention::hypercube::{
+    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
+};
 use cubek_microkernel::attention::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{AttentionOperand, AttentionPartitioning, QueryOrder};
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

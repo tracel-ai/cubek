@@ -1,4 +1,3 @@
-use cubek_std::microkernel::StageRing;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulPlaneLayout;
 use crate::matmul::cube::{
@@ -14,6 +13,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 
 /// A box of the output several cubes own together: each cube runs a [`CubeStagedMicrokernel`]

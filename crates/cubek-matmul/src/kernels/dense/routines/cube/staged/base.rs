@@ -9,15 +9,15 @@ use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubek_std::microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulStep;
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
-use cubek_std::layout::tile_order;
 use cubek_microkernel::matmul::{
     MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
 };
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::Packing;
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::{Hardware, Instructions};
 use cubek_std::{UNIT_REGISTERS, manual_mma};

@@ -1,5 +1,4 @@
 use super::base::CubeStagedDrain;
-use cubek_std::microkernel::StageRing;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{
     PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
@@ -10,6 +9,7 @@ use cubecl::tile::{
     stage::{AsyncStage, AsyncStageExpand, Role},
 };
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_std::microkernel::StageRing;
 
 /// The comptime decisions a cube's walk reads, kept apart from the microkernel's layout and output
 /// so the walk runs from these alone.

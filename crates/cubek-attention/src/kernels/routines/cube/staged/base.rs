@@ -10,11 +10,13 @@ use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
+use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
-use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand, AttentionPartitioning, QueryOrder};
-use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
+use cubek_microkernel::attention::{
+    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, QueryOrder,
+};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

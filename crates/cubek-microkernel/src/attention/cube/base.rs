@@ -1,13 +1,18 @@
-use cubek_std::microkernel::StageRing;
 use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings};
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning, AttentionStagingCount, AttentionWorkItem, G, Q, S};
-use crate::attention::plane::{CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads};
+use crate::attention::plane::{
+    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads,
+};
+use crate::attention::{
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
+    AttentionStagingCount, AttentionWorkItem, G, Q, S,
+};
 use crate::matmul::MatmulOrder;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one

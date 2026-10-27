@@ -1,7 +1,7 @@
-use cubek_std::layout::stored::BlockScales;
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
+use cubek_std::layout::stored::BlockScales;
 use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of every matmul product: handed a [`MatmulWorkItem`], and read by a routine for

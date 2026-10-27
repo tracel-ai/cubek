@@ -4,10 +4,10 @@ use crate::kernels::HypercubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
-use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_microkernel::attention::plane::PlaneShuffleAttention;
 use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
 use cubek_microkernel::attention::{AttentionVisibility, B, VisibleKeys};
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
 /// keys and values from tiles, leaving its partial in its slot for a second launch to merge.

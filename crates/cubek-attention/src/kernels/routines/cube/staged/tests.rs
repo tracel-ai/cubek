@@ -17,15 +17,15 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_std::microkernel::StageRing;
+    use cubek_microkernel::attention::AttentionMicrokernel;
     use cubek_microkernel::attention::CubeAttentionStageLayout;
+    use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
     use cubek_microkernel::attention::plane::InstructionShape;
     use cubek_microkernel::attention::plane::{
         ROW_STATE_HELD_BY_UNIT, SWIZZLED_STAGE_UNREAD, ScoreHolder,
     };
-    use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
     use cubek_microkernel::attention::{G, Q, S};
+    use cubek_std::microkernel::StageRing;
 
     const ROUTINE: CubeStagedAttentionRoutine<PlaneFragmentAttentionMicrokernel> =
         CubeStagedAttentionRoutine::new();

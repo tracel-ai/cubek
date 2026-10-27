@@ -1,4 +1,3 @@
-use cubek_std::microkernel::StageRing;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulStage;
 use crate::matmul::cube::MatmulCubeWrite;
@@ -10,7 +9,6 @@ use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
-use cubek_std::layout::stored::BlockScales;
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
@@ -23,7 +21,9 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_axes::{K, KB, M, N};
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A box of the output one cube owns: it stages the box's rows of the lhs and columns of the rhs

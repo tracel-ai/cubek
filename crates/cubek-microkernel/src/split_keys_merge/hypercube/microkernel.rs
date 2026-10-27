@@ -1,5 +1,5 @@
-use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use crate::split_keys_merge::SlotBox;
+use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 use cubecl::{self as cubecl, cube, prelude::*};
 

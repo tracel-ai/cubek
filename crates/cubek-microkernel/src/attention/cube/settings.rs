@@ -1,4 +1,3 @@
-use cubek_std::microkernel::StageRing;
 use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
@@ -9,6 +8,7 @@ use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::Hardware;
+use cubek_std::microkernel::StageRing;
 
 /// The plane microkernel's settings `P`, the heads a cube holds and the planes each head's queries
 /// and keys are laid over, and, where the plane microkernel reads a stage, how the cube holds its

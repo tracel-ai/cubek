@@ -14,8 +14,8 @@ use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
-use cubek_std::layout::stored::Packing;
 use cubek_std::Hardware;
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
@@ -347,10 +347,10 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
     use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_std::layout::stored::Operand;
-    use cubek_std::layout::tile_order;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
+    use cubek_std::layout::stored::Operand;
+    use cubek_std::layout::tile_order;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 

@@ -10,12 +10,12 @@ use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
 };
-use cubek_std::layout::stored::Operand;
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
+use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, UnitWork};
 

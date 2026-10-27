@@ -1,4 +1,3 @@
-use cubek_std::microkernel::StagedOperand;
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulReading,
@@ -6,6 +5,7 @@ use crate::matmul::{
 };
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{Axis, Space};
+use cubek_std::microkernel::StagedOperand;
 
 /// A work item of this kind as its microkernels see it: the elements it reads and writes, the
 /// one it sums in, the query heads that share each key head, and the dims a row of the query and

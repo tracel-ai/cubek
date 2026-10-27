@@ -1,10 +1,10 @@
-use cubek_std::microkernel::StagedOperand;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulOrder};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::microkernel::StagedOperand;
 
 /// The box one step of a walk through `K` stages of both operands: a cube's, or a plane's own.
 #[derive(Debug, Clone, PartialEq, Eq)]

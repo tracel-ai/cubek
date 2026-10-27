@@ -6,13 +6,13 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_std::layout::stored::Operand;
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
     MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
+use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
