@@ -16,7 +16,7 @@ use cubek_microkernel::StageRing;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
-use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
+use cubek_microkernel::matmul::{MatmulPlaneLayout, MatmulStagingCount};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

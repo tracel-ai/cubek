@@ -1,10 +1,10 @@
 use crate::StageRing;
 use crate::matmul::MatmulPartitioning;
+use crate::matmul::MatmulPlaneLayout;
 use crate::matmul::cube::{
     CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
 };
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
-use crate::matmul::staged_walk::MatmulPlaneLayout;
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
@@ -18,7 +18,7 @@ use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkern
 
 /// A box of the output several cubes own together: each cube runs a [`CubeStagedMicrokernel`]
 /// over its own run of `K`, and the parts reach the output once, as the routine's
-/// [`MatmulCubeWrite`](crate::matmul::staged_walk::MatmulCubeWrite) says: in turns
+/// [`MatmulCubeWrite`](crate::matmul::cube::MatmulCubeWrite) says: in turns
 /// at a carry, or into slots the last cube to arrive adds up. Which cubes share which box is the
 /// routine's too, so one microkernel serves every way a hypercube's cubes share their boxes.
 ///

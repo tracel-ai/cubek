@@ -1,4 +1,4 @@
-use crate::matmul::staged_walk::MatmulStage;
+use crate::matmul::MatmulStage;
 use crate::matmul::{MatmulAxes, MatmulRowsKind, MatmulWorkItem};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{

@@ -14,10 +14,10 @@ use cubek_microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::CubeStagedDelivery;
+use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
-use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};

@@ -1,5 +1,7 @@
 use crate::StageRing;
 use crate::matmul::MatmulPartitioning;
+use crate::matmul::MatmulStage;
+use crate::matmul::cube::MatmulCubeWrite;
 use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedRows,
     CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal,
@@ -8,13 +10,12 @@ use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
-use crate::matmul::staged_walk::MatmulStage;
-use crate::matmul::staged_walk::{MatmulCubeWrite, MatmulPlaneLayout, MatmulStagingCount};
 use crate::matmul::stored::BlockScales;
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
+use crate::matmul::{MatmulPlaneLayout, MatmulStagingCount};
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;

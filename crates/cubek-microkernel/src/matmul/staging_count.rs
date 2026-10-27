@@ -1,6 +1,6 @@
 use crate::StageRing;
 use crate::matmul::MatmulPartitioning;
-use crate::matmul::staged_walk::MatmulStage;
+use crate::matmul::MatmulStage;
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulOrder, MatmulWorkItem};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
