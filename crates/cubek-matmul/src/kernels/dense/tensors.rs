@@ -1066,12 +1066,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         blueprint: &MatmulBlueprint<Mk, SM>,
         launcher: &Launcher,
     ) -> MatmulRelayBinding {
-        self.assert_tiled();
         let sum = self.problem().sum();
         // Over the output's axes: a float product's, or against packed inputs the block-split
-        // space's, the carry restated over them as the output is.
+        // space's, the carry restated over them as the output is. Packed tensors merge their
+        // batches into the rows whatever the launch, so only float ones are read for a tiling one.
         let carry = match self.read(|view| view.blocks()) {
             None => {
+                self.assert_tiled();
                 let [lhs, rhs] = self.plain();
                 let shape =
                     Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
@@ -1121,14 +1122,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         blueprint: &MatmulBlueprint<Mk, SM>,
         launcher: &Launcher,
     ) -> MatmulLastArrivalBinding {
-        self.assert_tiled();
         let partitioning = blueprint.partitioning.as_tile();
         // The output's axes in its order: the batches the cube level hands out, then its rows and
         // columns, against packed inputs as the block-split space restates them
         // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long stays
         // a dim of the slots.
         let output: Vec<Axis> = match self.read(|view| view.blocks()) {
-            None => vec![M, N],
+            None => {
+                self.assert_tiled();
+                vec![M, N]
+            }
             Some(blocks) => blocks
                 .restated_dims(M, N, 1)
                 .into_iter()
