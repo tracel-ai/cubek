@@ -1,10 +1,10 @@
 use super::base::CubeStagedDrain;
+use crate::StageRing;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{
     PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
-use crate::StageRing;
 use cubecl::tile::{
     Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
     stage::{AsyncStage, AsyncStageExpand, Role},

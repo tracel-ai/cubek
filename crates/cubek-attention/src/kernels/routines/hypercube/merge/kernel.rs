@@ -1,7 +1,7 @@
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
 use cubek_microkernel::split_keys_merge::SlotBox;
 use cubek_microkernel::split_keys_merge::plane::plane_split_keys_merge_microkernel;
-use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
 
 /// A plane for every query merging the query's slots into the output: the query is `q = x`, head
 /// `g = y % group` of key head `kv = y / group`, batch `b = z` of the cube's position.

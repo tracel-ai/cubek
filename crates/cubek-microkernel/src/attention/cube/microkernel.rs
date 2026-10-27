@@ -1,13 +1,13 @@
 use super::base::CubeAttentionMicrokernel;
+use crate::attention::plane::{StepReads, StepReadsExpand};
+use crate::attention::{
+    B, CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneMicrokernel, DV, G,
+    GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, VisibleKeys,
+};
 use crate::split_keys_merge::plane::{
     plane_merge_rows_microkernel, plane_merge_rows_partial_microkernel,
 };
-use crate::attention::plane::{StepReads, StepReadsExpand};
 use crate::split_keys_merge::{SlotBox, SlotShape};
-use crate::attention::{
-    B, CubePlaneAttention, CubePlaneAttentionExpand,
-    CubePlaneMicrokernel, DV, G, GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, VisibleKeys,
-};
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 

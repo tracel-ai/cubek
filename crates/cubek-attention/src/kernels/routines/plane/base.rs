@@ -8,6 +8,7 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubek_microkernel::StageRing;
 use cubek_microkernel::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
@@ -15,7 +16,6 @@ use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
     AttentionStagingCount, CubePlaneMicrokernel, Q, S,
 };
-use cubek_microkernel::StageRing;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

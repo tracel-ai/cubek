@@ -11,9 +11,7 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::plane::{
-    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
-};
+use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use cubek_microkernel::matmul::stored::Packing;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOrder};
 use cubek_std::Hardware;

@@ -1,10 +1,10 @@
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::StageRing;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, plane_fragment_attention_microkernel,
 };
 use cubek_microkernel::attention::{AttentionVisibility, B, CubePlaneMicrokernel, S, VisibleKeys};
-use cubek_microkernel::StageRing;
 
 /// Every plane of the launch owning its rows, each running them through stages of its own
 /// ([`plane_fragment_attention_microkernel`]) over the keys its rows see.

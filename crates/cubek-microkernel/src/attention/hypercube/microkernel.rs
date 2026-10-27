@@ -1,6 +1,6 @@
+use crate::attention::hypercube::HypercubeMergeShape;
 use crate::split_keys_merge::SlotBox;
 use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
-use crate::attention::hypercube::HypercubeMergeShape;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The cube that stored its partial of `slot_box`'s queries counting itself in at the box, and the

@@ -1,9 +1,8 @@
 use super::kernel::hypercube_fragment_attention_kernel;
 use crate::kernels::routines::hypercube::merge::HypercubeSecondLaunch;
 use crate::kernels::{
-    HypercubeMerge,
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;

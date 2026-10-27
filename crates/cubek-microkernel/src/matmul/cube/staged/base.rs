@@ -1,3 +1,4 @@
+use crate::StageRing;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedRows,
@@ -14,7 +15,6 @@ use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
-use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;

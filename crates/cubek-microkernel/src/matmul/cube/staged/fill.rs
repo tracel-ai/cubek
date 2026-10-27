@@ -1,8 +1,8 @@
+use crate::StageRing;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
 use crate::matmul::staged_walk::MatmulStage;
 use crate::matmul::{MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem};
-use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;

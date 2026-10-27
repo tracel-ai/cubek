@@ -2,11 +2,12 @@ use crate::attention::cube::CubeAttentionMicrokernel;
 use crate::attention::hypercube::{
     HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings, HypercubeMergeShape,
 };
-use crate::split_keys_merge::SlotShape;
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, CubePlaneMicrokernel, CubePlaneReads, G, Q,
+    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem,
+    CubePlaneMicrokernel, CubePlaneReads, G, Q,
 };
 use crate::matmul::MatmulOrder;
+use crate::split_keys_merge::SlotShape;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;

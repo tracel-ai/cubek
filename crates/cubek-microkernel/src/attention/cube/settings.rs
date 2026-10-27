@@ -1,3 +1,4 @@
+use crate::StageRing;
 use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
@@ -5,7 +6,6 @@ use crate::attention::plane::{
 };
 use crate::attention::unit::UnitAttentionMicrokernelSettings;
 use crate::matmul::plane::PlaneFragmentTransport;
-use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::Hardware;

@@ -1,3 +1,4 @@
+use crate::StageRing;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::cube::{
     CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
@@ -7,7 +8,6 @@ use crate::matmul::staged_walk::MatmulPlaneLayout;
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
-use crate::StageRing;
 use cubecl::tile::Scratch;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;

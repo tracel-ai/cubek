@@ -17,6 +17,7 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
+    use cubek_microkernel::StageRing;
     use cubek_microkernel::attention::CubeAttentionStageLayout;
     use cubek_microkernel::attention::plane::InstructionShape;
     use cubek_microkernel::attention::plane::{
@@ -24,7 +25,6 @@ mod fragment {
     };
     use cubek_microkernel::attention::{AttentionMicrokernel, CubePlaneMicrokernel};
     use cubek_microkernel::attention::{G, Q, S};
-    use cubek_microkernel::StageRing;
 
     const ROUTINE: CubeStagedAttentionRoutine<PlaneFragmentAttentionMicrokernel> =
         CubeStagedAttentionRoutine::new();

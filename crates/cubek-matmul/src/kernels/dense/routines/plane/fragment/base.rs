@@ -12,11 +12,11 @@ use crate::kernels::{
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubek_microkernel::StageRing;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
 use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
-use cubek_microkernel::StageRing;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

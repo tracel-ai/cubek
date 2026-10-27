@@ -1,9 +1,9 @@
+use crate::StagedOperand;
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulReading,
     MatmulRows, MatmulWorkItem,
 };
-use crate::StagedOperand;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{Axis, Space};
 

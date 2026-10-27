@@ -9,6 +9,7 @@ use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
+use cubek_microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulStep;
 use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::stored::Packing;
@@ -16,7 +17,6 @@ use cubek_microkernel::matmul::tile_order;
 use cubek_microkernel::matmul::{
     MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
 };
-use cubek_microkernel::StageRing;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::{Hardware, Instructions};
@@ -35,9 +35,7 @@ use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedRows, CubeStagedStore,
 };
-use cubek_microkernel::matmul::plane::{
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
-};
+use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};

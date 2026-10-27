@@ -1,7 +1,6 @@
 use crate::kernels::{
-    HypercubeMerge,
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionRoutine,
-    AttentionRoutineProblem, AttentionTensors,
+    AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
@@ -10,8 +9,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
 use cubek_microkernel::attention::hypercube::{
-    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
-    HypercubeMergeShape,
+    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings, HypercubeMergeShape,
 };
 use cubek_microkernel::attention::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
@@ -299,12 +297,12 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeShuffleAttentionMicroke
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::HYPERCUBE_CUBES_UNMET;
     use crate::kernels::{
         AttentionCacheLayout, HypercubeLastArrivalShuffleAttentionRoutine,
         HypercubeSecondLaunchShuffleAttentionRoutine,
     };
     use cubecl::ir::{ElemType, FloatKind};
-    use crate::kernels::HYPERCUBE_CUBES_UNMET;
     use cubek_microkernel::attention::{
         ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS, Q, S,
     };

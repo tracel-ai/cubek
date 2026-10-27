@@ -8,6 +8,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::VectorRequirement;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubek_microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::CubeStagedDelivery;
@@ -15,7 +16,6 @@ use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
-use cubek_microkernel::StageRing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -344,9 +344,9 @@ mod tests {
     #[test]
     fn declines_the_warpgroup_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
+        use cubek_microkernel::StageRing;
         use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
         use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
-        use cubek_microkernel::StageRing;
 
         let hw = devices::offering_wgmma(
             offering(devices::h100()),

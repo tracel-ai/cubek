@@ -1,11 +1,11 @@
 use super::base::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
+use crate::StageRing;
 use crate::attention::{
     CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel, D, DV, G,
     Q, S, StagedPlaneOperands,
 };
 use crate::matmul::plane::plane_fragment_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use crate::StageRing;
 use core::marker::PhantomData;
 
 use cubecl::tile::{
