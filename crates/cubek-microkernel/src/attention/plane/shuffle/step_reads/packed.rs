@@ -1,5 +1,6 @@
 use crate::attention::S;
 use crate::attention::plane::{StepReads, StepReadsExpand, StepWalk};
+use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -76,6 +77,17 @@ impl<N: Size> StepReads<N> for PackedStepReads {
             }
         }
         loaded
+    }
+
+    fn read_page_entry(&self, _region: &Region) -> PageEntry {
+        PageEntry::unlisted()
+    }
+
+    fn with_page_entry(&self, _entry: &PageEntry) -> PackedStepReads {
+        PackedStepReads {
+            tile: self.tile.clone(),
+            fixup: self.fixup.clone(),
+        }
     }
 
     fn at(&self, region: &Region) -> PackedStepReads {

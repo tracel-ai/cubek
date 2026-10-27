@@ -1,6 +1,7 @@
 use crate::attention::S;
 use crate::attention::plane::{StepReads, StepReadsExpand, StepWalk};
 use core::marker::PhantomData;
+use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -50,6 +51,17 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
     fn at(&self, region: &Region) -> TileStepReads<E> {
         TileStepReads::<E> {
             tile: self.tile.at(region),
+            element: PhantomData,
+        }
+    }
+
+    fn read_page_entry(&self, region: &Region) -> PageEntry {
+        self.tile.read_page_entry(region)
+    }
+
+    fn with_page_entry(&self, entry: &PageEntry) -> TileStepReads<E> {
+        TileStepReads::<E> {
+            tile: self.tile.with_page_entry(entry),
             element: PhantomData,
         }
     }

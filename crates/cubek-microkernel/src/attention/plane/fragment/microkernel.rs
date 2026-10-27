@@ -312,7 +312,8 @@ impl StageScore {
         let query_fragments = query.over(&comptime!(Level::every(&[(Q, m), (D, k)])));
         let key_fragments = key.over(&comptime!(Level::every(&[(S, n), (D, k)])));
         let score_fragments = score_window.over(&comptime!(Level::every(&[(Q, m), (S, n)])));
-        #[unroll]
+        // Rolled, unlike the loops inside it: the step only offsets shared memory, never picks a
+        // register.
         for step in 0..depth {
             #[unroll]
             for row in 0..rows {
