@@ -15,4 +15,6 @@
 pub mod attention;
 #[cfg(feature = "matmul")]
 pub mod matmul;
+#[cfg(feature = "attention")]
+pub mod split_keys_merge;
 pub mod staging;

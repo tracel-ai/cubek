@@ -1,11 +1,11 @@
-use crate::attention::AttentionSlotBox;
-use crate::attention::merge::plane::plane_merge_attention_microkernel;
+use crate::split_keys_merge::SlotBox;
+use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 use crate::attention::hypercube::HypercubeMergeShape;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The cube that stored its partial of `slot_box`'s queries counting itself in at the box, and the
 /// last of the box's cubes to count merging the box into `out`, by one plane
-/// ([`plane_merge_attention_microkernel()`])
+/// ([`plane_split_keys_merge_microkernel()`])
 /// ([`HypercubeMerge::LastArrival`](crate::attention::hypercube::HypercubeMerge::LastArrival)).
 ///
 /// `arrivals` holds a counter for every box, the head's index times the boxes along the queries
@@ -14,7 +14,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
-    slot_box: &AttentionSlotBox,
+    slot_box: &SlotBox,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
@@ -36,7 +36,7 @@ pub fn hypercube_attention_arrive<EA: Float, E: Float, N: Size>(
     if arrived[0] as usize + 1 == comptime!(merge.cubes) {
         // What every other cube of the box stored is acquired before it is read.
         sync_storage();
-        plane_merge_attention_microkernel::<EA, E, N>(
+        plane_split_keys_merge_microkernel::<EA, E, N>(
             slot_out,
             slot_max,
             slot_sum,

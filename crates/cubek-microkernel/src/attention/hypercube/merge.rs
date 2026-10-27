@@ -1,9 +1,9 @@
-use crate::attention::AttentionSlotShape;
+use crate::split_keys_merge::SlotShape;
 use cubecl::tile::launch::Refusal;
 use cubek_std::Hardware;
 
 /// How the slots of a box are merged into its queries of the output, by
-/// [`plane_merge_attention_microkernel()`](fn@crate::attention::merge::plane::plane_merge_attention_microkernel)
+/// [`plane_split_keys_merge_microkernel()`](fn@crate::split_keys_merge::plane::plane_split_keys_merge_microkernel)
 /// either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HypercubeMerge {
@@ -63,7 +63,7 @@ impl core::fmt::Display for HypercubeMerge {
 /// ([`merge_shape`](crate::attention::hypercube::HypercubeAttentionMicrokernel::merge_shape)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeMergeShape {
-    pub slots: AttentionSlotShape,
+    pub slots: SlotShape,
     pub cubes: usize,
     pub seq_q: usize,
 }

@@ -129,7 +129,7 @@ impl CubePlaneLayout {
 /// walk, a step of keys taken into them, and the rows ended as the level above asks once the walk
 /// ends: normalized into the output where the cube owns its rows alone, or left undivided in
 /// slots where other cubes hold the same rows
-/// ([`AttentionSlotShape`](crate::attention::AttentionSlotShape)).
+/// ([`SlotShape`](crate::split_keys_merge::SlotShape)).
 ///
 /// `EA` is the element the rows' sums are kept in, `E` the query's and the output's; `K`, `V` and
 /// `M` are where a step reads its keys, its values and which keys each row sees: a plane that reads
@@ -175,7 +175,7 @@ pub trait CubePlaneAttention<EA: Float, E: Float, K: CubeType, V: CubeType, M: C
     /// `plane`'s own rows of the region of `walk`'s first step left undivided in slots, the first
     /// `rows` of them: row `r`'s running max, running sum and output at slot `first_slot + r ·
     /// row_stride` of `slot_max`, `slot_sum` and `slot_out`, laid out as
-    /// [`AttentionSlotShape`](crate::attention::AttentionSlotShape) states. A plane
+    /// [`SlotShape`](crate::split_keys_merge::SlotShape) states. A plane
     /// meets no other here: planes that split the same rows' keys are merged from their slots by
     /// the level above.
     #[allow(clippy::too_many_arguments)]

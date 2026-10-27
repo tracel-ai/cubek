@@ -1,9 +1,10 @@
 use crate::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
+use crate::split_keys_merge::SlotShape;
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
-    AttentionSlotShape, AttentionStagingCount, AttentionWorkItem, CubePlaneKeys, CubePlaneLayout,
+    AttentionStagingCount, AttentionWorkItem, CubePlaneKeys, CubePlaneLayout,
     CubePlaneMicrokernel, CubePlaneReads, G, Q, S,
 };
 use crate::matmul::MatmulOrder;
@@ -88,8 +89,8 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
     /// How the slots its planes that split the same rows' keys leave their rows in lie, `value`
     /// elements a row: a slot for each of those planes, a merged row's work shared among a
     /// plane's units.
-    pub fn merge_shape(&self, value: usize) -> AttentionSlotShape {
-        AttentionSlotShape {
+    pub fn merge_shape(&self, value: usize) -> SlotShape {
+        SlotShape {
             units: self.units,
             val_dim: value,
             splits: self.settings.planes_along_keys.get(),

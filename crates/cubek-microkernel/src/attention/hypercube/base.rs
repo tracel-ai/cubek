@@ -3,9 +3,9 @@ use crate::attention::hypercube::{
     HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings, HypercubeMerge,
     HypercubeMergeShape,
 };
+use crate::split_keys_merge::SlotShape;
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionSlotShape,
-    AttentionWorkItem, CubePlaneMicrokernel, CubePlaneReads, G, Q,
+    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, CubePlaneMicrokernel, CubePlaneReads, G, Q,
 };
 use crate::matmul::MatmulOrder;
 use cubecl::tile::StageStorage;
@@ -124,7 +124,7 @@ impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
     ) -> HypercubeMergeShape {
         let cubes = partitioning.cubes_along_keys().get();
         HypercubeMergeShape {
-            slots: AttentionSlotShape {
+            slots: SlotShape {
                 units: self.cube.units,
                 val_dim: item.val_dim,
                 splits: cubes,

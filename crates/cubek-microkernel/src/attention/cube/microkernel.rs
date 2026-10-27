@@ -1,10 +1,11 @@
 use super::base::CubeAttentionMicrokernel;
-use crate::attention::merge::plane::{
+use crate::split_keys_merge::plane::{
     plane_merge_rows_microkernel, plane_merge_rows_partial_microkernel,
 };
 use crate::attention::plane::{StepReads, StepReadsExpand};
+use crate::split_keys_merge::{SlotBox, SlotShape};
 use crate::attention::{
-    AttentionSlotBox, AttentionSlotShape, B, CubePlaneAttention, CubePlaneAttentionExpand,
+    B, CubePlaneAttention, CubePlaneAttentionExpand,
     CubePlaneMicrokernel, DV, G, GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, VisibleKeys,
 };
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
@@ -293,7 +294,7 @@ pub fn cube_unstaged_attention_partial_microkernel<
     #[comptime] microkernel: CubeAttentionMicrokernel<P::Microkernel>,
     #[comptime] splits: usize,
     #[comptime] value_dim: usize,
-) -> AttentionSlotBox {
+) -> SlotBox {
     let mut planes = unstaged_walk::<EA, E, N, K, L, P>(
         &run,
         steps,
@@ -356,7 +357,7 @@ pub fn cube_staged_attention_partial_microkernel<
     #[comptime] microkernel: CubeAttentionMicrokernel<P::Microkernel>,
     #[comptime] splits: usize,
     #[comptime] storage: StageStorage,
-) -> AttentionSlotBox {
+) -> SlotBox {
     let mut planes = staged_walk::<EA, E, P>(
         staged.range(0, steps),
         out,
@@ -383,7 +384,7 @@ pub fn cube_staged_attention_partial_microkernel<
 /// Every plane of a cube leaving its queries' partial in the cube's slot, at the cube's position
 /// along the keys, one of `splits`: planes splitting the same queries' keys merge into it
 /// ([`CubePlaneAttention::store_partial`]). Returns the box as the slots hold it, `run`'s first
-/// step's. The slots lie as [`AttentionSlotBox`] states.
+/// step's. The slots lie as [`SlotBox`] states.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn store_plane_partials<
@@ -403,9 +404,9 @@ fn store_plane_partials<
     #[comptime] cube: CubeAttentionMicrokernel<P::Microkernel>,
     #[comptime] splits: usize,
     #[comptime] value: usize,
-) -> AttentionSlotBox {
+) -> SlotBox {
     let first = run.region(0);
-    let slot_box = AttentionSlotBox::new::<EA>(
+    let slot_box = SlotBox::new::<EA>(
         slot_max,
         first.origin(B),
         first.origin(KV),
@@ -419,7 +420,7 @@ fn store_plane_partials<
     let queries = comptime!(cube.plane.seq_q());
     if comptime!(cube.settings.planes_along_keys.get() == 1) {
         for plane in run.planes() {
-            let plane_box = AttentionSlotBox::new::<EA>(
+            let plane_box = SlotBox::new::<EA>(
                 slot_max,
                 plane.origin(B),
                 plane.origin(KV),
@@ -444,7 +445,7 @@ fn store_plane_partials<
             split_planes_in_slots::<EA, E, N, K, L, V, P>(planes, run, cube, shape);
         let layout = comptime!(cube.layout());
         for plane in run.planes() {
-            let plane_box = AttentionSlotBox::new::<EA>(
+            let plane_box = SlotBox::new::<EA>(
                 slot_max,
                 plane.origin(B),
                 plane.origin(KV),
@@ -495,7 +496,7 @@ fn split_planes_in_slots<
     planes: &mut P,
     walk: &Walk,
     #[comptime] microkernel: CubeAttentionMicrokernel<P::Microkernel>,
-    #[comptime] shape: AttentionSlotShape,
+    #[comptime] shape: SlotShape,
 ) -> (Shared<[Vector<EA, N>]>, Shared<[EA]>, Shared<[EA]>) {
     let queries = comptime!(microkernel.plane.seq_q());
     let layout = comptime!(microkernel.layout());

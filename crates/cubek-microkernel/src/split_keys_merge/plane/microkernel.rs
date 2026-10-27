@@ -1,4 +1,4 @@
-use crate::attention::{AttentionSlotBox, AttentionSlotShape};
+use crate::split_keys_merge::{SlotBox, SlotShape};
 use cubecl::tile::{Monoid, Tile, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -6,20 +6,20 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// `out` by one plane, a query at a time (`MergedSlotRow::new`), the first `queries` of the box.
 /// A query whose every slot saw nothing stays zero.
 ///
-/// The slots lie as [`AttentionSlotBox`] states; `out` is the attention's output,
+/// The slots lie as [`SlotBox`] states; `out` is the attention's output,
 /// `[b, kv, g, q, dv]` at its own strides.
 #[cube]
-pub fn plane_merge_attention_microkernel<EA: Float, E: Float, N: Size>(
+pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     out: &mut Tensor<E>,
-    slot_box: &AttentionSlotBox,
-    #[comptime] slots: AttentionSlotShape,
+    slot_box: &SlotBox,
+    #[comptime] slots: SlotShape,
     #[comptime] queries: usize,
 ) {
-    let AttentionSlotShape { units, val_dim, .. } = slots;
+    let SlotShape { units, val_dim, .. } = slots;
     let width = slot_out.vector_size();
     let lines = comptime!(val_dim / width);
     let elements = comptime!(lines.div_ceil(units));
@@ -70,10 +70,10 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
     out: &Tile,
     first_row: usize,
     split: usize,
-    #[comptime] slots: AttentionSlotShape,
+    #[comptime] slots: SlotShape,
     #[comptime] queries: usize,
 ) {
-    let AttentionSlotShape {
+    let SlotShape {
         units,
         val_dim,
         splits,
@@ -119,10 +119,10 @@ pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
     first_slot: usize,
     row_stride: usize,
     rows: usize,
-    #[comptime] slots: AttentionSlotShape,
+    #[comptime] slots: SlotShape,
     #[comptime] queries: usize,
 ) {
-    let AttentionSlotShape {
+    let SlotShape {
         units,
         val_dim,
         splits,
@@ -176,7 +176,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
     /// that many, each group reading every `groups`-th slot, and the groups' sums meet once every slot
     /// is read. A unit past the row's lines then holds its group's copy of line `lane % lines`.
     ///
-    /// The slots lie in any memory, laid out as [`AttentionSlotShape`] states: device memory where
+    /// The slots lie in any memory, laid out as [`SlotShape`] states: device memory where
     /// cubes meet, shared memory where a cube's planes do.
     fn new(
         // Read only, taken as the kernel holds them: cube code passes no `&mut` where a `&` is asked.
@@ -184,9 +184,9 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
         slot_max: &mut [EA],
         slot_sum: &mut [EA],
         row: usize,
-        #[comptime] shape: AttentionSlotShape,
+        #[comptime] shape: SlotShape,
     ) -> MergedSlotRow<EA, N> {
-        let AttentionSlotShape {
+        let SlotShape {
             units,
             val_dim,
             splits,

@@ -95,7 +95,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
 
     /// The closed rows written as a partial, the first `rows` of them: row `r`'s running max and
     /// sum at `first_slot + r · row_stride` of `max` and `sum`, and its unnormalized output's line
-    /// `l` at that slot times the lines of a value, plus `l`, of `out` ([`AttentionSlotShape`](crate::attention::AttentionSlotShape)).
+    /// `l` at that slot times the lines of a value, plus `l`, of `out` ([`SlotShape`](crate::split_keys_merge::SlotShape)).
     /// The first team's units write their lines, and the plane's first unit the state.
     fn write_partial(
         &self,

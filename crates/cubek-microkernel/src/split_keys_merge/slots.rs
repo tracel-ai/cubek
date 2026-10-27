@@ -8,7 +8,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// What a merge of them is compiled for, beside the units of the plane that merges a row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AttentionSlotShape {
+pub struct SlotShape {
     /// Units of the plane that merges a row, which share its work.
     pub units: usize,
     /// Elements of a row's output.
@@ -25,9 +25,9 @@ pub struct AttentionSlotShape {
 /// `splits` cubes sharing its box holds a slot of it, `t`: the slots' max and sum lie at
 /// `(((b · kv_heads + kv) · group + g) · queries + q) · splits + t`, shaped `[b, kv, g, q,
 /// splits]`, and the slots' output holds the row's lines there as
-/// [`AttentionSlotShape`](crate::attention::AttentionSlotShape) lays them out.
+/// [`SlotShape`](crate::split_keys_merge::SlotShape) lays them out.
 #[derive(CubeType, Clone)]
-pub struct AttentionSlotBox {
+pub struct SlotBox {
     pub batch: usize,
     pub kv: usize,
     pub head: usize,
@@ -42,7 +42,7 @@ pub struct AttentionSlotBox {
 }
 
 #[cube]
-impl AttentionSlotBox {
+impl SlotBox {
     /// The box of `queries` queries of head `head` of key head `kv` in batch `batch` from query
     /// position `first_query`, in slots shaped as `slot_max`.
     pub fn new<EA: Float>(
@@ -53,7 +53,7 @@ impl AttentionSlotBox {
         head: usize,
         first_query: usize,
         #[comptime] queries: usize,
-    ) -> AttentionSlotBox {
+    ) -> SlotBox {
         let (kv_heads, group, held_queries) =
             (slot_max.shape(1), slot_max.shape(2), slot_max.shape(3));
         let mut held = 0usize;
@@ -61,7 +61,7 @@ impl AttentionSlotBox {
             held = held_queries - first_query;
         }
         let head_index = (batch * kv_heads + kv) * group + head;
-        AttentionSlotBox {
+        SlotBox {
             batch,
             kv,
             head,

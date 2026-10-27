@@ -243,7 +243,7 @@ impl CubePlaneMicrokernel for PlaneShuffleAttentionMicrokernel {
     }
 
     /// A slot for every plane of every row: a line of each element of a value, and its running
-    /// max and sum ([`AttentionSlotShape`](crate::attention::AttentionSlotShape)).
+    /// max and sum ([`SlotShape`](crate::split_keys_merge::SlotShape)).
     fn merge_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
         match layout.planes_along_keys {
             1 => 0,
