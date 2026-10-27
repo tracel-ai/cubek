@@ -1,5 +1,6 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::select::packed::nvfp4_scheme;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use core::num::NonZeroUsize;
@@ -10,9 +11,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
 use cubek_microkernel::matmul::MatmulStep;
-use cubek_microkernel::matmul::{
-    MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
-};
+use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::stored::Packing;
 use cubek_std::layout::tile_order;
@@ -31,7 +30,7 @@ use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
-use cubek_microkernel::matmul::MatmulPlaneLayout;
+use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedStore,
@@ -351,7 +350,7 @@ impl CubeStagedMatmulRoutine {
             .expect(MatmulView::PREPARED)
             .work_item();
         let contracted = blueprint.microkernel.contracted(&item);
-        let cube = blueprint.partitioning.cube_box();
+        let cube = blueprint.partitioning.cube_space().space;
         let (rows, columns, block) = (cube.extent(MI), cube.extent(NI), cube.extent(KI));
         let stage = blueprint.partitioning.stage();
         let stage_depth: usize = [KB, KI]
@@ -449,7 +448,7 @@ impl CubeStagedMatmulRoutine {
         partitioning: &MatmulPartitioning,
         storage: &StageStorage,
     ) -> MatmulOperands<usize> {
-        let block = partitioning.cube_box().extent(KI);
+        let block = partitioning.cube_space().extent(KI);
         let width = |operand: MatmulOperand| match microkernel.reads.get(operand).staged() {
             Some(_) => Self::decoded_width(
                 microkernel.plane.leaf_extent(MatmulDim::K),
@@ -550,7 +549,12 @@ impl Routine for CubeStagedMatmulRoutine {
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        assert_eq!(
+            partitioning.as_tile().fillers() as usize,
+            microkernel.fill.filling_planes,
+            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+        );
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: it only distributes the cubes, and its microkernel walks the whole of
@@ -569,7 +573,7 @@ impl Routine for CubeStagedMatmulRoutine {
         match item.blocks {
             None => blueprint.microkernel.estimate(
                 &item,
-                &blueprint.partitioning,
+                &blueprint.partitioning.cube_space(),
                 grid.planes(),
                 estimate,
             ),
@@ -612,7 +616,7 @@ impl Routine for CubeStagedMatmulRoutine {
             &contracted,
             &problem.buffers(microkernel.plane.orders),
             <Self as MatmulRoutine<CubeStagedMicrokernel, StageStorage>>::WRITE,
-            &place(microkernel.tiling()),
+            &place(microkernel.tiling()).cube_space(),
         )?;
         let (microkernel, storage) = (resolved.microkernel, resolved.storage);
         if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {

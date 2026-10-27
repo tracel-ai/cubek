@@ -98,7 +98,7 @@ impl Microkernel for UnitQueryGradientMicrokernel {
     type WorkItem = AttentionBackwardWorkItem;
     type Settings = UnitQueryGradientMicrokernelSettings;
     type Operand = AttentionBackwardOperand;
-    type Partitioning = Partitioning;
+    type CubeSpace = Partitioning;
 
     const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware";
 

@@ -133,7 +133,7 @@ mod plane_shuffle {
                         .prepare(&hw, &problem, &settings)
                         .unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
                     let partitioning = &blueprint.partitioning;
-                    for space in [partitioning.leaf(), partitioning.cube_box()] {
+                    for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
                             whole_steps(&step(&hw, &problem), &space),
                             "{name} at {settings}: {space:?}"
@@ -166,7 +166,7 @@ mod cube_shuffle {
                     };
                     prepared += 1;
                     let partitioning = &blueprint.partitioning;
-                    for space in [partitioning.leaf(), partitioning.cube_box()] {
+                    for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
                             whole_steps(&step(&hw, &problem), &space),
                             "{name} at {settings}: {space:?}"
@@ -228,8 +228,16 @@ mod cube_staged {
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
                 let step = step(&hw, &problem).under(Space::new(&[(M, m), (N, n), (K, k)]));
-                let cube = blueprint.partitioning.cube_box();
-                assert!(whole_steps(&step, &cube), "{name} at {settings}: {cube:?}");
+                let cube_space = blueprint.partitioning.cube_space();
+                assert!(
+                    whole_steps(&step, &cube_space.space),
+                    "{name} at {settings}: {cube_space:?}"
+                );
+                assert_eq!(
+                    blueprint.microkernel.stage(&cube_space),
+                    blueprint.partitioning.stage(),
+                    "{name} at {settings}"
+                );
             }
         }
         assert!(tile_order_prepared > 0, "no setting prepared tile order");
@@ -418,13 +426,18 @@ mod hypercube_last_arrival {
                         continue;
                     };
                     prepared += 1;
-                    let cube_box = blueprint.partitioning.cube_box();
+                    let cube_space = blueprint.partitioning.cube_space();
                     assert!(
-                        whole_steps(&step(&hw, &problem), &cube_box),
-                        "{name} at {settings}: {cube_box:?}"
+                        whole_steps(&step(&hw, &problem), &cube_space.space),
+                        "{name} at {settings}: {cube_space:?}"
                     );
                     assert_eq!(
-                        Some(cube_box.extent(blocked(K).1)),
+                        blueprint.microkernel.cube.stage(&cube_space),
+                        blueprint.partitioning.stage(),
+                        "{name} at {settings}"
+                    );
+                    assert_eq!(
+                        Some(cube_space.extent(blocked(K).1)),
                         block,
                         "{name} at {settings}: a cube's share cuts a block"
                     );

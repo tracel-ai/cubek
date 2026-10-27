@@ -1,10 +1,11 @@
 //! An attention launch's compile-time decisions.
 
+use crate::kernels::AttentionPartitioning;
 use crate::kernels::AttentionRoutineProblem;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, AttentionPartitioning, S};
+use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, S};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 

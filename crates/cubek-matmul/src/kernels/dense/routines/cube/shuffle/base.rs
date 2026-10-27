@@ -1,5 +1,6 @@
 use super::cube_shuffle_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
@@ -9,7 +10,6 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
@@ -86,7 +86,7 @@ impl CubeShuffleMatmulRoutine {
         let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
-        let (cube, leaf) = (&partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
         let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
         let groups = columns / leaf.extent(N) as u64;
         let planes_along_k = microkernel.planes_along_k.get() as u64;
@@ -187,7 +187,7 @@ impl CubeShuffleMatmulRoutine {
         microkernel.plane.check_vectors(&blueprint.widths)?;
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &blueprint.partitioning),
+            shared_memory: microkernel.shared_memory(&item, blueprint.partitioning.cells()),
         };
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
@@ -215,7 +215,7 @@ impl CubeShuffleMatmulRoutine {
         );
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &partitioning),
+            shared_memory: microkernel.shared_memory(&item, partitioning.cells()),
         };
         let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
@@ -423,7 +423,7 @@ mod tests {
         let planes_along_k = microkernel.planes_along_k.get();
         assert_eq!(grid.planes().count, planes_along_k);
         assert_eq!(grid.planes().width, 32);
-        let cube = partitioning.cube_box();
+        let cube = partitioning.cube_space().space;
         assert_eq!(cube.extent(K), 6144);
         assert_eq!(
             grid.shared_memory,

@@ -1,6 +1,7 @@
-use crate::matmul::MatmulPartitioning;
-use crate::matmul::MatmulPlaneLayout;
-use crate::matmul::cube::{CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings};
+use crate::matmul::cube::{
+    CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, MatmulCubeSpace,
+    MatmulPlaneLayout,
+};
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem,
@@ -112,7 +113,7 @@ impl Microkernel for HypercubeStagedMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = HypercubeStagedMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = MatmulPartitioning;
+    type CubeSpace = MatmulCubeSpace;
 
     const DECLINE: &'static str = "the hypercube's cubes meet at their box, which needs a device where one cube's \
          stores reach another within a launch, and planes that each drain their own tile with \
@@ -180,10 +181,10 @@ impl Microkernel for HypercubeStagedMicrokernel {
     /// others, as into an output it alone writes.
     fn vectorize(
         &self,
-        partitioning: &MatmulPartitioning,
+        cube_space: &MatmulCubeSpace,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        self.cube.vectorize(partitioning, vectorization);
+        self.cube.vectorize(cube_space, vectorization);
     }
 
     /// Its cubes' microkernel's, each walking its run of `K` as a staged cube walks a whole box,
@@ -192,12 +193,12 @@ impl Microkernel for HypercubeStagedMicrokernel {
     fn estimate(
         &self,
         item: &MatmulWorkItem,
-        partitioning: &MatmulPartitioning,
+        cube_space: &MatmulCubeSpace,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.cube.estimate(item, partitioning, planes, estimate);
-        let cube = partitioning.cube_box();
+        self.cube.estimate(item, cube_space, planes, estimate);
+        let cube = cube_space.space.clone();
         let size = item.sum.size();
         let carry = GlobalStream {
             bytes: (cube.extent(M) * cube.extent(N) * size) as u64,

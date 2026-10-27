@@ -1,8 +1,10 @@
-use crate::kernels::{CubeStagedMatmulRoutine, MatmulBlueprint, MatmulRoutineProblem};
+use crate::kernels::{
+    CubeStagedMatmulRoutine, MatmulBlueprint, MatmulPartitioning, MatmulRoutineProblem,
+};
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubek_microkernel::matmul::hypercube::HypercubeStagedMicrokernel;
-use cubek_microkernel::matmul::{MatmulOperand, MatmulPartitioning, MatmulWorkItem};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
@@ -22,8 +24,13 @@ pub(super) fn hypercube_blueprint(
 ) -> MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage> {
     match item.blocks {
         None => {
+            assert_eq!(
+                partitioning.as_tile().fillers() as usize,
+                microkernel.cube.fill.filling_planes,
+                "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+            );
             let mut vectorization = Vectorization::new();
-            microkernel.vectorize(&partitioning, &mut vectorization);
+            microkernel.vectorize(&partitioning.cube_space(), &mut vectorization);
             vectorization.require(VectorRequirement::Access {
                 operand: MatmulOperand::Out,
                 elements: hw.vector_ceiling(problem.sum()),

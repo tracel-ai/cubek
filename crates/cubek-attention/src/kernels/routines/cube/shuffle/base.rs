@@ -3,16 +3,17 @@ use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
 };
+use crate::kernels::{AttentionPartitioning, QueryOrder};
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
+use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::{AttentionOperand, AttentionPartitioning, QueryOrder};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -88,7 +89,7 @@ impl Routine for CubeShuffleAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: the cube microkernel places the staging and its planes the work.
@@ -101,7 +102,7 @@ impl Routine for CubeShuffleAttentionRoutine {
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning,
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -278,6 +279,6 @@ mod tests {
             Some(64 / keys)
         );
         assert_eq!(blueprint.partitioning.stage().extent(S), keys);
-        assert_eq!(blueprint.partitioning.cube_box().extent(S), 2048);
+        assert_eq!(blueprint.partitioning.cube_space().extent(S), 2048);
     }
 }

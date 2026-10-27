@@ -1,6 +1,5 @@
-use crate::attention::{
-    AttentionOperand, AttentionOperands, AttentionPartitioning, AttentionWorkItem, G, Q, S,
-};
+use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q, S};
+use cubecl::tile::Space;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
 
 /// How the cubes of a kernel of this kind walk the keys, as the component that places the
@@ -23,19 +22,18 @@ pub struct AttentionStagingCount {
 }
 
 impl AttentionStagingCount {
-    /// Set `estimate`'s staging to what one cube walking its box of `partitioning` this way moves
+    /// Set `estimate`'s staging to what one cube walking the space `cube_space` this way moves
     /// and computes for `item`: its rows' queries and outputs, and every key and value the buffers
     /// hold, each as many times over as it has readers. The attended keys are the device's, so a
     /// cube is counted against the capacity; a box the problem's edge cuts short is counted whole.
     pub fn count(
         &self,
         item: &AttentionWorkItem,
-        partitioning: &AttentionPartitioning,
+        cube_space: &Space,
         estimate: &mut KernelEstimate,
     ) {
-        let cube = partitioning.cube_box();
-        let rows = (cube.extent(Q) * cube.extent(G)) as u64;
-        let keys = cube.extent(S) as u64;
+        let rows = (cube_space.extent(Q) * cube_space.extent(G)) as u64;
+        let keys = cube_space.extent(S) as u64;
         let (head, value) = (item.head_dim as u64, item.val_dim as u64);
         let stream = |operand: AttentionOperand, elements: u64| {
             let size = item.elements.get(operand).size();

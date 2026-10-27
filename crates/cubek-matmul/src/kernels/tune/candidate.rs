@@ -118,7 +118,7 @@ where
         let Some((blueprint, _)) = prepared else {
             return CandidatePriority::LAST;
         };
-        let cube = blueprint.partitioning.cube_box();
+        let cube = blueprint.partitioning.cube_space().space;
         // The priority reads the output block alone; the cube's `K` stands in for the step it does
         // not read: the whole of it, or a cube's run of it where several share a box.
         key.shape().priority(

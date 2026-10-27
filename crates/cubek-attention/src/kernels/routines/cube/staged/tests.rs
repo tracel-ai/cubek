@@ -4,8 +4,8 @@
 mod fragment {
     use super::super::*;
     use crate::kernels::AttentionRoutineProblem;
+    use crate::kernels::QueryOrder;
     use cubecl::tile::launch::Refusal;
-    use cubek_microkernel::attention::QueryOrder;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
@@ -248,7 +248,7 @@ mod fragment {
             .prepare(&hw, &problem, &Settings::DEFAULT)
             .expect("the default prepares on the M2");
         let (cube, stage) = (
-            blueprint.partitioning.cube_box(),
+            blueprint.partitioning.cube_space(),
             blueprint.partitioning.stage(),
         );
         let microkernel = blueprint.microkernel;

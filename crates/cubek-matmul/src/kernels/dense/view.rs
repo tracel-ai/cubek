@@ -1,3 +1,4 @@
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
@@ -5,7 +6,6 @@ use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
     MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
@@ -153,7 +153,7 @@ impl<'a> MatmulView<'a> {
             .build();
         let partitioning = Partitioning::new(self.space(), levels);
         let tile = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        let cube_box = match cubes_along_k.get() {
+        let cube = match cubes_along_k.get() {
             1 => tile,
             // The cube level's own tile is one step of the walked axis where cubes share a box,
             // distributed in runs: the box states the run, as long as the longest cube's.
@@ -175,12 +175,7 @@ impl<'a> MatmulView<'a> {
                 )
             }
         };
-        MatmulPartitioning::new(
-            partitioning,
-            cube_box,
-            distributed_batch_axes,
-            self.rows_kind,
-        )
+        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
     }
 
     /// The axis a cube's run of `K` walks: `K`, or the blocks a block-split space states it in,
@@ -581,7 +576,7 @@ mod tests {
             MatmulView::ONE_CUBE_A_BOX,
         );
         assert_eq!(view.space().extent(EXPERT), 4);
-        assert_eq!(partitioning.cube_box().extent(EXPERT), 1);
+        assert_eq!(partitioning.cube_space().extent(EXPERT), 1);
     }
 
     /// Every batch is handed to the cubes, one of a single batch too, since the table's dims are

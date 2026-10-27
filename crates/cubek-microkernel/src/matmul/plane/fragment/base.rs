@@ -610,7 +610,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = PlaneFragmentMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = ();
+    type CubeSpace = ();
 
     const DECLINE: &'static str = "the plane microkernel's software instruction runs everywhere";
 
