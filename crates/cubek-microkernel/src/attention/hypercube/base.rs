@@ -1,7 +1,6 @@
 use crate::attention::cube::CubeAttentionMicrokernel;
 use crate::attention::hypercube::{
-    HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings, HypercubeMerge,
-    HypercubeMergeShape,
+    HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings, HypercubeMergeShape,
 };
 use crate::split_keys_merge::SlotShape;
 use crate::attention::{
@@ -16,7 +15,7 @@ use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkern
 /// A box of queries of one head several cubes own together: every cube walks its own run of the
 /// keys with the cube microkernel of planes `M`, and each of its planes leaves its queries'
 /// partial in a slot of its own, for the routine to merge into the output where it says the
-/// partials meet ([`HypercubeMerge`]).
+/// partials meet.
 ///
 /// The keys are cut across cubes, and inside each cube across its planes: they are the contracted
 /// axis of `p · value` and the columns of `query · keyᵀ`, so each plane scores only its part of
@@ -112,15 +111,14 @@ impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
             + self.cube.plane.partial_bytes(item, self.cube.layout())
     }
 
-    /// What `merge` is compiled for, over `item`'s value dim and the cubes `partitioning` shares a
+    /// What a merge is compiled for, over `item`'s value dim and the cubes `partitioning` shares a
     /// box between: a slot for every cube, its planes along the keys merged into it before it is
-    /// stored, the merging plane's units, and the queries one merging plane holds, a box's for the
-    /// last arrival and one for a second launch.
+    /// stored, the merging plane's units, and the `seq_q` queries one merging plane holds.
     pub fn merge_shape(
         &self,
         item: &AttentionWorkItem,
         partitioning: &AttentionPartitioning,
-        merge: HypercubeMerge,
+        seq_q: usize,
     ) -> HypercubeMergeShape {
         let cubes = partitioning.cubes_along_keys().get();
         HypercubeMergeShape {
@@ -130,10 +128,7 @@ impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
                 splits: cubes,
             },
             cubes,
-            seq_q: match merge {
-                HypercubeMerge::LastArrival => self.cube.seq_q(),
-                HypercubeMerge::SecondLaunch => 1,
-            },
+            seq_q,
         }
     }
 }

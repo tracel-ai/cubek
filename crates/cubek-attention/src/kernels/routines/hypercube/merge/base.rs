@@ -7,7 +7,7 @@ use cubek_std::Hardware;
 use cubek_std::routine::LaunchSettings;
 
 /// The second launch of a hypercube routine that merges by one
-/// ([`HypercubeMerge::SecondLaunch`](cubek_microkernel::attention::hypercube::HypercubeMerge)):
+/// ([`HypercubeMerge::SecondLaunch`](crate::kernels::HypercubeMerge::SecondLaunch)):
 /// a cube of one plane for every query, at `(q, kv · group + g, b)`, merging the query's slots,
 /// all written by the launch before, into the output.
 pub struct HypercubeSecondLaunch {

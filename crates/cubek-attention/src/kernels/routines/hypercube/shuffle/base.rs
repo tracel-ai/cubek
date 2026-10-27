@@ -1,4 +1,5 @@
 use crate::kernels::{
+    HypercubeMerge,
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionRoutine,
     AttentionRoutineProblem, AttentionTensors,
 };
@@ -9,7 +10,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
 use cubek_microkernel::attention::hypercube::{
-    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings, HypercubeMerge,
+    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
     HypercubeMergeShape,
 };
 use cubek_microkernel::attention::plane::{
@@ -250,7 +251,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         M::validate(
             hw,
             problem,
-            microkernel.merge_shape(&item, &partitioning, M::MERGE),
+            microkernel.merge_shape(&item, &partitioning, M::MERGE.seq_q(&microkernel)),
         )?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
@@ -289,7 +290,7 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeShuffleAttentionMicroke
         let shape = blueprint.microkernel.merge_shape(
             &tensors.problem().work_item(),
             &blueprint.partitioning,
-            M::MERGE,
+            M::MERGE.seq_q(&blueprint.microkernel),
         );
         M::dispatch(tensors, binding, blueprint, grid, shape);
     }
@@ -303,7 +304,7 @@ mod tests {
         HypercubeSecondLaunchShuffleAttentionRoutine,
     };
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::hypercube::HYPERCUBE_CUBES_UNMET;
+    use crate::kernels::HYPERCUBE_CUBES_UNMET;
     use cubek_microkernel::attention::{
         ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS, Q, S,
     };
