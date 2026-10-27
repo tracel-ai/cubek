@@ -154,3 +154,33 @@ fn test_avg_pool2d_backward_ceil_mode() {
         }
     }
 }
+
+#[test]
+fn test_avg_pool2d_backward_dilation_include_pad_ceil_mode() {
+    run_dilated_ceil_case(true);
+}
+
+#[test]
+fn test_avg_pool2d_backward_dilation_exclude_pad_ceil_mode() {
+    run_dilated_ceil_case(false);
+}
+
+fn run_dilated_ceil_case(count_include_pad: bool) {
+    let client = cubecl::test_device().client();
+    // Height windows are disjoint; width windows overlap and only sample odd columns.
+    // Ceil mode also leaves taps beyond the explicit end padding on both axes.
+    let problem = make_problem(
+        [10, 6],
+        Shape::from([2, 3, 3, 4]),
+        false,
+        AvgPoolOptions::new([2, 3], [5, 2], [1, 1], true, count_include_pad).with_dilation([3, 2]),
+    );
+    run_pool_backward_test(
+        client,
+        2468,
+        -10.0,
+        10.0,
+        problem,
+        AVG_POOL2D_BACKWARD_TOLERANCE,
+    );
+}

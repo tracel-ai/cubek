@@ -88,7 +88,8 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
         accumulator: Self::Accumulator,
     ) {
         let (sum, count) = accumulator;
-        output.write(position, sum / Vector::cast_from(count));
+        // A dilated window can miss every input position when padding is excluded.
+        output.write(position, sum / Vector::cast_from(clamp_min(count, 1)));
     }
 }
 
@@ -100,7 +101,7 @@ pub(crate) fn avg_pool2d_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let [_, in_h, in_w, _] = input.shape.dims();
-    let dilation = 1;
+    super::super::validate_dilation(&options.dilation)?;
 
     let vector_size = tensor_vector_size_parallel(
         client
@@ -136,8 +137,8 @@ pub(crate) fn avg_pool2d_launch(
         Pool2dDirectArgsLaunch::new(
             options.window.stride[0] as u32,
             options.window.stride[1] as u32,
-            dilation as u32,
-            dilation as u32,
+            options.dilation[0] as u32,
+            options.dilation[1] as u32,
             options.window.padding[0] as u32,
             options.window.padding[1] as u32,
         ),
