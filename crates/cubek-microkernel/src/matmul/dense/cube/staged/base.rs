@@ -202,9 +202,11 @@ impl CubeStagedMicrokernel {
     }
 
     /// The planes of an item it stages as it lies, a float one or one read as stored: where its
-    /// inputs may be rounded ([`MatmulWorkItem::rounded`]), first every plane on a matrix
-    /// instruction over the rounded inputs, which the fill decodes into its stages; then every
-    /// plane microkernel this device offers for `item`, at the settings' layout and requests.
+    /// inputs may be rounded ([`MatmulWorkItem::rounded`]) and its units copy the stages, first
+    /// every plane on a matrix instruction over the rounded inputs, which the fill decodes into
+    /// its stages as it loads them; then every plane microkernel this device offers for `item`,
+    /// at the settings' layout and requests. A stage the copy engine or the TMA engine fills
+    /// lands as it lies, so nothing decodes it.
     ///
     /// Rounded first, as the multi-level routines promote an `f32` product to tf32 where they
     /// may: on a device whose matrix instructions take no `f32`, the exact planes run the
@@ -227,7 +229,8 @@ impl CubeStagedMicrokernel {
             reads,
         };
         let mut candidates = Vec::new();
-        if let Some(read) = item.rounded() {
+        let decodes = settings.fill.delivery == CubeStagedDelivery::Copy;
+        if let Some(read) = item.rounded().filter(|_| decodes) {
             let reads = MatmulOperands {
                 lhs: MatmulRead::Dequantized(read),
                 rhs: MatmulRead::Dequantized(read),
