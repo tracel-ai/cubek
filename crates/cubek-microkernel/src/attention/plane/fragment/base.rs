@@ -1,7 +1,6 @@
 use super::microkernel::PlaneFragmentAttention;
-use crate::attention::plane::{
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
-};
+use crate::attention::cube::{CubePlaneKeys, CubePlaneLayout, CubePlaneReads};
+use crate::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
 use crate::attention::plane::{InstructionShape, PlaneFragmentAttentionMicrokernelSettings};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionWorkItem, B, D, DV, G, KV, Q, S,

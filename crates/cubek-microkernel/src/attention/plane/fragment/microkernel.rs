@@ -1,7 +1,7 @@
 use super::base::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
+use crate::attention::cube::CubePlaneLayout;
 use crate::attention::plane::{
-    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel,
-    StagedPlaneOperands,
+    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneMicrokernel, StagedPlaneOperands,
 };
 use crate::attention::{D, DV, G, Q, S};
 use crate::matmul::plane::plane_fragment_microkernel;

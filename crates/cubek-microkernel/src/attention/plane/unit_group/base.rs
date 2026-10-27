@@ -1,7 +1,6 @@
 use super::microkernel::PlaneUnitGroupAttention;
-use crate::attention::plane::{
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
-};
+use crate::attention::cube::{CubePlaneKeys, CubePlaneLayout, CubePlaneReads};
+use crate::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
 use crate::attention::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings};
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, Q};
 use cubecl::tile::launch::Vectorization;

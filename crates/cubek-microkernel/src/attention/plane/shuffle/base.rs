@@ -1,6 +1,5 @@
-use crate::attention::plane::{
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads,
-};
+use crate::attention::cube::{CubePlaneKeys, CubePlaneLayout, CubePlaneReads};
+use crate::attention::plane::CubePlaneMicrokernel;
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,

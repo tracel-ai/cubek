@@ -1,8 +1,9 @@
 use crate::attention::cube::CubeAttentionMicrokernel;
+use crate::attention::cube::CubePlaneReads;
 use crate::attention::hypercube::{
     HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings,
 };
-use crate::attention::plane::{CubePlaneMicrokernel, CubePlaneReads};
+use crate::attention::plane::CubePlaneMicrokernel;
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, G, Q};
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
