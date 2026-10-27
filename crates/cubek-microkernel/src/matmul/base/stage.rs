@@ -1,4 +1,4 @@
-use crate::StagedOperand;
+use cubek_std::microkernel::StagedOperand;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulOrder};
 use cubecl::ir::ElemType;

@@ -4,7 +4,7 @@
 //! [`MatmulWorkItem`], its axes and operands, the [`MatmulStep`] every load of a product fills
 //! whole, the [`MatmulMicrokernel`] trait, the [`MatmulPartitioning`] every product places its work
 //! with, and the [`MatmulStage`] a walk through `K` stages, its stages held in the
-//! [`StageRing`](crate::StageRing).
+//! [`StageRing`](cubek_std::microkernel::StageRing).
 
 mod base;
 pub mod cube;

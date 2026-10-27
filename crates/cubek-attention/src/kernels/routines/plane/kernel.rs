@@ -1,6 +1,6 @@
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::StageRing;
+use cubek_std::microkernel::StageRing;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, plane_fragment_attention_microkernel,
 };

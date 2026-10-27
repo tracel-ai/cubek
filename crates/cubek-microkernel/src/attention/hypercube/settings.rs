@@ -1,4 +1,4 @@
-use crate::StageRing;
+use cubek_std::microkernel::StageRing;
 use crate::attention::CubeAttentionStageLayout;
 use crate::attention::cube::CubeAttentionMicrokernelSettings;
 use crate::attention::plane::{

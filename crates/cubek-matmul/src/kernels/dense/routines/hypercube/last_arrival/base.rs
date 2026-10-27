@@ -8,7 +8,7 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::VectorRequirement;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
-use cubek_microkernel::StageRing;
+use cubek_std::microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::cube::CubeStagedDelivery;
@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn declines_the_warpgroup_mma() {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
-        use cubek_microkernel::StageRing;
+        use cubek_std::microkernel::StageRing;
         use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
         use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
 

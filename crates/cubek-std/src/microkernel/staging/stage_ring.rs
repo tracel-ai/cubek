@@ -1,8 +1,8 @@
-use crate::StagedOperand;
+use crate::microkernel::StagedOperand;
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::stage::Prefetch;
-use cubek_std::Hardware;
+use crate::Hardware;
 
 /// How a walk through shared memory holds its stages: a staged cube's, or each plane's own,
 /// whatever operands it stages.

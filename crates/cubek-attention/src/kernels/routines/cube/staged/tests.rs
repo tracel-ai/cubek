@@ -17,7 +17,7 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::StageRing;
+    use cubek_std::microkernel::StageRing;
     use cubek_microkernel::attention::CubeAttentionStageLayout;
     use cubek_microkernel::attention::plane::InstructionShape;
     use cubek_microkernel::attention::plane::{

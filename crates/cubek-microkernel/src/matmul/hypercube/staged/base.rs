@@ -1,4 +1,4 @@
-use crate::StageRing;
+use cubek_std::microkernel::StageRing;
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulPlaneLayout;
 use crate::matmul::cube::{

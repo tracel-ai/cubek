@@ -1,4 +1,4 @@
-use crate::StagedOperand;
+use cubek_std::microkernel::StagedOperand;
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulReading,

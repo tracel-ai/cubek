@@ -1,4 +1,4 @@
-use crate::StageRing;
+use cubek_std::microkernel::StageRing;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Axis, Instruction, Region, Semiring, StageStorage, Stages, Tile};

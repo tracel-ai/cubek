@@ -9,7 +9,7 @@ use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubek_microkernel::StageRing;
+use cubek_std::microkernel::StageRing;
 use cubek_microkernel::matmul::MatmulStep;
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::stored::Packing;

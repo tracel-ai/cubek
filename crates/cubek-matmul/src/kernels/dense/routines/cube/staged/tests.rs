@@ -13,7 +13,7 @@ mod base {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
-    use cubek_microkernel::StageRing;
+    use cubek_std::microkernel::StageRing;
     use cubek_microkernel::matmul::MatmulOperand;
     use cubek_microkernel::matmul::MatmulPartitioning;
     use cubek_microkernel::matmul::MatmulPlaneLayout;

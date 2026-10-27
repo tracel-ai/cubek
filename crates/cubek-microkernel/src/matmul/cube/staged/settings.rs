@@ -1,4 +1,4 @@
-use crate::StageRing;
+use cubek_std::microkernel::StageRing;
 use crate::matmul::MatmulPlaneLayout;
 use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
 use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};

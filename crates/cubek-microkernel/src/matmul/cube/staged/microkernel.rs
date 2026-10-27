@@ -1,5 +1,5 @@
 use super::base::CubeStagedDrain;
-use crate::StageRing;
+use cubek_std::microkernel::StageRing;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{
     PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,

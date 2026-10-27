@@ -1,4 +1,4 @@
-use crate::StageRing;
+use cubek_std::microkernel::StageRing;
 use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings};
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning, AttentionStagingCount, AttentionWorkItem, G, Q, S};
 use crate::attention::plane::{CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads};
