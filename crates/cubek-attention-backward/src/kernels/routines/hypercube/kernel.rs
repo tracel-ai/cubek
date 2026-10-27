@@ -61,11 +61,7 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
         value_gradient.tile(&partitioning),
     );
     let d_q = query_gradient.tile(&partitioning);
-    let visible = VisibleKeys {
-        attended: keys,
-        seq_q: queries,
-        visibility,
-    };
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for cube in &partitioning {
         let first_step = visible.first_query_step(&cube, comptime!(microkernel.seq_q()));

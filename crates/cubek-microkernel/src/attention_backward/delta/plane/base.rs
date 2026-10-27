@@ -56,7 +56,7 @@ impl Microkernel for PlaneDeltaMicrokernel {
     type WorkItem = AttentionBackwardWorkItem;
     type Settings = PlaneDeltaMicrokernelSettings;
     type Operand = AttentionBackwardOperand;
-    type Partitioning = Partitioning;
+    type CubeSpace = Partitioning;
 
     const DECLINE: &'static str = "the plane dot product runs on a device that commits to one plane \
          width";

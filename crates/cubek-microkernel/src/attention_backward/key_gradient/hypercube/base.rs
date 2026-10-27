@@ -99,7 +99,7 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
     type WorkItem = AttentionBackwardWorkItem;
     type Settings = HypercubeKeyGradientMicrokernelSettings;
     type Operand = AttentionBackwardOperand;
-    type Partitioning = Partitioning;
+    type CubeSpace = Partitioning;
 
     const DECLINE: &'static str = PlaneKeyGradientMicrokernel::DECLINE;
 
