@@ -1,5 +1,4 @@
 use super::microkernel::PlaneUnitGroupAttention;
-use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{
     CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
 };
@@ -7,12 +6,12 @@ use crate::attention::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelS
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, Q,
 };
-use crate::matmul::MatmulOrder;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubecl::{self as cubecl, prelude::*};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
+use cubek_std::layout::BindingOrder;
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout};
 
 /// A plane whose units each own rows of one head whole, against the cube's stage: every unit takes
 /// each step of keys into its rows with the unit microkernel's step, in its own registers, the
@@ -100,7 +99,7 @@ impl Microkernel for PlaneUnitGroupAttentionMicrokernel {
 
 impl AttentionMicrokernel for PlaneUnitGroupAttentionMicrokernel {
     /// Its unit's.
-    fn key_order(&self) -> MatmulOrder {
+    fn key_order(&self) -> BindingOrder {
         self.unit.key_order()
     }
 }
@@ -139,7 +138,7 @@ impl CubePlaneMicrokernel for PlaneUnitGroupAttentionMicrokernel {
 
     /// Row-major, whatever the layout: each unit reads its keys and values a row at a time, in no
     /// instruction's tiles.
-    fn stage_storage(&self, _layout: CubeAttentionStageLayout, _stage: &Space) -> StageStorage {
+    fn stage_storage(&self, _layout: StageLayout, _stage: &Space) -> StageStorage {
         StageStorage::Strided
     }
 

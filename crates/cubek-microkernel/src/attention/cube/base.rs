@@ -6,12 +6,12 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
     AttentionStagingCount, AttentionWorkItem, G, Q, S,
 };
-use crate::matmul::MatmulOrder;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -260,7 +260,7 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
 
 impl<M: CubePlaneMicrokernel> AttentionMicrokernel for CubeAttentionMicrokernel<M> {
     /// Its planes' microkernel's.
-    fn key_order(&self) -> MatmulOrder {
+    fn key_order(&self) -> BindingOrder {
         self.plane.key_order()
     }
 

@@ -1,4 +1,3 @@
-use crate::attention::CubeAttentionStageLayout;
 use crate::attention::cube::CubeAttentionMicrokernelSettings;
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
@@ -6,7 +5,7 @@ use crate::attention::plane::{
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubek_std::Hardware;
-use cubek_std::microkernel::StageRing;
+use cubek_std::microkernel::{StageLayout, StageRing};
 
 /// The settings of the cube every cube of the hypercube runs, over planes of the plane
 /// microkernel `P`: its own walk of its run of the keys is a cube's ([`CubeAttentionMicrokernel`](crate::attention::cube::CubeAttentionMicrokernel)),
@@ -25,7 +24,7 @@ impl HypercubeAttentionMicrokernelSettings<PlaneShuffleAttentionMicrokernelSetti
             planes_along_queries: NonZeroUsize::MIN,
             planes_along_keys: NonZeroUsize::MIN,
             ring: StageRing::SINGLE,
-            layout: CubeAttentionStageLayout::Strided,
+            layout: StageLayout::Strided,
         },
     };
 }
@@ -48,7 +47,7 @@ impl HypercubeAttentionMicrokernelSettings<PlaneFragmentAttentionMicrokernelSett
                 planes_along_queries: NonZeroUsize::MIN,
                 planes_along_keys: NonZeroUsize::MIN,
                 ring: StageRing::SINGLE,
-                layout: CubeAttentionStageLayout::Strided,
+                layout: StageLayout::Strided,
             },
     };
 }
@@ -126,7 +125,7 @@ impl HypercubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettin
                         seq_kv: count(keys),
                         ..cube.plane
                     },
-                    layout: CubeAttentionStageLayout::SwizzledBlocks,
+                    layout: StageLayout::SwizzledBlocks,
                     ..cube
                 },
             });

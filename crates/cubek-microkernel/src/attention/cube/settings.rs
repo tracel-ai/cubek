@@ -1,4 +1,3 @@
-use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernelSettings,
@@ -8,7 +7,7 @@ use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::Hardware;
-use cubek_std::microkernel::StageRing;
+use cubek_std::microkernel::{StageLayout, StageRing};
 
 /// The plane microkernel's settings `P`, the heads a cube holds and the planes each head's queries
 /// and keys are laid over, and, where the plane microkernel reads a stage, how the cube holds its
@@ -26,7 +25,7 @@ pub struct CubeAttentionMicrokernelSettings<P> {
     /// How it holds its stages of keys and values.
     pub ring: StageRing,
     /// How each of them is laid out in shared memory.
-    pub layout: CubeAttentionStageLayout,
+    pub layout: StageLayout,
 }
 
 impl CubeAttentionMicrokernelSettings<PlaneFragmentAttentionMicrokernelSettings> {
@@ -38,7 +37,7 @@ impl CubeAttentionMicrokernelSettings<PlaneFragmentAttentionMicrokernelSettings>
         planes_along_queries: NonZeroUsize::new(1).unwrap(),
         planes_along_keys: NonZeroUsize::new(1).unwrap(),
         ring: StageRing::SINGLE,
-        layout: CubeAttentionStageLayout::Strided,
+        layout: StageLayout::Strided,
     };
 }
 
@@ -51,7 +50,7 @@ impl CubeAttentionMicrokernelSettings<PlaneShuffleAttentionMicrokernelSettings> 
         planes_along_queries: NonZeroUsize::new(1).unwrap(),
         planes_along_keys: NonZeroUsize::new(4).unwrap(),
         ring: StageRing::SINGLE,
-        layout: CubeAttentionStageLayout::Strided,
+        layout: StageLayout::Strided,
     };
 }
 
@@ -64,7 +63,7 @@ impl CubeAttentionMicrokernelSettings<UnitAttentionMicrokernelSettings> {
         planes_along_queries: NonZeroUsize::new(1).unwrap(),
         planes_along_keys: NonZeroUsize::new(1).unwrap(),
         ring: StageRing::SINGLE,
-        layout: CubeAttentionStageLayout::Strided,
+        layout: StageLayout::Strided,
     };
 }
 
@@ -125,10 +124,10 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
         ]
         .map(|ring| CubeAttentionMicrokernelSettings { ring, ..lead });
         let layouts = [
-            CubeAttentionStageLayout::PaddedRows,
-            CubeAttentionStageLayout::Blocks,
-            CubeAttentionStageLayout::PaddedBlocks,
-            CubeAttentionStageLayout::SwizzledBlocks,
+            StageLayout::PaddedRows,
+            StageLayout::Blocks,
+            StageLayout::PaddedBlocks,
+            StageLayout::SwizzledBlocks,
         ]
         .map(|layout| CubeAttentionMicrokernelSettings { layout, ..lead });
         let whole = CubeAttentionMicrokernelSettings {
@@ -158,7 +157,7 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
         });
         let swizzled =
             [(2, 4), (2, 8), (1, 8)].map(|(rows, keys)| CubeAttentionMicrokernelSettings {
-                layout: CubeAttentionStageLayout::SwizzledBlocks,
+                layout: StageLayout::SwizzledBlocks,
                 ..fragments(rows, keys)
             });
         // A prompt of few heads leaves the device short of cubes, one a box of queries for every

@@ -10,10 +10,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
+use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOrder};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -132,8 +133,8 @@ impl PlaneShuffleMatmulRoutine {
         };
         // A col rhs's run is a column down all of `K`; a row rhs's, one plane's columns.
         let rhs_run = match microkernel.orders.rhs {
-            MatmulOrder::InBufferOrder => k,
-            MatmulOrder::Stated => columns / grid.planes().count as u64,
+            BindingOrder::InBufferOrder => k,
+            BindingOrder::Stated => columns / grid.planes().count as u64,
         };
         estimate.staging = Some(CubeStaging {
             operations: 2.0 * (rows * columns * k) as f64,

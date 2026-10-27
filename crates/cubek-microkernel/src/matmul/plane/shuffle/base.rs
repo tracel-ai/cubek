@@ -1,13 +1,14 @@
 use crate::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulOrder, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{Spread, Walked};
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{
@@ -63,10 +64,10 @@ pub struct PlaneShuffleMicrokernel {
     /// vector it could bind. A narrower bound vector inlines inside it.
     pub rhs_vector_ceiling: usize,
     /// The order each operand is read in. The rhs's is the axis each unit's step runs along:
-    /// [`InBufferOrder`](MatmulOrder::InBufferOrder) for a col rhs, contiguous along `K`,
-    /// and [`Stated`](MatmulOrder::Stated) for a row rhs, contiguous along `N`; the others are
+    /// [`InBufferOrder`](BindingOrder::InBufferOrder) for a col rhs, contiguous along `K`,
+    /// and [`Stated`](BindingOrder::Stated) for a row rhs, contiguous along `N`; the others are
     /// read as the product names them.
-    pub orders: MatmulOperands<MatmulOrder>,
+    pub orders: MatmulOperands<BindingOrder>,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
     /// The rhs's scale blocks and the step a unit moves in, where it is packed; none for a
@@ -115,10 +116,10 @@ impl PlaneShuffleMicrokernel {
     /// The order this microkernel reads an rhs `layout` lies as in, where it reads it: a col
     /// rhs in its buffer's order, a row rhs as the product names it, and none for an rhs
     /// lined along neither axis.
-    fn order_of(layout: MatmulLayout) -> Option<MatmulOrder> {
+    fn order_of(layout: MatmulLayout) -> Option<BindingOrder> {
         match layout {
-            MatmulLayout::Col => Some(MatmulOrder::InBufferOrder),
-            MatmulLayout::Row => Some(MatmulOrder::Stated),
+            MatmulLayout::Col => Some(BindingOrder::InBufferOrder),
+            MatmulLayout::Row => Some(BindingOrder::Stated),
             MatmulLayout::Strided => None,
         }
     }
@@ -148,9 +149,9 @@ impl PlaneShuffleMicrokernel {
     /// block of more than one column.
     pub fn check_vectors(&self, widths: &MatmulOperands<usize>) -> Result<(), Refusal> {
         match (self.orders.rhs, widths.rhs, self.settings.columns.get()) {
-            (MatmulOrder::InBufferOrder, 0 | 1, _) => Err(Self::COL_RHS_NEEDS_VECTORS_ALONG_K),
-            (MatmulOrder::InBufferOrder, _, 2..) => Err(Self::COL_RHS_ONE_COLUMN_A_UNIT),
-            (MatmulOrder::InBufferOrder | MatmulOrder::Stated, _, _) => Ok(()),
+            (BindingOrder::InBufferOrder, 0 | 1, _) => Err(Self::COL_RHS_NEEDS_VECTORS_ALONG_K),
+            (BindingOrder::InBufferOrder, _, 2..) => Err(Self::COL_RHS_ONE_COLUMN_A_UNIT),
+            (BindingOrder::InBufferOrder | BindingOrder::Stated, _, _) => Ok(()),
         }
     }
 
@@ -162,8 +163,8 @@ impl PlaneShuffleMicrokernel {
         }
         self.settings.columns.get()
             * match self.orders.rhs {
-                MatmulOrder::InBufferOrder => 1,
-                MatmulOrder::Stated => self.rhs_vector_ceiling,
+                BindingOrder::InBufferOrder => 1,
+                BindingOrder::Stated => self.rhs_vector_ceiling,
             }
     }
 
@@ -175,8 +176,8 @@ impl PlaneShuffleMicrokernel {
         }
         self.settings.depth.get()
             * match self.orders.rhs {
-                MatmulOrder::InBufferOrder => self.rhs_vector_ceiling,
-                MatmulOrder::Stated => 1,
+                BindingOrder::InBufferOrder => self.rhs_vector_ceiling,
+                BindingOrder::Stated => 1,
             }
     }
 
@@ -404,8 +405,8 @@ impl PlaneShuffleMicrokernel {
     fn accumulator_scalars(&self) -> usize {
         let cell = match (&self.blocks, self.orders.rhs) {
             (Some(blocks), _) => blocks.space.operand(MatmulOperand::Rhs).read(K),
-            (None, MatmulOrder::InBufferOrder) => self.rhs_vector_ceiling,
-            (None, MatmulOrder::Stated) => 1,
+            (None, BindingOrder::InBufferOrder) => self.rhs_vector_ceiling,
+            (None, BindingOrder::Stated) => 1,
         };
         self.rows * self.columns() * cell
     }
@@ -423,8 +424,8 @@ impl PlaneShuffleMicrokernel {
 impl core::fmt::Display for PlaneShuffleMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let weight = match self.orders.rhs {
-            MatmulOrder::InBufferOrder => "col",
-            MatmulOrder::Stated => "row",
+            BindingOrder::InBufferOrder => "col",
+            BindingOrder::Stated => "row",
         };
         write!(f, "rows={} {} rhs={weight}", self.rows, self.settings)
     }
@@ -500,7 +501,7 @@ impl Microkernel for PlaneShuffleMicrokernel {
             rhs_vector_ceiling: hw.vector_ceiling(item.elements.rhs),
             orders: MatmulOperands {
                 rhs,
-                ..MatmulOperands::all(MatmulOrder::Stated)
+                ..MatmulOperands::all(BindingOrder::Stated)
             },
             axes: item.axes,
             blocks,
@@ -535,8 +536,8 @@ impl Microkernel for PlaneShuffleMicrokernel {
             });
         }
         let rhs_partner = match self.orders.rhs {
-            MatmulOrder::InBufferOrder => MatmulOperand::Lhs,
-            MatmulOrder::Stated => MatmulOperand::Out,
+            BindingOrder::InBufferOrder => MatmulOperand::Lhs,
+            BindingOrder::Stated => MatmulOperand::Out,
         };
         vectorization.require(VectorRequirement::Together {
             operand: MatmulOperand::Rhs,
@@ -564,7 +565,7 @@ impl MatmulMicrokernel for PlaneShuffleMicrokernel {
     /// It holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
     }
 }

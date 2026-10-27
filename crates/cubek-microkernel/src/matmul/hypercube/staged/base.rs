@@ -1,20 +1,20 @@
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulPlaneLayout;
-use crate::matmul::cube::{
-    CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
-};
+use crate::matmul::cube::{CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings};
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
 use crate::matmul::{
-    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
+    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem,
 };
 use cubecl::tile::Scratch;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
+use cubek_std::microkernel::{
+    CubePlanes, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
+};
 
 /// A box of the output several cubes own together: each cube runs a [`CubeStagedMicrokernel`]
 /// over its own run of `K`, and the parts reach the output once, as the routine's
@@ -91,11 +91,11 @@ impl HypercubeStagedMicrokernelSettings {
         }
     }
 
-    /// These settings with each stage's rows in order ([`CubeStagedRows::InOrder`]).
+    /// These settings with each stage's rows in order ([`StageLayout::Blocks`]).
     pub const fn rows_in_order(self) -> Self {
         Self {
             cube: CubeStagedMicrokernelSettings {
-                stage_rows: CubeStagedRows::InOrder,
+                stage_layout: Some(StageLayout::Blocks),
                 ..self.cube
             },
         }
@@ -222,7 +222,7 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
     /// Its cubes' order: their planes read the rhs's tiles out of their stages.
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.cube.orders()
     }
 

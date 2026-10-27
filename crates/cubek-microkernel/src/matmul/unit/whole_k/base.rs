@@ -1,13 +1,14 @@
 use crate::matmul::plane::PlaneShuffleMicrokernel;
 use crate::matmul::{
     MatmulAxes, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands,
-    MatmulOrder, MatmulRows, MatmulRowsKind, MatmulWorkItem,
+    MatmulRows, MatmulRowsKind, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
@@ -26,7 +27,7 @@ pub struct UnitWholeKMicrokernel {
     pub rhs_vector_ceiling: usize,
     /// The order each operand is read in: the rhs along `K` for a col rhs, along `N` for a
     /// row rhs; the others as the product names them.
-    pub orders: MatmulOperands<MatmulOrder>,
+    pub orders: MatmulOperands<BindingOrder>,
     /// The caller's axes its levels are stated along.
     pub axes: MatmulAxes,
 }
@@ -92,10 +93,10 @@ impl UnitWholeKMicrokernel {
     };
 
     /// The order an rhs lying as `layout` is read in, none for one lined along neither axis.
-    fn order_of(layout: MatmulLayout) -> Option<MatmulOrder> {
+    fn order_of(layout: MatmulLayout) -> Option<BindingOrder> {
         match layout {
-            MatmulLayout::Col => Some(MatmulOrder::InBufferOrder),
-            MatmulLayout::Row => Some(MatmulOrder::Stated),
+            MatmulLayout::Col => Some(BindingOrder::InBufferOrder),
+            MatmulLayout::Row => Some(BindingOrder::Stated),
             MatmulLayout::Strided => None,
         }
     }
@@ -110,9 +111,9 @@ impl UnitWholeKMicrokernel {
     /// block of more than one column.
     pub fn check_vectors(&self, widths: &MatmulOperands<usize>) -> Result<(), Refusal> {
         match (self.orders.rhs, widths.rhs, self.settings.columns.get()) {
-            (MatmulOrder::InBufferOrder, 0 | 1, _) => Err(Self::COL_RHS_NEEDS_VECTORS_ALONG_K),
-            (MatmulOrder::InBufferOrder, _, 2..) => Err(Self::COL_RHS_ONE_COLUMN_A_UNIT),
-            (MatmulOrder::InBufferOrder | MatmulOrder::Stated, _, _) => Ok(()),
+            (BindingOrder::InBufferOrder, 0 | 1, _) => Err(Self::COL_RHS_NEEDS_VECTORS_ALONG_K),
+            (BindingOrder::InBufferOrder, _, 2..) => Err(Self::COL_RHS_ONE_COLUMN_A_UNIT),
+            (BindingOrder::InBufferOrder | BindingOrder::Stated, _, _) => Ok(()),
         }
     }
 
@@ -121,8 +122,8 @@ impl UnitWholeKMicrokernel {
     pub fn columns(&self) -> usize {
         self.settings.columns.get()
             * match self.orders.rhs {
-                MatmulOrder::InBufferOrder => 1,
-                MatmulOrder::Stated => self.rhs_vector_ceiling,
+                BindingOrder::InBufferOrder => 1,
+                BindingOrder::Stated => self.rhs_vector_ceiling,
             }
     }
 
@@ -131,8 +132,8 @@ impl UnitWholeKMicrokernel {
     pub fn depth(&self) -> usize {
         self.settings.depth.get()
             * match self.orders.rhs {
-                MatmulOrder::InBufferOrder => self.rhs_vector_ceiling,
-                MatmulOrder::Stated => 1,
+                BindingOrder::InBufferOrder => self.rhs_vector_ceiling,
+                BindingOrder::Stated => 1,
             }
     }
 
@@ -166,8 +167,8 @@ impl UnitWholeKMicrokernel {
     /// a line of partials summed on drain.
     fn accumulator_scalars(&self) -> usize {
         let cell = match self.orders.rhs {
-            MatmulOrder::InBufferOrder => self.rhs_vector_ceiling,
-            MatmulOrder::Stated => 1,
+            BindingOrder::InBufferOrder => self.rhs_vector_ceiling,
+            BindingOrder::Stated => 1,
         };
         self.rows * self.columns() * cell
     }
@@ -184,8 +185,8 @@ impl UnitWholeKMicrokernel {
 impl core::fmt::Display for UnitWholeKMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let weight = match self.orders.rhs {
-            MatmulOrder::InBufferOrder => "col",
-            MatmulOrder::Stated => "row",
+            BindingOrder::InBufferOrder => "col",
+            BindingOrder::Stated => "row",
         };
         write!(f, "rows={} {} rhs={weight}", self.rows, self.settings)
     }
@@ -240,7 +241,7 @@ impl Microkernel for UnitWholeKMicrokernel {
                 rhs_vector_ceiling: hw.vector_ceiling(item.elements.rhs),
                 orders: MatmulOperands {
                     rhs,
-                    ..MatmulOperands::all(MatmulOrder::Stated)
+                    ..MatmulOperands::all(BindingOrder::Stated)
                 },
                 axes: item.axes,
             })
@@ -259,8 +260,8 @@ impl Microkernel for UnitWholeKMicrokernel {
             });
         }
         let rhs_partner = match self.orders.rhs {
-            MatmulOrder::InBufferOrder => MatmulOperand::Lhs,
-            MatmulOrder::Stated => MatmulOperand::Out,
+            BindingOrder::InBufferOrder => MatmulOperand::Lhs,
+            BindingOrder::Stated => MatmulOperand::Out,
         };
         vectorization.require(VectorRequirement::Together {
             operand: MatmulOperand::Rhs,
@@ -288,7 +289,7 @@ impl MatmulMicrokernel for UnitWholeKMicrokernel {
     /// It holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
     }
 }

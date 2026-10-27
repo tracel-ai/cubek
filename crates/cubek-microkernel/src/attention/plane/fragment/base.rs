@@ -1,18 +1,17 @@
 use super::microkernel::PlaneFragmentAttention;
-use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{
     CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
 };
 use crate::attention::plane::{InstructionShape, PlaneFragmentAttentionMicrokernelSettings};
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, D, DV, G, Q,
-    S,
+    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, B, D, DV, G,
+    KV, Q, S,
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
-use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOrder, MatmulWorkItem};
+use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
@@ -20,9 +19,11 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Level, Levels, Space, StageStorage};
 use cubecl::{self as cubecl, features::MmaConfig, prelude::*};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::manual_mma;
 use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
+    StageLayout, UnitWork,
 };
 
 /// A box of rows of one head a plane owns: their scores against a stage of keys in the fragments
@@ -53,12 +54,6 @@ pub struct PlaneFragmentAttentionMicrokernel {
 pub const ROW_STATE_HELD_BY_UNIT: Refusal = Refusal::Declined {
     why: "planes whose rows merge with another holder's read the score through their \
               windows: a score kept in fragments leaves each unit its own rows' state",
-};
-
-/// What a cube declines where its stages are swizzled and its planes read the score through
-/// windows: a cmma fragment loads a tile off a pointer and a stride.
-pub const SWIZZLED_STAGE_UNREAD: Refusal = Refusal::Declined {
-    why: "a cmma fragment reads a stage tile by a stride, which swizzled tiles do not keep",
 };
 
 /// Where a plane keeps a stage's score between its two multiplications.
@@ -358,7 +353,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
 
 impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
     /// The score's: a fragment loads a block of keys col-major where it lies.
-    fn key_order(&self) -> MatmulOrder {
+    fn key_order(&self) -> BindingOrder {
         self.score.orders().rhs
     }
 
@@ -452,13 +447,15 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
         }
     }
 
-    /// In the instructions' tiles where the layout blocks it: the keys' rows by the score's `n`
-    /// and the value's `k`, whichever is longer, the head dim by the score's `k`, and the value
-    /// dim by the value's `n`.
-    fn stage_storage(&self, layout: CubeAttentionStageLayout, stage: &Space) -> StageStorage {
+    /// In the instructions' tiles where the layout blocks it: one batch and one head of keys,
+    /// the keys' rows by the score's `n` and the value's `k`, whichever is longer, the head dim by
+    /// the score's `k`, and the value dim by the value's `n`.
+    fn stage_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
         layout.storage(
             stage,
-            [
+            vec![
+                (B, 1),
+                (KV, 1),
                 (
                     S,
                     self.score
@@ -491,17 +488,15 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
     ///
     /// Swizzled tiles where it reads the score through its windows: a cmma fragment loads a tile
     /// off a pointer and a stride, which a swizzled row does not have.
-    fn reads_stage(&self, layout: CubeAttentionStageLayout) -> Result<(), Refusal> {
+    fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
         match (layout, self.score_holder()) {
-            (CubeAttentionStageLayout::SwizzledBlocks, ScoreHolder::Window) => {
-                Err(SWIZZLED_STAGE_UNREAD)
-            }
+            (StageLayout::SwizzledBlocks, ScoreHolder::Window) => Err(SWIZZLED_STAGE_UNREAD),
             (
-                CubeAttentionStageLayout::Strided
-                | CubeAttentionStageLayout::PaddedRows
-                | CubeAttentionStageLayout::Blocks
-                | CubeAttentionStageLayout::PaddedBlocks
-                | CubeAttentionStageLayout::SwizzledBlocks,
+                StageLayout::Strided
+                | StageLayout::PaddedRows
+                | StageLayout::Blocks
+                | StageLayout::PaddedBlocks
+                | StageLayout::SwizzledBlocks,
                 _,
             ) => Ok(()),
         }

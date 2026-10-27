@@ -2,8 +2,8 @@ use crate::matmul::MatmulPartitioning;
 use crate::matmul::MatmulStage;
 use crate::matmul::cube::MatmulCubeWrite;
 use crate::matmul::cube::{
-    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedRows,
-    CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal,
+    CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedStore,
+    CubeStagedWalk, CubeStagedWgmmaRefusal,
 };
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
@@ -11,7 +11,7 @@ use crate::matmul::plane::{
 };
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
-    MatmulOrder, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use crate::matmul::{MatmulPlaneLayout, MatmulStagingCount};
 use core::num::NonZeroUsize;
@@ -21,10 +21,10 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_axes::{K, KB, M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, StageRing};
 
 /// A box of the output one cube owns: it stages the box's rows of the lhs and columns of the rhs
 /// a step of `K` at a time, and its planes each run a [`PlaneFragmentMicrokernel`] out of every
@@ -53,8 +53,9 @@ pub struct CubeStagedMicrokernel {
     pub ring: StageRing,
     /// Who fills them.
     pub fill: CubeStagedFill,
-    /// How a stage lays out the rows its fragments load.
-    pub stage_rows: CubeStagedRows,
+    /// How a stage lays out the rows its fragments load: the layout its units copy it in, or
+    /// none where a box lands it.
+    pub stage_layout: Option<StageLayout>,
     /// Who stores its box of the output.
     pub store: CubeStagedStore,
     /// What one stage spans along the contraction.
@@ -224,7 +225,7 @@ impl CubeStagedMicrokernel {
             scratch: settings.scratch,
             ring: settings.ring,
             fill: settings.fill,
-            stage_rows: settings.stage_rows,
+            stage_layout: settings.stage_layout,
             store: settings.store,
             depth: CubeStagedDepth::Steps,
             reads,
@@ -333,7 +334,7 @@ impl CubeStagedMicrokernel {
                 scratch: settings.scratch,
                 ring: settings.ring,
                 fill: settings.fill,
-                stage_rows: settings.stage_rows,
+                stage_layout: settings.stage_layout,
                 store: settings.store,
                 depth: CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?),
                 reads: item.decoding_reads(),
@@ -488,28 +489,23 @@ impl CubeStagedMicrokernel {
         {
             return Err(refusal.into());
         }
-        // A box lands a stage as one run of whole rows; the units copy it into the instruction's
-        // own blocks, their rows laid as the setting says. A layout that lays nothing differently,
-        // a box's landing or the software instruction's strided stage, is no decision of its own:
-        // resolved as spread, its launch is its spread twin's, and a table sees one launch rather
-        // than timing it twice.
-        let (storage, stage_rows) = match fill.delivery {
-            CubeStagedDelivery::Tma => (landed, CubeStagedRows::Spread),
+        // A box lands a stage as one run of whole rows; the units copy it in the layout the
+        // setting names, or the instruction's own. Resolved to the layout it lays, a setting that
+        // names the instruction's own, or any layout under the software instruction's strided
+        // stage, launches as its twin does, and a table sees one launch rather than timing it
+        // twice.
+        let (storage, stage_layout) = match fill.delivery {
+            CubeStagedDelivery::Tma => (landed, None),
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
-                let spread = self.plane.stage_storage(&stage);
-                let laid = self.stage_rows.lay(spread.clone());
-                let stage_rows = match laid == spread {
-                    true => CubeStagedRows::Spread,
-                    false => self.stage_rows,
-                };
-                (laid, stage_rows)
+                let layout = instruction.stage_layout(self.stage_layout)?;
+                (self.plane.stage_storage(layout, &stage), Some(layout))
             }
         };
         let microkernel = Self {
             scratch,
             ring,
             fill,
-            stage_rows,
+            stage_layout,
             store,
             ..self
         };
@@ -626,7 +622,7 @@ impl Microkernel for CubeStagedMicrokernel {
     /// reaches its instruction.
     ///
     /// Then the default's grid on two by two planes and the small cube four fragments deep on two
-    /// planes, each with its stage's rows in order ([`CubeStagedRows::InOrder`]): a col rhs's
+    /// planes, each with its stage's rows in order ([`StageLayout::Blocks`]): a col rhs's
     /// fragments load down `K`, where the padding that spreads a row rhs's loads across banks
     /// can cost more than the conflicts it saves.
     ///
@@ -683,7 +679,7 @@ impl Microkernel for CubeStagedMicrokernel {
         ]
         .map(|(grid, planes)| boxed(grid, planes));
         let in_order = |settings: Self::Settings| Self::Settings {
-            stage_rows: CubeStagedRows::InOrder,
+            stage_layout: Some(StageLayout::Blocks),
             ..settings
         };
         let rows_in_order = [layouts[0], small_cubes[2]].map(in_order);
@@ -971,7 +967,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
     /// Its planes' order: they read the rhs's tiles out of its stages.
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.plane.orders
     }
 

@@ -1,4 +1,3 @@
-use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{
     CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads,
 };
@@ -6,13 +5,13 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
     AttentionStagingCount, AttentionWorkItem, G, Q, S,
 };
-use crate::matmul::MatmulOrder;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
 };
 
 /// A few rows of one head a plane owns in its units' registers, the head and value dims split
@@ -203,8 +202,8 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
 
 impl AttentionMicrokernel for PlaneShuffleAttentionMicrokernel {
     /// A unit reads a key's lines along the head dim, as the keys lie.
-    fn key_order(&self) -> MatmulOrder {
-        MatmulOrder::InBufferOrder
+    fn key_order(&self) -> BindingOrder {
+        BindingOrder::InBufferOrder
     }
 }
 
@@ -254,7 +253,7 @@ impl CubePlaneMicrokernel for PlaneShuffleAttentionMicrokernel {
     }
 
     /// Row-major, whatever the layout: its steps read no stage.
-    fn stage_storage(&self, _layout: CubeAttentionStageLayout, _stage: &Space) -> StageStorage {
+    fn stage_storage(&self, _layout: StageLayout, _stage: &Space) -> StageStorage {
         StageStorage::Strided
     }
 }

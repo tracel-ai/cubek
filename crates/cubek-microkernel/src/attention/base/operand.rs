@@ -1,6 +1,6 @@
 use crate::attention::{D, DV, S};
-use crate::matmul::MatmulOrder;
 use cubecl::tile::Axis;
+use cubek_std::layout::BindingOrder;
 
 /// One of the operands of `out = softmax(query · keyᵀ · scale) · value`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -21,10 +21,10 @@ impl AttentionOperand {
 
     /// The axis this operand is bound innermost along, the keys in `key_order`: the one its lines
     /// run along.
-    pub fn innermost(self, key_order: MatmulOrder) -> Axis {
+    pub fn innermost(self, key_order: BindingOrder) -> Axis {
         match (self, key_order) {
-            (Self::Query, _) | (Self::Key, MatmulOrder::InBufferOrder) => D,
-            (Self::Key, MatmulOrder::Stated) => S,
+            (Self::Query, _) | (Self::Key, BindingOrder::InBufferOrder) => D,
+            (Self::Key, BindingOrder::Stated) => S,
             (Self::Value, _) | (Self::Out, _) => DV,
         }
     }

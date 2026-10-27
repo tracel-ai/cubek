@@ -261,9 +261,12 @@ impl Routine for PlaneFragmentMatmulRoutine {
                 .operands(item.elements, microkernel.orders),
             plane_width as usize,
         );
-        let stage = microkernel
-            .instruction
-            .stage_storage(partitioning.batch_axes(), MatmulAxes::MNK);
+        let stage = microkernel.instruction.stage_layout(None)?.storage(
+            partitioning.stage().space(),
+            microkernel
+                .instruction
+                .stage_tile(partitioning.batch_axes(), MatmulAxes::MNK),
+        );
         let planes = settings.planes.count();
         let cube = CubeResources {
             plane_width,

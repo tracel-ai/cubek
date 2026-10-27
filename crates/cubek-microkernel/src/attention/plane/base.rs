@@ -1,9 +1,9 @@
-use crate::attention::CubeAttentionStageLayout;
 use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::{AttentionMicrokernel, AttentionWorkItem};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Levels, Region, Space, StageStorage, Tile, Walk};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
+use cubek_std::microkernel::StageLayout;
 
 /// A plane microkernel as the cube holds it: the box one plane owns, where its steps read their
 /// keys and values, and the shared memory each plane holds beside the cube's.
@@ -50,7 +50,7 @@ pub trait CubePlaneMicrokernel:
 
     /// The storage the cube holds a stage over `stage` of the keys and values its steps read in,
     /// laid out as `layout`: blocked into the tiles its steps read.
-    fn stage_storage(&self, layout: CubeAttentionStageLayout, stage: &Space) -> StageStorage;
+    fn stage_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage;
 
     /// Bytes of shared memory a cube laid out as `layout` holds for its planes to leave their
     /// rows in slots ([`CubePlaneAttention::store_partial`]).
@@ -78,7 +78,7 @@ pub trait CubePlaneMicrokernel:
     /// # Errors
     ///
     /// Why it cannot.
-    fn reads_stage(&self, _layout: CubeAttentionStageLayout) -> Result<(), Refusal> {
+    fn reads_stage(&self, _layout: StageLayout) -> Result<(), Refusal> {
         Ok(())
     }
 }

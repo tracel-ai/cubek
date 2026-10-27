@@ -4,14 +4,15 @@ use crate::matmul::plane::{
     PlaneShuffleMicrokernelSettings,
 };
 use crate::matmul::{
-    MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRead,
-    MatmulRowsKind, MatmulWorkItem,
+    MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRead, MatmulRowsKind,
+    MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Space};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -515,10 +516,10 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
 
     /// Its planes' orders: a float rhs's as the plane shuffle binds it, a packed rhs's
     /// words over the axes the product names.
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => plane.orders,
-            CubeShufflePlane::Fragment(_) => MatmulOperands::all(MatmulOrder::Stated),
+            CubeShufflePlane::Fragment(_) => MatmulOperands::all(BindingOrder::Stated),
         }
     }
 }

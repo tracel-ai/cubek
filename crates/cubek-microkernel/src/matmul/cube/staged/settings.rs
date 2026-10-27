@@ -2,8 +2,8 @@ use crate::matmul::MatmulPlaneLayout;
 use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
 use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
-use cubecl::tile::{Scratch, StageStorage, stage::RowChunks};
-use cubek_std::microkernel::StageRing;
+use cubecl::tile::Scratch;
+use cubek_std::microkernel::{StageLayout, StageRing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedMicrokernelSettings {
@@ -20,8 +20,12 @@ pub struct CubeStagedMicrokernelSettings {
     pub ring: StageRing,
     /// Who fills them.
     pub fill: CubeStagedFill,
-    /// How a stage lays out the rows its fragments load.
-    pub stage_rows: CubeStagedRows,
+    /// How a stage lays out the rows its fragments load: as the setting names, or as the
+    /// instruction reads its own stage where it names none
+    /// ([`PlaneFragmentInstruction::stage_layout`](crate::matmul::plane::PlaneFragmentInstruction::stage_layout)).
+    /// Which reads faster depends on the device and on which way the operands run, so it is a
+    /// setting a table races rather than a rule.
+    pub stage_layout: Option<StageLayout>,
     /// Who stores its box of the output.
     pub store: CubeStagedStore,
 }
@@ -36,7 +40,7 @@ impl CubeStagedMicrokernelSettings {
         scratch: Scratch::OneTile,
         ring: StageRing::SINGLE,
         fill: CubeStagedFill::BY_UNITS,
-        stage_rows: CubeStagedRows::Spread,
+        stage_layout: None,
         store: CubeStagedStore::Fragments,
     };
 
@@ -82,7 +86,7 @@ impl CubeStagedMicrokernelSettings {
             scratch: Scratch::None,
             ring,
             fill: CubeStagedFill::BY_UNITS,
-            stage_rows: CubeStagedRows::Spread,
+            stage_layout: None,
             store: CubeStagedStore::Fragments,
         }
     }
@@ -144,8 +148,8 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch or spread rows, so the settings that
-/// hold them keep their names.
+/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout, so
+/// the settings that hold them keep their names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.planes)?;
@@ -156,37 +160,9 @@ impl core::fmt::Display for CubeStagedMicrokernelSettings {
             write!(f, " scratch={}", self.scratch)?;
         }
         write!(f, "{}{}", self.ring, self.fill)?;
-        if self.stage_rows == CubeStagedRows::InOrder {
-            write!(f, " rows=in-order")?;
+        if let Some(layout) = self.stage_layout {
+            write!(f, "{layout}")?;
         }
         write!(f, "{}", self.store)
-    }
-}
-
-/// How a stage lays out the rows a matrix instruction's fragments load from it.
-///
-/// Spread is the instruction's own layout, which keeps the rows one load reads on distinct
-/// shared memory banks: `cmma`'s rows padded by a chunk, `mma`'s chunks swizzled
-/// ([`PlaneFragmentInstruction::stage_storage`](crate::matmul::plane::PlaneFragmentInstruction::stage_storage)).
-/// In order is the rows as they lie, which costs bank conflicts and saves the padding's bytes and
-/// strides. Which reads faster depends on the device and on which way the operands run, so it is a
-/// setting a table races rather than a rule. Under `mma` it races the swizzle the same way. The
-/// software instruction reads a strided stage either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubeStagedRows {
-    Spread,
-    InOrder,
-}
-
-impl CubeStagedRows {
-    /// `storage`, the instruction's stage, with its rows laid out this way.
-    pub fn lay(self, storage: StageStorage) -> StageStorage {
-        match (self, storage) {
-            (Self::InOrder, StageStorage::Tiled { block, .. }) => StageStorage::Tiled {
-                block,
-                chunks: RowChunks::InOrder,
-            },
-            (Self::Spread, storage) | (Self::InOrder, storage) => storage,
-        }
     }
 }

@@ -1,8 +1,8 @@
 use crate::matmul::cube::CubeMeet;
 use crate::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use crate::matmul::{
-    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulPartitioning,
-    MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulRowsKind,
+    MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
@@ -10,6 +10,7 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::{Axis, Levels, Space};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -239,7 +240,7 @@ impl MatmulMicrokernel for CubeTileGroupMicrokernel {
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
     /// The packed rhs is bound over the axes the product names, its words where they lie.
-    fn orders(&self) -> MatmulOperands<MatmulOrder> {
-        MatmulOperands::all(MatmulOrder::Stated)
+    fn orders(&self) -> MatmulOperands<BindingOrder> {
+        MatmulOperands::all(BindingOrder::Stated)
     }
 }

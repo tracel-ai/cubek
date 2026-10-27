@@ -6,12 +6,12 @@ use crate::attention::plane::{CubePlaneMicrokernel, CubePlaneReads};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, G, Q,
 };
-use crate::matmul::MatmulOrder;
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Vectorization;
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 
 /// A box of queries of one head several cubes own together: every cube walks its own run of the
@@ -156,7 +156,7 @@ where
     M::Settings: HypercubeAttentionPlaneSettings,
 {
     /// Its cube's.
-    fn key_order(&self) -> MatmulOrder {
+    fn key_order(&self) -> BindingOrder {
         self.cube.key_order()
     }
 
