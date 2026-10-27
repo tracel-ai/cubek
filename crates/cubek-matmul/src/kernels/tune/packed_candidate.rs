@@ -14,6 +14,12 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;
 
+/// What a [`MatmulPackedCandidate`] declines: two float inputs, which its settings were not listed
+/// for.
+pub const PACKED_SETTING_FLOAT_INPUTS: Refusal = Refusal::Declined {
+    why: "a setting listed for a packed input reads one, and both inputs are float",
+};
+
 /// What a packed setting contracts on, the one thing of it a packed key's priority reads.
 pub trait PackedContraction {
     /// Whether it contracts on matrix instructions, whose fragments take several of the product's
@@ -85,7 +91,8 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     ///
     /// # Errors
     ///
-    /// As [`MatmulRoutine::launch_into`].
+    /// [`PACKED_SETTING_FLOAT_INPUTS`] where neither input is packed, before compiling anything,
+    /// and as [`MatmulRoutine::launch_into`].
     pub fn launch_into<M: MatmulMicrokernel, SM>(
         &self,
         client: &Client,
@@ -96,6 +103,9 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
+        if let (StoredTensor::Plain(_), StoredTensor::Plain(_)) = (&lhs, &rhs) {
+            return Err(PACKED_SETTING_FLOAT_INPUTS);
+        }
         self.routine
             .launch_into(&self.hw, client, lhs, rhs, out, &self.settings)
     }
