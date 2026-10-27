@@ -9,8 +9,8 @@ use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, N};
 
-use crate::kernels::routed::RoutedMatmulKey;
-use crate::kernels::stack::{SlabAxis, SlabView};
+use crate::kernels::indexed::routed::RoutedMatmulKey;
+use crate::kernels::indexed::stack::{SlabAxis, SlabView};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::OperandLayout;
 use crate::kernels::{
@@ -80,7 +80,7 @@ impl RoutedMatmulTensors {
         );
         let lhs_shape = lhs.shape();
         assert_eq!(lhs_shape.rank(), 2, "a routed lhs is `[rows, k]`");
-        let [k, _] = along.slab_of(stack_extents(&rhs), experts);
+        let [k, _] = along.slab_shape(&rhs, experts);
         assert_eq!(lhs_shape[1], k, "the rows contract against one slab");
         let routes_shape = routes.shape();
         let slots = *routes_shape
@@ -244,7 +244,7 @@ impl RoutedMatmulTensors {
             },
             entries: self.routes.as_rows(rows, slots),
         };
-        Ok((lhs, self.stack()?, table))
+        Ok((lhs, self.along.read_slabs(&self.rhs, self.experts)?, table))
     }
 
     /// `out`, the product's `[rows, slots, n]`, as the dense routines write it: each row's slot a
@@ -255,27 +255,8 @@ impl RoutedMatmulTensors {
             .viewed(Metadata::new([rows, slots, 1, n], [slots * n, n, n, 1]))
     }
 
-    /// The stack as the product reads it: a float one as its slabs, `[experts, k, n]` over the
-    /// buffer it lies in, a packed one its words and scales read slab by slab.
-    fn stack(&self) -> Result<StoredTensor, Refusal> {
-        match &self.rhs {
-            StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
-                packed.clone().stacked(self.experts, self.along.axis())?,
-            )),
-            StoredTensor::Plain(rhs) => {
-                let slabs = SlabView::new(rhs, self.experts, self.along);
-                Ok(StoredTensor::Plain(slabs.slabs_of(rhs)))
-            }
-        }
-    }
-
     /// One slab's `[k, n]`.
     fn slab_shape(&self) -> [usize; 2] {
-        self.along.slab_of(stack_extents(&self.rhs), self.experts)
+        self.along.slab_shape(&self.rhs, self.experts)
     }
-}
-
-/// The stack's `[k, n]`, all its slabs together.
-pub(crate) fn stack_extents(stack: &StoredTensor) -> [usize; 2] {
-    [K, N].map(|axis| stack.extent([K, N], axis))
 }

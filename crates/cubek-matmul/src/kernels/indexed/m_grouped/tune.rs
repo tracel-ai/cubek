@@ -4,7 +4,7 @@
 //! ([`MGroupedMatmulTensors`]). A packed stack is read packed. Any rows grouped by the slab they
 //! read are one such product, not only an expert layer's.
 //!
-//! Its gradient for the stack is the K-grouped product, [`k_grouped`](crate::kernels::k_grouped).
+//! Its gradient for the stack is the K-grouped product, [`k_grouped`](crate::kernels::indexed::k_grouped).
 
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
@@ -17,12 +17,12 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
 use serde::{Deserialize, Serialize};
 
-use crate::kernels::grouped_rows::{GroupedRows, PaddedRows, RouteSort, upload};
-use crate::kernels::m_grouped::{
+use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort, upload};
+use crate::kernels::indexed::m_grouped::{
     MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind, MGroupedSettings,
 };
+use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
-use crate::kernels::stack::SlabAxis;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
 use crate::kernels::{
@@ -219,9 +219,9 @@ mod tests {
     use cubecl::std::tensor::TensorHandle;
 
     use super::evenly_spread;
-    use crate::kernels::grouped_rows::{GroupedRows, PaddedRows, RouteSort, upload};
-    use crate::kernels::m_grouped::{MGroupedMatmulTensors, MGroupedRowSource};
-    use crate::kernels::stack::SlabAxis;
+    use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort, upload};
+    use crate::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedRowSource};
+    use crate::kernels::indexed::stack::SlabAxis;
     use crate::kernels::tensor::{PlainTensor, StoredTensor};
 
     /// `tensor`, `u32`, read back.

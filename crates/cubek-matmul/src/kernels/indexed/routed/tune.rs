@@ -15,9 +15,9 @@ use cubek_std::autotune::{Autotune, GroupPriority};
 use cubek_std::routine::Routine;
 use serde::{Deserialize, Serialize};
 
-use crate::kernels::routed::RoutedMatmulTensors;
+use crate::kernels::indexed::routed::RoutedMatmulTensors;
+use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
-use crate::kernels::stack::SlabAxis;
 use crate::kernels::tune::key::OperandLayout;
 use crate::kernels::{
     MatmulRoutine, PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,

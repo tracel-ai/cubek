@@ -12,7 +12,7 @@ use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_microkernel::staging::StageRing;
 use cubek_std::Hardware;
 
-use crate::kernels::k_grouped::KGroupedMatmulTensors;
+use crate::kernels::indexed::k_grouped::KGroupedMatmulTensors;
 use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings};
 
 /// The setting a K-grouped product runs at: the dense default's box, one instruction deep, so a

@@ -2,6 +2,7 @@
 //! the tensors, blueprint and routine trait, the routines by scope in `routines`, and the product
 //! that decodes a packed input ahead of one of them ([`DequantizedMatmulRoutine`]).
 
+mod binding;
 mod blueprint;
 mod counters;
 mod cube_order;
@@ -14,6 +15,7 @@ mod routines;
 mod tensors;
 mod view;
 
+pub use binding::*;
 pub use blueprint::*;
 pub use cube_order::*;
 pub use dequantized::*;
