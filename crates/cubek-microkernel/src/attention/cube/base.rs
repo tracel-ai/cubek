@@ -1,4 +1,4 @@
-use crate::attention::output::cube::{
+use crate::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
 use crate::attention::{

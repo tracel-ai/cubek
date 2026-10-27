@@ -7,12 +7,12 @@ use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::attention::output::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::output::hypercube::{
+use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings, HypercubeMerge,
     HypercubeMergeShape,
 };
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{AttentionOperand, AttentionPartitioning, QueryOrder};
@@ -303,7 +303,7 @@ mod tests {
         HypercubeSecondLaunchShuffleAttentionRoutine,
     };
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::output::hypercube::HYPERCUBE_CUBES_UNMET;
+    use cubek_microkernel::attention::hypercube::HYPERCUBE_CUBES_UNMET;
     use cubek_microkernel::attention::{
         ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS, Q, S,
     };

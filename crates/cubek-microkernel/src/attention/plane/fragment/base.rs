@@ -1,6 +1,6 @@
 use super::microkernel::PlaneFragmentAttention;
 use crate::attention::CubeAttentionStageLayout;
-use crate::attention::output::plane::{
+use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
 };
 use crate::attention::{

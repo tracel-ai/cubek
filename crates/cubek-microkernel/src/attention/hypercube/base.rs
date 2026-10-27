@@ -1,5 +1,5 @@
-use crate::attention::output::cube::CubeAttentionMicrokernel;
-use crate::attention::output::hypercube::{
+use crate::attention::cube::CubeAttentionMicrokernel;
+use crate::attention::hypercube::{
     HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings, HypercubeMerge,
     HypercubeMergeShape,
 };
