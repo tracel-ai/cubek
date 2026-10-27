@@ -4,6 +4,7 @@ mod cmma;
 mod elements;
 mod indexed;
 mod integers;
+mod packed;
 mod storage;
 
 #[cfg(feature = "benchmarks")]
