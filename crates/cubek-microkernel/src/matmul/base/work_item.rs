@@ -204,24 +204,35 @@ impl MatmulWorkItem {
         }
     }
 
-    /// This item with both inputs read as they are stored, where both are packed into values that
-    /// name an element (`e2m1`): what an instruction that reads packed values and their scales as
-    /// they lie contracts, the block-scaled one. `None` where an input is float, or packed into
-    /// values no element names.
+    /// This item with its packed inputs read as they are stored, where each is packed into values
+    /// that name an element (`e2m1`), and its float input, if any, as it is: what a plane that
+    /// reads packed values and their scales as they lie contracts, the block-scaled instruction
+    /// over two such inputs, or a fragment that decodes one as it loads beside a float one.
+    /// `None` where an input is packed into values no element names.
     pub fn as_stored(&self) -> Option<Self> {
         let blocks = self.blocks?;
-        let stored = |packing: Option<Packing>| match packing?.scheme.value {
-            QuantValue::E2M1 => Some(ElemType::Float(FloatKind::E2M1)),
-            _ => None,
+        let stored = |packing: Option<Packing>, element: ElemType| match packing {
+            None => Some(element),
+            Some(packing) => match packing.scheme.value {
+                QuantValue::E2M1 => Some(ElemType::Float(FloatKind::E2M1)),
+                _ => None,
+            },
         };
         Some(Self {
             elements: MatmulOperands {
-                lhs: stored(blocks.packings.lhs)?,
-                rhs: stored(blocks.packings.rhs)?,
+                lhs: stored(blocks.packings.lhs, self.elements.lhs)?,
+                rhs: stored(blocks.packings.rhs, self.elements.rhs)?,
                 out: self.elements.out,
             },
             ..*self
         })
+    }
+
+    /// Whether both inputs are stored in `e2m1`, which only the block-scaled instruction reads as
+    /// they lie.
+    pub fn both_stored_in_e2m1(&self) -> bool {
+        let e2m1 = ElemType::Float(FloatKind::E2M1);
+        self.elements.lhs == e2m1 && self.elements.rhs == e2m1
     }
 
     /// Whether a stage of this item keeps an operand's block scales beside its values: an operand
