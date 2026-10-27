@@ -731,20 +731,6 @@ impl<Out> MatmulTensors<Out> {
     pub fn client(&self) -> &Client {
         &self.client
     }
-
-    /// The launcher over the blueprint's partitioning, as its kernel compiles it: the blocks in,
-    /// and the rows inside the one block along `M` read at launch where they are tiled.
-    fn packed_launcher<Mk, SM>(
-        &self,
-        blueprint: &MatmulBlueprint<Mk, SM>,
-        grid: &Grid,
-    ) -> Launcher {
-        grid.launcher(
-            self.client(),
-            blueprint.partitioning.kernel(),
-            blueprint.partitioning.as_tile().space(),
-        )
-    }
 }
 
 impl<Out: MatmulOutput> MatmulTensors<Out> {
@@ -855,6 +841,23 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             ([1, _], [1, _]) => MatmulLayout::Col,
             _ => MatmulLayout::Strided,
         }
+    }
+
+    /// The launcher over the blueprint's partitioning, as its kernel compiles it: the blocks in,
+    /// and the rows inside the one block along `M` read at launch where they are tiled and no
+    /// packed input's scales vary along them ([`MatmulBlocks::scaled_axes`]).
+    fn packed_launcher<Mk, SM>(
+        &self,
+        blueprint: &MatmulBlueprint<Mk, SM>,
+        grid: &Grid,
+    ) -> Launcher {
+        grid.launcher(
+            self.client(),
+            blueprint
+                .partitioning
+                .kernel_compiling(&self.blocks().scaled_axes()),
+            blueprint.partitioning.as_tile().space(),
+        )
     }
 
     /// The block-split space a packed input puts the product in.

@@ -151,14 +151,17 @@ pub fn generate_vector_size(
     {
         let supported_vector_sizes = client.io_optimized_vector_sizes(dtype.size());
         let num_reduce = output.shape.iter().copied().product::<usize>();
-        // The SIMD output write must stay within a single contiguous run of
-        // scalars. Excluding the reduce axis bounds the run so that for
-        // multi-accumulator outputs (topk/argtopk) a vector cannot cross k-slot
-        // boundaries, while for regular reductions (where the reduce axis has
-        // shape 1) the bound collapses to the full contiguous output run.
+        // The SIMD output write must tile a single contiguous run of scalars.
+        // Excluding the reduce axis bounds the run so that for multi-accumulator
+        // outputs (topk/argtopk) a vector cannot cross k-slot boundaries, which
+        // takes a vector size dividing the run, not only one fitting in it. For
+        // regular reductions (where the reduce axis has shape 1) the bound
+        // collapses to the full contiguous output run.
         let max_run = output_contiguous_run(&output.shape, &output.strides, axis);
         vector_size_output = supported_vector_sizes
-            .filter(|&vector_size| num_reduce % vector_size == 0 && vector_size <= max_run)
+            .filter(|&vector_size| {
+                num_reduce.is_multiple_of(vector_size) && max_run.is_multiple_of(vector_size)
+            })
             .max()
             .unwrap_or(1);
     }

@@ -44,6 +44,19 @@ pub struct MatmulBlocks {
 }
 
 impl MatmulBlocks {
+    /// The axes inside the blocks that some packed input's scales vary along: the tile engine
+    /// windows a factor through extents it knows at expansion, so a launch compiles these in
+    /// ([`MatmulPartitioning::kernel_compiling`](crate::matmul::MatmulPartitioning::kernel_compiling)).
+    /// A packed lhs's scales vary along its rows, a packed rhs's along its columns, and both along
+    /// `K`.
+    pub fn scaled_axes(&self) -> Vec<Axis> {
+        MatmulOperand::INPUTS
+            .into_iter()
+            .filter(|&operand| self.packings.get(operand).is_some())
+            .flat_map(|operand| operand.dims().map(|dim| MatmulAxes::INSIDE_BLOCKS.of(dim)))
+            .collect()
+    }
+
     /// What one read of `operand` and of its scales brings: a float one's a value, no scales.
     pub fn operand(&self, operand: MatmulOperand) -> Operand {
         self.packings
@@ -238,4 +251,46 @@ pub enum MatmulDestination {
     /// A call each line of the product is handed to, with no address and nothing to read back: a
     /// fused element-wise tail runs in it. It is written a line at a time, each cell once.
     Sink,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matmul::tile_order;
+    use cubek_std::matmul_axes::{KI, MI, NI};
+
+    /// The NVFP4 packing a tile-order operand carries, packed down `k`.
+    fn nvfp4() -> Option<Packing> {
+        Some(Packing {
+            operand: Operand::packed(K, 8, K, tile_order::BLOCK, 4),
+            scheme: tile_order::scheme(),
+        })
+    }
+
+    fn blocks(packings: MatmulOperands<Option<Packing>>) -> MatmulBlocks {
+        MatmulBlocks {
+            packings,
+            m: 33,
+            n: 4096,
+            k: 4096,
+        }
+    }
+
+    /// The rows inside the one block along `M` are left to the launch only where no scale varies
+    /// along them: a packed rhs's scales leave them free, a packed lhs's compile them in, as the
+    /// tile engine windows the lhs's scales through their extent at expansion.
+    #[test]
+    fn only_a_packed_lhs_compiles_its_rows_in() {
+        let rhs = blocks(MatmulOperands {
+            rhs: nvfp4(),
+            ..MatmulOperands::all(None)
+        });
+        assert_eq!(rhs.scaled_axes(), [KI, NI]);
+        let both = blocks(MatmulOperands {
+            lhs: nvfp4(),
+            rhs: nvfp4(),
+            out: None,
+        });
+        assert_eq!(both.scaled_axes(), [MI, KI, KI, NI]);
+    }
 }
