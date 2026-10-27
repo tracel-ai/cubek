@@ -350,7 +350,7 @@ impl PackedTensor {
                             .scales_per(blocks_axis),
                     )
                     // A whole read of the scales at once: a word of them.
-                    .vectorize(operand.scale_read_values());
+                    .vectorize(1); // EXPERIMENT: one scale a read
                 quantized_arg(
                     &self.scheme,
                     words,
