@@ -6,7 +6,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
 use cubek_microkernel::attention::plane::PlaneShuffleAttention;
 use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
-use cubek_microkernel::attention::{AttentionVisibility, B, VisibleKeys};
+use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
@@ -20,6 +20,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
+    mask: ComptimeOption<&TileArg<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -29,6 +30,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
+    let mask = mask.map(|mask| mask.tile(&partitioning));
     let key = TileStepReads::<E> {
         tile: key.tile(&partitioning),
         element: PhantomData,
@@ -41,7 +43,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
-    let visible = VisibleKeys::new(len, first_step.origin(B), queries, visibility);
+    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
         comptime!(microkernel.cube.seq_q()),
@@ -85,6 +87,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
+    mask: ComptimeOption<&TileArg<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -94,6 +97,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
+    let mask = mask.map(|mask| mask.tile(&partitioning));
     let key = PackedStepReads {
         tile: key.tile(&partitioning),
         fixup: key_fixup.map(|fixup| fixup.tile(&partitioning)),
@@ -106,7 +110,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     let run = partitioning.walk();
     let first_step = run.region(0);
     let q = query.tile(&partitioning);
-    let visible = VisibleKeys::new(len, first_step.origin(B), queries, visibility);
+    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
         comptime!(microkernel.cube.seq_q()),

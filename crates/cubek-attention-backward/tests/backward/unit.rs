@@ -5,7 +5,7 @@ use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 
 /// Two heads of their own key heads, more keys than queries, and no step that divides the
@@ -19,6 +19,7 @@ const CASE: Case = Case {
     head_dim: 16,
     val_dim: 8,
     visibility: AttentionVisibility::Attended,
+    hidden: None,
 };
 
 /// The routine at its lead setting on `case`, in `element`, against the host within `tolerance`.
@@ -59,7 +60,9 @@ fn the_unit_routine_masks_causally() {
     run(
         Case {
             seq_q: 21,
-            visibility: AttentionVisibility::Causal,
+            visibility: AttentionVisibility::Causal {
+                queries: QueryPlacement::Last,
+            },
             ..CASE
         },
         f32::elem_type_native(),
@@ -75,6 +78,7 @@ fn the_unit_routine_masks_a_sliding_window() {
             seq_q: 21,
             visibility: AttentionVisibility::Windowed {
                 window: NonZeroUsize::new(5).unwrap(),
+                queries: QueryPlacement::Last,
             },
             ..CASE
         },

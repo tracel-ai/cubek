@@ -80,6 +80,9 @@ pub struct AttentionKey {
     /// Positions a page holds where the keys and values are read through a page table: a paged
     /// read costs what a dense one does not, so a winner measured on one does not serve the other.
     page_size: Option<usize>,
+    /// Whether a mask tensor narrows the keys each query sees: its read is a cost per score
+    /// the unmasked launch does not pay.
+    masked: bool,
 }
 
 impl AttentionKey {
@@ -172,8 +175,11 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
         let group = key.group().ok_or(ATTENTION_GROUP_UNEVEN)?;
         let (element, head) = (key.elem(), key.head_dim());
         let rows = |innermost: usize| ElemAlignment::new(&[1, innermost], &[innermost, 1]);
-        let (group, queries, visibility) =
-            QueryAxis::new(key.seq_q()).read(group, key.seq_q(), key.visibility());
+        let (group, queries, visibility) = QueryAxis::new(key.seq_q(), key.visibility()).read(
+            group,
+            key.seq_q(),
+            key.visibility(),
+        );
         Ok(Self {
             batch: key.batch(),
             num_kv_heads: key.num_kv_heads(),

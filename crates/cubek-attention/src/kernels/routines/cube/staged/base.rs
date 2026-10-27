@@ -214,6 +214,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane>
                 value,
                 binding.out.arg(),
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
+                binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),

@@ -20,7 +20,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
-use cubek_microkernel::attention::{AttentionMicrokernel, AttentionVisibility};
+use cubek_microkernel::attention::{AttentionMicrokernel, AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
@@ -34,7 +34,10 @@ const PROMPT: Case = Case {
     seq_kv: 37,
     head_dim: 32,
     val_dim: 32,
-    visibility: AttentionVisibility::Causal,
+    visibility: AttentionVisibility::Causal {
+        queries: QueryPlacement::Last,
+    },
+    hidden: None,
 };
 
 /// A single position of the same heads, which the forward walks the group of as its queries.
@@ -44,14 +47,47 @@ const DECODE: Case = Case {
     ..PROMPT
 };
 
-/// `reference`'s inputs as a forward attention's tensors, asking for each query's logsumexp.
+/// The prompt with its queries placed first among the keys: query `i` sees the keys up to `i`.
+const PROMPT_PLACED_FIRST: Case = Case {
+    visibility: AttentionVisibility::Causal {
+        queries: QueryPlacement::First,
+    },
+    ..PROMPT
+};
+
+/// A mask that differs from head to head, so a routine reading another head's cells is caught. It
+/// never hides the first key, which a query placed first may be the only one to see.
+fn stripes([_batch, head, query, key]: [usize; 4]) -> bool {
+    key > 0 && (query + 2 * key + 3 * head).is_multiple_of(5)
+}
+
+/// The prompt under a mask, on top of its causal diagonal.
+const PROMPT_MASKED: Case = Case {
+    hidden: Some(stripes),
+    ..PROMPT
+};
+
+/// The prompt under a mask, its queries placed first.
+const PROMPT_MASKED_PLACED_FIRST: Case = Case {
+    hidden: Some(stripes),
+    ..PROMPT_PLACED_FIRST
+};
+
+/// A single position under a mask, its group's heads walked as its queries.
+const DECODE_MASKED: Case = Case {
+    hidden: Some(stripes),
+    ..DECODE
+};
+
+/// `reference`'s inputs as a forward attention's tensors, asking for each query's logsumexp,
+/// under the case's mask where it has one, stored as `u32` cells.
 fn forward_tensors(client: &Client, case: Case, reference: &Reference) -> AttentionTensors {
     let [query, key, value] = reference.inputs.clone().map(PlainTensor::of_handle);
     let lengths = TestInput::builder(client.clone(), Shape::new([1]))
         .dtype(u32::elem_type_native())
         .custom(vec![case.seq_kv as f32])
         .generate_without_host_data();
-    AttentionTensors::new(
+    let tensors = AttentionTensors::new(
         client,
         query,
         key,
@@ -63,7 +99,29 @@ fn forward_tensors(client: &Client, case: Case, reference: &Reference) -> Attent
         },
     )
     .expect("the case's tensors are verified")
-    .with_logsumexp()
+    .with_logsumexp();
+    match case.hidden {
+        Some(hidden) => {
+            let (batch, heads, queries, keys) = (case.batch, case.heads, case.seq_q, case.seq_kv);
+            let mut cells = Vec::with_capacity(batch * heads * queries * keys);
+            for b in 0..batch {
+                for h in 0..heads {
+                    for i in 0..queries {
+                        for j in 0..keys {
+                            cells.push(hidden([b, h, i, j]) as u32 as f32);
+                        }
+                    }
+                }
+            }
+            let mask =
+                TestInput::builder(client.clone(), Shape::new([batch, heads, queries, keys]))
+                    .dtype(u32::elem_type_native())
+                    .custom(cells)
+                    .generate_without_host_data();
+            tensors.with_mask(PlainTensor::of_handle(mask))
+        }
+        None => tensors,
+    }
 }
 
 /// `routine` at `settings` on `case`, its logsumexp against the host's; a routine this device
@@ -155,6 +213,64 @@ fn the_hypercube_routines_write_the_logsumexp() {
         HypercubeLastArrivalShuffleAttentionRoutine::new(),
         None,
         DECODE,
+    );
+}
+
+/// Every routine of many positions hides what a diagonal placed first and a mask hide, alone and
+/// together: its logsumexp is the host's over the keys the case leaves seen.
+#[test]
+fn every_prompt_routine_hides_what_a_mask_and_a_first_placed_diagonal_hide() {
+    for case in [
+        PROMPT_PLACED_FIRST,
+        PROMPT_MASKED,
+        PROMPT_MASKED_PLACED_FIRST,
+    ] {
+        check_logsumexp("unit", UnitAttentionRoutine, None, case);
+        check_logsumexp("plane", PlaneFragmentAttentionRoutine, None, case);
+        check_logsumexp(
+            "cube-fragment",
+            CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
+            None,
+            case,
+        );
+        check_logsumexp(
+            "cube-unit-group",
+            CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new(),
+            None,
+            case,
+        );
+        check_logsumexp("cube-shuffle", CubeShuffleAttentionRoutine, None, case);
+        check_logsumexp(
+            "hypercube-second-launch-fragment",
+            HypercubeSecondLaunchFragmentAttentionRoutine,
+            None,
+            case,
+        );
+    }
+}
+
+/// Every routine of a single position hides what a mask hides, each head of the group reading
+/// its own cells.
+#[test]
+fn every_decode_routine_hides_what_a_mask_hides() {
+    check_logsumexp("unit", UnitAttentionRoutine, None, DECODE_MASKED);
+    check_logsumexp(
+        "cube-shuffle",
+        CubeShuffleAttentionRoutine,
+        None,
+        DECODE_MASKED,
+    );
+    check_logsumexp(
+        "hypercube-second-launch-shuffle",
+        HypercubeSecondLaunchShuffleAttentionRoutine::new(),
+        None,
+        DECODE_MASKED,
+    );
+    check_logsumexp(
+        "hypercube-last-arrival-shuffle",
+        HypercubeLastArrivalShuffleAttentionRoutine::new(),
+        None,
+        DECODE_MASKED,
     );
 }
 
