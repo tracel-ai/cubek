@@ -242,7 +242,7 @@ impl CubeStagedFillingRefusal {
         scratch: Scratch,
         planes_along_k: NonZeroUsize,
     ) -> Option<Self> {
-        if delivery != CubeStagedDelivery::Tma {
+        if delivery == CubeStagedDelivery::AsyncCopy {
             Some(Self::CopiedByUnits)
         } else if item.stages_scales_beside() {
             Some(Self::ScalesCopiedByUnits)

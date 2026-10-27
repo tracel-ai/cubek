@@ -159,8 +159,26 @@ impl CubeStagedMicrokernel {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
             });
+        // EXPERIMENT: the boxes beside one or two planes set aside to decode their stages, two and
+        // three stages in flight.
+        let set_aside = [StageRing::DOUBLE, StageRing::TRIPLE]
+            .into_iter()
+            .flat_map(|ring| {
+                Self::PACKED_BOXES
+                    .into_iter()
+                    .flat_map(move |(steps, planes)| {
+                        [1, 2].map(|filling_planes| {
+                            CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
+                                .through(crate::matmul::plane::PlaneFragmentTransport::Mma)
+                                .filled(CubeStagedDelivery::Copy, filling_planes)
+                        })
+                    })
+            });
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
-        for candidate in boxed.chain(Self::packed_one_step_settings()) {
+        for candidate in boxed
+            .chain(set_aside)
+            .chain(Self::packed_one_step_settings())
+        {
             let merges = candidate.planes_along_k.get() > 1;
             if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
                 settings.push(candidate);
