@@ -1,6 +1,6 @@
 use super::base::UnitAttentionMicrokernel;
 use crate::attention::{DV, S};
-use crate::matmul::dense::unit::unit_registers_microkernel;
+use crate::matmul::unit::unit_registers_microkernel;
 use cubecl::tile::{Region, Semiring, Tile, ops::softmax::OnlineSoftmax};
 use cubecl::{self as cubecl, cube, prelude::*};
 

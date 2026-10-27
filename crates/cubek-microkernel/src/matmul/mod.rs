@@ -1,6 +1,6 @@
-//! The matmul microkernels, in [`dense`]: the one product, whichever of its inputs are packed. It
-//! holds its microkernels in a folder per scope, named by algorithm, beside what only they share.
-//! Beside them, what every matmul-shaped microkernel reads, attention's included: the
+//! The matmul microkernels: the one product, `lhs · rhs`, whichever of its inputs are packed, a
+//! folder per scope ([`unit`](mod@unit), [`plane`], [`cube`], [`hypercube`]), each named by
+//! algorithm. Beside them, what every matmul-shaped microkernel reads, attention's included: the
 //! [`MatmulWorkItem`] and its axes and layouts, the [`MatmulMicrokernel`] trait, the operands it
 //! names and how a packed one is stored ([`stored`], [`tile_order`]), the [`MatmulPartitioning`] every product
 //! places its work with, stated over a packed product's block-split space too ([`MatmulSpace`]),
@@ -9,15 +9,18 @@
 
 mod axes;
 mod buffers;
-pub mod dense;
+pub mod cube;
+pub mod hypercube;
 mod layout;
 mod matmul_microkernel;
 mod operand;
 mod partitioning;
+pub mod plane;
 pub mod staged_walk;
 mod step;
 pub mod stored;
 pub mod tile_order;
+pub mod unit;
 mod work_item;
 
 pub use axes::*;

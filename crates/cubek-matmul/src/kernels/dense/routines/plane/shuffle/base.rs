@@ -11,7 +11,7 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::plane::{
+use cubek_microkernel::matmul::plane::{
     PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
 };
 use cubek_microkernel::matmul::stored::Packing;
@@ -445,7 +445,7 @@ mod tests {
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::MatmulOperands;
-    use cubek_microkernel::matmul::dense::plane::PlaneShuffleKSplit;
+    use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_microkernel::matmul::stored::Operand;
     use cubek_std::devices;
 

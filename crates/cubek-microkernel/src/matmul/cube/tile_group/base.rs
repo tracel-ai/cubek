@@ -1,5 +1,5 @@
-use crate::matmul::dense::cube::CubeMeet;
-use crate::matmul::dense::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
+use crate::matmul::cube::CubeMeet;
+use crate::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulPartitioning,
     MatmulRowsKind, MatmulStep, MatmulWorkItem,

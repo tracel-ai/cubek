@@ -1,4 +1,4 @@
-use crate::matmul::dense::cube::{CubeStagedDelivery, CubeStagedFill};
+use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
 

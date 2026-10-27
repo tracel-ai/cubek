@@ -1,8 +1,8 @@
 use crate::matmul::MatmulPartitioning;
-use crate::matmul::dense::cube::{
+use crate::matmul::cube::{
     CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedRows,
 };
-use crate::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
+use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
 use crate::matmul::staged_walk::MatmulPlaneLayout;
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,

@@ -1,5 +1,5 @@
 use crate::matmul::MatmulPartitioning;
-use crate::matmul::dense::plane::{
+use crate::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
     PlaneShuffleMicrokernelSettings,
 };

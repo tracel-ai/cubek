@@ -4,7 +4,7 @@ use crate::attention::plane::{
     PlaneShuffleAttentionMicrokernelSettings,
 };
 use crate::attention::unit::UnitAttentionMicrokernelSettings;
-use crate::matmul::dense::plane::PlaneFragmentTransport;
+use crate::matmul::plane::PlaneFragmentTransport;
 use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;

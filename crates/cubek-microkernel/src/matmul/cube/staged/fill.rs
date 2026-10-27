@@ -1,5 +1,5 @@
 use crate::matmul::MatmulPartitioning;
-use crate::matmul::dense::plane::PlaneFragmentMicrokernel;
+use crate::matmul::plane::PlaneFragmentMicrokernel;
 use crate::matmul::staged_walk::MatmulStage;
 use crate::matmul::{MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use crate::StageRing;
@@ -143,7 +143,7 @@ pub enum CubeStagedFillingRefusal {
 impl CubeStagedTmaRefusal {
     /// Why `hw` cannot deliver the `stage` of `item`'s product, over buffers as `buffers` states
     /// them, held as `storage` (the instruction's
-    /// [`landed_stage_storage`](crate::matmul::dense::plane::PlaneFragmentInstruction::landed_stage_storage)),
+    /// [`landed_stage_storage`](crate::matmul::plane::PlaneFragmentInstruction::landed_stage_storage)),
     /// by the TMA engine, to `microkernel`'s fragments through `ring`; `None` where it can.
     #[allow(clippy::too_many_arguments)]
     pub fn new(

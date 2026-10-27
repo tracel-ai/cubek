@@ -31,11 +31,11 @@ use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedRows, CubeStagedStore,
 };
-use cubek_microkernel::matmul::dense::plane::{
+use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
 use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
@@ -243,7 +243,7 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// Registers the compiler adds around a plane's lower bound
-    /// ([`registers_per_unit`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel::registers_per_unit)):
+    /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
     /// addressing, loop state and the scale registers. A margin rather than a derivation, since
     /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.

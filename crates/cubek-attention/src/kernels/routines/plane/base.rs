@@ -284,7 +284,7 @@ mod tests {
     use cubek_microkernel::attention::plane::ScoreHolder;
     use cubek_microkernel::attention::{D, G};
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

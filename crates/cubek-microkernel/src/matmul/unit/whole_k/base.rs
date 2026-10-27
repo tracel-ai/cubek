@@ -1,4 +1,4 @@
-use crate::matmul::dense::plane::PlaneShuffleMicrokernel;
+use crate::matmul::plane::PlaneShuffleMicrokernel;
 use crate::matmul::{
     MatmulAxes, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulRows, MatmulRowsKind, MatmulWorkItem,

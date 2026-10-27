@@ -1,4 +1,4 @@
-use crate::matmul::dense::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
+use crate::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
 use crate::matmul::stored::{Spread, Walked};
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,

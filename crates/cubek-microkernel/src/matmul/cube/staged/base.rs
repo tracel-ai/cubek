@@ -1,9 +1,9 @@
 use crate::matmul::MatmulPartitioning;
-use crate::matmul::dense::cube::{
+use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedRows,
     CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal,
 };
-use crate::matmul::dense::plane::{
+use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
@@ -649,7 +649,7 @@ impl Microkernel for CubeStagedMicrokernel {
     ///
     /// Never the narrow step, which changes what the product computes, a thing a race on time
     /// alone cannot weigh
-    /// ([`PlaneFragmentStepSum::Narrow`](crate::matmul::dense::plane::PlaneFragmentStepSum::Narrow)).
+    /// ([`PlaneFragmentStepSum::Narrow`](crate::matmul::plane::PlaneFragmentStepSum::Narrow)).
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         use PlaneFragmentMicrokernelSettings as Plane;
         use PlaneFragmentTransport::{Mma, Wgmma};

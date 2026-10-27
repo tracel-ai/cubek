@@ -1,7 +1,7 @@
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::dense::unit::{
+use cubek_microkernel::matmul::unit::{
     UnitRegistersMicrokernel, unit_registers_microkernel,
 };
 

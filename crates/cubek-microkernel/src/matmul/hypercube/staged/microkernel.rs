@@ -1,4 +1,4 @@
-use crate::matmul::dense::cube::{CubeStagedWalk, cube_staged_sum_microkernel};
+use crate::matmul::cube::{CubeStagedWalk, cube_staged_sum_microkernel};
 use cubecl::tile::{
     StageStorage, Tile, Walk,
     launch::{LastArrival, Relay},

@@ -1,6 +1,6 @@
 use super::base::CubeStagedDrain;
-use crate::matmul::dense::cube::CubeStagedStore;
-use crate::matmul::dense::plane::{
+use crate::matmul::cube::CubeStagedStore;
+use crate::matmul::plane::{
     PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
@@ -238,7 +238,7 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
 /// plane fills the stages a step of `K` at a time and contracts its tile out of each with the
 /// plane microkernel, and nothing drains. A run that arrives as boxes adds each into one sum, as a
 /// hypercube's cube walks its run
-/// ([`hypercube_staged_relay_microkernel`](crate::matmul::dense::hypercube::hypercube_staged_relay_microkernel())).
+/// ([`hypercube_staged_relay_microkernel`](crate::matmul::hypercube::hypercube_staged_relay_microkernel())).
 #[cube]
 pub fn cube_staged_sum_microkernel<EL: Numeric>(
     run: Walk,

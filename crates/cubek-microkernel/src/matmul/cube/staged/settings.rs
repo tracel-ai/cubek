@@ -1,5 +1,5 @@
-use crate::matmul::dense::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
-use crate::matmul::dense::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
+use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use crate::matmul::staged_walk::MatmulPlaneLayout;
 use crate::StageRing;
 use core::num::NonZeroUsize;
@@ -167,7 +167,7 @@ impl core::fmt::Display for CubeStagedMicrokernelSettings {
 ///
 /// Spread is the instruction's own layout, which keeps the rows one load reads on distinct
 /// shared memory banks: `cmma`'s rows padded by a chunk, `mma`'s chunks swizzled
-/// ([`PlaneFragmentInstruction::stage_storage`](crate::matmul::dense::plane::PlaneFragmentInstruction::stage_storage)).
+/// ([`PlaneFragmentInstruction::stage_storage`](crate::matmul::plane::PlaneFragmentInstruction::stage_storage)).
 /// In order is the rows as they lie, which costs bank conflicts and saves the padding's bytes and
 /// strides. Which reads faster depends on the device and on which way the operands run, so it is a
 /// setting a table races rather than a rule. Under `mma` it races the swizzle the same way. The

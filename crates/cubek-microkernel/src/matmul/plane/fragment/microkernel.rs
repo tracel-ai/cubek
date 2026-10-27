@@ -1,4 +1,4 @@
-use crate::matmul::dense::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
 use crate::matmul::{MatmulOperands, MatmulRead};
 use crate::StageRing;
 use cubecl::tile::{Axis, Instruction, Region, Semiring, StageStorage, Stages, Tile};

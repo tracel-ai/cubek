@@ -2,7 +2,7 @@ use crate::attention::AttentionMicrokernel;
 use crate::attention::{
     AttentionOperand, AttentionPartitioning, AttentionWorkItem, D, DV, G, Q, S,
 };
-use crate::matmul::dense::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
+use crate::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulOrder, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;

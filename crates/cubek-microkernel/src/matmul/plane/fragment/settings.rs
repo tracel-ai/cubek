@@ -1,4 +1,4 @@
-use crate::matmul::dense::plane::{PlaneFragmentStepSum, PlaneFragmentTransport};
+use crate::matmul::plane::{PlaneFragmentStepSum, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 
 /// The steps a plane holds along `m` and `n`, and how many steps of `K` it walks per stage, each

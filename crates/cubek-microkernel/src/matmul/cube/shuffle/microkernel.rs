@@ -1,5 +1,5 @@
 use super::base::CubeMeet;
-use crate::matmul::dense::plane::plane_shuffle_microkernel;
+use crate::matmul::plane::plane_shuffle_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Axis, Instruction, Region, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};

@@ -12,7 +12,7 @@ use crate::kernels::{
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
-use cubek_microkernel::matmul::dense::plane::{
+use cubek_microkernel::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
 use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
@@ -334,7 +334,7 @@ mod tests {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
 
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentInstruction;
+    use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

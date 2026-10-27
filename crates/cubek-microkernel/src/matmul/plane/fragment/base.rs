@@ -5,7 +5,7 @@ use crate::matmul::{
 use cubecl::tile::launch::Refusal;
 use cubek_std::{Hardware, Instructions, manual_mma};
 
-use crate::matmul::dense::plane::{
+use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
 };
@@ -562,7 +562,7 @@ impl PlaneFragmentMicrokernel {
     /// granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
     /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
     /// read. The cube walking it adds what only its fill decides
-    /// ([`CubeStagedMicrokernel::resolve`](crate::matmul::dense::cube::CubeStagedMicrokernel::resolve)).
+    /// ([`CubeStagedMicrokernel::resolve`](crate::matmul::cube::CubeStagedMicrokernel::resolve)).
     fn wgmma(
         hw: &Hardware,
         item: &MatmulWorkItem,

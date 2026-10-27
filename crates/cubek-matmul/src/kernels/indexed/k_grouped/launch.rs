@@ -6,8 +6,8 @@
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
-use cubek_microkernel::matmul::dense::cube::{CubeStagedFill, CubeStagedMicrokernelSettings};
-use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
+use cubek_microkernel::matmul::cube::{CubeStagedFill, CubeStagedMicrokernelSettings};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
 use cubek_microkernel::StageRing;
 use cubek_std::Hardware;

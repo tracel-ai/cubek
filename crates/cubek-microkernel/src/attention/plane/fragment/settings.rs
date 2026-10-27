@@ -1,4 +1,4 @@
-use crate::matmul::dense::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
+use crate::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentTransport};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 
