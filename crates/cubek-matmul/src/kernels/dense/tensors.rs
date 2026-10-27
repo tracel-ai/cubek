@@ -28,7 +28,8 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
 /// What a launch writing into its caller's output declines: an output of another shape than the
-/// product's, of an element the routines do not write, or stored in tiles.
+/// product's, of an element the routines do not write, stored in tiles, or, beside a packed input,
+/// other than row-major.
 pub const MATMUL_OUTPUT_UNREAD: Refusal = Refusal::Declined {
     why: "the output handed in is not the product's shape, in an element the routines write, laid in rows",
 };
@@ -171,24 +172,31 @@ impl MatmulTensors {
         Self::packed(client, lhs, rhs, out)
     }
 
-    /// The product of the plain `lhs` and `rhs`, both on `client`'s device, as a launch on `M`
-    /// reads it, written into `out`, which the caller allocated at the product's shape, in any
-    /// element the routines write: the sum is cast to it as it drains.
+    /// The product of `lhs` and `rhs`, both on `client`'s device, as a launch on `M` reads it,
+    /// written into `out`, which the caller allocated at the product's shape, in any element the
+    /// routines write: the sum is cast to it as it drains. Float inputs hold the rows as `M`'s
+    /// [`ROWS_KIND`](MatmulMicrokernel::ROWS_KIND) says, a packed one every row whole, the output
+    /// then its dense rows.
     ///
     /// # Errors
     ///
-    /// As [`new`](Self::new) for plain inputs, and [`MATMUL_OUTPUT_UNREAD`] for an output of
-    /// another shape, of an element the routines do not write, or stored in tiles.
+    /// As [`new`](Self::new), and [`MATMUL_OUTPUT_UNREAD`] for an output of another shape, of an
+    /// element the routines do not write, stored in tiles, or, beside a packed input, other than
+    /// row-major.
     ///
     /// # Panics
     ///
     /// As [`new`](Self::new).
     pub fn writing_into<M: MatmulMicrokernel>(
         client: &Client,
-        lhs: PlainTensor,
-        rhs: PlainTensor,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
         out: PlainTensor,
     ) -> Result<Self, Refusal> {
+        let (lhs, rhs) = match (lhs, rhs) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => (lhs, rhs),
+            (lhs, rhs) => return Self::packed_into(client, lhs, rhs, out),
+        };
         let operands = Operands::read(client, lhs, rhs, M::ROWS_KIND)?;
         if out.shape().as_slice() != operands.out_shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
@@ -455,14 +463,7 @@ impl MatmulTensors {
         rhs: StoredTensor,
         out: ElemType,
     ) -> Result<Self, Refusal> {
-        let k = rhs.extent([K, N], K);
-        let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
-        let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
-        let mut shape = match &lhs {
-            StoredTensor::Plain(lhs) => lhs.shape().to_vec(),
-            StoredTensor::Packed(lhs) => vec![lhs.extent(M), k],
-        };
-        *shape.last_mut().expect("the lhs has a rank") = rhs.extent([K, N], N);
+        let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
         let (tensor, bound) = PlainTensor::empty(client, shape.into(), out);
         let tensor = Some(tensor);
         Ok(Self {
@@ -473,6 +474,58 @@ impl MatmulTensors {
             rows_kind: MatmulRowsKind::Whole,
             table: None,
         })
+    }
+
+    /// `lhs` against `rhs`, either packed, written into `out`, which the caller allocated as the
+    /// product's dense rows `[.., n]`.
+    ///
+    /// # Errors
+    ///
+    /// As [`packed`](Self::packed), and [`MATMUL_OUTPUT_UNREAD`] for an output of another shape,
+    /// of an element the routines do not write, or other than row-major.
+    fn packed_into(
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        out: PlainTensor,
+    ) -> Result<Self, Refusal> {
+        let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
+        if out.shape().as_slice() != shape.as_slice()
+            || !MatmulInputs::VERIFIED.contains(&out.elem)
+            || !out.is_contiguous()
+        {
+            return Err(MATMUL_OUTPUT_UNREAD);
+        }
+        Ok(Self {
+            client: client.clone(),
+            lhs,
+            rhs,
+            out: MatmulOutputBuffer {
+                tensor: None,
+                bound: out,
+            },
+            rows_kind: MatmulRowsKind::Whole,
+            table: None,
+        })
+    }
+
+    /// `lhs` and `rhs`, either packed, as a product beside a packed input reads them
+    /// ([`stored_beside_packed`](Self::stored_beside_packed)), and the shape of its output: the
+    /// float lhs's, or a packed one's rows, then `n`.
+    fn beside_packed_inputs(
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+    ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Refusal> {
+        let k = rhs.extent([K, N], K);
+        let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
+        let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
+        let mut shape = match &lhs {
+            StoredTensor::Plain(lhs) => lhs.shape().to_vec(),
+            StoredTensor::Packed(lhs) => vec![lhs.extent(M), k],
+        };
+        *shape.last_mut().expect("the lhs has a rank") = rhs.extent([K, N], N);
+        Ok((lhs, rhs, shape))
     }
 
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
