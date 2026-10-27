@@ -76,10 +76,11 @@ impl UnitRegistersMicrokernel {
         }
     }
 
-    /// [`tile_instruction`](Self::tile_instruction) for a sum nothing reads before it drains, as a
-    /// matmul's output: a col rhs's run along `K` is kept a partial a lane in its cell and summed
-    /// once at the drain, rather than summed into a one-value cell every step. An attention's
-    /// score is read by its softmax before then, so it opens on the plain instruction.
+    /// [`tile_instruction`](Self::tile_instruction) with partials: with a col rhs, each cell keeps
+    /// one partial sum per lane of a `K` line and reduces them once at the drain, instead of a
+    /// horizontal sum every step. Only for an accumulator read solely at its drain, like a
+    /// matmul's output; an attention score is read by its softmax first and uses
+    /// `tile_instruction`.
     pub fn drained_instruction(&self) -> Instruction {
         Instruction::Registers {
             config: RegisterBlock::new(UNIT_REGISTERS as usize).partials(),

@@ -45,15 +45,10 @@ impl UnitRegistersMatmulRoutine {
             .expect("the unit routine distributes its blocks to a plane's units")
     }
 
-    /// The blocks along `n` a plane's units take in turns, out of the `setting`'s, for a product
-    /// `n` wide in blocks `columns` wide.
-    ///
-    /// A plane one unit wide takes every block of its row itself, so the count sets only how far
-    /// along `n` the unit walks, and any count is as fast but one that runs past `n`: that masks
-    /// the launch's accesses, which a CPU runtime pays about twice over. Such a plane takes the
-    /// largest count up to the setting's that `n`'s blocks divide. A wider plane keeps the
-    /// setting's, since a smaller count would idle its units; so does a product whose `n` is not
-    /// a whole number of blocks, which overhangs whatever the count.
+    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
+    /// `n / columns` up to `setting`, so no plane's row overhangs `n` and masks its accesses.
+    /// Wider planes keep `setting`, since fewer blocks would idle their units, as does an `n`
+    /// that `columns` does not divide.
     fn fitted_blocks_per_plane(
         setting: usize,
         n: usize,
@@ -108,20 +103,13 @@ impl UnitRegistersMatmulRoutineSettings {
         cube_order: CubeOrder::RowMajor,
     };
 
-    /// The settings a CPU device runs a col rhs at, where a plane is one unit on one core.
+    /// Settings for a CPU runtime, where a plane is one unit on one core. Tuned for a col rhs.
     ///
-    /// - A plane a core, every plane of the cube along `m`: [`DEFAULT`](Self::DEFAULT)'s four
-    ///   planes leave every other core idle.
-    /// - A `3x2` block, eight values deep: a col rhs is read down `K` in lines of `depth`, and its
-    ///   cells keep a line's products a lane each until the drain, so a cell costs `depth`
-    ///   registers and six of them fill a block. Eight divides the `K` of the convolutions this
-    ///   was measured on, where sixteen does not divide `24` or `56` and leaves a ragged step.
-    /// - Cubes in strips along `m`, so a strip of the lhs stays in cache while every column block
-    ///   reads it, rather than streaming from memory once per column block.
-    ///
-    /// Measured against the unblocked multi-level gemm on a 16-thread Zen 3 host, f32, five 1x1
-    /// convolutions' shapes: 1.6x to 3.7x faster. A row rhs is read along `N` and ran slower than
-    /// that gemm at every block tried, so it is left to autotune to pass this by.
+    /// - Planes: one per core, all along `m`. [`DEFAULT`](Self::DEFAULT) uses 4.
+    /// - Block: `3x2`, depth 8. A col rhs is read in `depth`-wide lines along `K` and each cell
+    ///   holds one line of partials, so a cell costs `depth` registers. 8 divides the `K` of
+    ///   common 1x1 convolutions (24, 56); 16 does not.
+    /// - Cubes: strips of 4 along `m`, so the lhs rows of a strip stay in cache across `n`.
     pub fn cpu(hw: &Hardware) -> Self {
         Self {
             microkernel: UnitRegistersMicrokernelSettings {
@@ -440,10 +428,8 @@ mod tests {
         assert_eq!(widths(256, 516, 64), (4, 1, 1));
     }
 
-    /// [`UnitRegistersMatmulRoutineSettings::cpu`] on a CPU, at a 1x1 convolution's col weight
-    /// 1632 wide, which the setting's 32 blocks of two would overhang: its planes take 24, so a
-    /// plane's row ends on `n` and no access along it is masked, and the rhs keeps its lines down
-    /// `K`.
+    /// `cpu` settings with `n = 1632`: 32 blocks of width 2 per plane would overhang `n`, so
+    /// `prepare` fits them to 24, and the col rhs stays vectorized along `K`.
     #[test]
     fn the_cpu_settings_fit_their_planes_to_an_n_their_count_overhangs() {
         use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
@@ -470,7 +456,7 @@ mod tests {
 
     #[test]
     fn a_one_unit_plane_takes_a_count_that_divides_n() {
-        // 1632 and 272 columns in blocks of two: 816 = 2^4·3·17 and 136 = 2^3·17 blocks.
+        // 816 = 2^4·3·17 and 136 = 2^3·17 blocks of width 2.
         assert_eq!(
             UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1632, 2, 1),
             24
@@ -479,7 +465,7 @@ mod tests {
             UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 272, 2, 1),
             17
         );
-        // A count that divides already is kept, and a narrow `n` is taken whole.
+        // A divisor is kept; an `n` of fewer blocks than `setting` takes all of them.
         assert_eq!(
             UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1024, 2, 1),
             32

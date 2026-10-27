@@ -22,10 +22,8 @@ struct Dims {
     k: usize,
 }
 
-/// [`UnitRegistersMatmulRoutineSettings::cpu`] on a 1x1 convolution's layout, a col rhs beside a
-/// row lhs, at the depths it was measured on: `K` of 24 and 56, which its eight-deep block divides
-/// and sixteen would not, and 272, seventeen runs of sixteen. `m` is not a whole number of its
-/// cubes' rows, so the last cube along `m` is masked, and the strips along `m` are uneven.
+/// `cpu` settings on a row lhs and col rhs, at `K` = 24 and 56 (divisible by its depth of 8, not
+/// by 16) and 272. `m = 200` is not a multiple of a cube's rows, so the last cube is partial.
 #[test]
 fn the_cpu_settings_read_a_col_rhs_at_the_convolutions_depths() {
     let client = cubecl::test_device().client();
