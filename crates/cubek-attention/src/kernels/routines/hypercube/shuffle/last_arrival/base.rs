@@ -9,7 +9,7 @@ use crate::kernels::{
 };
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::routine::Grid;
 

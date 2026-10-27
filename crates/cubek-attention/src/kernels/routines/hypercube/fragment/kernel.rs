@@ -2,7 +2,7 @@ use super::base::HypercubeFragmentAttentionMicrokernel;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
-use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_microkernel::attention::plane::PlaneFragmentAttention;
 use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
 
