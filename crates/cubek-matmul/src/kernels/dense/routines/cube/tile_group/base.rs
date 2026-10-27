@@ -1,3 +1,4 @@
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::dense::routines::cube::cube_shuffle_matmul_kernel;
 use crate::kernels::{
     MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulRoutine,
@@ -6,10 +7,10 @@ use crate::kernels::{
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeTileGroupMicrokernel, CubeTileGroupMicrokernelSettings,
 };
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulRead};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulRead};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -62,10 +63,10 @@ impl Routine for CubeTileGroupMatmulRoutine {
     fn vectorize(
         &self,
         microkernel: &CubeTileGroupMicrokernel,
-        partitioning: &MatmulPartitioning,
+        _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&(), vectorization);
     }
 
     /// Each cube reads the lhs's rows along the whole of `K` once a column of its group, and its
@@ -112,7 +113,7 @@ impl Routine for CubeTileGroupMatmulRoutine {
                 CubeMeet::InSlots => 0,
             },
         });
-        microkernel.estimate(&item, &blueprint.partitioning, grid.planes(), estimate);
+        microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
     fn prepare(
@@ -138,7 +139,7 @@ impl Routine for CubeTileGroupMatmulRoutine {
         );
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &partitioning),
+            shared_memory: microkernel.shared_memory(&item, partitioning.cells()),
         };
         let blueprint = MatmulBlueprint::packed(&packing, microkernel, partitioning);
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
@@ -187,9 +188,9 @@ impl MatmulRoutine<CubeTileGroupMicrokernel> for CubeTileGroupMatmulRoutine {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
-    use cubek_microkernel::matmul::stored::{Operand, Packing};
-    use cubek_microkernel::matmul::tile_order;
     use cubek_std::devices;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order;
     use cubek_std::matmul_axes::{K, N};
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

@@ -4,15 +4,13 @@
 use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
-use cubek_microkernel::attention::output::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::output::plane::{
-    PlaneFragmentAttentionMicrokernel, SWIZZLED_STAGE_UNREAD,
-};
-use cubek_microkernel::attention::{AttentionMicrokernel, CubeAttentionStageLayout, Q, S};
-use cubek_microkernel::staging::StageRing;
+use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+use cubek_microkernel::attention::{AttentionMicrokernel, Q, S};
 use cubek_std::Hardware;
 use cubek_std::Instructions;
 use cubek_std::devices;
+use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 use cubek_std::routine::Routine;
 use std::collections::BTreeSet;
 
@@ -27,7 +25,7 @@ fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
     for settings in routine.settings(hw) {
         if let Ok((blueprint, _)) = routine.prepare(hw, problem, &settings) {
             steps.insert(blueprint.partitioning.stage().extent(S));
-            queries.insert(blueprint.partitioning.cube_box().extent(Q));
+            queries.insert(blueprint.partitioning.cube_space().extent(Q));
         }
     }
     (steps, queries)
@@ -117,9 +115,9 @@ fn the_cube_reaches_every_ring_and_layout() {
         );
     }
     for layout in [
-        CubeAttentionStageLayout::PaddedRows,
-        CubeAttentionStageLayout::Blocks,
-        CubeAttentionStageLayout::PaddedBlocks,
+        StageLayout::PaddedRows,
+        StageLayout::Blocks,
+        StageLayout::PaddedBlocks,
     ] {
         let listed = CubeAttentionMicrokernelSettings { layout, ..lead };
         assert!(

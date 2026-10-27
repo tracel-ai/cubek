@@ -19,6 +19,9 @@ pub use cubek_convolution as convolution;
 #[cfg(feature = "attention")]
 pub use cubek_attention as attention;
 
+#[cfg(feature = "attention-backward")]
+pub use cubek_attention_backward as attention_backward;
+
 #[cfg(feature = "interpolate")]
 pub use cubek_interpolate as interpolate;
 

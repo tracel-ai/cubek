@@ -1,7 +1,7 @@
 //! The devices and problems the family's host-side tests run against.
 
 use crate::kernels::tune::key::AttentionKey;
-use crate::kernels::{AttentionRoutineProblem, AttentionVisibility, ScoreScale};
+use crate::kernels::{AttentionRoutineProblem, AttentionVisibility, QueryPlacement, ScoreScale};
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::Hardware;
@@ -32,7 +32,7 @@ pub(crate) fn offering(hw: Hardware, edge: u32) -> Hardware {
 /// past one position.
 pub(crate) fn qwen(queries: usize, keys: usize) -> AttentionRoutineProblem {
     let f16 = ElemType::Float(FloatKind::F16);
-    let visibility = AttentionVisibility::new(queries > 1, None);
+    let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
     let key = AttentionKey::new(
         f16,
         32,
@@ -44,6 +44,7 @@ pub(crate) fn qwen(queries: usize, keys: usize) -> AttentionRoutineProblem {
         visibility,
         ScoreScale::standard(128),
         None,
+        false,
     );
     AttentionRoutineProblem::try_from(&key).expect("an even group")
 }

@@ -1,5 +1,6 @@
 use super::kernel::plane_shuffle_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
     MATMUL_STREAMED_INPUT_FLOAT, MatmulBlueprint, MatmulOutput, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, MatmulView,
@@ -10,13 +11,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
-use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::plane::{
-    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
-};
-use cubek_microkernel::matmul::stored::Packing;
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOrder};
+use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use cubek_std::Hardware;
+use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
@@ -120,7 +119,7 @@ impl PlaneShuffleMatmulRoutine {
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, partitioning) = (view.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
-        let (cube, leaf) = (partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (partitioning.cube_space().space, partitioning.leaf());
         let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
         // Each run of columns a plane's units own reads every row of the lhs.
         let groups = columns / leaf.extent(N) as u64;
@@ -134,8 +133,8 @@ impl PlaneShuffleMatmulRoutine {
         };
         // A col rhs's run is a column down all of `K`; a row rhs's, one plane's columns.
         let rhs_run = match microkernel.orders.rhs {
-            MatmulOrder::InBufferOrder => k,
-            MatmulOrder::Stated => columns / grid.planes().count as u64,
+            BindingOrder::InBufferOrder => k,
+            BindingOrder::Stated => columns / grid.planes().count as u64,
         };
         estimate.staging = Some(CubeStaging {
             operations: 2.0 * (rows * columns * k) as f64,
@@ -445,9 +444,9 @@ mod tests {
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::MatmulOperands;
-    use cubek_microkernel::matmul::dense::plane::PlaneShuffleKSplit;
-    use cubek_microkernel::matmul::stored::Operand;
+    use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_std::devices;
+    use cubek_std::layout::stored::Operand;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -560,7 +559,7 @@ mod tests {
                 .expect("the default prepares on a committed wave32");
             (
                 blueprint.microkernel.rows,
-                blueprint.partitioning.cube_box().extent(M),
+                blueprint.partitioning.cube_space().extent(M),
             )
         };
         for m in 1..=PlaneShuffleMicrokernel::MAX_ROWS {

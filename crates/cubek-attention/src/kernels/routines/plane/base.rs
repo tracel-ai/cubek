@@ -1,4 +1,5 @@
 use super::kernel::plane_fragment_attention_kernel;
+use crate::kernels::AttentionPartitioning;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
@@ -8,15 +9,15 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
+use cubek_microkernel::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
-    AttentionStagingCount, CubePlaneMicrokernel, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount, Q, S,
 };
-use cubek_microkernel::staging::StageRing;
 use cubek_std::Hardware;
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
@@ -146,7 +147,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Its planes' stages: each plane stages its rows of the query once, and every key and value of
@@ -161,7 +162,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
     ) {
         let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
-        let cube = partitioning.cube_box();
+        let cube = partitioning.cube_space();
         let readers = (cube.extent(Q) / microkernel.seq_q()) as u64;
         AttentionStagingCount {
             seq_kv: microkernel.seq_kv(),
@@ -179,8 +180,8 @@ impl Routine for PlaneFragmentAttentionRoutine {
                 out: 1,
             },
         }
-        .count(&item, partitioning, estimate);
-        microkernel.estimate(&item, partitioning, grid.planes(), estimate);
+        .count(&item, &cube, estimate);
+        microkernel.estimate(&item, &cube, grid.planes(), estimate);
     }
 
     /// A plane is as many units as the device issues its matrix instruction on, and it walks its
@@ -259,6 +260,8 @@ impl AttentionRoutine<PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionR
                 key,
                 value,
                 binding.out.arg(),
+                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
+                binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),
@@ -281,10 +284,10 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::output::plane::ScoreHolder;
+    use cubek_microkernel::attention::plane::ScoreHolder;
     use cubek_microkernel::attention::{D, G};
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

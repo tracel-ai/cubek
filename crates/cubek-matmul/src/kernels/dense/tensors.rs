@@ -15,13 +15,14 @@ use cubecl::tile::{
     launch::TmaBox, launch::TmaOperand, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
-use cubek_microkernel::matmul::staged_walk::MatmulStage;
+use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
-    MatmulRowsKind, MatmulWorkItem,
+    MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind,
+    MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_operand, tma_store_operand};
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -1026,7 +1027,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         &self,
         stage: &MatmulStage,
         storage: &StageStorage,
-        orders: MatmulOperands<MatmulOrder>,
+        orders: MatmulOperands<BindingOrder>,
     ) -> (TileArgLaunch, TileArgLaunch) {
         self.assert_tiled();
         let problem = self.problem();
@@ -1045,8 +1046,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             landing(lhs, MatmulOperand::Lhs),
         );
         let rhs = match orders.rhs {
-            MatmulOrder::Stated => Self::tma_matrix(rhs, [(K, problem.k), (N, problem.n)], landed),
-            MatmulOrder::InBufferOrder => Self::tma_matrix(
+            BindingOrder::Stated => Self::tma_matrix(rhs, [(K, problem.k), (N, problem.n)], landed),
+            BindingOrder::InBufferOrder => Self::tma_matrix(
                 &rhs.clone().in_buffer_order(),
                 [(N, problem.n), (K, problem.k)],
                 landed,
@@ -1060,25 +1061,48 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Panics
     ///
-    /// On tensors read for every row whole: only a launch tiling its rows splits `K` over cubes.
+    /// On float tensors read for every row whole: only a launch tiling its rows splits `K` over
+    /// cubes. Packed ones merge their batches into the rows whatever the launch.
     pub fn bind_relay<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         launcher: &Launcher,
     ) -> MatmulRelayBinding {
-        self.assert_tiled();
-        let [lhs, rhs] = self.plain();
-        let shape = Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
         let sum = self.problem().sum();
-        let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
+        // Over the output's axes: a float product's, or against packed inputs the block-split
+        // space's, the carry restated over them as the output is. Packed tensors merge their
+        // batches into the rows whatever the launch, so only float ones are read for a tiling one.
+        let carry = match self.read(|view| view.blocks()) {
+            None => {
+                self.assert_tiled();
+                let [lhs, rhs] = self.plain();
+                let shape =
+                    Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
+                let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
+                launcher
+                    .arg(carry.binding, sum)
+                    .axes(&[M, N])
+                    .batches(&self.batch_axes())
+                    .vectorize(blueprint.widths.out)
+                    .build()
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
+            Some(blocks) => {
+                let batches = self.table_batches();
+                let shape = vec![self.rows(), self.problem().n];
+                let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
+                let (carry, axes) = carry.restated(&blocks, M, N, &batches);
+                launcher
+                    .arg(carry.binding, sum)
+                    .axes(&axes)
+                    .batches(&batches)
+                    .vectorize(blueprint.widths.out)
+                    .build()
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
+        };
         MatmulRelayBinding {
-            carry: launcher
-                .arg(carry.binding, sum)
-                .axes(&[M, N])
-                .batches(&self.batch_axes())
-                .vectorize(blueprint.widths.out)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS),
+            carry,
             turns: ZeroedCounters::new(
                 blueprint.partitioning.as_tile().relay_counters(),
                 &self.client,
@@ -1094,22 +1118,35 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Panics
     ///
-    /// On tensors read for every row whole: only a launch tiling its rows shares its boxes' `K`.
+    /// On float tensors read for every row whole: only a launch tiling its rows shares its boxes'
+    /// `K`. Packed ones merge their batches into the rows whatever the launch.
     pub fn bind_last_arrival<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         launcher: &Launcher,
     ) -> MatmulLastArrivalBinding {
-        self.assert_tiled();
         let partitioning = blueprint.partitioning.as_tile();
         // The output's axes in its order: the batches the cube level hands out, then its rows and
-        // columns. Stated as labels, so a batch axis one box long stays a dim of the slots.
+        // columns, against packed inputs as the block-split space restates them
+        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long stays
+        // a dim of the slots.
+        let output: Vec<Axis> = match self.read(|view| view.blocks()) {
+            None => {
+                self.assert_tiled();
+                vec![M, N]
+            }
+            Some(blocks) => blocks
+                .restated_dims(M, N, 1)
+                .into_iter()
+                .map(|(axis, _, _)| axis)
+                .collect(),
+        };
         let axes: Vec<Axis> = blueprint
             .partitioning
             .batch_axes()
             .iter()
             .copied()
-            .chain([M, N])
+            .chain(output)
             .collect();
         let sum = self.problem().sum();
         let (_, slots) = PlainTensor::empty(&self.client, partitioning.arrival_slots(&axes), sum);

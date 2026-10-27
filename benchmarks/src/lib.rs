@@ -1,7 +1,7 @@
 //! Benchmark registry for cubek.
 
-pub use cubek_attention::eval::backward::benchmarks as attention_backward;
 pub use cubek_attention::eval::forward::benchmarks as attention;
+pub use cubek_attention_backward::eval::benchmarks as attention_backward;
 pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_convolution::eval::benchmarks::depthwise;
 pub use cubek_convolution::eval::benchmarks::direct as direct_conv;

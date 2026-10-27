@@ -1,8 +1,8 @@
 use super::kernel::plane_fragment_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 
@@ -12,12 +12,13 @@ use crate::kernels::{
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
-use cubek_microkernel::matmul::dense::plane::{
+use cubek_microkernel::matmul::MatmulStagingCount;
+use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
+use cubek_microkernel::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
-use cubek_microkernel::matmul::staged_walk::{MatmulPlaneLayout, MatmulStagingCount};
-use cubek_microkernel::staging::StageRing;
 use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
@@ -121,7 +122,7 @@ impl PlaneFragmentMatmulRoutine {
     /// of the rhs, and each writes its own tile of the output. A plane's tile is its stage's box
     /// over `m` and `n`.
     fn readers(partitioning: &MatmulPartitioning) -> MatmulOperands<u64> {
-        let (cube, stage) = (partitioning.cube_box(), partitioning.stage());
+        let (cube, stage) = (partitioning.cube_space().space, partitioning.stage());
         let planes_along = |axis| (cube.extent(axis) / stage.extent(axis)) as u64;
         MatmulOperands {
             lhs: planes_along(N),
@@ -200,14 +201,14 @@ impl Routine for PlaneFragmentMatmulRoutine {
         let staging = MatmulStagingCount {
             readers: Self::readers(partitioning),
             ..MatmulStagingCount::new(
-                partitioning,
+                &partitioning.cube_space().space,
                 &partitioning.stage(),
                 blueprint.microkernel.orders,
                 &blueprint.shared_memory.ring,
                 blueprint.microkernel.tile_extent(N),
             )
         };
-        staging.count(&item, partitioning, estimate);
+        staging.count(&item, &partitioning.cube_space().space, estimate);
         blueprint
             .microkernel
             .estimate(&item, &(), grid.planes(), estimate);
@@ -261,9 +262,12 @@ impl Routine for PlaneFragmentMatmulRoutine {
                 .operands(item.elements, microkernel.orders),
             plane_width as usize,
         );
-        let stage = microkernel
-            .instruction
-            .stage_storage(partitioning.batch_axes(), MatmulAxes::MNK);
+        let stage = microkernel.instruction.stage_layout(None)?.storage(
+            partitioning.stage().space(),
+            microkernel
+                .instruction
+                .stage_tile(partitioning.batch_axes(), MatmulAxes::MNK),
+        );
         let planes = settings.planes.count();
         let cube = CubeResources {
             plane_width,
@@ -334,7 +338,7 @@ mod tests {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
 
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentInstruction;
+    use cubek_microkernel::matmul::plane::PlaneFragmentInstruction;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -381,7 +385,7 @@ mod tests {
                     (
                         grid.shared_memory,
                         grid.launch.cube_dim,
-                        blueprint.partitioning.cube_box(),
+                        blueprint.partitioning.cube_space().space,
                         blueprint.shared_memory.ring,
                     )
                 })
@@ -445,7 +449,7 @@ mod tests {
             .prepare(&hw, &problem, &settings)
             .expect("the routine runs here");
         let (cube, stage) = (
-            blueprint.partitioning.cube_box(),
+            blueprint.partitioning.cube_space().space,
             blueprint.partitioning.stage(),
         );
         let microkernel = blueprint.microkernel;

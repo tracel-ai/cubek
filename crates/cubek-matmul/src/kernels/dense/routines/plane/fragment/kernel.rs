@@ -2,7 +2,7 @@ use super::base::PlaneFragmentMatmulRoutineSharedMemory;
 
 use cubecl::tile::{Partitioning, Semiring, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::dense::plane::{
+use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, plane_fragment_staged_microkernel,
 };
 

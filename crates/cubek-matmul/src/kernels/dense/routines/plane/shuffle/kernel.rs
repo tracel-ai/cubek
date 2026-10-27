@@ -1,7 +1,7 @@
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Instruction, Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::dense::plane::plane_shuffle_microkernel;
+use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every plane of the launch, running its run of the output. Each input is read at the element it

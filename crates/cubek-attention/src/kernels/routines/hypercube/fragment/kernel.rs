@@ -1,10 +1,10 @@
 use super::base::HypercubeFragmentAttentionMicrokernel;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::output::cube::cube_staged_attention_partial_microkernel;
-use cubek_microkernel::attention::output::hypercube::HypercubeMergeShape;
-use cubek_microkernel::attention::output::plane::PlaneFragmentAttention;
-use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
+use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
+use cubek_microkernel::attention::plane::PlaneFragmentAttention;
+use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
 /// Every cube walking its run of its box with plane fragments that read its stage, over the keys
 /// its queries see, each plane leaving its partial in its slot
@@ -20,6 +20,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     slot_out: &mut Tensor<Vector<EA, Const<1>>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
+    mask: ComptimeOption<&TileArg<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -30,11 +31,12 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     #[comptime] storage: StageStorage,
     #[define(EA, E, ES)] _elements: [ElemType; 3],
 ) {
+    let mask = mask.map(|mask| mask.tile(&partitioning));
     // The cube level's walk, this cube's run of the steps of keys: once for the staging ring,
     // once for where the slots lie.
     let run = partitioning.walk();
     let first_step = run.region(0);
-    let visible = VisibleKeys::new(len, first_step.origin(B), queries, visibility);
+    let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let q = query.tile(&partitioning);
     let k = key
         .tile(&partitioning)

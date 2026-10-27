@@ -2,21 +2,21 @@ use super::kernel::hypercube_fragment_attention_kernel;
 use crate::kernels::routines::hypercube::merge::HypercubeSecondLaunch;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
 };
+use crate::kernels::{AttentionPartitioning, QueryOrder};
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::attention::output::hypercube::{
-    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings, HypercubeMerge,
+use cubek_microkernel::attention::hypercube::{
+    HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
+use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, CubePlaneMicrokernel, QueryOrder,
-};
+use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -104,7 +104,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
@@ -118,7 +118,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning,
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -162,7 +162,11 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         partitioning.boxes_leave_workers_idle(hw, &grid.launch)?;
-        let shape = microkernel.merge_shape(&item, &partitioning, HypercubeMerge::SecondLaunch);
+        let shape = microkernel.merge_shape(
+            &item,
+            partitioning.cubes_along_keys(),
+            HypercubeMerge::SecondLaunch.seq_q(&microkernel),
+        );
         HypercubeSecondLaunch::new(problem, shape).validate(hw)?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
@@ -195,8 +199,8 @@ impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
         let (key, value) = binding.cache.into_tiles();
         let shape = microkernel.merge_shape(
             &problem.work_item(),
-            &blueprint.partitioning,
-            HypercubeMerge::SecondLaunch,
+            blueprint.partitioning.cubes_along_keys(),
+            HypercubeMerge::SecondLaunch.seq_q(&microkernel),
         );
         let slots = tensors.split_slots(shape.slots.splits);
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
@@ -215,6 +219,7 @@ impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
                 slots.out.clone().binding().into_tensor_arg(),
                 slots.max.clone().binding().into_tensor_arg(),
                 slots.sum.clone().binding().into_tensor_arg(),
+                binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),
