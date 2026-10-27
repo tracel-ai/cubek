@@ -469,6 +469,13 @@ pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
           launch's levels reach past the end of k",
 };
 
+/// What the hypercube routines decline: a packed lhs. They read a packed rhs beside a float lhs;
+/// two packed inputs contract on the block-scaled instruction, whose operands only the cube
+/// staged routine binds, so a hypercube launch over them would fail to expand.
+pub const MATMUL_HYPERCUBE_PACKED_LHS: Refusal = Refusal::Declined {
+    why: "the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
