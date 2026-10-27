@@ -7,15 +7,15 @@ use core::marker::PhantomData;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::attention::output::cube::{
+use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
+use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, CubePlaneMicrokernel,
-    CubeStagedPlane, QueryOrder,
+    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, QueryOrder,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};

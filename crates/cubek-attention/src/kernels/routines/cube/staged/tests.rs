@@ -6,9 +6,9 @@ mod fragment {
     use crate::kernels::AttentionRoutineProblem;
     use cubecl::tile::launch::Refusal;
     use cubek_microkernel::attention::QueryOrder;
-    use cubek_microkernel::attention::output::cube::CubeAttentionMicrokernelSettings;
-    use cubek_microkernel::attention::output::plane::PlaneFragmentAttentionMicrokernel;
-    use cubek_microkernel::attention::output::plane::PlaneFragmentAttentionMicrokernelSettings;
+    use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
@@ -17,14 +17,15 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
+    use cubek_microkernel::attention::AttentionMicrokernel;
     use cubek_microkernel::attention::CubeAttentionStageLayout;
-    use cubek_microkernel::attention::output::plane::InstructionShape;
-    use cubek_microkernel::attention::output::plane::{
+    use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
+    use cubek_microkernel::attention::plane::InstructionShape;
+    use cubek_microkernel::attention::plane::{
         ROW_STATE_HELD_BY_UNIT, SWIZZLED_STAGE_UNREAD, ScoreHolder,
     };
-    use cubek_microkernel::attention::{AttentionMicrokernel, CubePlaneMicrokernel};
     use cubek_microkernel::attention::{G, Q, S};
-    use cubek_microkernel::staging::StageRing;
+    use cubek_std::microkernel::StageRing;
 
     const ROUTINE: CubeStagedAttentionRoutine<PlaneFragmentAttentionMicrokernel> =
         CubeStagedAttentionRoutine::new();
@@ -378,7 +379,7 @@ mod unit_group {
     use crate::kernels::AttentionRoutineProblem;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::launch::Refusal;
-    use cubek_microkernel::attention::output::plane::PlaneUnitGroupAttentionMicrokernel;
+    use cubek_microkernel::attention::plane::PlaneUnitGroupAttentionMicrokernel;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 

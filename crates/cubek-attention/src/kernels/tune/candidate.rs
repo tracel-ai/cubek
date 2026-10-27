@@ -120,7 +120,7 @@ mod tests {
     use crate::kernels::{AttentionVisibility, ScoreScale};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::output::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

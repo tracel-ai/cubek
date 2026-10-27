@@ -4,15 +4,15 @@
 use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
-use cubek_microkernel::attention::output::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, SWIZZLED_STAGE_UNREAD,
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, CubeAttentionStageLayout, Q, S};
-use cubek_microkernel::staging::StageRing;
 use cubek_std::Hardware;
 use cubek_std::Instructions;
 use cubek_std::devices;
+use cubek_std::microkernel::StageRing;
 use cubek_std::routine::Routine;
 use std::collections::BTreeSet;
 

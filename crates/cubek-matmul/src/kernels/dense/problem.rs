@@ -6,11 +6,11 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Indexing};
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
-use cubek_microkernel::matmul::stored::Packing;
 use cubek_microkernel::matmul::{
     MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulStoredTile,
 };
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
 use cubek_std::routine::EstimatedProblem;
 

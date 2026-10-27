@@ -15,7 +15,7 @@ use cubecl::tile::{
     launch::TmaBox, launch::TmaOperand, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
-use cubek_microkernel::matmul::staged_walk::MatmulStage;
+use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder,
     MatmulRowsKind, MatmulWorkItem,
