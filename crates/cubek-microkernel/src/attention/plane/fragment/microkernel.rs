@@ -5,7 +5,7 @@ use crate::attention::{
 };
 use crate::matmul::dense::plane::plane_fragment_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use crate::staging::StageRing;
+use crate::StageRing;
 use core::marker::PhantomData;
 
 use cubecl::tile::{

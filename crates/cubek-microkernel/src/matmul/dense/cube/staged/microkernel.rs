@@ -4,7 +4,7 @@ use crate::matmul::dense::plane::{
     PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
-use crate::staging::StageRing;
+use crate::StageRing;
 use cubecl::tile::{
     Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
     stage::{AsyncStage, AsyncStageExpand, Role},

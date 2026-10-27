@@ -3,7 +3,7 @@ use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulReading,
     MatmulRows, MatmulWorkItem,
 };
-use crate::staging::StagedOperand;
+use crate::StagedOperand;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{Axis, Space};
 

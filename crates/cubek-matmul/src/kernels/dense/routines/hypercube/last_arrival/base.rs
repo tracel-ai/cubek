@@ -15,7 +15,7 @@ use cubek_microkernel::matmul::dense::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
-use cubek_microkernel::staging::StageRing;
+use cubek_microkernel::StageRing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -346,7 +346,7 @@ mod tests {
         use cubecl::features::{WgmmaConfig, WgmmaElems};
         use cubek_microkernel::matmul::dense::cube::{CubeStagedDelivery, CubeStagedFill};
         use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
-        use cubek_microkernel::staging::StageRing;
+        use cubek_microkernel::StageRing;
 
         let hw = devices::offering_wgmma(
             offering(devices::h100()),

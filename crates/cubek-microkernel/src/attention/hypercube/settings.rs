@@ -4,7 +4,7 @@ use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
 };
 use crate::matmul::dense::plane::PlaneFragmentTransport;
-use crate::staging::StageRing;
+use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubek_std::Hardware;
 

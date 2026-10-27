@@ -1,4 +1,4 @@
-use crate::staging::StagedOperand;
+use crate::StagedOperand;
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::stage::Prefetch;

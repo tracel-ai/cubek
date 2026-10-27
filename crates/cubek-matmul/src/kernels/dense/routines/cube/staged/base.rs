@@ -16,7 +16,7 @@ use cubek_microkernel::matmul::tile_order;
 use cubek_microkernel::matmul::{
     MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
 };
-use cubek_microkernel::staging::StageRing;
+use cubek_microkernel::StageRing;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
 use cubek_std::{Hardware, Instructions};

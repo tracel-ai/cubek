@@ -9,7 +9,7 @@ use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, SWIZZLED_STAGE_UNREAD,
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, CubeAttentionStageLayout, Q, S};
-use cubek_microkernel::staging::StageRing;
+use cubek_microkernel::StageRing;
 use cubek_std::Hardware;
 use cubek_std::Instructions;
 use cubek_std::devices;

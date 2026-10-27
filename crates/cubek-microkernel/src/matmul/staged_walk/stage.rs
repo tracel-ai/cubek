@@ -1,6 +1,6 @@
 use crate::matmul::MatmulPartitioning;
 use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulOrder};
-use crate::staging::StagedOperand;
+use crate::StagedOperand;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Space, StageStorage};

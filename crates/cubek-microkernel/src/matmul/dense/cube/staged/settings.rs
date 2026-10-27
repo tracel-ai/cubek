@@ -1,7 +1,7 @@
 use crate::matmul::dense::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
 use crate::matmul::dense::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use crate::matmul::staged_walk::MatmulPlaneLayout;
-use crate::staging::StageRing;
+use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::tile::{Scratch, StageStorage, stage::RowChunks};
 

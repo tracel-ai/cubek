@@ -29,7 +29,7 @@ mod base {
     };
     use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
     use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulOrder};
-    use cubek_microkernel::staging::StageRing;
+    use cubek_microkernel::StageRing;
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, M, N};

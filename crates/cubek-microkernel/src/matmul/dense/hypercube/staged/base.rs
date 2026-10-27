@@ -7,7 +7,7 @@ use crate::matmul::staged_walk::MatmulPlaneLayout;
 use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem,
 };
-use crate::staging::StageRing;
+use crate::StageRing;
 use cubecl::tile::Scratch;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;

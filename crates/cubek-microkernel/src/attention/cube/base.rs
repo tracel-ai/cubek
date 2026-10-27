@@ -8,7 +8,7 @@ use crate::attention::{
     CubePlaneMicrokernel, CubePlaneReads, G, Q, S,
 };
 use crate::matmul::MatmulOrder;
-use crate::staging::StageRing;
+use crate::StageRing;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Levels, Space, StageStorage};

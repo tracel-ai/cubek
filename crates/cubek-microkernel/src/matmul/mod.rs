@@ -5,7 +5,7 @@
 //! names and how a packed one is stored ([`stored`], [`tile_order`]), the [`MatmulPartitioning`] every product
 //! places its work with, stated over a packed product's block-split space too ([`MatmulSpace`]),
 //! the [`MatmulStep`], the least box every load of a product fills whole, and the [`staged_walk`]
-//! a cube takes through `K`, holding its stages in the [`staging`](crate::staging) ring.
+//! a cube takes through `K`, holding its stages in the [`StageRing`](crate::StageRing).
 
 mod axes;
 mod buffers;

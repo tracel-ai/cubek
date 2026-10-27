@@ -24,7 +24,7 @@ mod fragment {
     };
     use cubek_microkernel::attention::{AttentionMicrokernel, CubePlaneMicrokernel};
     use cubek_microkernel::attention::{G, Q, S};
-    use cubek_microkernel::staging::StageRing;
+    use cubek_microkernel::StageRing;
 
     const ROUTINE: CubeStagedAttentionRoutine<PlaneFragmentAttentionMicrokernel> =
         CubeStagedAttentionRoutine::new();
