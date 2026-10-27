@@ -6,7 +6,7 @@ use cubecl::zspace::shape;
 use cubek_matmul::kernels::{
     CubeShuffleMatmulRoutine, CubeStagedMatmulRoutine, MatmulRoutine, MatmulRoutineCandidate,
     PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine, UnitWholeKMatmulRoutine,
-    tensor::PlainTensor,
+    tensor::{PlainTensor, StoredTensor},
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
@@ -57,8 +57,8 @@ where
         let launched = routine.launch_into(
             &hw,
             &client,
-            PlainTensor::of_handle(lhs.clone()),
-            PlainTensor::of_handle(rhs.clone()),
+            StoredTensor::Plain(PlainTensor::of_handle(lhs.clone())),
+            StoredTensor::Plain(PlainTensor::of_handle(rhs.clone())),
             out_plain,
             candidate.settings(),
         );

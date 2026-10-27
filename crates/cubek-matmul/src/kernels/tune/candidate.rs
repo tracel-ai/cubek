@@ -1,6 +1,6 @@
 //! The tune candidate the many-rows and few-rows tables race a float routine as.
 
-use crate::kernels::tensor::PlainTensor;
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{CubeBlock, MatmulTuneKey};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
 use cubecl::CubeDim;
@@ -33,8 +33,17 @@ pub struct MatmulRoutineCandidate<R: Routine> {
 impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        Self::of(routine, routine.settings(hw), hw)
+    }
+
+    /// `routine` at each of `settings` on `hw`, in their order: an autotune racing settings the
+    /// routine lists apart, such as those worth trying against a packed input.
+    pub fn of(
+        routine: R,
+        settings: impl IntoIterator<Item = R::Settings>,
+        hw: &Hardware,
+    ) -> Vec<Self> {
+        settings
             .into_iter()
             .map(|settings| Self {
                 routine,
@@ -66,8 +75,8 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     pub fn launch_into<M: MatmulMicrokernel, SM>(
         &self,
         client: &Client,
-        lhs: PlainTensor,
-        rhs: PlainTensor,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
         out: PlainTensor,
     ) -> Result<(), Refusal>
     where
