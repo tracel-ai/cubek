@@ -287,9 +287,14 @@ impl CubeStagedMicrokernel {
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
         let (block, read) = (Self::block(item), item.decoded_element());
-        let step = item
-            .blocks
-            .map(|space| MatmulStep::new(hw, space.operands(), MatmulOperands::all(read)));
+        // The units filling a stage look each scale up at its value's coordinates, so a stage
+        // holds whole blocks but no whole word of their scales.
+        let step = item.blocks.map(|space| {
+            let operands = space
+                .operands()
+                .map(|_, operand| operand.scales_one_a_read());
+            MatmulStep::new(hw, operands, MatmulOperands::all(read))
+        });
         PlaneFragmentMicrokernel::candidates(
             hw,
             &item.decoded(),

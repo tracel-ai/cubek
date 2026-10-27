@@ -233,6 +233,15 @@ impl Operand {
             .map_or(1, |axis| self.scale_read.extent(axis))
     }
 
+    /// This operand with its scales read one at a time: what a reader that looks each scale up at
+    /// its value's coordinates needs of a step, which then holds no whole word of them.
+    pub fn scales_one_a_read(self) -> Self {
+        Operand {
+            scale_read: MicroTile::unit(),
+            ..self
+        }
+    }
+
     /// The box one read of this operand covers.
     pub fn read_space(&self) -> Space {
         self.read.space()
