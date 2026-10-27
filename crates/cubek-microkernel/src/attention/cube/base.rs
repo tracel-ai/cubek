@@ -1,6 +1,7 @@
-use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings};
-use crate::attention::cube::{CubePlaneKeys, CubePlaneLayout, CubePlaneReads};
-use crate::attention::plane::CubePlaneMicrokernel;
+use crate::attention::cube::{
+    CubeAttentionMicrokernelSettings, CubeAttentionPlane, CubePlaneKeys, CubePlaneLayout,
+    CubePlaneReads,
+};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,
@@ -8,26 +9,26 @@ use crate::attention::{
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Levels, Space, StageStorage};
+use cubecl::tile::{Axis, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
-/// head with the plane microkernel `M`. Where `M` reads a stage, the cube stages the keys and
-/// values once for all its planes — what makes a cube worth more than its planes, since every
-/// head of the group reads the same keys; where `M` reads keys where they lie, each plane reads
-/// its own.
+/// head with its plane microkernel. Where its planes read a stage, the cube stages the keys and
+/// values once for all of them — what makes a cube worth more than its planes, since every head
+/// of the group reads the same keys; where they read keys where they lie, each plane reads its
+/// own.
 ///
 /// The cube owns the staging, its ring met on `sync_cube` and laid out as its settings say; each
 /// plane takes every step into its rows, in windows of its own. Where planes split the keys, each
 /// takes its block of every step, and the planes holding the same rows merge their partials before
 /// the cube writes them; otherwise each plane writes its own rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeAttentionMicrokernel<M: CubePlaneMicrokernel> {
-    pub plane: M,
-    pub settings: CubeAttentionMicrokernelSettings<M::Settings>,
+pub struct CubeAttentionMicrokernel {
+    pub plane: CubeAttentionPlane,
+    pub settings: CubeAttentionMicrokernelSettings,
     /// Heads of the group a cube holds, a plane each: as many as the settings ask, and no more
     /// than the group has.
     pub heads: usize,
@@ -42,13 +43,13 @@ pub struct CubeAttentionMicrokernel<M: CubePlaneMicrokernel> {
     pub page_steps: Option<NonZeroUsize>,
 }
 
-impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
+impl CubeAttentionMicrokernel {
     /// This cube walking `item`'s paged cache a page at a time where its planes read keys where
     /// they lie and a page holds a whole number of its steps, more than one; otherwise still
     /// walking steps.
     pub(crate) fn over_pages(self, item: &AttentionWorkItem) -> Self {
         let keys = self.seq_kv();
-        let page_steps = match (M::READS, item.page_size) {
+        let page_steps = match (self.plane.reads(), item.page_size) {
             (CubePlaneReads::Global, Some(page_size))
                 if page_size > keys && page_size.is_multiple_of(keys) =>
             {
@@ -68,11 +69,17 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
     /// states: its heads and the planes along their queries and keys,
     /// each running the plane microkernel's box.
     pub fn tiling(&self) -> Levels {
-        self.plane.tiling().planes(&[
+        self.plane.tiling().planes(&self.planes())
+    }
+
+    /// Its planes along each axis of its box: a plane for every head it holds, along every plane
+    /// of a head's queries, along every plane of the same rows' keys.
+    pub fn planes(&self) -> Vec<(Axis, usize)> {
+        vec![
             (G, self.heads),
             (Q, self.settings.planes_along_queries.get()),
             (S, self.settings.planes_along_keys.get()),
-        ])
+        ]
     }
 
     /// Query positions of one head a cube's box holds.
@@ -133,7 +140,7 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
         storage: &StageStorage,
     ) -> usize {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
-        let staged = match M::READS {
+        let staged = match self.plane.reads() {
             CubePlaneReads::Stage => {
                 let query = self.heads * self.seq_q() * item.head_dim * item.elements.query.size();
                 let stage: usize = item
@@ -152,7 +159,7 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
     /// walk, once for all its planes where it stages them, once for every group of planes holding
     /// different rows where each plane reads its own.
     fn staging(&self, item: &AttentionWorkItem) -> AttentionStagingCount {
-        let (key, stages_in_flight) = match M::READS {
+        let (key, stages_in_flight) = match self.plane.reads() {
             CubePlaneReads::Stage => (1, self.ring.stages_in_flight.get() as u32),
             CubePlaneReads::Global => (self.layout().row_groups() as u64, 1),
         };
@@ -176,7 +183,7 @@ impl<M: CubePlaneMicrokernel> CubeAttentionMicrokernel<M> {
 }
 
 /// Its planes and ring, and the steps a page holds where it walks pages.
-impl<M: CubePlaneMicrokernel> core::fmt::Display for CubeAttentionMicrokernel<M> {
+impl core::fmt::Display for CubeAttentionMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.settings)?;
         if let Some(steps) = self.page_steps {
@@ -186,18 +193,25 @@ impl<M: CubePlaneMicrokernel> core::fmt::Display for CubeAttentionMicrokernel<M>
     }
 }
 
-impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
+impl Microkernel for CubeAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
-    type Settings = CubeAttentionMicrokernelSettings<M::Settings>;
+    type Settings = CubeAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
     type CubeSpace = Space;
 
-    const DECLINE: &'static str = M::DECLINE;
+    const DECLINE: &'static str = "the cube attention needs a plane microkernel the device runs";
 
-    /// The cube's settings over planes of its kind
-    /// ([`CubeAttentionPlaneSettings::cube_settings`]).
-    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        M::Settings::cube_settings(hw)
+    /// The cube's settings over each kind of plane, fragments, unit groups and shuffles, each
+    /// list led by its kind's lead ([`CubeAttentionMicrokernelSettings::listed`]).
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
+        [
+            CubeAttentionMicrokernelSettings::FRAGMENT,
+            CubeAttentionMicrokernelSettings::UNIT_GROUP,
+            CubeAttentionMicrokernelSettings::SHUFFLE,
+        ]
+        .into_iter()
+        .flat_map(CubeAttentionMicrokernelSettings::listed)
+        .collect()
     }
 
     /// The plane microkernel's candidates, a plane each for every head the cube holds along every
@@ -210,8 +224,9 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     ) -> impl Iterator<Item = Self> {
         let (heads, cube) = (settings.heads.get().min(item.group), *settings);
         let splits = settings.planes_along_keys.get() > 1;
-        M::candidates(hw, item, &settings.plane)
-            .filter(move |_| M::KEYS == CubePlaneKeys::Split || !splits)
+        CubeAttentionPlane::candidates(hw, item, &settings.plane)
+            .into_iter()
+            .filter(move |plane| plane.keys() == CubePlaneKeys::Split || !splits)
             .filter_map(move |plane| {
                 let requested = Self {
                     plane,
@@ -231,6 +246,11 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
                 );
                 Some(Self { ring, ..requested })
             })
+    }
+
+    /// Its plane microkernel's reason: what the device lacks for planes of that kind.
+    fn decline(settings: &Self::Settings) -> &'static str {
+        settings.plane.decline()
     }
 
     /// Its planes', whose reads its ring copies where it stages them.
@@ -253,7 +273,7 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     }
 }
 
-impl<M: CubePlaneMicrokernel> AttentionMicrokernel for CubeAttentionMicrokernel<M> {
+impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
     fn key_order(&self) -> BindingOrder {
         self.plane.key_order()

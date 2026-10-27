@@ -1,10 +1,9 @@
 use core::marker::PhantomData;
 
-use super::base::CubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, Tile, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::attention::cube::CubeAttentionMicrokernel;
 use cubek_microkernel::attention::cube::cube_unstaged_attention_microkernel;
-use cubek_microkernel::attention::plane::PlaneShuffleAttention;
 use cubek_microkernel::attention::plane::TileStepReads;
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 
@@ -24,7 +23,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeShuffleAttentionMicrokernel,
+    #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] value_dim: usize,
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
@@ -49,14 +48,7 @@ pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(
             comptime!(microkernel.region_keys()),
             1usize,
         );
-        cube_unstaged_attention_microkernel::<
-            EA,
-            E,
-            N,
-            TileStepReads<E>,
-            TileStepReads<E>,
-            PlaneShuffleAttention<EA, N>,
-        >(
+        cube_unstaged_attention_microkernel::<EA, E, N, TileStepReads<E>, TileStepReads<E>>(
             &cube,
             &o.at(&cube),
             &lse.clone().map(|lse| lse.at(&cube)),

@@ -12,10 +12,6 @@ use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
-use cubek_microkernel::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
-};
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -33,14 +29,9 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HypercubeSecondLaunchFragmentAttentionRoutine;
 
-/// The hypercube microkernel it places: cubes of plane fragments.
-pub type HypercubeFragmentAttentionMicrokernel =
-    HypercubeAttentionMicrokernel<PlaneFragmentAttentionMicrokernel>;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeSecondLaunchFragmentAttentionRoutineSettings {
-    pub microkernel:
-        HypercubeAttentionMicrokernelSettings<PlaneFragmentAttentionMicrokernelSettings>,
+    pub microkernel: HypercubeAttentionMicrokernelSettings,
     /// Cubes sharing one box, each on its own run of the keys: part of the partitioning, which
     /// distributes it whatever the keys ([`AttentionPartitioning::new`]).
     pub cubes_along_keys: NonZeroUsize,
@@ -49,9 +40,7 @@ pub struct HypercubeSecondLaunchFragmentAttentionRoutineSettings {
 impl HypercubeSecondLaunchFragmentAttentionRoutineSettings {
     /// Its microkernel's default on eight cubes a box.
     pub const DEFAULT: Self = Self {
-        microkernel: HypercubeAttentionMicrokernelSettings::<
-            PlaneFragmentAttentionMicrokernelSettings,
-        >::DEFAULT,
+        microkernel: HypercubeAttentionMicrokernelSettings::FRAGMENT,
         cubes_along_keys: NonZeroUsize::new(8).unwrap(),
     };
 }
@@ -67,7 +56,7 @@ impl core::fmt::Display for HypercubeSecondLaunchFragmentAttentionRoutineSetting
 }
 
 pub type HypercubeSecondLaunchFragmentAttentionRoutineBlueprint =
-    AttentionBlueprint<HypercubeFragmentAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<HypercubeAttentionMicrokernel, StageStorage>;
 
 /// The width its planes store their slots' lines at: one element, as the windows their sums
 /// drain through serve them.
@@ -75,18 +64,20 @@ const SLOT_WIDTH: usize = 1;
 
 impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = HypercubeFragmentAttentionMicrokernel;
+    type Microkernel = HypercubeAttentionMicrokernel;
     type Settings = HypercubeSecondLaunchFragmentAttentionRoutineSettings;
     type Blueprint = HypercubeSecondLaunchFragmentAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
-    /// Its microkernel's settings ([`HypercubeAttentionMicrokernel::settings`]) on eight cubes a
-    /// box, then four and sixteen.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    /// Its microkernel's settings over plane fragments
+    /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
+    /// sixteen.
+    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
         [8, 4, 16]
             .into_iter()
             .flat_map(|cubes| {
-                HypercubeFragmentAttentionMicrokernel::settings(hw)
+                HypercubeAttentionMicrokernelSettings::FRAGMENT
+                    .listed()
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -100,7 +91,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     /// access.
     fn vectorize(
         &self,
-        microkernel: &HypercubeFragmentAttentionMicrokernel,
+        microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
@@ -141,8 +132,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             return Err(ATTENTION_PACKED_UNREAD);
         }
         let item = problem.work_item();
-        let microkernel =
-            HypercubeFragmentAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
         microkernel
             .cube
             .plane
@@ -182,7 +172,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
+impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     for HypercubeSecondLaunchFragmentAttentionRoutine
 {
     /// Two launches: every plane leaves its partial in its slot, then a plane for every row
@@ -203,6 +193,11 @@ impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
             HypercubeMerge::SecondLaunch.seq_q(&microkernel),
         );
         let slots = tensors.split_slots(shape.slots.splits);
+        // Its planes keep their sums in the first and read the stage in the last; they leave
+        // their rows in the slots, and the output is read for its shape alone.
+        let [sum, _, staged] = microkernel
+            .served(&problem.work_item())
+            .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
         // problem's edge cuts short, the keys and values are read no further than the attended
         // length, and the output is read for its shape alone. A plane writes no slot but its own,
@@ -228,9 +223,7 @@ impl AttentionRoutine<HypercubeFragmentAttentionMicrokernel, StageStorage>
                 shape,
                 problem.visibility,
                 blueprint.shared_memory.clone(),
-                microkernel
-                    .served(&problem.work_item())
-                    .served_kernel_elements(),
+                [sum, staged],
             );
         }
         HypercubeSecondLaunch::new(&problem, shape).launch(tensors, slots, SLOT_WIDTH);

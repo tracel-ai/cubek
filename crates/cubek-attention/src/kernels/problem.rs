@@ -282,9 +282,7 @@ impl QueryAxis {
 mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
-    use cubek_microkernel::attention::plane::{
-        PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
-    };
+
     use cubek_microkernel::attention::{AttentionMicrokernel, S};
     use cubek_std::Hardware;
     use cubek_std::devices;
@@ -337,12 +335,7 @@ mod tests {
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| {
-                    assert_steps_divide(
-                        CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
-                        hw,
-                    )
-                })
+                .map(|hw| assert_steps_divide(CubeStagedAttentionRoutine::FRAGMENT, hw))
                 .sum(),
             fleet
                 .iter()
@@ -409,7 +402,7 @@ mod tests {
         assert_eq!(page_steps(&paged(4 * keys)), Some(4));
         assert_eq!(page_steps(&paged(keys)), None);
         assert_eq!(page_steps(&paged(3 * keys / 2)), None);
-        let staged = CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new();
+        let staged = CubeStagedAttentionRoutine::UNIT_GROUP;
         let staged_settings = &staged.settings(&hw)[0];
         let (blueprint, _) = staged
             .prepare(&hw, &paged(4 * keys), staged_settings)
@@ -465,16 +458,8 @@ mod tests {
         ));
         declines(UnitAttentionRoutine, &hw, &packed);
         declines(PlaneFragmentAttentionRoutine, &hw, &packed);
-        declines(
-            CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
-            &hw,
-            &packed,
-        );
-        declines(
-            CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new(),
-            &hw,
-            &packed,
-        );
+        declines(CubeStagedAttentionRoutine::FRAGMENT, &hw, &packed);
+        declines(CubeStagedAttentionRoutine::UNIT_GROUP, &hw, &packed);
         declines(CubeShuffleAttentionRoutine, &hw, &packed);
         declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
     }

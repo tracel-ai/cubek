@@ -1,9 +1,5 @@
 use super::base::PlaneShuffleAttentionMicrokernel;
 use super::step_reads::{StepReads, StepReadsExpand, StepWalk};
-use crate::attention::cube::CubePlaneLayout;
-use crate::attention::plane::{
-    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneMicrokernel, GlobalPlaneOperands,
-};
 use crate::attention::{D, G, Q, S, VisibleKeys};
 use cubecl::tile::{Monoid, Region, Tile, Walk, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -167,27 +163,19 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             }
         }
     }
-}
 
-#[cube]
-impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
-    CubePlaneAttention<EA, E, K, L, VisibleKeys> for PlaneShuffleAttention<EA, N>
-{
-    type Microkernel = PlaneShuffleAttentionMicrokernel;
-    type Opening = GlobalPlaneOperands;
-    type Line = Vector<EA, N>;
-
-    /// Every team's state before any key, the output at zero, and each plane's rows of the query
-    /// in its units' registers, read off the walk's first step.
-    fn open(
+    /// Every plane's rows over `walk` before any key: every team's state, the output at zero, and
+    /// each plane's rows of `query`, in `E`, in its units' registers, read off the walk's first
+    /// step. A value is `val_dim` elements.
+    pub fn open<E: Float>(
         walk: &Walk,
-        opening: &GlobalPlaneOperands,
+        query: &Tile,
+        #[comptime] val_dim: usize,
         #[comptime] microkernel: PlaneShuffleAttentionMicrokernel,
-        #[comptime] _layout: CubePlaneLayout,
     ) -> Self {
-        let width = opening.query.vector_size();
-        let head_lines = comptime!(opening.query.space().extent(D) / width);
-        let value_lines = comptime!(opening.val_dim / width);
+        let width = query.vector_size();
+        let head_lines = comptime!(query.space().extent(D) / width);
+        let value_lines = comptime!(val_dim / width);
         let rows = comptime!(microkernel.seq_q());
         let units_per_key = comptime!(microkernel.settings.units_per_key.get());
         let per_head = comptime!(head_lines.div_ceil(units_per_key));
@@ -215,7 +203,7 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
             value_lines,
         };
         for plane in walk.planes() {
-            shuffle.load_query::<E>(&opening.query.at(&plane));
+            shuffle.load_query::<E>(&query.at(&plane));
         }
         shuffle
     }
@@ -224,8 +212,15 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
     /// issued before any is used, a key past the attended ones reading nothing; the team sums
     /// each key's partial dots against each row, takes the step's scores into its rows' max and
     /// sum once, and adds the values they weigh into its lines of the output, rescaled to the new
-    /// max. A key a row does not see weighs nothing.
-    fn step(&mut self, plane: &Region, keys: &K, values: &L, visible: &VisibleKeys, scale: EA) {
+    /// max. A key a row does not see weighs nothing. `plane` is its region of one step of the walk.
+    pub fn step<K: StepReads<N>, L: StepReads<N>>(
+        &mut self,
+        plane: &Region,
+        keys: &K,
+        values: &L,
+        visible: &VisibleKeys,
+        scale: EA,
+    ) {
         let microkernel = comptime!(self.microkernel);
         let (head_lines, value_lines) = comptime!((self.head_lines, self.value_lines));
         let rows = comptime!(microkernel.seq_q());
@@ -316,19 +311,21 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
         }
     }
 
-    /// The teams merged (`close`), then each plane's rows divided and written where it holds
-    /// them. Planes that split the same rows' keys are never stored this way: the cube merges
-    /// them from what each leaves in slots ([`store_partial`](crate::attention::plane::CubePlaneAttention::store_partial)).
-    fn store_normalized(&mut self, cube: &Region, out: &Tile) {
+    /// The teams merged (`close`), then each plane's rows of `region` divided and written into
+    /// `out`, `region`'s window of the output, in `E`. Planes that split the same rows' keys are
+    /// never stored this way: their walker merges them from what each leaves in slots
+    /// (`store_partial`).
+    pub fn store_normalized<E: Float>(&mut self, region: &Region, out: &Tile) {
         self.close();
-        for plane in cube.planes() {
+        for plane in region.planes() {
             self.store_rows::<E>(&mut out.at(&plane));
         }
     }
 
-    /// Each row's max and total, which [`store_normalized`](Self::store_normalized) merged across
-    /// the plane's teams, written by the plane's first unit.
-    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
+    /// Each row's logsumexp, from its max and total, which
+    /// `store_normalized` merged across the plane's teams, written into
+    /// `logsumexp`, `region`'s window of it, by the plane's first unit.
+    pub fn store_logsumexp(&self, region: &Region, logsumexp: &Tile) {
         let rows = comptime!(self.microkernel.seq_q());
         let mut values = Array::<EA>::new(rows);
         #[unroll]
@@ -336,14 +333,16 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
             let live = self.total[r] > EA::from_int(0);
             values[r] = select(live, self.max[r] + self.total[r].ln(), EA::min_value());
         }
-        for plane in cube.planes() {
+        for plane in region.planes() {
             logsumexp.at(&plane).set_cells(&values, rows);
         }
     }
 
-    /// The teams merged (`close`), then the plane's rows written as they stand.
+    /// The plane's own rows left undivided in slots, the first `rows` of them: row `r`'s output,
+    /// running max and running sum at slot `first_slot + r · row_stride` of `slot_out`,
+    /// `slot_max` and `slot_sum`, once the teams are merged (`close`).
     #[allow(clippy::too_many_arguments)]
-    fn store_partial(
+    pub fn store_partial(
         &mut self,
         _walk: &Walk,
         _plane: &Region,

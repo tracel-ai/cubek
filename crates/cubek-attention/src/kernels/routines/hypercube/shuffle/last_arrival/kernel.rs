@@ -1,10 +1,9 @@
 use core::marker::PhantomData;
 
-use crate::kernels::HypercubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
-use cubek_microkernel::attention::plane::PlaneShuffleAttention;
+use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::{
@@ -32,7 +31,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: HypercubeShuffleAttentionMicrokernel,
+    #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
@@ -63,7 +62,6 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         N,
         TileStepReads<E>,
         TileStepReads<E>,
-        PlaneShuffleAttention<EA, N>,
     >(
         run,
         // The query spans no key: its box is the first step's.
@@ -104,7 +102,7 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: HypercubeShuffleAttentionMicrokernel,
+    #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
@@ -129,29 +127,23 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
         comptime!(microkernel.cube.region_keys()),
         comptime!(merge.cubes),
     );
-    let slot_box = cube_unstaged_attention_partial_microkernel::<
-        EA,
-        E,
-        N,
-        PackedStepReads,
-        PackedStepReads,
-        PlaneShuffleAttention<EA, N>,
-    >(
-        run,
-        // The query spans no key: its box is the first step's.
-        &q.at(&first_step),
-        &key,
-        &value,
-        &visible,
-        steps,
-        EA::cast_from(scale),
-        slot_out,
-        slot_max,
-        slot_sum,
-        comptime!(microkernel.cube),
-        comptime!(merge.slots.splits),
-        comptime!(merge.slots.val_dim),
-    );
+    let slot_box =
+        cube_unstaged_attention_partial_microkernel::<EA, E, N, PackedStepReads, PackedStepReads>(
+            run,
+            // The query spans no key: its box is the first step's.
+            &q.at(&first_step),
+            &key,
+            &value,
+            &visible,
+            steps,
+            EA::cast_from(scale),
+            slot_out,
+            slot_max,
+            slot_sum,
+            comptime!(microkernel.cube),
+            comptime!(merge.slots.splits),
+            comptime!(merge.slots.val_dim),
+        );
     // A packed cache is read for inference: no backward pass reads its logsumexp.
     hypercube_split_keys_merge_microkernel::<EA, E, N>(
         &slot_box,

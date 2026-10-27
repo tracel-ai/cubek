@@ -23,9 +23,6 @@ use cubecl::zspace::{Shape, metadata::Metadata};
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
-};
 use cubek_std::Hardware;
 use cubek_std::Instructions;
 use cubek_std::autotune::{Autotune, Ceiling, GroupPriority, Roofline, TuneCandidate};
@@ -106,10 +103,7 @@ fn many_queries(
         .read_cold(AttentionTuneInputs::many_queries_roofline)
         .prioritized(
             &routines,
-            AttentionRoutineCandidate::list(
-                CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
-                hw,
-            ),
+            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::FRAGMENT, hw),
             launch,
         );
     if !hw
@@ -123,10 +117,7 @@ fn many_queries(
     {
         autotune = autotune.prioritized(
             &routines,
-            AttentionRoutineCandidate::list(
-                CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new(),
-                hw,
-            ),
+            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::UNIT_GROUP, hw),
             launch,
         );
     }

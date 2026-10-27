@@ -4,9 +4,6 @@ use crate::kernels::{
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
-};
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
 
@@ -14,10 +11,10 @@ use serde::{Deserialize, Serialize};
 /// cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CubeAttentionKernel {
-    /// [`CubeStagedAttentionRoutine`] over [`PlaneFragmentAttentionMicrokernel`]: a cube's planes
+    /// [`CubeStagedAttentionRoutine::FRAGMENT`]: a cube's planes
     /// on a square matrix instruction, against the keys the cube stages.
     Fragment,
-    /// [`CubeStagedAttentionRoutine`] over [`PlaneUnitGroupAttentionMicrokernel`]: a cube's plane
+    /// [`CubeStagedAttentionRoutine::UNIT_GROUP`]: a cube's plane
     /// unit groups, each unit owning queries in its registers, against the keys the cube stages,
     /// on no matrix instruction.
     UnitGroup,
@@ -62,14 +59,8 @@ impl CubeAttentionKernel {
         tensors: AttentionTensors,
     ) -> Result<TensorHandle, Refusal> {
         match self {
-            Self::Fragment => {
-                CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new()
-                    .launch_lead_on(hw, tensors)
-            }
-            Self::UnitGroup => {
-                CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new()
-                    .launch_lead_on(hw, tensors)
-            }
+            Self::Fragment => CubeStagedAttentionRoutine::FRAGMENT.launch_lead_on(hw, tensors),
+            Self::UnitGroup => CubeStagedAttentionRoutine::UNIT_GROUP.launch_lead_on(hw, tensors),
             Self::Shuffle => CubeShuffleAttentionRoutine.launch_lead_on(hw, tensors),
         }
     }

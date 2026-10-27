@@ -17,9 +17,6 @@ use cubek_attention::kernels::{
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
-};
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
@@ -172,7 +169,7 @@ fn the_plane_routine_writes_the_logsumexp() {
 /// Planes that split the same rows' keys merge their state before they write it.
 #[test]
 fn the_cube_staged_routines_write_the_logsumexp() {
-    let fragments = CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new();
+    let fragments = CubeStagedAttentionRoutine::FRAGMENT;
     check_logsumexp("cube-fragment", fragments, None, PROMPT);
     let hw = Hardware::from_client(&cubecl::test_device().client());
     let split = fragments
@@ -182,7 +179,7 @@ fn the_cube_staged_routines_write_the_logsumexp() {
     if let Some(split) = split {
         check_logsumexp("cube-fragment split keys", fragments, Some(split), PROMPT);
     }
-    let unit_groups = CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new();
+    let unit_groups = CubeStagedAttentionRoutine::UNIT_GROUP;
     check_logsumexp("cube-unit-group", unit_groups, None, PROMPT);
 }
 
@@ -229,13 +226,13 @@ fn every_prompt_routine_hides_what_a_mask_and_a_first_placed_diagonal_hide() {
         check_logsumexp("plane", PlaneFragmentAttentionRoutine, None, case);
         check_logsumexp(
             "cube-fragment",
-            CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
+            CubeStagedAttentionRoutine::FRAGMENT,
             None,
             case,
         );
         check_logsumexp(
             "cube-unit-group",
-            CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new(),
+            CubeStagedAttentionRoutine::UNIT_GROUP,
             None,
             case,
         );

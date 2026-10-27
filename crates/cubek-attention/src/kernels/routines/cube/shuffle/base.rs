@@ -11,9 +11,6 @@ use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::plane::{
-    PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
-};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -26,13 +23,9 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeShuffleAttentionRoutine;
 
-/// The cube microkernel it places: a cube of plane shuffles.
-pub type CubeShuffleAttentionMicrokernel =
-    CubeAttentionMicrokernel<PlaneShuffleAttentionMicrokernel>;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeShuffleAttentionRoutineSettings {
-    pub microkernel: CubeAttentionMicrokernelSettings<PlaneShuffleAttentionMicrokernelSettings>,
+    pub microkernel: CubeAttentionMicrokernelSettings,
     /// The order the cubes take the boxes of queries in: part of the partitioning
     /// ([`AttentionPartitioning::new`]).
     pub queries: QueryOrder,
@@ -41,8 +34,7 @@ pub struct CubeShuffleAttentionRoutineSettings {
 impl CubeShuffleAttentionRoutineSettings {
     /// Four planes of the plane shuffle's default splitting one head's keys.
     pub const DEFAULT: Self = Self {
-        microkernel:
-            CubeAttentionMicrokernelSettings::<PlaneShuffleAttentionMicrokernelSettings>::DEFAULT,
+        microkernel: CubeAttentionMicrokernelSettings::SHUFFLE,
         queries: QueryOrder::InOrder,
     };
 }
@@ -58,19 +50,21 @@ impl core::fmt::Display for CubeShuffleAttentionRoutineSettings {
 }
 
 pub type CubeShuffleAttentionRoutineBlueprint =
-    AttentionBlueprint<CubeShuffleAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<CubeAttentionMicrokernel, StageStorage>;
 
 impl Routine for CubeShuffleAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = CubeShuffleAttentionMicrokernel;
+    type Microkernel = CubeAttentionMicrokernel;
     type Settings = CubeShuffleAttentionRoutineSettings;
     type Blueprint = CubeShuffleAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
-    /// Its microkernel's settings ([`CubeAttentionMicrokernel::settings`]) in query order, then
-    /// its microkernel's default with the boxes taken last first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        CubeAttentionMicrokernel::<PlaneShuffleAttentionMicrokernel>::settings(hw)
+    /// Its microkernel's settings over plane shuffles
+    /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then its microkernel's lead
+    /// with the boxes taken last first.
+    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+        CubeAttentionMicrokernelSettings::SHUFFLE
+            .listed()
             .into_iter()
             .map(|microkernel| Self::Settings {
                 microkernel,
@@ -85,7 +79,7 @@ impl Routine for CubeShuffleAttentionRoutine {
     /// Nothing of its own: it walks cubes, and its microkernel makes every access.
     fn vectorize(
         &self,
-        microkernel: &CubeShuffleAttentionMicrokernel,
+        microkernel: &CubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
@@ -122,7 +116,7 @@ impl Routine for CubeShuffleAttentionRoutine {
             return Err(ATTENTION_PACKED_UNREAD);
         }
         let item = problem.work_item();
-        let microkernel = CubeShuffleAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let microkernel = CubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
         let partitioning = AttentionPartitioning::new(
             problem.space(),
             microkernel.tiling(),
@@ -150,9 +144,7 @@ impl Routine for CubeShuffleAttentionRoutine {
     }
 }
 
-impl AttentionRoutine<CubeShuffleAttentionMicrokernel, StageStorage>
-    for CubeShuffleAttentionRoutine
-{
+impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAttentionRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionTensors,

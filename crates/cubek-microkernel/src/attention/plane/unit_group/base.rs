@@ -1,14 +1,10 @@
-use super::microkernel::PlaneUnitGroupAttention;
-use crate::attention::cube::{CubePlaneKeys, CubePlaneLayout, CubePlaneReads};
-use crate::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
 use crate::attention::unit::{UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings};
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, Q};
 use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Levels, Space, StageStorage};
-use cubecl::{self as cubecl, prelude::*};
+use cubecl::tile::{Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// A plane whose units each own rows of one head whole, against the cube's stage: every unit takes
 /// each step of keys into its rows with the unit microkernel's step, in its own registers, the
@@ -97,50 +93,26 @@ impl AttentionMicrokernel for PlaneUnitGroupAttentionMicrokernel {
     }
 }
 
-impl CubePlaneMicrokernel for PlaneUnitGroupAttentionMicrokernel {
-    const NAME: &'static str = "unit-group";
-
-    /// Its units read each stage from shared memory.
-    const READS: CubePlaneReads = CubePlaneReads::Stage;
-
-    /// A unit's rows are its own: no plane holds another's to merge with.
-    const KEYS: CubePlaneKeys = CubePlaneKeys::Whole;
+/// What a cube holding it on its planes reads of it.
+impl PlaneUnitGroupAttentionMicrokernel {
+    /// What the routines whose cubes hold it are named after.
+    pub const NAME: &'static str = "unit-group";
 
     /// Its unit's step, a block of rows on each of its units.
-    fn tiling(&self) -> Levels {
+    pub fn tiling(&self) -> Levels {
         self.unit.step_tiling().units(&[(Q, self.units)])
     }
 
-    fn seq_q(&self) -> usize {
+    pub fn seq_q(&self) -> usize {
         self.unit_seq_q() * self.units
     }
 
-    fn seq_kv(&self) -> usize {
+    pub fn seq_kv(&self) -> usize {
         self.unit.seq_kv()
     }
 
     /// None: its rows and their sums stay in registers.
-    fn window_bytes(&self, _item: &AttentionWorkItem) -> usize {
+    pub fn window_bytes(&self, _item: &AttentionWorkItem) -> usize {
         0
     }
-
-    /// None: its planes split no keys.
-    fn merge_bytes(&self, _item: &AttentionWorkItem, _layout: CubePlaneLayout) -> usize {
-        0
-    }
-
-    /// Row-major, whatever the layout: each unit reads its keys and values a row at a time, in no
-    /// instruction's tiles.
-    fn stage_storage(&self, _layout: StageLayout, _stage: &Space) -> StageStorage {
-        StageStorage::Strided
-    }
-
-    /// A window of every row of the cube's box over the value dim, its units' sums drain into.
-    fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        layout.row_groups() * self.seq_q() * item.val_dim * item.sum.size()
-    }
-}
-
-impl CubeStagedPlane for PlaneUnitGroupAttentionMicrokernel {
-    type Attention<EA: Float, E: Float, ES: Float> = PlaneUnitGroupAttention<EA, ES>;
 }

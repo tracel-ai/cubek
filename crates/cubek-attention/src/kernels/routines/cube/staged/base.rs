@@ -4,16 +4,11 @@ use crate::kernels::{
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
 };
 use crate::kernels::{AttentionPartitioning, QueryOrder};
-use core::marker::PhantomData;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
-};
-use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
-use cubek_microkernel::attention::plane::{
-    PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
 use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
@@ -21,83 +16,82 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
-/// nothing else: the cube microkernel stages the keys and values once for its planes of `P`, each
-/// plane owning its queries of one head. The cubes cover the queries and the heads, one batch and
-/// key head each; a group wider than a cube's heads reads its keys once a cube.
+/// nothing else: the cube microkernel stages the keys and values once for its planes, each plane
+/// owning its queries of one head. The cubes cover the queries and the heads, one batch and key
+/// head each; a group wider than a cube's heads reads its keys once a cube.
 ///
-/// Its planes are fragments of a square matrix instruction
-/// ([`PlaneFragmentAttentionMicrokernel`]), or groups of units each owning its queries in
-/// registers on no matrix instruction ([`PlaneUnitGroupAttentionMicrokernel`]), what a cube runs
-/// where the device has no square instruction for the element, as `bf16` on Metal.
+/// Its planes are fragments of a square matrix instruction ([`FRAGMENT`](Self::FRAGMENT)), or
+/// groups of units each owning its queries in registers on no matrix instruction
+/// ([`UNIT_GROUP`](Self::UNIT_GROUP)), what a cube runs where the device has no square instruction
+/// for the element, as `bf16` on Metal: one routine for each, each listing the cube's settings over
+/// its kind of plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CubeStagedAttentionRoutine<P> {
-    plane: PhantomData<P>,
+pub struct CubeStagedAttentionRoutine {
+    /// The cube's settings it lists first, whose kind of plane it lists the cube's settings over.
+    lead: CubeAttentionMicrokernelSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeStagedAttentionRoutineSettings<P: CubePlaneMicrokernel> {
-    pub microkernel: CubeAttentionMicrokernelSettings<P::Settings>,
+pub struct CubeStagedAttentionRoutineSettings {
+    pub microkernel: CubeAttentionMicrokernelSettings,
     /// The order the cubes take the boxes of queries in: part of the partitioning
     /// ([`AttentionPartitioning::new`]).
     pub queries: QueryOrder,
 }
 
-pub type CubeStagedAttentionRoutineBlueprint<P> =
-    AttentionBlueprint<CubeAttentionMicrokernel<P>, StageStorage>;
+pub type CubeStagedAttentionRoutineBlueprint =
+    AttentionBlueprint<CubeAttentionMicrokernel, StageStorage>;
 
-impl<P> CubeStagedAttentionRoutine<P> {
-    pub const fn new() -> Self {
-        Self { plane: PhantomData }
-    }
+impl CubeStagedAttentionRoutine {
+    /// Cubes of plane fragments.
+    pub const FRAGMENT: Self = Self {
+        lead: CubeAttentionMicrokernelSettings::FRAGMENT,
+    };
+
+    /// Cubes of plane unit groups.
+    pub const UNIT_GROUP: Self = Self {
+        lead: CubeAttentionMicrokernelSettings::UNIT_GROUP,
+    };
 }
 
-impl<P> Default for CubeStagedAttentionRoutine<P> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+impl CubeStagedAttentionRoutineSettings {
+    /// The lead of cubes of plane fragments.
+    pub const FRAGMENT: Self = Self {
+        microkernel: CubeAttentionMicrokernelSettings::FRAGMENT,
+        queries: QueryOrder::InOrder,
+    };
 
-impl CubeStagedAttentionRoutineSettings<PlaneFragmentAttentionMicrokernel> {
-    pub const DEFAULT: Self = Self {
-        microkernel: CubeAttentionMicrokernelSettings::<
-            <PlaneFragmentAttentionMicrokernel as Microkernel>::Settings,
-        >::DEFAULT,
+    /// The lead of cubes of plane unit groups.
+    pub const UNIT_GROUP: Self = Self {
+        microkernel: CubeAttentionMicrokernelSettings::UNIT_GROUP,
         queries: QueryOrder::InOrder,
     };
 }
 
-impl CubeStagedAttentionRoutineSettings<PlaneUnitGroupAttentionMicrokernel> {
-    pub const DEFAULT: Self = Self {
-        microkernel: CubeAttentionMicrokernelSettings::<
-            <PlaneUnitGroupAttentionMicrokernel as Microkernel>::Settings,
-        >::DEFAULT,
-        queries: QueryOrder::InOrder,
-    };
-}
-
-impl<P: CubePlaneMicrokernel> core::fmt::Display for CubeStagedAttentionRoutineSettings<P> {
+impl core::fmt::Display for CubeStagedAttentionRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "cube-{}-attention {}{}",
-            P::NAME,
+            self.microkernel.plane.name(),
             self.microkernel,
             self.queries
         )
     }
 }
 
-impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionRoutine<P> {
+impl Routine for CubeStagedAttentionRoutine {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = CubeAttentionMicrokernel<P>;
-    type Settings = CubeStagedAttentionRoutineSettings<P>;
-    type Blueprint = CubeStagedAttentionRoutineBlueprint<P>;
+    type Microkernel = CubeAttentionMicrokernel;
+    type Settings = CubeStagedAttentionRoutineSettings;
+    type Blueprint = CubeStagedAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
-    /// Its microkernel's settings ([`CubeAttentionMicrokernel::settings`]) in query order, then
-    /// the first of them, its microkernel's lead, with the boxes taken last first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
-        let microkernel = CubeAttentionMicrokernel::<P>::settings(hw);
+    /// Its microkernel's settings over its kind of plane
+    /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then the first of them, its
+    /// lead, with the boxes taken last first.
+    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+        let microkernel = self.lead.listed();
         let last_first = Self::Settings {
             microkernel: microkernel[0],
             queries: QueryOrder::LastFirst,
@@ -115,7 +109,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
     /// Nothing of its own: it walks cubes, and its microkernel makes every access.
     fn vectorize(
         &self,
-        microkernel: &CubeAttentionMicrokernel<P>,
+        microkernel: &CubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
@@ -126,7 +120,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
     fn estimate(
         &self,
         problem: &AttentionRoutineProblem,
-        blueprint: &CubeStagedAttentionRoutineBlueprint<P>,
+        blueprint: &CubeStagedAttentionRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
@@ -138,7 +132,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
         );
     }
 
-    /// The best cube of `P`'s planes at the settings, a cube a box, holding a plane for every
+    /// The best cube at the settings, a cube a box, holding a plane for every
     /// head it holds along every plane of its queries and of their keys, each as many units as
     /// the device's plane, and the shared memory the cube microkernel asks for, its stages held as
     /// its planes read them, the cubes taking the boxes in the settings' order. Its planes read
@@ -153,7 +147,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
             return Err(ATTENTION_PACKED_UNREAD);
         }
         let item = problem.work_item();
-        let microkernel = CubeAttentionMicrokernel::<P>::best(hw, &item, &settings.microkernel)?;
+        let microkernel = CubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
         let partitioning = AttentionPartitioning::new(
             problem.space(),
             microkernel.tiling(),
@@ -185,20 +179,24 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
     }
 }
 
-impl<P: CubePlaneMicrokernel + CubeStagedPlane>
-    AttentionRoutine<CubeAttentionMicrokernel<P>, StageStorage> for CubeStagedAttentionRoutine<P>
-{
+impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAttentionRoutine {
     /// Every cube staging its keys and values once for its planes, which read the stage, held as
     /// the blueprint's storage.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
         binding: AttentionBinding,
-        blueprint: CubeStagedAttentionRoutineBlueprint<P>,
+        blueprint: CubeStagedAttentionRoutineBlueprint,
         grid: Grid,
     ) {
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles();
+        // Its planes keep their sums in the first and read the stage in the last; the output is
+        // stored as its tile states.
+        let [sum, _, staged] = blueprint
+            .microkernel
+            .served(&problem.work_item())
+            .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, the keys and values are read no further than
         // the attended length, and the kernel indexes no buffer but through its tiles and the
@@ -221,10 +219,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane>
                 blueprint.microkernel,
                 blueprint.shared_memory.clone(),
                 problem.visibility,
-                blueprint
-                    .microkernel
-                    .served(&problem.work_item())
-                    .served_kernel_elements(),
+                [sum, staged],
             );
         }
     }

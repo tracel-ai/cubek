@@ -7,7 +7,7 @@ mod fragment {
     use crate::kernels::QueryOrder;
     use cubecl::tile::launch::Refusal;
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
     use cubek_std::Hardware;
     use cubek_std::devices;
@@ -18,15 +18,14 @@ mod fragment {
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::attention::AttentionMicrokernel;
-    use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
+    use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
     use cubek_microkernel::attention::plane::InstructionShape;
     use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
     use cubek_microkernel::attention::{G, Q, S};
     use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 
-    const ROUTINE: CubeStagedAttentionRoutine<PlaneFragmentAttentionMicrokernel> =
-        CubeStagedAttentionRoutine::new();
-    type Settings = CubeStagedAttentionRoutineSettings<PlaneFragmentAttentionMicrokernel>;
+    const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine::FRAGMENT;
+    type Settings = CubeStagedAttentionRoutineSettings;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -108,9 +107,12 @@ mod fragment {
         let hw = offering_nvidia(devices::h100());
         let [_, _, f16, _] = problems();
         let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f16, &Settings::DEFAULT)
+            .prepare(&hw, &f16, &Settings::FRAGMENT)
             .expect("f16 prepares on an NVIDIA GPU's shapes");
-        let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.score.instruction.shape();
+        let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
+            panic!("the routine runs plane fragments")
+        };
+        let [(_, m), (_, n), (_, k)] = plane.score.instruction.shape();
         assert_eq!((m, n, k), (16, 16, 16));
     }
 
@@ -122,13 +124,18 @@ mod fragment {
     fn a_rectangular_instruction_cuts_each_product_its_own_way() {
         let hw = offering_nvidia(devices::h100());
         let [_, _, f16, _] = problems();
-        let lead = Settings::DEFAULT;
+        let lead = Settings::FRAGMENT;
+        let CubeAttentionPlaneSettings::Fragment(lead_plane) = lead.microkernel.plane else {
+            panic!("the lead runs plane fragments")
+        };
         let rectangular = Settings {
             microkernel: CubeAttentionMicrokernelSettings {
-                plane: PlaneFragmentAttentionMicrokernelSettings {
-                    shape: InstructionShape::Rectangular,
-                    ..lead.microkernel.plane
-                },
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings {
+                        shape: InstructionShape::Rectangular,
+                        ..lead_plane
+                    },
+                ),
                 ..lead.microkernel
             },
             ..lead
@@ -136,7 +143,9 @@ mod fragment {
         let (blueprint, _) = ROUTINE
             .prepare(&hw, &f16, &rectangular)
             .expect("f16 prepares on an NVIDIA GPU's shapes");
-        let plane = blueprint.microkernel.plane;
+        let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
+            panic!("the routine runs plane fragments")
+        };
         assert_eq!(
             plane.score.instruction.shape(),
             plane.value.instruction.shape()
@@ -159,9 +168,11 @@ mod fragment {
         let hw = offering_nvidia(devices::h100());
         let [_, _, _, f32] = problems();
         let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f32, &Settings::DEFAULT)
+            .prepare(&hw, &f32, &Settings::FRAGMENT)
             .expect("f32 prepares on tf32's 16×16×8");
-        let plane = blueprint.microkernel.plane;
+        let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
+            panic!("the routine runs plane fragments")
+        };
         assert_eq!(plane.read, ElemType::Float(FloatKind::TF32));
         assert_eq!(
             (plane.score.tile_extent(S), plane.score.settings.depth.get()),
@@ -179,7 +190,7 @@ mod fragment {
     fn tf32_operands_prefetch_into_their_slots() {
         let hw = offering_nvidia(devices::h100());
         let [_, _, _, f32] = problems();
-        let lead = Settings::DEFAULT;
+        let lead = Settings::FRAGMENT;
         let through_registers = Settings {
             microkernel: CubeAttentionMicrokernelSettings {
                 ring: StageRing::SINGLE_THROUGH_REGISTERS,
@@ -206,9 +217,9 @@ mod fragment {
             let settings = Settings {
                 microkernel: CubeAttentionMicrokernelSettings {
                     layout,
-                    ..Settings::DEFAULT.microkernel
+                    ..Settings::FRAGMENT.microkernel
                 },
-                ..Settings::DEFAULT
+                ..Settings::FRAGMENT
             };
             let (blueprint, _) = ROUTINE
                 .prepare(&hw, &problem, &settings)
@@ -231,10 +242,10 @@ mod fragment {
         let strided = bytes(StageLayout::Strided);
         assert_eq!(bytes(StageLayout::PaddedRows), strided + whole_rows * chunk);
         assert_eq!(bytes(StageLayout::Blocks), strided);
-        assert_eq!(
-            microkernel.plane.out_edge() * F16.size(),
-            RowChunks::CHUNK_BYTES
-        );
+        let CubeAttentionPlane::Fragment(plane) = microkernel.plane else {
+            panic!("the routine runs plane fragments")
+        };
+        assert_eq!(plane.out_edge() * F16.size(), RowChunks::CHUNK_BYTES);
         assert_eq!(bytes(StageLayout::PaddedBlocks), strided);
     }
 
@@ -245,7 +256,7 @@ mod fragment {
         let hw = offering(devices::m2_pro(), 8);
         let [_, problem, _, _] = problems();
         let (blueprint, grid) = ROUTINE
-            .prepare(&hw, &problem, &Settings::DEFAULT)
+            .prepare(&hw, &problem, &Settings::FRAGMENT)
             .expect("the default prepares on the M2");
         let (cube, stage) = (
             blueprint.partitioning.cube_space(),
@@ -274,18 +285,21 @@ mod fragment {
             k,
         };
         let hw = devices::offering_mma(offering(devices::h100(), 16), [manual(16), manual(8)]);
-        let holder = |settings: CubeAttentionMicrokernelSettings<_>| {
+        let holder = |settings: CubeAttentionMicrokernelSettings| {
             let (blueprint, _) = ROUTINE
                 .prepare(
                     &hw,
                     &problems()[2],
                     &Settings {
                         microkernel: settings,
-                        ..Settings::DEFAULT
+                        ..Settings::FRAGMENT
                     },
                 )
                 .expect("prepares where both transports are offered");
-            blueprint.microkernel.plane.score_holder()
+            let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
+                panic!("the routine runs plane fragments")
+            };
+            plane.score_holder()
         };
         let settings = ROUTINE.settings(&hw);
         let lead = settings[0].microkernel;
@@ -317,14 +331,14 @@ mod fragment {
         let split = CubeAttentionMicrokernelSettings {
             heads: NonZeroUsize::new(1).unwrap(),
             planes_along_keys: NonZeroUsize::new(2).unwrap(),
-            ..Settings::DEFAULT.microkernel
+            ..Settings::FRAGMENT.microkernel
         };
         let prepared = ROUTINE.prepare(
             &hw,
             &problems()[2],
             &Settings {
                 microkernel: split,
-                ..Settings::DEFAULT
+                ..Settings::FRAGMENT
             },
         );
         assert_eq!(
@@ -360,7 +374,7 @@ mod fragment {
             last_first,
             [&Settings {
                 queries: QueryOrder::LastFirst,
-                ..Settings::DEFAULT
+                ..Settings::FRAGMENT
             }]
         );
         assert!(!reverses_queries(&settings[0]));
@@ -373,12 +387,11 @@ mod unit_group {
     use crate::kernels::AttentionRoutineProblem;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::launch::Refusal;
-    use cubek_microkernel::attention::plane::PlaneUnitGroupAttentionMicrokernel;
+
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
-    const ROUTINE: CubeStagedAttentionRoutine<PlaneUnitGroupAttentionMicrokernel> =
-        CubeStagedAttentionRoutine::new();
+    const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine::UNIT_GROUP;
 
     const BF16: ElemType = ElemType::Float(FloatKind::BF16);
     const F16: ElemType = ElemType::Float(FloatKind::F16);

@@ -5,7 +5,6 @@ use crate::kernels::test_support::{offering, qwen};
 use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionMicrokernel, Q, S};
 use cubek_std::Hardware;
 use cubek_std::Instructions;
@@ -37,11 +36,7 @@ fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
 fn a_prompt_reaches_wide_steps_and_narrow_boxes() {
     let hw = offering(devices::h100(), 16);
     let prompt = qwen(512, 512);
-    let (cube_steps, _) = reach(
-        CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
-        &hw,
-        &prompt,
-    );
+    let (cube_steps, _) = reach(CubeStagedAttentionRoutine::FRAGMENT, &hw, &prompt);
     assert!(cube_steps.contains(&256), "cube steps {cube_steps:?}");
     let (_, few) = reach(
         HypercubeLastArrivalShuffleAttentionRoutine::new(),
@@ -99,10 +94,8 @@ fn a_decode_step_reaches_every_split_and_step() {
 #[test]
 fn the_cube_reaches_every_ring_and_layout() {
     let hw = offering(devices::m2_pro(), 8);
-    let settings =
-        CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new().settings(&hw);
-    let lead = CubeStagedAttentionRoutineSettings::<PlaneFragmentAttentionMicrokernel>::DEFAULT
-        .microkernel;
+    let settings = CubeStagedAttentionRoutine::FRAGMENT.settings(&hw);
+    let lead = CubeStagedAttentionRoutineSettings::FRAGMENT.microkernel;
     for ring in [
         StageRing::DOUBLE,
         StageRing::SINGLE_THROUGH_REGISTERS,
@@ -125,14 +118,14 @@ fn the_cube_reaches_every_ring_and_layout() {
             "{listed} is not listed"
         );
     }
-    let prefetching = CubeStagedAttentionRoutineSettings::<PlaneFragmentAttentionMicrokernel> {
+    let prefetching = CubeStagedAttentionRoutineSettings {
         microkernel: CubeAttentionMicrokernelSettings {
             ring: StageRing::SINGLE_THROUGH_REGISTERS,
             ..lead
         },
-        ..CubeStagedAttentionRoutineSettings::<PlaneFragmentAttentionMicrokernel>::DEFAULT
+        ..CubeStagedAttentionRoutineSettings::FRAGMENT
     };
-    let (blueprint, _) = CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new()
+    let (blueprint, _) = CubeStagedAttentionRoutine::FRAGMENT
         .prepare(&hw, &qwen(512, 512), &prefetching)
         .expect("the lead's box prepares on the M2");
     assert_eq!(blueprint.microkernel.ring.prefetch, Prefetch::InRegisters);

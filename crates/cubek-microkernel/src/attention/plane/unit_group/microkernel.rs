@@ -1,6 +1,4 @@
 use super::base::PlaneUnitGroupAttentionMicrokernel;
-use crate::attention::cube::CubePlaneLayout;
-use crate::attention::plane::{CubePlaneAttention, CubePlaneAttentionExpand, StagedPlaneOperands};
 use crate::attention::unit::unit_attention_step;
 use crate::attention::{B, DV, G, KV, Q, S};
 use core::marker::PhantomData;
@@ -8,7 +6,7 @@ use core::marker::PhantomData;
 use cubecl::tile::{Region, Semiring, StageStorage, Tile, Walk, ops::softmax::OnlineSoftmax};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// A cube's plane unit groups over the cube's stages: each unit's sum of its rows' outputs in a
+/// Plane unit groups over staged keys and values: each unit's sum of its rows' outputs in a
 /// register block held across the walk, and the softmax state of its rows.
 #[derive(CubeType)]
 pub struct PlaneUnitGroupAttention<EA: Float, ES: Float> {
@@ -23,23 +21,19 @@ pub struct PlaneUnitGroupAttention<EA: Float, ES: Float> {
 }
 
 #[cube]
-impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
-    for PlaneUnitGroupAttention<EA, ES>
-{
-    type Microkernel = PlaneUnitGroupAttentionMicrokernel;
-    type Opening = StagedPlaneOperands;
-    type Line = Vector<EA, Const<1>>;
-
-    /// Its sum opened at zero on the cube's output, in the value's register blocks.
-    fn open(
-        _walk: &Walk,
-        opening: &StagedPlaneOperands,
+impl<EA: Float, ES: Float> PlaneUnitGroupAttention<EA, ES> {
+    /// Every plane's rows before any key: its sum opened at zero on `out`, the output it is shaped
+    /// by, in the value's register blocks against `value` and `bias`. `query` is staged.
+    pub fn open(
+        query: &Tile,
+        out: &Tile,
+        value: &Tile,
+        bias: &Tile,
         #[comptime] microkernel: PlaneUnitGroupAttentionMicrokernel,
-        #[comptime] _layout: CubePlaneLayout,
     ) -> Self {
-        let mut sum = opening.out.accumulator::<EA>(
-            &opening.bias,
-            &opening.value,
+        let mut sum = out.accumulator::<EA>(
+            bias,
+            value,
             comptime!(microkernel.unit.value.tile_instruction()),
             Semiring::SUM_PROD,
         );
@@ -47,14 +41,16 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         PlaneUnitGroupAttention::<EA, ES> {
             sum,
             softmax: OnlineSoftmax::<EA>::new(comptime!(microkernel.unit_seq_q()), S),
-            query: opening.query.clone(),
+            query: query.clone(),
             staged: PhantomData,
             microkernel,
         }
     }
 
-    /// `unit_attention_step` on each unit's rows of the plane's region of the stage.
-    fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
+    /// `plane`, its region of one step of the walk, taken into its rows: `unit_attention_step` on
+    /// each unit's rows, its keys and values read from `keys` and `values`, each row seeing those
+    /// `visible` admits, scaled by `scale`.
+    pub fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
         for rows in plane {
             unit_attention_step::<EA>(
                 &rows,
@@ -70,10 +66,10 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         }
     }
 
-    /// Each unit's rows divided by their sums and drained into `out`. Its candidates hold no
-    /// planes along the keys, so no rows are merged.
-    fn store_normalized(&mut self, cube: &Region, out: &Tile) {
-        for plane in cube.planes() {
+    /// Each unit's rows of `region` divided by their sums and drained into `out`, `region`'s
+    /// window of the output. No two planes hold the same rows, so none are merged.
+    pub fn store_normalized(&mut self, region: &Region, out: &Tile) {
+        for plane in region.planes() {
             for rows in plane {
                 let sum = self.sum.at(&rows);
                 sum.along(DV).mul(&self.softmax.recip_l());
@@ -82,9 +78,10 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         }
     }
 
-    /// Each unit's rows' state, which the unit holds whole.
-    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
-        for plane in cube.planes() {
+    /// Each unit's rows' logsumexp written into `logsumexp`, `region`'s window of it, from their
+    /// state, which the unit holds whole.
+    pub fn store_logsumexp(&self, region: &Region, logsumexp: &Tile) {
+        for plane in region.planes() {
             for rows in plane {
                 self.softmax
                     .store_logsumexp(&self.sum.at(&rows), &mut logsumexp.at(&rows));
@@ -92,11 +89,13 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         }
     }
 
-    /// Each unit's sum drained, as it stands, into its window of a scratch of the walk's step,
-    /// then its rows copied from there into their slots by the unit alone, beside its rows'
-    /// softmax state.
+    /// `plane`'s own rows of `walk`'s first step left undivided in slots, the first `rows` of
+    /// them: row `r`'s output, running max and running sum at slot `first_slot + r · row_stride`
+    /// of `slot_out`, `slot_max` and `slot_sum`. Each unit's sum is drained, as it stands, into
+    /// its window of a scratch of the walk's step, then its rows copied from there into their
+    /// slots by the unit alone, beside its rows' softmax state.
     #[allow(clippy::too_many_arguments)]
-    fn store_partial(
+    pub fn store_partial(
         &mut self,
         walk: &Walk,
         plane: &Region,

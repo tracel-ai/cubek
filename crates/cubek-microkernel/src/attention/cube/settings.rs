@@ -1,3 +1,4 @@
+use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernelSettings,
@@ -6,16 +7,15 @@ use crate::attention::unit::UnitAttentionMicrokernelSettings;
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
-use cubek_std::Hardware;
 use cubek_std::microkernel::{StageLayout, StageRing};
 
-/// The plane microkernel's settings `P`, the heads a cube holds and the planes each head's queries
-/// and keys are laid over, and, where the plane microkernel reads a stage, how the cube holds its
-/// stages of keys and values: how many at once, where the next one waits, and how each is laid
-/// out.
+/// The settings of the plane microkernel on each of its planes, the heads a cube holds and the
+/// planes each head's queries and keys are laid over, and, where its planes read a stage, how the
+/// cube holds its stages of keys and values: how many at once, where the next one waits, and how
+/// each is laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CubeAttentionMicrokernelSettings<P> {
-    pub plane: P,
+pub struct CubeAttentionMicrokernelSettings {
+    pub plane: CubeAttentionPlaneSettings,
     /// Heads of the group one cube holds, which read the keys it stages.
     pub heads: NonZeroUsize,
     /// Planes along one head's queries.
@@ -28,56 +28,57 @@ pub struct CubeAttentionMicrokernelSettings<P> {
     pub layout: StageLayout,
 }
 
-impl CubeAttentionMicrokernelSettings<PlaneFragmentAttentionMicrokernelSettings> {
-    /// A fragment of rows and one of keys a plane, four heads a cube: what a cube holds for a head
-    /// dim of 128 in `f32` within 32 KiB of shared memory.
-    pub const DEFAULT: Self = Self {
-        plane: PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1),
+impl CubeAttentionMicrokernelSettings {
+    /// The lead over plane fragments: a fragment of rows and one of keys a plane, four heads a
+    /// cube, what a cube holds for a head dim of 128 in `f32` within 32 KiB of shared memory.
+    pub const FRAGMENT: Self = Self {
+        plane: CubeAttentionPlaneSettings::Fragment(
+            PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1),
+        ),
         heads: NonZeroUsize::new(4).unwrap(),
         planes_along_queries: NonZeroUsize::new(1).unwrap(),
         planes_along_keys: NonZeroUsize::new(1).unwrap(),
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
     };
-}
 
-impl CubeAttentionMicrokernelSettings<PlaneShuffleAttentionMicrokernelSettings> {
-    /// Four planes of the plane shuffle's default splitting one head's keys: a cube's worth of planes on
-    /// every box of rows, where the shuffle alone would leave a cube one plane.
-    pub const DEFAULT: Self = Self {
-        plane: PlaneShuffleAttentionMicrokernelSettings::DEFAULT,
+    /// The lead over plane shuffles: four planes of the plane shuffle's default splitting one
+    /// head's keys, a cube's worth of planes on every box of rows, where the shuffle alone would
+    /// leave a cube one plane.
+    pub const SHUFFLE: Self = Self {
+        plane: CubeAttentionPlaneSettings::Shuffle(
+            PlaneShuffleAttentionMicrokernelSettings::DEFAULT,
+        ),
         heads: NonZeroUsize::new(1).unwrap(),
         planes_along_queries: NonZeroUsize::new(1).unwrap(),
         planes_along_keys: NonZeroUsize::new(4).unwrap(),
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
     };
-}
 
-impl CubeAttentionMicrokernelSettings<UnitAttentionMicrokernelSettings> {
-    /// A plane of the unit microkernel's default, a row a unit, for one head: a stage of keys
-    /// read by a plane's worth of rows.
-    pub const DEFAULT: Self = Self {
-        plane: UnitAttentionMicrokernelSettings::DEFAULT,
+    /// The lead over plane unit groups: a plane of the unit microkernel's default, a row a unit,
+    /// for one head, a stage of keys read by a plane's worth of rows.
+    pub const UNIT_GROUP: Self = Self {
+        plane: CubeAttentionPlaneSettings::UnitGroup(UnitAttentionMicrokernelSettings::DEFAULT),
         heads: NonZeroUsize::new(1).unwrap(),
         planes_along_queries: NonZeroUsize::new(1).unwrap(),
         planes_along_keys: NonZeroUsize::new(1).unwrap(),
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
     };
-}
 
-/// The settings of a plane microkernel a cube holds, and the cube's settings worth trying over it:
-/// a cube's own knobs are worth different values over each plane microkernel, so its list is one
-/// for each.
-pub trait CubeAttentionPlaneSettings: Sized {
-    /// The cube's settings worth trying on this device over planes of this kind, its default
-    /// first.
-    fn cube_settings(hw: &Hardware) -> Vec<CubeAttentionMicrokernelSettings<Self>>;
-}
+    /// The cube's settings worth trying over planes of the kind this lead runs, the lead first: a
+    /// cube's own knobs are worth different values over each plane microkernel, so its list is one
+    /// for each.
+    pub fn listed(self) -> Vec<Self> {
+        match self.plane {
+            CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
+            CubeAttentionPlaneSettings::UnitGroup(plane) => Self::unit_groups_listed(self, plane),
+            CubeAttentionPlaneSettings::Shuffle(plane) => Self::shuffles_listed(self, plane),
+        }
+    }
 
-impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
-    /// A star off the default: each larger box of fragments, each count of heads, two and four
+    /// A star off `lead`: each larger box of fragments, each count of heads, two and four
     /// planes along a head's queries, each other ring of stages and layout of a stage, the whole
     /// grid bounced at once, a rectangular cmma instruction read through the windows, and one head
     /// a cube with eight and sixteen fragments along its keys, or with two, four and eight planes
@@ -87,32 +88,36 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
     /// planes along a head's queries. The wide steps hold one head because a step's
     /// stages and the heads' windows share one budget; one that still does not fit the device's
     /// shared memory declines there.
-    fn cube_settings(_hw: &Hardware) -> Vec<CubeAttentionMicrokernelSettings<Self>> {
-        let lead = CubeAttentionMicrokernelSettings::<Self>::DEFAULT;
+    fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
-        let fragments = move |rows: usize, keys: usize| CubeAttentionMicrokernelSettings {
-            plane: PlaneFragmentAttentionMicrokernelSettings {
-                seq_q: count(rows),
-                seq_kv: count(keys),
-                ..lead.plane
-            },
+        let with = move |plane| Self {
+            plane: CubeAttentionPlaneSettings::Fragment(plane),
             ..lead
         };
-        let heads = [1, 2, 8].map(|heads| CubeAttentionMicrokernelSettings {
+        let fragments = move |rows: usize, keys: usize| {
+            with(PlaneFragmentAttentionMicrokernelSettings {
+                seq_q: count(rows),
+                seq_kv: count(keys),
+                ..plane
+            })
+        };
+        let heads = [1, 2, 8].map(|heads| Self {
             heads: count(heads),
             ..lead
         });
-        let split = [2, 4].map(|planes| CubeAttentionMicrokernelSettings {
+        let split = [2, 4].map(|planes| Self {
             planes_along_queries: count(planes),
             ..lead
         });
         // One head a cube, so the sum of the planes' products fits beside the stages, and the
         // score read through the windows, so the planes' states merge row by row.
-        let along_keys = [2, 4, 8].map(|planes| CubeAttentionMicrokernelSettings {
-            plane: PlaneFragmentAttentionMicrokernelSettings {
-                transport: PlaneFragmentTransport::Cmma,
-                ..lead.plane
-            },
+        let along_keys = [2, 4, 8].map(|planes| Self {
+            plane: CubeAttentionPlaneSettings::Fragment(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    transport: PlaneFragmentTransport::Cmma,
+                    ..plane
+                },
+            ),
             heads: count(1),
             planes_along_keys: count(planes),
             ..lead
@@ -122,50 +127,55 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
             StageRing::SINGLE_THROUGH_REGISTERS,
             StageRing::DOUBLE_THROUGH_REGISTERS,
         ]
-        .map(|ring| CubeAttentionMicrokernelSettings { ring, ..lead });
+        .map(|ring| Self { ring, ..lead });
         let layouts = [
             StageLayout::PaddedRows,
             StageLayout::Blocks,
             StageLayout::PaddedBlocks,
             StageLayout::SwizzledBlocks,
         ]
-        .map(|layout| CubeAttentionMicrokernelSettings { layout, ..lead });
-        let whole = CubeAttentionMicrokernelSettings {
-            plane: PlaneFragmentAttentionMicrokernelSettings {
-                scratch: Scratch::WholeGrid,
-                ..lead.plane
-            },
+        .map(|layout| Self { layout, ..lead });
+        let whole = Self {
+            plane: CubeAttentionPlaneSettings::Fragment(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    scratch: Scratch::WholeGrid,
+                    ..plane
+                },
+            ),
             ..lead
         };
         // A rectangular cmma instruction, read through the windows: the only one a device offers
         // for some elements, as tf32 for f32 operands on NVIDIA.
-        let rectangular = CubeAttentionMicrokernelSettings {
-            plane: PlaneFragmentAttentionMicrokernelSettings {
-                transport: PlaneFragmentTransport::Cmma,
-                shape: InstructionShape::Rectangular,
-                ..lead.plane
-            },
+        let rectangular = Self {
+            plane: CubeAttentionPlaneSettings::Fragment(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    transport: PlaneFragmentTransport::Cmma,
+                    shape: InstructionShape::Rectangular,
+                    ..plane
+                },
+            ),
             ..lead
         };
-        let wide = [8, 16].map(|keys| CubeAttentionMicrokernelSettings {
-            plane: PlaneFragmentAttentionMicrokernelSettings {
-                seq_kv: count(keys),
-                ..lead.plane
-            },
+        let wide = [8, 16].map(|keys| Self {
+            plane: CubeAttentionPlaneSettings::Fragment(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    seq_kv: count(keys),
+                    ..plane
+                },
+            ),
             heads: count(1),
             ..lead
         });
-        let swizzled =
-            [(2, 4), (2, 8), (1, 8)].map(|(rows, keys)| CubeAttentionMicrokernelSettings {
-                layout: StageLayout::SwizzledBlocks,
-                ..fragments(rows, keys)
-            });
+        let swizzled = [(2, 4), (2, 8), (1, 8)].map(|(rows, keys)| Self {
+            layout: StageLayout::SwizzledBlocks,
+            ..fragments(rows, keys)
+        });
         // A prompt of few heads leaves the device short of cubes, one a box of queries for every
         // four heads: more planes on each box are what it has left to run. On Qwen3-0.6B's prompt
         // of 512 on an RTX PRO 6000, two planes along the queries take the one-by-eight box from
         // 74 to 49 µs; on Qwen3-8B, whose cubes already fill the device, they cost 4%. Four were
         // slower than two on both.
-        let swizzled_split = CubeAttentionMicrokernelSettings {
+        let swizzled_split = Self {
             planes_along_queries: count(2),
             ..swizzled[2]
         };
@@ -182,37 +192,37 @@ impl CubeAttentionPlaneSettings for PlaneFragmentAttentionMicrokernelSettings {
             .chain([swizzled_split])
             .collect()
     }
-}
 
-impl CubeAttentionPlaneSettings for PlaneShuffleAttentionMicrokernelSettings {
-    /// A star off the default: two and eight planes along a head's keys, eight rows a plane,
+    /// A star off `lead`: two and eight planes along a head's keys, eight rows a plane,
     /// thirty-two units on a key, four keys in flight, four heads a cube, and two planes along a
     /// head's queries.
-    fn cube_settings(_hw: &Hardware) -> Vec<CubeAttentionMicrokernelSettings<Self>> {
-        let lead = CubeAttentionMicrokernelSettings::<Self>::DEFAULT;
+    fn shuffles_listed(lead: Self, plane: PlaneShuffleAttentionMicrokernelSettings) -> Vec<Self> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
-        let along_keys = [2, 8].map(|planes| CubeAttentionMicrokernelSettings {
+        let along_keys = [2, 8].map(|planes| Self {
             planes_along_keys: count(planes),
             ..lead
         });
-        let plane = |plane| CubeAttentionMicrokernelSettings { plane, ..lead };
-        let rows = plane(PlaneShuffleAttentionMicrokernelSettings {
+        let with = |shuffle| Self {
+            plane: CubeAttentionPlaneSettings::Shuffle(shuffle),
+            ..lead
+        };
+        let rows = with(PlaneShuffleAttentionMicrokernelSettings {
             seq_q: count(8),
-            ..lead.plane
+            ..plane
         });
-        let units = plane(PlaneShuffleAttentionMicrokernelSettings {
+        let units = with(PlaneShuffleAttentionMicrokernelSettings {
             units_per_key: count(32),
-            ..lead.plane
+            ..plane
         });
-        let in_flight = plane(PlaneShuffleAttentionMicrokernelSettings {
+        let in_flight = with(PlaneShuffleAttentionMicrokernelSettings {
             keys_in_flight: count(4),
-            ..lead.plane
+            ..plane
         });
-        let heads = CubeAttentionMicrokernelSettings {
+        let heads = Self {
             heads: count(4),
             ..lead
         };
-        let split = CubeAttentionMicrokernelSettings {
+        let split = Self {
             planes_along_queries: count(2),
             ..lead
         };
@@ -222,31 +232,28 @@ impl CubeAttentionPlaneSettings for PlaneShuffleAttentionMicrokernelSettings {
             .chain([rows, units, in_flight, heads, split])
             .collect()
     }
-}
 
-impl CubeAttentionPlaneSettings for UnitAttentionMicrokernelSettings {
-    /// A star off the default, a plane of the unit microkernel's default, a row a unit, eight keys
+    /// A star off `lead`, a plane of the unit microkernel's default, a row a unit, eight keys
     /// a stage: sixteen and thirty-two keys a stage, two rows a unit, two heads a cube, two planes
     /// along a head's queries, and a second stage in flight.
-    fn cube_settings(_hw: &Hardware) -> Vec<CubeAttentionMicrokernelSettings<Self>> {
-        let lead = CubeAttentionMicrokernelSettings::<Self>::DEFAULT;
+    fn unit_groups_listed(lead: Self, _plane: UnitAttentionMicrokernelSettings) -> Vec<Self> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
-        let unit = |rows: usize, keys: usize| CubeAttentionMicrokernelSettings {
-            plane: UnitAttentionMicrokernelSettings {
+        let unit = |rows: usize, keys: usize| Self {
+            plane: CubeAttentionPlaneSettings::UnitGroup(UnitAttentionMicrokernelSettings {
                 seq_q: count(rows),
                 seq_kv: count(keys),
-            },
+            }),
             ..lead
         };
-        let heads = CubeAttentionMicrokernelSettings {
+        let heads = Self {
             heads: count(2),
             ..lead
         };
-        let split = CubeAttentionMicrokernelSettings {
+        let split = Self {
             planes_along_queries: count(2),
             ..lead
         };
-        let ahead = CubeAttentionMicrokernelSettings {
+        let ahead = Self {
             ring: StageRing::DOUBLE,
             ..lead
         };
@@ -262,7 +269,7 @@ impl CubeAttentionPlaneSettings for UnitAttentionMicrokernelSettings {
     }
 }
 
-impl<P: core::fmt::Display> core::fmt::Display for CubeAttentionMicrokernelSettings<P> {
+impl core::fmt::Display for CubeAttentionMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
