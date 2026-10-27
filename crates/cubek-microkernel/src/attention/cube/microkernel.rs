@@ -2,10 +2,10 @@ use super::base::CubeAttentionMicrokernel;
 use crate::attention::merge::plane::{
     plane_merge_rows_microkernel, plane_merge_rows_partial_microkernel,
 };
+use crate::attention::plane::{StepReads, StepReadsExpand};
 use crate::attention::{
     AttentionSlotBox, AttentionSlotShape, B, CubePlaneAttention, CubePlaneAttentionExpand,
-    CubePlaneMicrokernel, DV, G, GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, StepLines,
-    StepLinesExpand, VisibleKeys,
+    CubePlaneMicrokernel, DV, G, GlobalPlaneOperands, KV, Q, S, StagedPlaneOperands, VisibleKeys,
 };
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -124,8 +124,8 @@ pub fn cube_unstaged_attention_microkernel<
     EA: Float,
     E: Float,
     N: Size,
-    K: StepLines<N>,
-    L: StepLines<N>,
+    K: StepReads<N>,
+    L: StepReads<N>,
     P: CubePlaneAttention<
             EA,
             E,
@@ -193,7 +193,7 @@ pub fn cube_unstaged_attention_microkernel<
 /// planes' rows as the walk leaves them, for the level above to end.
 ///
 /// `query`, which spans no key, is windowed to the cube's box; `key` and `value` are where each
-/// step's lines come from ([`StepLines`]), `value_dim` elements of a value, each row seeing the
+/// step's lines come from ([`StepReads`]), `value_dim` elements of a value, each row seeing the
 /// keys `visible` admits. The planes meet nowhere.
 #[cube]
 #[allow(clippy::too_many_arguments)]
@@ -201,8 +201,8 @@ fn unstaged_walk<
     EA: Float,
     E: Float,
     N: Size,
-    K: StepLines<N>,
-    L: StepLines<N>,
+    K: StepReads<N>,
+    L: StepReads<N>,
     P: CubePlaneAttention<EA, E, K, L, VisibleKeys, Opening = GlobalPlaneOperands>,
 >(
     walk: &Walk,
@@ -260,7 +260,7 @@ fn unstaged_walk<
 ///
 /// `run` is the cube level's walk, this cube's run of the steps of keys or the pages of them, of
 /// which it takes the first `steps`. `query`, which spans no key, is windowed to the box; `key`
-/// and `value` are where each step's lines come from ([`StepLines`]), `value_dim` elements of a
+/// and `value` are where each step's lines come from ([`StepReads`]), `value_dim` elements of a
 /// value.
 #[cube]
 #[allow(clippy::too_many_arguments)]
@@ -268,8 +268,8 @@ pub fn cube_unstaged_attention_partial_microkernel<
     EA: Float,
     E: Float,
     N: Size,
-    K: StepLines<N>,
-    L: StepLines<N>,
+    K: StepReads<N>,
+    L: StepReads<N>,
     P: CubePlaneAttention<
             EA,
             E,

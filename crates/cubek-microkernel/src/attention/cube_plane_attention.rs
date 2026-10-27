@@ -134,7 +134,7 @@ impl CubePlaneLayout {
 /// `EA` is the element the rows' sums are kept in, `E` the query's and the output's; `K`, `V` and
 /// `M` are where a step reads its keys, its values and which keys each row sees: a plane that reads
 /// the cube's stage takes tiles of it, the bias among them, and a plane that reads keys where they
-/// lie takes any [`StepLines`](crate::attention::StepLines) and the
+/// lie takes any [`StepReads`](crate::attention::plane::StepReads) and the
 /// [`VisibleKeys`](crate::attention::VisibleKeys) rule. A cube compiles only with the
 /// sources its planes take, so a packed cache, which only lines decode, never reaches a plane
 /// that reads a stage.

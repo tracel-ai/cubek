@@ -1,4 +1,5 @@
-use crate::attention::{S, StepLines, StepLinesExpand, StepWalk};
+use crate::attention::S;
+use crate::attention::plane::{StepReads, StepReadsExpand, StepWalk};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -15,13 +16,13 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// lies in the head dim and its key is attended, so the decoded read skips the bounds test it
 /// would repeat.
 #[derive(CubeType, Clone)]
-pub struct PackedLines {
+pub struct PackedStepReads {
     pub tile: Tile,
     pub fixup: ComptimeOption<Tile>,
 }
 
 #[cube]
-impl<N: Size> StepLines<N> for PackedLines {
+impl<N: Size> StepReads<N> for PackedStepReads {
     type Element = f32;
 
     fn load(
@@ -77,8 +78,8 @@ impl<N: Size> StepLines<N> for PackedLines {
         loaded
     }
 
-    fn at(&self, region: &Region) -> PackedLines {
-        PackedLines {
+    fn at(&self, region: &Region) -> PackedStepReads {
+        PackedStepReads {
             tile: self.tile.at(region),
             fixup: self.fixup.clone().map(|fixup| fixup.at(region)),
         }

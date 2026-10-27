@@ -21,7 +21,7 @@ pub struct StepWalk {
 /// its team's keys of `step`, every load issued before any is used. A key past the attended ones
 /// reads nothing, and neither does a line past `lines`.
 #[cube]
-pub trait StepLines<N: Size>: CubeType + Sized {
+pub trait StepReads<N: Size>: CubeType + Sized {
     /// The element its lines arrive in: the operand's own, or what a packed one decodes to.
     type Element: Float;
 

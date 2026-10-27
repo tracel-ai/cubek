@@ -1,7 +1,8 @@
 use super::base::PlaneShuffleAttentionMicrokernel;
+use super::step_reads::{StepReads, StepReadsExpand, StepWalk};
 use crate::attention::{
     CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel, D,
-    GlobalPlaneOperands, Q, S, StepLines, StepLinesExpand, StepWalk, VisibleKeys,
+    GlobalPlaneOperands, Q, S, VisibleKeys,
 };
 use cubecl::tile::{Monoid, Region, Tile, Walk, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -168,7 +169,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
 }
 
 #[cube]
-impl<EA: Float, E: Float, N: Size, K: StepLines<N>, L: StepLines<N>>
+impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
     CubePlaneAttention<EA, E, K, L, VisibleKeys> for PlaneShuffleAttention<EA, N>
 {
     type Microkernel = PlaneShuffleAttentionMicrokernel;
@@ -218,7 +219,7 @@ impl<EA: Float, E: Float, N: Size, K: StepLines<N>, L: StepLines<N>>
         shuffle
     }
 
-    /// Each team loads its keys of the step from `keys` and `values` ([`StepLines`]), every load
+    /// Each team loads its keys of the step from `keys` and `values` ([`StepReads`]), every load
     /// issued before any is used, a key past the attended ones reading nothing; the team sums
     /// each key's partial dots against each row, takes the step's scores into its rows' max and
     /// sum once, and adds the values they weigh into its lines of the output, rescaled to the new

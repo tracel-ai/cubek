@@ -1,4 +1,5 @@
-use crate::attention::{S, StepLines, StepLinesExpand, StepWalk};
+use crate::attention::S;
+use crate::attention::plane::{StepReads, StepReadsExpand, StepWalk};
 use core::marker::PhantomData;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -6,14 +7,14 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// A float operand's lines, read where they lie through its tile, at `E`, the element it holds.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct TileLines<E: Float> {
+pub struct TileStepReads<E: Float> {
     pub tile: Tile,
     #[cube(comptime)]
     pub element: PhantomData<E>,
 }
 
 #[cube]
-impl<E: Float, N: Size> StepLines<N> for TileLines<E> {
+impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
     type Element = E;
 
     fn load(
@@ -46,8 +47,8 @@ impl<E: Float, N: Size> StepLines<N> for TileLines<E> {
         loaded
     }
 
-    fn at(&self, region: &Region) -> TileLines<E> {
-        TileLines::<E> {
+    fn at(&self, region: &Region) -> TileStepReads<E> {
+        TileStepReads::<E> {
             tile: self.tile.at(region),
             element: PhantomData,
         }

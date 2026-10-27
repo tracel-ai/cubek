@@ -6,7 +6,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeMergeShape;
 use cubek_microkernel::attention::plane::PlaneShuffleAttention;
-use cubek_microkernel::attention::{AttentionVisibility, B, PackedLines, TileLines, VisibleKeys};
+use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
+use cubek_microkernel::attention::{AttentionVisibility, B, VisibleKeys};
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
 /// keys and values from tiles, leaving its partial in its slot for a second launch to merge.
@@ -28,11 +29,11 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
-    let key = TileLines::<E> {
+    let key = TileStepReads::<E> {
         tile: key.tile(&partitioning),
         element: PhantomData,
     };
-    let value = TileLines::<E> {
+    let value = TileStepReads::<E> {
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
@@ -51,8 +52,8 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
         EA,
         E,
         N,
-        TileLines<E>,
-        TileLines<E>,
+        TileStepReads<E>,
+        TileStepReads<E>,
         PlaneShuffleAttention<EA, N>,
     >(
         run,
@@ -73,7 +74,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
 }
 
 /// [`hypercube_attention_partial_kernel`] over a packed cache, its planes decoding the keys and
-/// values as they read them ([`PackedLines`]).
+/// values as they read them ([`PackedStepReads`]).
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
@@ -93,11 +94,11 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
-    let key = PackedLines {
+    let key = PackedStepReads {
         tile: key.tile(&partitioning),
         fixup: key_fixup.map(|fixup| fixup.tile(&partitioning)),
     };
-    let value = PackedLines {
+    let value = PackedStepReads {
         tile: value.tile(&partitioning),
         fixup: ComptimeOption::new_None(),
     };
@@ -116,8 +117,8 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         EA,
         E,
         N,
-        PackedLines,
-        PackedLines,
+        PackedStepReads,
+        PackedStepReads,
         PlaneShuffleAttention<EA, N>,
     >(
         run,
