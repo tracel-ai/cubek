@@ -9,7 +9,6 @@
 mod attention_microkernel;
 mod axes;
 pub mod cube;
-mod cube_plane_attention;
 pub mod hypercube;
 mod operand;
 mod partitioning;
@@ -23,7 +22,6 @@ mod work_item;
 
 pub use attention_microkernel::*;
 pub use axes::*;
-pub use cube_plane_attention::*;
 pub use operand::*;
 pub use partitioning::*;
 pub use stage_layout::*;

@@ -13,10 +13,8 @@ use cubek_microkernel::attention::cube::{
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
-use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, CubePlaneMicrokernel,
-    CubeStagedPlane, QueryOrder,
-};
+use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand, AttentionPartitioning, QueryOrder};
+use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};

@@ -1,10 +1,8 @@
 use crate::attention::cube::CubeAttentionMicrokernel;
 use crate::attention::hypercube::{HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings};
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem,
-    CubePlaneMicrokernel, CubePlaneReads, G, Q,
-};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, G, Q};
+use crate::attention::plane::{CubePlaneMicrokernel, CubePlaneReads};
 use crate::matmul::MatmulOrder;
 use crate::split_keys_merge::SlotShape;
 use cubecl::tile::StageStorage;

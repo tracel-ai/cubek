@@ -1,9 +1,6 @@
 use crate::attention::CubeAttentionStageLayout;
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
-    AttentionStagingCount, AttentionWorkItem, CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel,
-    CubePlaneReads, G, Q, S,
-};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning, AttentionStagingCount, AttentionWorkItem, G, Q, S};
+use crate::attention::plane::{CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads};
 use crate::matmul::MatmulOrder;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};

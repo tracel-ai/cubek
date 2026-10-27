@@ -4,7 +4,8 @@ use cubek_microkernel::StageRing;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, plane_fragment_attention_microkernel,
 };
-use cubek_microkernel::attention::{AttentionVisibility, B, CubePlaneMicrokernel, S, VisibleKeys};
+use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
+use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
 
 /// Every plane of the launch owning its rows, each running them through stages of its own
 /// ([`plane_fragment_attention_microkernel`]) over the keys its rows see.

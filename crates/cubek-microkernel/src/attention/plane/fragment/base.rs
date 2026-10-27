@@ -1,11 +1,8 @@
 use super::microkernel::PlaneFragmentAttention;
 use crate::attention::CubeAttentionStageLayout;
 use crate::attention::plane::{InstructionShape, PlaneFragmentAttentionMicrokernelSettings};
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem,
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane, D, DV,
-    G, Q, S,
-};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionPartitioning, AttentionWorkItem, D, DV, G, Q, S};
+use crate::attention::plane::{CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane};
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,

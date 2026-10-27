@@ -23,7 +23,8 @@ mod fragment {
     use cubek_microkernel::attention::plane::{
         ROW_STATE_HELD_BY_UNIT, SWIZZLED_STAGE_UNREAD, ScoreHolder,
     };
-    use cubek_microkernel::attention::{AttentionMicrokernel, CubePlaneMicrokernel};
+    use cubek_microkernel::attention::AttentionMicrokernel;
+use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
     use cubek_microkernel::attention::{G, Q, S};
 
     const ROUTINE: CubeStagedAttentionRoutine<PlaneFragmentAttentionMicrokernel> =

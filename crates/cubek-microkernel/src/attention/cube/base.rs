@@ -1,10 +1,7 @@
 use crate::StageRing;
 use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings};
-use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
-    AttentionStagingCount, AttentionWorkItem, CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel,
-    CubePlaneReads, G, Q, S,
-};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning, AttentionStagingCount, AttentionWorkItem, G, Q, S};
+use crate::attention::plane::{CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads};
 use crate::matmul::MatmulOrder;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
