@@ -11,7 +11,7 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::cube::CubeStagedDelivery;
+use cubek_microkernel::matmul::dense::cube::{CubeStagedDelivery, CubeStagedMicrokernel};
 use cubek_microkernel::matmul::dense::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
