@@ -1060,7 +1060,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Panics
     ///
-    /// On tensors read for every row whole: only a launch tiling its rows splits `K` over cubes.
+    /// On float tensors read for every row whole: only a launch tiling its rows splits `K` over
+    /// cubes. Packed ones merge their batches into the rows whatever the launch.
     pub fn bind_relay<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -1116,7 +1117,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Panics
     ///
-    /// On tensors read for every row whole: only a launch tiling its rows shares its boxes' `K`.
+    /// On float tensors read for every row whole: only a launch tiling its rows shares its boxes'
+    /// `K`. Packed ones merge their batches into the rows whatever the launch.
     pub fn bind_last_arrival<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
