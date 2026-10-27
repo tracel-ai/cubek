@@ -7,15 +7,17 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// One unit's rows of one head: `out = softmax(query · keyᵀ · scale + bias) · value`, summed in
 /// `EA` over the first `steps` steps of the rows' walk through `S`.
 ///
-/// `rows` is the region the unit owns, its walk the steps of keys; `out`, `query`, `key`, `value`
-/// and `bias` are already windowed to it. The bias is where the masking lies, read at each score's
-/// own coordinates. Each step is taken into the rows by `unit_attention_step`, then the rows are
-/// normalized and drained into `out`.
+/// `rows` is the region the unit owns, its walk the steps of keys; `out`, `logsumexp`, `query`,
+/// `key`, `value` and `bias` are already windowed to it. The bias is where the masking lies, read
+/// at each score's own coordinates. Each step is taken into the rows by `unit_attention_step`,
+/// then the rows are normalized and drained into `out`, and each row's logsumexp written where the
+/// caller asks for it.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub fn unit_attention_microkernel<EA: Float>(
     rows: &Region,
     out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
     query: &Tile,
     key: &Tile,
     value: &Tile,
@@ -47,6 +49,11 @@ pub fn unit_attention_microkernel<EA: Float>(
     }
     sum.along(DV).mul(&softmax.recip_l());
     sum.drained_into(out);
+    #[comptime]
+    match logsumexp {
+        ComptimeOption::Some(logsumexp) => softmax.store_logsumexp(bias, &mut logsumexp.clone()),
+        ComptimeOption::None => {}
+    }
 }
 
 /// One step of keys taken into a unit's rows: the step's score opened over it and contracted, the

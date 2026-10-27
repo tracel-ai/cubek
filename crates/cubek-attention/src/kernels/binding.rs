@@ -10,6 +10,8 @@ pub struct AttentionBinding {
     pub query: Bound,
     pub cache: AttentionCacheBinding,
     pub out: Bound,
+    /// Each query's logsumexp, where the tensors ask for it.
+    pub logsumexp: Option<Bound>,
     /// The attended length of each sequence.
     pub lengths: TensorArg,
 }

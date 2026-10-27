@@ -42,7 +42,7 @@ impl HypercubeSecondLaunch {
     }
 
     /// Every query's `slots`, their lines `slot_width` elements wide, merged into `tensors`'
-    /// output.
+    /// output, and into its logsumexp where the tensors ask for it.
     pub fn launch(self, tensors: &AttentionTensors, slots: AttentionSplitSlots, slot_width: usize) {
         // SAFETY: a plane for every query, `(q, kv · group + g, b)`, reads that query's slots, all
         // written by the launch before, and writes that query of the output at its own strides.
@@ -53,6 +53,7 @@ impl HypercubeSecondLaunch {
                 self.launch.cube_dim,
                 slot_width,
                 tensors.out_arg(),
+                tensors.logsumexp_arg().into(),
                 slots.out.binding().into_tensor_arg(),
                 slots.max.binding().into_tensor_arg(),
                 slots.sum.binding().into_tensor_arg(),

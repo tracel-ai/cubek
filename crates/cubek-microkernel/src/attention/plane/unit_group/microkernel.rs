@@ -83,6 +83,16 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         }
     }
 
+    /// Each unit's rows' state, which the unit holds whole.
+    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
+        for plane in cube.planes() {
+            for rows in plane {
+                self.softmax
+                    .store_logsumexp(&self.sum.at(&rows), &mut logsumexp.at(&rows));
+            }
+        }
+    }
+
     /// Each unit's sum drained, as it stands, into its window of a scratch of the walk's step,
     /// then its rows copied from there into their slots by the unit alone, beside its rows'
     /// softmax state.

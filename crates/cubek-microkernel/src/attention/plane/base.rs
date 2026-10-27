@@ -172,6 +172,13 @@ pub trait CubePlaneAttention<EA: Float, E: Float, K: CubeType, V: CubeType, M: C
     /// ([`store_partial`](Self::store_partial)).
     fn store_normalized(&mut self, cube: &Region, out: &Tile);
 
+    /// Every plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into
+    /// `logsumexp`, `cube`'s window of it, a value a row: once
+    /// [`store_normalized`](Self::store_normalized) has merged the planes that split the same rows'
+    /// keys, each of which then writes the same values. A row that saw no key holds the minimum
+    /// value.
+    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile);
+
     /// `plane`'s own rows of the region of `walk`'s first step left undivided in slots, the first
     /// `rows` of them: row `r`'s running max, running sum and output at slot `first_slot + r ·
     /// row_stride` of `slot_max`, `slot_sum` and `slot_out`, laid out as

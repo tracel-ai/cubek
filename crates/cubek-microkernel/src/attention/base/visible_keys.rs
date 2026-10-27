@@ -1,6 +1,6 @@
 use crate::attention::{AttentionVisibility, G, Q, S};
 use cubecl::tile::{
-    Axis, Partitioning, Region, Tile,
+    Axis, Partitioning, Region, Space, Tile,
     procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
 };
 use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
@@ -41,8 +41,25 @@ impl VisibleKeys {
 
     /// The bias the scores are summed with, over `partitioning`'s heads, queries and keys.
     pub fn bias<E: Numeric>(&self, partitioning: &Partitioning) -> Tile {
-        Procedural::new::<E, VisibleKeys>(
+        self.bias_over::<E>(
+            partitioning,
             comptime!(partitioning.space().subspace(&[G, Q, S])),
+        )
+    }
+
+    /// The bias over `partitioning`'s heads, keys and queries, the keys before the queries: as a
+    /// walk owned by the keys holds its scores.
+    pub fn keys_first_bias<E: Numeric>(&self, partitioning: &Partitioning) -> Tile {
+        self.bias_over::<E>(
+            partitioning,
+            comptime!(partitioning.space().subspace(&[G, S, Q])),
+        )
+    }
+
+    /// The bias over `space`, laid out as the scores it is summed into.
+    fn bias_over<E: Numeric>(&self, partitioning: &Partitioning, #[comptime] space: Space) -> Tile {
+        Procedural::new::<E, VisibleKeys>(
+            space,
             VisibleKeys {
                 attended: self.attended,
                 seq_q: self.seq_q,
@@ -50,6 +67,21 @@ impl VisibleKeys {
             },
         )
         .tile_in::<E>(partitioning)
+    }
+
+    /// Steps of `queries_per_step` queries before the first that sees `region`'s first key: what
+    /// a walk owned by the keys skips. Under a causal visibility a query sees no key past its own
+    /// position, so the queries before `s + queries − attended` see none of the region's; every
+    /// query may see a key otherwise.
+    pub fn first_query_step(&self, region: &Region, #[comptime] queries_per_step: usize) -> usize {
+        let mut first = 0usize;
+        if comptime!(self.visibility.is_causal()) {
+            let reach = region.origin(S) + self.seq_q as usize;
+            if reach > self.attended as usize {
+                first = reach - self.attended as usize;
+            }
+        }
+        first / queries_per_step
     }
 
     /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the steps from

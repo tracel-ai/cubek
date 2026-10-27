@@ -14,6 +14,8 @@
 
 #[cfg(feature = "attention")]
 pub mod attention;
+#[cfg(feature = "attention-backward")]
+pub mod attention_backward;
 #[cfg(feature = "matmul")]
 pub mod matmul;
 #[cfg(feature = "attention")]

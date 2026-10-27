@@ -4,8 +4,8 @@ use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The cube that stored its partial of `slot_box`'s queries counting itself in at the box, and the
-/// last of the box's cubes to count merging the box into `out`, by one plane
-/// ([`plane_split_keys_merge_microkernel()`]).
+/// last of the box's cubes to count merging the box into `out`, and into `logsumexp` where the
+/// caller asks for it, by one plane ([`plane_split_keys_merge_microkernel()`]).
 ///
 /// `arrivals` holds a counter for every box, the head's index times the boxes along the queries
 /// plus the box's, at zero; the box's last cube leaves it at zero again. The cube meets on
@@ -18,6 +18,7 @@ pub fn hypercube_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     out: &mut Tensor<E>,
+    logsumexp: ComptimeOption<&mut Tensor<EA>>,
     arrivals: &[Atomic<u32>],
     #[comptime] merge: HypercubeMergeShape,
 ) {
@@ -40,6 +41,7 @@ pub fn hypercube_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
             slot_max,
             slot_sum,
             out,
+            logsumexp,
             slot_box,
             merge.slots,
             merge.seq_q,
