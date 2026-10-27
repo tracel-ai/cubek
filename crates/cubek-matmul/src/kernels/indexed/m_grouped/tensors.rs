@@ -7,12 +7,11 @@ use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, M, N};
 
-use crate::kernels::grouped_rows::PaddedRows;
-use crate::kernels::m_grouped::{
+use crate::kernels::indexed::m_grouped::PaddedRows;
+use crate::kernels::indexed::m_grouped::{
     MGroupedChunk, MGroupedMatmulKey, MGroupedRowSource, MGroupedSettings,
 };
-use crate::kernels::routed::stack_extents;
-use crate::kernels::stack::{SlabAxis, SlabView};
+use crate::kernels::indexed::stack::{SlabAxis, SlabView};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::OperandLayout;
 use crate::kernels::{
@@ -87,7 +86,7 @@ impl MGroupedMatmulTensors {
         );
         let groups = ends.shape().num_elements();
         assert!(groups > 0, "rows are grouped into one slab at least");
-        let [k, n] = along.slab_of(stack_extents(&rhs), groups);
+        let [k, n] = along.slab_shape(&rhs, groups);
         assert_eq!(
             source.k(),
             k,
@@ -138,7 +137,7 @@ impl MGroupedMatmulTensors {
 
     /// One slab's `[k, n]`.
     pub fn slab_shape(&self) -> [usize; 2] {
-        self.along.slab_of(stack_extents(&self.rhs), self.groups())
+        self.along.slab_shape(&self.rhs, self.groups())
     }
 
     /// The key the grouped autotune measures these operands under.
@@ -206,7 +205,7 @@ impl MGroupedMatmulTensors {
             "a padded product has a row at least"
         );
         let chunk_rows = self.chunk_rows(hw, routine, settings)?;
-        let stack = self.stack()?;
+        let stack = self.along.read_slabs(&self.rhs, self.groups())?;
         let (lhs, layout) = self
             .source
             .clone()
@@ -323,20 +322,6 @@ impl MGroupedMatmulTensors {
                     (slabs.shape, slabs.strides),
                     rhs_layout,
                 ))
-            }
-        }
-    }
-
-    /// The stack as the product reads it: a float one as its slabs, `[groups, k, n]` over the
-    /// buffer it lies in, a packed one its words and scales read slab by slab.
-    fn stack(&self) -> Result<StoredTensor, Refusal> {
-        match &self.rhs {
-            StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
-                packed.clone().stacked(self.groups(), self.along.axis())?,
-            )),
-            StoredTensor::Plain(rhs) => {
-                let slabs = SlabView::new(rhs, self.groups(), self.along);
-                Ok(StoredTensor::Plain(slabs.slabs_of(rhs)))
             }
         }
     }

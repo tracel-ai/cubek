@@ -3,12 +3,13 @@
 
 use cubecl::client::Client;
 use cubecl::tile::Axis;
+use cubecl::tile::launch::Refusal;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::matmul_axes::{K, N};
 use serde::{Deserialize, Serialize};
 
-use crate::kernels::tensor::PlainTensor;
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 
 /// The axis of a product along which the slabs of its stacked rhs lie end
 /// to end.
@@ -61,6 +62,39 @@ impl SlabAxis {
         match self {
             Self::Output => [k, whole(n)],
             Self::Contraction => [whole(k), n],
+        }
+    }
+
+    /// One slab's `[k, n]` out of `stack`, float or packed, holding `slabs` of them along this
+    /// axis.
+    ///
+    /// # Panics
+    ///
+    /// As [`slab_of`](Self::slab_of).
+    pub(crate) fn slab_shape(self, stack: &StoredTensor, slabs: usize) -> [usize; 2] {
+        self.slab_of([K, N].map(|axis| stack.extent([K, N], axis)), slabs)
+    }
+
+    /// `stack`, holding `slabs` along this axis, as the product reads it: a float one as its
+    /// slabs, `[slabs, k, n]` over the buffer it lies in, a packed one its words and scales read
+    /// slab by slab.
+    ///
+    /// # Errors
+    ///
+    /// What reading a packed stack slab by slab declines.
+    pub(crate) fn read_slabs(
+        self,
+        stack: &StoredTensor,
+        slabs: usize,
+    ) -> Result<StoredTensor, Refusal> {
+        match stack {
+            StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
+                packed.clone().stacked(slabs, self.axis())?,
+            )),
+            StoredTensor::Plain(stack) => {
+                let view = SlabView::new(stack, slabs, self);
+                Ok(StoredTensor::Plain(view.slabs_of(stack)))
+            }
         }
     }
 }

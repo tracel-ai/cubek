@@ -9,10 +9,9 @@ use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, N};
 
-use crate::kernels::routed::RoutedMatmulKey;
-use crate::kernels::stack::{SlabAxis, SlabView};
+use crate::kernels::indexed::stack::{SlabAxis, SlabView};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::OperandLayout;
+use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey, OperandKey, OperandLayout};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulTensors,
@@ -35,7 +34,25 @@ pub struct RoutedMatmulTensors {
     along: SlabAxis,
 }
 
+impl core::fmt::Debug for RoutedMatmulTensors {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // The client says nothing about the product.
+        f.debug_struct("RoutedMatmulTensors")
+            .field("lhs", &self.lhs)
+            .field("rhs", &self.rhs)
+            .field("routes", &self.routes)
+            .field("experts", &self.experts)
+            .field("slots", &self.slots)
+            .field("along", &self.along)
+            .finish()
+    }
+}
+
 impl RoutedMatmulTensors {
+    /// The most batches a key tells apart: a prompt's rows times their slots, past which a grid
+    /// is full whatever the count.
+    const BATCHES_KEYED: usize = 65536;
+
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
     /// The rows and the routes are made dense, and a float stack is copied only where it is
@@ -80,7 +97,7 @@ impl RoutedMatmulTensors {
         );
         let lhs_shape = lhs.shape();
         assert_eq!(lhs_shape.rank(), 2, "a routed lhs is `[rows, k]`");
-        let [k, _] = along.slab_of(stack_extents(&rhs), experts);
+        let [k, _] = along.slab_shape(&rhs, experts);
         assert_eq!(lhs_shape[1], k, "the rows contract against one slab");
         let routes_shape = routes.shape();
         let slots = *routes_shape
@@ -125,19 +142,26 @@ impl RoutedMatmulTensors {
         self.lhs.elem
     }
 
-    /// The key the routed autotune measures these operands under.
-    pub fn key(&self) -> RoutedMatmulKey {
+    /// The key the matmul autotune measures these operands under: the dense product of
+    /// `[rows, slots]` batches of one row each, the rhs a stack of slabs each batch reads one of.
+    pub fn key(&self) -> MatmulTuneKey {
         let [k, n] = self.slab_shape();
-        RoutedMatmulKey::new(
+        let lhs = OperandKey::float(Some(K), MatmulBatching::Batched);
+        let rhs = OperandKey {
+            kind: self.rhs.kind(),
+            layout: OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
+            batching: MatmulBatching::Slabs {
+                slabs: self.experts,
+            },
+        };
+        MatmulTuneKey::new(
             self.elem(),
             k,
             n,
-            self.experts,
-            self.slots(),
-            self.rows(),
-            self.rhs.kind(),
-            OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
-            self.along,
+            1,
+            MatmulTuneKey::anchored(self.rows() * self.slots(), Self::BATCHES_KEYED),
+            lhs,
+            rhs,
         )
     }
 
@@ -244,7 +268,7 @@ impl RoutedMatmulTensors {
             },
             entries: self.routes.as_rows(rows, slots),
         };
-        Ok((lhs, self.stack()?, table))
+        Ok((lhs, self.along.read_slabs(&self.rhs, self.experts)?, table))
     }
 
     /// `out`, the product's `[rows, slots, n]`, as the dense routines write it: each row's slot a
@@ -255,27 +279,8 @@ impl RoutedMatmulTensors {
             .viewed(Metadata::new([rows, slots, 1, n], [slots * n, n, n, 1]))
     }
 
-    /// The stack as the product reads it: a float one as its slabs, `[experts, k, n]` over the
-    /// buffer it lies in, a packed one its words and scales read slab by slab.
-    fn stack(&self) -> Result<StoredTensor, Refusal> {
-        match &self.rhs {
-            StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
-                packed.clone().stacked(self.experts, self.along.axis())?,
-            )),
-            StoredTensor::Plain(rhs) => {
-                let slabs = SlabView::new(rhs, self.experts, self.along);
-                Ok(StoredTensor::Plain(slabs.slabs_of(rhs)))
-            }
-        }
-    }
-
     /// One slab's `[k, n]`.
     fn slab_shape(&self) -> [usize; 2] {
-        self.along.slab_of(stack_extents(&self.rhs), self.experts)
+        self.along.slab_shape(&self.rhs, self.experts)
     }
-}
-
-/// The stack's `[k, n]`, all its slabs together.
-pub(crate) fn stack_extents(stack: &StoredTensor) -> [usize; 2] {
-    [K, N].map(|axis| stack.extent([K, N], axis))
 }
