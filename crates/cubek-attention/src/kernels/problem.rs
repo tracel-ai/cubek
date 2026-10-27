@@ -279,7 +279,7 @@ impl QueryAxis {
 mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
-    use cubek_microkernel::attention::output::plane::{
+    use cubek_microkernel::attention::plane::{
         PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
     };
     use cubek_microkernel::attention::{AttentionMicrokernel, S};

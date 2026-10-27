@@ -1,35 +1,15 @@
-//! The attention microkernels, a folder per problem: the [`output`] of the queries over the keys
-//! and values, and the [`merge`] of partials of the same rows, each from a worker that walked its
-//! own part of the keys. Beside them, the trait a routine reads them through, the traits a cube
-//! holds its planes through, and what every attention microkernel shares under them: the axes,
-//! the operands, where a plane shuffle's lines come from, the work item, the partitioning, the
-//! staging count, how a cube lays its stages out, how partials of the same rows lie in slots, and
-//! which keys a query sees.
+//! The attention microkernels: the queries over the keys and values,
+//! `softmax(query · keyᵀ · scale) · value`, a folder per scope ([`unit`](mod@unit), [`plane`],
+//! [`cube`], [`hypercube`]). Beside them, what the problem is, which all of them and their kernels
+//! read: the [`AttentionWorkItem`], its axes and operands, which keys a query sees, the
+//! [`AttentionMicrokernel`] trait, the [`AttentionPartitioning`] and how a cube lays its stages
+//! out. Where workers split a row's keys, their partials are merged by
+//! [`split_keys_merge`](crate::split_keys_merge).
 
-mod attention_microkernel;
-mod axes;
-mod cube_plane_attention;
-mod lines;
-pub mod merge;
-mod operand;
-pub mod output;
-mod partitioning;
-mod slots;
-mod stage_layout;
-mod staging_count;
-mod visibility;
-mod visible_keys;
-mod work_item;
+mod base;
+pub mod cube;
+pub mod hypercube;
+pub mod plane;
+pub mod unit;
 
-pub use attention_microkernel::*;
-pub use axes::*;
-pub use cube_plane_attention::*;
-pub use lines::*;
-pub use operand::*;
-pub use partitioning::*;
-pub use slots::*;
-pub use stage_layout::*;
-pub use staging_count::*;
-pub use visibility::*;
-pub use visible_keys::*;
-pub use work_item::*;
+pub use base::*;

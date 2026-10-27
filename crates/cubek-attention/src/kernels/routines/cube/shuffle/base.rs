@@ -6,10 +6,10 @@ use crate::kernels::{
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
-use cubek_microkernel::attention::output::cube::{
+use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{AttentionOperand, AttentionPartitioning, QueryOrder};
@@ -186,6 +186,7 @@ impl AttentionRoutine<CubeShuffleAttentionMicrokernel, StageStorage>
                 key,
                 value,
                 binding.out.arg(),
+                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),

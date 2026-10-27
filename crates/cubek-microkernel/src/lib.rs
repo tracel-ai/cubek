@@ -8,11 +8,15 @@
 //! launches; the kernels are their family's crate's (`cubek-matmul`'s and `cubek-attention`'s
 //! `kernels`).
 //!
-//! A folder per problem, behind a feature of the same name, and the stage ring every staged walk
-//! holds its stages in ([`staging`]).
+//! A folder per problem, behind its family's feature: what the problem is in its `base`, beside a
+//! folder per scope. What every family shares, as the ring a staged walk holds its stages in, is
+//! cubek-std's.
 
 #[cfg(feature = "attention")]
 pub mod attention;
+#[cfg(feature = "attention-backward")]
+pub mod attention_backward;
 #[cfg(feature = "matmul")]
 pub mod matmul;
-pub mod staging;
+#[cfg(feature = "attention")]
+pub mod split_keys_merge;

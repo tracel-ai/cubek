@@ -2,12 +2,12 @@ use super::kernel::hypercube_attention_merge_kernel;
 use crate::kernels::{AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors};
 use cubecl::tile::launch::Refusal;
 use cubecl::{self as cubecl, prelude::*};
-use cubek_microkernel::attention::output::hypercube::HypercubeMergeShape;
+use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::routine::LaunchSettings;
 
 /// The second launch of a hypercube routine that merges by one
-/// ([`HypercubeMerge::SecondLaunch`](cubek_microkernel::attention::output::hypercube::HypercubeMerge)):
+/// ([`HypercubeMerge::SecondLaunch`](crate::kernels::HypercubeMerge::SecondLaunch)):
 /// a cube of one plane for every query, at `(q, kv · group + g, b)`, merging the query's slots,
 /// all written by the launch before, into the output.
 pub struct HypercubeSecondLaunch {
@@ -42,7 +42,7 @@ impl HypercubeSecondLaunch {
     }
 
     /// Every query's `slots`, their lines `slot_width` elements wide, merged into `tensors`'
-    /// output.
+    /// output, and into its logsumexp where the tensors ask for it.
     pub fn launch(self, tensors: &AttentionTensors, slots: AttentionSplitSlots, slot_width: usize) {
         // SAFETY: a plane for every query, `(q, kv · group + g, b)`, reads that query's slots, all
         // written by the launch before, and writes that query of the output at its own strides.
@@ -53,6 +53,7 @@ impl HypercubeSecondLaunch {
                 self.launch.cube_dim,
                 slot_width,
                 tensors.out_arg(),
+                tensors.logsumexp_arg().into(),
                 slots.out.binding().into_tensor_arg(),
                 slots.max.binding().into_tensor_arg(),
                 slots.sum.binding().into_tensor_arg(),

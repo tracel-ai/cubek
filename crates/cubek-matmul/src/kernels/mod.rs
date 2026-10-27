@@ -14,4 +14,4 @@ mod dense;
 
 pub use dense::*;
 pub use select::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-pub use tune::MatmulRoutineCandidate;
+pub use tune::{MatmulPackedCandidate, MatmulRoutineCandidate, PackedContraction};

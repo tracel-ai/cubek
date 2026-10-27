@@ -1,6 +1,6 @@
 use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::dense::hypercube::{
+use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, hypercube_staged_last_arrival_microkernel,
 };
 

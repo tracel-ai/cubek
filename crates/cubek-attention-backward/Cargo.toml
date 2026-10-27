@@ -1,0 +1,38 @@
+[package]
+authors = ["louisfd <louisfd94@gmail.com>"]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeK: Attention Backward Kernels"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-attention-backward"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-attention-backward"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "cubek-std/std"]
+# Enables `eval::benchmarks`, the catalogue of backward problems and routines the top-level
+# `benchmarks` crate runs.
+benchmarks = ["std", "dep:cubek-test-utils", "dep:half", "cubecl/test-runtime"]
+
+[dependencies]
+cubek-matmul = { workspace = true, features = ["tiled"] }
+cubek-microkernel = { workspace = true, features = ["attention-backward"] }
+cubek-std = { workspace = true }
+
+cubecl = { workspace = true, features = ["stdlib", "tile"] }
+cubek-test-utils = { workspace = true, optional = true }
+half = { workspace = true, optional = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+cubek-attention = { workspace = true, features = ["std", "tiled"] }
+cubek-test-utils = { workspace = true }
+half = { workspace = true }
+
+cubecl = { workspace = true, features = ["test-runtime"] }

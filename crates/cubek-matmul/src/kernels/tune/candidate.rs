@@ -1,6 +1,6 @@
 //! The tune candidate the many-rows and few-rows tables race a float routine as.
 
-use crate::kernels::tensor::PlainTensor;
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{CubeBlock, MatmulTuneKey};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
 use cubecl::CubeDim;
@@ -66,8 +66,8 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     pub fn launch_into<M: MatmulMicrokernel, SM>(
         &self,
         client: &Client,
-        lhs: PlainTensor,
-        rhs: PlainTensor,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
         out: PlainTensor,
     ) -> Result<(), Refusal>
     where
