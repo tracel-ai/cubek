@@ -15,8 +15,14 @@ use crate::routine::{Grid, Routine};
 /// It holds the [`CAPACITY`](Self::CAPACITY) problems prepared last, so a caller cycling through
 /// many shapes costs a comparison per held problem and no more than preparing each.
 pub struct PreparedLaunches<R: Routine> {
-    held: Mutex<Vec<(R::Problem, Result<(R::Blueprint, Grid), Refusal>)>>,
+    held: Mutex<Vec<Held<R>>>,
 }
+
+/// A held problem and what preparing it gave.
+type Held<R> = (
+    <R as Routine>::Problem,
+    Result<(<R as Routine>::Blueprint, Grid), Refusal>,
+);
 
 impl<R: Routine> PreparedLaunches<R>
 where
