@@ -7,7 +7,6 @@ use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
 use cubek_microkernel::attention::{AttentionMicrokernel, Q, S};
 use cubek_std::Hardware;
-use cubek_std::Instructions;
 use cubek_std::devices;
 use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 use cubek_std::routine::Routine;
@@ -36,7 +35,7 @@ fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
 fn a_prompt_reaches_wide_steps_and_narrow_boxes() {
     let hw = offering(devices::h100(), 16);
     let prompt = qwen(512, 512);
-    let (cube_steps, _) = reach(CubeStagedAttentionRoutine::FRAGMENT, &hw, &prompt);
+    let (cube_steps, _) = reach(CubeStagedAttentionRoutine, &hw, &prompt);
     assert!(cube_steps.contains(&256), "cube steps {cube_steps:?}");
     let (_, few) = reach(
         HypercubeLastArrivalShuffleAttentionRoutine::new(),
@@ -94,8 +93,8 @@ fn a_decode_step_reaches_every_split_and_step() {
 #[test]
 fn the_cube_reaches_every_ring_and_layout() {
     let hw = offering(devices::m2_pro(), 8);
-    let settings = CubeStagedAttentionRoutine::FRAGMENT.settings(&hw);
-    let lead = CubeStagedAttentionRoutineSettings::FRAGMENT.microkernel;
+    let settings = CubeStagedAttentionRoutine.settings(&hw);
+    let lead = CubeStagedAttentionRoutineSettings::DEFAULT.microkernel;
     for ring in [
         StageRing::DOUBLE,
         StageRing::SINGLE_THROUGH_REGISTERS,
@@ -123,9 +122,9 @@ fn the_cube_reaches_every_ring_and_layout() {
             ring: StageRing::SINGLE_THROUGH_REGISTERS,
             ..lead
         },
-        ..CubeStagedAttentionRoutineSettings::FRAGMENT
+        ..CubeStagedAttentionRoutineSettings::DEFAULT
     };
-    let (blueprint, _) = CubeStagedAttentionRoutine::FRAGMENT
+    let (blueprint, _) = CubeStagedAttentionRoutine
         .prepare(&hw, &qwen(512, 512), &prefetching)
         .expect("the lead's box prepares on the M2");
     assert_eq!(blueprint.microkernel.ring.prefetch, Prefetch::InRegisters);
@@ -154,30 +153,4 @@ fn every_hypercube_fragment_setting_prepares() {
             }
         }
     }
-}
-
-/// `bf16` on Metal has no square instruction for the cube's plane fragments; on an H100 every
-/// float element does.
-#[test]
-fn a_square_instruction_serves_every_float_on_an_h100_and_not_on_metal() {
-    assert!(
-        !devices::m2_pro()
-            .properties
-            .features
-            .matmul
-            .cmma
-            .iter()
-            .copied()
-            .serves_attention_in_every_float()
-    );
-    assert!(
-        offering(devices::h100(), 16)
-            .properties
-            .features
-            .matmul
-            .cmma
-            .iter()
-            .copied()
-            .serves_attention_in_every_float()
-    );
 }

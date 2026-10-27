@@ -85,7 +85,7 @@ mod tests {
     fn every_routine_estimates_every_setting_whole() {
         assert_every_estimate_is_whole(UnitAttentionRoutine);
         assert_every_estimate_is_whole(PlaneFragmentAttentionRoutine);
-        assert_every_estimate_is_whole(CubeStagedAttentionRoutine::FRAGMENT);
+        assert_every_estimate_is_whole(CubeStagedAttentionRoutine);
         assert_every_estimate_is_whole(HypercubeLastArrivalShuffleAttentionRoutine::new());
         assert_every_estimate_is_whole(HypercubeSecondLaunchShuffleAttentionRoutine::new());
     }

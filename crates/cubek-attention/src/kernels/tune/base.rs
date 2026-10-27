@@ -83,9 +83,7 @@ pub fn launch_tuned(
 
 type AttentionAutotune = Autotune<AttentionKey, AttentionTuneInputs, ()>;
 
-/// The routines that serve many query positions: the cube routines, a cube of plane unit groups
-/// only where some float element has no square instruction for the plane fragments (elsewhere the
-/// fragments serve every element, faster), and the hypercube routines for a prompt's or a chunk's
+/// The routines that serve many query positions: the cube routines, and the hypercube routines for a prompt's or a chunk's
 /// few boxes over many keys. The unit routine is listed only where none of them can run, for want
 /// of a plane width the device commits to: elsewhere measuring its candidates takes longer than
 /// the rest of the autotune. The plane routine is not listed.
@@ -103,24 +101,9 @@ fn many_queries(
         .read_cold(AttentionTuneInputs::many_queries_roofline)
         .prioritized(
             &routines,
-            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::FRAGMENT, hw),
+            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, hw),
             launch,
         );
-    if !hw
-        .properties
-        .features
-        .matmul
-        .cmma
-        .iter()
-        .copied()
-        .serves_attention_in_every_float()
-    {
-        autotune = autotune.prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::UNIT_GROUP, hw),
-            launch,
-        );
-    }
     autotune = autotune
         .prioritized(
             &routines,

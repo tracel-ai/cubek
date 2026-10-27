@@ -20,16 +20,9 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// owning its queries of one head. The cubes cover the queries and the heads, one batch and key
 /// head each; a group wider than a cube's heads reads its keys once a cube.
 ///
-/// Its planes are fragments of a square matrix instruction ([`FRAGMENT`](Self::FRAGMENT)), or
-/// groups of units each owning its queries in registers on no matrix instruction
-/// ([`UNIT_GROUP`](Self::UNIT_GROUP)), what a cube runs where the device has no square instruction
-/// for the element, as `bf16` on Metal: one routine for each, each listing the cube's settings over
-/// its kind of plane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CubeStagedAttentionRoutine {
-    /// The cube's settings it lists first, whose kind of plane it lists the cube's settings over.
-    lead: CubeAttentionMicrokernelSettings,
-}
+/// Its planes are fragments of a square matrix instruction, which read the stage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CubeStagedAttentionRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeStagedAttentionRoutineSettings {
@@ -42,28 +35,10 @@ pub struct CubeStagedAttentionRoutineSettings {
 pub type CubeStagedAttentionRoutineBlueprint =
     AttentionBlueprint<CubeAttentionMicrokernel, StageStorage>;
 
-impl CubeStagedAttentionRoutine {
-    /// Cubes of plane fragments.
-    pub const FRAGMENT: Self = Self {
-        lead: CubeAttentionMicrokernelSettings::FRAGMENT,
-    };
-
-    /// Cubes of plane unit groups.
-    pub const UNIT_GROUP: Self = Self {
-        lead: CubeAttentionMicrokernelSettings::UNIT_GROUP,
-    };
-}
-
 impl CubeStagedAttentionRoutineSettings {
-    /// The lead of cubes of plane fragments.
-    pub const FRAGMENT: Self = Self {
+    /// The cube's lead over plane fragments, its boxes taken in order.
+    pub const DEFAULT: Self = Self {
         microkernel: CubeAttentionMicrokernelSettings::FRAGMENT,
-        queries: QueryOrder::InOrder,
-    };
-
-    /// The lead of cubes of plane unit groups.
-    pub const UNIT_GROUP: Self = Self {
-        microkernel: CubeAttentionMicrokernelSettings::UNIT_GROUP,
         queries: QueryOrder::InOrder,
     };
 }
@@ -87,11 +62,11 @@ impl Routine for CubeStagedAttentionRoutine {
     type Blueprint = CubeStagedAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
 
-    /// Its microkernel's settings over its kind of plane
+    /// Its microkernel's settings over plane fragments
     /// ([`CubeAttentionMicrokernelSettings::listed`]) in query order, then the first of them, its
     /// lead, with the boxes taken last first.
     fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
-        let microkernel = self.lead.listed();
+        let microkernel = CubeAttentionMicrokernelSettings::FRAGMENT.listed();
         let last_first = Self::Settings {
             microkernel: microkernel[0],
             queries: QueryOrder::LastFirst,

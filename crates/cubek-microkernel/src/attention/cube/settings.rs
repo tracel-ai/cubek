@@ -3,7 +3,6 @@ use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernelSettings,
 };
-use crate::attention::unit::UnitAttentionMicrokernelSettings;
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
@@ -56,24 +55,12 @@ impl CubeAttentionMicrokernelSettings {
         layout: StageLayout::Strided,
     };
 
-    /// The lead over plane unit groups: a plane of the unit microkernel's default, a row a unit,
-    /// for one head, a stage of keys read by a plane's worth of rows.
-    pub const UNIT_GROUP: Self = Self {
-        plane: CubeAttentionPlaneSettings::UnitGroup(UnitAttentionMicrokernelSettings::DEFAULT),
-        heads: NonZeroUsize::new(1).unwrap(),
-        planes_along_queries: NonZeroUsize::new(1).unwrap(),
-        planes_along_keys: NonZeroUsize::new(1).unwrap(),
-        ring: StageRing::SINGLE,
-        layout: StageLayout::Strided,
-    };
-
     /// The cube's settings worth trying over planes of the kind this lead runs, the lead first: a
     /// cube's own knobs are worth different values over each plane microkernel, so its list is one
     /// for each.
     pub fn listed(self) -> Vec<Self> {
         match self.plane {
             CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
-            CubeAttentionPlaneSettings::UnitGroup(plane) => Self::unit_groups_listed(self, plane),
             CubeAttentionPlaneSettings::Shuffle(plane) => Self::shuffles_listed(self, plane),
         }
     }
@@ -231,41 +218,6 @@ impl CubeAttentionMicrokernelSettings {
             .chain(along_keys)
             .chain([rows, units, in_flight, heads, split])
             .collect()
-    }
-
-    /// A star off `lead`, a plane of the unit microkernel's default, a row a unit, eight keys
-    /// a stage: sixteen and thirty-two keys a stage, two rows a unit, two heads a cube, two planes
-    /// along a head's queries, and a second stage in flight.
-    fn unit_groups_listed(lead: Self, _plane: UnitAttentionMicrokernelSettings) -> Vec<Self> {
-        let count = |count: usize| NonZeroUsize::new(count).unwrap();
-        let unit = |rows: usize, keys: usize| Self {
-            plane: CubeAttentionPlaneSettings::UnitGroup(UnitAttentionMicrokernelSettings {
-                seq_q: count(rows),
-                seq_kv: count(keys),
-            }),
-            ..lead
-        };
-        let heads = Self {
-            heads: count(2),
-            ..lead
-        };
-        let split = Self {
-            planes_along_queries: count(2),
-            ..lead
-        };
-        let ahead = Self {
-            ring: StageRing::DOUBLE,
-            ..lead
-        };
-        vec![
-            lead,
-            unit(1, 16),
-            unit(1, 32),
-            unit(2, 8),
-            heads,
-            split,
-            ahead,
-        ]
     }
 }
 

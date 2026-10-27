@@ -1,6 +1,5 @@
 use crate::attention::cube::{
-    CubeAttentionMicrokernelSettings, CubeAttentionPlane, CubePlaneKeys, CubePlaneLayout,
-    CubePlaneReads,
+    CubeAttentionMicrokernelSettings, CubeAttentionPlane, CubePlaneLayout, CubePlaneReads,
 };
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
@@ -201,12 +200,11 @@ impl Microkernel for CubeAttentionMicrokernel {
 
     const DECLINE: &'static str = "the cube attention needs a plane microkernel the device runs";
 
-    /// The cube's settings over each kind of plane, fragments, unit groups and shuffles, each
-    /// list led by its kind's lead ([`CubeAttentionMicrokernelSettings::listed`]).
+    /// The cube's settings over each kind of plane, fragments then shuffles, each list led by its
+    /// kind's lead ([`CubeAttentionMicrokernelSettings::listed`]).
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         [
             CubeAttentionMicrokernelSettings::FRAGMENT,
-            CubeAttentionMicrokernelSettings::UNIT_GROUP,
             CubeAttentionMicrokernelSettings::SHUFFLE,
         ]
         .into_iter()
@@ -216,17 +214,15 @@ impl Microkernel for CubeAttentionMicrokernel {
 
     /// The plane microkernel's candidates, a plane each for every head the cube holds along every
     /// plane of its queries and of their keys, the ring resolved against the stages the cube's
-    /// units fill; planes split the same rows' keys only where the plane microkernel merges them.
+    /// units fill.
     fn candidates(
         hw: &Hardware,
         item: &AttentionWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
         let (heads, cube) = (settings.heads.get().min(item.group), *settings);
-        let splits = settings.planes_along_keys.get() > 1;
         CubeAttentionPlane::candidates(hw, item, &settings.plane)
             .into_iter()
-            .filter(move |plane| plane.keys() == CubePlaneKeys::Split || !splits)
             .filter_map(move |plane| {
                 let requested = Self {
                     plane,

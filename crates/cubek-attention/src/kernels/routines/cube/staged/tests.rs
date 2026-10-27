@@ -1,5 +1,5 @@
-//! Tests for the attention cube staged routine, over plane fragments and plane unit groups: its
-//! settings and what each prepares.
+//! Tests for the attention cube staged routine over plane fragments: its settings and what each
+//! prepares.
 
 mod fragment {
     use super::super::*;
@@ -24,7 +24,7 @@ mod fragment {
     use cubek_microkernel::attention::{G, Q, S};
     use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 
-    const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine::FRAGMENT;
+    const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine;
     type Settings = CubeStagedAttentionRoutineSettings;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -107,7 +107,7 @@ mod fragment {
         let hw = offering_nvidia(devices::h100());
         let [_, _, f16, _] = problems();
         let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f16, &Settings::FRAGMENT)
+            .prepare(&hw, &f16, &Settings::DEFAULT)
             .expect("f16 prepares on an NVIDIA GPU's shapes");
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
@@ -124,7 +124,7 @@ mod fragment {
     fn a_rectangular_instruction_cuts_each_product_its_own_way() {
         let hw = offering_nvidia(devices::h100());
         let [_, _, f16, _] = problems();
-        let lead = Settings::FRAGMENT;
+        let lead = Settings::DEFAULT;
         let CubeAttentionPlaneSettings::Fragment(lead_plane) = lead.microkernel.plane else {
             panic!("the lead runs plane fragments")
         };
@@ -168,7 +168,7 @@ mod fragment {
         let hw = offering_nvidia(devices::h100());
         let [_, _, _, f32] = problems();
         let (blueprint, _) = ROUTINE
-            .prepare(&hw, &f32, &Settings::FRAGMENT)
+            .prepare(&hw, &f32, &Settings::DEFAULT)
             .expect("f32 prepares on tf32's 16×16×8");
         let CubeAttentionPlane::Fragment(plane) = blueprint.microkernel.plane else {
             panic!("the routine runs plane fragments")
@@ -190,7 +190,7 @@ mod fragment {
     fn tf32_operands_prefetch_into_their_slots() {
         let hw = offering_nvidia(devices::h100());
         let [_, _, _, f32] = problems();
-        let lead = Settings::FRAGMENT;
+        let lead = Settings::DEFAULT;
         let through_registers = Settings {
             microkernel: CubeAttentionMicrokernelSettings {
                 ring: StageRing::SINGLE_THROUGH_REGISTERS,
@@ -217,9 +217,9 @@ mod fragment {
             let settings = Settings {
                 microkernel: CubeAttentionMicrokernelSettings {
                     layout,
-                    ..Settings::FRAGMENT.microkernel
+                    ..Settings::DEFAULT.microkernel
                 },
-                ..Settings::FRAGMENT
+                ..Settings::DEFAULT
             };
             let (blueprint, _) = ROUTINE
                 .prepare(&hw, &problem, &settings)
@@ -256,7 +256,7 @@ mod fragment {
         let hw = offering(devices::m2_pro(), 8);
         let [_, problem, _, _] = problems();
         let (blueprint, grid) = ROUTINE
-            .prepare(&hw, &problem, &Settings::FRAGMENT)
+            .prepare(&hw, &problem, &Settings::DEFAULT)
             .expect("the default prepares on the M2");
         let (cube, stage) = (
             blueprint.partitioning.cube_space(),
@@ -292,7 +292,7 @@ mod fragment {
                     &problems()[2],
                     &Settings {
                         microkernel: settings,
-                        ..Settings::FRAGMENT
+                        ..Settings::DEFAULT
                     },
                 )
                 .expect("prepares where both transports are offered");
@@ -331,14 +331,14 @@ mod fragment {
         let split = CubeAttentionMicrokernelSettings {
             heads: NonZeroUsize::new(1).unwrap(),
             planes_along_keys: NonZeroUsize::new(2).unwrap(),
-            ..Settings::FRAGMENT.microkernel
+            ..Settings::DEFAULT.microkernel
         };
         let prepared = ROUTINE.prepare(
             &hw,
             &problems()[2],
             &Settings {
                 microkernel: split,
-                ..Settings::FRAGMENT
+                ..Settings::DEFAULT
             },
         );
         assert_eq!(
@@ -374,70 +374,10 @@ mod fragment {
             last_first,
             [&Settings {
                 queries: QueryOrder::LastFirst,
-                ..Settings::FRAGMENT
+                ..Settings::DEFAULT
             }]
         );
         assert!(!reverses_queries(&settings[0]));
         assert!(reverses_queries(last_first[0]));
-    }
-}
-
-mod unit_group {
-    use super::super::*;
-    use crate::kernels::AttentionRoutineProblem;
-    use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::tile::launch::Refusal;
-
-    use cubek_std::devices;
-    use cubek_std::routine::Routine;
-
-    const ROUTINE: CubeStagedAttentionRoutine = CubeStagedAttentionRoutine::UNIT_GROUP;
-
-    const BF16: ElemType = ElemType::Float(FloatKind::BF16);
-    const F16: ElemType = ElemType::Float(FloatKind::F16);
-
-    /// A decode step, a prompt whose queries divide nothing, and a long prompt in `bf16`.
-    fn problems() -> [AttentionRoutineProblem; 3] {
-        [
-            AttentionRoutineProblem::dense((1, 32, 8), (1, 2048), (128, 128), F16),
-            AttentionRoutineProblem::dense((2, 8, 2), (37, 300), (64, 64), F16),
-            AttentionRoutineProblem::dense((1, 16, 2), (512, 512), (128, 128), BF16),
-        ]
-    }
-
-    /// Every setting prepares where the device commits to a plane width, with no matrix
-    /// instruction at all; one other than the default may ask for more than a cube holds, and
-    /// says so.
-    #[test]
-    fn every_setting_prepares_where_planes_run() {
-        for hw in [devices::m2_pro(), devices::h100()] {
-            for (position, settings) in ROUTINE.settings(&hw).iter().enumerate() {
-                for problem in problems() {
-                    let prepared = ROUTINE.prepare(&hw, &problem, settings);
-                    let outgrown = matches!(
-                        prepared,
-                        Err(Refusal::SharedMemoryPastDevice { .. } | Refusal::CubePastDevice { .. })
-                    );
-                    assert!(
-                        prepared.is_ok() || (position > 0 && outgrown),
-                        "{settings} on {hw:?}: {prepared:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// Every setting declines where the device commits to no plane width, rather than launching
-    /// on lanes it would misread.
-    #[test]
-    fn every_setting_declines_without_a_plane_width() {
-        for hw in [devices::wgpu_no_subgroups(), devices::rdna_range()] {
-            for settings in ROUTINE.settings(&devices::m2_pro()) {
-                for problem in problems() {
-                    let declined = ROUTINE.prepare(&hw, &problem, &settings);
-                    assert!(declined.is_err(), "{settings} on {hw:?}: {declined:?}");
-                }
-            }
-        }
     }
 }

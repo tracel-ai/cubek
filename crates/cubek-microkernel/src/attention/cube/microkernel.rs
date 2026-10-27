@@ -1,8 +1,8 @@
 use super::base::CubeAttentionMicrokernel;
 use super::plane::CubeAttentionPlane;
 use crate::attention::plane::{
-    PlaneFragmentAttention, PlaneShuffleAttention, PlaneShuffleAttentionExpand,
-    PlaneUnitGroupAttention, StepReads, StepReadsExpand,
+    PlaneFragmentAttention, PlaneFragmentAttentionExpand, PlaneShuffleAttention,
+    PlaneShuffleAttentionExpand, StepReads, StepReadsExpand,
 };
 use crate::attention::{B, DV, G, KV, Q, S, VisibleKeys};
 use crate::split_keys_merge::plane::{
@@ -13,81 +13,8 @@ use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// The rows a cube's planes hold while the cube walks a stage of keys at a time, as its plane
-/// microkernel holds them: in fragments of a matrix instruction, or in each unit's registers.
-// A cube type lives while the kernel expands, a handle a variant: its size is never on a device.
-#[allow(clippy::large_enum_variant)]
-#[derive(CubeType)]
-pub enum CubeStagedPlanes<EA: Float, ES: Float> {
-    Fragment(PlaneFragmentAttention<EA, ES>),
-    UnitGroup(PlaneUnitGroupAttention<EA, ES>),
-}
-
-#[cube]
-impl<EA: Float, ES: Float> CubeStagedPlanes<EA, ES> {
-    /// Every plane's rows over `walk` before any key, as `microkernel`'s planes open them: over
-    /// the staged `query`, their sums shaped by `out` against `value` and `bias`.
-    fn open(
-        walk: &Walk,
-        query: &Tile,
-        out: &Tile,
-        value: &Tile,
-        bias: &Tile,
-        #[comptime] microkernel: CubeAttentionMicrokernel,
-    ) -> CubeStagedPlanes<EA, ES> {
-        match comptime!(microkernel.plane) {
-            CubeAttentionPlane::Fragment(plane) => {
-                CubeStagedPlanes::new_Fragment(PlaneFragmentAttention::<EA, ES>::open(
-                    walk,
-                    query,
-                    out,
-                    value,
-                    bias,
-                    plane,
-                    comptime!(microkernel.planes()),
-                ))
-            }
-            CubeAttentionPlane::UnitGroup(plane) => CubeStagedPlanes::new_UnitGroup(
-                PlaneUnitGroupAttention::<EA, ES>::open(query, out, value, bias, plane),
-            ),
-            CubeAttentionPlane::Shuffle(_) => {
-                unreachable!("a cube whose planes read their keys where they lie stages nothing")
-            }
-        }
-    }
-
-    /// `plane`, its region of one step of the walk, taken into its rows: its keys and values
-    /// read from `keys` and `values`, each row seeing those `visible` admits, scaled by `scale`.
-    fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
-        match self {
-            CubeStagedPlanes::Fragment(planes) => planes.step(plane, keys, values, visible, scale),
-            CubeStagedPlanes::UnitGroup(planes) => planes.step(plane, keys, values, visible, scale),
-        }
-    }
-
-    /// Every plane's rows normalized and written into `out`, `cube`'s window of the output.
-    /// Planes that split the same rows' keys sum their outputs here, a meeting of the cube.
-    fn store_normalized(&mut self, cube: &Region, out: &Tile) {
-        match self {
-            CubeStagedPlanes::Fragment(planes) => planes.store_normalized(cube, out),
-            CubeStagedPlanes::UnitGroup(planes) => planes.store_normalized(cube, out),
-        }
-    }
-
-    /// Every plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into
-    /// `logsumexp`, `cube`'s window of it, a value a row: once
-    /// [`store_normalized`](Self::store_normalized) has merged the planes that split the same
-    /// rows' keys, each of which then writes the same values. A row that saw no key holds the
-    /// minimum value.
-    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
-        match self {
-            CubeStagedPlanes::Fragment(planes) => planes.store_logsumexp(cube, logsumexp),
-            CubeStagedPlanes::UnitGroup(planes) => planes.store_logsumexp(cube, logsumexp),
-        }
-    }
-}
-
-/// A cube's planes, of whichever kind, as the cube leaves their rows in slots once the walk ends.
+/// A cube's planes, fragments or shuffles, as the cube leaves their rows in slots once the walk
+/// ends.
 #[cube]
 trait CubeSlotPlanes<EA: Float, N: Size>: CubeType {
     /// `plane`'s own rows of the region of `walk`'s first step left undivided in slots, the first
@@ -110,7 +37,7 @@ trait CubeSlotPlanes<EA: Float, N: Size>: CubeType {
 }
 
 #[cube]
-impl<EA: Float, ES: Float> CubeSlotPlanes<EA, Const<1>> for CubeStagedPlanes<EA, ES> {
+impl<EA: Float, ES: Float> CubeSlotPlanes<EA, Const<1>> for PlaneFragmentAttention<EA, ES> {
     #[allow(clippy::too_many_arguments)]
     fn store_partial(
         &mut self,
@@ -123,14 +50,9 @@ impl<EA: Float, ES: Float> CubeSlotPlanes<EA, Const<1>> for CubeStagedPlanes<EA,
         row_stride: usize,
         rows: usize,
     ) {
-        match self {
-            CubeStagedPlanes::Fragment(planes) => planes.store_partial(
-                walk, plane, slot_out, slot_max, slot_sum, first_slot, row_stride, rows,
-            ),
-            CubeStagedPlanes::UnitGroup(planes) => planes.store_partial(
-                walk, plane, slot_out, slot_max, slot_sum, first_slot, row_stride, rows,
-            ),
-        }
+        self.store_partial(
+            walk, plane, slot_out, slot_max, slot_sum, first_slot, row_stride, rows,
+        );
     }
 }
 
@@ -198,8 +120,8 @@ pub fn cube_staged_attention_microkernel<EA: Float, ES: Float>(
 
 /// A cube's planes over `walk`, the steps of keys it takes: its query staged once, its keys and
 /// values a stage at a time through the ring for every plane, each plane taking its part of every
-/// stage into its rows of one head with the cube's plane microkernel. Returns the planes' rows as
-/// the walk leaves them, for the level above to end.
+/// stage into its rows of one head with the plane fragment microkernel. Returns the planes' rows
+/// as the walk leaves them, for the level above to end.
 ///
 /// `out` and `query`, which span no key, are windowed to the cube's box; `key`, `value` and `bias`
 /// are read at the walk's regions, each stage of them held as `storage`. The cube meets on the
@@ -216,7 +138,7 @@ fn staged_walk<EA: Float, ES: Float>(
     scale: EA,
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
-) -> CubeStagedPlanes<EA, ES> {
+) -> PlaneFragmentAttention<EA, ES> {
     // The query spans no key: staged once for every plane, before the walk.
     let mut staged_query = query.stage_for(
         &walk,
@@ -224,8 +146,20 @@ fn staged_walk<EA: Float, ES: Float>(
         comptime!(microkernel.plane.decoded_stage()),
     );
     staged_query.copy_from(query);
-    let mut planes =
-        CubeStagedPlanes::<EA, ES>::open(&walk, &staged_query, out, value, bias, microkernel);
+    let mut planes = match comptime!(microkernel.plane) {
+        CubeAttentionPlane::Fragment(plane) => PlaneFragmentAttention::<EA, ES>::open(
+            &walk,
+            &staged_query,
+            out,
+            value,
+            bias,
+            plane,
+            comptime!(microkernel.planes()),
+        ),
+        CubeAttentionPlane::Shuffle(_) => {
+            unreachable!("a cube whose planes read their keys where they lie stages nothing")
+        }
+    };
     sync_cube();
     let mut stages = Stages::smem(
         &walk,
@@ -347,7 +281,7 @@ fn unstaged_walk<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
         CubeAttentionPlane::Shuffle(plane) => {
             PlaneShuffleAttention::<EA, N>::open::<E>(walk, query, value_dim, plane)
         }
-        CubeAttentionPlane::Fragment(_) | CubeAttentionPlane::UnitGroup(_) => {
+        CubeAttentionPlane::Fragment(_) => {
             unreachable!("a cube whose planes read its stage walks it staged")
         }
     };
@@ -508,7 +442,7 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
         microkernel,
         storage,
     );
-    store_plane_partials::<EA, Const<1>, CubeStagedPlanes<EA, ES>>(
+    store_plane_partials::<EA, Const<1>, PlaneFragmentAttention<EA, ES>>(
         &mut planes,
         run,
         slot_out,

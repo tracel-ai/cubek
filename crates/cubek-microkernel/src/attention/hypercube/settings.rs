@@ -49,13 +49,11 @@ impl HypercubeAttentionMicrokernelSettings {
     };
 
     /// The hypercube's settings worth trying over planes of the kind this lead runs: its knobs are
-    /// worth different values over each plane microkernel, so its list is one for each. None over
-    /// plane unit groups, which no hypercube runs.
+    /// worth different values over each plane microkernel, so its list is one for each.
     pub fn listed(self) -> Vec<Self> {
         match self.cube.plane {
             CubeAttentionPlaneSettings::Fragment(_) => Self::fragments_listed(self),
             CubeAttentionPlaneSettings::Shuffle(_) => Self::shuffles_listed(self),
-            CubeAttentionPlaneSettings::UnitGroup(_) => Vec::new(),
         }
     }
 

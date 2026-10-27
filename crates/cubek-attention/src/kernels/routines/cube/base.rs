@@ -11,13 +11,9 @@ use serde::{Deserialize, Serialize};
 /// cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CubeAttentionKernel {
-    /// [`CubeStagedAttentionRoutine::FRAGMENT`]: a cube's planes
-    /// on a square matrix instruction, against the keys the cube stages.
+    /// [`CubeStagedAttentionRoutine`]: a cube's planes on a square matrix instruction, against the
+    /// keys the cube stages.
     Fragment,
-    /// [`CubeStagedAttentionRoutine::UNIT_GROUP`]: a cube's plane
-    /// unit groups, each unit owning queries in its registers, against the keys the cube stages,
-    /// on no matrix instruction.
-    UnitGroup,
     /// [`CubeShuffleAttentionRoutine`]: a cube's planes reading their keys where they lie, its
     /// units scoring a key in teams and summing across the plane.
     Shuffle,
@@ -26,16 +22,16 @@ pub enum CubeAttentionKernel {
 impl CubeAttentionKernel {
     /// Every cube routine a pin names, in declaration order.
     pub fn all() -> Vec<Self> {
-        vec![Self::Fragment, Self::UnitGroup, Self::Shuffle]
+        vec![Self::Fragment, Self::Shuffle]
     }
 
     /// What a rule that named this routine runs where it declines on geometry the rules cannot
-    /// see: the plane unit groups after the plane fragments, which decline an element with no
-    /// square instruction, and the unit routine after any other.
+    /// see: the plane shuffles after the plane fragments, which decline an element with no square
+    /// instruction, and the unit routine after the shuffles.
     pub fn instead_by_rule(&self) -> AttentionKernel {
         match self {
-            Self::Fragment => AttentionKernel::Cube(Self::UnitGroup),
-            Self::UnitGroup | Self::Shuffle => AttentionKernel::Unit,
+            Self::Fragment => AttentionKernel::Cube(Self::Shuffle),
+            Self::Shuffle => AttentionKernel::Unit,
         }
     }
 
@@ -43,7 +39,6 @@ impl CubeAttentionKernel {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Fragment => "cube-fragment-attention",
-            Self::UnitGroup => "cube-unit-group-attention",
             Self::Shuffle => "cube-shuffle-attention",
         }
     }
@@ -59,8 +54,7 @@ impl CubeAttentionKernel {
         tensors: AttentionTensors,
     ) -> Result<TensorHandle, Refusal> {
         match self {
-            Self::Fragment => CubeStagedAttentionRoutine::FRAGMENT.launch_lead_on(hw, tensors),
-            Self::UnitGroup => CubeStagedAttentionRoutine::UNIT_GROUP.launch_lead_on(hw, tensors),
+            Self::Fragment => CubeStagedAttentionRoutine.launch_lead_on(hw, tensors),
             Self::Shuffle => CubeShuffleAttentionRoutine.launch_lead_on(hw, tensors),
         }
     }

@@ -162,12 +162,11 @@ mod tests {
     #[test]
     fn a_candidate_per_setting_the_default_first() {
         let hw = devices::m2_pro();
-        let listed: Vec<_> =
-            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::FRAGMENT, &hw)
-                .iter()
-                .map(|candidate| *candidate.strategy())
-                .collect();
-        assert_eq!(listed, CubeStagedAttentionRoutine::FRAGMENT.settings(&hw));
+        let listed: Vec<_> = AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, &hw)
+            .iter()
+            .map(|candidate| *candidate.strategy())
+            .collect();
+        assert_eq!(listed, CubeStagedAttentionRoutine.settings(&hw));
     }
 
     /// A key whose query heads do not split over its key heads is declined by every candidate:
@@ -226,15 +225,15 @@ mod tests {
             for unit in AttentionRoutineCandidate::list(UnitAttentionRoutine, &hw) {
                 assert!(unit.blueprint(&key).is_some(), "{}", unit.strategy());
             }
-            for cube in AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::FRAGMENT, &hw) {
+            for cube in AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, &hw) {
                 let declined = cube.blueprint(&key).is_none();
                 let last = cube.priority(&key) == CandidatePriority::LAST;
                 assert_eq!(declined, last, "{}", cube.strategy());
             }
         }
         let h100 = offering(devices::h100());
-        let lead = AttentionRoutineCandidate::list(CubeStagedAttentionRoutine::FRAGMENT, &h100)
-            .swap_remove(0);
+        let lead =
+            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, &h100).swap_remove(0);
         assert!(lead.blueprint(&key).is_some());
     }
 }

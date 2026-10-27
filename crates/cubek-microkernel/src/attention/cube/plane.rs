@@ -1,9 +1,7 @@
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
-    PlaneUnitGroupAttentionMicrokernel,
 };
-use crate::attention::unit::UnitAttentionMicrokernelSettings;
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Refusal, Vectorization};
@@ -22,10 +20,6 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayou
 pub enum CubeAttentionPlane {
     /// Fragments of a square matrix instruction, against the keys the cube stages.
     Fragment(PlaneFragmentAttentionMicrokernel),
-    /// Units each owning their rows in registers, on no matrix instruction, against the keys the
-    /// cube stages: what a cube runs where the device has no square instruction for the element,
-    /// as `bf16` on Metal.
-    UnitGroup(PlaneUnitGroupAttentionMicrokernel),
     /// Teams of units scoring each key where it lies, summing across the plane.
     Shuffle(PlaneShuffleAttentionMicrokernel),
 }
@@ -34,7 +28,6 @@ pub enum CubeAttentionPlane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CubeAttentionPlaneSettings {
     Fragment(PlaneFragmentAttentionMicrokernelSettings),
-    UnitGroup(UnitAttentionMicrokernelSettings),
     Shuffle(PlaneShuffleAttentionMicrokernelSettings),
 }
 
@@ -46,16 +39,6 @@ pub enum CubePlaneReads {
     Stage,
     /// Where they lie: each plane reads its own keys of each step, and the cube stages nothing.
     Global,
-}
-
-/// How planes of a plane microkernel holding the same rows may take their keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubePlaneKeys {
-    /// Split between them, each taking its block of every step, their rows merged once the walk
-    /// ends.
-    Split,
-    /// Whole: a plane walks every key of its rows, so no two planes hold the same rows.
-    Whole,
 }
 
 /// How a cube lays its planes over its box: a plane for every head it holds, along every plane of
@@ -86,7 +69,6 @@ impl CubeAttentionPlaneSettings {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Fragment(_) => PlaneFragmentAttentionMicrokernel::NAME,
-            Self::UnitGroup(_) => PlaneUnitGroupAttentionMicrokernel::NAME,
             Self::Shuffle(_) => PlaneShuffleAttentionMicrokernel::NAME,
         }
     }
@@ -95,7 +77,6 @@ impl CubeAttentionPlaneSettings {
     pub fn decline(&self) -> &'static str {
         match self {
             Self::Fragment(_) => PlaneFragmentAttentionMicrokernel::DECLINE,
-            Self::UnitGroup(_) => PlaneUnitGroupAttentionMicrokernel::DECLINE,
             Self::Shuffle(_) => PlaneShuffleAttentionMicrokernel::DECLINE,
         }
     }
@@ -105,7 +86,6 @@ impl core::fmt::Display for CubeAttentionPlaneSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Fragment(settings) => settings.fmt(f),
-            Self::UnitGroup(settings) => settings.fmt(f),
             Self::Shuffle(settings) => settings.fmt(f),
         }
     }
@@ -124,11 +104,6 @@ impl CubeAttentionPlane {
                     .map(Self::Fragment)
                     .collect()
             }
-            CubeAttentionPlaneSettings::UnitGroup(settings) => {
-                PlaneUnitGroupAttentionMicrokernel::candidates(hw, item, settings)
-                    .map(Self::UnitGroup)
-                    .collect()
-            }
             CubeAttentionPlaneSettings::Shuffle(settings) => {
                 PlaneShuffleAttentionMicrokernel::candidates(hw, item, settings)
                     .map(Self::Shuffle)
@@ -137,23 +112,13 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// Where its steps read their keys and values: the cube's stage for fragments and unit
-    /// groups, which load each stage from shared memory, and where they lie for a shuffle, each
-    /// team reading its keys of every step.
+    /// Where its steps read their keys and values: the cube's stage for fragments, which load each
+    /// stage from shared memory, and where they lie for a shuffle, each team reading its keys of
+    /// every step.
     pub fn reads(&self) -> CubePlaneReads {
         match self {
-            Self::Fragment(_) | Self::UnitGroup(_) => CubePlaneReads::Stage,
+            Self::Fragment(_) => CubePlaneReads::Stage,
             Self::Shuffle(_) => CubePlaneReads::Global,
-        }
-    }
-
-    /// How planes holding the same rows may take their keys: split for fragments, which merge
-    /// their softmax states and sum their products in shared memory, and for a shuffle, which
-    /// merges in slots; whole for unit groups, a unit's rows being its own.
-    pub fn keys(&self) -> CubePlaneKeys {
-        match self {
-            Self::Fragment(_) | Self::Shuffle(_) => CubePlaneKeys::Split,
-            Self::UnitGroup(_) => CubePlaneKeys::Whole,
         }
     }
 
@@ -162,7 +127,6 @@ impl CubeAttentionPlane {
     pub fn tiling(&self) -> Levels {
         match self {
             Self::Fragment(plane) => plane.tiling(),
-            Self::UnitGroup(plane) => plane.tiling(),
             Self::Shuffle(plane) => plane.tiling(),
         }
     }
@@ -171,7 +135,6 @@ impl CubeAttentionPlane {
     pub fn seq_q(&self) -> usize {
         match self {
             Self::Fragment(plane) => plane.seq_q(),
-            Self::UnitGroup(plane) => plane.seq_q(),
             Self::Shuffle(plane) => plane.seq_q(),
         }
     }
@@ -180,7 +143,6 @@ impl CubeAttentionPlane {
     pub fn seq_kv(&self) -> usize {
         match self {
             Self::Fragment(plane) => plane.seq_kv(),
-            Self::UnitGroup(plane) => plane.seq_kv(),
             Self::Shuffle(plane) => plane.seq_kv(),
         }
     }
@@ -189,7 +151,6 @@ impl CubeAttentionPlane {
     pub fn window_bytes(&self, item: &AttentionWorkItem) -> usize {
         match self {
             Self::Fragment(plane) => plane.window_bytes(item),
-            Self::UnitGroup(plane) => plane.window_bytes(item),
             Self::Shuffle(plane) => plane.window_bytes(item),
         }
     }
@@ -201,7 +162,7 @@ impl CubeAttentionPlane {
     /// plane's softmax state, beside the stages: the compiler does not hand a freed stage's bytes
     /// to what is declared after it. A shuffle meets in a slot for every plane of every row: a
     /// line of each element of a value, and its running max and sum
-    /// ([`SlotShape`](crate::split_keys_merge::SlotShape)). Unit groups split no keys.
+    /// ([`SlotShape`](crate::split_keys_merge::SlotShape)).
     pub fn merge_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
         if layout.planes_along_keys == 1 {
             return 0;
@@ -214,7 +175,6 @@ impl CubeAttentionPlane {
             Self::Shuffle(_) => {
                 layout.planes() * self.seq_q() * (item.val_dim + 2) * item.sum.size()
             }
-            Self::UnitGroup(_) => 0,
         }
     }
 
@@ -222,15 +182,13 @@ impl CubeAttentionPlane {
     /// in slots.
     ///
     /// Fragments drain through a window of every row of the cube's box over the value dim, and two
-    /// of one cell a row, their softmax state's max and sum; unit groups through the value dim's
-    /// window alone, each unit holding its rows' state. A shuffle's rows leave their slots from its
-    /// units' registers, after its planes that split the same rows' keys meet
+    /// of one cell a row, their softmax state's max and sum. A shuffle's rows leave their slots from
+    /// its units' registers, after its planes that split the same rows' keys meet
     /// ([`merge_bytes`](Self::merge_bytes)).
     pub fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
         let rows = layout.row_groups() * self.seq_q();
         match self {
             Self::Fragment(_) => rows * (item.val_dim + 2) * item.sum.size(),
-            Self::UnitGroup(_) => rows * item.val_dim * item.sum.size(),
             Self::Shuffle(_) => self.merge_bytes(item, layout),
         }
     }
@@ -238,12 +196,11 @@ impl CubeAttentionPlane {
     /// The storage a stage over `stage` of the keys and values its steps read is held in, laid
     /// out as `layout`: in the tiles a fragment's step reads
     /// ([`stage_tile`](PlaneFragmentAttentionMicrokernel::stage_tile)) where the layout blocks it,
-    /// and row-major for unit groups, whose units read a row at a time in no instruction's tiles,
-    /// and for a shuffle, which reads no stage.
+    /// and row-major for a shuffle, which reads no stage.
     pub fn stage_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
         match self {
             Self::Fragment(plane) => layout.storage(stage, plane.stage_tile()),
-            Self::UnitGroup(_) | Self::Shuffle(_) => StageStorage::Strided,
+            Self::Shuffle(_) => StageStorage::Strided,
         }
     }
 
@@ -256,7 +213,7 @@ impl CubeAttentionPlane {
     pub fn merges_rows(&self) -> Result<(), Refusal> {
         match self {
             Self::Fragment(plane) => plane.merges_rows(),
-            Self::UnitGroup(_) | Self::Shuffle(_) => Ok(()),
+            Self::Shuffle(_) => Ok(()),
         }
     }
 
@@ -266,7 +223,7 @@ impl CubeAttentionPlane {
     pub fn decoded_stage(&self) -> Option<ElemType> {
         match self {
             Self::Fragment(plane) => plane.decoded_stage(),
-            Self::UnitGroup(_) | Self::Shuffle(_) => None,
+            Self::Shuffle(_) => None,
         }
     }
 
@@ -278,7 +235,7 @@ impl CubeAttentionPlane {
     pub fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
         match self {
             Self::Fragment(plane) => plane.reads_stage(layout),
-            Self::UnitGroup(_) | Self::Shuffle(_) => Ok(()),
+            Self::Shuffle(_) => Ok(()),
         }
     }
 
@@ -290,7 +247,6 @@ impl CubeAttentionPlane {
     ) {
         match self {
             Self::Fragment(plane) => plane.vectorize(cube_space, vectorization),
-            Self::UnitGroup(plane) => plane.vectorize(cube_space, vectorization),
             Self::Shuffle(plane) => plane.vectorize(cube_space, vectorization),
         }
     }
@@ -305,7 +261,6 @@ impl CubeAttentionPlane {
     ) {
         match self {
             Self::Fragment(plane) => plane.estimate(item, cube_space, planes, estimate),
-            Self::UnitGroup(plane) => plane.estimate(item, cube_space, planes, estimate),
             Self::Shuffle(plane) => plane.estimate(item, cube_space, planes, estimate),
         }
     }
@@ -314,7 +269,6 @@ impl CubeAttentionPlane {
     pub fn key_order(&self) -> BindingOrder {
         match self {
             Self::Fragment(plane) => plane.key_order(),
-            Self::UnitGroup(plane) => plane.key_order(),
             Self::Shuffle(plane) => plane.key_order(),
         }
     }
@@ -323,7 +277,6 @@ impl CubeAttentionPlane {
     pub fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         match self {
             Self::Fragment(plane) => plane.served(item),
-            Self::UnitGroup(plane) => plane.served(item),
             Self::Shuffle(plane) => plane.served(item),
         }
     }
@@ -333,7 +286,6 @@ impl core::fmt::Display for CubeAttentionPlane {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Fragment(plane) => plane.fmt(f),
-            Self::UnitGroup(plane) => plane.fmt(f),
             Self::Shuffle(plane) => plane.fmt(f),
         }
     }
