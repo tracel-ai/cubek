@@ -41,6 +41,24 @@ impl AttentionBackwardWorkItem {
         self.kept_product(Q, D, S, kept)
     }
 
+    /// The query's gradient as a walk owned by keys adds its share: `score_gradient · key`, rows
+    /// `Q` by columns `D`, contracting `S`, out of the score's gradient its owner keeps keys first
+    /// at `kept`, into a sum at the sum's element that every walk over those queries adds into.
+    pub fn summed_query_gradient(&self, kept: ElemType) -> MatmulWorkItem {
+        let product = self.kept_product(Q, D, S, kept);
+        MatmulWorkItem {
+            elements: MatmulOperands {
+                out: self.sum,
+                ..product.elements
+            },
+            layouts: MatmulOperands {
+                lhs: MatmulLayout::Col,
+                ..product.layouts
+            },
+            ..product
+        }
+    }
+
     /// The keys' gradient, `score_gradientᵀ · query`: rows `S` by columns `D`, contracting `Q`, out
     /// of the score's gradient its owner keeps keys first at `kept`. The queries lie contiguous
     /// along `D`.
