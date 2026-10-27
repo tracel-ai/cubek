@@ -17,7 +17,9 @@ mod empty_output;
 mod logical;
 mod nan_extrema;
 mod plane_reduction;
+mod topk_negative_infinity;
 mod topk_unroll_limit;
+mod topk_vectorized_output;
 mod topk_with_indices_cube;
 mod with_indices_validation;
 

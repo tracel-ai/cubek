@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::instructions::AccumulatorFormat;
 
+use crate::components::instructions::max_identity;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::reaches;
@@ -205,14 +206,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
-        Vector::empty().fill(P::EI::min_value())
+        Vector::empty().fill(max_identity::<P::EI>())
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
         let mut elements = Array::new(comptime!(this.k));
         #[unroll]
         for i in 0..this.k {
-            elements[i] = Vector::new(P::EA::min_value());
+            elements[i] = Vector::new(max_identity::<P::EA>());
         }
 
         let args = if comptime!(this.output.has_indices()) {
@@ -366,7 +367,7 @@ fn topk_finalize_values<P: ReducePrecision, Out: Numeric>(
     let mut topk = Array::new(k);
     #[unroll]
     for slot in 0..k {
-        topk[slot] = Out::min_value();
+        topk[slot] = max_identity::<Out>();
     }
 
     #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
@@ -408,7 +409,7 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
 
     #[unroll]
     for slot in 0..k {
-        topk_vals[slot] = P::EA::min_value();
+        topk_vals[slot] = max_identity::<P::EA>();
         topk_coords[slot] = u32::MAX;
     }
 
