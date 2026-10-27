@@ -3,16 +3,18 @@ use core::marker::PhantomData;
 use crate::kernels::HypercubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::attention::output::cube::cube_unstaged_attention_partial_microkernel;
-use cubek_microkernel::attention::output::hypercube::{
-    HypercubeMergeShape, hypercube_attention_arrive,
+use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
+use cubek_microkernel::attention::plane::PlaneShuffleAttention;
+use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
+use cubek_microkernel::attention::{AttentionVisibility, B, VisibleKeys};
+use cubek_microkernel::split_keys_merge::hypercube::{
+    HypercubeMergeShape, hypercube_split_keys_merge_microkernel,
 };
-use cubek_microkernel::attention::output::plane::PlaneShuffleAttention;
-use cubek_microkernel::attention::{AttentionVisibility, B, PackedLines, TileLines, VisibleKeys};
 
 /// Every cube walking its run of its box over the keys its queries see, its planes reading the
 /// keys and values from tiles, leaving its partial in its slot, then counting itself in at the
-/// box, the last merging it ([`hypercube_attention_arrive()`]).
+/// box, the last merging it ([`hypercube_split_keys_merge_microkernel()`]), with each query's
+/// logsumexp where the launch binds one.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
@@ -20,6 +22,7 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     key: &TileArg<'_>,
     value: &TileArg<'_>,
     out: &mut Tensor<E>,
+    logsumexp: ComptimeOption<&mut Tensor<EA>>,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
@@ -33,11 +36,11 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
-    let key = TileLines::<E> {
+    let key = TileStepReads::<E> {
         tile: key.tile(&partitioning),
         element: PhantomData,
     };
-    let value = TileLines::<E> {
+    let value = TileStepReads::<E> {
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
@@ -56,8 +59,8 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         EA,
         E,
         N,
-        TileLines<E>,
-        TileLines<E>,
+        TileStepReads<E>,
+        TileStepReads<E>,
         PlaneShuffleAttention<EA, N>,
     >(
         run,
@@ -75,13 +78,13 @@ pub fn hypercube_attention_arrival_kernel<EA: Float, E: Float, N: Size>(
         comptime!(merge.slots.splits),
         comptime!(merge.slots.val_dim),
     );
-    hypercube_attention_arrive::<EA, E, N>(
-        &slot_box, slot_out, slot_max, slot_sum, out, arrivals, merge,
+    hypercube_split_keys_merge_microkernel::<EA, E, N>(
+        &slot_box, slot_out, slot_max, slot_sum, out, logsumexp, arrivals, merge,
     );
 }
 
 /// [`hypercube_attention_arrival_kernel`] over a packed cache, its planes decoding the keys and
-/// values as they read them ([`PackedLines`]).
+/// values as they read them ([`PackedStepReads`]).
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
@@ -103,11 +106,11 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
-    let key = PackedLines {
+    let key = PackedStepReads {
         tile: key.tile(&partitioning),
         fixup: key_fixup.map(|fixup| fixup.tile(&partitioning)),
     };
-    let value = PackedLines {
+    let value = PackedStepReads {
         tile: value.tile(&partitioning),
         fixup: ComptimeOption::new_None(),
     };
@@ -126,8 +129,8 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
         EA,
         E,
         N,
-        PackedLines,
-        PackedLines,
+        PackedStepReads,
+        PackedStepReads,
         PlaneShuffleAttention<EA, N>,
     >(
         run,
@@ -145,7 +148,15 @@ pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
         comptime!(merge.slots.splits),
         comptime!(merge.slots.val_dim),
     );
-    hypercube_attention_arrive::<EA, E, N>(
-        &slot_box, slot_out, slot_max, slot_sum, out, arrivals, merge,
+    // A packed cache is read for inference: no backward pass reads its logsumexp.
+    hypercube_split_keys_merge_microkernel::<EA, E, N>(
+        &slot_box,
+        slot_out,
+        slot_max,
+        slot_sum,
+        out,
+        ComptimeOption::new_None(),
+        arrivals,
+        merge,
     );
 }

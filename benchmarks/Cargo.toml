@@ -48,6 +48,7 @@ cubek = { workspace = true, features = [
     "quantization",
 ] }
 cubek-attention = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-attention-backward = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-convolution = { workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-fft = {workspace = true, default-features = true, features = ["benchmarks"] }
 cubek-interpolate = { workspace = true, default-features = true, features = ["benchmarks"] }
@@ -60,6 +61,10 @@ cubek-test-utils = { workspace = true, default-features = true }
 
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
 half = { workspace = true }
+
+[[bench]]
+harness = false
+name = "attention_backward"
 
 [[bench]]
 harness = false
@@ -124,10 +129,6 @@ name = "unary"
 [[bench]]
 harness = false
 name = "attention"
-
-[[bench]]
-harness = false
-name = "attention_backward"
 
 [[bench]]
 harness = false

@@ -5,7 +5,7 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
-use cubek_microkernel::matmul::staged_walk::MatmulCubeWrite;
+use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_std::Hardware;
 
 use crate::kernels::{
@@ -97,8 +97,8 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         &self,
         hw: &Hardware,
         client: &Client,
-        lhs: PlainTensor,
-        rhs: PlainTensor,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
         out: PlainTensor,
         settings: &Self::Settings,
     ) -> Result<(), Refusal> {

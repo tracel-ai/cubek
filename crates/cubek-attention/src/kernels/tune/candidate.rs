@@ -1,13 +1,18 @@
 //! The tune candidates attention's autotunes race, the prompt's and the single position's.
 
 use crate::kernels::tune::key::AttentionKey;
-use crate::kernels::{AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem};
+use crate::kernels::{
+    AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+};
 use cubecl::CubeDim;
+use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
-use cubek_std::routine::{Grid, Routine};
+use cubek_std::routine::{Grid, PreparedLaunches, Routine};
+use std::sync::Arc;
 
 /// One candidate of an attention autotune: a routine of this kind at one of its
 /// settings, prepared for the device the autotune is built for.
@@ -19,6 +24,9 @@ pub struct AttentionRoutineCandidate<R: Routine> {
     routine: R,
     settings: R::Settings,
     hw: Hardware,
+    /// The launches this candidate prepared, shared by its clones: they launch the same routine
+    /// at the same setting on the same device.
+    prepared: Arc<PreparedLaunches<R>>,
 }
 
 impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
@@ -31,6 +39,7 @@ impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
                 routine,
                 settings,
                 hw: hw.clone(),
+                prepared: Arc::default(),
             })
             .collect()
     }
@@ -45,6 +54,22 @@ impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
 where
     R: AttentionRoutine<M, SM> + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>,
 {
+    /// The attention `tensors` state, launched on their client's device by this candidate's
+    /// routine at its setting: [`AttentionRoutine::launch_on`] on the device the candidate was
+    /// listed for, each problem prepared once ([`PreparedLaunches`]).
+    ///
+    /// # Errors
+    ///
+    /// Why the routine cannot run the attention at this setting.
+    pub fn launch_on(&self, tensors: AttentionTensors) -> Result<TensorHandle, Refusal> {
+        let (blueprint, grid) =
+            self.prepared
+                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
+        let binding = tensors.bind(&blueprint, &grid);
+        self.routine.dispatch(&tensors, binding, blueprint, grid);
+        Ok(tensors.into_out())
+    }
+
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device.
     fn prepared(&self, key: &AttentionKey) -> Option<(AttentionBlueprint<M, SM>, Grid)> {
@@ -95,7 +120,7 @@ mod tests {
     use crate::kernels::{AttentionVisibility, ScoreScale};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::output::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

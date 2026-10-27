@@ -5,7 +5,7 @@ use cubek_std::Hardware;
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
-use cubek_microkernel::matmul::stored::Packing;
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, N};
 
 /// What a routine's launch compiles: the microkernel, the partitioning that places its

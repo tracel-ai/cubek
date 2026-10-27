@@ -1,30 +1,15 @@
-//! The matmul microkernels, in [`dense`]: the one product, whichever of its inputs are packed. It
-//! holds its microkernels in a folder per scope, named by algorithm, beside what only they share.
-//! Beside them, what every matmul-shaped microkernel reads, attention's included: the
-//! [`MatmulWorkItem`] and its axes and layouts, the [`MatmulMicrokernel`] trait, the operands it
-//! names and how a packed one is stored ([`stored`], [`tile_order`]), the [`MatmulPartitioning`] every product
-//! places its work with, stated over a packed product's block-split space too ([`MatmulSpace`]),
-//! the [`MatmulStep`], the least box every load of a product fills whole, and the [`staged_walk`]
-//! a cube takes through `K`, holding its stages in the [`staging`](crate::staging) ring.
+//! The matmul microkernels: the one product, `lhs · rhs`, whichever of its inputs are packed, a
+//! folder per scope ([`unit`](mod@unit), [`plane`], [`cube`], [`hypercube`]), each named by
+//! algorithm. Beside them, what the product is, which all of them and its kernels read: the
+//! [`MatmulWorkItem`], its axes and operands, the [`MatmulStep`] every load of a product fills
+//! whole, the [`MatmulMicrokernel`] trait, the [`MatmulPartitioning`] every product places its work
+//! with, and the [`MatmulStage`] a walk through `K` stages, its stages held in the
+//! [`StageRing`](cubek_std::microkernel::StageRing).
 
-mod axes;
-mod buffers;
-pub mod dense;
-mod layout;
-mod matmul_microkernel;
-mod operand;
-mod partitioning;
-pub mod staged_walk;
-mod step;
-pub mod stored;
-pub mod tile_order;
-mod work_item;
+mod base;
+pub mod cube;
+pub mod hypercube;
+pub mod plane;
+pub mod unit;
 
-pub use axes::*;
-pub use buffers::*;
-pub use layout::*;
-pub use matmul_microkernel::*;
-pub use operand::*;
-pub use partitioning::*;
-pub use step::*;
-pub use work_item::*;
+pub use base::*;

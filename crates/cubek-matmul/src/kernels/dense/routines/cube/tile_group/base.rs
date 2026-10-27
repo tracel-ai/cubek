@@ -6,7 +6,7 @@ use crate::kernels::{
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::CubeOrder;
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeTileGroupMicrokernel, CubeTileGroupMicrokernelSettings,
 };
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulRead};
@@ -187,9 +187,9 @@ impl MatmulRoutine<CubeTileGroupMicrokernel> for CubeTileGroupMatmulRoutine {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
-    use cubek_microkernel::matmul::stored::{Operand, Packing};
-    use cubek_microkernel::matmul::tile_order;
     use cubek_std::devices;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order;
     use cubek_std::matmul_axes::{K, N};
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

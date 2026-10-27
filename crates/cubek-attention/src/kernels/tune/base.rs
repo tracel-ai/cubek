@@ -23,7 +23,7 @@ use cubecl::zspace::{Shape, metadata::Metadata};
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::output::plane::{
+use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
 use cubek_std::Hardware;
@@ -232,13 +232,13 @@ where
         + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
         + Copy,
 {
-    let settings = candidate.strategy();
-    let hw = Hardware::from_client(&inputs.client);
     candidate
-        .routine()
-        .launch_on(&hw, inputs.tensors, settings)
+        .launch_on(inputs.tensors)
         .map(|_| ())
-        .map_err(|why| format!("{settings} does not serve this problem: {why:?}"))
+        .map_err(|why| {
+            let settings = candidate.strategy();
+            format!("{settings} does not serve this problem: {why:?}")
+        })
 }
 
 impl AttentionTuneInputs {
@@ -291,6 +291,19 @@ impl AttentionTuneInputs {
             scoring,
             tensors,
         })
+    }
+
+    /// The same attention, writing beside its output each query's logsumexp
+    /// ([`AttentionTensors::with_logsumexp`]): every candidate writes it, so the winner's is the
+    /// call's.
+    pub fn with_logsumexp(mut self) -> Self {
+        self.tensors = self.tensors.with_logsumexp();
+        self
+    }
+
+    /// Each query's logsumexp, `[b, h, q]`, where the attention writes it.
+    pub fn logsumexp(&self) -> Option<TensorHandle> {
+        self.tensors.logsumexp()
     }
 
     /// The key positions the buffers hold: a sequence's extent, or its pages' positions.
