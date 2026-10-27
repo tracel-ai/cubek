@@ -35,7 +35,8 @@ pub fn run_avg_pool<const N: usize>(
             in_coords[N + 1] = channel;
 
             for d in 0..N {
-                let id_pad = spatial_out[d] * opts.window.stride[d] + k_coords[d];
+                let id_pad =
+                    spatial_out[d] * opts.window.stride[d] + k_coords[d] * opts.dilation[d];
                 let id_signed = id_pad as isize - opts.window.padding[d] as isize;
 
                 if id_signed < 0 || id_signed >= in_dims[d + 1] as isize {

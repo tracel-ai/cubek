@@ -4,7 +4,7 @@ use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, plane_fragment_attention_microkernel,
 };
-use cubek_microkernel::attention::{AttentionVisibility, B, S, VisibleKeys};
+use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 use cubek_std::microkernel::StageRing;
 
 /// Every plane of the launch owning its rows, each running them through stages of its own
@@ -18,6 +18,7 @@ pub fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     value: &TileArg<'_>,
     out: &TileArg<'_>,
     logsumexp: ComptimeOption<&TileArg<'static>>,
+    mask: ComptimeOption<&TileArg<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     scale: f32,
@@ -28,13 +29,14 @@ pub fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
+    let mask = mask.map(|mask| mask.tile(&partitioning));
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
     let o = out.tile(&partitioning);
     let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
     for plane in &partitioning {
-        let visible = VisibleKeys::new(len, plane.origin(B), queries, visibility);
+        let visible = VisibleKeys::new(len, &plane, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);

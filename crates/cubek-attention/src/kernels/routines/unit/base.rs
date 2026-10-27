@@ -1,4 +1,5 @@
 use super::kernel::unit_attention_kernel;
+use crate::kernels::AttentionPartitioning;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
@@ -11,7 +12,7 @@ use cubek_microkernel::attention::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionPartitioning, AttentionStagingCount, Q, S,
+    AttentionOperand, AttentionOperands, AttentionStagingCount, Q, S,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -86,7 +87,7 @@ impl Routine for UnitAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Its units' steps: each unit reads its rows of the query once a step, and every key and
@@ -100,7 +101,7 @@ impl Routine for UnitAttentionRoutine {
         estimate: &mut KernelEstimate,
     ) {
         let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
-        let (cube, leaf) = (partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (partitioning.cube_space(), partitioning.leaf());
         let steps = cube.extent(S).div_ceil(leaf.extent(S)) as u64;
         let row_readers = (cube.extent(Q) / leaf.extent(Q)) as u64;
         AttentionStagingCount {
@@ -119,10 +120,10 @@ impl Routine for UnitAttentionRoutine {
                 out: 1,
             },
         }
-        .count(&item, partitioning, estimate);
+        .count(&item, &cube, estimate);
         blueprint
             .microkernel
-            .estimate(&item, partitioning, grid.planes(), estimate);
+            .estimate(&item, &cube, grid.planes(), estimate);
     }
 
     /// The units cooperate on nothing, so a cube groups its settings' planes, each as wide as the
@@ -188,6 +189,7 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 value,
                 binding.out.arg(),
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
+                binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),

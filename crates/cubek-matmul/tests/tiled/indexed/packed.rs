@@ -3,8 +3,8 @@
 
 use super::super::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
 use super::*;
-use cubek_matmul::kernels::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
-use cubek_matmul::kernels::stack::SlabAxis;
+use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
+use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::PACKED_STACK_UNREAD;
 use cubek_microkernel::matmul::MatmulOperand;
 use half::f16;

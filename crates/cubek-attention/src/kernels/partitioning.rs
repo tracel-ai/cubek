@@ -1,4 +1,3 @@
-use crate::attention::{B, G, KV, Q, S};
 use core::num::NonZeroUsize;
 use cubecl::CubeCount;
 use cubecl::tile::launch::Refusal;
@@ -6,6 +5,7 @@ use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, Coverage, PlaneOrder, UnitCube},
 };
+use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_std::Hardware;
 use cubek_std::routine::LaunchSettings;
 
@@ -43,7 +43,7 @@ pub struct AttentionPartitioning {
     /// Steps of the walk through `S` a page holds, where the walk takes a page at a time.
     page_steps: Option<NonZeroUsize>,
     /// The box one cube covers, its `S` a cube's run of the walk where several share a box.
-    cube_box: Space,
+    cube_space: Space,
 }
 
 /// The order a launch's cubes take the boxes of queries in.
@@ -114,7 +114,7 @@ impl AttentionPartitioning {
                 keys.div_ceil(step).max(1).div_ceil(cubes) * step
             }
         };
-        let cube_box = Space::new(
+        let cube_space = Space::new(
             &tile
                 .extents()
                 .into_iter()
@@ -125,7 +125,7 @@ impl AttentionPartitioning {
             partitioning,
             cubes_along_keys,
             page_steps,
-            cube_box,
+            cube_space,
         }
     }
 
@@ -154,7 +154,7 @@ impl AttentionPartitioning {
     fn spanning_launch(space: Space, levels: Levels, scope: ComputeScope, per_cube: usize) -> Self {
         let partitioning = Partitioning::new(space, levels.build());
         let instance = partitioning.box_of(scope);
-        let cube_box = Space::new(
+        let cube_space = Space::new(
             &instance
                 .extents()
                 .into_iter()
@@ -168,14 +168,14 @@ impl AttentionPartitioning {
             partitioning,
             cubes_along_keys: Self::ONE_CUBE_A_BOX,
             page_steps: None,
-            cube_box,
+            cube_space,
         }
     }
 
     /// The box one cube covers: its queries of its heads, all of `D` and `DV`, and all of `S`, or
     /// its run of it where several cubes share the box.
-    pub fn cube_box(&self) -> Space {
-        self.cube_box.clone()
+    pub fn cube_space(&self) -> Space {
+        self.cube_space.clone()
     }
 
     /// Cubes sharing every box of rows, each on its own run of `S`.
@@ -251,7 +251,7 @@ impl AttentionPartitioning {
         let outermost = &self.partitioning.levels()[0];
         let mut enclosing = match (outermost.spans_launch(), outermost.coverage().scope()) {
             (true, Some(scope)) => self.partitioning.box_of(scope),
-            _ => self.cube_box(),
+            _ => self.cube_space(),
         };
         let mut walks = self.partitioning.levels()[1..].iter().filter_map(|level| {
             let tile = level.child(&enclosing);
@@ -276,7 +276,7 @@ impl AttentionPartitioning {
     /// Cubes one batch and key head of the problem spawns: one for every box of queries and
     /// heads, times the cubes sharing each.
     pub fn cubes(&self) -> usize {
-        let (space, cube) = (self.partitioning.space(), self.cube_box());
+        let (space, cube) = (self.partitioning.space(), self.cube_space());
         let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
         boxes(Q) * boxes(G) * self.cubes_along_keys.get()
     }

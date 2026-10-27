@@ -15,9 +15,9 @@ pub trait Microkernel: Debug + Clone + PartialEq + Sized {
     type Settings: Debug + Clone + Display;
     /// How the family names its operands, for [`Vectorization`].
     type Operand: Debug + Copy + Eq;
-    /// How the family places work items over a problem: what a microkernel reads the tiles it is
-    /// handed off.
-    type Partitioning: Debug + Clone;
+    /// The part of the problem one cube covers, as much of it as this microkernel reads: `()` for
+    /// one that reads only its own tiling. Where the cubes lie is its routine's placement.
+    type CubeSpace: Debug + Clone;
 
     /// Why [`candidates`](Self::candidates) comes back empty on a device, when it does.
     const DECLINE: &'static str;
@@ -75,22 +75,22 @@ pub trait Microkernel: Debug + Clone + PartialEq + Sized {
     }
 
     /// Enqueue what the accesses this microkernel's own code makes to the tiles it is handed
-    /// require of their widths, under the `partitioning` its routine placed it in, then hand
+    /// require of their widths, its cube covering `cube_space`, then hand
     /// `vectorization` to the microkernels it is built from. Where those tiles live is its
     /// walker's to know, not its own.
     fn vectorize(
         &self,
-        partitioning: &Self::Partitioning,
+        cube_space: &Self::CubeSpace,
         vectorization: &mut Vectorization<Self::Operand>,
     );
 
-    /// Set in `estimate` the parts this microkernel owns of a kernel running `item` placed by
-    /// `partitioning` on cubes of `planes`, then hand `estimate` to the microkernel it is built from:
+    /// Set in `estimate` the parts this microkernel owns of a kernel running `item`, each of its
+    /// cubes of `planes` covering `cube_space`, then hand `estimate` to the microkernel it is built from:
     /// the staging where it places the stage's reads, the work where its units hold it.
     fn estimate(
         &self,
         item: &Self::WorkItem,
-        partitioning: &Self::Partitioning,
+        cube_space: &Self::CubeSpace,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     );

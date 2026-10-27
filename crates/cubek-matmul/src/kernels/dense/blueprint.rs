@@ -1,4 +1,4 @@
-use cubek_microkernel::matmul::MatmulPartitioning;
+use crate::kernels::MatmulPartitioning;
 use cubek_microkernel::matmul::{MatmulAxes, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 

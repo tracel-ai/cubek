@@ -2,11 +2,13 @@ use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionRoutine,
     AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
 };
+use crate::kernels::{AttentionPartitioning, QueryOrder};
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
+use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
@@ -14,7 +16,6 @@ use cubek_microkernel::attention::hypercube::{
 use cubek_microkernel::attention::plane::{
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::{AttentionOperand, AttentionPartitioning, QueryOrder};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -195,7 +196,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
@@ -209,7 +210,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning,
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -250,7 +251,11 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         M::validate(
             hw,
             problem,
-            microkernel.merge_shape(&item, &partitioning, M::MERGE.seq_q(&microkernel)),
+            microkernel.merge_shape(
+                &item,
+                partitioning.cubes_along_keys(),
+                M::MERGE.seq_q(&microkernel),
+            ),
         )?;
         let mut vectorization = Vectorization::new();
         self.vectorize(&microkernel, &partitioning, &mut vectorization);
@@ -288,7 +293,7 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeShuffleAttentionMicroke
         }
         let shape = blueprint.microkernel.merge_shape(
             &tensors.problem().work_item(),
-            &blueprint.partitioning,
+            blueprint.partitioning.cubes_along_keys(),
             M::MERGE.seq_q(&blueprint.microkernel),
         );
         M::dispatch(tensors, binding, blueprint, grid, shape);
@@ -299,14 +304,13 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeShuffleAttentionMicroke
 mod tests {
     use super::*;
     use crate::kernels::HYPERCUBE_CUBES_UNMET;
+    use crate::kernels::{ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS};
     use crate::kernels::{
         AttentionCacheLayout, HypercubeLastArrivalShuffleAttentionRoutine,
         HypercubeSecondLaunchShuffleAttentionRoutine,
     };
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::{
-        ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS, Q, S,
-    };
+    use cubek_microkernel::attention::{Q, S};
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -441,8 +445,8 @@ mod tests {
         let partitioning = &blueprint.partitioning;
         assert_eq!(partitioning.cubes_along_keys().get(), 32);
         assert_eq!(partitioning.stage().extent(S), 4);
-        assert_eq!(partitioning.cube_box().extent(S), 128);
-        assert_eq!(partitioning.cube_box().extent(Q), 4);
+        assert_eq!(partitioning.cube_space().extent(S), 128);
+        assert_eq!(partitioning.cube_space().extent(Q), 4);
         // One head a box, the group's four by eight key heads.
         assert_eq!(partitioning.cubes(), 4 * 32);
         assert_eq!(grid.cubes(), Some(8 * 4 * 32));
@@ -475,6 +479,6 @@ mod tests {
         );
         assert_eq!(partitioning.cubes_along_keys().get(), 32);
         assert_eq!(partitioning.stage().extent(S), 4);
-        assert_eq!(partitioning.cube_box().extent(S), 128);
+        assert_eq!(partitioning.cube_space().extent(S), 128);
     }
 }

@@ -278,14 +278,16 @@ impl MatmulShape {
     ///
     /// [`Tiled`](GridCoverage::Tiled) candidates go first. A
     /// [`Masked`](GridCoverage::Masked) candidate falls one priority level per doubling of
-    /// what its grid covers against what the problem asks for. A
+    /// what its grid covers against what the problem asks for, where those cells cost
+    /// ([`MaskedCells::Cost`]); where they are free it goes first with the tiled ones. A
     /// [`Whole`](GridCoverage::Whole) candidate goes last: a grid that cannot
     /// spread is the one claim about a launch that needs no clock — and even
     /// that says only where to try it, since how much it costs is still a
     /// measurement.
-    pub fn priority(&self, block: CubeBlock) -> CandidatePriority {
+    pub fn priority(&self, block: CubeBlock, masked: MaskedCells) -> CandidatePriority {
         match self.coverage(block) {
             GridCoverage::Tiled => CandidatePriority::FIRST,
+            GridCoverage::Masked if masked == MaskedCells::Free => CandidatePriority::FIRST,
             GridCoverage::Masked => CandidatePriority::FIRST
                 .lowered((self.covered(block) / self.work().max(1)).max(1).ilog2()),
             GridCoverage::Whole => CandidatePriority::LAST,
@@ -305,6 +307,22 @@ impl MatmulShape {
             false => GridCoverage::Masked,
         }
     }
+}
+
+/// What the cells a masked grid covers past the problem's edge cost its candidate: the
+/// arithmetic a cube spends on them, and nothing else, since a masked cell reads and writes
+/// nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskedCells {
+    /// They take arithmetic from an instruction the problem's bytes leave idle: a product whose
+    /// element the device multiplies on a tensor core, whose rate is hundreds of operations per
+    /// byte the bus brings. A decode's eight rows padded to a tile of sixty-four cost the bus
+    /// nothing, and a staged candidate reads the weight at its rate.
+    Free,
+    /// They take arithmetic from the instruction the product is bound by, or near enough: a
+    /// product on the units' own arithmetic, an integer one among them, whose rate is a few
+    /// dozen operations per byte.
+    Cost,
 }
 
 /// The problem a tuning **key** describes: dense operands of the key's element, the batch held by

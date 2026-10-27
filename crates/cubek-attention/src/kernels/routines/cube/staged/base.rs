@@ -3,6 +3,7 @@ use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
 };
+use crate::kernels::{AttentionPartitioning, QueryOrder};
 use core::marker::PhantomData;
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
@@ -14,9 +15,7 @@ use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane}
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
 };
-use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionPartitioning, QueryOrder,
-};
+use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -120,7 +119,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: the cube microkernel places the staging and its planes the work.
@@ -133,7 +132,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning,
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -214,6 +213,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane>
                 value,
                 binding.out.arg(),
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
+                binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),

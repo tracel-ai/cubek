@@ -12,7 +12,7 @@ use cubecl_common::e4m3;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor, WordsLaid};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::stored::Operand;
+use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 

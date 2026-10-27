@@ -1,4 +1,5 @@
 use super::kernel::plane_fragment_attention_kernel;
+use crate::kernels::AttentionPartitioning;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
@@ -13,8 +14,7 @@ use cubek_microkernel::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionPartitioning,
-    AttentionStagingCount, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount, Q, S,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::StageRing;
@@ -147,7 +147,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Its planes' stages: each plane stages its rows of the query once, and every key and value of
@@ -162,7 +162,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
     ) {
         let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
-        let cube = partitioning.cube_box();
+        let cube = partitioning.cube_space();
         let readers = (cube.extent(Q) / microkernel.seq_q()) as u64;
         AttentionStagingCount {
             seq_kv: microkernel.seq_kv(),
@@ -180,8 +180,8 @@ impl Routine for PlaneFragmentAttentionRoutine {
                 out: 1,
             },
         }
-        .count(&item, partitioning, estimate);
-        microkernel.estimate(&item, partitioning, grid.planes(), estimate);
+        .count(&item, &cube, estimate);
+        microkernel.estimate(&item, &cube, grid.planes(), estimate);
     }
 
     /// A plane is as many units as the device issues its matrix instruction on, and it walks its
@@ -261,6 +261,7 @@ impl AttentionRoutine<PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionR
                 value,
                 binding.out.arg(),
                 binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
+                binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 tensors.scale(),

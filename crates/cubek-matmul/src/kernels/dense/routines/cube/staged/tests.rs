@@ -3,6 +3,7 @@
 mod base {
     use super::super::*;
     use crate::kernels::CUBE_STRIPS;
+    use crate::kernels::MatmulPartitioning;
     use crate::kernels::{MATMUL_PACKED_WALK_PAST_K, MatmulRoutineProblem, MatmulView};
     use core::num::NonZeroUsize;
     use cubecl::features::MmaConfig;
@@ -14,8 +15,7 @@ mod base {
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
     use cubek_microkernel::matmul::MatmulOperand;
-    use cubek_microkernel::matmul::MatmulPartitioning;
-    use cubek_microkernel::matmul::MatmulPlaneLayout;
+    use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
     use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
     };
@@ -51,7 +51,7 @@ mod base {
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &problem.buffers(plane.orders),
-            partitioning,
+            &partitioning.cube_space(),
             &partitioning.stage(),
             storage,
             ring,
@@ -113,7 +113,8 @@ mod base {
     }
 
     /// Every setting prepares on a row and a col rhs, padded stages and all, but a ring whose
-    /// stages the device's shared memory cannot hold; the default always prepares.
+    /// stages the device's shared memory cannot hold; the default always prepares. Each walks the
+    /// stage its placement states.
     #[test]
     fn every_setting_prepares_where_the_instruction_is_offered() {
         let hw = offering(devices::strix_halo());
@@ -125,6 +126,14 @@ mod base {
                     prepared.is_ok() || (position > 0 && outgrown),
                     "{settings}: {prepared:?}"
                 );
+                if let Ok((blueprint, _)) = prepared {
+                    let partitioning = &blueprint.partitioning;
+                    assert_eq!(
+                        blueprint.microkernel.stage(&partitioning.cube_space()),
+                        partitioning.stage(),
+                        "{settings}"
+                    );
+                }
             }
         }
     }
@@ -191,7 +200,7 @@ mod base {
                     (
                         grid.shared_memory,
                         grid.launch.cube_dim,
-                        blueprint.partitioning.cube_box(),
+                        blueprint.partitioning.cube_space().space,
                         blueprint.microkernel.ring,
                         blueprint.microkernel.fill,
                     )
@@ -568,7 +577,7 @@ mod base {
             .prepare(&hw, &problem, &multi_row)
             .expect("the routine runs here");
         let (cube, stage) = (
-            blueprint.partitioning.cube_box(),
+            blueprint.partitioning.cube_space().space,
             blueprint.partitioning.stage(),
         );
         assert_eq!((cube.extent(M), cube.extent(N)), (128, 128));
@@ -941,7 +950,7 @@ mod base {
                 MatmulView::ONE_CUBE_A_BOX,
             );
         let launched = &blueprint.partitioning;
-        assert_eq!(launched.cube_box(), placed.cube_box());
+        assert_eq!(launched.cube_space().space, placed.cube_space().space);
         assert_eq!(launched.stage(), placed.stage());
         assert_eq!(launched.leaf(), placed.leaf());
         assert_eq!(launched.overhangs_output(), placed.overhangs_output());
@@ -1428,7 +1437,7 @@ mod base {
             let CubeStagedDepth::ScaleBlocks(blocks) = blueprint.microkernel.depth else {
                 panic!("{settings}: a decoded input is staged in scale blocks");
             };
-            let block = blueprint.partitioning.cube_box().extent(KI);
+            let block = blueprint.partitioning.cube_space().extent(KI);
             let planes_along_k = blueprint.microkernel.planes_along_k.get();
             let mut estimate = KernelEstimate::from(&grid);
             CubeStagedMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);

@@ -1,4 +1,4 @@
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_test_utils::CatalogEntry;
 
 /// One backward pass's shape: the query's `[batch, heads, seq_q, head_dim]`, the keys' and
@@ -34,17 +34,44 @@ pub fn problems() -> Vec<CatalogEntry<AttentionBackwardSpec>> {
         CatalogEntry::new(
             "small_causal",
             "Small causal (b=1 h=4 s=512 d=64)",
-            spec(1, 4, 4, 512, 64, AttentionVisibility::Causal),
+            spec(
+                1,
+                4,
+                4,
+                512,
+                64,
+                AttentionVisibility::Causal {
+                    queries: QueryPlacement::Last,
+                },
+            ),
         ),
         CatalogEntry::new(
             "gpt2",
             "GPT-2 (b=4 h=12 s=1024 d=64, causal)",
-            spec(4, 12, 12, 1024, 64, AttentionVisibility::Causal),
+            spec(
+                4,
+                12,
+                12,
+                1024,
+                64,
+                AttentionVisibility::Causal {
+                    queries: QueryPlacement::Last,
+                },
+            ),
         ),
         CatalogEntry::new(
             "llama_gqa",
             "Llama GQA (b=1 h=32 kv=8 s=2048 d=128, causal)",
-            spec(1, 32, 8, 2048, 128, AttentionVisibility::Causal),
+            spec(
+                1,
+                32,
+                8,
+                2048,
+                128,
+                AttentionVisibility::Causal {
+                    queries: QueryPlacement::Last,
+                },
+            ),
         ),
     ]
 }

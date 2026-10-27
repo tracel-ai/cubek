@@ -8,7 +8,7 @@ use cubek_attention_backward::kernels::{
     AttentionBackwardRoutine, CubeStagedAttentionBackwardRoutine,
     CubeStagedAttentionBackwardRoutineSettings,
 };
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 
 /// Two heads of their own key heads, more keys than queries, and no cube's box that divides the
@@ -22,6 +22,7 @@ const CASE: Case = Case {
     head_dim: 16,
     val_dim: 8,
     visibility: AttentionVisibility::Attended,
+    hidden: None,
 };
 
 /// The routine at `settings` on `case`, in `element`, against the host within `tolerance`; skipped,
@@ -69,7 +70,9 @@ fn the_cube_routine_masks_causally() {
     run(
         Case {
             seq_q: 21,
-            visibility: AttentionVisibility::Causal,
+            visibility: AttentionVisibility::Causal {
+                queries: QueryPlacement::Last,
+            },
             ..CASE
         },
         f32::elem_type_native(),

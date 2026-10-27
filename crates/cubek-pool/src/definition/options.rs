@@ -27,10 +27,14 @@ impl<const N: usize> MaxPoolOptions<N> {
 #[derive(Clone, Debug)]
 pub struct AvgPoolOptions<const N: usize> {
     pub window: PoolWindow<N>,
+    /// Spacing between kernel taps along each spatial axis. Must be non-zero.
+    pub dilation: [usize; N],
+    /// Count taps in explicit padding, excluding ceil-mode extensions beyond it.
     pub count_include_pad: bool,
 }
 
 impl<const N: usize> AvgPoolOptions<N> {
+    /// Creates average pooling options with dilation one.
     pub fn new(
         kernel_size: [usize; N],
         stride: [usize; N],
@@ -45,8 +49,17 @@ impl<const N: usize> AvgPoolOptions<N> {
                 padding,
                 ceil_mode,
             },
+            dilation: [1; N],
             count_include_pad,
         }
+    }
+
+    /// Sets the spacing between kernel taps, which sample `start + k * dilation`.
+    ///
+    /// Pooling returns [`super::PoolError::InvalidDilation`] if an entry is zero.
+    pub fn with_dilation(mut self, dilation: [usize; N]) -> Self {
+        self.dilation = dilation;
+        self
     }
 }
 

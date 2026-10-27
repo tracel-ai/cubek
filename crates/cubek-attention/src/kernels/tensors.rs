@@ -67,6 +67,10 @@ pub struct AttentionTensors {
     /// Each query's logsumexp, `[b, h, q]`, and the same buffer as the kernel writes it,
     /// `[b, kv, g, q]`, where the caller asks for it ([`with_logsumexp`](Self::with_logsumexp)).
     logsumexp: Option<(TensorHandle, PlainTensor)>,
+    /// Which keys each query of each head does not see, `[b, kv, g, q, s]` over the caller's
+    /// buffer as the query is ([`with_mask`](Self::with_mask)); `None` where it sees every key
+    /// its visibility admits.
+    mask: Option<PlainTensor>,
 }
 
 impl core::fmt::Debug for AttentionTensors {
@@ -82,6 +86,7 @@ impl core::fmt::Debug for AttentionTensors {
             .field("axis", &self.axis)
             .field("arrivals", &self.arrivals)
             .field("logsumexp", &self.logsumexp)
+            .field("mask", &self.mask)
             .finish()
     }
 }
@@ -317,7 +322,7 @@ impl AttentionTensors {
     ) -> Self {
         let q_shape = query.shape();
         let (batch, heads, queries) = (q_shape[0], q_shape[1], q_shape[2]);
-        let axis = QueryAxis::new(queries);
+        let axis = QueryAxis::new(queries, scoring.visibility);
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.
@@ -337,6 +342,7 @@ impl AttentionTensors {
             axis,
             arrivals: None,
             logsumexp: None,
+            mask: None,
         }
     }
 
@@ -400,6 +406,26 @@ impl AttentionTensors {
             assert_eq!(kept.elem, Self::COUNTER, "arrival counters are u32");
         }
         self.arrivals = arrivals;
+        self
+    }
+
+    /// The same attention, query `q` of head `h` of sequence `b` not seeing key `s` where
+    /// `mask[b, h, q, s]` is not zero, on top of what its visibility hides. A dim the mask does
+    /// not vary along is read at stride zero, so a mask broadcast over the batch or the heads is
+    /// never copied. Its element is any integer, a stored boolean among them.
+    ///
+    /// # Panics
+    ///
+    /// A mask of another shape than the scores', `[b, h, q, s]`.
+    pub fn with_mask(mut self, mask: PlainTensor) -> Self {
+        let [batch, queries, heads, _] = self.out.shape().dims::<4>();
+        assert_eq!(
+            mask.shape().as_slice(),
+            [batch, heads, queries, self.cache.seq_kv()],
+            "a mask is [b, h, q, s], one cell a score"
+        );
+        let group = heads / self.cache.num_kv_heads();
+        self.mask = Some(self.axis.view(&mask, group, [0, 1, 2, 3]));
         self
     }
 
@@ -630,12 +656,19 @@ impl AttentionTensors {
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
         });
+        // A cell a read: a mask broadcast over a dim lies there at stride zero.
+        let mask = self.mask.as_ref().map(|mask| {
+            arg(mask, &[B, KV, G, Q, S], 1, mask.elem)
+                .build()
+                .expect(ADMITTED_PLAN_RUNS)
+        });
         AttentionBinding {
             launcher,
             query,
             cache,
             out,
             logsumexp,
+            mask,
             lengths: self.lengths.binding.clone().into_tensor_arg(),
         }
     }

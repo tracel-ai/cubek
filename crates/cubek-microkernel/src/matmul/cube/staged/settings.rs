@@ -1,4 +1,4 @@
-use crate::matmul::MatmulPlaneLayout;
+use crate::matmul::cube::MatmulPlaneLayout;
 use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
 use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use core::num::NonZeroUsize;

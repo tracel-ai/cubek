@@ -40,11 +40,7 @@ pub fn cube_staged_query_gradient_kernel<EA: Float, ES: Float>(
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
     let (lse, delta) = (logsumexp.tile(&partitioning), delta.tile(&partitioning));
     let d_q = query_gradient.tile(&partitioning);
-    let visible = VisibleKeys {
-        attended: keys,
-        seq_q: queries,
-        visibility,
-    };
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
     for cube in &partitioning {
         let steps = visible.steps(
@@ -105,11 +101,7 @@ pub fn cube_staged_key_gradient_kernel<EA: Float, ES: Float>(
         key_gradient.tile(&partitioning),
         value_gradient.tile(&partitioning),
     );
-    let visible = VisibleKeys {
-        attended: keys,
-        seq_q: queries,
-        visibility,
-    };
+    let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for cube in &partitioning {
         let first_step = visible.first_query_step(&cube, comptime!(microkernel.seq_q()));

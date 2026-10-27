@@ -58,8 +58,9 @@ impl PlaneFragmentMicrokernel {
     /// plane against a packed rhs runs at.
     pub const DECODING_PLANE_UNITS: usize = 32;
 
-    /// The scale block along `K` a packed rhs's fragments decode under: NVFP4's, sixteen
-    /// values.
+    /// The values of `K` a fragment's lane run looks one scale up for: NVFP4's block. A packed
+    /// rhs's fragments decode under scale blocks a whole number of them long, NVFP4's sixteen
+    /// values or MXFP4's thirty-two.
     const DECODED_BLOCK: usize = 16;
 
     /// What a packed item of no rows, or of more than [`MAX_PACKED_ROWS`](Self::MAX_PACKED_ROWS),
@@ -105,7 +106,8 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// Whether a packed `item`'s operands are what the fragments contract: a 16-bit lhs,
-    /// and a packed rhs read along `K` alone, under scales of sixteen-value blocks along `K`.
+    /// and a packed rhs read along `K` alone, under scale blocks along `K` a whole number of
+    /// [`DECODED_BLOCK`](Self::DECODED_BLOCK) long.
     fn serves(item: &MatmulWorkItem, space: &MatmulBlocks) -> bool {
         let rhs = &space.operand(MatmulOperand::Rhs);
         let sixteen_bits = matches!(
@@ -115,7 +117,9 @@ impl PlaneFragmentMicrokernel {
         sixteen_bits
             && rhs.lined() == K
             && rhs.read(N) == 1
-            && rhs.grouping(K, space.k) == Some(Self::DECODED_BLOCK)
+            && rhs
+                .grouping(K, space.k)
+                .is_some_and(|block| block.is_multiple_of(Self::DECODED_BLOCK))
     }
 
     /// The planes against the packed rhs of `space`: one fragment of the decoding instruction's
@@ -133,12 +137,18 @@ impl PlaneFragmentMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let shape = Self::decoding_instruction(item.elements.lhs, item.sum);
         let window = settings.depth.get() * shape.k as usize;
-        let runs_whole = (window / 4).is_multiple_of(space.operand(MatmulOperand::Rhs).read(K));
+        let rhs = space.operand(MatmulOperand::Rhs);
+        let runs_whole = (window / 4).is_multiple_of(rhs.read(K));
+        // A window states `K` as whole scale blocks and the position inside one.
+        let blocks_whole = rhs
+            .grouping(K, space.k)
+            .is_some_and(|block| window.is_multiple_of(block));
         let windowed = settings.along_m == NonZeroUsize::MIN
             && settings.transport == PlaneFragmentTransport::Mma
             && settings.fragment_depth == PlaneFragmentDepth::Stage;
         let offered = windowed
             && runs_whole
+            && blocks_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
         let instruction = PlaneFragmentInstruction::Mma { shape };
@@ -600,7 +610,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = PlaneFragmentMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Partitioning = ();
+    type CubeSpace = ();
 
     const DECLINE: &'static str = "the plane microkernel's software instruction runs everywhere";
 
@@ -715,5 +725,62 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::matmul::{MatmulDestination, MatmulReading};
+    use cubek_std::layout::stored::Packing;
+    use cubek_std::layout::tile_order;
+
+    /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
+    /// long along `k`.
+    fn against_blocks_of(block: usize) -> (MatmulWorkItem, MatmulBlocks) {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let packings = MatmulOperands {
+            lhs: None,
+            rhs: Some(Packing {
+                operand: Operand::packed(K, 8, K, block, 4),
+                scheme: tile_order::scheme(),
+            }),
+            out: None,
+        };
+        let space = MatmulBlocks {
+            packings,
+            m: 16,
+            n: 4096,
+            k: 4096,
+        };
+        let item = MatmulWorkItem {
+            elements: MatmulOperands {
+                lhs: f16,
+                rhs: ElemType::Float(FloatKind::E2M1),
+                out: f16,
+            },
+            sum: ElemType::Float(FloatKind::F32),
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: Some(space),
+            rows: MatmulRows::Whole(16),
+            destination: MatmulDestination::Buffer,
+            axes: MatmulAxes::MNK,
+            reading: MatmulReading::AsStored,
+        };
+        (item, space)
+    }
+
+    /// The fragments decode a packed rhs under NVFP4's sixteen-value blocks and MXFP4's
+    /// thirty-two, each a whole number of the sixteen a lane run looks one scale up for, and under
+    /// no block shorter than that.
+    #[test]
+    fn the_fragments_decode_under_blocks_a_whole_number_of_sixteen_long() {
+        let serves = |block| {
+            let (item, space) = against_blocks_of(block);
+            PlaneFragmentMicrokernel::serves(&item, &space)
+        };
+        assert!(serves(16));
+        assert!(serves(32));
+        assert!(!serves(8));
     }
 }
