@@ -232,13 +232,13 @@ where
         + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
         + Copy,
 {
-    let settings = candidate.strategy();
-    let hw = Hardware::from_client(&inputs.client);
     candidate
-        .routine()
-        .launch_on(&hw, inputs.tensors, settings)
+        .launch_on(inputs.tensors)
         .map(|_| ())
-        .map_err(|why| format!("{settings} does not serve this problem: {why:?}"))
+        .map_err(|why| {
+            let settings = candidate.strategy();
+            format!("{settings} does not serve this problem: {why:?}")
+        })
 }
 
 impl AttentionTuneInputs {

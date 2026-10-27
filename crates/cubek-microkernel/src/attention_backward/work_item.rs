@@ -1,6 +1,7 @@
 use crate::attention::{D, DV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulRows, MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulWorkItem,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::Axis;
@@ -80,6 +81,7 @@ impl AttentionBackwardWorkItem {
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes { m, n, k },
+            reading: MatmulReading::AsStored,
         }
     }
 
@@ -99,6 +101,7 @@ impl AttentionBackwardWorkItem {
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes { m, n, k },
+            reading: MatmulReading::AsStored,
         }
     }
 }

@@ -217,7 +217,10 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
 
     /// A cube holds its planes along the keys, and the shared memory its microkernel and its merge
     /// ask for. The cubes sharing a box are its settings' count, whatever the keys
-    /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way.
+    /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and where
+    /// the buffers hold too few keys for every cube to walk some
+    /// ([`AttentionPartitioning::every_cube_walks`]) or one cube a box already fills the device
+    /// ([`AttentionPartitioning::boxes_leave_workers_idle`]).
     fn prepare(
         &self,
         hw: &Hardware,
@@ -235,6 +238,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             settings.cubes_along_keys,
             QueryOrder::InOrder,
         );
+        partitioning.every_cube_walks()?;
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
         let cube = CubeResources {
             plane_width: hw.plane_dim()?,
@@ -242,6 +246,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
                 + M::MERGE.shared_memory(),
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        partitioning.boxes_leave_workers_idle(hw, &grid.launch)?;
         M::validate(
             hw,
             problem,
@@ -299,17 +304,20 @@ mod tests {
     };
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::attention::output::hypercube::HYPERCUBE_CUBES_UNMET;
-    use cubek_microkernel::attention::{Q, S};
+    use cubek_microkernel::attention::{
+        ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS, Q, S,
+    };
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
-    /// A decode step over a long cache, and a short chunk of a prompt against it.
+    /// A decode step over a long cache, and a short chunk of a prompt against one whose keys do
+    /// not fill the last step: each long enough for every cube of every setting to walk some.
     fn problems() -> [AttentionRoutineProblem; 2] {
         [
             AttentionRoutineProblem::dense((1, 32, 8), (1, 4096), (128, 128), F16),
-            AttentionRoutineProblem::dense((1, 8, 2), (16, 1000), (64, 64), F32),
+            AttentionRoutineProblem::dense((1, 8, 2), (16, 4000), (64, 64), F32),
         ]
     }
 
@@ -349,6 +357,38 @@ mod tests {
             HypercubeSecondLaunchShuffleAttentionRoutine::new(),
             &[devices::m2_pro(), devices::h100(), unmet(devices::m2_pro())],
         );
+    }
+
+    /// A cache too short to give every cube of a box a step declines whatever the setting: the
+    /// cubes past its steps would walk nothing and still leave a partial to merge.
+    #[test]
+    fn a_cache_shorter_than_the_cubes_declines() {
+        let hw = devices::h100();
+        let one_key = AttentionRoutineProblem::dense((1, 32, 8), (1, 1), (128, 128), F16);
+        let routine = HypercubeLastArrivalShuffleAttentionRoutine::new();
+        for settings in routine.settings(&hw) {
+            assert_eq!(
+                routine.prepare(&hw, &one_key, &settings).err(),
+                Some(ATTENTION_CUBES_WITHOUT_KEYS),
+                "{settings}"
+            );
+        }
+    }
+
+    /// A prompt whose boxes of queries already fill the device declines whatever the setting:
+    /// the cubes sharing a box would find no idle worker and only add a merge.
+    #[test]
+    fn a_prompt_filling_the_device_declines() {
+        let hw = devices::h100();
+        let prompt = AttentionRoutineProblem::dense((1, 32, 32), (4096, 4096), (128, 128), F16);
+        let routine = HypercubeSecondLaunchShuffleAttentionRoutine::new();
+        for settings in routine.settings(&hw) {
+            assert_eq!(
+                routine.prepare(&hw, &prompt, &settings).err(),
+                Some(ATTENTION_BOXES_FILL_THE_DEVICE),
+                "{settings}"
+            );
+        }
     }
 
     /// Every setting declines where the device commits to no plane width, rather than launching
