@@ -1,6 +1,7 @@
 use cubecl::ir::ElemType;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::StageRing;
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, cube_staged_key_gradient_microkernel,
@@ -8,7 +9,6 @@ use cubek_microkernel::attention_backward::key_gradient::cube::{
 use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, cube_staged_query_gradient_microkernel,
 };
-use cubek_microkernel::StageRing;
 
 /// Every cube of the launch running its queries through stages it fills for all its planes: their
 /// dot product of the output with its gradient, and their gradient, over the keys they see.

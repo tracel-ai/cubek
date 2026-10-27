@@ -1,10 +1,10 @@
 use super::base::CubeQueryGradientMicrokernel;
+use crate::StageRing;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::query_gradient::plane::{
     plane_query_gradient_step, query_gradient_sum,
 };
 use crate::attention_backward::{ScoreWindows, drain_scaled};
-use crate::StageRing;
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 

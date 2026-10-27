@@ -1,9 +1,9 @@
 use super::base::PlaneKeyGradientMicrokernel;
+use crate::StageRing;
 use crate::attention::{D, DV, Q, S};
 use crate::attention_backward::{ScoreWindows, contract_into_window, drain_scaled};
 use crate::matmul::plane::plane_fragment_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use crate::StageRing;
 use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
