@@ -91,6 +91,8 @@ pub fn hypercube_key_gradient_microkernel<EA: Float, ES: Float>(
                             comptime!(microkernel.score_levels()),
                             comptime!(microkernel.score_gradient_levels()),
                         );
+                        // The step leaves the score's gradient cast in its window: its product
+                        // with the keys is this plane's share of the stage's query gradient.
                         let query_gradient = query_gradient.at(&plane);
                         let mut sum = query_gradient
                             .accumulator::<EA>(
