@@ -1,3 +1,4 @@
+use crate::matmul::MatmulStage;
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
 use crate::matmul::{MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem};
@@ -140,8 +141,8 @@ pub enum CubeStagedFillingRefusal {
 }
 
 impl CubeStagedTmaRefusal {
-    /// Why `hw` cannot deliver the stage of `item`'s product a cube handed `cube_space` walks, over
-    /// buffers as `buffers` states them, held as `storage` (the instruction's
+    /// Why `hw` cannot deliver the `stage` of `item`'s product a cube walks through the space
+    /// `cube_space`, over buffers as `buffers` states them, held as `storage` (the instruction's
     /// [`landed_stage_storage`](crate::matmul::plane::PlaneFragmentInstruction::landed_stage_storage)),
     /// by the TMA engine, to `microkernel`'s fragments through `ring`; `None` where it can.
     #[allow(clippy::too_many_arguments)]
@@ -150,11 +151,11 @@ impl CubeStagedTmaRefusal {
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         cube_space: &MatmulCubeSpace,
+        stage: &MatmulStage,
         storage: &StageStorage,
         ring: &StageRing,
         microkernel: &PlaneFragmentMicrokernel,
     ) -> Option<Self> {
-        let stage = &cube_space.stage;
         // Bits rather than bytes: an `e2m1` value is half of one.
         let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits().max(1);
         // A stage of whole stored tiles along its rows, bound rows first, `K` along them, at most
@@ -264,7 +265,7 @@ impl CubeStagedFill {
         filling_planes: 0,
     };
 
-    /// This fill as `hw` runs it for `item` over `buffers`, a cube handed `cube_space` staging through
+    /// This fill as `hw` runs it for `item` over `buffers`, a cube covering `cube_space` staging `stage` through
     /// `ring` into `microkernel`'s fragments, which drain through `scratch`, its planes split
     /// `planes_along_k` ways along `K`: the TMA engine where nothing refuses it a stage held as
     /// `landed` ([`CubeStagedTmaRefusal`]), the units elsewhere; the planes set aside where nothing
@@ -276,6 +277,7 @@ impl CubeStagedFill {
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         cube_space: &MatmulCubeSpace,
+        stage: &MatmulStage,
         landed: &StageStorage,
         ring: &StageRing,
         microkernel: &PlaneFragmentMicrokernel,
@@ -289,6 +291,7 @@ impl CubeStagedFill {
                     item,
                     buffers,
                     cube_space,
+                    stage,
                     landed,
                     ring,
                     microkernel,

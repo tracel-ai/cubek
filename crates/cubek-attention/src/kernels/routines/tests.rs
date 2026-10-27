@@ -25,7 +25,7 @@ fn reach<M: AttentionMicrokernel, SM, R: AttentionRoutine<M, SM>>(
     for settings in routine.settings(hw) {
         if let Ok((blueprint, _)) = routine.prepare(hw, problem, &settings) {
             steps.insert(blueprint.partitioning.stage().extent(S));
-            queries.insert(blueprint.partitioning.cube_box().extent(Q));
+            queries.insert(blueprint.partitioning.cube_space().extent(Q));
         }
     }
     (steps, queries)

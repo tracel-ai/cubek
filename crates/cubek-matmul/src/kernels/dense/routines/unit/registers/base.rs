@@ -166,7 +166,7 @@ impl Routine for UnitRegistersMatmulRoutine {
                 .work_item(),
             &blueprint.partitioning,
         );
-        let (cube, block) = (partitioning.cube_box(), partitioning.leaf());
+        let (cube, block) = (partitioning.cube_space().space, partitioning.leaf());
         let plane_row = block.extent(N) * Self::blocks_per_plane(partitioning);
         let staging = MatmulStagingCount {
             depth: block.extent(K),

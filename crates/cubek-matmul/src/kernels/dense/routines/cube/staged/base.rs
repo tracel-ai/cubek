@@ -350,7 +350,7 @@ impl CubeStagedMatmulRoutine {
             .expect(MatmulView::PREPARED)
             .work_item();
         let contracted = blueprint.microkernel.contracted(&item);
-        let cube = blueprint.partitioning.cube_box();
+        let cube = blueprint.partitioning.cube_space().space;
         let (rows, columns, block) = (cube.extent(MI), cube.extent(NI), cube.extent(KI));
         let stage = blueprint.partitioning.stage();
         let stage_depth: usize = [KB, KI]
@@ -429,7 +429,7 @@ impl CubeStagedMatmulRoutine {
         partitioning: MatmulPartitioning,
         storage: StageStorage,
     ) -> CubeStagedMatmulRoutineBlueprint {
-        let block = partitioning.cube_box().extent(KI);
+        let block = partitioning.cube_space().extent(KI);
         let width = |operand: MatmulOperand| match microkernel.reads.get(operand).staged() {
             Some(_) => Self::decoded_width(
                 microkernel.plane.leaf_extent(MatmulDim::K),

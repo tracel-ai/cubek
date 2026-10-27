@@ -288,7 +288,7 @@ impl MGroupedMatmulTensors {
         }
         let problem = self.slab_problem(self.source.rows())?;
         let (blueprint, _) = routine.prepare(hw, &problem, settings)?;
-        Ok(blueprint.partitioning.cube_box().extent(M))
+        Ok(blueprint.partitioning.cube_space().extent(M))
     }
 
     /// `rows` rows against one slab, as a dense product states it, the slab aligned as a slab of

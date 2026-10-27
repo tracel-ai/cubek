@@ -248,7 +248,7 @@ mod fragment {
             .prepare(&hw, &problem, &Settings::DEFAULT)
             .expect("the default prepares on the M2");
         let (cube, stage) = (
-            blueprint.partitioning.cube_box(),
+            blueprint.partitioning.cube_space(),
             blueprint.partitioning.stage(),
         );
         let microkernel = blueprint.microkernel;

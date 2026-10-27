@@ -133,7 +133,7 @@ mod plane_shuffle {
                         .prepare(&hw, &problem, &settings)
                         .unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
                     let partitioning = &blueprint.partitioning;
-                    for space in [partitioning.leaf(), partitioning.cube_box()] {
+                    for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
                             whole_steps(&step(&hw, &problem), &space),
                             "{name} at {settings}: {space:?}"
@@ -166,7 +166,7 @@ mod cube_shuffle {
                     };
                     prepared += 1;
                     let partitioning = &blueprint.partitioning;
-                    for space in [partitioning.leaf(), partitioning.cube_box()] {
+                    for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
                             whole_steps(&step(&hw, &problem), &space),
                             "{name} at {settings}: {space:?}"
@@ -228,8 +228,16 @@ mod cube_staged {
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
                 let step = step(&hw, &problem).under(Space::new(&[(M, m), (N, n), (K, k)]));
-                let cube = blueprint.partitioning.cube_box();
-                assert!(whole_steps(&step, &cube), "{name} at {settings}: {cube:?}");
+                let cube_space = blueprint.partitioning.cube_space();
+                assert!(
+                    whole_steps(&step, &cube_space.space),
+                    "{name} at {settings}: {cube_space:?}"
+                );
+                assert_eq!(
+                    blueprint.microkernel.stage(&cube_space),
+                    blueprint.partitioning.stage(),
+                    "{name} at {settings}"
+                );
             }
         }
         assert!(tile_order_prepared > 0, "no setting prepared tile order");

@@ -119,7 +119,7 @@ impl PlaneShuffleMatmulRoutine {
         let view = MatmulView::of::<PlaneShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, partitioning) = (view.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
-        let (cube, leaf) = (partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (partitioning.cube_space().space, partitioning.leaf());
         let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
         // Each run of columns a plane's units own reads every row of the lhs.
         let groups = columns / leaf.extent(N) as u64;
@@ -559,7 +559,7 @@ mod tests {
                 .expect("the default prepares on a committed wave32");
             (
                 blueprint.microkernel.rows,
-                blueprint.partitioning.cube_box().extent(M),
+                blueprint.partitioning.cube_space().extent(M),
             )
         };
         for m in 1..=PlaneShuffleMicrokernel::MAX_ROWS {

@@ -150,7 +150,7 @@ impl<'a> MatmulView<'a> {
             .build();
         let partitioning = Partitioning::new(self.space(), levels);
         let tile = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        let cube_box = match cubes_along_k.get() {
+        let cube = match cubes_along_k.get() {
             1 => tile,
             // The cube level's own tile is one step of `K` where cubes share a box, distributed
             // in runs: the box states the run, as long as the longest cube's.
@@ -166,12 +166,7 @@ impl<'a> MatmulView<'a> {
                 )
             }
         };
-        MatmulPartitioning::new(
-            partitioning,
-            cube_box,
-            distributed_batch_axes,
-            self.rows_kind,
-        )
+        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
     }
 
     /// The problem partitioned with `inside` a plane's box, every box `axes` cut a plane of the
@@ -563,7 +558,7 @@ mod tests {
             MatmulView::ONE_CUBE_A_BOX,
         );
         assert_eq!(view.space().extent(EXPERT), 4);
-        assert_eq!(partitioning.cube_box().extent(EXPERT), 1);
+        assert_eq!(partitioning.cube_space().extent(EXPERT), 1);
     }
 
     /// Every batch is handed to the cubes, one of a single batch too, since the table's dims are

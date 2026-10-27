@@ -119,7 +119,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(&partitioning.cube_box(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: the cube microkernel places the staging and its planes the work.
@@ -132,7 +132,7 @@ impl<P: CubePlaneMicrokernel + CubeStagedPlane> Routine for CubeStagedAttentionR
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning.cube_box(),
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );

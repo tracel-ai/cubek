@@ -147,7 +147,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(&partitioning.cube_box(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Its planes' stages: each plane stages its rows of the query once, and every key and value of
@@ -162,7 +162,7 @@ impl Routine for PlaneFragmentAttentionRoutine {
     ) {
         let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
         let microkernel = &blueprint.microkernel;
-        let cube = partitioning.cube_box();
+        let cube = partitioning.cube_space();
         let readers = (cube.extent(Q) / microkernel.seq_q()) as u64;
         AttentionStagingCount {
             seq_kv: microkernel.seq_kv(),

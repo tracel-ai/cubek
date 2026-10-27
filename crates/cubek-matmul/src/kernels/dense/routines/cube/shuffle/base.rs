@@ -86,7 +86,7 @@ impl CubeShuffleMatmulRoutine {
         let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
-        let (cube, leaf) = (&partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
         let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
         let groups = columns / leaf.extent(N) as u64;
         let planes_along_k = microkernel.planes_along_k.get() as u64;
@@ -423,7 +423,7 @@ mod tests {
         let planes_along_k = microkernel.planes_along_k.get();
         assert_eq!(grid.planes().count, planes_along_k);
         assert_eq!(grid.planes().width, 32);
-        let cube = partitioning.cube_box();
+        let cube = partitioning.cube_space().space;
         assert_eq!(cube.extent(K), 6144);
         assert_eq!(
             grid.shared_memory,

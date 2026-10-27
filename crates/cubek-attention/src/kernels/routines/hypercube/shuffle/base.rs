@@ -196,7 +196,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(&partitioning.cube_box(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
@@ -210,7 +210,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning.cube_box(),
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -445,8 +445,8 @@ mod tests {
         let partitioning = &blueprint.partitioning;
         assert_eq!(partitioning.cubes_along_keys().get(), 32);
         assert_eq!(partitioning.stage().extent(S), 4);
-        assert_eq!(partitioning.cube_box().extent(S), 128);
-        assert_eq!(partitioning.cube_box().extent(Q), 4);
+        assert_eq!(partitioning.cube_space().extent(S), 128);
+        assert_eq!(partitioning.cube_space().extent(Q), 4);
         // One head a box, the group's four by eight key heads.
         assert_eq!(partitioning.cubes(), 4 * 32);
         assert_eq!(grid.cubes(), Some(8 * 4 * 32));
@@ -479,6 +479,6 @@ mod tests {
         );
         assert_eq!(partitioning.cubes_along_keys().get(), 32);
         assert_eq!(partitioning.stage().extent(S), 4);
-        assert_eq!(partitioning.cube_box().extent(S), 128);
+        assert_eq!(partitioning.cube_space().extent(S), 128);
     }
 }

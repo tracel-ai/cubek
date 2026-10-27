@@ -388,8 +388,15 @@ mod tests {
         let hw = offering(devices::strix_halo());
         let problem = MatmulRoutineProblem::dense(37, 29, 300, F16);
         for settings in HypercubeRelayMatmulRoutine.settings(&hw) {
-            let prepared = HypercubeRelayMatmulRoutine.prepare(&hw, &problem, &settings);
-            assert!(prepared.is_ok(), "{settings}: {prepared:?}");
+            let (blueprint, _) = HypercubeRelayMatmulRoutine
+                .prepare(&hw, &problem, &settings)
+                .unwrap_or_else(|refusal| panic!("{settings}: {refusal:?}"));
+            let partitioning = &blueprint.partitioning;
+            assert_eq!(
+                blueprint.microkernel.cube.stage(&partitioning.cube_space()),
+                partitioning.stage(),
+                "{settings}"
+            );
         }
     }
 
@@ -426,8 +433,15 @@ mod tests {
         let hw = offering(devices::h100());
         let problem = MatmulRoutineProblem::dense(37, 29, 300, F16);
         for settings in HypercubeRelayMatmulRoutine.settings(&hw) {
-            let prepared = HypercubeRelayMatmulRoutine.prepare(&hw, &problem, &settings);
-            assert!(prepared.is_ok(), "{settings}: {prepared:?}");
+            let (blueprint, _) = HypercubeRelayMatmulRoutine
+                .prepare(&hw, &problem, &settings)
+                .unwrap_or_else(|refusal| panic!("{settings}: {refusal:?}"));
+            let partitioning = &blueprint.partitioning;
+            assert_eq!(
+                blueprint.microkernel.cube.stage(&partitioning.cube_space()),
+                partitioning.stage(),
+                "{settings}"
+            );
         }
     }
 
@@ -447,7 +461,7 @@ mod tests {
                 .expect("the routine runs here")
         };
         let (blueprint, grid) = prepared(1024);
-        assert_eq!(blueprint.partitioning.cube_box().extent(K), 256);
+        assert_eq!(blueprint.partitioning.cube_space().extent(K), 256);
         assert_eq!(grid.cubes(), Some(8 * 2 * 4));
         let (blueprint, grid) = prepared(32);
         assert_eq!(grid.cubes(), Some(8 * 2 * 4));
@@ -460,7 +474,7 @@ mod tests {
         let (blueprint, _) = HypercubeRelayMatmulRoutine
             .prepare(&hw, &problem, &eight)
             .expect("the routine runs here");
-        assert_eq!(blueprint.partitioning.cube_box().extent(K), 32);
+        assert_eq!(blueprint.partitioning.cube_space().extent(K), 32);
     }
 
     /// A fragment cannot land its cells in the relay's carry through its own store, so a setting
@@ -497,7 +511,7 @@ mod tests {
         let mut estimate = KernelEstimate::from(&grid);
         HypercubeRelayMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
         let staging = estimate.staging.expect("a staged estimate");
-        let cube = blueprint.partitioning.cube_box();
+        let cube = blueprint.partitioning.cube_space().space;
         let cells = (cube.extent(M) * cube.extent(N)) as u64;
         let bytes = |streams: &[GlobalStream]| streams.iter().map(|s| s.bytes).collect::<Vec<_>>();
         assert_eq!(bytes(&staging.writes), [cells * 2, cells * 4]);

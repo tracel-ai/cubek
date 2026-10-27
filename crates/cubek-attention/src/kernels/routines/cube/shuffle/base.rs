@@ -89,7 +89,7 @@ impl Routine for CubeShuffleAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(&partitioning.cube_box(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: the cube microkernel places the staging and its planes the work.
@@ -102,7 +102,7 @@ impl Routine for CubeShuffleAttentionRoutine {
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning.cube_box(),
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -278,6 +278,6 @@ mod tests {
             Some(64 / keys)
         );
         assert_eq!(blueprint.partitioning.stage().extent(S), keys);
-        assert_eq!(blueprint.partitioning.cube_box().extent(S), 2048);
+        assert_eq!(blueprint.partitioning.cube_space().extent(S), 2048);
     }
 }

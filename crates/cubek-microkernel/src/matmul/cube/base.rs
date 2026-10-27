@@ -1,17 +1,15 @@
-use crate::matmul::{MatmulAxes, MatmulAxesKind, MatmulStage, MatmulWorkItem};
+use crate::matmul::{MatmulAxes, MatmulAxesKind, MatmulWorkItem};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Space};
 
-/// The space a cube microkernel is handed: the part of the problem one cube covers, the stage it
-/// walks through it, and what of its routine's placement its refusals read. The placement itself
-/// is the routine's.
+/// The space a cube microkernel is handed: the part of the problem one cube covers, and what of
+/// its routine's placement its refusals read. The placement itself is the routine's; how the cube
+/// walks its space is the microkernel's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulCubeSpace {
     /// One batch of the output's `m × n` box, and the whole of `k`, or the cube's run of it where
     /// several cubes share the box.
     pub space: Space,
-    /// The box one step of its walk through `K` stages.
-    pub stage: MatmulStage,
     /// The innermost box: what one instruction, or one unit's block, covers.
     pub leaf: Space,
     /// The axes the problem, and so this space, is stated over.

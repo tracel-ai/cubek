@@ -104,7 +104,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(&partitioning.cube_box(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
@@ -118,7 +118,7 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     ) {
         blueprint.microkernel.estimate(
             &problem.work_item(),
-            &blueprint.partitioning.cube_box(),
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );

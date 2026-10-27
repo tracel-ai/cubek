@@ -18,7 +18,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound};
+use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound, space::Coverage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
@@ -402,6 +402,22 @@ impl CubeStagedMicrokernel {
         tiling.walk_every(&[walked])
     }
 
+    /// The box one step of its walk through `K` stages, in the space `cube_space` its cube covers:
+    /// the first level of its [`tiling`](Self::tiling) that walks `K` (its blocks, in a
+    /// block-split space), cut from that space.
+    pub fn stage(&self, cube_space: &MatmulCubeSpace) -> MatmulStage {
+        let walked = cube_space.axes_kind.walked();
+        let mut enclosing = cube_space.space.clone();
+        for level in self.tiling().build() {
+            let tile = level.child(&enclosing);
+            if level.coverage() == Coverage::Walk && level.tile(walked).is_some() {
+                return MatmulStage::new(tile, cube_space.axes_kind.stage_axes());
+            }
+            enclosing = tile;
+        }
+        unreachable!("a staged cube's tiling walks `K`")
+    }
+
     /// The levels a cube launches: its [`tiling`](Self::tiling), beside the planes its fill sets
     /// aside to fill the stages. Those take no tile of any level, so they change no box or stage
     /// the tiling's placement gave; launched over its tiling instead, a cube would hold too few
@@ -439,7 +455,7 @@ impl CubeStagedMicrokernel {
         write: MatmulCubeWrite,
         cube_space: &MatmulCubeSpace,
     ) -> Result<CubeStagedResolved, Refusal> {
-        let stage = &cube_space.stage;
+        let stage = &self.stage(cube_space);
         let plane_width = self.plane.instruction.units(hw)?;
         let units = self.contracting_planes() * plane_width as usize;
         let ring = self
@@ -471,6 +487,7 @@ impl CubeStagedMicrokernel {
             item,
             buffers,
             cube_space,
+            stage,
             &landed,
             &ring,
             &self.plane,
@@ -875,8 +892,7 @@ impl Microkernel for CubeStagedMicrokernel {
         cube_space: &MatmulCubeSpace,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        cube_space
-            .stage
+        self.stage(cube_space)
             .require_runs(self.plane.orders, vectorization);
         self.fill.vectorize(vectorization);
         self.store.vectorize(vectorization);
@@ -922,7 +938,7 @@ impl Microkernel for CubeStagedMicrokernel {
         estimate: &mut KernelEstimate,
     ) {
         let extents = &cube_space.space;
-        let stage = &cube_space.stage;
+        let stage = &self.stage(cube_space);
         let (out_run, drain_atomics) = match self.drain() {
             CubeStagedDrain::EachPlane => (self.plane.tile_extent(N), 0),
             CubeStagedDrain::Merged => (

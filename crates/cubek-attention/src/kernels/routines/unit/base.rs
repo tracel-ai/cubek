@@ -87,7 +87,7 @@ impl Routine for UnitAttentionRoutine {
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
-        microkernel.vectorize(&partitioning.cube_box(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Its units' steps: each unit reads its rows of the query once a step, and every key and
@@ -101,7 +101,7 @@ impl Routine for UnitAttentionRoutine {
         estimate: &mut KernelEstimate,
     ) {
         let (item, partitioning) = (problem.work_item(), &blueprint.partitioning);
-        let (cube, leaf) = (partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (partitioning.cube_space(), partitioning.leaf());
         let steps = cube.extent(S).div_ceil(leaf.extent(S)) as u64;
         let row_readers = (cube.extent(Q) / leaf.extent(Q)) as u64;
         AttentionStagingCount {
