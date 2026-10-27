@@ -6,6 +6,7 @@ use cubecl::client::Client;
 use cubecl::tile::launch::Grid as LaunchGrid;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Launcher, Partitioning, Space};
+use cubecl_environment::sync::{Arc, SyncOnceCell};
 
 /// The cubes a launch spawns, the units each holds, and the shared memory each holds.
 ///
@@ -17,6 +18,20 @@ pub struct Grid {
     pub launch: LaunchSettings,
     /// Bytes of shared memory one cube holds.
     pub shared_memory: usize,
+    /// The launcher the first launch on this grid built, shared by its clones.
+    launcher: SettledLauncher,
+}
+
+/// A grid's launcher, built by its first launch and cloned by every later one: it reads nothing
+/// but the grid and the blueprint the grid was prepared beside, and building it settles the
+/// partitioning over the problem's extents, which costs more host time than a small product.
+#[derive(Clone, Default)]
+struct SettledLauncher(Arc<SyncOnceCell<Launcher>>);
+
+impl core::fmt::Debug for SettledLauncher {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("SettledLauncher")
+    }
 }
 
 /// What one cube of a launch asks of the device.
@@ -36,17 +51,22 @@ impl Grid {
     ///
     /// Where the device refuses the grid, which [`Grid::new`] already admitted for it.
     pub fn launcher(&self, client: &Client, kernel: Partitioning, concrete: &Space) -> Launcher {
-        Launcher::new(
-            client,
-            kernel,
-            concrete,
-            LaunchGrid::Stated {
-                cube_count: self.launch.cube_count.clone(),
-                cube_dim: self.launch.cube_dim,
-            },
-        )
-        .and_then(|launcher| launcher.holding(self.shared_memory))
-        .expect(ADMITTED_PLAN_RUNS)
+        self.launcher
+            .0
+            .get_or_init(|| {
+                Launcher::new(
+                    client,
+                    kernel,
+                    concrete,
+                    LaunchGrid::Stated {
+                        cube_count: self.launch.cube_count.clone(),
+                        cube_dim: self.launch.cube_dim,
+                    },
+                )
+                .and_then(|launcher| launcher.holding(self.shared_memory))
+                .expect(ADMITTED_PLAN_RUNS)
+            })
+            .clone()
     }
 
     /// The grid `partitioning` distributes to on this device, each cube holding `cube`.
@@ -76,6 +96,7 @@ impl Grid {
         Ok(Self {
             launch,
             shared_memory: cube.shared_memory,
+            launcher: SettledLauncher::default(),
         })
     }
 
