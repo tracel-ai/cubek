@@ -137,12 +137,18 @@ impl CubeStagedMicrokernel {
     /// The settings a product against a packed input staged as it is stored races: each stored
     /// box two and three stages deep.
     pub fn stored_settings() -> Vec<CubeStagedMicrokernelSettings> {
-        [StageRing::DOUBLE, StageRing::TRIPLE]
+        let deliveries = [CubeStagedDelivery::Copy, CubeStagedDelivery::AsyncCopy];
+        deliveries
             .into_iter()
-            .flat_map(|ring| {
-                Self::STORED_BOXES.map(|(fragments, planes)| {
-                    CubeStagedMicrokernelSettings::stored(fragments, planes, ring)
-                })
+            .flat_map(|delivery| {
+                [StageRing::DOUBLE, StageRing::TRIPLE]
+                    .into_iter()
+                    .flat_map(move |ring| {
+                        Self::STORED_BOXES.map(|(fragments, planes)| {
+                            CubeStagedMicrokernelSettings::stored(fragments, planes, ring)
+                                .filled(delivery, 0)
+                        })
+                    })
             })
             .collect()
     }
