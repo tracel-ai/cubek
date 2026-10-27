@@ -1,4 +1,4 @@
-use crate::matmul::stored::BlockScales;
+use cubek_std::layout::stored::BlockScales;
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulOrder, MatmulRowsKind, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;

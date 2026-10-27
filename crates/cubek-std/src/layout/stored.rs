@@ -8,7 +8,7 @@
 use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Axis, Space, kind::Field};
-use cubek_std::matmul_axes::{K, blocked};
+use crate::matmul_axes::{K, blocked};
 
 /// The shape of the smallest indivisible tile of something: one value on every
 /// axis but the ones it names.
@@ -599,9 +599,9 @@ pub enum Walked {
 
 #[cfg(test)]
 mod tests {
-    use crate::matmul::stored::Operand;
-    use crate::matmul::tile_order;
-    use cubek_std::matmul_axes::{K, KB, KI, N, NI};
+    use crate::layout::stored::Operand;
+    use crate::layout::tile_order;
+    use crate::matmul_axes::{K, KB, KI, N, NI};
 
     /// Words one 128-bit load holds.
     const WORDS: usize = 4;

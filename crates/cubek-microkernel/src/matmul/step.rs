@@ -1,4 +1,4 @@
-use crate::matmul::stored::Operand;
+use cubek_std::layout::stored::Operand;
 use crate::matmul::{MatmulOperand, MatmulOperands};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
@@ -235,7 +235,7 @@ impl MatmulStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::tile_order;
+    use cubek_std::layout::tile_order;
     use cubecl::features::{MmaConfig, Tma};
     use cubecl::ir::{FloatKind, OpaqueType, UIntKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};

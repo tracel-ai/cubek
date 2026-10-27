@@ -14,7 +14,7 @@ use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
-use cubek_microkernel::matmul::stored::Packing;
+use cubek_std::layout::stored::Packing;
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
@@ -347,8 +347,8 @@ mod tests {
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
     use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_microkernel::matmul::stored::Operand;
-    use cubek_microkernel::matmul::tile_order;
+    use cubek_std::layout::stored::Operand;
+    use cubek_std::layout::tile_order;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
 

@@ -1,6 +1,6 @@
 use crate::matmul::MatmulDim;
 use crate::matmul::MatmulOperand;
-use crate::matmul::stored::Packing;
+use cubek_std::layout::stored::Packing;
 use cubecl::tile::launch::{Arg, Labelled};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Geometry, Projection};

@@ -1,5 +1,5 @@
 use crate::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
-use crate::matmul::stored::{Spread, Walked};
+use cubek_std::layout::stored::{Spread, Walked};
 use crate::matmul::{
     MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
     MatmulOperands, MatmulOrder, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
@@ -572,9 +572,9 @@ impl MatmulMicrokernel for PlaneShuffleMicrokernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::stored::Operand;
-    use crate::matmul::stored::Packing;
-    use crate::matmul::tile_order;
+    use cubek_std::layout::stored::Operand;
+    use cubek_std::layout::stored::Packing;
+    use cubek_std::layout::tile_order;
     use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;

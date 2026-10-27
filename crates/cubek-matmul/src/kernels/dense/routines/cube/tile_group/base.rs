@@ -187,8 +187,8 @@ impl MatmulRoutine<CubeTileGroupMicrokernel> for CubeTileGroupMatmulRoutine {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
-    use cubek_microkernel::matmul::stored::{Operand, Packing};
-    use cubek_microkernel::matmul::tile_order;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order;
     use cubek_std::devices;
     use cubek_std::matmul_axes::{K, N};
 

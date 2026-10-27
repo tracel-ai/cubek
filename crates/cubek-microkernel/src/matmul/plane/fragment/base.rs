@@ -10,7 +10,7 @@ use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
 };
-use crate::matmul::stored::Operand;
+use cubek_std::layout::stored::Operand;
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};

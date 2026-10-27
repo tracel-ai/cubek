@@ -12,7 +12,7 @@ use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulPartitioning;
 use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
-use cubek_microkernel::matmul::stored::Packing;
+use cubek_std::layout::stored::Packing;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOrder};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, M, N, blocked};
@@ -444,7 +444,7 @@ mod tests {
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::MatmulOperands;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
-    use cubek_microkernel::matmul::stored::Operand;
+    use cubek_std::layout::stored::Operand;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

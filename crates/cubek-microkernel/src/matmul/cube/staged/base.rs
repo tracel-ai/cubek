@@ -10,7 +10,7 @@ use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
-use crate::matmul::stored::BlockScales;
+use cubek_std::layout::stored::BlockScales;
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulMicrokernel, MatmulOperand, MatmulOperands,
     MatmulOrder, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,

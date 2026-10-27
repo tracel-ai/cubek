@@ -6,7 +6,7 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::stored::Operand;
+use cubek_std::layout::stored::Operand;
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
     MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,

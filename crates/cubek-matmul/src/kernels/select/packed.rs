@@ -6,7 +6,7 @@
 
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::stored::Operand;
+use cubek_std::layout::stored::Operand;
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
 
@@ -36,7 +36,7 @@ pub fn quantized_few_rows(rows: usize) -> bool {
 /// framework's artifact form) or `PackedU32(1)` with blocks along the reduction (the
 /// col-requantized serving form) — with block-level scales running the packed
 /// direction and covering whole `u32`s (see
-/// [`Operand::of_scheme`](cubek_microkernel::matmul::stored::Operand::of_scheme)), at any block-scale
+/// [`Operand::of_scheme`](cubek_std::layout::stored::Operand::of_scheme)), at any block-scale
 /// dtype, and under a per-tensor second level or not.
 ///
 /// It takes the device because streaming a packed field means *decoding* it,

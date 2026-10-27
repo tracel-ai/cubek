@@ -1,5 +1,5 @@
-use crate::matmul::stored::Operand;
-use crate::matmul::stored::Packing;
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::Packing;
 use crate::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
@@ -293,7 +293,7 @@ pub enum MatmulDestination {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matmul::tile_order;
+    use cubek_std::layout::tile_order;
     use cubek_std::matmul_axes::{KI, MI, NI};
 
     /// The NVFP4 packing a tile-order operand carries, packed down `k`.

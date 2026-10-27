@@ -1345,9 +1345,9 @@ mod base {
     fn an_nvfp4_product_read_as_stored_is_estimated() {
         use crate::kernels::select::packed::nvfp4_scheme;
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
-        use cubek_microkernel::matmul::stored::Operand;
-        use cubek_microkernel::matmul::stored::Packing;
-        use cubek_microkernel::matmul::tile_order;
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::tile_order;
         use cubek_std::microkernel::KernelEstimate;
 
         let hw = devices::offering_nvfp4(devices::h100());
@@ -1384,9 +1384,9 @@ mod base {
     #[test]
     fn a_decoded_input_is_estimated_in_stages_of_its_blocks() {
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
-        use cubek_microkernel::matmul::stored::Operand;
-        use cubek_microkernel::matmul::stored::Packing;
-        use cubek_microkernel::matmul::tile_order;
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::layout::stored::Packing;
+        use cubek_std::layout::tile_order;
         use cubek_std::matmul_axes::KI;
         use cubek_std::microkernel::KernelEstimate;
 
@@ -1449,8 +1449,8 @@ mod base {
     #[test]
     fn a_packed_input_prepares_no_walk_past_k() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-        use cubek_microkernel::matmul::stored::Operand;
-        use cubek_microkernel::matmul::stored::Packing;
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::layout::stored::Packing;
         use cubek_std::matmul_axes::{KB, KI};
 
         let f16 = ElemType::Float(FloatKind::F16);
