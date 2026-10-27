@@ -117,6 +117,21 @@ impl CubeStagedMicrokernelSettings {
         }
     }
 
+    /// These settings staging `depth` instruction steps of `K` at a time.
+    ///
+    /// # Panics
+    ///
+    /// On a depth of zero.
+    pub const fn deepened(self, depth: usize) -> Self {
+        Self {
+            plane: PlaneFragmentMicrokernelSettings {
+                depth: NonZeroUsize::new(depth).unwrap(),
+                ..self.plane
+            },
+            ..self
+        }
+    }
+
     /// These settings holding their stages in `ring`.
     pub const fn ringed(self, ring: StageRing) -> Self {
         Self { ring, ..self }

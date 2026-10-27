@@ -159,8 +159,31 @@ impl CubeStagedMicrokernel {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
             });
+        // EXPERIMENT: the best boxes staged two and four steps of `K` deep, a stage at a time,
+        // two in flight, and with the next waiting in registers, through either transport.
+        let deep = [((4, 2), (2, 2)), ((4, 2), (1, 2)), ((4, 4), (2, 2)), ((4, 2), (2, 4))]
+            .into_iter()
+            .flat_map(|(steps, planes)| {
+                [2, 4].into_iter().flat_map(move |depth| {
+                    [
+                        StageRing::SINGLE,
+                        StageRing::DOUBLE,
+                        StageRing::SINGLE_THROUGH_REGISTERS,
+                        StageRing::DOUBLE_THROUGH_REGISTERS,
+                    ]
+                    .into_iter()
+                    .flat_map(move |ring| {
+                        let settings = CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
+                            .deepened(depth);
+                        [
+                            settings,
+                            settings.through(crate::matmul::plane::PlaneFragmentTransport::Mma),
+                        ]
+                    })
+                })
+            });
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
-        for candidate in boxed.chain(Self::packed_one_step_settings()) {
+        for candidate in boxed.chain(deep).chain(Self::packed_one_step_settings()) {
             let merges = candidate.planes_along_k.get() > 1;
             if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
                 settings.push(candidate);
