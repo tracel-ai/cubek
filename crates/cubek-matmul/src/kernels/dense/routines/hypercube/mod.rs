@@ -3,6 +3,7 @@
 //! ([`HypercubeRelayMatmulRoutine`]), or added up by the last cube to arrive
 //! ([`HypercubeLastArrivalMatmulRoutine`]).
 
+mod blueprint;
 mod last_arrival;
 mod relay;
 

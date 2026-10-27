@@ -1067,18 +1067,39 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         launcher: &Launcher,
     ) -> MatmulRelayBinding {
         self.assert_tiled();
-        let [lhs, rhs] = self.plain();
-        let shape = Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
         let sum = self.problem().sum();
-        let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
+        // Over the output's axes: a float product's, or against packed inputs the block-split
+        // space's, the carry restated over them as the output is.
+        let carry = match self.read(|view| view.blocks()) {
+            None => {
+                let [lhs, rhs] = self.plain();
+                let shape =
+                    Operands::product_shape(lhs, rhs).expect("the product's shape was checked");
+                let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
+                launcher
+                    .arg(carry.binding, sum)
+                    .axes(&[M, N])
+                    .batches(&self.batch_axes())
+                    .vectorize(blueprint.widths.out)
+                    .build()
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
+            Some(blocks) => {
+                let batches = self.table_batches();
+                let shape = vec![self.rows(), self.problem().n];
+                let (_, carry) = PlainTensor::empty(&self.client, shape.into(), sum);
+                let (carry, axes) = carry.restated(&blocks, M, N, &batches);
+                launcher
+                    .arg(carry.binding, sum)
+                    .axes(&axes)
+                    .batches(&batches)
+                    .vectorize(blueprint.widths.out)
+                    .build()
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
+        };
         MatmulRelayBinding {
-            carry: launcher
-                .arg(carry.binding, sum)
-                .axes(&[M, N])
-                .batches(&self.batch_axes())
-                .vectorize(blueprint.widths.out)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS),
+            carry,
             turns: ZeroedCounters::new(
                 blueprint.partitioning.as_tile().relay_counters(),
                 &self.client,
@@ -1103,13 +1124,23 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         self.assert_tiled();
         let partitioning = blueprint.partitioning.as_tile();
         // The output's axes in its order: the batches the cube level hands out, then its rows and
-        // columns. Stated as labels, so a batch axis one box long stays a dim of the slots.
+        // columns, against packed inputs as the block-split space restates them
+        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long stays
+        // a dim of the slots.
+        let output: Vec<Axis> = match self.read(|view| view.blocks()) {
+            None => vec![M, N],
+            Some(blocks) => blocks
+                .restated_dims(M, N, 1)
+                .into_iter()
+                .map(|(axis, _, _)| axis)
+                .collect(),
+        };
         let axes: Vec<Axis> = blueprint
             .partitioning
             .batch_axes()
             .iter()
             .copied()
-            .chain([M, N])
+            .chain(output)
             .collect();
         let sum = self.problem().sum();
         let (_, slots) = PlainTensor::empty(&self.client, partitioning.arrival_slots(&axes), sum);
