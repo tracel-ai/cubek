@@ -1,6 +1,6 @@
 use core::fmt::Display;
 use core::num::NonZeroUsize;
-use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
+use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 

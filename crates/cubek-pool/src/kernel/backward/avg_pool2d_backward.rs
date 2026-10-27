@@ -61,8 +61,12 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
     let padding_1 = args.padding_1 as u32;
     let stride_0 = args.stride_0 as u32;
     let stride_1 = args.stride_1 as u32;
+    let dilation_0 = args.dilation_0 as u32;
+    let dilation_1 = args.dilation_1 as u32;
     let kernel_size_0 = comptime![kernel_size_0 as u32];
     let kernel_size_1 = comptime![kernel_size_1 as u32];
+    let extent_0 = (kernel_size_0 - 1) * dilation_0 + 1;
+    let extent_1 = (kernel_size_1 - 1) * dilation_1 + 1;
 
     let (_, out_h, out_w, _) = output.shape();
     let index_base = batch * grad.stride(0) + channel * grad.stride(3);
@@ -73,30 +77,40 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
 
     for oh in oh_start..oh_end {
         let ih_start = oh * stride_0;
-        let ih_end = clamp_max(ih_start + kernel_size_0, border_bottom);
-        let ih_start = clamp_min(ih_start, padding_0);
+        let ih_end = clamp_max(ih_start + extent_0, border_bottom);
 
-        if begin_h >= ih_start && (ih as u32) < ih_end {
+        if begin_h >= ih_start
+            && begin_h < ih_end
+            && (begin_h - ih_start).is_multiple_of(dilation_0)
+        {
             for ow in ow_start..ow_end {
                 let index =
                     index_base + oh as usize * grad.stride(1) + ow as usize * grad.stride(2);
 
                 let iw_start = ow * stride_1;
-                let iw_end = clamp_max(iw_start + kernel_size_1, border_right);
-                let iw_start = clamp_min(iw_start, padding_1);
+                let iw_end = clamp_max(iw_start + extent_1, border_right);
 
-                if begin_w >= iw_start && (iw as u32) < iw_end {
+                if begin_w >= iw_start
+                    && begin_w < iw_end
+                    && (begin_w - iw_start).is_multiple_of(dilation_1)
+                {
                     if count_include_pad {
                         // Ceil-mode extensions lie outside the padded input.
-                        let padded_h =
-                            clamp_max(kernel_size_0, border_bottom + padding_0 - oh * stride_0);
-                        let padded_w =
-                            clamp_max(kernel_size_1, border_right + padding_1 - ow * stride_1);
+                        let padded_h = clamp_max(
+                            kernel_size_0,
+                            (border_bottom + padding_0 - ih_start).div_ceil(dilation_0),
+                        );
+                        let padded_w = clamp_max(
+                            kernel_size_1,
+                            (border_right + padding_1 - iw_start).div_ceil(dilation_1),
+                        );
                         grad_acc +=
                             grad[index / vector_size] / Vector::cast_from(padded_h * padded_w);
                     } else {
-                        let ih_diff = ih_end - ih_start;
-                        let iw_diff = iw_end - iw_start;
+                        let ih_diff = (ih_end - ih_start).div_ceil(dilation_0)
+                            - padding_0.saturating_sub(ih_start).div_ceil(dilation_0);
+                        let iw_diff = (iw_end - iw_start).div_ceil(dilation_1)
+                            - padding_1.saturating_sub(iw_start).div_ceil(dilation_1);
                         let count = Vector::cast_from(ih_diff * iw_diff);
                         grad_acc += grad[index / vector_size] / count;
                     }
@@ -118,13 +132,13 @@ fn loop_ranges(
     #[comptime] kernel_size_0: i32,
     #[comptime] kernel_size_1: i32,
 ) -> (u32, u32, u32, u32) {
-    let kms_0 = args.dilation_0 * kernel_size_0 - args.stride_0;
-    let kms_1 = args.dilation_1 * kernel_size_1 - args.stride_1;
+    let kms_0 = args.dilation_0 * (kernel_size_0 - 1) + 1 - args.stride_0;
+    let kms_1 = args.dilation_1 * (kernel_size_1 - 1) + 1 - args.stride_1;
 
     let oh_start = clamp_min((ih + args.padding_0 - kms_0) / args.stride_0, 0) as u32;
     let ow_start = clamp_min((iw + args.padding_1 - kms_1) / args.stride_1, 0) as u32;
-    let oh_end = clamp_max(clamp_min(kms_0, 0) as u32 + oh_start, grad_h - 1) + 1;
-    let ow_end = clamp_max(clamp_min(kms_1, 0) as u32 + ow_start, grad_w - 1) + 1;
+    let oh_end = clamp_max(((ih + args.padding_0) / args.stride_0) as u32 + 1, grad_h);
+    let ow_end = clamp_max(((iw + args.padding_1) / args.stride_1) as u32 + 1, grad_w);
 
     (oh_start, oh_end, ow_start, ow_end)
 }
@@ -137,7 +151,7 @@ pub(crate) fn avg_pool2d_backward_launch(
     options: AvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
-    let dilation = 1;
+    super::super::validate_dilation(&options.dilation)?;
 
     let vector_size = tensor_vector_size_parallel(
         client
@@ -170,8 +184,8 @@ pub(crate) fn avg_pool2d_backward_launch(
             PoolBackwardArgsLaunch::new(
                 options.window.stride[0] as i32,
                 options.window.stride[1] as i32,
-                dilation,
-                dilation,
+                options.dilation[0] as i32,
+                options.dilation[1] as i32,
                 options.window.padding[0] as i32,
                 options.window.padding[1] as i32,
             ),

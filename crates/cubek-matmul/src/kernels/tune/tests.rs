@@ -3,17 +3,19 @@
 mod candidate {
     use super::super::*;
     use crate::kernels::select::problem::OperandKind;
-    use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey, OperandKey};
+    use crate::kernels::tune::key::{
+        CubeBlock, MaskedCells, MatmulBatching, MatmulTuneKey, OperandKey,
+    };
     use crate::kernels::{
         CubeStagedMatmulRoutine, MatmulRoutineProblem, UnitRegistersMatmulRoutine,
     };
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::MatmulMicrokernel;
-    use cubek_microkernel::matmul::MatmulOrder;
     use cubek_std::Hardware;
     use cubek_std::autotune::{CandidatePriority, TuneCandidate};
     use cubek_std::devices;
+    use cubek_std::layout::BindingOrder;
     use cubek_std::matmul_axes::{K, N};
     use cubek_std::routine::Routine;
 
@@ -96,6 +98,28 @@ mod candidate {
         );
     }
 
+    /// A grid masking rows costs the arithmetic it spends on them alone, so it is lowered where
+    /// that arithmetic is the units' own, and goes first beside the tiled grids where a tensor core
+    /// spends it: a decode's eight rows on the cube routine, whose block holds a tile's sixteen.
+    #[test]
+    fn masked_cells_cost_only_off_a_tensor_core() {
+        let decode = key(1, 8, 4096, 4096);
+        let masking = CubeBlock {
+            m: 64,
+            n: 64,
+            k: 4096,
+        };
+        assert_eq!(
+            decode.shape().priority(masking, MaskedCells::Free),
+            CandidatePriority::FIRST
+        );
+        assert!(decode.shape().priority(masking, MaskedCells::Cost) < CandidatePriority::FIRST);
+
+        let hw = offering(devices::strix_halo());
+        let lead = MatmulRoutineCandidate::list(CubeStagedMatmulRoutine, &hw).swap_remove(0);
+        assert_eq!(lead.priority(&decode), CandidatePriority::FIRST);
+    }
+
     /// A col rhs is read where it lies, so the key that names one prepares the launch its
     /// tensors will: the cube routine's cmma fragment and the unit routine's register block both
     /// bind it in its buffer's order, in vectors along `K`.
@@ -115,13 +139,13 @@ mod candidate {
         let (in_buffer_order, _) = cube.blueprint(&col).expect("runs here");
         assert_eq!(
             in_buffer_order.microkernel.orders().rhs,
-            MatmulOrder::InBufferOrder
+            BindingOrder::InBufferOrder
         );
         assert!(in_buffer_order.widths.rhs > 1);
 
         let unit = MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, &hw).swap_remove(0);
         let (merged, _) = unit.blueprint(&col).expect("runs here");
-        assert_eq!(merged.microkernel.orders().rhs, MatmulOrder::InBufferOrder);
+        assert_eq!(merged.microkernel.orders().rhs, BindingOrder::InBufferOrder);
         assert!(merged.widths.rhs > 1);
     }
 

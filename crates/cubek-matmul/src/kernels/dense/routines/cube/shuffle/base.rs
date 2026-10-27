@@ -1,5 +1,6 @@
 use super::cube_shuffle_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
     MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
@@ -9,13 +10,12 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings,
 };
-use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
-use cubek_microkernel::matmul::stored::Packing;
+use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
@@ -25,7 +25,7 @@ use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine}
 /// ([`PlaneShuffleMicrokernel`]), or, against a packed rhs, on the tensor cores, where an NVFP4
 /// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
 /// reading the rhs
-/// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel)).
+/// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel)).
 ///
 /// What a product whose runs of columns are too few to fill the device with planes wants: a
 /// narrow `N` on a device of many compute units. Declines a float row rhs, a col rhs whose
@@ -86,7 +86,7 @@ impl CubeShuffleMatmulRoutine {
         let view = MatmulView::of::<CubeShuffleMicrokernel>(problem).expect(MatmulView::PREPARED);
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
-        let (cube, leaf) = (&partitioning.cube_box(), partitioning.leaf());
+        let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
         let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
         let groups = columns / leaf.extent(N) as u64;
         let planes_along_k = microkernel.planes_along_k.get() as u64;
@@ -187,7 +187,7 @@ impl CubeShuffleMatmulRoutine {
         microkernel.plane.check_vectors(&blueprint.widths)?;
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &blueprint.partitioning),
+            shared_memory: microkernel.shared_memory(&item, blueprint.partitioning.cells()),
         };
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
         Ok((blueprint, grid))
@@ -215,7 +215,7 @@ impl CubeShuffleMatmulRoutine {
         );
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
-            shared_memory: microkernel.shared_memory(&item, &partitioning),
+            shared_memory: microkernel.shared_memory(&item, partitioning.cells()),
         };
         let blueprint = MatmulBlueprint::packed(packing, microkernel, partitioning);
         let grid = Grid::new(hw, blueprint.partitioning.as_tile(), cube)?;
@@ -345,12 +345,12 @@ mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind, UIntKind};
-    use cubek_microkernel::matmul::dense::cube::CubeShufflePlaneSettings;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernelSettings;
-    use cubek_microkernel::matmul::stored::Operand;
-    use cubek_microkernel::matmul::tile_order;
+    use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
+    use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
+    use cubek_std::layout::stored::Operand;
+    use cubek_std::layout::tile_order;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -423,7 +423,7 @@ mod tests {
         let planes_along_k = microkernel.planes_along_k.get();
         assert_eq!(grid.planes().count, planes_along_k);
         assert_eq!(grid.planes().width, 32);
-        let cube = partitioning.cube_box();
+        let cube = partitioning.cube_space().space;
         assert_eq!(cube.extent(K), 6144);
         assert_eq!(
             grid.shared_memory,

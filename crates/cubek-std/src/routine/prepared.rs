@@ -4,6 +4,9 @@ use cubecl_environment::sync::Mutex;
 use crate::Hardware;
 use crate::routine::{Grid, Routine};
 
+/// What [`prepare`](Routine::prepare) answers: the launch, or why the routine declines it.
+type Prepared<R> = Result<(<R as Routine>::Blueprint, Grid), Refusal>;
+
 /// The launches one routine prepared at one setting on one device, per problem: what a caller
 /// that launches the same problem again and again reads instead of preparing it again.
 ///
@@ -15,14 +18,8 @@ use crate::routine::{Grid, Routine};
 /// It holds the [`CAPACITY`](Self::CAPACITY) problems prepared last, so a caller cycling through
 /// many shapes costs a comparison per held problem and no more than preparing each.
 pub struct PreparedLaunches<R: Routine> {
-    held: Mutex<Vec<Held<R>>>,
+    held: Mutex<Vec<(R::Problem, Prepared<R>)>>,
 }
-
-/// A held problem and what preparing it gave.
-type Held<R> = (
-    <R as Routine>::Problem,
-    Result<(<R as Routine>::Blueprint, Grid), Refusal>,
-);
 
 impl<R: Routine> PreparedLaunches<R>
 where
@@ -44,7 +41,7 @@ where
         hw: &Hardware,
         problem: &R::Problem,
         settings: &R::Settings,
-    ) -> Result<(R::Blueprint, Grid), Refusal> {
+    ) -> Prepared<R> {
         let mut held = self.held.lock();
         if let Some((_, prepared)) = held.iter().find(|(held, _)| held == problem) {
             return prepared.clone();

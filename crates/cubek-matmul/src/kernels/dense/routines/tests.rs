@@ -7,11 +7,11 @@ use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{Axis, Space};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::MatmulStep;
-use cubek_microkernel::matmul::stored::Operand;
-use cubek_microkernel::matmul::stored::Packing;
-use cubek_microkernel::matmul::tile_order;
 use cubek_std::Hardware;
 use cubek_std::devices;
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::Packing;
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -133,7 +133,7 @@ mod plane_shuffle {
                         .prepare(&hw, &problem, &settings)
                         .unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
                     let partitioning = &blueprint.partitioning;
-                    for space in [partitioning.leaf(), partitioning.cube_box()] {
+                    for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
                             whole_steps(&step(&hw, &problem), &space),
                             "{name} at {settings}: {space:?}"
@@ -166,7 +166,7 @@ mod cube_shuffle {
                     };
                     prepared += 1;
                     let partitioning = &blueprint.partitioning;
-                    for space in [partitioning.leaf(), partitioning.cube_box()] {
+                    for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
                             whole_steps(&step(&hw, &problem), &space),
                             "{name} at {settings}: {space:?}"
@@ -187,8 +187,8 @@ mod cube_staged {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_microkernel::matmul::dense::cube::CubeStagedMicrokernel;
-    use cubek_microkernel::matmul::dense::plane::PlaneFragmentTransport;
+    use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
+    use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
@@ -228,8 +228,16 @@ mod cube_staged {
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
                 let step = step(&hw, &problem).under(Space::new(&[(M, m), (N, n), (K, k)]));
-                let cube = blueprint.partitioning.cube_box();
-                assert!(whole_steps(&step, &cube), "{name} at {settings}: {cube:?}");
+                let cube_space = blueprint.partitioning.cube_space();
+                assert!(
+                    whole_steps(&step, &cube_space.space),
+                    "{name} at {settings}: {cube_space:?}"
+                );
+                assert_eq!(
+                    blueprint.microkernel.stage(&cube_space),
+                    blueprint.partitioning.stage(),
+                    "{name} at {settings}"
+                );
             }
         }
         assert!(tile_order_prepared > 0, "no setting prepared tile order");
@@ -371,5 +379,76 @@ mod packed_lhs {
                 .any(|settings| decoded.prepare(&hw, &problem, settings).is_ok()),
             "no setting decodes the packed lhs and runs the float product"
         );
+    }
+}
+
+mod hypercube_last_arrival {
+    use super::*;
+    use crate::kernels::HypercubeLastArrivalMatmulRoutine;
+    use cubecl::features::MmaConfig;
+    use cubek_std::devices;
+    use cubek_std::routine::Routine;
+
+    /// Against a packed rhs the cubes sharing a box each walk whole blocks of `K`: every setting
+    /// that prepares cuts whole steps and its cube box spans whole blocks along `KI`. At a
+    /// prompt's rows some setting prepares on every scheme whose scales group `K`, and none on one
+    /// whose scales group `n`.
+    #[test]
+    fn cubes_sharing_a_box_walk_whole_blocks() {
+        let hw = devices::offering_mma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: F16,
+                b_type: F16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 8,
+                k: 16,
+            }],
+        );
+        assert!(
+            !HypercubeLastArrivalMatmulRoutine
+                .packed_settings(&hw)
+                .is_empty(),
+            "a device whose cubes meet lists packed settings"
+        );
+        for m in [128, 300] {
+            for (name, problem) in problems(m) {
+                let block = problem
+                    .packings
+                    .rhs
+                    .and_then(|packing| packing.operand.grouping(K, problem.k));
+                let mut prepared = 0;
+                for settings in HypercubeLastArrivalMatmulRoutine.packed_settings(&hw) {
+                    let Ok((blueprint, _)) =
+                        HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings)
+                    else {
+                        continue;
+                    };
+                    prepared += 1;
+                    let cube_space = blueprint.partitioning.cube_space();
+                    assert!(
+                        whole_steps(&step(&hw, &problem), &cube_space.space),
+                        "{name} at {settings}: {cube_space:?}"
+                    );
+                    assert_eq!(
+                        blueprint.microkernel.cube.stage(&cube_space),
+                        blueprint.partitioning.stage(),
+                        "{name} at {settings}"
+                    );
+                    assert_eq!(
+                        Some(cube_space.extent(blocked(K).1)),
+                        block,
+                        "{name} at {settings}: a cube's share cuts a block"
+                    );
+                }
+                // Scales grouping `n` are not staged a block of `K` at a time, by any cube.
+                assert_eq!(
+                    prepared > 0,
+                    block.is_some(),
+                    "{name}, {m} rows: {prepared} settings prepared"
+                );
+            }
+        }
     }
 }

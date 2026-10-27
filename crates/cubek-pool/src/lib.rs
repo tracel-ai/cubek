@@ -22,7 +22,11 @@ use crate::kernel::{
 
 /// Pool2d public wrapper
 ///
-/// Expects input in NHWC layout.
+/// Expects input in NHWC layout. Average pooling supports dilated windows through
+/// [`definition::AvgPoolOptions::with_dilation`]. Windows with no sampled input taps return zero
+/// when padding is excluded. Ceil-mode taps beyond the explicit padding are not counted.
+///
+/// Returns [`PoolError::InvalidDilation`] if an average-pooling dilation is zero.
 pub fn pool2d(
     client: &Client,
     input: TensorBinding,
@@ -106,7 +110,10 @@ pub fn pool2d_with_indices(
 
 /// Pool2d backward public wrapper
 ///
-/// Expects input and output gradients in NHWC layout.
+/// Expects input and output gradients in NHWC layout. Average pooling distributes gradients
+/// only to sampled taps, using the same dilation and padding divisor as the forward pass.
+///
+/// Returns [`PoolError::InvalidDilation`] if an average-pooling dilation is zero.
 pub fn pool2d_backward(
     client: &Client,
     input: TensorBinding,

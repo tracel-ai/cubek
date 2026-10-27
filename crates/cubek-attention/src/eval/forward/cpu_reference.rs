@@ -250,9 +250,7 @@ pub fn flash_attention_v2_reference(
 
 /// Like [`flash_attention_v2_reference`] but also returns the per-row
 /// `lse = m + ln(l)` tensor, shape `[B, H, seq_q]`. Fully-masked rows get
-/// `-inf`, matching the backward reference's convention. No kernel emits lse
-/// yet; this is the ground truth the tile port's epilogue will be tested
-/// against.
+/// `-inf`.
 pub fn flash_attention_v2_reference_with_lse(
     query: &HostData,
     key: &HostData,

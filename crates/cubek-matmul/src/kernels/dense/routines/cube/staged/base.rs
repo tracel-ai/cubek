@@ -1,5 +1,6 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::MatmulBinding;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::select::packed::nvfp4_scheme;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use core::num::NonZeroUsize;
@@ -10,15 +11,13 @@ use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
 use cubek_microkernel::matmul::MatmulStep;
-use cubek_microkernel::matmul::stored::Operand;
-use cubek_microkernel::matmul::stored::Packing;
-use cubek_microkernel::matmul::tile_order;
-use cubek_microkernel::matmul::{
-    MatmulDim, MatmulOperand, MatmulOperands, MatmulPartitioning, MatmulWorkItem,
-};
-use cubek_microkernel::staging::StageRing;
+use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands, MatmulWorkItem};
+use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::Packing;
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream};
+use cubek_std::microkernel::{StageLayout, StageRing};
 use cubek_std::{Hardware, Instructions};
 use cubek_std::{UNIT_REGISTERS, manual_mma};
 
@@ -31,14 +30,12 @@ use cubecl::tile::{
     StageStorage, TileArgLaunch,
     launch::{DestinationLaunch, TmaStored},
 };
-use cubek_microkernel::matmul::dense::cube::{
+use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
+use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedRows, CubeStagedStore,
+    CubeStagedStore,
 };
-use cubek_microkernel::matmul::dense::plane::{
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
-};
-use cubek_microkernel::matmul::staged_walk::MatmulPlaneLayout;
+use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
 use cubek_std::matmul_axes::{M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -97,7 +94,7 @@ impl CubeStagedMatmulRoutine {
     /// planes, and two by four on four by two or two by four planes, three stages in flight and the
     /// box stored by the TMA engine in one bulk copy, which a contraction of a few thousand
     /// finishes sooner with. A stage one step deep is one tile of an input in [tile
-    /// order](cubek_microkernel::matmul::tile_order), which a box lands as it lands rows. Filled by
+    /// order](cubek_std::layout::tile_order), which a box lands as it lands rows. Filled by
     /// the cube's units asynchronously: four by four on two by four planes, three stages in flight,
     /// and two by four on four by two planes, two.
     ///
@@ -193,7 +190,7 @@ impl CubeStagedMatmulRoutine {
     /// The step of an NVFP4 product on `hw` ([`MatmulStep`]): the least box every load of
     /// both inputs fills whole — a row of the TMA engine's box, a word of scales — under the
     /// device's block-scaled instruction. `None` on a device that offers none. An input in rows and
-    /// one in [tile order](cubek_microkernel::matmul::tile_order) step alike, and a load on such a device
+    /// one in [tile order](cubek_std::layout::tile_order) step alike, and a load on such a device
     /// stores in this step.
     pub fn block_scaled_step(hw: &Hardware) -> Option<MatmulStep> {
         let e2m1 = ElemType::Float(FloatKind::E2M1);
@@ -243,7 +240,7 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// Registers the compiler adds around a plane's lower bound
-    /// ([`registers_per_unit`](cubek_microkernel::matmul::dense::plane::PlaneFragmentMicrokernel::registers_per_unit)):
+    /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
     /// addressing, loop state and the scale registers. A margin rather than a derivation, since
     /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.
@@ -353,7 +350,7 @@ impl CubeStagedMatmulRoutine {
             .expect(MatmulView::PREPARED)
             .work_item();
         let contracted = blueprint.microkernel.contracted(&item);
-        let cube = blueprint.partitioning.cube_box();
+        let cube = blueprint.partitioning.cube_space().space;
         let (rows, columns, block) = (cube.extent(MI), cube.extent(NI), cube.extent(KI));
         let stage = blueprint.partitioning.stage();
         let stage_depth: usize = [KB, KI]
@@ -432,24 +429,38 @@ impl CubeStagedMatmulRoutine {
         partitioning: MatmulPartitioning,
         storage: StageStorage,
     ) -> CubeStagedMatmulRoutineBlueprint {
-        let block = partitioning.cube_box().extent(KI);
+        MatmulBlueprint {
+            widths: Self::widths_in_blocks(hw, contracted, &microkernel, &partitioning, &storage),
+            microkernel,
+            partitioning,
+            shared_memory: storage,
+        }
+    }
+
+    /// The widths a cube staged `microkernel` binds its operands at over a block-split space,
+    /// each placed as `partitioning` places it and staged as `storage` lays it: what
+    /// [`blueprint_in_blocks`](Self::blueprint_in_blocks) holds, and every routine whose cubes run
+    /// that microkernel over such a space.
+    pub(crate) fn widths_in_blocks(
+        hw: &Hardware,
+        contracted: &MatmulWorkItem,
+        microkernel: &CubeStagedMicrokernel,
+        partitioning: &MatmulPartitioning,
+        storage: &StageStorage,
+    ) -> MatmulOperands<usize> {
+        let block = partitioning.cube_space().extent(KI);
         let width = |operand: MatmulOperand| match microkernel.reads.get(operand).staged() {
             Some(_) => Self::decoded_width(
                 microkernel.plane.leaf_extent(MatmulDim::K),
-                &storage,
+                storage,
                 contracted.elements.get(operand),
             ),
             None => hw.load_values(contracted.elements.get(operand)).min(block),
         };
-        MatmulBlueprint {
-            widths: MatmulOperands {
-                lhs: width(MatmulOperand::Lhs),
-                rhs: width(MatmulOperand::Rhs),
-                out: 1,
-            },
-            microkernel,
-            partitioning,
-            shared_memory: storage,
+        MatmulOperands {
+            lhs: width(MatmulOperand::Lhs),
+            rhs: width(MatmulOperand::Rhs),
+            out: 1,
         }
     }
 
@@ -507,7 +518,7 @@ impl Routine for CubeStagedMatmulRoutine {
                 },
             });
         let rows_in_order_on_2x2 = CubeStagedMicrokernelSettings {
-            stage_rows: CubeStagedRows::InOrder,
+            stage_layout: Some(StageLayout::Blocks),
             ..CubeStagedMicrokernelSettings::boxed(
                 PlaneFragmentMicrokernelSettings::DEFAULT,
                 MatmulPlaneLayout::new(2, 2),
@@ -538,7 +549,12 @@ impl Routine for CubeStagedMatmulRoutine {
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        microkernel.vectorize(partitioning, vectorization);
+        assert_eq!(
+            partitioning.as_tile().fillers() as usize,
+            microkernel.fill.filling_planes,
+            "a cube is launched over its launch tiling, beside the planes its fill sets aside"
+        );
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: it only distributes the cubes, and its microkernel walks the whole of
@@ -557,7 +573,7 @@ impl Routine for CubeStagedMatmulRoutine {
         match item.blocks {
             None => blueprint.microkernel.estimate(
                 &item,
-                &blueprint.partitioning,
+                &blueprint.partitioning.cube_space(),
                 grid.planes(),
                 estimate,
             ),
@@ -600,7 +616,7 @@ impl Routine for CubeStagedMatmulRoutine {
             &contracted,
             &problem.buffers(microkernel.plane.orders),
             <Self as MatmulRoutine<CubeStagedMicrokernel, StageStorage>>::WRITE,
-            &place(microkernel.tiling()),
+            &place(microkernel.tiling()).cube_space(),
         )?;
         let (microkernel, storage) = (resolved.microkernel, resolved.storage);
         if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {

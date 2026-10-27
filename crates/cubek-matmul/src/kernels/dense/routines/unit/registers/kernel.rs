@@ -1,9 +1,7 @@
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::matmul::dense::unit::{
-    UnitRegistersMicrokernel, unit_registers_microkernel,
-};
+use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, unit_registers_microkernel};
 
 /// Every plane of the launch, each of its units running its block, walked within the rhs: a
 /// batch whose entry of a table names no slab holds nothing, so its units take no step and write

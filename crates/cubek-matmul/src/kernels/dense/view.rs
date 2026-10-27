@@ -1,3 +1,4 @@
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
@@ -5,15 +6,14 @@ use cubecl::tile::{
     Axis, Levels, Partitioning, Space,
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
-use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::stored::Operand;
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
     MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::layout::stored::Operand;
+use cubek_std::matmul_axes::{K, M, N, blocked};
 
 /// What a launch holding every row whole declines whatever the device: an lhs or an output
 /// that does not hold every batch, whose batches no merge makes rows of one matrix.
@@ -140,9 +140,12 @@ impl<'a> MatmulView<'a> {
         cubes_along_k: NonZeroUsize,
     ) -> MatmulPartitioning {
         let distributed_batch_axes = self.distributed_batch_axes();
+        let walked = self.walked();
         let cubes = match cubes_along_k.get() {
             1 => inside.cubes(axes),
-            cubes => inside.cubes(&[axes, &[K]].concat()).across(K, cubes),
+            cubes => inside
+                .cubes(&[axes, &[walked]].concat())
+                .across(walked, cubes),
         };
         let levels = cubes
             .ordered(order)
@@ -150,28 +153,38 @@ impl<'a> MatmulView<'a> {
             .build();
         let partitioning = Partitioning::new(self.space(), levels);
         let tile = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        let cube_box = match cubes_along_k.get() {
+        let cube = match cubes_along_k.get() {
             1 => tile,
-            // The cube level's own tile is one step of `K` where cubes share a box, distributed
-            // in runs: the box states the run, as long as the longest cube's.
+            // The cube level's own tile is one step of the walked axis where cubes share a box,
+            // distributed in runs: the box states the run, as long as the longest cube's.
             cubes => {
-                let step = tile.extent(K);
-                let run = self.problem.k.div_ceil(step).max(1).div_ceil(cubes) * step;
+                let step = tile.extent(walked);
+                let run = self
+                    .space()
+                    .extent(walked)
+                    .div_ceil(step)
+                    .max(1)
+                    .div_ceil(cubes)
+                    * step;
                 Space::new(
                     &tile
                         .extents()
                         .into_iter()
-                        .map(|(axis, extent)| (axis, if axis == K { run } else { extent }))
+                        .map(|(axis, extent)| (axis, if axis == walked { run } else { extent }))
                         .collect::<Vec<_>>(),
                 )
             }
         };
-        MatmulPartitioning::new(
-            partitioning,
-            cube_box,
-            distributed_batch_axes,
-            self.rows_kind,
-        )
+        MatmulPartitioning::new(partitioning, cube, distributed_batch_axes, self.rows_kind)
+    }
+
+    /// The axis a cube's run of `K` walks: `K`, or the blocks a block-split space states it in,
+    /// so cubes sharing a box each take whole blocks under their scales.
+    fn walked(&self) -> Axis {
+        match self.blocks() {
+            None => K,
+            Some(_) => blocked(K).0,
+        }
     }
 
     /// The problem partitioned with `inside` a plane's box, every box `axes` cut a plane of the
@@ -563,7 +576,7 @@ mod tests {
             MatmulView::ONE_CUBE_A_BOX,
         );
         assert_eq!(view.space().extent(EXPERT), 4);
-        assert_eq!(partitioning.cube_box().extent(EXPERT), 1);
+        assert_eq!(partitioning.cube_space().extent(EXPERT), 1);
     }
 
     /// Every batch is handed to the cubes, one of a single batch too, since the table's dims are

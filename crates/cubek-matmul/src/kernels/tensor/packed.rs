@@ -14,10 +14,10 @@ use cubecl::tile::{
     layout::{DimsBuilder, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
-use cubek_microkernel::matmul::stored::{BlockScales, Operand, Packing};
-use cubek_microkernel::matmul::tile_order;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
+use cubek_std::layout::stored::{BlockScales, Operand, Packing};
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 

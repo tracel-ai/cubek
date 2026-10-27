@@ -16,7 +16,7 @@ use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperands, B, D, DV, G, KV, Q, S,
 };
-use cubek_microkernel::matmul::MatmulOrder;
+use cubek_std::layout::BindingOrder;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
@@ -64,6 +64,13 @@ pub struct AttentionTensors {
     /// The `u32` counters the cubes of a box count themselves in at, held by the caller across
     /// launches ([`with_arrivals`](Self::with_arrivals)); `None` where each launch makes its own.
     arrivals: Option<PlainTensor>,
+    /// Each query's logsumexp, `[b, h, q]`, and the same buffer as the kernel writes it,
+    /// `[b, kv, g, q]`, where the caller asks for it ([`with_logsumexp`](Self::with_logsumexp)).
+    logsumexp: Option<(TensorHandle, PlainTensor)>,
+    /// Which keys each query of each head does not see, `[b, kv, g, q, s]` over the caller's
+    /// buffer as the query is ([`with_mask`](Self::with_mask)); `None` where it sees every key
+    /// its visibility admits.
+    mask: Option<PlainTensor>,
 }
 
 impl core::fmt::Debug for AttentionTensors {
@@ -78,6 +85,8 @@ impl core::fmt::Debug for AttentionTensors {
             .field("scoring", &self.scoring)
             .field("axis", &self.axis)
             .field("arrivals", &self.arrivals)
+            .field("logsumexp", &self.logsumexp)
+            .field("mask", &self.mask)
             .finish()
     }
 }
@@ -211,7 +220,7 @@ impl AttentionTensors {
     ///
     /// Where the keys carry a QJL fix-up, `query` is the query followed along its head dim by its
     /// projection, `d` twice the cache's head dim: the keys' lines run as far, their second half
-    /// the fix-up ([`PackedLines`](cubek_microkernel::attention::PackedLines)).
+    /// the fix-up ([`PackedStepReads`](cubek_microkernel::attention::plane::PackedStepReads)).
     ///
     /// # Errors
     ///
@@ -313,7 +322,7 @@ impl AttentionTensors {
     ) -> Self {
         let q_shape = query.shape();
         let (batch, heads, queries) = (q_shape[0], q_shape[1], q_shape[2]);
-        let axis = QueryAxis::new(queries);
+        let axis = QueryAxis::new(queries, scoring.visibility);
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.
@@ -332,6 +341,8 @@ impl AttentionTensors {
             scoring,
             axis,
             arrivals: None,
+            logsumexp: None,
+            mask: None,
         }
     }
 
@@ -396,6 +407,72 @@ impl AttentionTensors {
         }
         self.arrivals = arrivals;
         self
+    }
+
+    /// The same attention, query `q` of head `h` of sequence `b` not seeing key `s` where
+    /// `mask[b, h, q, s]` is not zero, on top of what its visibility hides. A dim the mask does
+    /// not vary along is read at stride zero, so a mask broadcast over the batch or the heads is
+    /// never copied. Its element is any integer, a stored boolean among them.
+    ///
+    /// # Panics
+    ///
+    /// A mask of another shape than the scores', `[b, h, q, s]`.
+    pub fn with_mask(mut self, mask: PlainTensor) -> Self {
+        let [batch, queries, heads, _] = self.out.shape().dims::<4>();
+        assert_eq!(
+            mask.shape().as_slice(),
+            [batch, heads, queries, self.cache.seq_kv()],
+            "a mask is [b, h, q, s], one cell a score"
+        );
+        let group = heads / self.cache.num_kv_heads();
+        self.mask = Some(self.axis.view(&mask, group, [0, 1, 2, 3]));
+        self
+    }
+
+    /// The same attention, writing beside its output each query's logsumexp of its scaled scores,
+    /// `[b, h, q]` in the sum's element ([`logsumexp`](Self::logsumexp)): what a backward pass reads
+    /// its probabilities back from. A query that sees no key holds the minimum value.
+    ///
+    /// # Panics
+    ///
+    /// On a packed cache, which is read for inference: no backward pass reads its logsumexp.
+    pub fn with_logsumexp(mut self) -> Self {
+        assert!(
+            !matches!(self.cache, AttentionCache::Packed(_)),
+            "a packed cache's attention writes no logsumexp"
+        );
+        let [batch, queries, heads, _] = self.out.shape().dims::<4>();
+        let (handle, rows) = PlainTensor::empty_contiguous(
+            &self.client,
+            [batch, heads, queries].into(),
+            AttentionRoutineProblem::SUM,
+        );
+        // Viewed along the query axis as the output is: a last dim one wide, then left out.
+        let strides = &rows.binding.strides;
+        let widened = rows.viewed(Metadata::new(
+            [batch, heads, queries, 1],
+            [strides[0], strides[1], strides[2], 1],
+        ));
+        let group = heads / self.cache.num_kv_heads();
+        let view = self.axis.view(&widened, group, [0, 1, 2, 3]);
+        let (shape, strides) = (&view.binding.shape, &view.binding.strides);
+        let view = view.viewed(Metadata::new(shape[..4].to_vec(), strides[..4].to_vec()));
+        self.logsumexp = Some((handle, view));
+        self
+    }
+
+    /// Each query's logsumexp, `[b, h, q]`, where the attention writes it
+    /// ([`with_logsumexp`](Self::with_logsumexp)).
+    pub fn logsumexp(&self) -> Option<TensorHandle> {
+        self.logsumexp.as_ref().map(|(handle, _)| handle.clone())
+    }
+
+    /// Each query's logsumexp, `[b, kv, g, q]` at its own strides, bound as a plain tensor where
+    /// the attention writes it: what a kernel that writes it by hand addresses.
+    pub fn logsumexp_arg(&self) -> Option<TensorArg> {
+        self.logsumexp
+            .as_ref()
+            .map(|(_, view)| view.binding.clone().into_tensor_arg())
     }
 
     /// The problem the tensors state.
@@ -555,8 +632,8 @@ impl AttentionTensors {
                     }
                 };
                 let key = match blueprint.microkernel.key_order() {
-                    MatmulOrder::InBufferOrder => read_cache(key, &[B, KV, S, D], widths.key),
-                    MatmulOrder::Stated => {
+                    BindingOrder::InBufferOrder => read_cache(key, &[B, KV, S, D], widths.key),
+                    BindingOrder::Stated => {
                         read_cache(&key.transposed(), &[B, KV, D, S], widths.key)
                     }
                 };
@@ -573,11 +650,25 @@ impl AttentionTensors {
         )
         .build()
         .expect(ADMITTED_PLAN_RUNS);
+        // A value a query, written by whoever holds its row.
+        let logsumexp = self.logsumexp.as_ref().map(|(_, view)| {
+            arg(view, &[B, KV, G, Q], 1, AttentionRoutineProblem::SUM)
+                .build()
+                .expect(ADMITTED_PLAN_RUNS)
+        });
+        // A cell a read: a mask broadcast over a dim lies there at stride zero.
+        let mask = self.mask.as_ref().map(|mask| {
+            arg(mask, &[B, KV, G, Q, S], 1, mask.elem)
+                .build()
+                .expect(ADMITTED_PLAN_RUNS)
+        });
         AttentionBinding {
             launcher,
             query,
             cache,
             out,
+            logsumexp,
+            mask,
             lengths: self.lengths.binding.clone().into_tensor_arg(),
         }
     }

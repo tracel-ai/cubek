@@ -10,6 +10,11 @@ pub struct AttentionBinding {
     pub query: Bound,
     pub cache: AttentionCacheBinding,
     pub out: Bound,
+    /// Each query's logsumexp, where the tensors ask for it.
+    pub logsumexp: Option<Bound>,
+    /// Which keys each query does not see, over `[B, KV, G, Q, S]`, where the tensors carry a
+    /// mask.
+    pub mask: Option<Bound>,
     /// The attended length of each sequence.
     pub lengths: TensorArg,
 }

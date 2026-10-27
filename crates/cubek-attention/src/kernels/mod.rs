@@ -11,6 +11,7 @@ mod binding;
 mod blueprint;
 mod launch;
 mod packed;
+mod partitioning;
 mod problem;
 mod routines;
 mod scoring;
@@ -21,13 +22,14 @@ pub use binding::*;
 pub use blueprint::*;
 pub use launch::*;
 pub use packed::*;
+pub use partitioning::*;
 pub use problem::*;
 pub use routines::*;
 pub use scoring::*;
 pub use tensors::*;
 pub use tune::AttentionRoutineCandidate;
 
-pub use cubek_microkernel::attention::AttentionVisibility;
+pub use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 
 pub use select::{AttentionKernel, AttentionKernelHeuristic, AttentionOpStrategy};
 

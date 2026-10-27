@@ -117,10 +117,10 @@ mod tests {
     use super::*;
     use crate::kernels::CubeStagedAttentionRoutine;
     use crate::kernels::UnitAttentionRoutine;
-    use crate::kernels::{AttentionVisibility, ScoreScale};
+    use crate::kernels::{AttentionVisibility, QueryPlacement, ScoreScale};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_microkernel::attention::output::plane::PlaneFragmentAttentionMicrokernel;
+    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -150,9 +150,12 @@ mod tests {
             seq,
             seq,
             1,
-            AttentionVisibility::Causal,
+            AttentionVisibility::Causal {
+                queries: QueryPlacement::Last,
+            },
             ScoreScale::standard(128),
             None,
+            false,
         )
     }
 
@@ -205,7 +208,9 @@ mod tests {
         let keyed = AttentionRoutineProblem::try_from(&key(32, 8, 2048)).expect("an even group");
         let extents = (keyed.seq_q, keyed.seq_kv);
         let dense = AttentionRoutineProblem {
-            visibility: AttentionVisibility::Causal,
+            visibility: AttentionVisibility::Causal {
+                queries: QueryPlacement::Last,
+            },
             ..AttentionRoutineProblem::dense((1, 32, 8), extents, (128, 128), F16)
         };
         assert_eq!(keyed, dense);

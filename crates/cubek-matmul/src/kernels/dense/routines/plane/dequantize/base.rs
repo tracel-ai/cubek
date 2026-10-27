@@ -1,4 +1,5 @@
 use super::kernel::plane_dequantize_kernel;
+use crate::kernels::MatmulPartitioning;
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use crate::kernels::{
     MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED, MatmulBlueprint, MatmulDequantizeBinding, MatmulInputs,
@@ -14,8 +15,7 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::launch::{Buffered, DestinationLaunch};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
-use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::plane::PlaneShuffleMicrokernel;
+use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, N};
