@@ -114,7 +114,7 @@ fn storage_tiled_weight(dtype: ElemType) {
 
     match outcome {
         ExecutionOutcome::Executed => {
-            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, elems).as_test_outcome()
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }

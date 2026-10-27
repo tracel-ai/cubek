@@ -1,7 +1,7 @@
 use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulRows,
-    MatmulWorkItem,
+    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulOrder, MatmulReading,
+    MatmulRows, MatmulWorkItem,
 };
 use crate::staging::StagedOperand;
 use cubecl::ir::{ElemType, FloatKind};
@@ -96,6 +96,7 @@ impl AttentionWorkItem {
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes { m: Q, n: S, k: D },
+            reading: MatmulReading::AsStored,
         }
     }
 
@@ -118,6 +119,7 @@ impl AttentionWorkItem {
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes { m: Q, n: DV, k: S },
+            reading: MatmulReading::AsStored,
         }
     }
 

@@ -127,7 +127,10 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
     /// The best hypercube of plane fragments at the settings, its settings' cubes on every box
     /// whatever the keys ([`AttentionPartitioning::new`]), each holding its planes along the keys
     /// and the shared memory its microkernel asks for, its stages held as its planes read them;
-    /// merged by a second launch, that launch checked against the device too.
+    /// merged by a second launch, that launch checked against the device too. Declines where the
+    /// buffers hold too few keys for every cube to walk some
+    /// ([`AttentionPartitioning::every_cube_walks`]) or one cube a box already fills the device
+    /// ([`AttentionPartitioning::boxes_leave_workers_idle`]).
     fn prepare(
         &self,
         hw: &Hardware,
@@ -151,12 +154,14 @@ impl Routine for HypercubeSecondLaunchFragmentAttentionRoutine {
             settings.cubes_along_keys,
             QueryOrder::InOrder,
         );
+        partitioning.every_cube_walks()?;
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
         let cube = CubeResources {
             plane_width: hw.plane_dim()?,
             shared_memory: microkernel.shared_memory(hw, &item, &storage),
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
+        partitioning.boxes_leave_workers_idle(hw, &grid.launch)?;
         let shape = microkernel.merge_shape(&item, &partitioning, HypercubeMerge::SecondLaunch);
         HypercubeSecondLaunch::new(problem, shape).validate(hw)?;
         let mut vectorization = Vectorization::new();

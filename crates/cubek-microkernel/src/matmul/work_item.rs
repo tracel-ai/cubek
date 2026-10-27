@@ -25,6 +25,19 @@ pub struct MatmulWorkItem {
     pub rows: MatmulRows,
     pub destination: MatmulDestination,
     pub axes: MatmulAxes,
+    /// Which elements its float inputs may be read in.
+    pub reading: MatmulReading,
+}
+
+/// Which elements a product's float inputs may be read in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MatmulReading {
+    /// As stored, or `f32` inputs rounded to tf32, ten bits of mantissa, the matrix instruction
+    /// an NVIDIA GPU offers `f32` operands, the sum staying `f32`: what a caller allowing tf32
+    /// asks of an `f32` product.
+    Rounded,
+    /// As stored only.
+    AsStored,
 }
 
 /// The block-split space packed operands put a product in: how each packed operand is stored, its
@@ -113,6 +126,29 @@ impl MatmulBlocks {
 }
 
 impl MatmulWorkItem {
+    /// The element its inputs may be rounded to for a matrix instruction: tf32 where both are
+    /// `f32` and float, and the reading allows it; none otherwise.
+    pub fn rounded(&self) -> Option<ElemType> {
+        let f32 = ElemType::Float(FloatKind::F32);
+        let rounds = self.reading == MatmulReading::Rounded
+            && self.blocks.is_none()
+            && self.elements.lhs == f32
+            && self.elements.rhs == f32;
+        rounds.then_some(ElemType::Float(FloatKind::TF32))
+    }
+
+    /// This item with both inputs read in `read`; the output and the sum stay as they are.
+    pub fn read_as(&self, read: ElemType) -> Self {
+        Self {
+            elements: MatmulOperands {
+                lhs: read,
+                rhs: read,
+                out: self.elements.out,
+            },
+            ..*self
+        }
+    }
+
     /// The element this item's packed inputs are decoded into to be contracted: a float input's,
     /// the output's where both are packed.
     pub fn decoded_element(&self) -> ElemType {
@@ -164,6 +200,7 @@ impl MatmulWorkItem {
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
             axes: MatmulAxes::INSIDE_BLOCKS,
+            reading: self.reading,
         }
     }
 
