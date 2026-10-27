@@ -19,6 +19,7 @@ std = ["cubecl/std", "cubek-std/std"]
 # A family's microkernels, each usable without the next one's.
 matmul = []
 attention = ["matmul"]
+attention-backward = ["attention"]
 
 [dependencies]
 cubek-std = { workspace = true }

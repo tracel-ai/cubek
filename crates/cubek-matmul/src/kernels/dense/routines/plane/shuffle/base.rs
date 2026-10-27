@@ -11,12 +11,10 @@ use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::dense::plane::{
-    PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings,
-};
-use cubek_microkernel::matmul::stored::Packing;
+use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOrder};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
@@ -445,9 +443,9 @@ mod tests {
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::MatmulOperands;
-    use cubek_microkernel::matmul::dense::plane::PlaneShuffleKSplit;
-    use cubek_microkernel::matmul::stored::Operand;
+    use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_std::devices;
+    use cubek_std::layout::stored::Operand;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
