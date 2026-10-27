@@ -1,4 +1,4 @@
-use crate::matmul::cube::MatmulCubeBox;
+use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
     PlaneShuffleMicrokernelSettings,
@@ -389,7 +389,7 @@ impl Microkernel for CubeShuffleMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = CubeShuffleMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Placed = ();
+    type CubeSpace = ();
 
     const DECLINE: &'static str = "the cube shuffle needs a plane width the device commits to, and against a packed rhs one whose scales group K and two turns of K or more for its planes";
 
@@ -421,7 +421,7 @@ impl Microkernel for CubeShuffleMicrokernel {
                 Err(_) => shuffle,
             };
         };
-        MatmulCubeBox::admits(item)?;
+        MatmulCubeSpace::admits(item)?;
         PlaneShuffleMicrokernel::admits(item)?;
         match item.layouts.rhs {
             MatmulLayout::Row => Err(Self::ROW_RHS_UNSUPPORTED),

@@ -149,7 +149,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
             microkernel.cube.fill.filling_planes,
             "a cube is launched over its launch tiling, beside the planes its fill sets aside"
         );
-        microkernel.vectorize(&partitioning.placed(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: its cubes' microkernel walks each cube's run of `K`, and drains into
@@ -166,7 +166,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
             &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
-            &blueprint.partitioning.placed(),
+            &blueprint.partitioning.cube_space(),
             grid.planes(),
             estimate,
         );
@@ -195,7 +195,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
             &item,
             &problem.buffers(microkernel.cube.plane.orders),
             <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
-            &place(microkernel.cube.tiling()).placed(),
+            &place(microkernel.cube.tiling()).cube_space(),
         )?;
         let (partitioning, storage) = (
             place(resolved.microkernel.launch_tiling()),

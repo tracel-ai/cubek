@@ -120,7 +120,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
     type Settings = UnitAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
-    type Placed = Space;
+    type CubeSpace = Space;
 
     const DECLINE: &'static str = "the unit microkernel asks nothing of the hardware";
 
@@ -170,7 +170,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     /// along `D`, where the keys lie contiguous, summing a line of each into every score; the
     /// value reads the values along `DV` and writes the output along `DV`, lining its block with
     /// both. The score's block, a value a cell, is the value's lhs, read in registers.
-    fn vectorize(&self, _cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+    fn vectorize(&self, _cube_space: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
         let mut score = Vectorization::new();
         self.score.vectorize(&(), &mut score);
         vectorization.restate(score, |operand| match operand {
@@ -193,7 +193,7 @@ impl Microkernel for UnitAttentionMicrokernel {
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        _cube: &Space,
+        _cube_space: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {

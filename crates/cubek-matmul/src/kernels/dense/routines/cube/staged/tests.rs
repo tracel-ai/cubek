@@ -51,7 +51,7 @@ mod base {
                 .expect(MatmulView::PREPARED)
                 .work_item(),
             &problem.buffers(plane.orders),
-            &partitioning.placed(),
+            &partitioning.cube_space(),
             storage,
             ring,
             plane,

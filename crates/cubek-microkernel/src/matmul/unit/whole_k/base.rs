@@ -196,7 +196,7 @@ impl Microkernel for UnitWholeKMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = UnitWholeKMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Placed = ();
+    type CubeSpace = ();
 
     const DECLINE: &'static str = "the unit whole-K microkernel asks nothing of the hardware";
 

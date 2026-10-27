@@ -182,7 +182,7 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
     type WorkItem = AttentionBackwardWorkItem;
     type Settings = PlaneQueryGradientMicrokernelSettings;
     type Operand = AttentionBackwardOperand;
-    type Placed = Partitioning;
+    type CubeSpace = Partitioning;
 
     const DECLINE: &'static str = "the plane backward microkernel runs on a cmma instruction of \
          the operands' element summing in f32, whose k divides the head and value dims and whose n \

@@ -540,7 +540,7 @@ impl Routine for CubeStagedMatmulRoutine {
             microkernel.fill.filling_planes,
             "a cube is launched over its launch tiling, beside the planes its fill sets aside"
         );
-        microkernel.vectorize(&partitioning.placed(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Nothing of its own: it only distributes the cubes, and its microkernel walks the whole of
@@ -559,7 +559,7 @@ impl Routine for CubeStagedMatmulRoutine {
         match item.blocks {
             None => blueprint.microkernel.estimate(
                 &item,
-                &blueprint.partitioning.placed(),
+                &blueprint.partitioning.cube_space(),
                 grid.planes(),
                 estimate,
             ),
@@ -602,7 +602,7 @@ impl Routine for CubeStagedMatmulRoutine {
             &contracted,
             &problem.buffers(microkernel.plane.orders),
             <Self as MatmulRoutine<CubeStagedMicrokernel, StageStorage>>::WRITE,
-            &place(microkernel.tiling()).placed(),
+            &place(microkernel.tiling()).cube_space(),
         )?;
         let (microkernel, storage) = (resolved.microkernel, resolved.storage);
         if problem.index.is_some() && microkernel.fill.delivery == CubeStagedDelivery::Tma {

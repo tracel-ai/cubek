@@ -13,7 +13,7 @@ pub(crate) struct BoundProduct<M> {
     pub out: Option<AttentionBackwardOperand>,
 }
 
-impl<M: Microkernel<Operand = MatmulOperand, Placed = ()>> BoundProduct<M> {
+impl<M: Microkernel<Operand = MatmulOperand, CubeSpace = ()>> BoundProduct<M> {
     /// The shared microkernel's requirements, restated on the operands this product binds.
     pub fn restate(self, vectorization: &mut Vectorization<AttentionBackwardOperand>) {
         let mut product = Vectorization::new();
@@ -33,7 +33,7 @@ pub(crate) fn estimate_beside<M>(
     planes: CubePlanes,
     estimate: &mut KernelEstimate,
 ) where
-    M: Microkernel<WorkItem = MatmulWorkItem, Placed = ()>,
+    M: Microkernel<WorkItem = MatmulWorkItem, CubeSpace = ()>,
 {
     let mut work = None;
     for (microkernel, product) in products {

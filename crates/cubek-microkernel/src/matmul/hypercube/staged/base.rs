@@ -1,5 +1,5 @@
 use crate::matmul::cube::{
-    CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, MatmulCubeBox,
+    CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, MatmulCubeSpace,
     MatmulPlaneLayout,
 };
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
@@ -113,7 +113,7 @@ impl Microkernel for HypercubeStagedMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = HypercubeStagedMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Placed = MatmulCubeBox;
+    type CubeSpace = MatmulCubeSpace;
 
     const DECLINE: &'static str = "the hypercube's cubes meet at their box, which needs a device where one cube's \
          stores reach another within a launch, and planes that each drain their own tile with \
@@ -179,8 +179,12 @@ impl Microkernel for HypercubeStagedMicrokernel {
 
     /// Its cubes' microkernel's: each plane drains its tile in lines to where its box meets the
     /// others, as into an output it alone writes.
-    fn vectorize(&self, placed: &MatmulCubeBox, vectorization: &mut Vectorization<MatmulOperand>) {
-        self.cube.vectorize(placed, vectorization);
+    fn vectorize(
+        &self,
+        cube_space: &MatmulCubeSpace,
+        vectorization: &mut Vectorization<MatmulOperand>,
+    ) {
+        self.cube.vectorize(cube_space, vectorization);
     }
 
     /// Its cubes' microkernel's, each walking its run of `K` as a staged cube walks a whole box,
@@ -189,12 +193,12 @@ impl Microkernel for HypercubeStagedMicrokernel {
     fn estimate(
         &self,
         item: &MatmulWorkItem,
-        placed: &MatmulCubeBox,
+        cube_space: &MatmulCubeSpace,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.cube.estimate(item, placed, planes, estimate);
-        let cube = placed.cube.clone();
+        self.cube.estimate(item, cube_space, planes, estimate);
+        let cube = cube_space.space.clone();
         let size = item.sum.size();
         let carry = GlobalStream {
             bytes: (cube.extent(M) * cube.extent(N) * size) as u64,

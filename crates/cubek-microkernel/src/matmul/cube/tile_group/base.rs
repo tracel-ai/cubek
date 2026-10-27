@@ -166,7 +166,7 @@ impl Microkernel for CubeTileGroupMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = CubeTileGroupMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Placed = ();
+    type CubeSpace = ();
 
     const DECLINE: &'static str = "the tile group cube needs a plane width the device commits to, an rhs of `e2m1` values it stores in tiles whose scales group K, and two turns of K or more for its planes";
 

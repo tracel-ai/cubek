@@ -15,10 +15,9 @@ pub trait Microkernel: Debug + Clone + PartialEq + Sized {
     type Settings: Debug + Clone + Display;
     /// How the family names its operands, for [`Vectorization`].
     type Operand: Debug + Copy + Eq;
-    /// What its routine places it on, as much of the placement as it reads: the box a cube is
-    /// handed, or nothing for a microkernel that reads only its own tiling. The placement itself
-    /// is the routine's.
-    type Placed: Debug + Clone;
+    /// The part of the problem one cube covers, as much of it as this microkernel reads: `()` for
+    /// one that reads only its own tiling. Where the cubes lie is its routine's placement.
+    type CubeSpace: Debug + Clone;
 
     /// Why [`candidates`](Self::candidates) comes back empty on a device, when it does.
     const DECLINE: &'static str;
@@ -76,18 +75,22 @@ pub trait Microkernel: Debug + Clone + PartialEq + Sized {
     }
 
     /// Enqueue what the accesses this microkernel's own code makes to the tiles it is handed
-    /// require of their widths, `placed` as its routine placed it, then hand
+    /// require of their widths, its cube covering `cube_space`, then hand
     /// `vectorization` to the microkernels it is built from. Where those tiles live is its
     /// walker's to know, not its own.
-    fn vectorize(&self, placed: &Self::Placed, vectorization: &mut Vectorization<Self::Operand>);
+    fn vectorize(
+        &self,
+        cube_space: &Self::CubeSpace,
+        vectorization: &mut Vectorization<Self::Operand>,
+    );
 
-    /// Set in `estimate` the parts this microkernel owns of a kernel running `item`, placed on
-    /// `placed`, on cubes of `planes`, then hand `estimate` to the microkernel it is built from:
+    /// Set in `estimate` the parts this microkernel owns of a kernel running `item`, each of its
+    /// cubes of `planes` covering `cube_space`, then hand `estimate` to the microkernel it is built from:
     /// the staging where it places the stage's reads, the work where its units hold it.
     fn estimate(
         &self,
         item: &Self::WorkItem,
-        placed: &Self::Placed,
+        cube_space: &Self::CubeSpace,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     );

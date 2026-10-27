@@ -4,7 +4,7 @@ use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedStore,
     CubeStagedWalk, CubeStagedWgmmaRefusal,
 };
-use crate::matmul::cube::{MatmulCubeBox, MatmulCubeWrite, MatmulPlaneLayout};
+use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite, MatmulPlaneLayout};
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
@@ -410,7 +410,7 @@ impl CubeStagedMicrokernel {
         self.tiling().filled_by(self.fill.filling_planes)
     }
 
-    /// This microkernel as `hw` runs it for `item` over `buffers`, handed the box `placed` (of its
+    /// This microkernel as `hw` runs it for `item` over `buffers`, handed the box `cube_space` (of its
     /// [`tiling`](Self::tiling) placed over the problem), its cubes reaching the output as
     /// `write`: its ring, scratch and fill decided, how its stages hold their cells, the width of
     /// its planes and the shared memory a cube holds. The routine launches it over its
@@ -437,9 +437,9 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
         write: MatmulCubeWrite,
-        placed: &MatmulCubeBox,
+        cube_space: &MatmulCubeSpace,
     ) -> Result<CubeStagedResolved, Refusal> {
-        let stage = &placed.stage;
+        let stage = &cube_space.stage;
         let plane_width = self.plane.instruction.units(hw)?;
         let units = self.contracting_planes() * plane_width as usize;
         let ring = self
@@ -450,10 +450,10 @@ impl CubeStagedMicrokernel {
         let merges = self.drain() == CubeStagedDrain::Merged || write.accumulates();
         let store = self
             .store
-            .resolve(hw, item, buffers, placed, write, self.planes_along_k);
+            .resolve(hw, item, buffers, cube_space, write, self.planes_along_k);
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
-        let cut_short = placed.overhangs_output && store == CubeStagedStore::Fragments;
+        let cut_short = cube_space.overhangs_output && store == CubeStagedStore::Fragments;
         let window = match self.plane.instruction.drain() {
             PlaneFragmentDrain::Bounce => {
                 let bouncing = true;
@@ -470,7 +470,7 @@ impl CubeStagedMicrokernel {
             hw,
             item,
             buffers,
-            placed,
+            cube_space,
             &landed,
             &ring,
             &self.plane,
@@ -600,7 +600,7 @@ impl Microkernel for CubeStagedMicrokernel {
     type WorkItem = MatmulWorkItem;
     type Settings = CubeStagedMicrokernelSettings;
     type Operand = MatmulOperand;
-    type Placed = MatmulCubeBox;
+    type CubeSpace = MatmulCubeSpace;
 
     const DECLINE: &'static str = "this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
 
@@ -829,7 +829,7 @@ impl Microkernel for CubeStagedMicrokernel {
     /// input whose scales group `K`, which it stages a block at a time.
     fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
         match item.blocks {
-            None => MatmulCubeBox::admits(item),
+            None => MatmulCubeSpace::admits(item),
             Some(_) => Self::block(item).map(|_| ()).ok_or(Self::UNGROUPED_K),
         }
     }
@@ -870,15 +870,21 @@ impl Microkernel for CubeStagedMicrokernel {
     /// planes on the software instruction drain their register block, which holds the rhs's lines,
     /// so the rhs is read one element at a time too. Its planes' reads are the plane
     /// microkernel's.
-    fn vectorize(&self, placed: &MatmulCubeBox, vectorization: &mut Vectorization<MatmulOperand>) {
-        placed.stage.require_runs(self.plane.orders, vectorization);
+    fn vectorize(
+        &self,
+        cube_space: &MatmulCubeSpace,
+        vectorization: &mut Vectorization<MatmulOperand>,
+    ) {
+        cube_space
+            .stage
+            .require_runs(self.plane.orders, vectorization);
         self.fill.vectorize(vectorization);
         self.store.vectorize(vectorization);
         match self.drain() {
             CubeStagedDrain::EachPlane => {
                 vectorization.require(VectorRequirement::Access {
                     operand: MatmulOperand::Out,
-                    elements: placed.leaf.extent(
+                    elements: cube_space.leaf.extent(
                         MatmulAxes::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
                     ),
                 });
@@ -911,12 +917,12 @@ impl Microkernel for CubeStagedMicrokernel {
     fn estimate(
         &self,
         item: &MatmulWorkItem,
-        placed: &MatmulCubeBox,
+        cube_space: &MatmulCubeSpace,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let extents = &placed.cube;
-        let stage = &placed.stage;
+        let extents = &cube_space.space;
+        let stage = &cube_space.stage;
         let (out_run, drain_atomics) = match self.drain() {
             CubeStagedDrain::EachPlane => (self.plane.tile_extent(N), 0),
             CubeStagedDrain::Merged => (
@@ -926,9 +932,15 @@ impl Microkernel for CubeStagedMicrokernel {
         };
         let staging = MatmulStagingCount {
             drain_atomics,
-            ..MatmulStagingCount::new(&placed.cube, stage, self.plane.orders, &self.ring, out_run)
+            ..MatmulStagingCount::new(
+                &cube_space.space,
+                stage,
+                self.plane.orders,
+                &self.ring,
+                out_run,
+            )
         };
-        staging.count(item, &placed.cube, estimate);
+        staging.count(item, &cube_space.space, estimate);
         self.plane.estimate(item, &(), planes, estimate);
     }
 }

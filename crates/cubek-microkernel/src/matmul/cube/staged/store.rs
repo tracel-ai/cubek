@@ -1,6 +1,6 @@
-use crate::matmul::MatmulSpace;
+use crate::matmul::MatmulAxesKind;
 use crate::matmul::MatmulStage;
-use crate::matmul::cube::{MatmulCubeBox, MatmulCubeWrite};
+use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite};
 use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Delivery;
@@ -50,13 +50,13 @@ pub enum CubeStagedTmaStoreRefusal {
 
 impl CubeStagedTmaStoreRefusal {
     /// Why `hw` cannot store the boxes of `item`'s product, over buffers as `buffers` states them,
-    /// in the box `placed`, its cubes reaching the output as `write` and its planes split
+    /// in the box `cube_space`, its cubes reaching the output as `write` and its planes split
     /// `planes_along_k` ways along `K`, by the TMA engine; `None` where it can.
     pub fn new(
         hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
-        placed: &MatmulCubeBox,
+        cube_space: &MatmulCubeSpace,
         write: MatmulCubeWrite,
         planes_along_k: NonZeroUsize,
     ) -> Option<Self> {
@@ -70,9 +70,9 @@ impl CubeStagedTmaStoreRefusal {
             Some(Self::Shared(write))
         } else if planes_along_k.get() > 1 {
             Some(Self::SplitAlongK)
-        } else if placed.batched {
+        } else if cube_space.batched {
             Some(Self::Batched)
-        } else if placed.space == MatmulSpace::BlockSplit {
+        } else if cube_space.axes_kind == MatmulAxesKind::BlockSplit {
             Some(Self::BlockSplit)
         } else if buffers.alignments.get(out).is_stored_piece()
             || !buffers
@@ -87,7 +87,10 @@ impl CubeStagedTmaStoreRefusal {
             .is_multiple_of(TMA_ALIGNMENT_BYTES as u64)
         {
             Some(Self::UnalignedStart)
-        } else if Delivery::Tma.moves(&placed.cube.subspace(&[M, N])).is_err() {
+        } else if Delivery::Tma
+            .moves(&cube_space.space.subspace(&[M, N]))
+            .is_err()
+        {
             Some(Self::BoxPastDescriptor)
         } else {
             None
@@ -96,7 +99,7 @@ impl CubeStagedTmaStoreRefusal {
 }
 
 impl CubeStagedStore {
-    /// This store as `hw` runs it for `item` over `buffers`, its cubes handed the box `placed`
+    /// This store as `hw` runs it for `item` over `buffers`, its cubes handed the box `cube_space`
     /// and reaching the output as `write`, its planes split `planes_along_k` ways along `K`: the
     /// TMA engine where nothing refuses it ([`CubeStagedTmaStoreRefusal`]), the fragments
     /// elsewhere.
@@ -105,7 +108,7 @@ impl CubeStagedStore {
         hw: &Hardware,
         item: &MatmulWorkItem,
         buffers: &MatmulBuffers,
-        placed: &MatmulCubeBox,
+        cube_space: &MatmulCubeSpace,
         write: MatmulCubeWrite,
         planes_along_k: NonZeroUsize,
     ) -> Self {
@@ -114,7 +117,7 @@ impl CubeStagedStore {
                 hw,
                 item,
                 buffers,
-                placed,
+                cube_space,
                 write,
                 planes_along_k,
             ) {

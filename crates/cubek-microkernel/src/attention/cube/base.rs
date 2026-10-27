@@ -191,7 +191,7 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     type WorkItem = AttentionWorkItem;
     type Settings = CubeAttentionMicrokernelSettings<M::Settings>;
     type Operand = AttentionOperand;
-    type Placed = Space;
+    type CubeSpace = Space;
 
     const DECLINE: &'static str = M::DECLINE;
 
@@ -235,8 +235,8 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     }
 
     /// Its planes', whose reads its ring copies where it stages them.
-    fn vectorize(&self, cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
-        self.plane.vectorize(cube, vectorization);
+    fn vectorize(&self, cube_space: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+        self.plane.vectorize(cube_space, vectorization);
     }
 
     /// Its plane microkernel's work, and the staging, which it places: its box of the query, and
@@ -245,12 +245,12 @@ impl<M: CubePlaneMicrokernel> Microkernel for CubeAttentionMicrokernel<M> {
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        cube: &Space,
+        cube_space: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.plane.estimate(item, cube, planes, estimate);
-        self.staging(item).count(item, cube, estimate);
+        self.plane.estimate(item, cube_space, planes, estimate);
+        self.staging(item).count(item, cube_space, estimate);
     }
 }
 

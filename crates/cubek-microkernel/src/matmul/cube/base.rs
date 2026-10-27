@@ -1,20 +1,21 @@
-use crate::matmul::{MatmulAxes, MatmulSpace, MatmulStage, MatmulWorkItem};
-use cubecl::tile::Space;
+use crate::matmul::{MatmulAxes, MatmulAxesKind, MatmulStage, MatmulWorkItem};
 use cubecl::tile::launch::Refusal;
+use cubecl::tile::{Axis, Space};
 
-/// The box a cube microkernel is handed: what it stages and walks of its routine's placement, and
-/// what of that placement its refusals read. The placement itself is the routine's.
+/// The space a cube microkernel is handed: the part of the problem one cube covers, the stage it
+/// walks through it, and what of its routine's placement its refusals read. The placement itself
+/// is the routine's.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MatmulCubeBox {
+pub struct MatmulCubeSpace {
     /// One batch of the output's `m × n` box, and the whole of `k`, or the cube's run of it where
     /// several cubes share the box.
-    pub cube: Space,
+    pub space: Space,
     /// The box one step of its walk through `K` stages.
     pub stage: MatmulStage,
     /// The innermost box: what one instruction, or one unit's block, covers.
     pub leaf: Space,
-    /// The space the box is stated over.
-    pub space: MatmulSpace,
+    /// The axes the problem, and so this space, is stated over.
+    pub axes_kind: MatmulAxesKind,
     /// Whether the boxes overhang the output: a box the output's edge cuts short, which a write
     /// that cannot be masked would reach past.
     pub overhangs_output: bool,
@@ -22,7 +23,12 @@ pub struct MatmulCubeBox {
     pub batched: bool,
 }
 
-impl MatmulCubeBox {
+impl MatmulCubeSpace {
+    /// Its extent along `axis`.
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.space.extent(axis)
+    }
+
     /// What a cube microkernel declines an item on other axes with: it places and stages in
     /// matmul's own `M`, `N` and `K`.
     pub const OTHER_AXES: Refusal = Refusal::Declined {

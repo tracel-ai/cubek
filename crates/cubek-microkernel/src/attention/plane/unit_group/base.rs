@@ -45,7 +45,7 @@ impl Microkernel for PlaneUnitGroupAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
     type Settings = UnitAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
-    type Placed = Space;
+    type CubeSpace = Space;
 
     const DECLINE: &'static str = "the plane unit group lays a block of rows on each of its units, \
          which needs a plane width the device commits to";
@@ -75,19 +75,19 @@ impl Microkernel for PlaneUnitGroupAttentionMicrokernel {
     }
 
     /// Its unit's.
-    fn vectorize(&self, cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
-        self.unit.vectorize(cube, vectorization);
+    fn vectorize(&self, cube_space: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+        self.unit.vectorize(cube_space, vectorization);
     }
 
     /// Its unit's: every unit holds its blocks, beside the softmax state of its rows.
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        cube: &Space,
+        cube_space: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.unit.estimate(item, cube, planes, estimate);
+        self.unit.estimate(item, cube_space, planes, estimate);
     }
 }
 

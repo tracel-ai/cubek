@@ -97,7 +97,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
     type Settings = PlaneShuffleAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
-    type Placed = Space;
+    type CubeSpace = Space;
 
     const DECLINE: &'static str = "the plane shuffle sums a key's partial dots across its team, \
          which needs a plane width the device commits to and its settings' units per key divide, \
@@ -150,7 +150,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
 
     /// The query, keys and values lined alike: a unit's line of a row's query meets the same
     /// line of each key, and its line of the row's output sums the same line of each value.
-    fn vectorize(&self, _cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+    fn vectorize(&self, _cube_space: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
         for operand in [
             AttentionOperand::Key,
             AttentionOperand::Value,
@@ -168,7 +168,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        cube: &Space,
+        cube_space: &Space,
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
@@ -188,7 +188,7 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
                 out: 1,
             },
         }
-        .count(item, cube, estimate);
+        .count(item, cube_space, estimate);
         estimate.work = Some(UnitWork {
             instruction: ArithmeticInstruction::Vector,
             registers: self.registers_per_unit(item),

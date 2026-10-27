@@ -2,10 +2,10 @@ use crate::matmul::MatmulAxes;
 use cubecl::tile::{Axis, Space};
 use cubek_std::matmul_axes::{K, KB, M, MI, N, NI};
 
-/// The space a product is stated over, which a placement's walk, its stage and its output's axes
+/// The axes a product is stated over, which a placement's walk, its stage and its output's axes
 /// are read in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MatmulSpace {
+pub enum MatmulAxesKind {
     /// Matmul's own `M`, `N` and `K`, and the batches beside them.
     Plain,
     /// A packed product's: each axis as the blocks its rhs's scales make of it and the position
@@ -14,7 +14,7 @@ pub enum MatmulSpace {
     BlockSplit,
 }
 
-impl MatmulSpace {
+impl MatmulAxesKind {
     /// The space `space` is: block-split where it carries `K`'s blocks.
     pub fn of(space: &Space) -> Self {
         match space.contains(KB) {

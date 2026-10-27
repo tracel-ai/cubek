@@ -37,7 +37,7 @@ where
     type WorkItem = AttentionWorkItem;
     type Settings = HypercubeAttentionMicrokernelSettings<M::Settings>;
     type Operand = AttentionOperand;
-    type Placed = Space;
+    type CubeSpace = Space;
 
     const DECLINE: &'static str = "the hypercube attention needs a cube microkernel the device \
          runs and a plane width the device commits to; cubes that stage hold one plane along the \
@@ -66,8 +66,8 @@ where
     }
 
     /// Its cube's: the slots and the output are written whole lines at a time.
-    fn vectorize(&self, cube: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
-        self.cube.vectorize(cube, vectorization);
+    fn vectorize(&self, cube_space: &Space, vectorization: &mut Vectorization<AttentionOperand>) {
+        self.cube.vectorize(cube_space, vectorization);
     }
 
     /// Its cube's, walking a cube's run of the keys as it would walk them all; then its own: the
@@ -76,12 +76,12 @@ where
     fn estimate(
         &self,
         item: &AttentionWorkItem,
-        cube: &Space,
+        cube_space: &Space,
         planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        self.cube.estimate(item, cube, planes, estimate);
-        let rows = (cube.extent(Q) * cube.extent(G)) as u64;
+        self.cube.estimate(item, cube_space, planes, estimate);
+        let rows = (cube_space.extent(Q) * cube_space.extent(G)) as u64;
         let size = item.sum.size();
         let partial = GlobalStream {
             bytes: rows * (item.val_dim as u64 + 2) * size as u64,

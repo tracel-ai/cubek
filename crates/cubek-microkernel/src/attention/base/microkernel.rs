@@ -6,7 +6,7 @@ use cubek_std::microkernel::Microkernel;
 /// A microkernel of this kind, as its routines and their blueprint read it beside what every
 /// microkernel states.
 pub trait AttentionMicrokernel:
-    Microkernel<WorkItem = AttentionWorkItem, Operand = AttentionOperand, Placed = Space>
+    Microkernel<WorkItem = AttentionWorkItem, Operand = AttentionOperand, CubeSpace = Space>
     + core::fmt::Display
 {
     /// The order its score reads its rhs, the keys, in, which the launch binds them in:

@@ -2,7 +2,7 @@
 //! folder per scope ([`unit`](mod@unit), [`plane`], [`cube`], [`hypercube`]), each named by
 //! algorithm. Beside them, what the product is, which all of them and its kernels read: the
 //! [`MatmulWorkItem`], its axes and operands, the [`MatmulStep`] every load of a product fills
-//! whole, the [`MatmulMicrokernel`] trait, the [`MatmulSpace`] a product is stated over, and the
+//! whole, the [`MatmulMicrokernel`] trait, the [`MatmulAxesKind`] a product is stated over, and the
 //! [`MatmulStage`] a walk through `K` stages, its stages held in the
 //! [`StageRing`](cubek_std::microkernel::StageRing).
 

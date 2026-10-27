@@ -167,7 +167,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             microkernel.cube.fill.filling_planes,
             "a cube is launched over its launch tiling, beside the planes its fill sets aside"
         );
-        microkernel.vectorize(&partitioning.placed(), vectorization);
+        microkernel.vectorize(&partitioning.cube_space(), vectorization);
     }
 
     /// Its cubes' microkernel's, over one cube's run as if it were one tile's contraction: a run
@@ -187,7 +187,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             &MatmulView::of::<HypercubeStagedMicrokernel>(problem)
                 .expect(MatmulView::PREPARED)
                 .work_item(),
-            &Self::one_run(partitioning, cubes as usize).placed(),
+            &Self::one_run(partitioning, cubes as usize).cube_space(),
             grid.planes(),
             estimate,
         );
@@ -216,7 +216,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
             &view
                 .shared_partitioning(microkernel.cube.tiling(), &[M, N], target)
-                .placed(),
+                .cube_space(),
         )?;
         let partitioning =
             view.shared_partitioning(resolved.microkernel.launch_tiling(), &[M, N], target);
