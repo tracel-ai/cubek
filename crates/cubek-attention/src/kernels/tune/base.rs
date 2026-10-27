@@ -103,7 +103,7 @@ fn many_queries(
     );
     let routines = autotune.group("microkernel", priority);
     autotune = autotune
-        .read_cold(AttentionTuneInputs::many_queries_roofline)
+        .bounded(AttentionTuneInputs::many_queries_roofline)
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(
@@ -181,7 +181,7 @@ fn one_query(
     );
     let routines = autotune.group("microkernel", priority);
     autotune = autotune
-        .read_cold(AttentionTuneInputs::one_query_roofline)
+        .bounded(AttentionTuneInputs::one_query_roofline)
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw),

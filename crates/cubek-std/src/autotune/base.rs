@@ -319,30 +319,6 @@ impl<K: AutotuneKey, I: TuneInputs, O: 'static, Id: Identity> Autotune<K, I, O, 
         }
     }
 
-    /// The cold read of [`bounded`](Self::bounded) without the early stop.
-    ///
-    /// A round that ends at the first candidate under the limit is only sound
-    /// while every candidate's time is real. A candidate timed at **zero**
-    /// clears any limit, so the round stops at it and persists that candidate
-    /// with the rest unmeasured; the attention autotunes have met such a
-    /// candidate. The limit is not what fails, the reading is.
-    ///
-    /// So the stop waits until a zero cannot be reported as a time. The cold
-    /// read stays, because that reason is untouched: a problem inside the
-    /// last-level cache is otherwise measured from it, and production reads it
-    /// after every other weight of the model.
-    pub fn read_cold<F>(self, roofline: F) -> Self
-    where
-        F: for<'a> Fn(&K, &<I as TuneInputs>::At<'a>) -> Roofline + Send + Sync + 'static,
-    {
-        Self {
-            set: self
-                .set
-                .with_eviction(Arc::new(ReadCold(Arc::new(roofline)))),
-            ..self
-        }
-    }
-
     /// Add the candidate that answers a key every group declined — and that a
     /// file taking every group out of the autotune still reaches, because a plan
     /// cubecl cannot fill is a panic rather than an empty result.
