@@ -1,6 +1,6 @@
 //! The problem a routine computes, and the axis its queries are read along.
 
-use crate::kernels::{AttentionVisibility, PackedLayout};
+use crate::kernels::{AttentionVisibility, PackedLayout, QueryPlacement};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Refusal;
@@ -223,10 +223,13 @@ pub enum QueryAxis {
 }
 
 impl QueryAxis {
-    /// The query axis of an attention of `queries` positions.
-    pub fn new(queries: usize) -> Self {
-        match queries {
-            1 => Self::GroupHeads,
+    /// The query axis of an attention of `queries` positions seeing the keys `visibility` says.
+    /// Only a position that is the last attended one reads the group's heads along the query
+    /// axis: a causal query placed first sees the first key alone, which no visibility of a
+    /// group's heads states.
+    pub fn new(queries: usize, visibility: AttentionVisibility) -> Self {
+        match (queries, visibility.queries()) {
+            (1, None | Some(QueryPlacement::Last)) => Self::GroupHeads,
             _ => Self::Positions,
         }
     }
@@ -499,18 +502,20 @@ mod tests {
     }
 
     /// A single position reads its group as rows of one head, every one attending every key: a
-    /// causal single position sees every attended key, so nothing is masked differently. More
-    /// positions keep their own rows and visibility.
+    /// causal single position placed last sees every attended key, so nothing is masked
+    /// differently. Placed first, it sees the first key alone, so it keeps its own rows, as more
+    /// positions do.
     #[test]
     fn a_single_position_reads_its_group_as_rows() {
+        let causal = |queries| AttentionVisibility::Causal { queries };
+        let last = causal(QueryPlacement::Last);
+        let first = causal(QueryPlacement::First);
         assert_eq!(
-            QueryAxis::new(1).read(4, 1, AttentionVisibility::Causal),
+            QueryAxis::new(1, last).read(4, 1, last),
             (1, 4, AttentionVisibility::Attended)
         );
-        assert_eq!(
-            QueryAxis::new(7).read(4, 7, AttentionVisibility::Causal),
-            (4, 7, AttentionVisibility::Causal)
-        );
+        assert_eq!(QueryAxis::new(7, last).read(4, 7, last), (4, 7, last));
+        assert_eq!(QueryAxis::new(1, first).read(4, 1, first), (4, 1, first));
     }
 
     /// A windowed single position keeps its window as rows: every head of the group sees the
@@ -519,13 +524,22 @@ mod tests {
     #[test]
     fn a_single_position_keeps_its_window_as_rows() {
         let window = core::num::NonZeroUsize::new(512).unwrap();
-        let windowed = AttentionVisibility::new(true, Some(window));
-        assert_eq!(windowed, AttentionVisibility::Windowed { window });
+        let windowed = AttentionVisibility::new(true, Some(window), QueryPlacement::Last);
         assert_eq!(
-            QueryAxis::new(1).read(4, 1, windowed),
+            windowed,
+            AttentionVisibility::Windowed {
+                window,
+                queries: QueryPlacement::Last
+            }
+        );
+        assert_eq!(
+            QueryAxis::new(1, windowed).read(4, 1, windowed),
             (1, 4, AttentionVisibility::Recent { window })
         );
-        assert_eq!(QueryAxis::new(7).read(4, 7, windowed), (4, 7, windowed));
+        assert_eq!(
+            QueryAxis::new(7, windowed).read(4, 7, windowed),
+            (4, 7, windowed)
+        );
         assert!(windowed.is_causal());
         assert!(!AttentionVisibility::Recent { window }.is_causal());
     }

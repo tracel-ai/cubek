@@ -109,7 +109,7 @@ mod tests {
     /// the problems autotune reads off its keys.
     fn problems() -> [AttentionRoutineProblem; 2] {
         [(512, 512, true), (1, 4096, false)].map(|(queries, keys, causal)| {
-            let visibility = AttentionVisibility::new(causal, None);
+            let visibility = AttentionVisibility::new(causal, None, QueryPlacement::Last);
             let key = AttentionKey::new(
                 F16,
                 32,
@@ -121,6 +121,7 @@ mod tests {
                 visibility,
                 ScoreScale::standard(128),
                 None,
+                false,
             );
             AttentionRoutineProblem::try_from(&key).expect("an even group")
         })

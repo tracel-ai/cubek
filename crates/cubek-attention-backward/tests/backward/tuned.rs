@@ -3,7 +3,7 @@
 use super::reference::{Case, Reference};
 use cubecl::prelude::*;
 use cubek_attention_backward::attention_backward;
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 
 /// Four query heads over two key heads, causal, and no box of any routine that divides the
 /// queries or the keys evenly.
@@ -15,7 +15,10 @@ const CASE: Case = Case {
     seq_kv: 27,
     head_dim: 16,
     val_dim: 16,
-    visibility: AttentionVisibility::Causal,
+    visibility: AttentionVisibility::Causal {
+        queries: QueryPlacement::Last,
+    },
+    hidden: None,
 };
 
 /// Whichever routine autotune elects, the gradients are the host's.

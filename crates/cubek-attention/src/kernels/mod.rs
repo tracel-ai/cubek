@@ -27,7 +27,7 @@ pub use scoring::*;
 pub use tensors::*;
 pub use tune::AttentionRoutineCandidate;
 
-pub use cubek_microkernel::attention::AttentionVisibility;
+pub use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 
 pub use select::{AttentionKernel, AttentionKernelHeuristic, AttentionOpStrategy};
 

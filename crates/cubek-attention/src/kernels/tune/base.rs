@@ -11,7 +11,7 @@ use crate::kernels::{
     AttentionBlueprint, AttentionRoutine, AttentionRoutineCandidate, AttentionRoutineProblem,
     AttentionScoring, AttentionTensors, CubeShuffleAttentionRoutine, CubeStagedAttentionRoutine,
     HypercubeLastArrivalShuffleAttentionRoutine, HypercubeSecondLaunchFragmentAttentionRoutine,
-    HypercubeSecondLaunchShuffleAttentionRoutine, UnitAttentionRoutine,
+    HypercubeSecondLaunchShuffleAttentionRoutine, QueryPlacement, UnitAttentionRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
@@ -48,6 +48,8 @@ pub struct AttentionTuneInputs {
     /// The `u32` counters the cubes of a box count themselves in at, held across launches.
     arrivals: Option<PlainTensor>,
     scoring: AttentionScoring,
+    /// The `[b, h, q, s]` mask hiding keys from the call's queries ([`with_mask`](Self::with_mask)).
+    mask: Option<PlainTensor>,
     tensors: AttentionTensors,
 }
 
@@ -289,8 +291,17 @@ impl AttentionTuneInputs {
             pages,
             arrivals,
             scoring,
+            mask: None,
             tensors,
         })
+    }
+
+    /// The same attention, each query not seeing the keys `mask` hides
+    /// ([`AttentionTensors::with_mask`]).
+    pub fn with_mask(mut self, mask: PlainTensor) -> Self {
+        self.tensors = self.tensors.with_mask(mask.clone());
+        self.mask = Some(mask);
+        self
     }
 
     /// The same attention, writing beside its output each query's logsumexp
@@ -329,13 +340,19 @@ impl AttentionTuneInputs {
         2 * batch * self.kv_heads() * self.keys() * dim * self.key.elem.size()
     }
 
-    /// The key many query positions are tuned under. A chunk — queries the tail of a longer
-    /// prefix — is stated as the one chunk every chunk key stands for.
+    /// The key many query positions are tuned under. A chunk — queries the tail of a prefix at
+    /// least as long as the one every chunk key stands for — is stated as that one chunk: a
+    /// winner measured on its prefix serves every buffer that holds as many keys. Anything else
+    /// keeps its own extents: a whole prompt, causal queries placed first, or queries against a
+    /// shorter buffer, which a winner measured on the longer one may not serve.
     fn many_queries_key(&self) -> AttentionKey {
         let q = self.query.shape();
-        let (queries, keys) = match q[2] == self.keys() {
-            true => (q[2], self.keys()),
-            false => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
+        let chunk = q[2] != self.keys()
+            && self.scoring.visibility.queries() != Some(QueryPlacement::First)
+            && self.keys() >= AttentionKey::CHUNK_PREFIX;
+        let (queries, keys) = match chunk {
+            true => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
+            false => (q[2], self.keys()),
         };
         AttentionKey::new(
             self.query.elem,
@@ -348,6 +365,7 @@ impl AttentionTuneInputs {
             self.scoring.visibility,
             self.scoring.scale,
             self.page_size(),
+            self.mask.is_some(),
         )
     }
 
@@ -367,6 +385,7 @@ impl AttentionTuneInputs {
             self.scoring.visibility,
             self.scoring.scale,
             self.page_size(),
+            self.mask.is_some(),
         )
     }
 
@@ -475,7 +494,18 @@ impl AttentionTuneInputs {
             None => positions,
         };
         let lengths = upload_u32(&self.client, &[batch], &vec![keys as u32; batch]);
-        Self::new(
+        // A mask's cells change which scores count, not what a launch reads or how many steps it
+        // takes: one cell of the call's element, at stride zero over the measured scores.
+        let mask = self.mask.as_ref().map(|mask| {
+            let [batch, heads, queries, _] = query.shape().dims::<4>();
+            zeros(
+                &self.client,
+                &[batch, heads, queries, keys],
+                vec![0; 4],
+                mask.elem,
+            )
+        });
+        let measured = Self::new(
             &self.client,
             query,
             key,
@@ -485,7 +515,11 @@ impl AttentionTuneInputs {
             arrivals,
             self.scoring,
         )
-        .expect("operands of the call's elements and heads are admitted as the call's were")
+        .expect("operands of the call's elements and heads are admitted as the call's were");
+        match mask {
+            Some(mask) => measured.with_mask(mask),
+            None => measured,
+        }
     }
 
     fn many_queries_work(&self) -> Work {
@@ -690,7 +724,7 @@ fn zeros_grown(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::{AttentionVisibility, ScoreScale};
+    use crate::kernels::{AttentionVisibility, QueryPlacement, ScoreScale};
 
     /// Qwen3-8B prefilling 512 tokens: 32 heads over a 128-wide head dim.
     const SHAPE: (usize, usize, usize, usize, usize) = (1, 32, 512, 512, 128);
@@ -707,9 +741,12 @@ mod tests {
             AttentionKey::CHUNK_QUERIES,
             AttentionKey::CHUNK_PREFIX,
             1,
-            AttentionVisibility::Causal,
+            AttentionVisibility::Causal {
+                queries: QueryPlacement::Last,
+            },
             ScoreScale::standard(128),
             None,
+            false,
         );
         let problem = chunk_problem(&key).expect("a chunk key has a problem");
         assert_eq!(problem.seq_kv, key.seq_kv());

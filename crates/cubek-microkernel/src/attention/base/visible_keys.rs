@@ -1,7 +1,8 @@
-use crate::attention::{AttentionVisibility, G, Q, S};
+use crate::attention::{AttentionVisibility, B, G, Q, QueryPlacement, S};
 use cubecl::tile::{
     Axis, Partitioning, Region, Space, Tile,
-    procedural::{Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
+    procedural::{MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
+    space::Coords,
 };
 use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 
@@ -9,32 +10,67 @@ use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 /// minimum value elsewhere. A microkernel that holds a tile of scores sums the bias into it; one
 /// that scores keys in its own registers asks [`sees`](VisibleKeys::sees). A query sees the first
 /// `attended` keys; under [`Causal`](AttentionVisibility::Causal) none past its own position: query `q` of
-/// `queries` sees key `s` where `s + queries ≤ q + attended`; under
+/// `queries` sees key `s` where `s + queries ≤ q + queries_end`; under
 /// [`Windowed`](AttentionVisibility::Windowed) none `window` or more before it either, where
-/// `s + queries + window > q + attended`; and under [`Recent`](AttentionVisibility::Recent) the
-/// last `window` of them, where `s + window ≥ attended`.
+/// `s + queries + window > q + queries_end`; under [`Recent`](AttentionVisibility::Recent) the
+/// last `window` of them, where `s + window ≥ attended`; and, where there is a mask, none whose
+/// cell is not zero.
 #[derive(CubeType, Clone)]
 pub struct VisibleKeys {
     /// Keys attended, a prefix of the buffers': none past it is read.
     pub attended: u32,
     pub seq_q: u32,
+    /// The key position just past the last query: the attended keys' end where the queries are
+    /// their last positions, `seq_q` where they are the first.
+    queries_end: u32,
+    /// The mask cut to the owner's sequence and key head: a key whose cell is not zero is hidden.
+    mask: ComptimeOption<MemoryValues>,
     #[cube(comptime)]
     pub visibility: AttentionVisibility,
 }
 
 #[cube]
 impl VisibleKeys {
-    /// What sequence `batch`'s `queries` see: its entry of `len`, read by stride, so a single
-    /// length bound at stride zero is every sequence's.
+    /// What the queries of `owner`'s sequence and key head see: its sequence's entry of `len`,
+    /// read by stride, so a single length bound at stride zero is every sequence's; `queries` of
+    /// them; and the cells of `mask`, over `[B, KV, G, Q, S]`, where there is one.
     pub fn new(
         len: &Tensor<u32>,
-        batch: usize,
+        owner: &Region,
+        queries: u32,
+        mask: &ComptimeOption<Tile>,
+        #[comptime] visibility: AttentionVisibility,
+    ) -> VisibleKeys {
+        let attended = len[owner.origin(B) * len.stride(0)];
+        let queries_end = match comptime!(visibility.queries()) {
+            Some(QueryPlacement::First) => queries,
+            Some(QueryPlacement::Last) | None => attended,
+        };
+        VisibleKeys {
+            attended,
+            seq_q: queries,
+            queries_end,
+            mask: mask.clone().map(|mask| mask.at(owner).values()),
+            visibility,
+        }
+    }
+
+    /// What `queries` see of the first `keys` keys, with no mask: a launch that states the keys
+    /// as one count for every sequence, as the backward walks do.
+    pub fn of_keys(
+        keys: u32,
         queries: u32,
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
+        let queries_end = match comptime!(visibility.queries()) {
+            Some(QueryPlacement::First) => queries,
+            Some(QueryPlacement::Last) | None => keys,
+        };
         VisibleKeys {
-            attended: len[batch * len.stride(0)],
+            attended: keys,
             seq_q: queries,
+            queries_end,
+            mask: ComptimeOption::new_None(),
             visibility,
         }
     }
@@ -63,6 +99,8 @@ impl VisibleKeys {
             VisibleKeys {
                 attended: self.attended,
                 seq_q: self.seq_q,
+                queries_end: self.queries_end,
+                mask: self.mask.clone(),
                 visibility: comptime!(self.visibility),
             },
         )
@@ -71,14 +109,14 @@ impl VisibleKeys {
 
     /// Steps of `queries_per_step` queries before the first that sees `region`'s first key: what
     /// a walk owned by the keys skips. Under a causal visibility a query sees no key past its own
-    /// position, so the queries before `s + queries − attended` see none of the region's; every
-    /// query may see a key otherwise.
+    /// position, so the queries before `s + queries − queries_end` see none of the region's;
+    /// every query may see a key otherwise.
     pub fn first_query_step(&self, region: &Region, #[comptime] queries_per_step: usize) -> usize {
         let mut first = 0usize;
         if comptime!(self.visibility.is_causal()) {
             let reach = region.origin(S) + self.seq_q as usize;
-            if reach > self.attended as usize {
-                first = reach - self.attended as usize;
+            if reach > self.queries_end as usize {
+                first = reach - self.queries_end as usize;
             }
         }
         first / queries_per_step
@@ -92,7 +130,7 @@ impl VisibleKeys {
     ///
     /// A window bounds the keys a query sees from below too, and the walk still starts at
     /// `region`'s first key: a step wholly before the window weighs nothing in the softmax, which
-    /// keeps a masked slice's zero sum.
+    /// keeps a masked slice's zero sum. A mask is read as the steps are, never to count them.
     pub fn steps(
         &self,
         region: &Region,
@@ -102,9 +140,9 @@ impl VisibleKeys {
     ) -> usize {
         let mut seen = self.attended as usize;
         if comptime!(self.visibility.is_causal()) {
-            // Query `q` sees key `s` where `s + queries ≤ q + attended`: the region's last query
-            // sees below `reach`.
-            let reach = region.origin(Q) + region_queries + self.attended as usize;
+            // Query `q` sees key `s` where `s + queries ≤ q + queries_end`: the region's last
+            // query sees below `reach`.
+            let reach = region.origin(Q) + region_queries + self.queries_end as usize;
             if reach > self.seq_q as usize {
                 seen = seen.min(reach - self.seq_q as usize);
             } else {
@@ -120,18 +158,29 @@ impl VisibleKeys {
         ahead.div_ceil(in_turns)
     }
 
-    /// Whether query `query` sees key `key`.
-    pub fn sees(&self, query: u32, key: u32) -> bool {
+    /// Whether query `query` of head `head` in its key head's group sees key `key`.
+    pub fn sees(&self, head: u32, query: u32, key: u32) -> bool {
         let mut seen = key < self.attended;
         if comptime!(self.visibility.is_causal()) {
-            seen = seen && key + self.seq_q <= query + self.attended;
+            seen = seen && key + self.seq_q <= query + self.queries_end;
         }
         if comptime!(self.visibility.window().is_some()) {
             let window = comptime!(self.visibility.window().unwrap().get() as u32);
             if comptime!(self.visibility.is_causal()) {
-                seen = seen && key + self.seq_q + window > query + self.attended;
+                seen = seen && key + self.seq_q + window > query + self.queries_end;
             } else {
                 seen = seen && key + window >= self.attended;
+            }
+        }
+        #[comptime]
+        match &self.mask {
+            ComptimeOption::None => {}
+            ComptimeOption::Some(mask) => {
+                let mut cell = Coords::<u32>::new();
+                cell.push(head);
+                cell.push(query);
+                cell.push(key);
+                seen = seen && mask.read::<u32>(comptime!(vec![G, Q, S]), &cell) == 0;
             }
         }
         seen
@@ -141,13 +190,18 @@ impl VisibleKeys {
 #[cube]
 impl<E: Numeric> Recipe<E> for VisibleKeys {
     fn evaluate(&self, coordinates: &RecipeCoords) -> E {
-        let seen = self.sees(coordinates.along(Q), coordinates.along(S));
+        let seen = self.sees(
+            coordinates.along(G),
+            coordinates.along(Q),
+            coordinates.along(S),
+        );
         select(seen, E::from_int(0), E::min_value())
     }
 }
 
 impl Reads for VisibleKeysExpand {
     fn reads(&self, _scope: &Scope, axis: Axis) -> bool {
-        axis == S || (self.visibility.is_causal() && axis == Q)
+        let masked = self.mask.is_some();
+        axis == S || ((self.visibility.is_causal() || masked) && axis == Q) || (masked && axis == G)
     }
 }

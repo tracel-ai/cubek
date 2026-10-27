@@ -4,7 +4,7 @@ use crate::attention::plane::{
     CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel,
     GlobalPlaneOperands,
 };
-use crate::attention::{D, Q, S, VisibleKeys};
+use crate::attention::{D, G, Q, S, VisibleKeys};
 use cubecl::tile::{Monoid, Region, Tile, Walk, space::UnitShare};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -239,6 +239,7 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
         let unit = UNIT_POS_PLANE as usize;
         let (team, lane) = (unit / units_per_key, unit % units_per_key);
         let (first_query, first_key) = (plane.origin(Q), plane.origin(S));
+        let head = plane.origin(G) as u32;
         let walk = StepWalk {
             team,
             lane,
@@ -282,14 +283,14 @@ impl<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
             let mut after = before;
             #[unroll]
             for c in 0..in_flight {
-                if visible.sees(query, (first_key + c * teams + team) as u32) {
+                if visible.sees(head, query, (first_key + c * teams + team) as u32) {
                     after = max(after, scores[c]);
                 }
             }
             let mut added = EA::from_int(0);
             #[unroll]
             for c in 0..in_flight {
-                let seen = visible.sees(query, (first_key + c * teams + team) as u32);
+                let seen = visible.sees(head, query, (first_key + c * teams + team) as u32);
                 let weight = select(seen, (scores[c] - after).exp(), EA::from_int(0));
                 weights[r * in_flight + c] = weight;
                 added += weight;

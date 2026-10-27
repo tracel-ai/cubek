@@ -7,7 +7,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
 use cubek_attention_backward::{AttentionBackwardGradients, AttentionBackwardTensors};
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_microkernel::attention::AttentionVisibility;
+use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 /// The shape of one backward pass, and how its queries see its keys.
@@ -21,6 +21,9 @@ pub struct Case {
     pub head_dim: usize,
     pub val_dim: usize,
     pub visibility: AttentionVisibility,
+    /// A mask's pattern, where the case has one: query `i` of head `h` in sequence `b` does not
+    /// see key `j` where `hidden([b, h, i, j])` holds.
+    pub hidden: Option<fn([usize; 4]) -> bool>,
 }
 
 impl Case {
@@ -28,18 +31,27 @@ impl Case {
         1. / (self.head_dim as f64).sqrt()
     }
 
-    /// Whether query `i` sees key `j`: the queries are the last positions of the keys.
-    fn sees(&self, i: usize, j: usize) -> bool {
+    /// Whether query `i` of head `h` in sequence `b` sees key `j`: the queries sit among the
+    /// keys as the visibility places them, the last positions or the first, and the mask hides
+    /// what it hides.
+    fn sees(&self, b: usize, h: usize, i: usize, j: usize) -> bool {
         let (queries, keys) = (self.seq_q, self.seq_kv);
+        let queries_end = match self.visibility.queries() {
+            Some(QueryPlacement::First) => queries,
+            Some(QueryPlacement::Last) | None => keys,
+        };
         let mut seen = true;
         if self.visibility.is_causal() {
-            seen &= j + queries <= i + keys;
+            seen &= j + queries <= i + queries_end;
         }
         if let Some(window) = self.visibility.window() {
             seen &= match self.visibility.is_causal() {
-                true => j + queries + window.get() > i + keys,
+                true => j + queries + window.get() > i + queries_end,
                 false => j + window.get() >= keys,
             };
+        }
+        if let Some(hidden) = self.hidden {
+            seen &= !hidden([b, h, i, j]);
         }
         seen
     }
@@ -105,7 +117,7 @@ impl Reference {
                     let row = (b * heads + h) * seq_q + i;
                     let scores: Vec<Option<f64>> = (0..seq_kv)
                         .map(|j| {
-                            case.sees(i, j).then(|| {
+                            case.sees(b, h, i, j).then(|| {
                                 (0..head_dim)
                                     .map(|d| get(&q, [b, h, i, d]) * get(&k, [b, kv, j, d]))
                                     .sum::<f64>()
