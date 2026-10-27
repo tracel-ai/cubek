@@ -1,22 +1,23 @@
+use super::super::blueprint::hypercube_blueprint;
 use super::kernel::hypercube_last_arrival_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::VectorRequirement;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulPartitioning;
-use cubek_microkernel::matmul::cube::CubeStagedDelivery;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
+use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -198,21 +199,34 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        problem.check_plain()?;
         problem.check_unindexed()?;
         let view = MatmulView::of::<HypercubeStagedMicrokernel>(problem)?;
         let item = view.work_item();
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        if microkernel.cube.walk().decoded().is_some() {
+            view.check_steps(hw)?;
+        }
         let target = Self::cubes(hw, settings)?;
+        // Against packed inputs each cube contracts them as its microkernel reads them, over the
+        // block-split space, its share of the walk whole blocks of `K`.
+        let axes = [item.axes.m, item.axes.n];
         let resolved = microkernel.cube.resolve(
             hw,
-            &item,
+            &microkernel.cube.contracted(&item),
             &problem.buffers(microkernel.cube.plane.orders),
             <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
-            &view.shared_partitioning(microkernel.cube.tiling(), &[M, N], target),
+            &view.shared_partitioning(microkernel.cube.tiling(), &axes, target),
         )?;
         let partitioning =
-            view.shared_partitioning(resolved.microkernel.launch_tiling(), &[M, N], target);
+            view.shared_partitioning(resolved.microkernel.launch_tiling(), &axes, target);
+        let past_k = || {
+            [KB, KI]
+                .into_iter()
+                .any(|axis| partitioning.as_tile().overhangs(axis))
+        };
+        if item.blocks.is_some() && past_k() {
+            return Err(MATMUL_PACKED_WALK_PAST_K);
+        }
         let storage = resolved.storage;
         let cube = CubeResources {
             plane_width: resolved.plane_width,
@@ -222,26 +236,38 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             cube: resolved.microkernel,
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        vectorization.require(VectorRequirement::Access {
-            operand: MatmulOperand::Out,
-            elements: hw.vector_ceiling(problem.sum()),
-        });
-        let mut blueprint = MatmulBlueprint::new(
-            hw,
-            problem,
-            microkernel,
-            partitioning,
-            vectorization,
-            storage,
-        );
-        blueprint.microkernel.cube.fill = blueprint
-            .microkernel
-            .cube
-            .fill
-            .at_widths(&blueprint.widths, &item);
+        let blueprint = hypercube_blueprint(hw, problem, &item, microkernel, partitioning, storage);
         Ok((blueprint, grid))
+    }
+}
+
+impl HypercubeLastArrivalMatmulRoutine {
+    /// Cubes a worker the settings against a packed input race.
+    const PACKED_CUBES_PER_WORKER: [usize; 3] = [1, 2, 4];
+
+    /// The settings a product against a packed input races on `hw`: each box the cube staged
+    /// microkernel races against one ([`CubeStagedMicrokernel::packed_settings`]) whose planes
+    /// each drain their own tile and set none aside to fill, which is what a hypercube's cubes run,
+    /// at one, two and four cubes a worker. None where the routine's own list is empty: on a
+    /// device whose cubes do not meet within a launch, or that reports no workers.
+    pub fn packed_settings(&self, hw: &Hardware) -> Vec<HypercubeLastArrivalMatmulRoutineSettings> {
+        if self.settings(hw).is_empty() {
+            return Vec::new();
+        }
+        CubeStagedMicrokernel::packed_settings(hw)
+            .into_iter()
+            .filter(|cube| {
+                cube.planes_along_k == NonZeroUsize::MIN && cube.fill.filling_planes == 0
+            })
+            .flat_map(|cube| {
+                Self::PACKED_CUBES_PER_WORKER.map(|cubes| {
+                    HypercubeLastArrivalMatmulRoutineSettings {
+                        microkernel: HypercubeStagedMicrokernelSettings { cube },
+                        cubes_per_worker: NonZeroUsize::new(cubes).expect("a count of cubes"),
+                    }
+                })
+            })
+            .collect()
     }
 }
 
@@ -255,7 +281,13 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
         blueprint: HypercubeLastArrivalMatmulRoutineBlueprint,
         grid: Grid,
     ) {
-        let item = tensors.work_item();
+        // The elements its cubes contract: packed inputs a fill decodes at the element they decode
+        // into, ones read as stored at the element their values name.
+        let elements = blueprint
+            .microkernel
+            .cube
+            .contracted(&tensors.work_item())
+            .kernel_elements();
         let stage = blueprint.partitioning.stage();
         let merge = tensors.bind_last_arrival(&blueprint, &binding.launcher);
         let out_width = blueprint.widths.out;
@@ -280,7 +312,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel,
                     blueprint.shared_memory,
-                    item.kernel_elements(),
+                    elements,
                 );
             },
             CubeStagedDelivery::Tma => {
@@ -303,7 +335,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
                         binding.launcher.partitioning_arg(),
                         blueprint.microkernel,
                         blueprint.shared_memory,
-                        item.kernel_elements(),
+                        elements,
                     );
                 }
             }

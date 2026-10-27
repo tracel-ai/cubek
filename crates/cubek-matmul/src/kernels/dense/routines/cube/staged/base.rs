@@ -430,24 +430,38 @@ impl CubeStagedMatmulRoutine {
         partitioning: MatmulPartitioning,
         storage: StageStorage,
     ) -> CubeStagedMatmulRoutineBlueprint {
+        MatmulBlueprint {
+            widths: Self::widths_in_blocks(hw, contracted, &microkernel, &partitioning, &storage),
+            microkernel,
+            partitioning,
+            shared_memory: storage,
+        }
+    }
+
+    /// The widths a cube staged `microkernel` binds its operands at over a block-split space,
+    /// each placed as `partitioning` places it and staged as `storage` lays it: what
+    /// [`blueprint_in_blocks`](Self::blueprint_in_blocks) holds, and every routine whose cubes run
+    /// that microkernel over such a space.
+    pub(crate) fn widths_in_blocks(
+        hw: &Hardware,
+        contracted: &MatmulWorkItem,
+        microkernel: &CubeStagedMicrokernel,
+        partitioning: &MatmulPartitioning,
+        storage: &StageStorage,
+    ) -> MatmulOperands<usize> {
         let block = partitioning.cube_box().extent(KI);
         let width = |operand: MatmulOperand| match microkernel.reads.get(operand).staged() {
             Some(_) => Self::decoded_width(
                 microkernel.plane.leaf_extent(MatmulDim::K),
-                &storage,
+                storage,
                 contracted.elements.get(operand),
             ),
             None => hw.load_values(contracted.elements.get(operand)).min(block),
         };
-        MatmulBlueprint {
-            widths: MatmulOperands {
-                lhs: width(MatmulOperand::Lhs),
-                rhs: width(MatmulOperand::Rhs),
-                out: 1,
-            },
-            microkernel,
-            partitioning,
-            shared_memory: storage,
+        MatmulOperands {
+            lhs: width(MatmulOperand::Lhs),
+            rhs: width(MatmulOperand::Rhs),
+            out: 1,
         }
     }
 

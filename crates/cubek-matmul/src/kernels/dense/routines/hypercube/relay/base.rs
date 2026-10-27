@@ -1,12 +1,13 @@
+use super::super::blueprint::hypercube_blueprint;
 use super::kernel::hypercube_relay_matmul_kernel;
 use crate::kernels::MatmulBinding;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::VectorRequirement;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{Scratch, StageStorage, TileArgLaunch, launch::DestinationLaunch};
@@ -18,7 +19,7 @@ use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_axes::{KB, KI};
 use cubek_std::microkernel::StageRing;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -177,17 +178,27 @@ impl Routine for HypercubeRelayMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        problem.check_plain()?;
         problem.check_unindexed()?;
         let view = MatmulView::of::<HypercubeStagedMicrokernel>(problem)?;
         let item = view.work_item();
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        if microkernel.cube.walk().decoded().is_some() {
+            view.check_steps(hw)?;
+        }
+        // Against packed inputs each cube contracts them as its microkernel reads them, over the
+        // block-split space, and the cubes sharing a box each walk whole blocks of `K`.
+        let contracted = microkernel.cube.contracted(&item);
         let place = |tiling| {
-            view.partitioning(tiling, &[M, N], settings.cube_order, settings.cubes_along_k)
+            view.partitioning(
+                tiling,
+                &[item.axes.m, item.axes.n],
+                settings.cube_order,
+                settings.cubes_along_k,
+            )
         };
         let resolved = microkernel.cube.resolve(
             hw,
-            &item,
+            &contracted,
             &problem.buffers(microkernel.cube.plane.orders),
             <Self as MatmulRoutine<HypercubeStagedMicrokernel, StageStorage>>::WRITE,
             &place(microkernel.cube.tiling()),
@@ -196,6 +207,14 @@ impl Routine for HypercubeRelayMatmulRoutine {
             place(resolved.microkernel.launch_tiling()),
             resolved.storage,
         );
+        let past_k = || {
+            [KB, KI]
+                .into_iter()
+                .any(|axis| partitioning.as_tile().overhangs(axis))
+        };
+        if item.blocks.is_some() && past_k() {
+            return Err(MATMUL_PACKED_WALK_PAST_K);
+        }
         let cube = CubeResources {
             plane_width: resolved.plane_width,
             shared_memory: resolved.shared_memory,
@@ -204,25 +223,7 @@ impl Routine for HypercubeRelayMatmulRoutine {
             cube: resolved.microkernel,
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
-        vectorization.require(VectorRequirement::Access {
-            operand: MatmulOperand::Out,
-            elements: hw.vector_ceiling(problem.sum()),
-        });
-        let mut blueprint = MatmulBlueprint::new(
-            hw,
-            problem,
-            microkernel,
-            partitioning,
-            vectorization,
-            storage,
-        );
-        blueprint.microkernel.cube.fill = blueprint
-            .microkernel
-            .cube
-            .fill
-            .at_widths(&blueprint.widths, &item);
+        let blueprint = hypercube_blueprint(hw, problem, &item, microkernel, partitioning, storage);
         Ok((blueprint, grid))
     }
 }
@@ -237,7 +238,13 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeRelayM
         blueprint: HypercubeRelayMatmulRoutineBlueprint,
         grid: Grid,
     ) {
-        let item = tensors.work_item();
+        // The elements its cubes contract: packed inputs a fill decodes at the element they decode
+        // into, ones read as stored at the element their values name.
+        let elements = blueprint
+            .microkernel
+            .cube
+            .contracted(&tensors.work_item())
+            .kernel_elements();
         let stage = blueprint.partitioning.stage();
         let relay = tensors.bind_relay(&blueprint, &binding.launcher);
         let out_width = blueprint.widths.out;
@@ -262,7 +269,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeRelayM
                     binding.launcher.partitioning_arg(),
                     blueprint.microkernel,
                     blueprint.shared_memory,
-                    item.kernel_elements(),
+                    elements,
                 );
             },
             CubeStagedDelivery::Tma => {
@@ -285,7 +292,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeRelayM
                         binding.launcher.partitioning_arg(),
                         blueprint.microkernel,
                         blueprint.shared_memory,
-                        item.kernel_elements(),
+                        elements,
                     );
                 }
             }
@@ -304,6 +311,7 @@ mod tests {
     use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
     use cubek_std::devices;
     use cubek_std::matmul_axes::K;
+    use cubek_std::matmul_axes::{M, N};
     use cubek_std::microkernel::GlobalStream;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
