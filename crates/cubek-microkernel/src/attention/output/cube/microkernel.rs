@@ -279,7 +279,8 @@ fn walk_reading_ahead<
     let count = steps.min(walk.total());
     if count > 0 {
         let last = walk.total() - 1;
-        let mut entry = plane_page_entry::<N, K>(walk, key, 0);
+        let first = 0;
+        let mut entry = plane_page_entry::<N, K>(walk, key, first);
         for i in 0..count {
             let next = plane_page_entry::<N, K>(walk, key, (i + 1).min(last));
             let (keys, values) = (key.with_page_entry(&entry), value.with_page_entry(&entry));
