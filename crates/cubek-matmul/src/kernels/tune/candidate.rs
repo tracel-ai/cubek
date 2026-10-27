@@ -1,16 +1,17 @@
 //! The tune candidate the many-rows and few-rows tables race a float routine as.
 
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::{CubeBlock, MatmulTuneKey};
+use crate::kernels::tune::key::{CubeBlock, MaskedCells, MatmulTuneKey};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
 use cubecl::CubeDim;
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
-use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::routine::{PreparedLaunches, Routine};
+use cubek_std::{Hardware, Instructions, manual_mma};
 use std::sync::Arc;
 
 /// One candidate of a matmul table's autotune: a float routine at one of its settings,
@@ -107,9 +108,10 @@ where
         Some((blueprint, grid.launch.cube_dim))
     }
 
-    /// Where the output block one cube of `prepared` covers places it on `key`'s extents; last
-    /// where nothing is prepared, which the launch then declines before compiling anything.
+    /// Where the output block one cube of `prepared` covers places it on `key`'s extents on `hw`;
+    /// last where nothing is prepared, which the launch then declines before compiling anything.
     pub fn ranked(
+        hw: &Hardware,
         key: &MatmulTuneKey,
         prepared: Option<(MatmulBlueprint<M, SM>, CubeDim)>,
     ) -> CandidatePriority {
@@ -119,11 +121,14 @@ where
         let cube = blueprint.partitioning.cube_space().space;
         // The priority reads the output block alone; the cube's `K` stands in for the step it does
         // not read: the whole of it, or a cube's run of it where several share a box.
-        key.shape().priority(CubeBlock {
-            m: cube.extent(M),
-            n: cube.extent(N),
-            k: cube.extent(K),
-        })
+        key.shape().priority(
+            CubeBlock {
+                m: cube.extent(M),
+                n: cube.extent(N),
+                k: cube.extent(K),
+            },
+            masked_cells(hw, key),
+        )
     }
 }
 
@@ -145,10 +150,27 @@ where
     /// extents; last where the routine declines the problem, which it then does at launch before
     /// compiling anything.
     fn priority(&self, key: &MatmulTuneKey) -> CandidatePriority {
-        Self::ranked(key, self.prepared(key))
+        Self::ranked(&self.hw, key, self.prepared(key))
     }
 
     fn blueprint(&self, key: &MatmulTuneKey) -> Option<Self::Blueprint> {
         self.prepared(key)
+    }
+}
+
+/// What the cells a masked grid covers cost a product of `key` on `hw`: free where the device
+/// multiplies the key's element on a tensor core, accumulating at `f32`, and a cost otherwise.
+fn masked_cells(hw: &Hardware, key: &MatmulTuneKey) -> MaskedCells {
+    let elem = key.shape().elem;
+    let f32 = ElemType::Float(FloatKind::F32);
+    let matmul = &hw.properties.features.matmul;
+    let tensor_core = manual_mma(hw)
+        .chain(matmul.cmma.iter().copied())
+        .for_triple(elem, elem, f32)
+        .next()
+        .is_some();
+    match tensor_core {
+        true => MaskedCells::Free,
+        false => MaskedCells::Cost,
     }
 }

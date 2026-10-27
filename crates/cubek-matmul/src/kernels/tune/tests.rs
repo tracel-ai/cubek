@@ -3,7 +3,9 @@
 mod candidate {
     use super::super::*;
     use crate::kernels::select::problem::OperandKind;
-    use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey, OperandKey};
+    use crate::kernels::tune::key::{
+        CubeBlock, MaskedCells, MatmulBatching, MatmulTuneKey, OperandKey,
+    };
     use crate::kernels::{
         CubeStagedMatmulRoutine, MatmulRoutineProblem, UnitRegistersMatmulRoutine,
     };
@@ -94,6 +96,28 @@ mod candidate {
             lead.priority(&key(1, 16, 16, 2048)),
             CandidatePriority::LAST
         );
+    }
+
+    /// A grid masking rows costs the arithmetic it spends on them alone, so it is lowered where
+    /// that arithmetic is the units' own, and goes first beside the tiled grids where a tensor core
+    /// spends it: a decode's eight rows on the cube routine, whose block holds a tile's sixteen.
+    #[test]
+    fn masked_cells_cost_only_off_a_tensor_core() {
+        let decode = key(1, 8, 4096, 4096);
+        let masking = CubeBlock {
+            m: 64,
+            n: 64,
+            k: 4096,
+        };
+        assert_eq!(
+            decode.shape().priority(masking, MaskedCells::Free),
+            CandidatePriority::FIRST
+        );
+        assert!(decode.shape().priority(masking, MaskedCells::Cost) < CandidatePriority::FIRST);
+
+        let hw = offering(devices::strix_halo());
+        let lead = MatmulRoutineCandidate::list(CubeStagedMatmulRoutine, &hw).swap_remove(0);
+        assert_eq!(lead.priority(&decode), CandidatePriority::FIRST);
     }
 
     /// A col rhs is read where it lies, so the key that names one prepares the launch its
