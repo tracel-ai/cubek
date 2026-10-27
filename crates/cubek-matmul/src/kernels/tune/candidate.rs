@@ -33,17 +33,8 @@ pub struct MatmulRoutineCandidate<R: Routine> {
 impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        Self::of(routine, routine.settings(hw), hw)
-    }
-
-    /// `routine` at each of `settings` on `hw`, in their order: an autotune racing settings the
-    /// routine lists apart, such as those worth trying against a packed input.
-    pub fn of(
-        routine: R,
-        settings: impl IntoIterator<Item = R::Settings>,
-        hw: &Hardware,
-    ) -> Vec<Self> {
-        settings
+        routine
+            .settings(hw)
             .into_iter()
             .map(|settings| Self {
                 routine,
