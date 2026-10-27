@@ -50,7 +50,7 @@ impl<const N: usize> PoolGeometry<N> for AvgPoolOptions<N> {
         for i in 0..N {
             let idx = 1 + i;
             let padded = input_dims[idx] + 2 * self.window.padding[i];
-            let effective_kernel = self.window.kernel_size[i];
+            let effective_kernel = (self.window.kernel_size[i] - 1) * self.dilation[i] + 1;
             out.push(pooled_dim(
                 padded,
                 effective_kernel,

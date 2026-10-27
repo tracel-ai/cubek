@@ -2,6 +2,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 pub enum PoolError {
+    #[error("Pooling dilation must be non-zero, got {dilation:?}")]
+    InvalidDilation { dilation: Vec<usize> },
+
     #[error("Unsupported pooling mode: {mode}")]
     UnsupportedMode { mode: String },
 
