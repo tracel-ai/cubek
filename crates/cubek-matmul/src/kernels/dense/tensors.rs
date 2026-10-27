@@ -6,6 +6,7 @@ use crate::kernels::{
     MatmulView,
 };
 use cubecl::client::Client;
+use cubecl_environment::sync::{Arc, SyncOnceCell};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
@@ -111,7 +112,15 @@ pub struct MatmulTensors<Out = MatmulOutputBuffer> {
     out: Out,
     rows_kind: MatmulRowsKind,
     table: Option<MatmulIndexTable>,
+    /// The problem the tensors state, read the first time it is asked: a launch reads it to look
+    /// up its prepared plan and again where it walks its work item.
+    stated: StatedProblem,
 }
+
+/// A problem read once off the tensors it is stated by, shared by their clones: none of their
+/// fields changes once they are read.
+#[derive(Clone, Default)]
+struct StatedProblem(Arc<SyncOnceCell<MatmulRoutineProblem>>);
 
 impl<Out: core::fmt::Debug> core::fmt::Debug for MatmulTensors<Out> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -216,6 +225,7 @@ impl MatmulTensors {
             },
             rows_kind: M::ROWS_KIND,
             table: None,
+            stated: StatedProblem::default(),
         })
     }
 
@@ -279,6 +289,7 @@ impl MatmulTensors {
             out,
             rows_kind,
             table: Some(table),
+            stated: StatedProblem::default(),
         })
     }
 
@@ -308,6 +319,7 @@ impl MatmulTensors {
             out,
             rows_kind: MatmulRowsKind::Whole,
             table: Some(table),
+            stated: StatedProblem::default(),
         })
     }
 
@@ -454,6 +466,7 @@ impl MatmulTensors {
             out: MatmulOutputBuffer { tensor, bound },
             rows_kind,
             table: None,
+            stated: StatedProblem::default(),
         })
     }
 
@@ -474,6 +487,7 @@ impl MatmulTensors {
             out: MatmulOutputBuffer { tensor, bound },
             rows_kind: MatmulRowsKind::Whole,
             table: None,
+            stated: StatedProblem::default(),
         })
     }
 
@@ -507,6 +521,7 @@ impl MatmulTensors {
             },
             rows_kind: MatmulRowsKind::Whole,
             table: None,
+            stated: StatedProblem::default(),
         })
     }
 
@@ -633,6 +648,7 @@ impl MatmulTensors<Geometry> {
             out,
             rows_kind,
             table: None,
+            stated: StatedProblem::default(),
         })
     }
 
@@ -649,6 +665,7 @@ impl MatmulTensors<Geometry> {
             out,
             rows_kind: MatmulRowsKind::Whole,
             table: None,
+            stated: StatedProblem::default(),
         })
     }
 
@@ -790,6 +807,11 @@ impl<Out> MatmulTensors<Out> {
 impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// The problem the three tensors state.
     pub fn problem(&self) -> MatmulRoutineProblem {
+        self.stated.0.get_or_init(|| self.state_problem()).clone()
+    }
+
+    /// The problem these tensors state, read off them.
+    fn state_problem(&self) -> MatmulRoutineProblem {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => match &self.table {
                 None => self.out.problem(lhs, rhs),
@@ -905,13 +927,14 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
     ) -> Launcher {
-        grid.launcher(
-            self.client(),
-            blueprint
-                .partitioning
-                .kernel_compiling(&self.blocks().scaled_axes()),
-            blueprint.partitioning.as_tile().space(),
-        )
+        grid.launcher(self.client(), || {
+            (
+                blueprint
+                    .partitioning
+                    .kernel_compiling(&self.blocks().scaled_axes()),
+                blueprint.partitioning.as_tile().space().clone(),
+            )
+        })
     }
 
     /// The block-split space a packed input puts the product in.
@@ -1181,11 +1204,12 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         grid: &Grid,
     ) -> (Launcher, [TileArgLaunch; 2]) {
         let partitioning = blueprint.partitioning.as_tile();
-        let launcher = grid.launcher(
-            self.client(),
-            blueprint.partitioning.kernel(),
-            partitioning.space(),
-        );
+        let launcher = grid.launcher(self.client(), || {
+            (
+                blueprint.partitioning.kernel(),
+                partitioning.space().clone(),
+            )
+        });
         let (batch_axes, widths) = (self.batch_axes(), blueprint.widths);
         let delivery = blueprint.microkernel.delivery();
         let decoded = blueprint.microkernel.decoded_stage();

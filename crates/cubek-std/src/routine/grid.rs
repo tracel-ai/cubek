@@ -44,20 +44,27 @@ pub struct CubeResources {
 }
 
 impl Grid {
-    /// The launcher a kernel compiled for `kernel` runs on over `concrete`'s real extents, spawning
-    /// this grid: the cubes a launch's own partitioning states, not ones cubek derives again.
+    /// The launcher a kernel compiled for the partitioning `settle` states runs on over the real
+    /// extents of the space it states beside it, spawning this grid: the cubes a launch's own
+    /// partitioning states, not ones cubek derives again. `settle` runs on the grid's first launch
+    /// alone: every later one clones the launcher it built.
     ///
     /// # Panics
     ///
     /// Where the device refuses the grid, which [`Grid::new`] already admitted for it.
-    pub fn launcher(&self, client: &Client, kernel: Partitioning, concrete: &Space) -> Launcher {
+    pub fn launcher(
+        &self,
+        client: &Client,
+        settle: impl FnOnce() -> (Partitioning, Space),
+    ) -> Launcher {
         self.launcher
             .0
             .get_or_init(|| {
+                let (kernel, concrete) = settle();
                 Launcher::new(
                     client,
                     kernel,
-                    concrete,
+                    &concrete,
                     LaunchGrid::Stated {
                         cube_count: self.launch.cube_count.clone(),
                         cube_dim: self.launch.cube_dim,
