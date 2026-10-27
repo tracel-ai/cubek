@@ -110,7 +110,7 @@ impl UnitRegistersMatmulRoutineSettings {
     ///   holds one line of partials, so a cell costs `depth` registers. 8 divides the `K` of
     ///   common 1x1 convolutions (24, 56); 16 does not.
     /// - Cubes: strips of 4 along `m`, so the lhs rows of a strip stay in cache across `n`.
-    pub fn cpu(hw: &Hardware) -> Self {
+    pub fn cpu_col_rhs(hw: &Hardware) -> Self {
         Self {
             microkernel: UnitRegistersMicrokernelSettings {
                 rows: NonZeroUsize::new(3).unwrap(),
@@ -428,8 +428,8 @@ mod tests {
         assert_eq!(widths(256, 516, 64), (4, 1, 1));
     }
 
-    /// `cpu` settings with `n = 1632`: 32 blocks of width 2 per plane would overhang `n`, so
-    /// `prepare` fits them to 24, and the col rhs stays vectorized along `K`.
+    /// `cpu_col_rhs` settings with `n = 1632`: 32 blocks of width 2 per plane would overhang `n`,
+    /// so `prepare` fits them to 24, and the col rhs stays vectorized along `K`.
     #[test]
     fn the_cpu_settings_fit_their_planes_to_an_n_their_count_overhangs() {
         use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
@@ -443,7 +443,7 @@ mod tests {
             lhs: OperandKey::float(Some(K), MatmulBatching::Batched),
             rhs: OperandKey::float(Some(K), MatmulBatching::Shared),
         });
-        let settings = UnitRegistersMatmulRoutineSettings::cpu(&hw);
+        let settings = UnitRegistersMatmulRoutineSettings::cpu_col_rhs(&hw);
         let (blueprint, _) = UnitRegistersMatmulRoutine
             .prepare(&hw, &col_weight, &settings)
             .expect("the cpu settings prepare on a cpu");

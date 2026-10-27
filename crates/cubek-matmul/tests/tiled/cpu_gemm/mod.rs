@@ -22,15 +22,16 @@ struct Dims {
     k: usize,
 }
 
-/// `cpu` settings on a row lhs and col rhs, at `K` = 24 and 56 (divisible by its depth of 8, not
-/// by 16) and 272. `m = 200` is not a multiple of a cube's rows, so the last cube is partial.
+/// `cpu_col_rhs` settings on a row lhs and col rhs, at `K` = 24 and 56 (divisible by its depth
+/// of 8, not by 16) and 272. `m = 200` is not a multiple of a cube's rows, so the last cube is
+/// partial.
 #[test]
 fn the_cpu_settings_read_a_col_rhs_at_the_convolutions_depths() {
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
-    let settings = UnitRegistersMatmulRoutineSettings::cpu(&Hardware::from_client(&client));
+    let settings = UnitRegistersMatmulRoutineSettings::cpu_col_rhs(&Hardware::from_client(&client));
     for (m, n, k) in [(200, 48, 24), (200, 48, 56), (200, 64, 272)] {
         let problem = MatmulProblem::from_parameters(
             m,
