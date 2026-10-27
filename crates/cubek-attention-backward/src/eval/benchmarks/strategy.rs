@@ -6,6 +6,7 @@ pub enum AttentionBackwardStrategy {
     UnitLead,
     PlaneLead,
     CubeLead,
+    HypercubeLead,
     Tuned,
 }
 
@@ -25,6 +26,11 @@ pub fn strategies() -> Vec<CatalogEntry<AttentionBackwardStrategy>> {
             "cube_lead",
             "Cube staged routine (lead)",
             AttentionBackwardStrategy::CubeLead,
+        ),
+        CatalogEntry::new(
+            "hypercube_lead",
+            "Hypercube routine (lead)",
+            AttentionBackwardStrategy::HypercubeLead,
         ),
         CatalogEntry::new("tuned", "Tuned", AttentionBackwardStrategy::Tuned),
     ]

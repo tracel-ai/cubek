@@ -4,8 +4,8 @@ use crate::kernels::{
     attention_backward,
 };
 use crate::kernels::{
-    CubeStagedAttentionBackwardRoutine, PlaneFragmentAttentionBackwardRoutine,
-    UnitAttentionBackwardRoutine,
+    CubeStagedAttentionBackwardRoutine, HypercubeAttentionBackwardRoutine,
+    PlaneFragmentAttentionBackwardRoutine, UnitAttentionBackwardRoutine,
 };
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
 use cubecl::client::Client;
@@ -127,6 +127,9 @@ impl Benchmark for AttentionBackwardBench {
             }
             AttentionBackwardStrategy::CubeLead => {
                 self.lead(CubeStagedAttentionBackwardRoutine, tensors)
+            }
+            AttentionBackwardStrategy::HypercubeLead => {
+                self.lead(HypercubeAttentionBackwardRoutine, tensors)
             }
             AttentionBackwardStrategy::Tuned => {
                 attention_backward(&self.device, tensors);
