@@ -86,6 +86,29 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         Ok(tensors.into_out().expect(ALLOCATED))
     }
 
+    /// `lhs · rhs` on `client`'s device, prepared for `hw` at `settings` and for a sink the caller
+    /// binds afterwards ([`MatmulSinkLaunch`]). Nothing is compiled until the launch is.
+    ///
+    /// # Errors
+    ///
+    /// What [`MatmulTensors::sink`] declines, why `hw` cannot run the product at these settings,
+    /// and what [`MatmulSinkLaunch::new`] declines.
+    fn sink_launch_on(
+        self,
+        hw: &Hardware,
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        settings: &Self::Settings,
+    ) -> Result<MatmulSinkLaunch<Self, M, SM>, Refusal>
+    where
+        Self: Sized,
+    {
+        let tensors = MatmulTensors::sink::<M>(client, lhs, rhs)?;
+        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
+        MatmulSinkLaunch::new(self, tensors, blueprint, grid)
+    }
+
     /// `lhs · rhs` on `client`'s device written into `out`, which the caller allocated, prepared
     /// for `hw` at `settings`.
     ///

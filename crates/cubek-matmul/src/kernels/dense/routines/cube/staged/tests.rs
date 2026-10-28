@@ -1451,6 +1451,71 @@ mod base {
         }
         assert!(estimated > 0, "no packed setting prepared");
     }
+    /// Against an NVFP4 weight the units decode into its stages, the setting that hands the float
+    /// input to the copy engine keeps it there on a device that has one, while the weight's words
+    /// still pass through the units' registers; a device without the engine never lists it.
+    #[test]
+    fn a_packed_products_float_input_rides_the_copy_engine() {
+        use cubek_microkernel::matmul::MatmulMicrokernel;
+        use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
+        use cubek_std::layout::stored::{Operand, Packing};
+        use cubek_std::layout::tile_order;
+
+        let f16 = ElemType::Float(FloatKind::F16);
+        let mma = MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        };
+        let scheme = tile_order::scheme();
+        let weight = Packing {
+            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let problem = MatmulRoutineProblem::packed(
+            512,
+            4096,
+            4096,
+            f16,
+            MatmulOperands {
+                lhs: None,
+                rhs: Some(weight),
+                out: None,
+            },
+        );
+        let on_engine = |hw: &Hardware| {
+            CubeStagedMatmulRoutine
+                .packed_settings(hw)
+                .into_iter()
+                .find(|settings| {
+                    settings.microkernel == CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE
+                })
+        };
+
+        let hw = devices::offering_mma(devices::h100(), [mma]);
+        let settings = on_engine(&hw).expect("a device with a copy engine lists the setting");
+        let (blueprint, _) = CubeStagedMatmulRoutine
+            .prepare(&hw, &problem, &settings)
+            .expect("the setting prepares against an NVFP4 weight");
+        let microkernel = &blueprint.microkernel;
+        assert!(
+            microkernel.decoded_stage().is_some(),
+            "the fill decodes the weight"
+        );
+        assert_eq!(microkernel.fill.delivery, CubeStagedDelivery::AsyncCopy);
+        assert_eq!(microkernel.delivery(), Delivery::AsyncPerUnit);
+        assert_eq!(microkernel.words_delivery(), Delivery::SyncPerUnit);
+
+        let hw = devices::offering_mma(devices::strix_halo(), [mma]);
+        assert!(
+            on_engine(&hw).is_none(),
+            "no copy engine, no setting asking for it"
+        );
+    }
+
     /// A packed input is bound a whole read wide along `K`, which no mask checks, so a setting
     /// whose levels reach past the end of `K` declines rather than prepare a launch its binding
     /// refuses: a q4 activation against a q4 weight, one row, where a deep stage holds more blocks

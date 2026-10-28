@@ -2,6 +2,8 @@
 //! pure rule that resolves it ([`selector`]). What tells two attentions apart for autotune is
 //! [`tune`](super::tune)'s.
 
+#[cfg(test)]
+mod plans;
 pub mod selector;
 mod strategy;
 

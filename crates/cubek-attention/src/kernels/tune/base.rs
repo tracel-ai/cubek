@@ -272,6 +272,11 @@ impl AttentionTuneInputs {
         })
     }
 
+    /// The tensors every candidate launches on, the output among them.
+    pub fn tensors(&self) -> &AttentionTensors {
+        &self.tensors
+    }
+
     /// The same attention, each query not seeing the keys `mask` hides
     /// ([`AttentionTensors::with_mask`]).
     pub fn with_mask(mut self, mask: PlainTensor) -> Self {

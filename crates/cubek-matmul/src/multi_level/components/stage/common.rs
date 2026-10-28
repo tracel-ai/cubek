@@ -159,7 +159,7 @@ pub fn init_b_fragments<MT: MatmulTypes, Sc: TileScope>(
 /// # Safety
 ///
 /// This may point towards uninitialized memory. Make sure to call
-/// [`load_partition_from_stage`](crate::multi_level::tile::load_partition_from_stage)
+/// [`load_partition_from_stage`](fn@crate::multi_level::tile::load_partition_from_stage)
 /// prior to [`Tile::mma_partition`](crate::multi_level::tile::Tile::mma_partition).
 pub fn init_accumulator<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] shared_config: PartitionedStageMatmul,

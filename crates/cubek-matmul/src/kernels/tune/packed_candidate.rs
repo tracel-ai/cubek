@@ -4,9 +4,11 @@ use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings, MatmulRoutine,
-    PlaneShuffleMatmulRoutineSettings,
+    MatmulTensors, PlaneShuffleMatmulRoutineSettings,
 };
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
@@ -86,6 +88,11 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
         &self.settings
     }
 
+    /// The routine this candidate launches.
+    pub fn routine(&self) -> R {
+        self.routine
+    }
+
     /// `lhs · rhs` on `client`'s device written into `out`, which the caller allocated, by this
     /// candidate's routine at its setting ([`MatmulRoutine::launch_into`]).
     ///
@@ -108,6 +115,37 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
         }
         self.routine
             .launch_into(&self.hw, client, lhs, rhs, out, &self.settings)
+    }
+
+    /// `lhs · rhs` on `client`'s device, written in `out` into an output the launch allocates, by
+    /// this candidate's routine at its setting.
+    ///
+    /// # Errors
+    ///
+    /// [`PACKED_SETTING_FLOAT_INPUTS`] where neither input is packed, before compiling anything,
+    /// what [`MatmulTensors::written_in`] declines, and why the routine cannot run the product at
+    /// this setting.
+    pub fn launch_written_in<M: MatmulMicrokernel, SM>(
+        &self,
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+        out: ElemType,
+    ) -> Result<TensorHandle, Refusal>
+    where
+        R: MatmulRoutine<M, SM>,
+    {
+        if let (StoredTensor::Plain(_), StoredTensor::Plain(_)) = (&lhs, &rhs) {
+            return Err(PACKED_SETTING_FLOAT_INPUTS);
+        }
+        let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
+        let (blueprint, grid) =
+            self.routine
+                .prepare(&self.hw, &tensors.problem(), &self.settings)?;
+        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+        Ok(tensors
+            .into_out()
+            .expect("a launch allocating its output hands it back"))
     }
 }
 

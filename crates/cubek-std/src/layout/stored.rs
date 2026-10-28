@@ -70,6 +70,17 @@ impl MicroTile {
         self
     }
 
+    /// This tile with its axis `from` named `to`: the same reach, over a matrix whose axes another
+    /// reader names otherwise.
+    pub fn renamed(mut self, from: Axis, to: Axis) -> Self {
+        for (axis, _) in self.0.iter_mut().flatten() {
+            if *axis == from {
+                *axis = to;
+            }
+        }
+        self
+    }
+
     /// The box this tile covers, an axis to each extent.
     pub fn space(&self) -> Space {
         Space::new(&self.entries().collect::<Vec<_>>())
@@ -178,6 +189,16 @@ impl Operand {
             read: MicroTile::unit(),
             scale: None,
             scale_read: MicroTile::unit(),
+        }
+    }
+
+    /// This operand with its axis `from` named `to`: the same reads and scales, over a matrix whose
+    /// axes another reader names otherwise.
+    pub fn renamed(self, from: Axis, to: Axis) -> Self {
+        Operand {
+            read: self.read.renamed(from, to),
+            scale: self.scale.map(|scale| scale.renamed(from, to)),
+            scale_read: self.scale_read.renamed(from, to),
         }
     }
 

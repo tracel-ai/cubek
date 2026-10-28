@@ -107,10 +107,16 @@ impl CubeStagedAsyncCopyRefusal {
         }
     }
 
-    /// Why lines `widths` wide, of `item`'s elements, are not ones the engine copies whole.
-    fn of_widths(widths: &MatmulOperands<usize>, item: &MatmulWorkItem) -> Option<Self> {
-        MatmulOperand::INPUTS
-            .into_iter()
+    /// Why lines `widths` wide, of `item`'s elements, of the `copied` operands are not ones the
+    /// engine copies whole.
+    fn of_widths(
+        copied: &[MatmulOperand],
+        widths: &MatmulOperands<usize>,
+        item: &MatmulWorkItem,
+    ) -> Option<Self> {
+        copied
+            .iter()
+            .copied()
             .find(|&operand| {
                 // Bits rather than bytes: an `e2m1` value is half of one.
                 let bytes = widths.get(operand) * item.elements.get(operand).size_bits() / 8;
@@ -321,9 +327,21 @@ impl CubeStagedFill {
     /// whose lines it does not copy whole ([`CubeStagedAsyncCopyRefusal::LineSize`]) is copied by
     /// the units, whose loads bind the same widths, so the widths stand.
     pub fn at_widths(self, widths: &MatmulOperands<usize>, item: &MatmulWorkItem) -> Self {
+        self.at_widths_of(&MatmulOperand::INPUTS, widths, item)
+    }
+
+    /// [`at_widths`](Self::at_widths) where the engine copies only the `copied` operands' stages,
+    /// the units loading the others: a product whose fill decodes a packed input loads its words
+    /// itself ([`MatmulMicrokernel::words_delivery`](crate::matmul::MatmulMicrokernel::words_delivery)).
+    pub fn at_widths_of(
+        self,
+        copied: &[MatmulOperand],
+        widths: &MatmulOperands<usize>,
+        item: &MatmulWorkItem,
+    ) -> Self {
         match self.delivery {
             CubeStagedDelivery::AsyncCopy
-                if CubeStagedAsyncCopyRefusal::of_widths(widths, item).is_some() =>
+                if CubeStagedAsyncCopyRefusal::of_widths(copied, widths, item).is_some() =>
             {
                 Self {
                     delivery: CubeStagedDelivery::Copy,

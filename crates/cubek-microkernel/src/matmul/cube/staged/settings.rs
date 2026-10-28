@@ -96,6 +96,14 @@ impl CubeStagedMicrokernelSettings {
     /// Qwen3-4B projections at a prompt's rows, whose planes contract the same stages these hold.
     pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE);
 
+    /// Four by two steps on each of two by four planes, two stages in flight, the float input
+    /// handed to the copy engine while the units decode the packed one into the other stage. On
+    /// an RTX PRO 6000 at Qwen3-8B's projections it leads every other box against an NVFP4 weight
+    /// on the `o` and `down` projections, by 11 to 19%, both at 512 rows and at 2048, and runs
+    /// within 5% of the fastest on most of the others.
+    pub const PACKED_FLOAT_ON_ENGINE: Self =
+        Self::in_steps((4, 2), (2, 4), StageRing::DOUBLE).filled(CubeStagedDelivery::AsyncCopy, 0);
+
     /// These settings with `planes` planes sharing each box along `K`.
     ///
     /// # Panics
