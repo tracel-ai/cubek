@@ -12,7 +12,7 @@ use cubecl::tile::{Axis, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StagedOperand};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
 /// head with its plane microkernel. Where its planes read a stage, the cube stages the keys and
@@ -117,6 +117,17 @@ impl CubeAttentionMicrokernel {
         self.plane.stage_storage(self.settings.layout, stage)
     }
 
+    /// The storage its query, staged once over `stage`, is held in: as the settings lay out the
+    /// stages of keys and values, blocked as its planes read it.
+    pub fn query_storage(&self, stage: &Space) -> StageStorage {
+        self.plane.query_storage(self.settings.layout, stage)
+    }
+
+    /// The query as it stages it once for its walk: its heads' rows over the whole head dim.
+    pub fn staged_query(&self, item: &AttentionWorkItem) -> StagedOperand {
+        item.staged_query(self.heads, self.seq_q())
+    }
+
     /// Bytes of shared memory one cube holds alone on `hw`, its stages held as `storage`: what it
     /// walks with ([`walk_shared_memory`](Self::walk_shared_memory)), and where its planes that
     /// split the same rows' keys meet.
@@ -141,7 +152,8 @@ impl CubeAttentionMicrokernel {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
         let staged = match self.plane.reads() {
             CubePlaneReads::Stage => {
-                let query = self.heads * self.seq_q() * item.head_dim * item.elements.query.size();
+                let query = self.staged_query(item);
+                let query = query.bytes(hw, &self.query_storage(&query.space));
                 let stage: usize = item
                     .stage(self.seq_kv(), self.key_order())
                     .iter()

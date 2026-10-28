@@ -204,10 +204,11 @@ mod fragment {
         assert_eq!(blueprint.microkernel.ring, StageRing::SINGLE);
     }
 
-    /// A padded stage costs one chunk a row of its keys and values, and a blocked one lays the same
-    /// cells out at no cost: what the cube counts, so a layout that does not fit the device
-    /// declines instead of overflowing. Padded blocks of the instruction's tiles cost nothing
-    /// either here: a tile's row of eight `f16` is one chunk, which the tile DSL keeps in order.
+    /// A padded stage costs one chunk a row of its keys and values, and of the query staged beside
+    /// them in the same layout, and a blocked one lays the same cells out at no cost: what the
+    /// cube counts, so a layout that does not fit the device declines instead of overflowing.
+    /// Padded blocks of the instruction's tiles cost nothing either here: a tile's row of eight
+    /// `f16` is one chunk, which the tile DSL keeps in order.
     #[test]
     fn a_padded_stage_costs_a_chunk_a_row() {
         let hw = offering(devices::m2_pro(), 8);
@@ -236,6 +237,7 @@ mod fragment {
         let stage = item.stage(microkernel.seq_kv(), microkernel.key_order());
         let whole_rows: usize = stage
             .iter()
+            .chain([&microkernel.staged_query(&item)])
             .map(|operand| operand.cells() / operand.space.extent(operand.innermost))
             .sum();
         let chunk = RowChunks::CHUNK_BYTES.max(hw.vector_ceiling(F16) * F16.size());

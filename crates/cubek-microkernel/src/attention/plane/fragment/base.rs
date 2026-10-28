@@ -436,6 +436,18 @@ impl PlaneFragmentAttentionMicrokernel {
         cells * (item.sum.size() + item.elements.query.size()) + bounced
     }
 
+    /// The tile one fragment of the score reads of the staged query: one batch, one head of keys
+    /// and one of its queries, the score's rows by its depth along the head dim.
+    pub fn query_tile(&self) -> Vec<(Axis, usize)> {
+        vec![
+            (B, 1),
+            (KV, 1),
+            (G, 1),
+            (Q, self.score.leaf_extent(MatmulDim::M)),
+            (D, self.score.leaf_extent(MatmulDim::K)),
+        ]
+    }
+
     /// The tile one step reads of a stage of keys and values: one batch and one head of keys, the
     /// keys' rows by the score's `n` and the value's `k`, whichever is longer, the head dim by the
     /// score's `k`, and the value dim by the value's `n`.

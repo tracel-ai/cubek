@@ -1,4 +1,4 @@
-use crate::attention::{AttentionOperand, AttentionOperands, D, DV, Q, S};
+use crate::attention::{AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S};
 use crate::matmul::{
     MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulWorkItem,
@@ -136,5 +136,21 @@ impl AttentionWorkItem {
             operand(AttentionOperand::Key, D, self.head_dim),
             operand(AttentionOperand::Value, DV, self.val_dim),
         ]
+    }
+
+    /// The query as a cube stages it once for its walk: one batch and one head of keys, `queries`
+    /// rows of each of `heads` of its heads, over the whole head dim, its lines along it.
+    pub fn staged_query(&self, heads: usize, queries: usize) -> StagedOperand {
+        StagedOperand {
+            element: self.elements.get(AttentionOperand::Query),
+            space: Space::new(&[
+                (B, 1),
+                (KV, 1),
+                (G, heads),
+                (Q, queries),
+                (D, self.head_dim),
+            ]),
+            innermost: D,
+        }
     }
 }
