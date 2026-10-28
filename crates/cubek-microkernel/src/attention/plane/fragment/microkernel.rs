@@ -1,8 +1,4 @@
 use super::base::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
-use crate::attention::plane::{
-    CubePlaneAttention, CubePlaneAttentionExpand, CubePlaneLayout, CubePlaneMicrokernel,
-    StagedPlaneOperands,
-};
 use crate::attention::{D, DV, G, Q, S};
 use crate::matmul::plane::plane_fragment_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
@@ -10,13 +6,13 @@ use core::marker::PhantomData;
 use cubek_std::microkernel::StageRing;
 
 use cubecl::tile::{
-    Level, Region, Semiring, StageStorage, Stages, Tile, Walk, ops::softmax::OnlineSoftmax,
+    Axis, Level, Region, Semiring, StageStorage, Stages, Tile, Walk, ops::softmax::OnlineSoftmax,
 };
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// A cube's planes running the plane fragment microkernel over the cube's stages: each plane's
-/// sum of its rows' outputs in fragments held across the walk, its score where the microkernel
-/// keeps it, and the softmax state of its rows, kept where the score is.
+/// Planes running the plane fragment microkernel over staged keys and values: each plane's sum of
+/// its rows' outputs in fragments held across the walk, its score where the microkernel keeps it,
+/// and the softmax state of its rows, kept where the score is.
 #[derive(CubeType)]
 pub struct PlaneFragmentAttention<EA: Float, ES: Float> {
     sum: Tile,
@@ -28,45 +24,43 @@ pub struct PlaneFragmentAttention<EA: Float, ES: Float> {
     staged: PhantomData<ES>,
     #[cube(comptime)]
     microkernel: PlaneFragmentAttentionMicrokernel,
+    /// The planes its walker lays it over, along each axis: what the score's own grid is placed
+    /// under ([`PlaneFragmentAttentionMicrokernel::score_levels`]).
     #[cube(comptime)]
-    layout: CubePlaneLayout,
+    planes: Vec<(Axis, usize)>,
 }
 
 #[cube]
-impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
-    for PlaneFragmentAttention<EA, ES>
-{
-    type Microkernel = PlaneFragmentAttentionMicrokernel;
-    type Opening = StagedPlaneOperands;
-    type Line = Vector<EA, Const<1>>;
-
-    /// Its score placed by the walk, and its sum opened at zero on the cube's output.
-    fn open(
+impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
+    /// Every plane's rows over `walk` before any key: its score placed by the walk, and its sum
+    /// opened at zero on `out`, the output it is shaped by, against `value` and `bias`. `query` is
+    /// staged, and `planes` the planes its walker lays it over along each axis.
+    pub fn open(
         walk: &Walk,
-        opening: &StagedPlaneOperands,
+        query: &Tile,
+        out: &Tile,
+        value: &Tile,
+        bias: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
-        #[comptime] layout: CubePlaneLayout,
+        #[comptime] planes: Vec<(Axis, usize)>,
     ) -> Self {
-        let score = StageScore::open::<EA, ES>(walk, &opening.query, microkernel);
+        let score = StageScore::open::<EA, ES>(walk, query, microkernel);
         let softmax = score.softmax::<EA>(comptime!(microkernel.seq_q()));
         PlaneFragmentAttention::<EA, ES> {
-            sum: plane_fragment_attention_sum::<EA>(
-                &opening.out,
-                &opening.bias,
-                &opening.value,
-                microkernel,
-            ),
+            sum: plane_fragment_attention_sum::<EA>(out, bias, value, microkernel),
             score,
             softmax,
-            query: opening.query.clone(),
+            query: query.clone(),
             staged: PhantomData,
             microkernel,
-            layout,
+            planes,
         }
     }
 
-    /// The plane's part of the stage taken into its rows ([`StageScore::step`]).
-    fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
+    /// `plane`, its region of one step of the walk, taken into its rows ([`StageScore::step`]):
+    /// its keys and values read from `keys` and `values`, each row seeing those `visible` admits,
+    /// scaled by `scale`.
+    pub fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
         let mut sum = self.sum.at(plane);
         self.score.at(plane).step::<EA, ES>(
             plane,
@@ -78,20 +72,17 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
             &visible.at(plane),
             scale,
             self.microkernel,
-            comptime!(self.microkernel.score_levels(&[
-                (G, self.layout.heads),
-                (Q, self.layout.planes_along_queries),
-                (S, self.layout.planes_along_keys),
-            ])),
+            comptime!(self.microkernel.score_levels(&self.planes)),
         );
     }
 
-    /// Every plane's rows read off the walk's first step, whether or not the walk took one: what
-    /// the softmax and the output read how many planes share a plane's rows from. The output sums
-    /// the planes that split the same rows' keys.
-    fn store_normalized(&mut self, cube: &Region, out: &Tile) {
-        let mut output = out.planes_output::<EA>(cube);
-        for plane in cube.planes() {
+    /// Every plane's rows of `region` normalized and written into `out`, `region`'s window of the
+    /// output, read off the walk's first step whether or not the walk took one: what the softmax
+    /// and the output read how many planes share a plane's rows from. The output sums the planes
+    /// that split the same rows' keys.
+    pub fn store_normalized(&mut self, region: &Region, out: &Tile) {
+        let mut output = out.planes_output::<EA>(region);
+        for plane in region.planes() {
             let sum = self.sum.at(&plane);
             sum.along(DV).mul(&self.softmax.normalizer(&plane));
             output.drain(&sum, &plane);
@@ -99,23 +90,28 @@ impl<EA: Float, E: Float, ES: Float> CubePlaneAttention<EA, E, Tile, Tile, Tile>
         output.write();
     }
 
-    /// Each plane's rows' state, kept where its score is ([`OnlineSoftmax::store_logsumexp`]).
-    fn store_logsumexp(&self, cube: &Region, logsumexp: &Tile) {
-        for plane in cube.planes() {
+    /// Each plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into
+    /// `logsumexp`, `region`'s window of it, from their state kept where the score is
+    /// ([`OnlineSoftmax::store_logsumexp`]).
+    pub fn store_logsumexp(&self, region: &Region, logsumexp: &Tile) {
+        for plane in region.planes() {
             self.softmax
                 .store_logsumexp(&self.score.at(&plane).scores(), &mut logsumexp.at(&plane));
         }
     }
 
-    /// The plane's sum drained, as it stands, into its window of a scratch of the walk's step,
-    /// and its rows' softmax state into two more, a cell a row, each written by a unit that holds
-    /// it ([`OnlineSoftmax::store_rows`]); then each row's elements copied from there into its
-    /// slot by the plane's units in turn, beside its state.
+    /// `plane`'s own rows of `walk`'s first step left undivided in slots, the first `rows` of
+    /// them: row `r`'s output, running max and running sum at slot `first_slot + r · row_stride`
+    /// of `slot_out`, `slot_max` and `slot_sum`.
     ///
-    /// The scratches hold the cube's rows once, so planes holding the same rows would share them:
-    /// the cube that stores this way holds one plane along the keys.
+    /// The plane's sum is drained, as it stands, into its window of a scratch of the walk's step,
+    /// and its rows' softmax state into two more, a cell a row, each written by a unit that holds
+    /// it ([`OnlineSoftmax::store_rows`]); then each row's elements are copied from there into
+    /// its slot by the plane's units in turn, beside its state. The scratches hold the walk's rows
+    /// once, so planes holding the same rows would share them: its walker holds one plane along
+    /// the keys where it stores this way.
     #[allow(clippy::too_many_arguments)]
-    fn store_partial(
+    pub fn store_partial(
         &mut self,
         walk: &Walk,
         plane: &Region,

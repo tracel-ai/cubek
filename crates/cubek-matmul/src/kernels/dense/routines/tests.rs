@@ -384,10 +384,77 @@ mod packed_lhs {
 
 mod hypercube_last_arrival {
     use super::*;
-    use crate::kernels::HypercubeLastArrivalMatmulRoutine;
+    use crate::kernels::select::packed::nvfp4_scheme;
+    use crate::kernels::{
+        HypercubeLastArrivalMatmulRoutine, HypercubeRelayMatmulRoutine, MATMUL_HYPERCUBE_PACKED_LHS,
+    };
     use cubecl::features::MmaConfig;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
+
+    /// Two NVFP4 inputs, the block-scaled instruction's, are declined by both hypercube routines
+    /// at every setting they list, before anything is compiled: they bind a packed rhs beside a
+    /// float lhs, and a launch over a packed lhs would fail to expand.
+    #[test]
+    fn two_packed_inputs_are_declined() {
+        let hw = devices::offering_mma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: F16,
+                b_type: F16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 8,
+                k: 16,
+            }],
+        );
+        let lhs = Packing {
+            operand: Operand::of_scheme(&nvfp4_scheme(), K, [M, K]).expect("one axis a block"),
+            scheme: nvfp4_scheme(),
+        };
+        let rhs = Packing {
+            operand: Operand::of_scheme(&tile_order::scheme(), K, [K, N])
+                .expect("one axis a block"),
+            scheme: tile_order::scheme(),
+        };
+        let problem = MatmulRoutineProblem::packed(
+            512,
+            2048,
+            4096,
+            F16,
+            MatmulOperands {
+                lhs: Some(lhs),
+                rhs: Some(rhs),
+                out: None,
+            },
+        );
+        let (last_arrival, relay) = (
+            HypercubeLastArrivalMatmulRoutine.settings(&hw),
+            HypercubeRelayMatmulRoutine.settings(&hw),
+        );
+        assert!(
+            !last_arrival.is_empty() && !relay.is_empty(),
+            "a device whose cubes meet lists hypercube settings"
+        );
+        for settings in last_arrival {
+            assert_eq!(
+                HypercubeLastArrivalMatmulRoutine
+                    .prepare(&hw, &problem, &settings)
+                    .err(),
+                Some(MATMUL_HYPERCUBE_PACKED_LHS),
+                "last arrival at {settings}"
+            );
+        }
+        for settings in relay {
+            assert_eq!(
+                HypercubeRelayMatmulRoutine
+                    .prepare(&hw, &problem, &settings)
+                    .err(),
+                Some(MATMUL_HYPERCUBE_PACKED_LHS),
+                "relay at {settings}"
+            );
+        }
+    }
 
     /// Against a packed rhs the cubes sharing a box each walk whole blocks of `K`: every setting
     /// that prepares cuts whole steps and its cube box spans whole blocks along `KI`. At a

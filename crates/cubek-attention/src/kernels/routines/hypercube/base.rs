@@ -6,7 +6,6 @@ use crate::kernels::{
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
-use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
 
@@ -120,10 +119,7 @@ impl HypercubeMerge {
 
     /// The queries one plane merging this way holds: a box's of `microkernel` for the last
     /// arrival, one for a second launch.
-    pub fn seq_q<M: CubePlaneMicrokernel>(
-        &self,
-        microkernel: &HypercubeAttentionMicrokernel<M>,
-    ) -> usize {
+    pub fn seq_q(&self, microkernel: &HypercubeAttentionMicrokernel) -> usize {
         match self {
             Self::LastArrival => microkernel.cube.seq_q(),
             Self::SecondLaunch => 1,

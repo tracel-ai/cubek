@@ -311,19 +311,6 @@ pub trait Instructions: Iterator<Item = MmaConfig> + Clone {
         self.for_triple(elem, elem, ElemType::Float(FloatKind::F32))
     }
 
-    /// Whether every float element an attention reads, `f16`, `bf16` and `f32`, is offered a
-    /// shape for both its contractions.
-    fn serves_attention_in_every_float(self) -> bool {
-        [FloatKind::F16, FloatKind::BF16, FloatKind::F32]
-            .into_iter()
-            .all(|kind| {
-                self.clone()
-                    .for_attention(ElemType::Float(kind))
-                    .next()
-                    .is_some()
-            })
-    }
-
     /// The largest block offered, by area and then by depth: the reuse a block buys grows with
     /// the block. `None` where nothing is offered.
     fn largest(self) -> Option<MmaConfig> {

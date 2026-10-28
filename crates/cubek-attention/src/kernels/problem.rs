@@ -282,9 +282,7 @@ impl QueryAxis {
 mod tests {
     use crate::kernels::test_support::{offering, qwen};
     use crate::kernels::*;
-    use cubek_microkernel::attention::plane::{
-        PlaneFragmentAttentionMicrokernel, PlaneUnitGroupAttentionMicrokernel,
-    };
+
     use cubek_microkernel::attention::{AttentionMicrokernel, S};
     use cubek_std::Hardware;
     use cubek_std::devices;
@@ -337,12 +335,7 @@ mod tests {
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| {
-                    assert_steps_divide(
-                        CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
-                        hw,
-                    )
-                })
+                .map(|hw| assert_steps_divide(CubeStagedAttentionRoutine, hw))
                 .sum(),
             fleet
                 .iter()
@@ -409,10 +402,12 @@ mod tests {
         assert_eq!(page_steps(&paged(4 * keys)), Some(4));
         assert_eq!(page_steps(&paged(keys)), None);
         assert_eq!(page_steps(&paged(3 * keys / 2)), None);
-        let staged = CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new();
-        let staged_settings = &staged.settings(&hw)[0];
+        // The M2 as Metal reports it, offering its plane fragments their simdgroup matrix.
+        let fragments = offering(hw, 8);
+        let staged = CubeStagedAttentionRoutine;
+        let staged_settings = &staged.settings(&fragments)[0];
         let (blueprint, _) = staged
-            .prepare(&hw, &paged(4 * keys), staged_settings)
+            .prepare(&fragments, &paged(4 * keys), staged_settings)
             .expect("the decode step prepares");
         assert_eq!(blueprint.microkernel.page_steps, None);
     }
@@ -465,16 +460,7 @@ mod tests {
         ));
         declines(UnitAttentionRoutine, &hw, &packed);
         declines(PlaneFragmentAttentionRoutine, &hw, &packed);
-        declines(
-            CubeStagedAttentionRoutine::<PlaneFragmentAttentionMicrokernel>::new(),
-            &hw,
-            &packed,
-        );
-        declines(
-            CubeStagedAttentionRoutine::<PlaneUnitGroupAttentionMicrokernel>::new(),
-            &hw,
-            &packed,
-        );
+        declines(CubeStagedAttentionRoutine, &hw, &packed);
         declines(CubeShuffleAttentionRoutine, &hw, &packed);
         declines(HypercubeSecondLaunchFragmentAttentionRoutine, &hw, &packed);
     }

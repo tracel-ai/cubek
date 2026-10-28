@@ -70,7 +70,7 @@ mod tests {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::attention::AttentionMicrokernel;
-    use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernel;
+
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::microkernel::KernelEstimate;
@@ -85,9 +85,7 @@ mod tests {
     fn every_routine_estimates_every_setting_whole() {
         assert_every_estimate_is_whole(UnitAttentionRoutine);
         assert_every_estimate_is_whole(PlaneFragmentAttentionRoutine);
-        assert_every_estimate_is_whole(CubeStagedAttentionRoutine::<
-            PlaneFragmentAttentionMicrokernel,
-        >::new());
+        assert_every_estimate_is_whole(CubeStagedAttentionRoutine);
         assert_every_estimate_is_whole(HypercubeLastArrivalShuffleAttentionRoutine::new());
         assert_every_estimate_is_whole(HypercubeSecondLaunchShuffleAttentionRoutine::new());
     }

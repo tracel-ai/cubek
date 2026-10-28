@@ -193,7 +193,7 @@ mod tests {
         );
     }
 
-    /// Where a kernel a rule named declines, the cube's plane unit groups run after its plane
+    /// Where a kernel a rule named declines, the cube's plane shuffles run after its plane
     /// fragments, the hypercube shuffle merged by a second launch after the one merged on the last
     /// arrival, and the unit routine after any other: every kernel reaches the unit routine,
     /// and nothing follows it.
@@ -201,7 +201,7 @@ mod tests {
     fn every_rule_ends_at_the_unit_routine() {
         assert_eq!(
             CUBE_FRAGMENT.instead_by_rule(),
-            Some(AttentionKernel::Cube(CubeAttentionKernel::UnitGroup))
+            Some(AttentionKernel::Cube(CubeAttentionKernel::Shuffle))
         );
         assert_eq!(
             LAST_ARRIVAL_SHUFFLE.instead_by_rule(),

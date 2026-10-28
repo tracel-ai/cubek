@@ -1,17 +1,14 @@
-use crate::attention::plane::{
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads,
-};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Levels, Space, StageStorage};
+use cubecl::tile::{Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
 /// A few rows of one head a plane owns in its units' registers, the head and value dims split
@@ -203,53 +200,28 @@ impl AttentionMicrokernel for PlaneShuffleAttentionMicrokernel {
     }
 }
 
-impl CubePlaneMicrokernel for PlaneShuffleAttentionMicrokernel {
-    const NAME: &'static str = "shuffle";
-
-    /// Each team reads its keys of every step where they lie.
-    const READS: CubePlaneReads = CubePlaneReads::Global;
-
-    /// Its planes merge in slots of shared memory.
-    const KEYS: CubePlaneKeys = CubePlaneKeys::Split;
+/// What a cube holding it on its planes reads of it.
+impl PlaneShuffleAttentionMicrokernel {
+    /// What the routines whose cubes hold it are named after.
+    pub const NAME: &'static str = "shuffle";
 
     /// Its rows of one head against a step of keys, the head and value dims whole. The plane's
     /// units lie over them in teams it places itself.
-    fn tiling(&self) -> Levels {
+    pub fn tiling(&self) -> Levels {
         Levels::leaf(&[(Q, self.seq_q()), (G, 1), (S, self.seq_kv())])
     }
 
-    fn seq_q(&self) -> usize {
+    pub fn seq_q(&self) -> usize {
         self.settings.seq_q.get()
     }
 
     /// Every team's keys in flight.
-    fn seq_kv(&self) -> usize {
+    pub fn seq_kv(&self) -> usize {
         self.teams * self.settings.keys_in_flight.get()
     }
 
     /// None: its rows and their keys stay in registers.
-    fn window_bytes(&self, _item: &AttentionWorkItem) -> usize {
+    pub fn window_bytes(&self, _item: &AttentionWorkItem) -> usize {
         0
-    }
-
-    /// None where a plane holds its rows alone: they leave their slots from its units'
-    /// registers. Where planes split the same rows' keys, the slots they merge in first, as the
-    /// cube's own rows do ([`merge_bytes`](CubePlaneMicrokernel::merge_bytes)).
-    fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        self.merge_bytes(item, layout)
-    }
-
-    /// A slot for every plane of every row: a line of each element of a value, and its running
-    /// max and sum ([`SlotShape`](crate::split_keys_merge::SlotShape)).
-    fn merge_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        match layout.planes_along_keys {
-            1 => 0,
-            _ => layout.planes() * self.seq_q() * (item.val_dim + 2) * item.sum.size(),
-        }
-    }
-
-    /// Row-major, whatever the layout: its steps read no stage.
-    fn stage_storage(&self, _layout: StageLayout, _stage: &Space) -> StageStorage {
-        StageStorage::Strided
     }
 }
