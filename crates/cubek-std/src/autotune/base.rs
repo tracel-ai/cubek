@@ -287,7 +287,7 @@ impl<K: AutotuneKey, I: TuneInputs, O: 'static, Id: Identity> Autotune<K, I, O, 
     /// that runs close enough to the device's peak.
     ///
     /// How close is the configured autotune level's
-    /// ([`Thresholds::for_level`]): the roofline time `roofline` states,
+    /// (`Thresholds::for_level`): the roofline time `roofline` states,
     /// divided by the level's fraction of peak, is the time under which a
     /// candidate ends the round. At `full` every candidate is measured. The
     /// peaks are cubecl's own probes, cached per device.
@@ -303,7 +303,7 @@ impl<K: AutotuneKey, I: TuneInputs, O: 'static, Id: Identity> Autotune<K, I, O, 
     /// the bus, meets this very bound on the first candidate tried, and ends
     /// the round with a winner chosen on a read production never gets. So
     /// before every measured sample of such a problem the autotune writes past the
-    /// cache ([`cold_read_bytes`]), and the candidates are timed the way a decode
+    /// cache ([`cold_read_bytes`](crate::autotune::cold_read_bytes)), and the candidates are timed the way a decode
     /// step meets them: after every other weight of the model.
     pub fn bounded<F>(self, roofline: F) -> Self
     where

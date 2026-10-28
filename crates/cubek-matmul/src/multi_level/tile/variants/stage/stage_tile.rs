@@ -10,7 +10,7 @@ use crate::multi_level::{
 use cubecl::std::tensor::layout::Coords2d;
 use cubek_std::MatrixLayout;
 
-/// Payload of [`TileKind::Stage`](crate::multi_level::tile::TileKind): non-owning view of a
+/// Payload of `TileKind::Stage`: non-owning view of a
 /// [`StridedStageMemory`] buffer, with vector size and tiling layout erased
 /// from the type and held as comptime metadata.
 #[derive(CubeType, Clone)]

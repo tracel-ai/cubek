@@ -6,6 +6,7 @@ use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, Matmu
 use cubecl::CubeDim;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
@@ -80,6 +81,32 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
                 .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
         self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(())
+    }
+
+    /// `lhs · rhs` on `client`'s device, into an output the launch allocates, by this
+    /// candidate's routine at its setting, each problem prepared once ([`PreparedLaunches`]).
+    ///
+    /// # Errors
+    ///
+    /// What [`MatmulTensors::new`] declines, and why the routine cannot run the product at this
+    /// setting.
+    pub fn launch<M: MatmulMicrokernel, SM>(
+        &self,
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+    ) -> Result<TensorHandle, Refusal>
+    where
+        R: MatmulRoutine<M, SM>,
+    {
+        let tensors = MatmulTensors::new::<M>(client, lhs, rhs)?;
+        let (blueprint, grid) =
+            self.prepared
+                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
+        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+        Ok(tensors
+            .into_out()
+            .expect("a launch allocating its output hands it back"))
     }
 }
 

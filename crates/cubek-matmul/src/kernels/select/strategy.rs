@@ -25,8 +25,8 @@ pub enum MatmulOpStrategy {
     /// Only kernels are measured. There is no framework op among the
     /// candidates: a framework's `matmul` runs an autotune of its own, so an autotune
     /// holding it would be a tuner inside a tuner whose winning candidate names
-    /// a wrapper. The multi-level routines are named and launched directly
-    /// instead, which is what makes every candidate a kernel.
+    /// a wrapper. The routines are named and launched directly instead, which
+    /// is what makes every candidate a kernel.
     ///
     /// Which kernels join, and in what order, is the autotune's own answer,
     /// because its candidate set is built once per process and no
@@ -41,18 +41,10 @@ pub enum MatmulOpStrategy {
 }
 
 /// How far from the routines in [`kernels`](crate::kernels) a
-/// [`Heuristic`](MatmulOpStrategy::Heuristic) may reach.
+/// [`Heuristic`](MatmulOpStrategy::Heuristic) may reach: a **ceiling**, named as attention names
+/// its own, of which the matmul family has one.
 ///
-/// A **ceiling**, not an exclusive choice: `Tile ⊂ Cubek`, ordered by
-/// distance from the kernels a caller would rather run. The two answer the
-/// question the groups of an [`Autotune`](MatmulOpStrategy::Autotune) candidate list
-/// answer, `microkernel` and `cubek`: reaching a ceiling and racing a group
-/// are two ways of asking it about the same set of kernels.
-///
-/// Nothing here measures. A heuristic that ran out of rules hands the problem
-/// to the multi-level routines' own selection ([`Strategy::Auto`](crate::strategy::Strategy::Auto)),
-/// not to an autotune: that is a rule-based answer from the code that owns those routines, which
-/// is what the ceiling promised.
+/// Nothing here measures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MatmulKernelHeuristic {
     /// The routines in [`kernels`](crate::kernels) only: a branch runs one, and another of them
@@ -60,11 +52,6 @@ pub enum MatmulKernelHeuristic {
     /// dequantized float pair). The one foreign kernel it reaches is the framework's
     /// dequantize, where a quantized input is materialized.
     Tile,
-    /// Everything, the multi-level routines included. The rules still pick the
-    /// memory-bound kernel where one serves; what they have no rule for —
-    /// which staged routine suits a shape — goes to
-    /// [`CubekAuto`](MatmulKernel::CubekAuto), the multi-level routines' selection.
-    Cubek,
 }
 
 /// The kernels themselves, named for what they are.
@@ -90,11 +77,6 @@ pub enum MatmulKernel {
     // A strategy written down under the pin's earlier name still reads as this one.
     #[serde(alias = "PlaneFold")]
     PlaneShuffle,
-    /// The multi-level routines' own selection ([`Strategy::Auto`](crate::strategy::Strategy::Auto))
-    /// — its rules, no autotune, a quantized input read as stored. The baseline the groups are
-    /// measured against, and what [`Heuristic(Cubek)`](MatmulKernelHeuristic::Cubek)
-    /// falls through to.
-    CubekAuto,
     /// Two NVFP4 inputs multiplied on the GPU's 4-bit tensor cores, both read as they are stored.
     /// The inputs a caller rounded to NVFP4 are its choice of what the product computes, so no
     /// policy runs it. Named here for a benchmark or a test; two NVFP4 inputs only, on a GPU with
@@ -131,7 +113,7 @@ impl MatmulOpStrategy {
 impl MatmulKernelHeuristic {
     /// Every ceiling, nearest first.
     pub fn all() -> Vec<Self> {
-        vec![Self::Tile, Self::Cubek]
+        vec![Self::Tile]
     }
 }
 
@@ -141,7 +123,6 @@ impl MatmulKernel {
         vec![
             Self::UnitRegisters,
             Self::PlaneShuffle,
-            Self::CubekAuto,
             Self::Nvfp4TensorCores,
         ]
     }
