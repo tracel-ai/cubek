@@ -421,16 +421,25 @@ impl CubeStagedMatmulRoutine {
     /// The blueprint of a product over a block-split space, whose inputs are restated contiguous
     /// along `K`, so no buffer fact narrows them: a packed input its fill decodes binds at
     /// [`decoded_width`](Self::decoded_width); every other input a device's load of the element its planes contract it at,
-    /// at most a block; the output one value wide.
+    /// at most a block; the output one value wide. The fill is narrowed to the widths the inputs
+    /// it does not decode land, which are the ones the copy engine may move.
     fn blueprint_in_blocks(
         hw: &Hardware,
         contracted: &MatmulWorkItem,
-        microkernel: CubeStagedMicrokernel,
+        mut microkernel: CubeStagedMicrokernel,
         partitioning: MatmulPartitioning,
         storage: StageStorage,
     ) -> CubeStagedMatmulRoutineBlueprint {
+        let widths = Self::widths_in_blocks(hw, contracted, &microkernel, &partitioning, &storage);
+        let undecoded: Vec<MatmulOperand> = MatmulOperand::INPUTS
+            .into_iter()
+            .filter(|&operand| microkernel.reads.get(operand).staged().is_none())
+            .collect();
+        microkernel.fill = microkernel
+            .fill
+            .at_widths_of(&undecoded, &widths, contracted);
         MatmulBlueprint {
-            widths: Self::widths_in_blocks(hw, contracted, &microkernel, &partitioning, &storage),
+            widths,
             microkernel,
             partitioning,
             shared_memory: storage,

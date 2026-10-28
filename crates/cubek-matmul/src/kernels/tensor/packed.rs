@@ -7,7 +7,7 @@ use super::PlainTensor;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::QuantScheme;
-use cubecl::tile::launch::{Arg, Labelled, Refusal};
+use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
     kind::Field,
@@ -261,13 +261,19 @@ impl PackedTensor {
         )
     }
 
-    /// The matrix as one tile under `launcher`, its words `width` values wide: the words under
-    /// their block scales, read as `scales` says, under the per-tensor scale where the scheme has
-    /// one.
+    /// The matrix as one tile under `launcher`, its words `width` values wide and moved into a
+    /// stage as `delivery` says: the words under their block scales, read as `scales` says, under
+    /// the per-tensor scale where the scheme has one.
     ///
     /// Every level binds as the words it lies in and is served every scale a word holds: the unit
     /// that reads a word of scales holds the blocks of every field in it.
-    pub fn bind(&self, launcher: &Launcher, width: usize, scales: BlockScales) -> TileArgLaunch {
+    pub fn bind(
+        &self,
+        launcher: &Launcher,
+        width: usize,
+        scales: BlockScales,
+        delivery: Delivery,
+    ) -> TileArgLaunch {
         let operand = &self.operand;
         let lined = operand.lined();
         // The buffer steps its rows before its words, so its dims are named that way.
@@ -319,7 +325,7 @@ impl PackedTensor {
                     .axes(&values_axes),
             ),
         };
-        let words = words.vectorize(width);
+        let words = words.vectorize(width).delivery(delivery);
         // The scales count the blocks of the axis they are constant inside.
         let tiled_along = operand
             .scaled_along()
