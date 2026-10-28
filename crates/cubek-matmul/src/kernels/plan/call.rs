@@ -30,6 +30,9 @@ pub struct MatmulCall {
     /// Where each lhs row reads the slabs of a stacked rhs its routes name: the routed product
     /// they state, read as stored once for every candidate of a table.
     pub routes: Option<RoutedMatmulTensors>,
+    /// The buffer the product is written into, where the caller allocated it at the product's
+    /// shape; a launch allocates one otherwise.
+    pub destination: Option<TensorHandle>,
 }
 
 impl MatmulCall {
@@ -55,9 +58,12 @@ impl MatmulCall {
             (None, StoredTensor::Plain(lhs)) => zeros_grown(&call.client, lhs, key.m),
             _ => None,
         };
+        // A grown lhs makes a product of another shape than the caller's buffer, so the round's
+        // launches allocate their own.
         match grown {
             Some(lhs) => Self {
                 lhs: MatmulCallInput::replaced_by(lhs),
+                destination: None,
                 ..call.clone()
             },
             None => call.clone(),

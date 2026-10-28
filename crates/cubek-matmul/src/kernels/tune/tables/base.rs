@@ -1,7 +1,7 @@
 use super::{few_rows, many_rows, nvfp4};
 use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
 use crate::kernels::select::selector::MatmulTable;
-use crate::kernels::tensor::StoredTensor;
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
 use crate::kernels::tune::{
     MatmulPackedCandidate, MatmulRoutineCandidate, MatmulRoutineSettings, PackedContraction,
@@ -160,9 +160,17 @@ where
 {
     listed_for(Product::Float, &call)?;
     let settings = candidate.strategy();
-    let launched = match &call.routes {
-        Some(routes) => routes.launch(&call.hw, &candidate.routine(), settings),
-        None => candidate.launch(&call.client, call.lhs.tensor, call.rhs.tensor),
+    let launched = match (&call.routes, call.destination) {
+        (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
+        (None, Some(destination)) => candidate
+            .launch_into(
+                &call.client,
+                call.lhs.tensor,
+                call.rhs.tensor,
+                PlainTensor::of_handle(destination.clone()),
+            )
+            .map(|()| destination),
+        (None, None) => candidate.launch(&call.client, call.lhs.tensor, call.rhs.tensor),
     };
     launched
         .map(|handle| MatmulProduct {
@@ -189,9 +197,17 @@ where
 {
     listed_for(Product::Packed, &call)?;
     let settings = candidate.settings();
-    let launched = match &call.routes {
-        Some(routes) => routes.launch(&call.hw, &candidate.routine(), settings),
-        None => {
+    let launched = match (&call.routes, call.destination) {
+        (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
+        (None, Some(destination)) => candidate
+            .launch_into(
+                &call.client,
+                call.lhs.tensor,
+                call.rhs.tensor,
+                PlainTensor::of_handle(destination.clone()),
+            )
+            .map(|()| destination),
+        (None, None) => {
             candidate.launch_written_in(&call.client, call.lhs.tensor, call.rhs.tensor, call.out)
         }
     };

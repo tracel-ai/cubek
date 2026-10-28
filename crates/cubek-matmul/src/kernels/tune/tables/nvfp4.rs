@@ -4,9 +4,11 @@ use super::base::{
 };
 use crate::kernels::MatmulRoutine;
 use crate::kernels::plan::MatmulCall;
+use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::{CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulTensors};
 use cubecl::tune::Tunable;
+use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{GroupPriority, Identity};
 use cubek_std::routine::Routine;
@@ -40,18 +42,31 @@ fn candidate(
 ) -> Tunable<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity> {
     RoutineIdentity::named(&format!("nvfp4 {settings}"), move |call: MatmulCall| {
         reads_no_routes(&call)?;
-        let tensors =
-            MatmulTensors::written_in(&call.client, call.lhs.tensor, call.rhs.tensor, call.out)
-                .map_err(|why| format!("{settings} does not serve this product: {why:?}"))?;
+        let declined = |why| format!("{settings} does not serve this product: {why:?}");
+        let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
+        let tensors = match &call.destination {
+            Some(destination) => MatmulTensors::writing_into::<CubeStagedMicrokernel>(
+                &call.client,
+                lhs,
+                rhs,
+                PlainTensor::of_handle(destination.clone()),
+            ),
+            None => MatmulTensors::written_in(&call.client, lhs, rhs, call.out),
+        }
+        .map_err(declined)?;
         let (blueprint, grid) = CubeStagedMatmulRoutine
             .prepare(&hw, &tensors.problem(), &settings)
-            .map_err(|why| format!("{settings} does not serve this product: {why:?}"))?;
+            .map_err(declined)?;
         CubeStagedMatmulRoutine.dispatch_into_buffer(&tensors, blueprint, grid);
-        Ok::<_, String>(MatmulProduct {
-            client: call.client,
-            handle: tensors
+        let handle = match call.destination {
+            Some(destination) => destination,
+            None => tensors
                 .into_out()
                 .expect("a launch allocating its output hands it back"),
+        };
+        Ok::<_, String>(MatmulProduct {
+            client: call.client,
+            handle,
         })
     })
 }
