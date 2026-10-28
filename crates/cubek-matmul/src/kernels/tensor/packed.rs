@@ -202,6 +202,26 @@ impl PackedTensor {
         }
     }
 
+    /// The matrix's two axes, in the order its caller stated them.
+    pub fn axes(&self) -> [Axis; 2] {
+        self.axes.map(|(axis, _)| axis)
+    }
+
+    /// This matrix with its axis `from` named `to`: the same bytes, read by a kernel that names
+    /// the matrix's axes otherwise.
+    pub fn renamed(self, from: Axis, to: Axis) -> Self {
+        let rename = |axis: Axis| if axis == from { to } else { axis };
+        Self {
+            operand: self.operand.renamed(from, to),
+            axes: self.axes.map(|(axis, extent)| (rename(axis), extent)),
+            stack: self.stack.map(|stack| PackedStack {
+                along: rename(stack.along),
+                ..stack
+            }),
+            ..self
+        }
+    }
+
     /// What `axis` of the matrix measures.
     ///
     /// # Panics

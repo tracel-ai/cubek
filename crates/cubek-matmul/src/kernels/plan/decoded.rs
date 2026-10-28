@@ -1,7 +1,8 @@
 use super::{MatmulCall, MatmulCallInput};
 use crate::kernels::PlaneDequantizeMatmulRoutine;
-use crate::kernels::tensor::{PackedTensor, StoredTensor};
+use crate::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubecl::tile::launch::Refusal;
+use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::plan::{Declined, Step};
 
 /// Every packed input decoded into a float one of the call's element by this crate's decode
@@ -72,16 +73,24 @@ impl Step<MatmulCall> for FrameworkDequantized {
 }
 
 /// `packed` decoded by this crate's decode into a float input of the call's element.
+///
+/// The decode names a packed matrix's axes `K` and `N`: an `[m, k]` input's rows are its `N`, and
+/// the `[k, rows]` it writes is read back transposed.
 fn decode(call: &MatmulCall, packed: &PackedTensor) -> Result<MatmulCallInput, Refusal> {
-    PlaneDequantizeMatmulRoutine
-        .launch_on(
-            &call.hw,
-            &call.client,
-            packed.clone(),
-            call.out,
-            &PlaneDequantizeMatmulRoutine::SETTINGS,
-        )
-        .map(MatmulCallInput::replaced_by)
+    let matrix = packed.clone().renamed(M, N);
+    let laid_along_k = matrix.axes()[0] == K;
+    let handle = PlaneDequantizeMatmulRoutine.launch_on(
+        &call.hw,
+        &call.client,
+        matrix,
+        call.out,
+        &PlaneDequantizeMatmulRoutine::SETTINGS,
+    )?;
+    let decoded = PlainTensor::of_handle(handle);
+    Ok(MatmulCallInput::plain(match laid_along_k {
+        true => decoded,
+        false => decoded.transposed(),
+    }))
 }
 
 /// `input` dequantized by the framework, as its caller bound it.
