@@ -3,8 +3,9 @@
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::{
-    CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings, MatmulRoutine,
-    MatmulTensors, PlaneShuffleMatmulRoutineSettings,
+    CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
+    HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
+    PlaneShuffleMatmulRoutineSettings,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -45,6 +46,12 @@ impl PackedContraction for CubeShuffleMatmulRoutineSettings {
 }
 
 impl PackedContraction for CubeStagedMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for HypercubeLastArrivalMatmulRoutineSettings {
     fn on_matrix_instructions(&self) -> bool {
         true
     }

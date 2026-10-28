@@ -19,13 +19,24 @@ const NO_FRAMEWORK_DEQUANTIZE: Refusal = Refusal::Declined {
     why: "the caller states no framework dequantize for this packed input",
 };
 
-impl Step<MatmulCall> for Decoded {
+impl Decoded {
+    /// `input`, one of `call`'s, decoded where it is packed: what a candidate that decodes one
+    /// input and reads the other as stored decodes.
+    ///
+    /// # Errors
+    ///
+    /// Where the decode declines the input and the caller states no framework dequantize for it.
+    ///
     /// # Panics
     ///
     /// Where the decode declines an input stored in tiles, which the framework's dequantize reads
     /// by its strides alone and would answer wrong.
-    fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {
-        let decoded = |input: &MatmulCallInput| match &input.tensor {
+    pub fn input(
+        &self,
+        call: &MatmulCall,
+        input: &MatmulCallInput,
+    ) -> Result<MatmulCallInput, Declined> {
+        match &input.tensor {
             StoredTensor::Plain(_) => Ok(input.clone()),
             StoredTensor::Packed(packed) => decode(call, packed)
                 .or_else(|why| match packed.words().is_tiled() {
@@ -38,10 +49,18 @@ impl Step<MatmulCall> for Decoded {
                     plan: self.name(),
                     why: why.to_string(),
                 }),
-        };
+        }
+    }
+}
+
+impl Step<MatmulCall> for Decoded {
+    /// # Panics
+    ///
+    /// As [`Decoded::input`].
+    fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {
         Ok(MatmulCall {
-            lhs: decoded(&call.lhs)?,
-            rhs: decoded(&call.rhs)?,
+            lhs: self.input(call, &call.lhs)?,
+            rhs: self.input(call, &call.rhs)?,
             ..call.clone()
         })
     }

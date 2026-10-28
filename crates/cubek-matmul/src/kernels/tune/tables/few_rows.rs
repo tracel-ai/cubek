@@ -1,6 +1,7 @@
 use super::base::{
-    MatmulTableGroups, MatmulTunables, RoutineIdentity, decoded_floor, few_rows_roofline,
-    measured_table, microkernel_candidate, packed_candidate,
+    MatmulTableGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
+    activation_decoded_identity, decoded_floor, few_rows_roofline, measured_table,
+    microkernel_candidate, packed_candidate,
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
 use crate::kernels::{
@@ -12,7 +13,8 @@ use cubek_std::Hardware;
 /// The few-rows table's candidates on `hw`. Against float inputs the plane and cube shuffles and
 /// the unit whole-K routine at their own settings; against a packed input the shuffles at the
 /// settings worth trying against it, reading it as stored, and the packed staged routine at a
-/// decode's settings.
+/// decode's settings; against a packed activation, the same again with the activation decoded first
+/// ([`activation_decoded_candidate`]).
 ///
 /// Keyed by the power of two at or above the call's rows, as the many-rows table is: a routine
 /// that does not stage holds that many rows whatever the call's count inside it, so it serves or
@@ -74,6 +76,37 @@ pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
             ),
             RoutineIdentity::new,
             packed_candidate,
+        )
+        // The same, against a packed activation decoded first.
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                PlaneShuffleMatmulRoutine,
+                PlaneShuffleMatmulRoutine.packed_settings(),
+                &hw,
+            ),
+            activation_decoded_identity,
+            activation_decoded_candidate,
+        )
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                CubeShuffleMatmulRoutine,
+                CubeShuffleMatmulRoutine.packed_settings(&hw),
+                &hw,
+            ),
+            activation_decoded_identity,
+            activation_decoded_candidate,
+        )
+        .identified(
+            &microkernel,
+            MatmulPackedCandidate::of(
+                CubeStagedMatmulRoutine,
+                CubeStagedMatmulRoutine.packed_one_step_settings(),
+                &hw,
+            ),
+            activation_decoded_identity,
+            activation_decoded_candidate,
         )
         .floor(decoded_floor(&hw))
         .finish()
