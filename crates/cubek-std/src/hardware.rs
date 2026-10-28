@@ -22,8 +22,9 @@ pub struct Hardware {
     /// is read here, as cubecl states it.
     pub properties: Arc<DeviceProperties>,
     /// Whether an `mma` accumulator holds its cells where the `A` operand of a contraction as
-    /// deep as it is wide holds them, so a product contracted again reads it as that operand in
-    /// the same registers (the tile DSL's `accumulator_as_a`).
+    /// deep as it is wide holds them, and a run of accumulators along a deeper contraction where
+    /// its `A` holds them one after another, so a product contracted again reads them as that
+    /// operand in the same registers (the tile DSL's `accumulators_as_a`).
     ///
     /// True on CUDA, and on Metal, whose simdgroup matrix gives every lane two cells of one row
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
@@ -333,7 +334,8 @@ pub trait Instructions: Iterator<Item = MmaConfig> + Clone {
 
     /// These shapes less every one offered beside a deeper one of the same tile and elements: the
     /// deeper contracts the tile in fewer calls. The shallower stays in the device's set for what
-    /// reads its operand from an accumulator of that tile, as an attention's value from its score.
+    /// reads its operand from accumulators of that tile too few to fill the deeper, as an
+    /// attention's value from a score one fragment wide.
     fn deepest(self) -> impl Instructions {
         let offered = self.clone();
         self.filter(move |shape| {
