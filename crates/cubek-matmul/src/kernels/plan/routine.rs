@@ -7,7 +7,6 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::plan::{Declined, Plan, PlanTree};
-use cubek_std::routine::Routine;
 
 /// One routine as a plan: at the first of its settings that serves the product, or at one setting.
 ///
