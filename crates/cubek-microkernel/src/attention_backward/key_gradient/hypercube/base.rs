@@ -1,11 +1,14 @@
 use crate::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, CubeKeyGradientMicrokernelSettings,
 };
-use crate::attention_backward::key_gradient::plane::PlaneKeyGradientMicrokernel;
+use crate::attention_backward::key_gradient::plane::{
+    PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
+};
 use crate::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardWorkItem, BoundProduct, estimate_beside,
 };
 use crate::matmul::plane::PlaneFragmentMicrokernel;
+use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Level, Levels, Partitioning};
 use cubek_std::Hardware;
@@ -110,10 +113,19 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
 
     const DECLINE: &'static str = PlaneKeyGradientMicrokernel::DECLINE;
 
-    /// The cube microkernel's.
+    /// The cube microkernel's, then wider boxes of keys: each cube adds into the query's gradient
+    /// once a stage whatever its planes, so the more keys a cube holds, the fewer cubes add into
+    /// each query's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
+        let wider = [(2, 2, 8), (1, 1, 4), (1, 1, 8), (4, 2, 4)].map(|(keys, queries, planes)| {
+            CubeKeyGradientMicrokernelSettings {
+                plane: PlaneKeyGradientMicrokernelSettings::fragments(keys, queries),
+                planes_along_keys: NonZeroUsize::new(planes).unwrap(),
+            }
+        });
         CubeKeyGradientMicrokernel::settings(hw)
             .into_iter()
+            .chain(wider)
             .map(|cube| Self::Settings { cube })
             .collect()
     }
