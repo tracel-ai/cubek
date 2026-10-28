@@ -97,11 +97,12 @@ impl PlaneDequantizeMatmulRoutine {
         } = MatmulDequantizeBinding::new(
             &packed,
             &into_plain,
-            grid.launcher(
-                client,
-                blueprint.partitioning.kernel(),
-                blueprint.partitioning.as_tile().space(),
-            ),
+            grid.launcher(client, || {
+                (
+                    blueprint.partitioning.kernel(),
+                    blueprint.partitioning.as_tile().space().clone(),
+                )
+            }),
             blueprint.widths.rhs,
         );
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes

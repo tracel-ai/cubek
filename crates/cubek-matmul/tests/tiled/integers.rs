@@ -53,7 +53,7 @@ where
     let rhs = upload(shape![k, n], &rhs_host);
     let mut served = 0;
     for candidate in MatmulRoutineCandidate::list(routine, &hw) {
-        let (out, out_plain) = PlainTensor::empty(&client, shape![m, n], I32);
+        let (out, out_plain) = PlainTensor::empty_contiguous(&client, shape![m, n], I32);
         let launched = routine.launch_into(
             &hw,
             &client,

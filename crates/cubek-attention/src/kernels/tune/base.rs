@@ -14,9 +14,9 @@ use crate::kernels::{
     HypercubeSecondLaunchShuffleAttentionRoutine, QueryPlacement, UnitAttentionRoutine,
 };
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind, UIntKind};
+use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::throughput::{MemoryAccess, compute_throughput_key};
+use cubecl::throughput::MemoryAccess;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, Tunable, TunableSet, Work, local_tuner};
 use cubecl::zspace::{Shape, metadata::Metadata};
@@ -24,7 +24,6 @@ use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::Instructions;
 use cubek_std::autotune::{Autotune, Ceiling, GroupPriority, Roofline, TuneCandidate};
 use cubek_std::routine::Routine;
 
@@ -87,6 +86,11 @@ type AttentionAutotune = Autotune<AttentionKey, AttentionTuneInputs, ()>;
 /// few boxes over many keys. The unit routine is listed only where none of them can run, for want
 /// of a plane width the device commits to: elsewhere measuring its candidates takes longer than
 /// the rest of the autotune. The plane routine is not listed.
+///
+/// Its candidates are timed as the cache leaves them, unlike one query's: a prompt's queries, keys
+/// and values are the activations the layer before it just wrote, so production reads them warm,
+/// and a round timing them cold ranks the candidates on a read they never meet (an f32 head dim
+/// of 128 on an L4: a winner 14% behind the multi-level kernels warm, against 28% chosen cold).
 fn many_queries(
     hw: &Hardware,
     priority: GroupPriority,
@@ -97,13 +101,11 @@ fn many_queries(
         AttentionTuneInputs::many_queries_representative,
     );
     let routines = autotune.group("microkernel", priority);
-    autotune = autotune
-        .read_cold(AttentionTuneInputs::many_queries_roofline)
-        .prioritized(
-            &routines,
-            AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, hw),
-            launch,
-        );
+    autotune = autotune.prioritized(
+        &routines,
+        AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, hw),
+        launch,
+    );
     autotune = autotune
         .prioritized(
             &routines,
@@ -496,23 +498,6 @@ impl AttentionTuneInputs {
         }
     }
 
-    fn many_queries_work(&self) -> Work {
-        let q = self.query.shape();
-        let (batch, heads, q_len, head_dim) = (q[0], q[1], q[2], q[3]);
-        Work {
-            compute_ops: attention_ops(
-                batch,
-                heads,
-                q_len,
-                self.keys(),
-                head_dim,
-                self.scoring.visibility.is_causal(),
-            ),
-            // The output is the query's element count laid out heads-adjacent.
-            bytes: self.query.binding.handle.size() as usize * 2 + self.kv_bytes(batch),
-        }
-    }
-
     fn one_query_work(&self) -> Work {
         let q = self.query.shape();
         let (batch, heads, head_dim) = (q[0], q[1], q[3]);
@@ -521,39 +506,6 @@ impl AttentionTuneInputs {
             // so every position it scores is one it attends.
             compute_ops: attention_ops(batch, heads, 1, self.keys(), head_dim, false),
             bytes: self.query.binding.handle.size() as usize * 2 + self.kv_bytes(batch),
-        }
-    }
-
-    /// The many-positions roofline: the instruction. A whole prompt reuses each key and value
-    /// across every query position in the block, so what binds is the arithmetic rather than
-    /// the bus, at the instruction the planes contract on, and plain arithmetic where they can
-    /// contract on none. The instruction is
-    /// [`for_attention`](cubek_std::Instructions::for_attention)'s answer, not the offer's: the
-    /// planes need a shape for the mix as well as the score.
-    fn many_queries_roofline(key: &AttentionKey, inputs: &Self) -> Roofline {
-        let elem = key.elem();
-        let accumulate = ElemType::Float(FloatKind::F32);
-        let hw = Hardware::from_client(&inputs.client);
-        let instruction = hw
-            .properties
-            .features
-            .matmul
-            .cmma
-            .iter()
-            .copied()
-            .for_attention(elem)
-            .largest()
-            .map(|i| (i.m, i.n, i.k));
-        // A chunk key's candidates run on the chunk the key stands for, whatever chunk the call
-        // brought, so a chunk key prices its own problem, at the call's element.
-        let work = match chunk_problem(key) {
-            Some(problem) => problem_work(&problem, inputs.query.elem.size()),
-            None => inputs.many_queries_work(),
-        };
-        Roofline {
-            client: inputs.client.clone(),
-            ceiling: Ceiling::Compute(compute_throughput_key(instruction, elem, accumulate)),
-            work,
         }
     }
 
@@ -594,27 +546,6 @@ fn chunk_problem(key: &AttentionKey) -> Option<AttentionRoutineProblem> {
     AttentionRoutineProblem::try_from(key)
         .ok()
         .filter(|_| key.chunk())
-}
-
-/// The work of a problem rather than of operands: the query and the output at the query heads,
-/// the keys and values at the key heads.
-fn problem_work(problem: &AttentionRoutineProblem, elem_size: usize) -> Work {
-    let heads = problem.heads();
-    let causal = problem.visibility.is_causal();
-    Work {
-        compute_ops: attention_ops(
-            problem.batch,
-            heads,
-            problem.seq_q,
-            problem.seq_kv,
-            problem.head_dim,
-            causal,
-        ),
-        bytes: problem.batch
-            * problem.head_dim
-            * elem_size
-            * (2 * heads * problem.seq_q + 2 * problem.num_kv_heads * problem.seq_kv),
-    }
 }
 
 /// Row-major strides over `shape`.
@@ -698,43 +629,9 @@ fn zeros_grown(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::{AttentionVisibility, QueryPlacement, ScoreScale};
 
     /// Qwen3-8B prefilling 512 tokens: 32 heads over a 128-wide head dim.
     const SHAPE: (usize, usize, usize, usize, usize) = (1, 32, 512, 512, 128);
-
-    /// **A chunk key's round is priced on the chunk it times** — the one every chunk key stands
-    /// for — and not on whichever chunk the call brought.
-    #[test]
-    fn a_chunk_key_prices_the_chunk_it_times() {
-        let key = AttentionKey::new(
-            ElemType::Float(FloatKind::F16),
-            32,
-            8,
-            128,
-            AttentionKey::CHUNK_QUERIES,
-            AttentionKey::CHUNK_PREFIX,
-            1,
-            AttentionVisibility::Causal {
-                queries: QueryPlacement::Last,
-            },
-            ScoreScale::standard(128),
-            None,
-            false,
-        );
-        let problem = chunk_problem(&key).expect("a chunk key has a problem");
-        assert_eq!(problem.seq_kv, key.seq_kv());
-        assert!(problem.seq_kv >= AttentionKey::CHUNK_PREFIX);
-        let work = problem_work(&problem, 2);
-        assert_eq!(
-            work.compute_ops,
-            attention_ops(1, 32, problem.seq_q, problem.seq_kv, 128, true)
-        );
-        assert_eq!(
-            work.bytes,
-            128 * 2 * (2 * 32 * problem.seq_q + 2 * 8 * problem.seq_kv)
-        );
-    }
 
     /// **Both contractions, and nothing between them.** A roofline that counted one would be half
     /// the ceiling every candidate is held to, and the round would stop on a candidate at half

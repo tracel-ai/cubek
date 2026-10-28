@@ -1475,6 +1475,7 @@ dependencies = [
  "bytemuck",
  "cubecl",
  "cubecl-common",
+ "cubecl-environment",
  "cubek-matmul",
  "cubek-microkernel",
  "cubek-quant",
