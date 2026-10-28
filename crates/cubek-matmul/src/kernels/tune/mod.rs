@@ -3,10 +3,18 @@
 //! settings it lists for a packed input. A caller builds its tables from them.
 
 mod candidate;
+#[cfg(feature = "autotune-checks")]
+mod checks;
 pub mod key;
 mod packed_candidate;
+mod routine_settings;
+mod tables;
 #[cfg(test)]
 mod tests;
 
 pub use candidate::*;
+#[cfg(feature = "autotune-checks")]
+pub use checks::*;
 pub use packed_candidate::*;
+pub use routine_settings::*;
+pub use tables::*;

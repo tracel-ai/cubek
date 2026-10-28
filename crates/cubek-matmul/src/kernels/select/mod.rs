@@ -10,4 +10,6 @@ mod strategy;
 pub use strategy::*;
 
 #[cfg(test)]
+mod plans;
+#[cfg(test)]
 mod tests;

@@ -207,30 +207,6 @@ impl AttentionKernel {
             Self::Hypercube(hypercube) => hypercube.launch_lead_on(hw, tensors),
         }
     }
-
-    /// The kernel's lead on `tensors` by rule: where it declines on geometry the rules cannot
-    /// see, the kernel it names instead ([`instead_by_rule`](Self::instead_by_rule)), down to the
-    /// unit routine's lead.
-    ///
-    /// # Errors
-    ///
-    /// Why the unit routine's lead declines too: operands no routine serves.
-    pub fn launch_by_rule_on(
-        &self,
-        hw: &Hardware,
-        tensors: AttentionTensors,
-    ) -> Result<TensorHandle, Refusal> {
-        let mut kernel = *self;
-        loop {
-            match kernel.launch_lead_on(hw, tensors.clone()) {
-                Ok(out) => return Ok(out),
-                Err(why) => match kernel.instead_by_rule() {
-                    Some(instead) => kernel = instead,
-                    None => return Err(why),
-                },
-            }
-        }
-    }
 }
 
 #[cfg(test)]

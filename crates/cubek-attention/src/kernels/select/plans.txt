@@ -1,0 +1,44 @@
+# float cache, one query position
+autotune: fastest(decode)
+tile: in-order[hypercube-last-arrival-shuffle-attention@lead, hypercube-second-launch-shuffle-attention@lead, unit-attention@lead]
+cubek: fastest(decode)
+unit-attention: unit-attention@lead
+cube-fragment-attention: cube-fragment-attention@lead
+cube-shuffle-attention: cube-shuffle-attention@lead
+hypercube-last-arrival-shuffle-attention: hypercube-last-arrival-shuffle-attention@lead
+hypercube-second-launch-shuffle-attention: hypercube-second-launch-shuffle-attention@lead
+hypercube-second-launch-fragment-attention: hypercube-second-launch-fragment-attention@lead
+
+# float cache, many query positions
+autotune: fastest(prefill)
+tile: in-order[cube-fragment-attention@lead, cube-shuffle-attention@lead, unit-attention@lead]
+cubek: fastest(prefill)
+unit-attention: unit-attention@lead
+cube-fragment-attention: cube-fragment-attention@lead
+cube-shuffle-attention: cube-shuffle-attention@lead
+hypercube-last-arrival-shuffle-attention: hypercube-last-arrival-shuffle-attention@lead
+hypercube-second-launch-shuffle-attention: hypercube-second-launch-shuffle-attention@lead
+hypercube-second-launch-fragment-attention: hypercube-second-launch-fragment-attention@lead
+
+# packed cache, one query position
+autotune: in-order[hypercube-last-arrival-shuffle-attention@lead(packed cache), hypercube-second-launch-shuffle-attention@lead(packed cache), unit-attention@lead(packed cache), rebuilt(unit-attention@lead)]
+tile: in-order[hypercube-last-arrival-shuffle-attention@lead(packed cache), hypercube-second-launch-shuffle-attention@lead(packed cache), unit-attention@lead(packed cache), rebuilt(unit-attention@lead)]
+cubek: in-order[hypercube-last-arrival-shuffle-attention@lead(packed cache), hypercube-second-launch-shuffle-attention@lead(packed cache), unit-attention@lead(packed cache), rebuilt(unit-attention@lead)]
+unit-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+cube-fragment-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+cube-shuffle-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+hypercube-last-arrival-shuffle-attention: hypercube-last-arrival-shuffle-attention@lead(packed cache)
+hypercube-second-launch-shuffle-attention: hypercube-second-launch-shuffle-attention@lead(packed cache)
+hypercube-second-launch-fragment-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+
+# packed cache, many query positions
+autotune: rebuilt(fastest(prefill))
+tile: rebuilt(in-order[cube-fragment-attention@lead, cube-shuffle-attention@lead, unit-attention@lead])
+cubek: rebuilt(fastest(prefill))
+unit-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+cube-fragment-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+cube-shuffle-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+hypercube-last-arrival-shuffle-attention: hypercube-last-arrival-shuffle-attention@lead(packed cache)
+hypercube-second-launch-shuffle-attention: hypercube-second-launch-shuffle-attention@lead(packed cache)
+hypercube-second-launch-fragment-attention: refused: of the microkernel attention routines, only the hypercube shuffles read a packed cache
+

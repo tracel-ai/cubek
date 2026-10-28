@@ -1,18 +1,15 @@
 use super::packed::*;
 use super::problem::{MatmulProblem, OperandKind};
-use super::selector::{
-    FLOAT_FEW_ROWS, MatmulChoice, MatmulDequantize, MatmulPackedChoice, MatmulSelection,
-    MatmulTable, NVFP4_TENSOR_CORES_UNSERVED, select,
-};
+use super::selector::{FLOAT_FEW_ROWS, MatmulTable, NVFP4_TENSOR_CORES_UNSERVED, measured_table};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-use MatmulChoice as F;
+use crate::kernels::tune::MatmulTableGroups;
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
-use MatmulPackedChoice as P;
-use MatmulSelection as S;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
+use cubek_std::plan::Plan;
 use cubek_std::{Hardware, devices};
 
 fn q4() -> QuantScheme {
@@ -69,25 +66,73 @@ fn ue8m0_blocks() -> QuantScheme {
         .with_store(QuantStore::PackedU32(0))
 }
 
-/// The packed inputs read as stored by the kernel `choice` gives.
-fn packed(choice: P) -> S {
-    S::Packed(choice)
+/// What `strategy`'s plan for `problem` on `hw` tries, as its tree prints it.
+fn select(
+    strategy: MatmulOpStrategy,
+    problem: &MatmulProblem,
+    hw: &Hardware,
+) -> Result<String, Refusal> {
+    super::selector::select(strategy, problem, hw, MatmulTableGroups::default())
+        .map(|plan| plan.tree().to_string())
 }
 
-/// The kernel a rule names, and `otherwise` where it declines.
-fn rule(kernel: K, otherwise: S) -> P {
-    P::Rule {
-        kernel,
-        otherwise: Box::new(otherwise),
+/// The fastest candidate of `table`.
+fn fastest(table: MatmulTable) -> String {
+    format!("fastest({})", table.name())
+}
+
+/// `kernel` alone over float inputs: what a pin of it runs.
+fn float_pin(kernel: K) -> String {
+    match kernel {
+        K::UnitRegisters => "unit-registers@default".to_string(),
+        K::PlaneShuffle => "plane-shuffle".to_string(),
+        K::Nvfp4TensorCores => unreachable!("a float product's selection refuses it"),
     }
 }
 
-/// The packed inputs decoded by this crate's decode, then read by the float kernel `choice` gives.
-fn decoded(choice: F) -> S {
-    S::DequantizeThen {
-        dequantize: MatmulDequantize::Decode,
-        choice,
+/// A float rule: the plane shuffle, then the fixed routines that serve what it declines.
+fn float_rule() -> String {
+    "in-order[plane-shuffle, cube-staged@default, unit-registers@default]".to_string()
+}
+
+/// `kernel` alone reading the packed inputs as stored: what a pin of it runs.
+fn packed_pin(kernel: K) -> String {
+    match kernel {
+        K::PlaneShuffle => "plane-shuffle(packed as stored)".to_string(),
+        K::Nvfp4TensorCores => fastest(MatmulTable::Nvfp4),
+        K::UnitRegisters => unreachable!("a packed selection runs it on the decoded inputs"),
     }
+}
+
+/// `kernel` reading the packed inputs as stored, and `otherwise` where it declines.
+fn rule(kernel: K, otherwise: String) -> String {
+    let otherwise = otherwise
+        .strip_prefix("in-order[")
+        .and_then(|list| list.strip_suffix(']'))
+        .map(str::to_string)
+        .unwrap_or(otherwise);
+    format!("in-order[{}, {otherwise}]", packed_pin(kernel))
+}
+
+/// The packed inputs decoded by this crate's decode, then `plan` over them.
+fn decoded(plan: String) -> String {
+    format!("decoded({plan})")
+}
+
+/// Whether `plan` dequantizes its packed inputs by the framework first.
+fn framework_dequantized(plan: &Result<String, Refusal>) -> bool {
+    matches!(plan, Ok(tree) if tree.starts_with("framework-dequantized("))
+}
+
+/// Whether `plan` runs one kernel and nothing after it, once its steps are taken: a pin.
+fn names_a_pin(plan: &str) -> bool {
+    let mut inner = plan;
+    for step in ["decoded(", "framework-dequantized("] {
+        if let Some(rest) = inner.strip_prefix(step) {
+            inner = rest;
+        }
+    }
+    !(inner.starts_with("fastest(") || inner.starts_with("in-order["))
 }
 
 /// `m` rows against a `[k, n]` rhs packed under `scheme`, the lhs float.
@@ -141,7 +186,6 @@ fn which_input_is_packed_never_changes_the_selection() {
     let strategies = [
         Autotune,
         Heuristic(H::Tile),
-        Heuristic(H::Cubek),
         Specific(K::UnitRegisters),
         Specific(K::PlaneShuffle),
     ];
@@ -165,20 +209,38 @@ fn which_input_is_packed_never_changes_the_selection() {
     }
 }
 
+/// The table a caller asks which routine won is the one its plan is: autotune's, on the table
+/// the inputs go to, and none where the plan is anything else.
+#[test]
+fn the_measured_table_is_the_plan_where_it_is_one_table() {
+    let hw = block_scaled();
+    let measured = |strategy, problem: &MatmulProblem| measured_table(strategy, problem, &hw);
+    assert_eq!(
+        measured(Autotune, &quantized(1, q4())),
+        Some(MatmulTable::FewRows)
+    );
+    assert_eq!(
+        measured(Autotune, &quantized(QUANTIZED_FEW_ROWS + 1, q4())),
+        Some(MatmulTable::ManyRows)
+    );
+    assert_eq!(
+        measured(Autotune, &with_float_rhs(quantized(512, q4()))),
+        Some(MatmulTable::ManyRows)
+    );
+    assert_eq!(measured(Autotune, &quantized(1, per_tensor())), None);
+    assert_eq!(measured(Heuristic(H::Tile), &quantized(1, q4())), None);
+    for problem in [quantized(1, q4()), with_float_rhs(quantized(4, q4()))] {
+        let table = measured(Autotune, &problem).expect("autotune measures");
+        assert_eq!(select(Autotune, &problem, &hw), Ok(fastest(table)));
+    }
+}
+
 /// A packed input under a scheme no kernel reads sends the product to the framework's dequantize,
 /// whichever input it is.
 #[test]
 fn an_unread_scheme_on_either_input_is_dequantized_by_the_framework() {
     let hw = block_scaled();
-    let burn = |problem: &MatmulProblem| {
-        matches!(
-            select(Autotune, problem, &hw),
-            Ok(S::DequantizeThen {
-                dequantize: MatmulDequantize::Burn,
-                ..
-            })
-        )
-    };
+    let burn = |problem: &MatmulProblem| framework_dequantized(&select(Autotune, problem, &hw));
     let unread_rhs = quantized(8, per_tensor());
     assert!(burn(&unread_rhs));
     assert!(burn(&with_float_rhs(with_packed_lhs(
@@ -206,7 +268,7 @@ fn autotune_never_names_the_4_bit_kernel() {
                     &with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs()),
                     &hw
                 ),
-                Ok(packed(P::Autotune(table))),
+                Ok(fastest(table)),
                 "{rows} rows on {hw:?}"
             );
         }
@@ -224,7 +286,7 @@ fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
         let nvfp4 = with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs());
         assert_eq!(
             select(named, &nvfp4, &block_scaled()),
-            Ok(packed(P::Pin(K::Nvfp4TensorCores))),
+            Ok(packed_pin(K::Nvfp4TensorCores)),
             "{rows}"
         );
         assert_eq!(
@@ -247,7 +309,7 @@ fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
         {
             assert_ne!(
                 select(strategy, &nvfp4, &block_scaled()),
-                Ok(packed(P::Pin(K::Nvfp4TensorCores))),
+                Ok(packed_pin(K::Nvfp4TensorCores)),
                 "{strategy:?}"
             );
         }
@@ -255,39 +317,19 @@ fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
 }
 
 /// The heuristic decode projection takes the packed plane routine at one row, and dequantizes
-/// otherwise — onto this crate's float pair below the cubek ceiling, and onto cubek's own
-/// selector at it, reading the packed input as stored rather than materializing it.
+/// otherwise, onto this crate's float routines.
 #[test]
 fn heuristic_quantized_rules() {
     let hw = devices::strix_halo();
-    for (heuristic, expected) in [
-        (
-            H::Tile,
-            rule(K::PlaneShuffle, decoded(F::Rule(K::PlaneShuffle))),
-        ),
-        (
-            H::Cubek,
-            rule(
-                K::PlaneShuffle,
-                packed(rule(K::CubekAuto, decoded(F::Rule(K::CubekAuto)))),
-            ),
-        ),
-    ] {
-        for scheme in [q4(), two_level()] {
-            assert_eq!(
-                select(Heuristic(heuristic), &quantized(1, scheme), &hw),
-                Ok(packed(expected.clone())),
-                "{heuristic:?}",
-            );
-        }
+    for scheme in [q4(), two_level()] {
+        assert_eq!(
+            select(Heuristic(H::Tile), &quantized(1, scheme), &hw),
+            Ok(rule(K::PlaneShuffle, decoded(float_rule()))),
+        );
     }
     assert_eq!(
-        select(Heuristic(H::Cubek), &quantized(2, q4()), &hw),
-        Ok(packed(rule(K::CubekAuto, decoded(F::Rule(K::CubekAuto)))))
-    );
-    assert_eq!(
         select(Heuristic(H::Tile), &quantized(2, q4()), &hw),
-        Ok(decoded(F::Rule(K::PlaneShuffle)))
+        Ok(decoded(float_rule()))
     );
 }
 
@@ -298,7 +340,7 @@ fn a_two_level_scheme_reaches_the_plane_routine() {
     let hw = devices::strix_halo();
     assert_eq!(
         select(Specific(K::PlaneShuffle), &quantized(1, two_level()), &hw),
-        Ok(packed(P::Pin(K::PlaneShuffle)))
+        Ok(packed_pin(K::PlaneShuffle))
     );
 }
 
@@ -310,62 +352,43 @@ fn autotuned_and_pinned_quantized_rules() {
         (
             Autotune,
             quantized(1, q4()),
-            Ok(packed(P::Autotune(MatmulTable::FewRows))),
+            Ok(fastest(MatmulTable::FewRows)),
         ),
         (
             Autotune,
             quantized(512, q4()),
-            Ok(packed(P::Autotune(MatmulTable::ManyRows))),
+            Ok(fastest(MatmulTable::ManyRows)),
         ),
         (
             Specific(K::UnitRegisters),
             quantized(512, q4()),
-            Ok(decoded(F::Pin(K::UnitRegisters))),
+            Ok(decoded(float_pin(K::UnitRegisters))),
         ),
         (
             Specific(K::PlaneShuffle),
             quantized(1, q4()),
-            Ok(packed(P::Pin(K::PlaneShuffle))),
-        ),
-        (
-            Specific(K::CubekAuto),
-            quantized(1, q4()),
-            Ok(packed(P::Pin(K::CubekAuto))),
+            Ok(packed_pin(K::PlaneShuffle)),
         ),
     ] {
         assert_eq!(select(strategy, &problem, &hw), expected, "{strategy:?}");
     }
 }
 
-/// A scheme the kernels do not stream is materialized before *every*
-/// kernel, cubek's selector included.
-///
-/// cubek's staged routines do read a quantized operand, so handing them one
-/// looks like the better trade — but `Strategy::Auto` answers a setup
-/// error it cannot classify with a panic rather than an error, and a panic
-/// escaping a launch leaves the stream where it was. A scheme nobody here
-/// has vouched for is exactly the input that produces one.
+/// A scheme the kernels do not stream is materialized before *every* kernel: a scheme nobody here
+/// has vouched for is read by no kernel as stored.
 #[test]
 fn an_unsupported_scheme_never_reaches_a_quantized_kernel_at_all() {
     let hw = devices::cpu_12();
     for strategy in [
         Autotune,
-        Heuristic(H::Cubek),
         Heuristic(H::Tile),
         Specific(K::UnitRegisters),
         Specific(K::PlaneShuffle),
-        Specific(K::CubekAuto),
     ] {
         for rows in [0, 1, FLOAT_FEW_ROWS + 1, 512] {
             let selection = select(strategy, &quantized(rows, per_tensor()), &hw);
             assert!(
-                matches!(
-                    selection,
-                    Ok(S::DequantizeThen {
-                        dequantize: MatmulDequantize::Burn,
-                        ..
-                    })
-                ),
+                framework_dequantized(&selection),
                 "{strategy:?} {rows} rows: {selection:?}"
             );
         }
@@ -385,7 +408,7 @@ fn the_fp4_value_reaches_the_plane_routine_on_every_device() {
     assert!(matmul_supported(&hw, &e2m1_blocks(), MatmulOperand::Rhs));
     assert_eq!(
         select(Specific(K::PlaneShuffle), &quantized(1, e2m1_blocks()), &hw),
-        Ok(packed(P::Pin(K::PlaneShuffle)))
+        Ok(packed_pin(K::PlaneShuffle))
     );
 }
 
@@ -406,7 +429,7 @@ fn the_fp8_values_reach_the_plane_routine_on_every_device() {
         );
         assert_eq!(
             select(Specific(K::PlaneShuffle), &quantized(1, mxfp8), &hw),
-            Ok(packed(P::Pin(K::PlaneShuffle))),
+            Ok(packed_pin(K::PlaneShuffle)),
             "{value:?}"
         );
     }
@@ -425,7 +448,7 @@ fn a_narrow_scale_dtype_reaches_the_plane_routine() {
             &quantized(1, ue8m0_blocks()),
             &hw
         ),
-        Ok(packed(P::Pin(K::PlaneShuffle)))
+        Ok(packed_pin(K::PlaneShuffle))
     );
 }
 
@@ -448,11 +471,11 @@ fn a_packed_input_reaches_its_table_by_its_own_row_ceiling() {
     const { assert!(FLOAT_FEW_ROWS < QUANTIZED_FEW_ROWS, "the ceilings coincide") };
     assert_eq!(
         select(Autotune, &quantized(QUANTIZED_FEW_ROWS, q4()), &hw),
-        Ok(packed(P::Autotune(MatmulTable::FewRows)))
+        Ok(fastest(MatmulTable::FewRows))
     );
     assert_eq!(
         select(Autotune, &quantized(QUANTIZED_FEW_ROWS + 1, q4()), &hw),
-        Ok(packed(P::Autotune(MatmulTable::ManyRows)))
+        Ok(fastest(MatmulTable::ManyRows))
     );
 }
 
@@ -468,10 +491,7 @@ fn a_policy_never_names_a_kernel_that_can_decline() {
     };
     assert_eq!(
         select(Heuristic(H::Tile), &awkward, &hw),
-        Ok(packed(rule(
-            K::PlaneShuffle,
-            decoded(F::Rule(K::PlaneShuffle))
-        )))
+        Ok(rule(K::PlaneShuffle, decoded(float_rule())))
     );
     for strategy in MatmulOpStrategy::all()
         .into_iter()
@@ -490,14 +510,7 @@ fn a_policy_never_names_a_kernel_that_can_decline() {
         ] {
             let selection = select(strategy, &problem, &hw);
             assert!(
-                !matches!(
-                    selection,
-                    Ok(S::Packed(P::Pin(_))
-                        | S::DequantizeThen {
-                            choice: F::Pin(_),
-                            ..
-                        })
-                ),
+                !selection.as_deref().is_ok_and(names_a_pin),
                 "{strategy:?} names a pin for {problem:?}: {selection:?}"
             );
         }
@@ -521,7 +534,6 @@ mod strategy {
             vec![
                 MatmulOpStrategy::Autotune,
                 MatmulOpStrategy::Heuristic(MatmulKernelHeuristic::Tile),
-                MatmulOpStrategy::Heuristic(MatmulKernelHeuristic::Cubek),
             ],
         );
     }
@@ -547,7 +559,6 @@ mod strategy {
                     kernel,
                     MatmulKernel::UnitRegisters
                         | MatmulKernel::PlaneShuffle
-                        | MatmulKernel::CubekAuto
                         | MatmulKernel::Nvfp4TensorCores
                 ),
                 "{kernel:?} is not one of this family's kernels",
@@ -560,7 +571,7 @@ mod float {
     use super::super::problem::*;
     use super::super::selector::*;
     use super::super::*;
-    use MatmulChoice as F;
+    use super::{fastest, float_pin, float_rule};
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
@@ -570,11 +581,8 @@ mod float {
 
     /// The kernel `strategy` chooses for the float `problem`: the selection, which reads a float
     /// input on any device alike.
-    fn select(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<F, Refusal> {
-        match super::super::selector::select(strategy, problem, &devices::cpu_12())? {
-            MatmulSelection::Float(choice) => Ok(choice),
-            other => panic!("a float input is read as it is: {other:?}"),
-        }
+    fn select(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<String, Refusal> {
+        super::select(strategy, problem, &devices::cpu_12())
     }
 
     /// A product against an unbatched rhs, so the left-hand side's extents
@@ -606,49 +614,21 @@ mod float {
     fn float_rules() {
         for (strategy, problem, expected) in [
             // Rows pick the table, and nothing else does.
-            (Autotune, float(1, 1), Ok(F::Autotune(MatmulTable::FewRows))),
-            (
-                Autotune,
-                float(512, 1),
-                Ok(F::Autotune(MatmulTable::ManyRows)),
-            ),
-            // No heuristic measures. Below the cubek ceiling the answer is
-            // this crate's routines, resolved at the launch by the strides;
-            // at it, cubek's own selector.
-            (
-                Heuristic(H::Tile),
-                float(1, 1),
-                Ok(F::Rule(MatmulKernel::PlaneShuffle)),
-            ),
-            (
-                Heuristic(H::Tile),
-                float(512, 4),
-                Ok(F::Rule(MatmulKernel::PlaneShuffle)),
-            ),
-            (
-                Heuristic(H::Cubek),
-                float(1, 1),
-                Ok(F::Rule(MatmulKernel::CubekAuto)),
-            ),
-            (
-                Heuristic(H::Cubek),
-                float(512, 4),
-                Ok(F::Rule(MatmulKernel::CubekAuto)),
-            ),
+            (Autotune, float(1, 1), Ok(fastest(MatmulTable::FewRows))),
+            (Autotune, float(512, 1), Ok(fastest(MatmulTable::ManyRows))),
+            // No heuristic measures: the answer is this crate's routines,
+            // resolved at the launch by the strides.
+            (Heuristic(H::Tile), float(1, 1), Ok(float_rule())),
+            (Heuristic(H::Tile), float(512, 4), Ok(float_rule())),
             (
                 Specific(K::UnitRegisters),
                 float(512, 1),
-                Ok(F::Pin(MatmulKernel::UnitRegisters)),
+                Ok(float_pin(K::UnitRegisters)),
             ),
             (
                 Specific(K::PlaneShuffle),
                 float(1, 1),
-                Ok(F::Pin(MatmulKernel::PlaneShuffle)),
-            ),
-            (
-                Specific(K::CubekAuto),
-                float(1, 1),
-                Ok(F::Pin(MatmulKernel::CubekAuto)),
+                Ok(float_pin(K::PlaneShuffle)),
             ),
         ] {
             assert_eq!(select(strategy, &problem), expected, "{strategy:?}");
@@ -687,14 +667,14 @@ mod float {
         for rows in 1..=FLOAT_FEW_ROWS {
             assert_eq!(
                 select(Autotune, &float(rows, 1)),
-                Ok(F::Autotune(MatmulTable::FewRows)),
+                Ok(fastest(MatmulTable::FewRows)),
                 "{rows} float rows"
             );
         }
         for rows in [0, FLOAT_FEW_ROWS + 1, 512] {
             assert_eq!(
                 select(Autotune, &float(rows, 1)),
-                Ok(F::Autotune(MatmulTable::ManyRows)),
+                Ok(fastest(MatmulTable::ManyRows)),
                 "{rows} float rows"
             );
         }
@@ -719,14 +699,14 @@ mod float {
         assert_eq!(merged.streamed_rows, Some(512));
         assert_eq!(
             select(Autotune, &merged),
-            Ok(F::Autotune(MatmulTable::ManyRows))
+            Ok(fastest(MatmulTable::ManyRows))
         );
 
         // An rhs per batch merges nothing, at any row count.
         for problem in [batched_rhs(1, 64), batched_rhs(8, 64)] {
             assert_eq!(
                 select(Autotune, &problem),
-                Ok(F::Autotune(MatmulTable::ManyRows)),
+                Ok(fastest(MatmulTable::ManyRows)),
                 "{problem:?}"
             );
         }
@@ -744,7 +724,7 @@ mod float {
             for problem in [float(1, 1), float(512, 1)] {
                 let selection = select(strategy, &problem);
                 assert!(
-                    !matches!(selection, Ok(F::Pin(_))),
+                    !selection.as_deref().is_ok_and(super::names_a_pin),
                     "{strategy:?} names a pin for {problem:?}: {selection:?}"
                 );
             }

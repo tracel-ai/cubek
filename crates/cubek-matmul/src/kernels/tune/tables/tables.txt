@@ -1,0 +1,20 @@
+# m2-pro
+few-rows: 46 candidates, checksum ac361654a0cb0061cb902024c40a7ad3
+many-rows: 89 candidates, checksum c7ca440cde12c73dc9b7148572a4f7cb
+nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
+
+# h100
+few-rows: 46 candidates, checksum ac361654a0cb0061cb902024c40a7ad3
+many-rows: 121 candidates, checksum a623a9bfc2d0b0fe15cf442293a7e420
+nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
+
+# h100 with nvfp4
+few-rows: 46 candidates, checksum ac361654a0cb0061cb902024c40a7ad3
+many-rows: 121 candidates, checksum a623a9bfc2d0b0fe15cf442293a7e420
+nvfp4: 18 candidates, checksum 708733718e6b3dca4dee921b7198e992
+
+# wgpu without subgroups
+few-rows: 53 candidates, checksum 77bec8a607b25ac18cbec8a36b59f5fe
+many-rows: 84 candidates, checksum 81f2463b13b3689cf1eac19b803247a0
+nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
+
