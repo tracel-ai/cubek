@@ -11,7 +11,7 @@ use crate::kernels::{
     UnitRegistersMatmulRoutineSettings, UnitWholeKMatmulRoutine, UnitWholeKMatmulRoutineSettings,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{Refusal, SinkLaunchVisitor};
 
 /// A routine at one of its settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +48,36 @@ impl MatmulRoutineSettings {
             Self::HypercubeRelay(settings) => launch(HypercubeRelayMatmulRoutine, call, &settings),
             Self::HypercubeLastArrival(settings) => {
                 launch(HypercubeLastArrivalMatmulRoutine, call, &settings)
+            }
+        }
+    }
+
+    /// The routine at these settings, prepared on `call`'s inputs for a sink and handed to
+    /// `visitor` ([`MatmulRoutine::sink_launch_on`]): what a caller storing the product through a
+    /// sink of its own launches, once a table named the routine
+    /// ([`MatmulTable::fastest_routine`](crate::kernels::select::selector::MatmulTable::fastest_routine)).
+    pub fn sink_launch<V: SinkLaunchVisitor>(self, call: &MatmulCall, visitor: V) -> V::Output {
+        match self {
+            Self::UnitRegisters(settings) => {
+                sink_launch(UnitRegistersMatmulRoutine, call, &settings, visitor)
+            }
+            Self::PlaneShuffle(settings) => {
+                sink_launch(PlaneShuffleMatmulRoutine, call, &settings, visitor)
+            }
+            Self::UnitWholeK(settings) => {
+                sink_launch(UnitWholeKMatmulRoutine, call, &settings, visitor)
+            }
+            Self::CubeShuffle(settings) => {
+                sink_launch(CubeShuffleMatmulRoutine, call, &settings, visitor)
+            }
+            Self::CubeStaged(settings) => {
+                sink_launch(CubeStagedMatmulRoutine, call, &settings, visitor)
+            }
+            Self::HypercubeRelay(settings) => {
+                sink_launch(HypercubeRelayMatmulRoutine, call, &settings, visitor)
+            }
+            Self::HypercubeLastArrival(settings) => {
+                sink_launch(HypercubeLastArrivalMatmulRoutine, call, &settings, visitor)
             }
         }
     }
@@ -126,4 +156,25 @@ where
         call.rhs.tensor.clone(),
         settings,
     )
+}
+
+/// `routine` at `settings` on `call`'s inputs, prepared for a sink and handed to `visitor`.
+fn sink_launch<R, M, SM, V>(
+    routine: R,
+    call: &MatmulCall,
+    settings: &R::Settings,
+    visitor: V,
+) -> V::Output
+where
+    R: MatmulRoutine<M, SM>,
+    M: cubek_microkernel::matmul::MatmulMicrokernel,
+    V: SinkLaunchVisitor,
+{
+    visitor.visit(routine.sink_launch_on(
+        &call.hw,
+        &call.client,
+        call.lhs.tensor.clone(),
+        call.rhs.tensor.clone(),
+        settings,
+    ))
 }
