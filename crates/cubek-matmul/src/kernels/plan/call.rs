@@ -9,7 +9,11 @@ use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::Hardware;
+use cubek_std::plan::BoxedPlan;
 use std::sync::Arc;
+
+/// A plan of the matmul family: what a product's launch tries, on one [`MatmulCall`].
+pub type MatmulPlan = BoxedPlan<MatmulCall, TensorHandle>;
 
 /// One product a plan runs: its two inputs, each as it is stored, the element it is written in,
 /// and the device it runs on as the plan prepares for it.

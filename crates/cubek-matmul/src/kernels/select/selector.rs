@@ -32,161 +32,20 @@
 use super::packed::{NVFP4_SCALE_WORD_SPAN, matmul_supported, nvfp4_scheme, quantized_few_rows};
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
+use crate::kernels::plan::{Decoded, FrameworkDequantized, MatmulPlan, RoutinePlan};
+use crate::kernels::tune::MatmulTableGroups;
+use crate::kernels::{
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
+    UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
+};
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
+use cubek_std::plan::{InOrder, Then};
 use cubek_std::{NVFP4_BLOCK, block_scaled_nvfp4};
-
-/// How a product runs: what becomes of its packed inputs, and the kernel that reads them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MatmulSelection {
-    /// Float inputs, read by the kernel `choice` gives.
-    Float(MatmulChoice),
-    /// Packed inputs read as they are stored, by the kernel `choice` gives.
-    Packed(MatmulPackedChoice),
-    /// Every packed input dequantized into the product's element by `dequantize`, then read by
-    /// the float kernel `choice` gives.
-    DequantizeThen {
-        dequantize: MatmulDequantize,
-        choice: MatmulChoice,
-    },
-}
-
-impl MatmulSelection {
-    /// How `strategy` runs a product whose packed inputs the kernels stream, in rows or in tiles:
-    /// each kernel reads their layout or declines it at the launch.
-    fn packed(
-        strategy: MatmulOpStrategy,
-        problem: &MatmulProblem,
-        hw: &Hardware,
-    ) -> Result<Self, Refusal> {
-        use MatmulKernel as K;
-        use MatmulKernelHeuristic as H;
-        use MatmulOpStrategy::*;
-        let packed = |choice| Ok(MatmulSelection::Packed(choice));
-        let rule = |kernel, otherwise| MatmulPackedChoice::Rule {
-            kernel,
-            otherwise: Box::new(otherwise),
-        };
-        let decoded = || {
-            MatmulChoice::new(strategy, problem).map(|choice| MatmulSelection::DequantizeThen {
-                dequantize: MatmulDequantize::Decode,
-                choice,
-            })
-        };
-        // What every narrow candidate counts, which is not the trailing extent.
-        let rows = problem.streamed_rows;
-        let single_row = rows == Some(1);
-        match strategy {
-            Autotune => packed(MatmulPackedChoice::Autotune(MatmulTable::packed(problem))),
-            // The packed plane routine with the heuristic's own ceiling behind it, since it can still
-            // decline a contraction its steps do not close, which no rule here sees.
-            Heuristic(H::Tile) if single_row => packed(rule(K::PlaneShuffle, decoded()?)),
-            // Past one row the packed inputs are decoded and run on the tiled routines.
-            Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
-            Specific(K::PlaneShuffle) => packed(MatmulPackedChoice::Pin(K::PlaneShuffle)),
-            Specific(K::Nvfp4TensorCores) if Self::nvfp4_tensor_cores_serve(problem, hw) => {
-                packed(MatmulPackedChoice::Pin(K::Nvfp4TensorCores))
-            }
-            Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
-        }
-    }
-
-    /// Whether the 4-bit tensor cores serve this product, on a GPU whose 4-bit instruction takes it:
-    /// both inputs in NVFP4 ([`nvfp4_scheme`]), `e2m1` values under a `ue4m3` scale every
-    /// [`NVFP4_BLOCK`] of `k` and one `f32` over the whole of it, their words along `k`, `k` whole
-    /// words of block scales.
-    fn nvfp4_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
-        let nvfp4 = nvfp4_scheme();
-        let format = |scheme: &QuantScheme| {
-            (scheme.value, scheme.block_scale().map(|block| block.dtype))
-                == (nvfp4.value, nvfp4.block_scale().map(|block| block.dtype))
-                && scheme.tensor_scale() == nvfp4.tensor_scale()
-        };
-        let along_k = |scheme: &QuantScheme, input: MatmulOperand| {
-            Operand::axis_of(scheme, input.axes()) == Some(K)
-                && Operand::of_scheme(scheme, K, input.axes())
-                    .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK))
-        };
-        let nvfp4_input = |input: MatmulOperand| match problem.operands.get(input) {
-            OperandKind::Quantized(scheme) => format(&scheme) && along_k(&scheme, input),
-            OperandKind::Float => false,
-        };
-        MatmulOperand::INPUTS.into_iter().all(nvfp4_input)
-            && problem.k.is_multiple_of(NVFP4_SCALE_WORD_SPAN)
-            && block_scaled_nvfp4(hw)
-    }
-}
-
-/// How the kernel reading float inputs is chosen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatmulChoice {
-    /// The fastest candidate of the table.
-    Autotune(MatmulTable),
-    /// The kernel a rule names where it serves these operands, the fixed float routine where it declines.
-    /// The rules read the shape, not the strides the caller arrived with, and a rule may not fail
-    /// a launch over a question it could not ask: whether the plane shuffle binds the strides.
-    Rule(MatmulKernel),
-    /// The kernel a pin names, and only it: a decline is the caller's contract broken, so it is
-    /// loud.
-    Pin(MatmulKernel),
-}
-
-impl MatmulChoice {
-    /// The kernel `strategy` chooses for float inputs, or packed ones decoded first.
-    fn new(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<Self, Refusal> {
-        use MatmulKernel as K;
-        use MatmulKernelHeuristic as H;
-        use MatmulOpStrategy::*;
-        match strategy {
-            Autotune => Ok(MatmulChoice::Autotune(MatmulTable::new(problem))),
-            // Nothing to measure: the tiled float routines are the whole pool, and which of them
-            // serves a call is a question about strides, answered at the launch.
-            Heuristic(H::Tile) => Ok(MatmulChoice::Rule(K::PlaneShuffle)),
-            Specific(kernel @ (K::UnitRegisters | K::PlaneShuffle)) => {
-                Ok(MatmulChoice::Pin(kernel))
-            }
-            Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
-        }
-    }
-}
-
-/// How the kernel reading packed inputs as they are stored is chosen.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MatmulPackedChoice {
-    /// The fastest candidate of the table. On the few-rows table each candidate reads the packed
-    /// inputs as they are stored; on the many-rows table the packed staged routine does, and each
-    /// float routine runs on them decoded, priced with the decode included, because a caller pays
-    /// it every launch. The NVFP4
-    /// table only a pin reaches.
-    Autotune(MatmulTable),
-    /// The kernel a rule names where it serves these operands, and `otherwise` where it declines:
-    /// a kernel's plan reads the strides and the scheme's block, which the rules could not ask, and
-    /// a rule may not fail a launch over it.
-    Rule {
-        kernel: MatmulKernel,
-        otherwise: Box<MatmulSelection>,
-    },
-    /// The kernel a pin names, and only it: a decline is the caller's contract broken, so it is
-    /// loud.
-    Pin(MatmulKernel),
-}
-
-/// How a packed input becomes a float one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatmulDequantize {
-    /// Decoded by the caller's dequantize routine, which places the plane shuffle's planes over
-    /// the input, in rows or in tiles. Where the decode declines (a device that commits to no plane width, a
-    /// shape its placement does not cut), the framework's dequantize instead: the decode's placement reads
-    /// what the rules cannot ask, and a rule may not fail a launch over it.
-    Decode,
-    /// Dequantized by the framework at the product's element: a scheme no kernel here reads
-    /// ([`matmul_supported`]).
-    Burn,
-}
 
 /// The autotune tables a product races on, split by the rows a routine that does not stage would stream: each holds the
 /// candidates for a float product and for a packed one.
@@ -224,7 +83,8 @@ impl MatmulTable {
     }
 }
 
-/// How `problem` runs under `strategy` on `hw`.
+/// How `problem` runs under `strategy` on `hw`: the plan its launch tries, the tables it names
+/// shipping their groups at `groups`.
 ///
 /// `Autotune` measures, on the table the rows go to. `Heuristic` picks by rule, on the tiled
 /// routines, and never measures. A `Specific` names its kernel.
@@ -245,18 +105,108 @@ pub fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-) -> Result<MatmulSelection, Refusal> {
+    groups: MatmulTableGroups,
+) -> Result<MatmulPlan, Refusal> {
     let mut packed = problem.packed_inputs().peekable();
     if packed.peek().is_none() {
-        MatmulChoice::new(strategy, problem).map(MatmulSelection::Float)
+        float_plan(strategy, problem, groups)
     } else if packed.all(|(input, scheme)| matmul_supported(hw, &scheme, input)) {
-        MatmulSelection::packed(strategy, problem, hw)
+        packed_plan(strategy, problem, hw, groups)
     } else {
-        Ok(MatmulSelection::DequantizeThen {
-            dequantize: MatmulDequantize::Burn,
-            choice: MatmulChoice::new(strategy, problem)?,
-        })
+        let plan = float_plan(strategy, problem, groups)?;
+        Ok(Box::new(Then::new(FrameworkDequantized, plan)))
     }
+}
+
+/// How `strategy` runs float inputs, or packed ones decoded first: a table, a rule's kernel and then
+/// the fixed routines that serve what it declines, or a pin's kernel alone.
+///
+/// The rules read the shape, not the strides the caller arrived with, and a rule may not fail a
+/// launch over a question it could not ask: whether the plane shuffle binds the strides. So a rule
+/// ends on the routine that asks nothing of the device. A pin's decline is the caller's contract
+/// broken, so it is loud.
+fn float_plan(
+    strategy: MatmulOpStrategy,
+    problem: &MatmulProblem,
+    groups: MatmulTableGroups,
+) -> Result<MatmulPlan, Refusal> {
+    use MatmulKernel as K;
+    use MatmulKernelHeuristic as H;
+    use MatmulOpStrategy::*;
+    match strategy {
+        Autotune => Ok(MatmulTable::new(problem).plan(groups)),
+        // Nothing to measure: the tiled float routines are the whole pool, and which of them
+        // serves a call is a question about strides, answered at the launch.
+        Heuristic(H::Tile) => Ok(Box::new(InOrder::new(vec![
+            plane_shuffle(),
+            cube_staged_at_default(),
+            unit_registers_at_default(),
+        ]))),
+        Specific(K::UnitRegisters) => Ok(unit_registers_at_default()),
+        Specific(K::PlaneShuffle) => Ok(plane_shuffle()),
+        Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
+    }
+}
+
+/// How `strategy` runs a product whose packed inputs the kernels stream, in rows or in tiles:
+/// each kernel reads their layout or declines it at the launch, the packed inputs then decoded
+/// for the float plan a rule falls back to.
+fn packed_plan(
+    strategy: MatmulOpStrategy,
+    problem: &MatmulProblem,
+    hw: &Hardware,
+    groups: MatmulTableGroups,
+) -> Result<MatmulPlan, Refusal> {
+    use MatmulKernel as K;
+    use MatmulKernelHeuristic as H;
+    use MatmulOpStrategy::*;
+    let decoded = || -> Result<MatmulPlan, Refusal> {
+        let plan = float_plan(strategy, problem, groups)?;
+        Ok(Box::new(Then::new(Decoded, plan)))
+    };
+    // What every narrow candidate counts, which is not the trailing extent.
+    let single_row = problem.streamed_rows == Some(1);
+    match strategy {
+        Autotune => Ok(MatmulTable::packed(problem).plan(groups)),
+        // The packed plane routine with the heuristic's own fallback behind it, since it can still
+        // decline a contraction its steps do not close, which no rule here sees.
+        Heuristic(H::Tile) if single_row => Ok(Box::new(InOrder::new(vec![
+            packed_plane_shuffle(),
+            decoded()?,
+        ]))),
+        // Past one row the packed inputs are decoded and run on the tiled routines.
+        Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
+        Specific(K::PlaneShuffle) => Ok(packed_plane_shuffle()),
+        Specific(K::Nvfp4TensorCores) if nvfp4_tensor_cores_serve(problem, hw) => {
+            Ok(MatmulTable::Nvfp4.plan(groups))
+        }
+        Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
+    }
+}
+
+/// Whether the 4-bit tensor cores serve this product, on a GPU whose 4-bit instruction takes it:
+/// both inputs in NVFP4 ([`nvfp4_scheme`]), `e2m1` values under a `ue4m3` scale every
+/// [`NVFP4_BLOCK`] of `k` and one `f32` over the whole of it, their words along `k`, `k` whole
+/// words of block scales.
+fn nvfp4_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
+    let nvfp4 = nvfp4_scheme();
+    let format = |scheme: &QuantScheme| {
+        (scheme.value, scheme.block_scale().map(|block| block.dtype))
+            == (nvfp4.value, nvfp4.block_scale().map(|block| block.dtype))
+            && scheme.tensor_scale() == nvfp4.tensor_scale()
+    };
+    let along_k = |scheme: &QuantScheme, input: MatmulOperand| {
+        Operand::axis_of(scheme, input.axes()) == Some(K)
+            && Operand::of_scheme(scheme, K, input.axes())
+                .is_some_and(|operand| operand.scale(K) == Some(NVFP4_BLOCK))
+    };
+    let nvfp4_input = |input: MatmulOperand| match problem.operands.get(input) {
+        OperandKind::Quantized(scheme) => format(&scheme) && along_k(&scheme, input),
+        OperandKind::Float => false,
+    };
+    MatmulOperand::INPUTS.into_iter().all(nvfp4_input)
+        && problem.k.is_multiple_of(NVFP4_SCALE_WORD_SPAN)
+        && block_scaled_nvfp4(hw)
 }
 
 /// The most rows a float product goes to the few-rows table with: the rows every float few-rows candidate
@@ -277,3 +227,37 @@ pub const NVFP4_TENSOR_CORES_UNSERVED: Refusal = Refusal::Declined {
     why: "Nvfp4TensorCores multiplies two NVFP4 inputs, their words along k, on a GPU with a 4-bit \
               tensor-core instruction; take autotune or a policy for any other product",
 };
+
+/// The memory-bound plane routine, at the first of its settings that serves.
+fn plane_shuffle() -> MatmulPlan {
+    Box::new(RoutinePlan::first_served(
+        PlaneShuffleMatmulRoutine,
+        "plane-shuffle",
+    ))
+}
+
+/// The plane routine reading the packed inputs as they are stored.
+fn packed_plane_shuffle() -> MatmulPlan {
+    Box::new(RoutinePlan::first_served(
+        PlaneShuffleMatmulRoutine,
+        "plane-shuffle(packed as stored)",
+    ))
+}
+
+/// The staged routine at its default: a rule's first fallback.
+fn cube_staged_at_default() -> MatmulPlan {
+    Box::new(RoutinePlan::at(
+        CubeStagedMatmulRoutine,
+        "cube-staged@default",
+        CubeStagedMatmulRoutineSettings::DEFAULT,
+    ))
+}
+
+/// The routine that asks nothing of the device, at its default: what serves any float product.
+fn unit_registers_at_default() -> MatmulPlan {
+    Box::new(RoutinePlan::at(
+        UnitRegistersMatmulRoutine,
+        "unit-registers@default",
+        UnitRegistersMatmulRoutineSettings::DEFAULT,
+    ))
+}

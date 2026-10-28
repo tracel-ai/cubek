@@ -14,21 +14,15 @@
 //! - `in-order[..]`: the first that serves runs; a list held in a list is written flat, and a
 //!   list of one as its piece.
 //! - `refused: ..`: the selection refuses the product.
-//!
-//! What follows a selection's decline is decided by the caller that launches it, so this module
-//! states it here: the fixed routines a float rule falls back to.
 
+use super::MatmulOpStrategy;
 use super::packed::{QUANTIZED_FEW_ROWS, nvfp4_scheme};
 use super::problem::{MatmulProblem, OperandKind};
-use super::selector::{
-    FLOAT_FEW_ROWS, MatmulChoice, MatmulDequantize, MatmulPackedChoice, MatmulSelection,
-    MatmulTable, select,
-};
-use super::{MatmulKernel, MatmulOpStrategy};
-use crate::kernels::plan::{MatmulCall, planned};
+use super::selector::{FLOAT_FEW_ROWS, select};
+use crate::kernels::tune::MatmulTableGroups;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperands;
-use cubek_std::plan::{Fastest, Plan};
+use cubek_std::plan::Plan;
 use cubek_std::{Hardware, devices};
 
 /// Every strategy's plan for every kind of product is the one `plans.txt` records.
@@ -50,37 +44,15 @@ fn every_plan_is_the_one_written_down() {
     );
 }
 
-/// The plan each selection is run as tries what that selection tries, in the same order.
-#[test]
-fn every_plan_tries_what_its_selection_tries() {
-    for product in Product::all() {
-        for strategy in MatmulOpStrategy::all() {
-            let Ok(selection) = select(strategy, &product.problem, &product.hw) else {
-                continue;
-            };
-            let plan = planned(&selection, &|table| {
-                Box::new(Fastest::new(table_name(&table), |_: &MatmulCall| {
-                    unreachable!("a plan's tree launches nothing")
-                }))
-            });
-            assert_eq!(
-                plan.tree().to_string(),
-                tried(&selection),
-                "{strategy:?}, {}",
-                product.name
-            );
-        }
-    }
-}
-
 /// Every strategy against every kind of product, one line each.
 fn render_all() -> String {
     let mut out = String::new();
     for product in Product::all() {
         out.push_str(&format!("# {}\n", product.name));
         for strategy in MatmulOpStrategy::all() {
-            let plan = select(strategy, &product.problem, &product.hw)
-                .map(|selection| tried(&selection))
+            let groups = MatmulTableGroups::default();
+            let plan = select(strategy, &product.problem, &product.hw, groups)
+                .map(|plan| plan.tree().to_string())
                 .unwrap_or_else(|refusal| format!("refused: {refusal}"));
             out.push_str(&format!("{strategy:?}: {plan}\n"));
         }
@@ -148,98 +120,6 @@ impl Product {
 
     fn new(name: &'static str, problem: MatmulProblem, hw: Hardware) -> Self {
         Self { name, problem, hw }
-    }
-}
-
-/// What a launch of `selection` tries, in order.
-fn tried(selection: &MatmulSelection) -> String {
-    match selection {
-        MatmulSelection::Float(choice) => float_tried(choice),
-        MatmulSelection::Packed(choice) => packed_tried(choice),
-        MatmulSelection::DequantizeThen { dequantize, choice } => {
-            let step = match dequantize {
-                MatmulDequantize::Decode => "decoded",
-                MatmulDequantize::Burn => "framework-dequantized",
-            };
-            format!("{step}({})", float_tried(choice))
-        }
-    }
-}
-
-/// What a launch of `choice` tries on float inputs: a rule falls back to the fixed routines, a
-/// pin to nothing.
-fn float_tried(choice: &MatmulChoice) -> String {
-    match choice {
-        MatmulChoice::Autotune(table) => fastest(table),
-        MatmulChoice::Pin(kernel) => float_kernel(kernel).to_string(),
-        MatmulChoice::Rule(kernel) => in_order(
-            [
-                float_kernel(kernel),
-                "cube-staged@default",
-                "unit-registers@default",
-            ]
-            .map(String::from),
-        ),
-    }
-}
-
-/// What a launch of `choice` tries reading the packed inputs as stored.
-fn packed_tried(choice: &MatmulPackedChoice) -> String {
-    match choice {
-        MatmulPackedChoice::Autotune(table) => fastest(table),
-        MatmulPackedChoice::Pin(kernel) => packed_kernel(kernel),
-        MatmulPackedChoice::Rule { kernel, otherwise } => {
-            in_order([packed_kernel(kernel), tried(otherwise)])
-        }
-    }
-}
-
-/// The routine a float launch of `kernel` runs.
-fn float_kernel(kernel: &MatmulKernel) -> &'static str {
-    match kernel {
-        MatmulKernel::UnitRegisters => "unit-registers@default",
-        MatmulKernel::PlaneShuffle => "plane-shuffle",
-        MatmulKernel::Nvfp4TensorCores => unreachable!("a float product's selection refuses it"),
-    }
-}
-
-/// What a launch of `kernel` runs reading the packed inputs as stored: the NVFP4 kernel is its
-/// own table, whose candidates are its settings.
-fn packed_kernel(kernel: &MatmulKernel) -> String {
-    match kernel {
-        MatmulKernel::PlaneShuffle => "plane-shuffle(packed as stored)".to_string(),
-        MatmulKernel::Nvfp4TensorCores => fastest(&MatmulTable::Nvfp4),
-        MatmulKernel::UnitRegisters => {
-            unreachable!("a packed selection runs it on the decoded inputs")
-        }
-    }
-}
-
-fn fastest(table: &MatmulTable) -> String {
-    format!("fastest({})", table_name(table))
-}
-
-fn table_name(table: &MatmulTable) -> &'static str {
-    match table {
-        MatmulTable::FewRows => "few-rows",
-        MatmulTable::ManyRows => "many-rows",
-        MatmulTable::Nvfp4 => "nvfp4",
-    }
-}
-
-/// `pieces` tried in order, a list among them written flat and a list of one as its piece:
-/// trying one piece in order is trying that piece.
-fn in_order(pieces: impl IntoIterator<Item = String>) -> String {
-    let flat: Vec<String> = pieces
-        .into_iter()
-        .map(|piece| match piece.strip_prefix("in-order[") {
-            Some(list) => list.strip_suffix(']').expect("a list closes").to_string(),
-            None => piece,
-        })
-        .collect();
-    match flat.as_slice() {
-        [one] => one.clone(),
-        _ => format!("in-order[{}]", flat.join(", ")),
     }
 }
 
