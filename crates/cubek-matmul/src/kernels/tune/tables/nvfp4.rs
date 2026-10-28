@@ -18,8 +18,8 @@ use cubek_std::routine::Routine;
 ///
 /// Every candidate sums each output in the same order, so the race moves the time and no number.
 /// Not bounded: a roofline is a 16-bit product's peak, which the 4-bit instruction runs past, so a
-/// bound would end every round at its first candidate. Its one group is its own, whatever the
-/// caller's groups say: the table races one kernel's settings.
+/// bound would end every round at its first candidate. Its one group is its own: the table races
+/// one kernel's settings.
 pub(super) fn table(hw: Hardware, _groups: MatmulTableGroups) -> MatmulTunables {
     let mut table = measured_table();
     let group = table.group("nvfp4", GroupPriority::DEFAULT);

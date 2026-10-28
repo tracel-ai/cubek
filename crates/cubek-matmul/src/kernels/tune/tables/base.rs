@@ -23,18 +23,22 @@ use cubek_std::plan::{Fastest, Step};
 use cubek_std::routine::Routine;
 use std::sync::Arc;
 
-/// The priority each group of a table ships at: a caller's to set, since which group a device
-/// measures first is a deployment's call, and fixed for the process once the table is first built.
+/// The priority each table's routines ship at: a caller's to set, since which group a device
+/// measures first is a deployment's call, and fixed for the process once a table is first built.
+/// The NVFP4 table races one kernel's settings in a group of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MatmulTableGroups {
-    /// This crate's routines.
-    pub microkernel: GroupPriority,
+    /// The few-rows table's.
+    pub few_rows: GroupPriority,
+    /// The many-rows table's.
+    pub many_rows: GroupPriority,
 }
 
 impl Default for MatmulTableGroups {
     fn default() -> Self {
         Self {
-            microkernel: GroupPriority::DEFAULT,
+            few_rows: GroupPriority::DEFAULT,
+            many_rows: GroupPriority::DEFAULT,
         }
     }
 }

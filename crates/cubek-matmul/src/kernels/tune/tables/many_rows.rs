@@ -18,7 +18,7 @@ use cubek_std::Hardware;
 /// cubes wait on each other.
 pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
     let mut table = measured_table();
-    let microkernel = table.group("microkernel", groups.microkernel);
+    let microkernel = table.group("microkernel", groups.many_rows);
     table
         .bounded(many_rows_roofline)
         .identified(

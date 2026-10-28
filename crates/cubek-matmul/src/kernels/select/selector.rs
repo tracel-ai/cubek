@@ -101,6 +101,28 @@ impl MatmulTable {
 /// A pin that cannot serve the problem: `Nvfp4TensorCores` but on two NVFP4 inputs its GPU's
 /// 4-bit instruction takes. The launch panics on it: a pin is a contract with the caller, not a
 /// preference.
+/// The table `strategy`'s plan for `problem` on `hw` is, where its plan is one table alone: what a
+/// caller that launches the table's winner itself asks the table about
+/// ([`MatmulTable::fastest_routine`]). `None` where the plan is anything else, a packed input the
+/// framework dequantizes first among them.
+pub fn measured_table(
+    strategy: MatmulOpStrategy,
+    problem: &MatmulProblem,
+    hw: &Hardware,
+) -> Option<MatmulTable> {
+    if strategy != MatmulOpStrategy::Autotune {
+        return None;
+    }
+    let mut packed = problem.packed_inputs().peekable();
+    if packed.peek().is_none() {
+        Some(MatmulTable::new(problem))
+    } else if packed.all(|(input, scheme)| matmul_supported(hw, &scheme, input)) {
+        Some(MatmulTable::packed(problem))
+    } else {
+        None
+    }
+}
+
 pub fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,

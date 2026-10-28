@@ -26,6 +26,13 @@ pub enum MatmulRoutineSettings {
 }
 
 impl MatmulRoutineSettings {
+    /// What a rule falls back to where its kernel declines, in order: the staged routine at its
+    /// default, then the routine that asks nothing of the device, which serves any float product.
+    pub const FALLBACK: [Self; 2] = [
+        Self::CubeStaged(CubeStagedMatmulRoutineSettings::DEFAULT),
+        Self::UnitRegisters(UnitRegistersMatmulRoutineSettings::DEFAULT),
+    ];
+
     /// The routine at these settings, launched on `call`'s inputs as they are stored.
     ///
     /// # Errors

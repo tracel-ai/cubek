@@ -19,7 +19,7 @@ use cubek_std::Hardware;
 /// declines every count of a key alike, and the one kernel it compiles serves them all.
 pub(super) fn table(hw: Hardware, groups: MatmulTableGroups) -> MatmulTunables {
     let mut table = measured_table();
-    let microkernel = table.group("microkernel", groups.microkernel);
+    let microkernel = table.group("microkernel", groups.few_rows);
     table
         .bounded(few_rows_roofline)
         .identified(

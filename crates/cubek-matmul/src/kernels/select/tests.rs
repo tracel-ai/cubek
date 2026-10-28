@@ -1,6 +1,6 @@
 use super::packed::*;
 use super::problem::{MatmulProblem, OperandKind};
-use super::selector::{FLOAT_FEW_ROWS, MatmulTable, NVFP4_TENSOR_CORES_UNSERVED};
+use super::selector::{FLOAT_FEW_ROWS, MatmulTable, NVFP4_TENSOR_CORES_UNSERVED, measured_table};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::tune::MatmulTableGroups;
 use MatmulKernel as K;
@@ -206,6 +206,32 @@ fn which_input_is_packed_never_changes_the_selection() {
                 "{strategy:?}, {rows} rows"
             );
         }
+    }
+}
+
+/// The table a caller asks which routine won is the one its plan is: autotune's, on the table
+/// the inputs go to, and none where the plan is anything else.
+#[test]
+fn the_measured_table_is_the_plan_where_it_is_one_table() {
+    let hw = block_scaled();
+    let measured = |strategy, problem: &MatmulProblem| measured_table(strategy, problem, &hw);
+    assert_eq!(
+        measured(Autotune, &quantized(1, q4())),
+        Some(MatmulTable::FewRows)
+    );
+    assert_eq!(
+        measured(Autotune, &quantized(QUANTIZED_FEW_ROWS + 1, q4())),
+        Some(MatmulTable::ManyRows)
+    );
+    assert_eq!(
+        measured(Autotune, &with_float_rhs(quantized(512, q4()))),
+        Some(MatmulTable::ManyRows)
+    );
+    assert_eq!(measured(Autotune, &quantized(1, per_tensor())), None);
+    assert_eq!(measured(Heuristic(H::Tile), &quantized(1, q4())), None);
+    for problem in [quantized(1, q4()), with_float_rhs(quantized(4, q4()))] {
+        let table = measured(Autotune, &problem).expect("autotune measures");
+        assert_eq!(select(Autotune, &problem, &hw), Ok(fastest(table)));
     }
 }
 
