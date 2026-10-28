@@ -143,7 +143,11 @@ impl CubeStagedMicrokernel {
     /// The settings a product against a packed input staged as it is stored races: each stored
     /// box two and three stages deep.
     pub fn stored_settings() -> Vec<CubeStagedMicrokernelSettings> {
-        let deliveries = [CubeStagedDelivery::Copy, CubeStagedDelivery::AsyncCopy];
+        let deliveries = [
+            CubeStagedDelivery::Copy,
+            CubeStagedDelivery::AsyncCopy,
+            CubeStagedDelivery::Tma,
+        ];
         deliveries
             .into_iter()
             .flat_map(|delivery| {
