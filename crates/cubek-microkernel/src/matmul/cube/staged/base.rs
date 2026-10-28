@@ -18,6 +18,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound, space::Coverage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -508,14 +509,27 @@ impl CubeStagedMicrokernel {
             return Err(refusal.into());
         }
         // A box lands a stage as one run of whole rows; the units copy it in the layout the
-        // setting names, or the instruction's own. Resolved to the layout it lays, a setting that
-        // names the instruction's own, or any layout under the software instruction's strided
-        // stage, launches as its twin does, and a table sees one launch rather than timing it
-        // twice.
-        let (storage, stage_layout) = match fill.delivery {
-            CubeStagedDelivery::Tma => (landed, None),
-            CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => {
-                let layout = instruction.stage_layout(self.stage_layout)?;
+        // setting names, or, where it names none, as a box would land it if the instruction reads
+        // its rows swizzled: rows the whole stage deep, which a swizzle spreads across the banks a
+        // fragment load reads at once, where the instruction's own tiles one step deep give it two
+        // chunks a row to spread. Elsewhere the instruction's own layout. Resolved to the layout
+        // it lays, a setting that names the instruction's own, or any layout under the software
+        // instruction's strided stage, launches as its twin does, and a table sees one launch
+        // rather than timing it twice.
+        let lands_swizzled = matches!(
+            landed,
+            StageStorage::Tiled {
+                chunks: RowChunks::Swizzled,
+                ..
+            }
+        );
+        let (storage, stage_layout) = match (fill.delivery, self.stage_layout) {
+            (CubeStagedDelivery::Tma, _) => (landed, None),
+            (CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy, None) if lands_swizzled => {
+                (landed, None)
+            }
+            (CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy, setting) => {
+                let layout = instruction.stage_layout(setting)?;
                 (self.plane.stage_storage(layout, stage), Some(layout))
             }
         };
