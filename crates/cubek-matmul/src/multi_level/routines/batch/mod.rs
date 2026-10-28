@@ -1,5 +1,5 @@
-//! The batch-matmul routine family: cooperative, tiled [`BatchMatmulRoutine`] algorithms
-//! that all launch through the shared [`launch`] hub (`launch_ref` / `launch_ref_tma`).
+//! The batch-matmul routine family: cooperative, tiled `BatchMatmulRoutine` algorithms
+//! that all launch through the shared `launch` hub (`launch_ref` / `launch_ref_tma`).
 
 pub mod double_buffering;
 pub mod double_unit;

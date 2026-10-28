@@ -9,7 +9,7 @@ use crate::{
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::{fmt::Debug, hash::Hash};
 
-/// A family of [matmuls](BatchMatmul) working with any [precision](MatmulPrecision).
+/// A family of [matmuls](BatchMatmul) working with any precision.
 pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
     /// The specific [BatchMatmul] implementation associated with this family.
     type Matmul<MP: MatmulTypes>: BatchMatmul<RC, MP, Config = Self::Config>;

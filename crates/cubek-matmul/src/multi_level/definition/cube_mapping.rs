@@ -18,7 +18,7 @@ pub fn cube_pos_to_m_n_batch(cube_mapping: &CubeMapping) -> (u32, u32, u32) {
 /// Reads the cube position as GEMV `(matrix_axis, batch)` coordinates.
 ///
 /// GEMV is 2D in problem space (the matrix axis + batch). The routine builds
-/// its [CubeCountPlan] with `y = 1`, so the meaningful matrix-axis lives in `x`.
+/// its [`CubeCountPlan`](cubek_std::cube_count::CubeCountPlan) with `y = 1`, so the meaningful matrix-axis lives in `x`.
 pub fn cube_pos_to_matrix_batch(cube_mapping: &CubeMapping) -> (u32, u32) {
     let (matrix, _, batch) = cube_mapping.cube_pos_to_xyz();
     (matrix, batch)
