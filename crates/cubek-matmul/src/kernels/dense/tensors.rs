@@ -6,6 +6,7 @@ use crate::kernels::{
     MatmulView,
 };
 use cubecl::client::Client;
+use cubecl_environment::sync::{Arc, SyncOnceCell};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
@@ -15,7 +16,6 @@ use cubecl::tile::{
     launch::TmaBox, launch::TmaOperand, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
-use cubecl_environment::sync::{Arc, SyncOnceCell};
 use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind,
