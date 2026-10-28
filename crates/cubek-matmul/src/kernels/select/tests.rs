@@ -141,7 +141,6 @@ fn which_input_is_packed_never_changes_the_selection() {
     let strategies = [
         Autotune,
         Heuristic(H::Tile),
-        Heuristic(H::Cubek),
         Specific(K::UnitRegisters),
         Specific(K::PlaneShuffle),
     ];
@@ -255,36 +254,19 @@ fn the_named_nvfp4_kernel_serves_only_two_nvfp4_inputs_on_a_4_bit_gpu() {
 }
 
 /// The heuristic decode projection takes the packed plane routine at one row, and dequantizes
-/// otherwise — onto this crate's float pair below the cubek ceiling, and onto cubek's own
-/// selector at it, reading the packed input as stored rather than materializing it.
+/// otherwise, onto this crate's float routines.
 #[test]
 fn heuristic_quantized_rules() {
     let hw = devices::strix_halo();
-    for (heuristic, expected) in [
-        (
-            H::Tile,
-            rule(K::PlaneShuffle, decoded(F::Rule(K::PlaneShuffle))),
-        ),
-        (
-            H::Cubek,
-            rule(
+    for scheme in [q4(), two_level()] {
+        assert_eq!(
+            select(Heuristic(H::Tile), &quantized(1, scheme), &hw),
+            Ok(packed(rule(
                 K::PlaneShuffle,
-                packed(rule(K::CubekAuto, decoded(F::Rule(K::CubekAuto)))),
-            ),
-        ),
-    ] {
-        for scheme in [q4(), two_level()] {
-            assert_eq!(
-                select(Heuristic(heuristic), &quantized(1, scheme), &hw),
-                Ok(packed(expected.clone())),
-                "{heuristic:?}",
-            );
-        }
+                decoded(F::Rule(K::PlaneShuffle))
+            ))),
+        );
     }
-    assert_eq!(
-        select(Heuristic(H::Cubek), &quantized(2, q4()), &hw),
-        Ok(packed(rule(K::CubekAuto, decoded(F::Rule(K::CubekAuto)))))
-    );
     assert_eq!(
         select(Heuristic(H::Tile), &quantized(2, q4()), &hw),
         Ok(decoded(F::Rule(K::PlaneShuffle)))
@@ -327,34 +309,21 @@ fn autotuned_and_pinned_quantized_rules() {
             quantized(1, q4()),
             Ok(packed(P::Pin(K::PlaneShuffle))),
         ),
-        (
-            Specific(K::CubekAuto),
-            quantized(1, q4()),
-            Ok(packed(P::Pin(K::CubekAuto))),
-        ),
     ] {
         assert_eq!(select(strategy, &problem, &hw), expected, "{strategy:?}");
     }
 }
 
-/// A scheme the kernels do not stream is materialized before *every*
-/// kernel, cubek's selector included.
-///
-/// cubek's staged routines do read a quantized operand, so handing them one
-/// looks like the better trade — but `Strategy::Auto` answers a setup
-/// error it cannot classify with a panic rather than an error, and a panic
-/// escaping a launch leaves the stream where it was. A scheme nobody here
-/// has vouched for is exactly the input that produces one.
+/// A scheme the kernels do not stream is materialized before *every* kernel: a scheme nobody here
+/// has vouched for is read by no kernel as stored.
 #[test]
 fn an_unsupported_scheme_never_reaches_a_quantized_kernel_at_all() {
     let hw = devices::cpu_12();
     for strategy in [
         Autotune,
-        Heuristic(H::Cubek),
         Heuristic(H::Tile),
         Specific(K::UnitRegisters),
         Specific(K::PlaneShuffle),
-        Specific(K::CubekAuto),
     ] {
         for rows in [0, 1, FLOAT_FEW_ROWS + 1, 512] {
             let selection = select(strategy, &quantized(rows, per_tensor()), &hw);
@@ -521,7 +490,6 @@ mod strategy {
             vec![
                 MatmulOpStrategy::Autotune,
                 MatmulOpStrategy::Heuristic(MatmulKernelHeuristic::Tile),
-                MatmulOpStrategy::Heuristic(MatmulKernelHeuristic::Cubek),
             ],
         );
     }
@@ -547,7 +515,6 @@ mod strategy {
                     kernel,
                     MatmulKernel::UnitRegisters
                         | MatmulKernel::PlaneShuffle
-                        | MatmulKernel::CubekAuto
                         | MatmulKernel::Nvfp4TensorCores
                 ),
                 "{kernel:?} is not one of this family's kernels",
@@ -612,9 +579,8 @@ mod float {
                 float(512, 1),
                 Ok(F::Autotune(MatmulTable::ManyRows)),
             ),
-            // No heuristic measures. Below the cubek ceiling the answer is
-            // this crate's routines, resolved at the launch by the strides;
-            // at it, cubek's own selector.
+            // No heuristic measures: the answer is this crate's routines,
+            // resolved at the launch by the strides.
             (
                 Heuristic(H::Tile),
                 float(1, 1),
@@ -624,16 +590,6 @@ mod float {
                 Heuristic(H::Tile),
                 float(512, 4),
                 Ok(F::Rule(MatmulKernel::PlaneShuffle)),
-            ),
-            (
-                Heuristic(H::Cubek),
-                float(1, 1),
-                Ok(F::Rule(MatmulKernel::CubekAuto)),
-            ),
-            (
-                Heuristic(H::Cubek),
-                float(512, 4),
-                Ok(F::Rule(MatmulKernel::CubekAuto)),
             ),
             (
                 Specific(K::UnitRegisters),
@@ -644,11 +600,6 @@ mod float {
                 Specific(K::PlaneShuffle),
                 float(1, 1),
                 Ok(F::Pin(MatmulKernel::PlaneShuffle)),
-            ),
-            (
-                Specific(K::CubekAuto),
-                float(1, 1),
-                Ok(F::Pin(MatmulKernel::CubekAuto)),
             ),
         ] {
             assert_eq!(select(strategy, &problem), expected, "{strategy:?}");

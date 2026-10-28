@@ -6,9 +6,9 @@
 //! # The tables, and the line between them
 //!
 //! A product races on a **few-rows** table or a **many-rows** one, the [`MatmulTable`]s, whatever its
-//! inputs. The few-rows and many-rows tables share no candidate but the unit routine (the few-rows
-//! table's floor) and the multi-level routines' naive floor: the two regimes are different kernel bodies, so a single
-//! table would be one whose rows mostly decline, paying a compile each to say so. Within a table a
+//! inputs. The few-rows and many-rows tables share no candidate but the unit routine, their floor:
+//! the two regimes are different kernel bodies, so a single table would be one whose rows mostly
+//! decline, paying a compile each to say so. Within a table a
 //! float product and a packed one race the same list: each candidate is listed for one kind of
 //! product and declines the other before compiling anything, so a key races what its inputs are
 //! listed for. A packed product races the settings worth trying on its packed inputs, and the
@@ -85,17 +85,9 @@ impl MatmulSelection {
             // The packed plane routine with the heuristic's own ceiling behind it, since it can still
             // decline a contraction its steps do not close, which no rule here sees.
             Heuristic(H::Tile) if single_row => packed(rule(K::PlaneShuffle, decoded()?)),
-            Heuristic(H::Cubek) if single_row => packed(rule(
-                K::PlaneShuffle,
-                MatmulSelection::Packed(rule(K::CubekAuto, decoded()?)),
-            )),
-            // Below the `Cubek` ceiling the packed inputs are decoded and run on the tiled routines;
-            // at it, the multi-level selection reads them as they are stored.
+            // Past one row the packed inputs are decoded and run on the tiled routines.
             Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
-            Heuristic(H::Cubek) => packed(rule(K::CubekAuto, decoded()?)),
-            Specific(kernel @ (K::PlaneShuffle | K::CubekAuto)) => {
-                packed(MatmulPackedChoice::Pin(kernel))
-            }
+            Specific(K::PlaneShuffle) => packed(MatmulPackedChoice::Pin(K::PlaneShuffle)),
             Specific(K::Nvfp4TensorCores) if Self::nvfp4_tensor_cores_serve(problem, hw) => {
                 packed(MatmulPackedChoice::Pin(K::Nvfp4TensorCores))
             }
@@ -136,9 +128,7 @@ pub enum MatmulChoice {
     Autotune(MatmulTable),
     /// The kernel a rule names where it serves these operands, the fixed float routine where it declines.
     /// The rules read the shape, not the strides the caller arrived with, and a rule may not fail
-    /// a launch over a question it could not ask: whether the plane shuffle binds the strides, or
-    /// whether the multi-level selection finds an accelerated path ("no path on this device" comes back as
-    /// an error at launch, which no rule can ask in advance).
+    /// a launch over a question it could not ask: whether the plane shuffle binds the strides.
     Rule(MatmulKernel),
     /// The kernel a pin names, and only it: a decline is the caller's contract broken, so it is
     /// loud.
@@ -153,14 +143,10 @@ impl MatmulChoice {
         use MatmulOpStrategy::*;
         match strategy {
             Autotune => Ok(MatmulChoice::Autotune(MatmulTable::new(problem))),
-            // No foreign kernel and nothing to measure: the tiled float routines are the whole pool
-            // below the `Cubek` ceiling, and which of them serves a call is a question about strides,
-            // answered at the launch.
+            // Nothing to measure: the tiled float routines are the whole pool, and which of them
+            // serves a call is a question about strides, answered at the launch.
             Heuristic(H::Tile) => Ok(MatmulChoice::Rule(K::PlaneShuffle)),
-            // At the ceiling the rules run out: no constant says which staged routine suits a shape, so
-            // the answer comes from the selector that owns those routines rather than from a guess.
-            Heuristic(H::Cubek) => Ok(MatmulChoice::Rule(K::CubekAuto)),
-            Specific(kernel @ (K::UnitRegisters | K::PlaneShuffle | K::CubekAuto)) => {
+            Specific(kernel @ (K::UnitRegisters | K::PlaneShuffle)) => {
                 Ok(MatmulChoice::Pin(kernel))
             }
             Specific(K::Nvfp4TensorCores) => Err(NVFP4_TENSOR_CORES_UNSERVED),
@@ -178,8 +164,8 @@ pub enum MatmulPackedChoice {
     /// table only a pin reaches.
     Autotune(MatmulTable),
     /// The kernel a rule names where it serves these operands, and `otherwise` where it declines:
-    /// a kernel's plan reads the strides and the scheme's block, and the multi-level selection whether the
-    /// device has a path, which the rules could not ask, and a rule may not fail a launch over it.
+    /// a kernel's plan reads the strides and the scheme's block, which the rules could not ask, and
+    /// a rule may not fail a launch over it.
     Rule {
         kernel: MatmulKernel,
         otherwise: Box<MatmulSelection>,
@@ -240,14 +226,12 @@ impl MatmulTable {
 
 /// How `problem` runs under `strategy` on `hw`.
 ///
-/// `Autotune` measures, on the table the rows go to. `Heuristic` picks by rule, reaching no further
-/// than its ceiling: `Tile` stays on the tiled routines, and `Cubek` is the one that may hand a
-/// shape to the multi-level selection, which it does wherever these rules have nothing better than a
-/// guess. No heuristic measures. A `Specific` names its kernel.
+/// `Autotune` measures, on the table the rows go to. `Heuristic` picks by rule, on the tiled
+/// routines, and never measures. A `Specific` names its kernel.
 ///
 /// Float inputs are read by the kernel the strategy chooses. Packed inputs under schemes the
-/// kernels stream are read as they are stored by the plane shuffle at one row, by the multi-level
-/// selection at the `Cubek` ceiling, and by the kernel a pin names; elsewhere they are decoded first
+/// kernels stream are read as they are stored by the plane shuffle at one row and by the kernel a
+/// pin names; elsewhere they are decoded first
 /// and read by the kernel the strategy chooses for float inputs. Where a packed input's scheme is
 /// one no kernel here reads, the framework dequantizes the packed inputs first. Which input is
 /// packed never matters.

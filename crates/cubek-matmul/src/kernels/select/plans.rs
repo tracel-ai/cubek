@@ -16,8 +16,7 @@
 //! - `refused: ..`: the selection refuses the product.
 //!
 //! What follows a selection's decline is decided by the caller that launches it, so this module
-//! states it here: the fixed routines a float rule falls back to, then the multi-level naive
-//! routine.
+//! states it here: the fixed routines a float rule falls back to.
 
 use super::packed::{QUANTIZED_FEW_ROWS, nvfp4_scheme};
 use super::problem::{MatmulProblem, OperandKind};
@@ -153,7 +152,6 @@ fn float_tried(choice: &MatmulChoice) -> String {
                 float_kernel(kernel),
                 "cube-staged@default",
                 "unit-registers@default",
-                "multi-level-naive",
             ]
             .map(String::from),
         ),
@@ -176,7 +174,6 @@ fn float_kernel(kernel: &MatmulKernel) -> &'static str {
     match kernel {
         MatmulKernel::UnitRegisters => "unit-registers@default",
         MatmulKernel::PlaneShuffle => "plane-shuffle",
-        MatmulKernel::CubekAuto => "multi-level",
         MatmulKernel::Nvfp4TensorCores => unreachable!("a float product's selection refuses it"),
     }
 }
@@ -186,7 +183,6 @@ fn float_kernel(kernel: &MatmulKernel) -> &'static str {
 fn packed_kernel(kernel: &MatmulKernel) -> String {
     match kernel {
         MatmulKernel::PlaneShuffle => "plane-shuffle(packed as stored)".to_string(),
-        MatmulKernel::CubekAuto => "multi-level(packed as stored)".to_string(),
         MatmulKernel::Nvfp4TensorCores => fastest(&MatmulTable::Nvfp4),
         MatmulKernel::UnitRegisters => {
             unreachable!("a packed selection runs it on the decoded inputs")
