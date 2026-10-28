@@ -8,7 +8,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     definition::MatmulSetupError,
-    tiled::storage::{StorageLevels, StoragePartitioning, tile, untile},
+    tiled::storage::{StorageLevels, StoragePartitioning, empty, tile, untile},
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, client};
 
@@ -370,6 +370,139 @@ fn tiling_refuses_packed_values_whose_word_is_not_the_finest_tile() {
         u32::elem_type_native(),
         Some(Field::Quant(QuantValue::E2M1)),
         StorageLevels::new(&[(KI, 16)]).grid(&[KI, KB, N]),
+    );
+    assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+}
+
+/// A shape, its named trailing axes, how its values pack and the storage they are stated in: one
+/// case of [`an_empty_tensor_lies_as_its_shape_tiled`].
+struct StoredCase {
+    shape: Vec<usize>,
+    axes: Vec<Axis>,
+    packed: Option<Field>,
+    storage: StoragePartitioning,
+    dtype: ElemType,
+}
+
+impl StoredCase {
+    /// `f32` values over rows and columns, unpacked.
+    fn plain(shape: &[usize], storage: StoragePartitioning) -> Self {
+        Self {
+            shape: shape.to_vec(),
+            axes: vec![ROWS, COLS],
+            packed: None,
+            storage,
+            dtype: f32::elem_type_native(),
+        }
+    }
+}
+
+/// An empty tensor lies exactly as a tensor of its shape tiled into the same storage: the same
+/// shape, strides and tiling, over a buffer of as many bytes, whatever the statement — one tile at
+/// a time, batches, two nested levels, a tile stored a column at a time, packed words.
+#[test]
+fn an_empty_tensor_lies_as_its_shape_tiled() {
+    let client = client();
+    let cases: Vec<StoredCase> = vec![
+        StoredCase::plain(
+            &[64, 96],
+            StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[COLS, ROWS]),
+        ),
+        StoredCase::plain(
+            &[2, 3, 32, 32],
+            StorageLevels::new(&[(COLS, 16), (ROWS, 8)]).grid(&[COLS, ROWS]),
+        ),
+        StoredCase::plain(
+            &[32, 48],
+            StorageLevels::new(&[(COLS, 4), (ROWS, 2)])
+                .tile(&[(COLS, 2), (ROWS, 4)])
+                .grid(&[ROWS, COLS]),
+        ),
+        StoredCase::plain(
+            &[64, 96],
+            StorageLevels::new(&[(ROWS, 16), (COLS, 32)]).grid(&[COLS, ROWS]),
+        ),
+        StoredCase {
+            shape: vec![8, 8, 16],
+            axes: vec![N, KB, KI],
+            packed: Some(Field::Quant(QuantValue::E2M1)),
+            storage: StorageLevels::new(&[(KI, 8)])
+                .tile(&[(KI, 2), (N, 2)])
+                .tile(&[(KB, 4), (N, 2)])
+                .grid(&[KI, KB, N]),
+            dtype: u32::elem_type_native(),
+        },
+    ];
+    for StoredCase {
+        shape,
+        axes,
+        packed,
+        storage,
+        dtype,
+    } in cases
+    {
+        let total: usize = shape.iter().product::<usize>() / packed.map_or(1, |f| f.per_word());
+        let values: Vec<u32> = (0..total as u32).collect();
+        let src = TensorHandle::new_contiguous(
+            match packed {
+                None => shape.clone(),
+                Some(field) => {
+                    let mut words = shape.clone();
+                    *words.last_mut().unwrap() /= field.per_word();
+                    words
+                }
+            },
+            client.create(Bytes::from_elems(values)),
+            dtype,
+        );
+        let mut binding = src.binding();
+        if packed.is_some() {
+            // A packed binding is stated in values, as `tile` reads it.
+            binding.shape = shape.clone().into();
+            let rank = shape.len();
+            for d in 0..rank - 1 {
+                binding.strides[d] = shape[d + 1..].iter().product();
+            }
+        }
+        let tiled = tile(&client, binding, &axes, dtype, packed, storage.clone()).unwrap();
+        let fresh = empty(&client, &shape, &axes, dtype, packed, storage).unwrap();
+        assert_eq!(fresh.metadata, tiled.metadata, "{shape:?} {packed:?}");
+        assert_eq!(
+            fresh.handle.size(),
+            tiled.handle.size(),
+            "{shape:?} {packed:?}"
+        );
+    }
+}
+
+/// What `tile` refuses of a shape, `empty` refuses too: a tile that does not divide its dim.
+#[test]
+fn an_empty_tensor_refuses_a_tile_that_does_not_divide() {
+    let client = client();
+    let storage = StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[COLS, ROWS]);
+    let refused = empty(
+        &client,
+        &[60, 96],
+        &[ROWS, COLS],
+        f32::elem_type_native(),
+        None,
+        storage,
+    );
+    assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+}
+
+/// A shape of fewer dims than the axes it is stated over is refused, not read past its end.
+#[test]
+fn an_empty_tensor_refuses_a_shape_shorter_than_its_axes() {
+    let client = client();
+    let storage = StorageLevels::new(&[(COLS, 32), (ROWS, 16)]).grid(&[COLS, ROWS]);
+    let refused = empty(
+        &client,
+        &[96],
+        &[ROWS, COLS],
+        f32::elem_type_native(),
+        None,
+        storage,
     );
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
