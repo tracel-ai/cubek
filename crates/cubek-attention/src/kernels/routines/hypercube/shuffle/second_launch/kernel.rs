@@ -1,10 +1,9 @@
 use core::marker::PhantomData;
 
-use crate::kernels::HypercubeShuffleAttentionMicrokernel;
 use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_unstaged_attention_partial_microkernel;
-use cubek_microkernel::attention::plane::PlaneShuffleAttention;
+use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::attention::plane::{PackedStepReads, TileStepReads};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
@@ -25,7 +24,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: HypercubeShuffleAttentionMicrokernel,
+    #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
@@ -56,7 +55,6 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
         N,
         TileStepReads<E>,
         TileStepReads<E>,
-        PlaneShuffleAttention<EA, N>,
     >(
         run,
         // The query spans no key: its box is the first step's.
@@ -92,7 +90,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: HypercubeShuffleAttentionMicrokernel,
+    #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
     #[define(EA, E)] _elements: [ElemType; 2],
@@ -117,14 +115,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         comptime!(microkernel.cube.region_keys()),
         comptime!(merge.cubes),
     );
-    let _ = cube_unstaged_attention_partial_microkernel::<
-        EA,
-        E,
-        N,
-        PackedStepReads,
-        PackedStepReads,
-        PlaneShuffleAttention<EA, N>,
-    >(
+    let _ = cube_unstaged_attention_partial_microkernel::<EA, E, N, PackedStepReads, PackedStepReads>(
         run,
         // The query spans no key: its box is the first step's.
         &q.at(&first_step),

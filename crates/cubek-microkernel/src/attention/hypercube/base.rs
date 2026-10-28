@@ -1,8 +1,5 @@
-use crate::attention::cube::CubeAttentionMicrokernel;
-use crate::attention::hypercube::{
-    HypercubeAttentionMicrokernelSettings, HypercubeAttentionPlaneSettings,
-};
-use crate::attention::plane::{CubePlaneMicrokernel, CubePlaneReads};
+use crate::attention::cube::{CubeAttentionMicrokernel, CubePlaneReads};
+use crate::attention::hypercube::HypercubeAttentionMicrokernelSettings;
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, G, Q};
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
@@ -14,7 +11,7 @@ use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 
 /// A box of queries of one head several cubes own together: every cube walks its own run of the
-/// keys with the cube microkernel of planes `M`, and each of its planes leaves its queries'
+/// keys with the cube microkernel, and each of its planes leaves its queries'
 /// partial in a slot of its own, for the routine to merge into the output where it says the
 /// partials meet.
 ///
@@ -24,18 +21,15 @@ use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkern
 /// on another: a cube spinning on a counter another cube moves holds the device until that cube
 /// runs, which, where cubes are not preempted, as on Metal, can be never.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HypercubeAttentionMicrokernel<M: CubePlaneMicrokernel> {
+pub struct HypercubeAttentionMicrokernel {
     /// What each of its cubes runs on its run of the keys; the plane that merges a box's slots
     /// shares a row's work across its cube's units.
-    pub cube: CubeAttentionMicrokernel<M>,
+    pub cube: CubeAttentionMicrokernel,
 }
 
-impl<M: CubePlaneMicrokernel> Microkernel for HypercubeAttentionMicrokernel<M>
-where
-    M::Settings: HypercubeAttentionPlaneSettings,
-{
+impl Microkernel for HypercubeAttentionMicrokernel {
     type WorkItem = AttentionWorkItem;
-    type Settings = HypercubeAttentionMicrokernelSettings<M::Settings>;
+    type Settings = HypercubeAttentionMicrokernelSettings;
     type Operand = AttentionOperand;
     type CubeSpace = Space;
 
@@ -43,10 +37,16 @@ where
          runs and a plane width the device commits to; cubes that stage hold one plane along the \
          keys";
 
-    /// The hypercube's settings over planes of its kind
-    /// ([`HypercubeAttentionPlaneSettings::hypercube_settings`]).
-    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
-        M::Settings::hypercube_settings(hw)
+    /// The hypercube's settings over plane fragments, then over plane shuffles
+    /// ([`HypercubeAttentionMicrokernelSettings::listed`]).
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
+        [
+            HypercubeAttentionMicrokernelSettings::FRAGMENT,
+            HypercubeAttentionMicrokernelSettings::SHUFFLE,
+        ]
+        .into_iter()
+        .flat_map(HypercubeAttentionMicrokernelSettings::listed)
+        .collect()
     }
 
     /// Its cube microkernel's candidates at its cube's settings
@@ -58,10 +58,9 @@ where
     ) -> impl Iterator<Item = Self> {
         // A staging cube's planes leave their slots through one window of the cube's queries, so
         // planes holding the same queries cannot split their keys.
-        let splits =
-            M::READS == CubePlaneReads::Global || settings.cube.planes_along_keys.get() == 1;
-        CubeAttentionMicrokernel::<M>::candidates(hw, item, &settings.cube)
-            .filter(move |_| splits)
+        let one_along_keys = settings.cube.planes_along_keys.get() == 1;
+        CubeAttentionMicrokernel::candidates(hw, item, &settings.cube)
+            .filter(move |cube| cube.plane.reads() == CubePlaneReads::Global || one_along_keys)
             .map(|cube| Self { cube })
     }
 
@@ -94,7 +93,7 @@ where
     }
 }
 
-impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
+impl HypercubeAttentionMicrokernel {
     /// Bytes of shared memory one cube holds on `hw`, its stages held as `storage`: what its cube
     /// walks with, and what its planes leave their slots through.
     pub fn shared_memory(
@@ -131,7 +130,7 @@ impl<M: CubePlaneMicrokernel> HypercubeAttentionMicrokernel<M> {
 
 /// Its plane, the planes along the keys of a cube where there are several, and the steps a page
 /// holds where the cube walks pages.
-impl<M: CubePlaneMicrokernel> core::fmt::Display for HypercubeAttentionMicrokernel<M> {
+impl core::fmt::Display for HypercubeAttentionMicrokernel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.cube.plane)?;
         let planes = self.cube.layout().planes_along_keys;
@@ -145,10 +144,7 @@ impl<M: CubePlaneMicrokernel> core::fmt::Display for HypercubeAttentionMicrokern
     }
 }
 
-impl<M: CubePlaneMicrokernel> AttentionMicrokernel for HypercubeAttentionMicrokernel<M>
-where
-    M::Settings: HypercubeAttentionPlaneSettings,
-{
+impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     /// Its cube's.
     fn key_order(&self) -> BindingOrder {
         self.cube.key_order()

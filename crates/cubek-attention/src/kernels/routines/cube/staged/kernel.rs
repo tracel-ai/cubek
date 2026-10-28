@@ -3,7 +3,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, cube_staged_attention_microkernel,
 };
-use cubek_microkernel::attention::plane::{CubePlaneMicrokernel, CubeStagedPlane};
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 
 /// Every cube running the cube microkernel on its box with planes that read its stage, held as
@@ -11,12 +10,7 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// one.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
-pub fn cube_staged_attention_kernel<
-    EA: Float,
-    E: Float,
-    ES: Float,
-    M: CubePlaneMicrokernel + CubeStagedPlane,
->(
+pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
     query: &TileArg<'_>,
     key: &TileArg<'_>,
     value: &TileArg<'_>,
@@ -27,10 +21,10 @@ pub fn cube_staged_attention_kernel<
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeAttentionMicrokernel<M>,
+    #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
     #[comptime] visibility: AttentionVisibility,
-    #[define(EA, E, ES)] _elements: [ElemType; 3],
+    #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
     let q = query.tile(&partitioning);
@@ -49,7 +43,7 @@ pub fn cube_staged_attention_kernel<
             comptime!(microkernel.seq_kv()),
             1usize,
         );
-        cube_staged_attention_microkernel::<EA, E, M::Attention<EA, E, ES>>(
+        cube_staged_attention_microkernel::<EA, ES>(
             &cube,
             &o.at(&cube),
             &lse.clone().map(|lse| lse.at(&cube)),
