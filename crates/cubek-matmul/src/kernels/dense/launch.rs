@@ -12,9 +12,9 @@ use crate::kernels::{
     MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
-    TileArgLaunch,
+    Geometry, TileArgLaunch,
     kind::Write,
-    launch::{Buffered, DestinationLaunch},
+    launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
 use cubek_std::routine::{Grid, Routine};
 
@@ -176,5 +176,80 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
         self.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(tensors.into_out().expect(ALLOCATED))
+    }
+}
+
+/// A product prepared for a sink the caller builds afterwards: the routine at its setting, its
+/// operands, and the launch it settled, bound but for the output, whose spec and geometry the sink
+/// is built from ([`SinkLaunch::launch`]).
+///
+/// A fused element-wise tail is one such sink: its block stores in lines of the width the kernel
+/// settled ([`SinkLaunch::width`]), so the caller plans it around this launch before binding it.
+pub struct MatmulSinkLaunch<R, M, SM = ()> {
+    routine: R,
+    tensors: MatmulTensors<Geometry>,
+    blueprint: MatmulBlueprint<M, SM>,
+    grid: Grid,
+    binding: MatmulBinding<Unbound, TileArgLaunch, TileArgLaunch>,
+}
+
+impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {
+    /// `tensors`' product on `routine`, launched as `blueprint` and `grid` state it, its operands
+    /// bound now.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_SINK_TAKES_NO_RELAY`], for a routine whose cubes reach the output in a way no
+    /// sink takes.
+    pub fn new(
+        routine: R,
+        tensors: MatmulTensors<Geometry>,
+        blueprint: MatmulBlueprint<M, SM>,
+        grid: Grid,
+    ) -> Result<Self, Refusal> {
+        if !R::WRITE.takes_sink() {
+            return Err(MATMUL_SINK_TAKES_NO_RELAY);
+        }
+        let binding = tensors.bind(&blueprint, &grid);
+        Ok(Self {
+            routine,
+            tensors,
+            blueprint,
+            grid,
+            binding,
+        })
+    }
+}
+
+impl<R, M, SM> core::fmt::Debug for MatmulSinkLaunch<R, M, SM>
+where
+    R: core::fmt::Debug,
+    M: core::fmt::Debug,
+    SM: core::fmt::Debug,
+{
+    // The binding is left out: the tile DSL's `Launcher` is not `Debug`.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MatmulSinkLaunch")
+            .field("routine", &self.routine)
+            .field("tensors", &self.tensors)
+            .field("blueprint", &self.blueprint)
+            .field("grid", &self.grid)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> SinkLaunch for MatmulSinkLaunch<R, M, SM> {
+    fn width(&self) -> usize {
+        self.blueprint.widths.out
+    }
+
+    fn elements(&self) -> usize {
+        self.tensors.out().shape().iter().product()
+    }
+
+    fn launch<O: DestinationLaunch>(self, sink: impl FnOnce(Unbound) -> O::Operand) {
+        let binding = self.binding.map_out(sink);
+        self.routine
+            .dispatch::<O, _>(&self.tensors, binding, self.blueprint, self.grid);
     }
 }

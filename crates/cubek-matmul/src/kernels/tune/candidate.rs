@@ -2,7 +2,9 @@
 
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{CubeBlock, MaskedCells, MatmulTuneKey};
-use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
+use crate::kernels::{
+    MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulSinkLaunch, MatmulTensors,
+};
 use cubecl::CubeDim;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
@@ -80,6 +82,30 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
                 .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
         self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
         Ok(())
+    }
+
+    /// `lhs · rhs` on `client`'s device by this candidate's routine at its setting, prepared for a
+    /// sink the caller binds afterwards ([`MatmulSinkLaunch`]), each problem prepared once
+    /// ([`PreparedLaunches`]). Nothing is compiled until the launch is.
+    ///
+    /// # Errors
+    ///
+    /// What [`MatmulTensors::sink`] declines, why the routine cannot run the product at this
+    /// setting, and what [`MatmulSinkLaunch::new`] declines.
+    pub fn sink_launch<M: MatmulMicrokernel, SM>(
+        &self,
+        client: &Client,
+        lhs: StoredTensor,
+        rhs: StoredTensor,
+    ) -> Result<MatmulSinkLaunch<R, M, SM>, Refusal>
+    where
+        R: MatmulRoutine<M, SM>,
+    {
+        let tensors = MatmulTensors::sink::<M>(client, lhs, rhs)?;
+        let (blueprint, grid) =
+            self.prepared
+                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
+        MatmulSinkLaunch::new(self.routine, tensors, blueprint, grid)
     }
 }
 
