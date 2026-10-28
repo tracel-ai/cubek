@@ -49,6 +49,39 @@ fn cmma_batched_f32() {
     test_matmul_strategy(client(), problem, cmma().into());
 }
 
+/// An lhs laid along `M`, as a weight gradient's transposed activation is: read where it lies.
+#[test]
+fn cmma_col_lhs_f32() {
+    col_lhs(f32_elems());
+}
+
+#[test]
+fn cmma_col_lhs_f16() {
+    col_lhs(f16_elems());
+}
+
+fn col_lhs(elems: cubek_matmul::definition::MatmulGlobalElems) {
+    use cubecl::{ir::AddressType, zspace::shape};
+    use cubek_matmul::definition::MatmulProblem;
+    use cubek_std::MatrixLayout;
+
+    let problem = MatmulProblem::from_parameters(
+        256,
+        128,
+        64,
+        shape![],
+        shape![],
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        elems,
+        AddressType::U32,
+    );
+    test_matmul_strategy(client(), problem, cmma().into());
+}
+
 /// The weight stored in `32 × 32` tiles beside a row-major activation: the same product as the
 /// row-major run, the routine reading each tile through the binding's tiling.
 #[test]
