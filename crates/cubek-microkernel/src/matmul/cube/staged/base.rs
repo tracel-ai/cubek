@@ -151,11 +151,23 @@ impl CubeStagedMicrokernel {
     /// into its store, which its fragments drain into cell by cell; the race sees only the
     /// product.
     pub fn packed_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
-        let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
+        let rings = [
+            StageRing::SINGLE,
+            StageRing::DOUBLE,
+            StageRing::SINGLE_THROUGH_REGISTERS,
+            StageRing::DOUBLE_THROUGH_REGISTERS,
+        ];
+        let boxed = [None, Some(PlaneFragmentTransport::Mma)]
             .into_iter()
-            .flat_map(|ring| {
-                Self::PACKED_BOXES.map(|(steps, planes)| {
-                    CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
+            .flat_map(move |transport| {
+                rings.into_iter().flat_map(move |ring| {
+                    Self::PACKED_BOXES.map(|(steps, planes)| {
+                        let settings = CubeStagedMicrokernelSettings::in_steps(steps, planes, ring);
+                        match transport {
+                            Some(transport) => settings.through(transport),
+                            None => settings,
+                        }
+                    })
                 })
             });
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
