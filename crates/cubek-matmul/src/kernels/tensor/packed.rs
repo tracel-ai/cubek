@@ -4,9 +4,10 @@
 //! how its block scales are read ([`BlockScales`]), nothing else.
 
 use super::PlainTensor;
-use cubecl::ir::{ElemType, UIntKind};
+use cubecl::client::Client;
+use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::TensorBinding;
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
@@ -95,6 +96,52 @@ impl PackedTensor {
             axes,
             stack: None,
         }
+    }
+
+    /// A quantized matrix over `axes`, in the order its shape states them, as a framework stores
+    /// one: `values`, its buffer bound under its logical shape and strides, its values packed as
+    /// `scheme` stores them, and its block scales and its per-tensor scale, where `scheme` has one,
+    /// each bound where it lies. The scales are laid in rows and bound on whole words, as
+    /// [`new`](Self::new) takes them.
+    ///
+    /// # Errors
+    ///
+    /// [`SCALES_NOT_ALONG_WORDS`], and [`PACKED_NOT_ONE_MATRIX_IN_ROWS`].
+    ///
+    /// # Panics
+    ///
+    /// A scheme storing sub-byte values natively, or natively packing other values than `E2M1`:
+    /// no framework stores one.
+    pub fn of_quantized(
+        client: &Client,
+        values: TensorBinding,
+        scheme: QuantScheme,
+        block_scales: PlainTensor,
+        global_scale: Option<PlainTensor>,
+        axes: [Axis; 2],
+    ) -> Result<Self, Refusal> {
+        let operand = Operand::axis_of(&scheme, axes)
+            .and_then(|axis| Operand::of_scheme(&scheme, axis, axes))
+            .ok_or(SCALES_NOT_ALONG_WORDS)?;
+        let shape = values.shape.clone();
+        if shape.rank() != 2 || values.tiling.is_tiled() {
+            return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
+        }
+        let words = stored_words(values, &scheme);
+        if !words.is_contiguous() {
+            return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
+        }
+        let in_rows_of_words =
+            |scale: PlainTensor| bound_to_whole_words(scale.into_contiguous(client));
+        Ok(Self::new(
+            words,
+            WordsLaid::InRows,
+            in_rows_of_words(block_scales),
+            global_scale.map(in_rows_of_words),
+            scheme,
+            operand,
+            [(axes[0], shape[0]), (axes[1], shape[1])],
+        ))
     }
 
     /// This matrix read as `slabs` matrices laid end to end along `along`, each its extent there
@@ -485,6 +532,54 @@ impl PackedTensor {
         )
     }
 }
+
+/// The values of a quantized matrix bound under its logical shape, `values`, as the elements
+/// `scheme` stores them in: one per value, or, packed, whole words of them, the packed dim's
+/// extent counting words.
+fn stored_words(values: TensorBinding, scheme: &QuantScheme) -> PlainTensor {
+    let packed = |values: TensorBinding, packed_dim: usize, elem: ElemType| {
+        let mut values = values;
+        let dim = values.shape.rank() - packed_dim - 1;
+        values.shape[dim] = values.shape[dim].div_ceil(scheme.num_quants());
+        PlainTensor::new(values, elem)
+    };
+    match (scheme.store, scheme.value) {
+        (QuantStore::Native, QuantValue::Q8F | QuantValue::Q8S) => {
+            PlainTensor::new(values, ElemType::Int(IntKind::I8))
+        }
+        (QuantStore::Native, QuantValue::E4M3 | QuantValue::E5M2) => {
+            PlainTensor::new(values, ElemType::UInt(UIntKind::U8))
+        }
+        (QuantStore::PackedU32(packed_dim), _) => packed(values, packed_dim, WORD),
+        (QuantStore::PackedNative(packed_dim), QuantValue::E2M1) => {
+            packed(values, packed_dim, ElemType::UInt(UIntKind::U8))
+        }
+        (store, value) => panic!("no framework stores {value:?} as {store:?}"),
+    }
+}
+
+/// `tensor`, contiguous, its binding ending on the `u32` word that holds its last element: the
+/// routines read scales a word at a time. A quantized buffer starts each region on a word, so the
+/// word's tail is allocated.
+fn bound_to_whole_words(mut tensor: PlainTensor) -> PlainTensor {
+    let handle = &mut tensor.binding.handle;
+    let bytes = (tensor.binding.shape.num_elements() * tensor.elem.size()) as u64;
+    let end = handle.offset_start.unwrap_or(0) + bytes.next_multiple_of(4);
+    handle.offset_end = Some(handle.size - end);
+    tensor
+}
+
+/// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the axis its
+/// words run along.
+pub const SCALES_NOT_ALONG_WORDS: Refusal = Refusal::Declined {
+    why: "the packed routines read block scales along the axis the words run along",
+};
+
+/// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
+/// in contiguous rows.
+pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Refusal = Refusal::Declined {
+    why: "the packed routines read one quantized matrix in row-major rows",
+};
 
 /// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
 pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {
