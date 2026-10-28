@@ -1,3 +1,5 @@
+#![allow(clippy::redundant_field_names)]
+
 use cubecl::{AutotuneKey, ir::ElemType};
 use serde::{Deserialize, Serialize};
 
