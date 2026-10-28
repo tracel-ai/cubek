@@ -4,9 +4,10 @@ use cubecl::tile::{Partitioning, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::attention_backward::delta::plane::plane_delta_microkernel;
-use cubek_microkernel::attention_backward::key_gradient::hypercube::{
-    HypercubeKeyGradientMicrokernel, hypercube_key_gradient_microkernel,
+use cubek_microkernel::attention_backward::key_gradient::cube::{
+    QueryGradientShare, cube_staged_key_gradient_microkernel,
 };
+use cubek_microkernel::attention_backward::key_gradient::hypercube::HypercubeKeyGradientMicrokernel;
 use cubek_std::microkernel::StageRing;
 
 /// Every plane of the launch writing its queries' dot product of the output with its gradient.
@@ -65,11 +66,15 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for cube in &partitioning {
         let first_step = visible.first_query_step(&cube, comptime!(microkernel.seq_q()));
-        hypercube_key_gradient_microkernel::<EA, ES>(
+        let share = ComptimeOption::new_Some(QueryGradientShare {
+            sum: d_q.at(&cube),
+            product: comptime!(microkernel.query_gradient),
+        });
+        cube_staged_key_gradient_microkernel::<EA, ES>(
             &cube,
             &d_k.at(&cube),
             &d_v.at(&cube),
-            &d_q.at(&cube),
+            &share,
             &q.at(&cube),
             &k.at(&cube),
             &v.at(&cube),
@@ -79,7 +84,7 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
             &bias.at(&cube),
             first_step,
             EA::cast_from(scale),
-            microkernel,
+            comptime!(microkernel.cube),
             ring,
         );
     }

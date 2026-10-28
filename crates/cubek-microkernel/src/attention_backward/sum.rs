@@ -12,11 +12,17 @@ pub(crate) fn drain_scaled<EA: Float>(
     scale: EA,
     #[comptime] rows: usize,
 ) {
+    scale_rows::<EA>(sum, scale, rows);
+    sum.drained_into(gradient);
+}
+
+/// `sum`'s `rows` rows along `D` scaled by the attention's `scale`.
+#[cube]
+pub(crate) fn scale_rows<EA: Float>(sum: &Tile, scale: EA, #[comptime] rows: usize) {
     let mut scales = Array::<EA>::new(rows);
     #[unroll]
     for r in 0..rows {
         scales[r] = scale;
     }
     sum.along(D).mul(&scales);
-    sum.drained_into(gradient);
 }

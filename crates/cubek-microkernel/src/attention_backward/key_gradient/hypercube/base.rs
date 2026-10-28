@@ -15,9 +15,11 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 /// and adding its share of the query's gradient into one sum every cube that sees those queries
 /// adds into: that sum is the hypercube's dependent work.
 ///
-/// Each plane takes every stage with the plane microkernel's step, then adds
-/// `scale · score_gradient · key` for the stage's queries into the sum, atomically, out of the
-/// score's gradient the step leaves cast in its window.
+/// Each plane takes every stage with the plane microkernel's step, then contracts
+/// `scale · score_gradient · key` for the stage's queries out of the score's gradient the step
+/// leaves cast in its window. The planes, which split the stage's keys, meet in shared memory, and
+/// the cube adds their sum into the query's gradient atomically, once a stage
+/// ([`QueryGradientShare`](crate::attention_backward::key_gradient::cube::QueryGradientShare)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeKeyGradientMicrokernel {
     pub cube: CubeKeyGradientMicrokernel,
@@ -77,14 +79,19 @@ impl HypercubeKeyGradientMicrokernel {
         self.cube.score_gradient_levels()
     }
 
-    /// Bytes of shared memory one cube holds beside its stages: the cube microkernel's, and the
-    /// fragments every plane's share of the query's gradient bounces through.
+    /// Bytes of shared memory one cube holds beside its stages: the cube microkernel's, the
+    /// fragments every plane's part of the query's gradient bounces through, and, where planes
+    /// split the keys, the stage's query gradient they meet in.
     pub fn window_bytes(&self, item: &AttentionBackwardWorkItem) -> usize {
         let bounced = self.query_gradient.scratch_bytes(
             &item.summed_query_gradient(item.element),
             self.cube.plane.settings.scratch,
         );
-        self.cube.window_bytes(item) + self.plane_count() * bounced
+        let met = match self.plane_count() {
+            1 => 0,
+            _ => self.seq_q() * item.head_dim * item.sum.size(),
+        };
+        self.cube.window_bytes(item) + self.plane_count() * bounced + met
     }
 }
 

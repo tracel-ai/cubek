@@ -35,11 +35,14 @@ pub const ATTENTION_BACKWARD_NO_ATOMIC_ADD: Refusal = Refusal::Declined {
 /// The backward pass with one walk owned by the keys, which the hypercube scope extends to the
 /// query's gradient: every cube owns a box of keys of one key head as the cube staged routine's
 /// second walk does, and also adds its share of the gradient of each query it sees into one `f32`
-/// sum every such cube adds into. Five multiplications a tile instead of seven.
+/// sum every such cube adds into, atomically, once a stage of queries: its planes, which split
+/// its keys, sum their shares in shared memory first. Five multiplications a tile instead of
+/// seven.
 ///
 /// The first walk only writes each query's dot product of the output with its gradient, a plane a
-/// box of queries; the last casts the sum into the query's gradient under the same planes. The atomic adds land in no set order,
-/// so the query's gradient may differ from one run to the next in its last bits.
+/// box of queries; the last casts the sum into the query's gradient under the same planes. The
+/// atomic adds land in no set order, so the query's gradient may differ from one run to the next
+/// in its last bits.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HypercubeAttentionBackwardRoutine;
 
