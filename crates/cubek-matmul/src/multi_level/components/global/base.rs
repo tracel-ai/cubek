@@ -20,7 +20,7 @@ use crate::{
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::{fmt::Debug, hash::Hash};
 
-/// A family of [matmuls](GlobalMatmul) working with any [precision](MatmulPrecision).
+/// A family of [matmuls](GlobalMatmul) working with any precision.
 pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// The specific [GlobalMatmul] implementation associated with this family.
     type Matmul<MP: MatmulTypes>: GlobalMatmul<RC, MP, Config = Self::Config>;

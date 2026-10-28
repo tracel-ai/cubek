@@ -96,7 +96,7 @@ pub fn cold_read_bytes(client: &Client) -> usize {
 }
 
 /// Read `bytes` of scratch through the device's caches, writing back one
-/// vector per [`TOUCHED_PER_WRITTEN`] read: what a measurement runs before a
+/// vector per `TOUCHED_PER_WRITTEN` read: what a measurement runs before a
 /// sample whose operands the last-level cache would otherwise serve. A read
 /// and not a fill, because a fill leaves the cache full of dirty data that
 /// writes back **during** the sample it was meant to clean, and a
@@ -112,7 +112,7 @@ pub fn touch(client: &Client, bytes: usize) {
 /// whole of it is a sum a test checks rather than a stopwatch a device could flatter.
 ///
 /// Vector `j` of the result is the sum of vectors `j + i · written` of `scratch` for `i` below
-/// [`TOUCHED_PER_WRITTEN`], `written` being the result's own length in vectors.
+/// `TOUCHED_PER_WRITTEN`, `written` being the result's own length in vectors.
 pub fn read_through(client: &Client, scratch: TensorHandle) -> TensorHandle {
     let elem = scratch.dtype;
     let vector_size = tensor_vector_size_parallel(

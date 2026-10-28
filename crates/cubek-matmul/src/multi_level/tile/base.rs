@@ -10,7 +10,7 @@ use crate::multi_level::tile::{
     variants::stage::partition::partition_get_at_mut,
 };
 
-/// Public tile type. Wraps a [`TileKind`] payload; the inner enum is
+/// Public tile type. Wraps a `TileKind` payload; the inner enum is
 /// crate-private and callers construct via `Tile::new_*`.
 #[derive(CubeType)]
 pub struct Tile<N: Numeric, Sc: TileScope> {

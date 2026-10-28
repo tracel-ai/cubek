@@ -182,7 +182,7 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     }
 }
 
-/// Payload of [`TileKind::SharedTile`]. Vectorization is erased from the
+/// Payload of `TileKind::SharedTile`. Vectorization is erased from the
 /// type but kept on the runtime slice; project back with [`view`](Self::view).
 #[derive(CubeType, Clone)]
 pub struct SharedTile<E: Numeric> {

@@ -6,7 +6,7 @@
 //! dispatch: the enums themselves, accessor methods that read fields of the
 //! carried data, and per-method 2-arm matches that forward into the variant's
 //! [`StageVariant`] impl. Shared data (`PartitionedStageMatmul`, `NumStages`,
-//! `StagePartitioner`, `init_*`) lives in [`common`].
+//! `StagePartitioner`, `init_*`) lives in `common`.
 //!
 //! The generic `Stage` / `StageFamily` / `LoadStageFamily` traits and the
 //! `StridedStageMemory` impls live in [`crate::multi_level::stage`]; the
