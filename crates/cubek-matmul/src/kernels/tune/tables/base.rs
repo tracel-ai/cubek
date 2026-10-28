@@ -219,6 +219,46 @@ where
         .map_err(|why| format!("{settings} does not serve this problem: {why:?}"))
 }
 
+/// [`packed_candidate`] with a packed lhs decoded first, the rhs still read as stored: a packed
+/// activation beside a weight no routine reads it beside (an MXFP8 activation's blocks of 32 beside
+/// an NVFP4 weight's 16), or beside one a routine reads it beside slower than the weight alone,
+/// contracted as fast as the weight alone allows. An activation is a few rows against the weight's
+/// many, so decoding it costs little of a product that streams the weight; decoding the weight
+/// instead, as the [`decoded_floor`] does, rewrites the weight on every call.
+///
+/// # Errors
+///
+/// A float lhs, which the candidate as stored serves; and every error of [`packed_candidate`].
+pub(super) fn activation_decoded_candidate<R, M, SM>(
+    candidate: &MatmulPackedCandidate<R>,
+    call: MatmulCall,
+) -> Result<MatmulProduct, String>
+where
+    M: MatmulMicrokernel,
+    R: MatmulRoutine<M, SM> + Copy,
+    R::Settings: PackedContraction,
+{
+    if matches!(call.lhs.tensor, StoredTensor::Plain(_)) {
+        return Err("the lhs is float: the candidate reading it as stored serves it".into());
+    }
+    let lhs = Decoded
+        .input(&call, &call.lhs)
+        .map_err(|why| why.to_string())?;
+    packed_candidate(candidate, MatmulCall { lhs, ..call })
+}
+
+/// What an [`activation_decoded_candidate`] is identified by: its setting, named apart from the
+/// same setting reading the lhs as stored, which a caller may launch again as a routine; this one
+/// it may not, since its lhs is decoded first.
+pub(super) fn activation_decoded_identity<R: Routine>(
+    candidate: &MatmulPackedCandidate<R>,
+) -> RoutineIdentity
+where
+    R::Settings: core::fmt::Display + PackedContraction,
+{
+    CandidateIdentity::Named(format!("{} activation decoded", candidate.strategy()))
+}
+
 /// Both tables' floor: the unit routine at its default, every packed input decoded first
 /// ([`Decoded`]). It asks nothing of the device, so it serves what no other candidate binds: an
 /// input laid out no body can describe, or two packed inputs whose scales group `k` apart, which
