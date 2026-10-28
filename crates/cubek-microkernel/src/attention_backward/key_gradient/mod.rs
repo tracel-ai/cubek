@@ -2,5 +2,6 @@
 //! every head of its group that see them, one folder per scope.
 
 pub mod cube;
+pub mod hypercube;
 pub mod plane;
 pub mod unit;

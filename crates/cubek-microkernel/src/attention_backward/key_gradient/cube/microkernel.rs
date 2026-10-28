@@ -1,4 +1,5 @@
 use super::base::CubeKeyGradientMicrokernel;
+use super::share::{QueryGradientShare, StageQueryGradientShare};
 use crate::attention::{Q, S};
 use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{KeyGradientSums, plane_key_gradient_step};
@@ -8,7 +9,9 @@ use cubek_std::microkernel::StageRing;
 
 /// One cube's keys of one key head: each plane's keys' and values' gradients, over every head of
 /// the group, each head walking its steps of queries from `first_step` on, each plane taking every
-/// stage with the plane microkernel's step.
+/// stage with the plane microkernel's step. Where a `query_gradient` share is given, each plane
+/// then adds its part of each stage's query gradient, the planes meeting in shared memory so the
+/// cube adds into the sum once a stage ([`QueryGradientShare`]).
 ///
 /// The cube stages its keys and values once, and each head's queries and output gradient a stage
 /// at a time for all its planes, holding as many stages as `ring` says, met on `sync_cube`. Every
@@ -19,6 +22,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     cube: &Region,
     key_gradient: &Tile,
     value_gradient: &Tile,
+    query_gradient: &ComptimeOption<QueryGradientShare>,
     query: &Tile,
     key: &Tile,
     value: &Tile,
@@ -31,6 +35,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
     #[comptime] microkernel: CubeKeyGradientMicrokernel,
     #[comptime] ring: StageRing,
 ) {
+    let plane_microkernel = comptime!(microkernel.plane);
     let heads = cube.walk();
     // Every head has the first's shape: the stages and windows are placed once, by its walk.
     let first_head = heads.region(0usize);
@@ -42,7 +47,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
         &windows.scores,
         &query.at(&first_head),
         &out_gradient.at(&first_head),
-        comptime!(microkernel.plane),
+        plane_microkernel,
     );
     // The keys and the values span no query: staged once for every plane, before the walk.
     let mut staged_key = key.stage_for(&shape, StageStorage::Strided, None);
@@ -68,12 +73,23 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
             comptime!(ring.prefetch),
             |slot, stage| {
                 slot.consume(|query, out_gradient| {
+                    #[comptime]
+                    let mut share = match query_gradient {
+                        ComptimeOption::Some(share) => {
+                            ComptimeOption::new_Some(share.open::<EA>(stage))
+                        }
+                        ComptimeOption::None => {
+                            ComptimeOption::<StageQueryGradientShare<EA>>::new_None()
+                        }
+                    };
                     for plane in stage {
+                        let windows = windows.at(&plane);
+                        let key = staged_key.at(&plane);
                         plane_key_gradient_step::<EA>(
                             &plane,
                             &sums.at(&plane),
-                            &windows.at(&plane),
-                            &staged_key.at(&plane),
+                            &windows,
+                            &key,
                             &staged_value.at(&plane),
                             &query.at(&plane),
                             &out_gradient.at(&plane),
@@ -81,10 +97,29 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                             &logsumexp.at(&plane),
                             &delta.at(&plane),
                             scale,
-                            comptime!(microkernel.plane),
+                            plane_microkernel,
                             comptime!(microkernel.score_levels()),
                             comptime!(microkernel.score_gradient_levels()),
                         );
+                        // The step leaves the score's gradient cast in its window: its product
+                        // with the keys is this plane's part of the stage's query gradient.
+                        #[comptime]
+                        match &share {
+                            ComptimeOption::Some(share) => share.add(
+                                &plane,
+                                &windows.cast,
+                                &key,
+                                scale,
+                                comptime!(plane_microkernel.settings.scratch),
+                                comptime!(microkernel.seq_q()),
+                            ),
+                            ComptimeOption::None => {}
+                        }
+                    }
+                    #[comptime]
+                    match share {
+                        ComptimeOption::Some(ref mut share) => share.write(),
+                        ComptimeOption::None => {}
                     }
                 });
             },
@@ -95,7 +130,7 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
             &key_gradient.at(&plane),
             &value_gradient.at(&plane),
             scale,
-            comptime!(microkernel.plane),
+            plane_microkernel,
         );
     }
 }

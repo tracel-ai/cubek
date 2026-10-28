@@ -158,7 +158,7 @@ impl PlaneKeyGradientMicrokernel {
 
     /// `product` on the score's instruction, `along_m` by `along_n` fragments, `depth` steps of its
     /// contraction.
-    fn beside(
+    pub(crate) fn beside(
         score: PlaneFragmentMicrokernel,
         product: &MatmulWorkItem,
         (along_m, along_n, depth): (NonZeroUsize, NonZeroUsize, NonZeroUsize),
@@ -178,7 +178,7 @@ impl PlaneKeyGradientMicrokernel {
     }
 
     /// `extent` in steps of `step`, where they divide it.
-    fn steps(extent: usize, step: usize) -> Option<NonZeroUsize> {
+    pub(crate) fn steps(extent: usize, step: usize) -> Option<NonZeroUsize> {
         NonZeroUsize::new(extent / step).filter(|_| extent.is_multiple_of(step))
     }
 }
