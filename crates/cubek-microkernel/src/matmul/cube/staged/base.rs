@@ -191,6 +191,16 @@ impl CubeStagedMicrokernel {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
             });
+        // The float input handed to the copy engine, the packed one still decoded by the units.
+        let float_async = [StageRing::DOUBLE, StageRing::TRIPLE]
+            .into_iter()
+            .flat_map(|ring| {
+                Self::PACKED_BOXES.map(|(steps, planes)| {
+                    CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
+                        .filled(CubeStagedDelivery::AsyncCopy, 0)
+                })
+            });
+        let boxed = boxed.chain(float_async);
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
         for candidate in boxed
             .chain(Self::packed_one_step_settings())

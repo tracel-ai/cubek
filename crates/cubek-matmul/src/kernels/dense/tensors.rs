@@ -9,7 +9,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Arg, Labelled, Refusal};
+use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal};
 use cubecl::tile::{
     Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
     launch::TmaBox, launch::TmaOperand, launch::Unbound,
@@ -934,6 +934,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ) -> MatmulBinding<O, TileArgLaunch, TileArgLaunch> {
         let blocks = self.blocks();
         let batches = self.table_batches();
+        let delivery = blueprint.microkernel.delivery();
+        // A packed input the fill decodes passes through the units' registers, whatever moves
+        // the float one: only the copy engine's lines skip them.
+        let words_delivery = match blueprint.microkernel.decoded_stage() {
+            Some(_) => Delivery::SyncPerUnit,
+            None => delivery,
+        };
         let bind = |operand: &StoredTensor, [rows, columns]: [Axis; 2], width: usize| match operand
         {
             StoredTensor::Plain(tensor) => {
@@ -943,13 +950,17 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     .axes(&axes)
                     .batches(&batches)
                     .vectorize(width)
+                    .delivery(delivery)
                     .build()
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg()
             }
-            StoredTensor::Packed(tensor) => {
-                tensor.bind(&launcher, width, blueprint.microkernel.block_scales())
-            }
+            StoredTensor::Packed(tensor) => tensor.bind(
+                &launcher,
+                width,
+                blueprint.microkernel.block_scales(),
+                words_delivery,
+            ),
         };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
         let rhs = bind(&self.rhs, [K, N], blueprint.widths.rhs);
