@@ -11,7 +11,7 @@ use crate::multi_level::{
 #[cube]
 pub trait Stage<ES: Numeric>: CubeType<ExpandType: Clone> + Clone + 'static {
     fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc>;
-    /// Wrap the whole stage as a [`TileKind::Stage`](crate::multi_level::tile::TileKind::Stage)
+    /// Wrap the whole stage as a `TileKind::Stage`
     /// tile. Only meaningful for read-only stages consumed by the partition
     /// matmul; other impls return [`Tile::new_None()`].
     fn as_stage_tile<Sc: TileScope>(this: &Self) -> Tile<ES, Sc>;

@@ -48,7 +48,7 @@ impl PaddedRows {
     }
 
     /// Every token's routes read back out of these rows and summed under their weights: see
-    /// [`GroupedRows::combine_routes`].
+    /// `GroupedRows::combine_routes`.
     pub fn combine_routes(
         &self,
         routes: PlainTensor,

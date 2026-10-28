@@ -150,12 +150,26 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// The order this instruction reads operands laid out as `layouts` in: a col rhs in its
-    /// buffer's order where the fragment loads `B` col-major, which both matrix transports do, so
-    /// the stage is filled along the rhs's own lines; the others as the product names them. The
-    /// software instruction reads the role's own order, and under it a transposed tile would be a
-    /// wrong answer rather than a slow one.
+    /// The order this instruction reads operands laid out as `layouts` in: a col operand in its
+    /// buffer's order where the fragment loads it col-major, so the stage is filled along the
+    /// operand's own lines. Both matrix transports load `A` and `B` either way; a warpgroup MMA
+    /// loads only `B` col-major. The others as the product names them. The software instruction
+    /// reads the role's own order, and under it a transposed tile would be a wrong answer rather
+    /// than a slow one.
+    ///
+    /// Measured on an L4 for a weight gradient's `f32` col lhs at tf32: staged in the product's
+    /// order, a unit reads one value at a time across the lhs's lines, and the cmma candidates
+    /// lose to the software instruction.
     pub fn orders(self, layouts: MatmulOperands<MatmulLayout>) -> MatmulOperands<BindingOrder> {
+        let lhs = match (self, layouts.lhs) {
+            (Self::Cmma { .. } | Self::Mma { .. }, MatmulLayout::Col) => {
+                BindingOrder::InBufferOrder
+            }
+            (
+                Self::Cmma { .. } | Self::Mma { .. } | Self::Registers { .. } | Self::Wgmma { .. },
+                _,
+            ) => BindingOrder::Stated,
+        };
         let rhs = match (self, layouts.rhs) {
             (Self::Cmma { .. } | Self::Mma { .. } | Self::Wgmma { .. }, MatmulLayout::Col) => {
                 BindingOrder::InBufferOrder
@@ -166,6 +180,7 @@ impl PlaneFragmentInstruction {
             ) => BindingOrder::Stated,
         };
         MatmulOperands {
+            lhs,
             rhs,
             ..MatmulOperands::all(BindingOrder::Stated)
         }
