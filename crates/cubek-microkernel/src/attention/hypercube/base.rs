@@ -97,15 +97,17 @@ impl Microkernel for HypercubeAttentionMicrokernel {
 
 impl HypercubeAttentionMicrokernel {
     /// Bytes of shared memory one cube holds on `hw`, its stages held as `storage`: what its cube
-    /// walks with, and what its planes leave their slots through.
+    /// walks with, then what its planes leave their slots through, in the bytes the walk's stages
+    /// free. Each cube walks its run once.
     pub fn shared_memory(
         &self,
         hw: &Hardware,
         item: &AttentionWorkItem,
         storage: &StageStorage,
     ) -> usize {
-        self.cube.walk_shared_memory(hw, item, storage)
-            + self.cube.plane.partial_bytes(item, self.cube.layout())
+        let partial = self.cube.plane.partial_bytes(item, self.cube.layout());
+        self.cube
+            .walk_then_shared_memory(hw, item, storage, partial)
     }
 
     /// What a merge is compiled for, over `item`'s value dim and the `cubes_along_keys` sharing a

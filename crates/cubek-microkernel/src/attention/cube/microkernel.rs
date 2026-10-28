@@ -177,6 +177,11 @@ fn staged_walk<EA: Float, ES: Float>(
             }
         });
     });
+    // Nothing reads a stage once the walk is over: what the cube declares after it takes their
+    // bytes, once every unit is past its last read
+    // ([`walk_then_shared_memory`](CubeAttentionMicrokernel::walk_then_shared_memory)).
+    stages.free();
+    sync_cube();
     planes
 }
 

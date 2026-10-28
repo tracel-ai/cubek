@@ -172,8 +172,22 @@ impl CubeAttentionMicrokernel {
         item: &AttentionWorkItem,
         storage: &StageStorage,
     ) -> usize {
+        self.walk_then_shared_memory(hw, item, storage, 0)
+    }
+
+    /// Bytes of shared memory one cube holds on `hw` to walk, as
+    /// [`walk_shared_memory`](Self::walk_shared_memory), and then `after` bytes it declares once
+    /// the walk has freed its stages, which take their bytes: where the cube walks its run once.
+    /// A cube that walks a box at a time, in a loop, frees nothing what follows could take.
+    pub fn walk_then_shared_memory(
+        &self,
+        hw: &Hardware,
+        item: &AttentionWorkItem,
+        storage: &StageStorage,
+        after: usize,
+    ) -> usize {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
-        let staged = match self.plane.reads() {
+        let (query, ring) = match self.plane.reads() {
             CubePlaneReads::Stage => {
                 let query = self.staged_query(item);
                 let query = query.bytes(hw, &self.query_storage(&query.space));
@@ -182,11 +196,11 @@ impl CubeAttentionMicrokernel {
                     .iter()
                     .map(|operand| operand.bytes(hw, storage))
                     .sum();
-                query + self.ring.bytes(stage)
+                (query, self.ring.bytes(stage))
             }
-            CubePlaneReads::Global => 0,
+            CubePlaneReads::Global => (0, 0),
         };
-        planes + staged
+        planes + query + ring.max(after)
     }
 
     /// What one cube reads of each operand: its box of the query and every key and value of its
