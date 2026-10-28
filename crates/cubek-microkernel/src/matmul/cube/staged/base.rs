@@ -119,53 +119,41 @@ impl CubeStagedMicrokernel {
     /// a stage of `K` that many planes deep outgrows shared memory.
     const PACKED_ONE_STEP_PLANES_ALONG_K: [usize; 2] = [4, 8];
 
-    /// Boxes against a packed input staged as it is stored, in fragments of the decoding
-    /// instruction a plane (along `m`, `n` and `k`) and planes a cube (along `m` and `n`): two to
-    /// four fragments of rows a plane, each sharing the rhs fragments it decodes.
+    /// The settings a product against a packed input staged as it is stored races, in fragments
+    /// of the decoding instruction a plane (along `m`, `n` and `k`) and planes a cube (along `m`
+    /// and `n`), its stages filled by the TMA engine or the copy engine. Each box is four steps of
+    /// `K` deep: its stages keep the packed input's scales beside the codes, read four to a word
+    /// along `KB`, and a stage shallower than a word of them would cut one.
     ///
-    /// Each box is four steps of `K` deep: its stages keep the packed input's scales beside the
-    /// codes, read four to a word along `KB`, and a stage shallower than a word of them would cut
-    /// one.
-    const STORED_BOXES: [((usize, usize, usize), (usize, usize)); 9] = [
-        ((2, 4, 4), (2, 2)),
-        ((4, 4, 4), (2, 2)),
-        ((2, 8, 4), (2, 2)),
-        ((4, 2, 4), (2, 4)),
-        // One plane along `m`: no two planes read the same rhs fragment, so each is decoded
-        // once a cube.
-        ((4, 4, 4), (1, 4)),
-        ((4, 8, 4), (1, 2)),
-        ((4, 2, 4), (1, 8)),
-        ((4, 4, 4), (1, 8)),
-        ((2, 8, 4), (1, 4)),
+    /// Measured on Qwen3-4B's and Qwen3-8B's projections at 512 and 2048 rows on an RTX PRO 6000
+    /// (sm_120), out of sixty boxes, rings and fills: by each engine, the fewest that come within
+    /// 3% of its fastest on every projection. Together they come within 2% of the fastest of all.
+    /// A fill by the units never was the fastest.
+    const STORED: [CubeStagedMicrokernelSettings; 6] = [
+        // One plane along `m`, eight along `n`: no two planes decode the same rhs fragment.
+        CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE)
+            .filled(CubeStagedDelivery::Tma, 0),
+        CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::Tma, 0),
+        CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::DOUBLE)
+            .filled(CubeStagedDelivery::Tma, 0)
+            .split_along_k(2),
+        CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::AsyncCopy, 0),
+        CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::AsyncCopy, 0),
+        CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE)
+            .filled(CubeStagedDelivery::AsyncCopy, 0),
     ];
 
-    /// The settings a product against a packed input staged as it is stored races: each stored
-    /// box two and three stages deep.
-    pub fn stored_settings() -> Vec<CubeStagedMicrokernelSettings> {
-        let deliveries = [
-            CubeStagedDelivery::Copy,
-            CubeStagedDelivery::AsyncCopy,
-            CubeStagedDelivery::Tma,
-        ];
-        deliveries
+    /// The [stored settings](Self::STORED) `hw` races: those filled by the TMA engine only where
+    /// it has one, since elsewhere they would race the units' fill of a box the copy engine's
+    /// settings already cover.
+    pub fn stored_settings(hw: &Hardware) -> Vec<CubeStagedMicrokernelSettings> {
+        Self::STORED
             .into_iter()
-            .flat_map(|delivery| {
-                [StageRing::DOUBLE, StageRing::TRIPLE]
-                    .into_iter()
-                    .flat_map(move |ring| {
-                        Self::STORED_BOXES
-                            .into_iter()
-                            .map(move |(fragments, planes)| {
-                                CubeStagedMicrokernelSettings::stored(fragments, planes, ring)
-                                    .filled(delivery, 0)
-                            })
-                            .chain([
-                                CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), ring)
-                                    .filled(delivery, 0)
-                                    .split_along_k(2),
-                            ])
-                    })
+            .filter(|settings| {
+                settings.fill.delivery != CubeStagedDelivery::Tma || hw.bulk_tensor_copy()
             })
             .collect()
     }
@@ -218,7 +206,7 @@ impl CubeStagedMicrokernel {
         for candidate in boxed
             .chain(float_on_engine)
             .chain(Self::packed_one_step_settings())
-            .chain(Self::stored_settings())
+            .chain(Self::stored_settings(hw))
         {
             let merges = candidate.planes_along_k.get() > 1;
             if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
