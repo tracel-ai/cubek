@@ -213,10 +213,9 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
 
     /// A cube holds its planes along the keys, and the shared memory its microkernel and its merge
     /// ask for. The cubes sharing a box are its settings' count, whatever the keys
-    /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and where
-    /// the buffers hold too few keys for every cube to walk some
-    /// ([`AttentionPartitioning::every_cube_walks`]) or one cube a box already fills the device
-    /// ([`AttentionPartitioning::boxes_leave_workers_idle`]).
+    /// ([`AttentionPartitioning::new`]). Declines where the device cannot merge this way, and
+    /// serves a cache of any length, at any device fill: neither is a call's to decline, since an
+    /// autotune key prepares its candidates at one representative for every call of its bucket.
     fn prepare(
         &self,
         hw: &Hardware,
@@ -233,7 +232,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             settings.cubes_along_keys,
             QueryOrder::InOrder,
         );
-        partitioning.every_cube_walks()?;
         let storage = microkernel.cube.stage_storage(&partitioning.stage());
         let cube = CubeResources {
             plane_width: hw.plane_dim()?,
@@ -241,7 +239,6 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
                 + M::MERGE.shared_memory(),
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        partitioning.boxes_leave_workers_idle(hw, &grid.launch)?;
         M::validate(
             hw,
             problem,
@@ -298,7 +295,6 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeAttentionMicrokernel, S
 mod tests {
     use super::*;
     use crate::kernels::HYPERCUBE_CUBES_UNMET;
-    use crate::kernels::{ATTENTION_BOXES_FILL_THE_DEVICE, ATTENTION_CUBES_WITHOUT_KEYS};
     use crate::kernels::{
         AttentionCacheLayout, HypercubeLastArrivalShuffleAttentionRoutine,
         HypercubeSecondLaunchShuffleAttentionRoutine,
@@ -357,35 +353,26 @@ mod tests {
         );
     }
 
-    /// A cache too short to give every cube of a box a step declines whatever the setting: the
-    /// cubes past its steps would walk nothing and still leave a partial to merge.
+    /// Every setting serves a cache of any length, down to one key, and a prompt whose boxes of
+    /// queries already fill the device: a call inside an autotune key's bucket must run what the
+    /// key elected at its representative.
     #[test]
-    fn a_cache_shorter_than_the_cubes_declines() {
+    fn every_setting_serves_any_cache_length_and_fill() {
         let hw = devices::h100();
-        let one_key = AttentionRoutineProblem::dense((1, 32, 8), (1, 1), (128, 128), F16);
-        let routine = HypercubeLastArrivalShuffleAttentionRoutine::new();
-        for settings in routine.settings(&hw) {
-            assert_eq!(
-                routine.prepare(&hw, &one_key, &settings).err(),
-                Some(ATTENTION_CUBES_WITHOUT_KEYS),
-                "{settings}"
-            );
-        }
-    }
-
-    /// A prompt whose boxes of queries already fill the device declines whatever the setting:
-    /// the cubes sharing a box would find no idle worker and only add a merge.
-    #[test]
-    fn a_prompt_filling_the_device_declines() {
-        let hw = devices::h100();
-        let prompt = AttentionRoutineProblem::dense((1, 32, 32), (4096, 4096), (128, 128), F16);
         let routine = HypercubeSecondLaunchShuffleAttentionRoutine::new();
+        let decode = |keys| AttentionRoutineProblem::dense((1, 32, 8), (1, keys), (128, 128), F16);
+        let prompt = AttentionRoutineProblem::dense((1, 32, 32), (4096, 4096), (128, 128), F16);
         for settings in routine.settings(&hw) {
-            assert_eq!(
-                routine.prepare(&hw, &prompt, &settings).err(),
-                Some(ATTENTION_BOXES_FILL_THE_DEVICE),
-                "{settings}"
-            );
+            for problem in [
+                decode(1),
+                decode(5),
+                decode(100),
+                decode(1500),
+                prompt.clone(),
+            ] {
+                let prepared = routine.prepare(&hw, &problem, &settings);
+                assert!(prepared.is_ok(), "{settings}: {:?}", prepared.err());
+            }
         }
     }
 
