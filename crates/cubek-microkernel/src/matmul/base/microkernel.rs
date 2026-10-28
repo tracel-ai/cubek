@@ -26,6 +26,17 @@ pub trait MatmulMicrokernel:
         Delivery::SyncPerUnit
     }
 
+    /// How a packed input's words are moved into its stages: as [`delivery`](Self::delivery)
+    /// moves the float inputs, except where its fill decodes them
+    /// ([`decoded_stage`](Self::decoded_stage)), which passes them through the units' registers,
+    /// where the copy engine's lines never land.
+    fn words_delivery(&self) -> Delivery {
+        match self.decoded_stage() {
+            Some(_) => Delivery::SyncPerUnit,
+            None => self.delivery(),
+        }
+    }
+
     /// How it reads a packed input's block scales, which the launch binds them as:
     /// [`Fields`](BlockScales::Fields) for one that decodes them.
     fn block_scales(&self) -> BlockScales {

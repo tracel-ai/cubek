@@ -948,7 +948,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     }
 
     /// Both inputs under `launcher`, beside `out`: each packed one as one tile of its words under
-    /// its scales, each float one restated over the block-split space.
+    /// its scales, each float one restated over the block-split space, each moved into the stages
+    /// as the microkernel says ([`delivery`](MatmulMicrokernel::delivery),
+    /// [`words_delivery`](MatmulMicrokernel::words_delivery)).
     fn bind_packed_inputs<Mk: MatmulMicrokernel, SM, O>(
         &self,
         launcher: Launcher,
@@ -966,13 +968,17 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     .axes(&axes)
                     .batches(&batches)
                     .vectorize(width)
+                    .delivery(blueprint.microkernel.delivery())
                     .build()
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg()
             }
-            StoredTensor::Packed(tensor) => {
-                tensor.bind(&launcher, width, blueprint.microkernel.block_scales())
-            }
+            StoredTensor::Packed(tensor) => tensor.bind(
+                &launcher,
+                width,
+                blueprint.microkernel.block_scales(),
+                blueprint.microkernel.words_delivery(),
+            ),
         };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
         let rhs = bind(&self.rhs, [K, N], blueprint.widths.rhs);

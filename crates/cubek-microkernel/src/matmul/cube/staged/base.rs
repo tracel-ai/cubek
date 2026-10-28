@@ -142,7 +142,9 @@ impl CubeStagedMicrokernel {
 
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
     /// steps tall the float staged routine races, one stage at a time and with a second in flight,
-    /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)).
+    /// on a device with a copy engine one of them with its float input handed to the engine
+    /// ([`PACKED_FLOAT_ON_ENGINE`](CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE)), then
+    /// the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)).
     /// Planes splitting `K` only on a device whose shared memory takes the atomic `f32` add they
     /// merge through: elsewhere they would only be tried and declined.
     ///
@@ -158,8 +160,14 @@ impl CubeStagedMicrokernel {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
             });
+        let float_on_engine = hw
+            .unit_async_copy()
+            .then_some(CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE);
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
-        for candidate in boxed.chain(Self::packed_one_step_settings()) {
+        for candidate in boxed
+            .chain(float_on_engine)
+            .chain(Self::packed_one_step_settings())
+        {
             let merges = candidate.planes_along_k.get() > 1;
             if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
                 settings.push(candidate);
