@@ -6,6 +6,7 @@
 //! product over batches whose inputs read a table, one entry a batch ([`MatmulIndex`]).
 
 pub mod indexed;
+pub mod plan;
 pub mod select;
 pub mod tensor;
 pub mod tune;

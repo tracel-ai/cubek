@@ -10,7 +10,7 @@
 //! - `fastest(table)`: the fastest candidate of an autotune table.
 //! - `decoded(..)`: every packed input decoded into floats first, by this crate's decode, or by the
 //!   framework's dequantize where the decode declines.
-//! - `burn-dequantized(..)`: every packed input dequantized by the framework first.
+//! - `framework-dequantized(..)`: every packed input dequantized by the framework first.
 //! - `in-order[..]`: the first that serves runs; a list held in a list is written flat, and a
 //!   list of one as its piece.
 //! - `refused: ..`: the selection refuses the product.
@@ -25,8 +25,10 @@ use super::selector::{
     MatmulTable, select,
 };
 use super::{MatmulKernel, MatmulOpStrategy};
+use crate::kernels::plan::{MatmulCall, planned};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperands;
+use cubek_std::plan::{Fastest, Plan};
 use cubek_std::{Hardware, devices};
 
 /// Every strategy's plan for every kind of product is the one `plans.txt` records.
@@ -46,6 +48,29 @@ fn every_plan_is_the_one_written_down() {
         include_str!("plans.txt"),
         "a plan changed; rewrite plans.txt with CUBEK_WRITE_PLANS=1 and review the diff"
     );
+}
+
+/// The plan each selection is run as tries what that selection tries, in the same order.
+#[test]
+fn every_plan_tries_what_its_selection_tries() {
+    for product in Product::all() {
+        for strategy in MatmulOpStrategy::all() {
+            let Ok(selection) = select(strategy, &product.problem, &product.hw) else {
+                continue;
+            };
+            let plan = planned(&selection, &|table| {
+                Box::new(Fastest::new(table_name(&table), |_: &MatmulCall| {
+                    unreachable!("a plan's tree launches nothing")
+                }))
+            });
+            assert_eq!(
+                plan.tree().to_string(),
+                tried(&selection),
+                "{strategy:?}, {}",
+                product.name
+            );
+        }
+    }
 }
 
 /// Every strategy against every kind of product, one line each.
@@ -134,7 +159,7 @@ fn tried(selection: &MatmulSelection) -> String {
         MatmulSelection::DequantizeThen { dequantize, choice } => {
             let step = match dequantize {
                 MatmulDequantize::Decode => "decoded",
-                MatmulDequantize::Burn => "burn-dequantized",
+                MatmulDequantize::Burn => "framework-dequantized",
             };
             format!("{step}({})", float_tried(choice))
         }
@@ -191,12 +216,15 @@ fn packed_kernel(kernel: &MatmulKernel) -> String {
 }
 
 fn fastest(table: &MatmulTable) -> String {
-    let name = match table {
+    format!("fastest({})", table_name(table))
+}
+
+fn table_name(table: &MatmulTable) -> &'static str {
+    match table {
         MatmulTable::FewRows => "few-rows",
         MatmulTable::ManyRows => "many-rows",
         MatmulTable::Nvfp4 => "nvfp4",
-    };
-    format!("fastest({name})")
+    }
 }
 
 /// `pieces` tried in order, a list among them written flat and a list of one as its piece:

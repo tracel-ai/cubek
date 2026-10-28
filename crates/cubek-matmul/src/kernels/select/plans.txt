@@ -48,10 +48,10 @@ Specific(PlaneShuffle): plane-shuffle(packed as stored)
 Specific(Nvfp4TensorCores): refused: Nvfp4TensorCores multiplies two NVFP4 inputs, their words along k, on a GPU with a 4-bit tensor-core instruction; take autotune or a policy for any other product
 
 # rhs packed under a scheme no kernel reads, 1 row
-Autotune: burn-dequantized(fastest(few-rows))
-Heuristic(Tile): burn-dequantized(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
-Specific(UnitRegisters): burn-dequantized(unit-registers@default)
-Specific(PlaneShuffle): burn-dequantized(plane-shuffle)
+Autotune: framework-dequantized(fastest(few-rows))
+Heuristic(Tile): framework-dequantized(in-order[plane-shuffle, cube-staged@default, unit-registers@default])
+Specific(UnitRegisters): framework-dequantized(unit-registers@default)
+Specific(PlaneShuffle): framework-dequantized(plane-shuffle)
 Specific(Nvfp4TensorCores): refused: Nvfp4TensorCores multiplies two NVFP4 inputs, their words along k, on a GPU with a 4-bit tensor-core instruction; take autotune or a policy for any other product
 
 # two NVFP4 inputs, 1 row, 4-bit GPU
