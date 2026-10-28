@@ -14,10 +14,9 @@
 //! - `refused: ..`: the selection refuses the call.
 
 use super::AttentionOpStrategy;
-use super::selector::{
-    AttentionChoice, AttentionSelection, KernelChoice, KvKind, QueryPositions, select,
-};
-use crate::kernels::AttentionKernel;
+use super::selector::{KvKind, QueryPositions, select};
+use crate::kernels::plan::AttentionTableGroups;
+use cubek_std::plan::Plan;
 
 /// Every strategy's plan for every kind of call is the one `plans.txt` records.
 ///
@@ -65,69 +64,12 @@ fn render_all() -> String {
     ] {
         out.push_str(&format!("# {name}\n"));
         for strategy in AttentionOpStrategy::all() {
-            let plan = select(strategy, queries, cache)
-                .map(|selection| tried(&selection))
+            let plan = select(strategy, queries, cache, AttentionTableGroups::default())
+                .map(|plan| plan.tree().to_string())
                 .unwrap_or_else(|refusal| format!("refused: {refusal}"));
             out.push_str(&format!("{}: {plan}\n", strategy.name()));
         }
         out.push('\n');
     }
     out
-}
-
-/// What a launch of `selection` tries, in order.
-fn tried(selection: &AttentionSelection) -> String {
-    match selection {
-        AttentionSelection::Float(choice) => float_tried(choice),
-        AttentionSelection::DequantizeThen(choice) => rebuilt(choice),
-        AttentionSelection::Packed { read, otherwise } => {
-            let read = kernel_tried(read, "(packed cache)");
-            match otherwise {
-                Some(choice) => in_order([read, rebuilt(choice)]),
-                None => read,
-            }
-        }
-    }
-}
-
-/// What a launch of `choice` tries over a float cache.
-fn float_tried(choice: &AttentionChoice) -> String {
-    match choice {
-        AttentionChoice::Autotune(QueryPositions::One) => "fastest(decode)".to_string(),
-        AttentionChoice::Autotune(QueryPositions::Many) => "fastest(prefill)".to_string(),
-        AttentionChoice::Kernel(choice) => kernel_tried(choice, ""),
-    }
-}
-
-/// The packed cache rebuilt as floats, then `choice` over it.
-fn rebuilt(choice: &AttentionChoice) -> String {
-    format!("rebuilt({})", float_tried(choice))
-}
-
-/// What a launch of `choice` tries, each kernel read as `reads` says: a pin its kernel alone, a
-/// rule its kernel and then each one its scope names instead, down to the unit routine.
-fn kernel_tried(choice: &KernelChoice, reads: &str) -> String {
-    let lead = |kernel: AttentionKernel| format!("{}@lead{reads}", kernel.name());
-    match *choice {
-        KernelChoice::Pin(kernel) => lead(kernel),
-        KernelChoice::Rule(kernel) => in_order(
-            core::iter::successors(Some(kernel), AttentionKernel::instead_by_rule).map(lead),
-        ),
-    }
-}
-
-/// `pieces` tried in order, a list among them written flat and a list of one as its piece:
-/// trying one piece in order is trying that piece.
-fn in_order(pieces: impl IntoIterator<Item = String>) -> String {
-    let flat: Vec<String> = pieces
-        .into_iter()
-        .map(|piece| match piece.strip_prefix("in-order[") {
-            Some(list) => list.strip_suffix(']').expect("a list closes").to_string(),
-            None => piece,
-        })
-        .collect();
-    match flat.as_slice() {
-        [one] => one.clone(),
-        _ => format!("in-order[{}]", flat.join(", ")),
-    }
 }

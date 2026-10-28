@@ -5,6 +5,7 @@
 //! runs. Every routine writes the output `[b, q, h, dv]`, a token's heads adjacent, so the caller
 //! merges them with a reshape.
 
+pub mod plan;
 pub mod select;
 
 mod binding;
