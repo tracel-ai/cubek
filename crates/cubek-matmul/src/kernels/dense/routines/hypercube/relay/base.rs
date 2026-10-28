@@ -4,8 +4,8 @@ use crate::kernels::MatmulBinding;
 use crate::kernels::MatmulPartitioning;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use crate::kernels::{
-    MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView,
+    MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
@@ -186,6 +186,12 @@ impl Routine for HypercubeRelayMatmulRoutine {
         problem.check_unindexed()?;
         let view = MatmulView::of::<HypercubeStagedMicrokernel>(problem)?;
         let item = view.work_item();
+        if item
+            .blocks
+            .is_some_and(|blocks| blocks.packings.lhs.is_some())
+        {
+            return Err(MATMUL_HYPERCUBE_PACKED_LHS);
+        }
         let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
         if microkernel.cube.walk().decoded().is_some() {
             view.check_steps(hw)?;

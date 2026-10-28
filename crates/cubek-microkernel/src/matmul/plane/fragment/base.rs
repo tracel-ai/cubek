@@ -14,6 +14,7 @@ use crate::matmul::plane::{
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
+use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
 use cubek_std::layout::stored::Operand;
@@ -106,15 +107,20 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// Whether a packed `item`'s operands are what the fragments contract: a 16-bit lhs,
-    /// and a packed rhs read along `K` alone, under scale blocks along `K` a whole number of
-    /// [`DECODED_BLOCK`](Self::DECODED_BLOCK) long.
+    /// and a packed rhs of `e2m1` codes, the only values a lane run decodes, read along `K` alone,
+    /// under scale blocks along `K` a whole number of [`DECODED_BLOCK`](Self::DECODED_BLOCK) long.
     fn serves(item: &MatmulWorkItem, space: &MatmulBlocks) -> bool {
         let rhs = &space.operand(MatmulOperand::Rhs);
         let sixteen_bits = matches!(
             item.elements.lhs,
             ElemType::Float(FloatKind::F16 | FloatKind::BF16)
         );
+        let e2m1 = space
+            .packings
+            .rhs
+            .is_some_and(|packing| packing.scheme.value == QuantValue::E2M1);
         sixteen_bits
+            && e2m1
             && rhs.lined() == K
             && rhs.read(N) == 1
             && rhs
@@ -732,18 +738,25 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
 mod tests {
     use super::*;
     use crate::matmul::{MatmulDestination, MatmulReading};
+    use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
     use cubek_std::layout::stored::Packing;
     use cubek_std::layout::tile_order;
 
     /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
     /// long along `k`.
     fn against_blocks_of(block: usize) -> (MatmulWorkItem, MatmulBlocks) {
+        against(tile_order::scheme(), block)
+    }
+
+    /// An `f16` activation against a weight packed down `k` under `scheme`, eight values a word
+    /// and four scales, under scale blocks `block` long along `k`.
+    fn against(scheme: QuantScheme, block: usize) -> (MatmulWorkItem, MatmulBlocks) {
         let f16 = ElemType::Float(FloatKind::F16);
         let packings = MatmulOperands {
             lhs: None,
             rhs: Some(Packing {
                 operand: Operand::packed(K, 8, K, block, 4),
-                scheme: tile_order::scheme(),
+                scheme,
             }),
             out: None,
         };
@@ -782,5 +795,18 @@ mod tests {
         assert!(serves(16));
         assert!(serves(32));
         assert!(!serves(8));
+    }
+
+    /// The fragments decode `e2m1` codes alone: an MXFP8 weight's `e4m3` values under the same
+    /// thirty-two-value blocks as MXFP4's are a lane run's to refuse, so no plane is offered for
+    /// them, rather than one whose kernel fails to expand.
+    #[test]
+    fn the_fragments_decode_e2m1_codes_alone() {
+        let mxfp8 = QuantScheme::default()
+            .with_value(QuantValue::E4M3)
+            .per_block([32, 1], ScaleDtype::UE8M0)
+            .with_store(QuantStore::PackedU32(1));
+        let (item, space) = against(mxfp8, 32);
+        assert!(!PlaneFragmentMicrokernel::serves(&item, &space));
     }
 }
