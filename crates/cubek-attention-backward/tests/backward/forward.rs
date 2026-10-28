@@ -223,6 +223,22 @@ fn every_cube_staged_setting_matches_the_host_at_a_head_dim_of_128() {
     }
 }
 
+/// Every setting the hypercube of plane fragments lists at a model's head dim, each box's keys cut
+/// across its cubes: the stages each cube hands on to the partial it leaves are each a different
+/// kernel.
+#[test]
+fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    for settings in HypercubeSecondLaunchFragmentAttentionRoutine.settings(&hw) {
+        check_forward(
+            "hypercube-second-launch-fragment",
+            HypercubeSecondLaunchFragmentAttentionRoutine,
+            Some(settings),
+            PROMPT_WIDE,
+        );
+    }
+}
+
 #[test]
 fn the_cube_shuffle_routine_writes_the_logsumexp() {
     check_forward("cube-shuffle", CubeShuffleAttentionRoutine, None, PROMPT);
