@@ -5,8 +5,9 @@ mod fragment {
     use super::super::*;
     use crate::kernels::AttentionRoutineProblem;
     use crate::kernels::QueryOrder;
-    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::launch::{Delivery, Refusal};
     use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+    use cubek_microkernel::matmul::cube::CubeStagedDelivery;
 
     use cubek_microkernel::attention::plane::PlaneFragmentAttentionMicrokernelSettings;
     use cubek_std::Hardware;
@@ -249,6 +250,55 @@ mod fragment {
         };
         assert_eq!(plane.out_edge() * F16.size(), RowChunks::CHUNK_BYTES);
         assert_eq!(bytes(StageLayout::PaddedBlocks), strided);
+    }
+
+    /// The copy engine fills a stage where the device has one and the ring lands the lines in
+    /// shared memory, and only lines of 4, 8 or 16 bytes, the copies it makes. A ring that
+    /// prefetches through the units' registers, or a device with no engine, has the units copy.
+    #[test]
+    fn the_copy_engine_fills_the_stages_the_ring_lands_in_shared_memory() {
+        let hw = offering_nvidia(devices::h100());
+        let [_, _, problem, _] = problems();
+        let item = problem.work_item();
+        let prepared = |hw: &Hardware, ring| {
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    ring,
+                    delivery: CubeStagedDelivery::AsyncCopy,
+                    ..Settings::DEFAULT.microkernel
+                },
+                ..Settings::DEFAULT
+            };
+            let (blueprint, _) = ROUTINE
+                .prepare(hw, &problem, &settings)
+                .expect("the lead prepares on any ring");
+            blueprint
+        };
+        let blueprint = prepared(&hw, StageRing::DOUBLE);
+        assert_eq!(
+            blueprint.microkernel.delivery,
+            CubeStagedDelivery::AsyncCopy
+        );
+        assert_eq!(
+            blueprint.microkernel.delivery(&blueprint.widths, &item),
+            Delivery::AsyncPerUnit
+        );
+        let single_cells = blueprint.widths.map(|_, _| 1);
+        assert_eq!(
+            blueprint.microkernel.delivery(&single_cells, &item),
+            Delivery::SyncPerUnit
+        );
+        let through_registers = prepared(&hw, StageRing::DOUBLE_THROUGH_REGISTERS);
+        assert_eq!(
+            through_registers.microkernel.delivery,
+            CubeStagedDelivery::Copy
+        );
+        let mut no_engine = hw.clone();
+        devices::features(&mut no_engine).copy_async = false;
+        assert_eq!(
+            prepared(&no_engine, StageRing::DOUBLE).microkernel.delivery,
+            CubeStagedDelivery::Copy
+        );
     }
 
     /// A cube's box is its heads over its queries, a plane each, and its stage is that box against

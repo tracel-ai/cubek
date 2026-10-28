@@ -5,9 +5,10 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,
 };
+use crate::matmul::cube::{CubeStagedAsyncCopyRefusal, CubeStagedDelivery};
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Axis, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -34,6 +35,10 @@ pub struct CubeAttentionMicrokernel {
     /// The settings' ring as this device holds its stages of keys and values
     /// ([`StageRing::resolve`]).
     pub ring: StageRing,
+    /// Who moves its stages of keys and values: the settings' delivery where the device and the
+    /// ring take it and its planes read a stage, the cube's units otherwise. The lines' widths
+    /// have the last word ([`delivery`](AttentionMicrokernel::delivery)).
+    pub delivery: CubeStagedDelivery,
     /// Units of each plane, the device's plane width: what a merged row's work is shared among
     /// where planes split the same rows' keys.
     pub units: usize,
@@ -115,6 +120,24 @@ impl CubeAttentionMicrokernel {
     /// out, blocked as its planes read it.
     pub fn stage_storage(&self, stage: &Space) -> StageStorage {
         self.plane.stage_storage(self.settings.layout, stage)
+    }
+
+    /// The settings' delivery as `hw` moves its stages over `ring`: the copy engine where it was
+    /// asked for, the device has one and the ring takes the lines straight into shared memory,
+    /// and its planes read a stage; the cube's units otherwise. A stage of attention is never a
+    /// descriptor's: its operands bind no tensor map.
+    fn resolve_delivery(&self, hw: &Hardware, ring: &StageRing) -> CubeStagedDelivery {
+        let staged = self.plane.reads() == CubePlaneReads::Stage;
+        match self.settings.delivery {
+            CubeStagedDelivery::AsyncCopy
+                if staged && CubeStagedAsyncCopyRefusal::new(hw, ring).is_none() =>
+            {
+                CubeStagedDelivery::AsyncCopy
+            }
+            CubeStagedDelivery::AsyncCopy | CubeStagedDelivery::Copy | CubeStagedDelivery::Tma => {
+                CubeStagedDelivery::Copy
+            }
+        }
     }
 
     /// The storage its query, staged once over `stage`, is held in: as the settings lay out the
@@ -241,6 +264,7 @@ impl Microkernel for CubeAttentionMicrokernel {
                     settings: cube,
                     heads,
                     ring: cube.ring,
+                    delivery: CubeStagedDelivery::Copy,
                     units: hw.plane_dim().ok()? as usize,
                     page_steps: None,
                 }
@@ -252,7 +276,12 @@ impl Microkernel for CubeAttentionMicrokernel {
                         .stage(requested.seq_kv(), requested.key_order()),
                     requested.layout().planes() * requested.units,
                 );
-                Some(Self { ring, ..requested })
+                let delivery = requested.resolve_delivery(hw, &ring);
+                Some(Self {
+                    ring,
+                    delivery,
+                    ..requested
+                })
             })
     }
 
@@ -290,5 +319,23 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         self.plane.served(item)
+    }
+
+    /// Its resolved delivery, the copy engine's only where the keys' and the values' lines at
+    /// `widths` are 4, 8 or 16 bytes, the only copies it makes.
+    fn delivery(&self, widths: &AttentionOperands<usize>, item: &AttentionWorkItem) -> Delivery {
+        let served = self.served(item).elements;
+        let copied = [AttentionOperand::Key, AttentionOperand::Value]
+            .into_iter()
+            .all(|operand| {
+                let bytes = widths.get(operand) * served.get(operand).size();
+                matches!(bytes, 4 | 8 | 16)
+            });
+        match self.delivery {
+            CubeStagedDelivery::AsyncCopy if copied => CubeStagedDelivery::AsyncCopy.bound(),
+            CubeStagedDelivery::AsyncCopy | CubeStagedDelivery::Copy | CubeStagedDelivery::Tma => {
+                CubeStagedDelivery::Copy.bound()
+            }
+        }
     }
 }

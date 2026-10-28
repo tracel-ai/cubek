@@ -2,6 +2,7 @@ use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlan
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
 };
+use crate::matmul::cube::CubeStagedDelivery;
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubek_std::microkernel::{StageLayout, StageRing};
@@ -26,6 +27,7 @@ impl HypercubeAttentionMicrokernelSettings {
             planes_along_keys: NonZeroUsize::MIN,
             ring: StageRing::SINGLE,
             layout: StageLayout::Strided,
+            delivery: CubeStagedDelivery::Copy,
         },
     };
 
@@ -45,6 +47,7 @@ impl HypercubeAttentionMicrokernelSettings {
             planes_along_keys: NonZeroUsize::MIN,
             ring: StageRing::SINGLE,
             layout: StageLayout::Strided,
+            delivery: CubeStagedDelivery::Copy,
         },
     };
 

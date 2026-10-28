@@ -1,10 +1,12 @@
 use crate::attention::cube::{CubeAttentionMicrokernel, CubePlaneReads};
 use crate::attention::hypercube::HypercubeAttentionMicrokernelSettings;
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, G, Q};
+use crate::attention::{
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q,
+};
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -153,5 +155,10 @@ impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     /// Its cube's.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         self.cube.served(item)
+    }
+
+    /// Its cube's.
+    fn delivery(&self, widths: &AttentionOperands<usize>, item: &AttentionWorkItem) -> Delivery {
+        self.cube.delivery(widths, item)
     }
 }

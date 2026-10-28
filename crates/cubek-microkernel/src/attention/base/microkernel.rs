@@ -1,5 +1,6 @@
-use crate::attention::{AttentionOperand, AttentionWorkItem};
+use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem};
 use cubecl::tile::Space;
+use cubecl::tile::launch::Delivery;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::Microkernel;
 
@@ -19,5 +20,11 @@ pub trait AttentionMicrokernel:
     /// in. As they are stored, unless its instruction reads them in another element.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         *item
+    }
+
+    /// How the keys and values it binds at `widths` are moved into its stages, which the launch
+    /// states on both: [`SyncPerUnit`](Delivery::SyncPerUnit) for one that stages nothing.
+    fn delivery(&self, _widths: &AttentionOperands<usize>, _item: &AttentionWorkItem) -> Delivery {
+        Delivery::SyncPerUnit
     }
 }
