@@ -9,13 +9,13 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::attention::AttentionOperand;
-use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use cubek_microkernel::attention::cube::{
+    CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
+};
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::plane::{
-    PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
-};
+use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSettings;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -63,17 +63,12 @@ pub trait HypercubeShuffleMerge: core::fmt::Debug + Copy + Eq + core::hash::Hash
     );
 }
 
-/// The hypercube microkernel both shuffle routines place: cubes of plane shuffles.
-pub type HypercubeShuffleAttentionMicrokernel =
-    HypercubeAttentionMicrokernel<PlaneShuffleAttentionMicrokernel>;
-
 pub type HypercubeShuffleAttentionRoutineBlueprint =
-    AttentionBlueprint<HypercubeShuffleAttentionMicrokernel, StageStorage>;
+    AttentionBlueprint<HypercubeAttentionMicrokernel, StageStorage>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeShuffleAttentionRoutineSettings<M> {
-    pub microkernel:
-        HypercubeAttentionMicrokernelSettings<PlaneShuffleAttentionMicrokernelSettings>,
+    pub microkernel: HypercubeAttentionMicrokernelSettings,
     /// Cubes sharing one box, each on its own run of the keys: part of the partitioning, which
     /// distributes it whatever the keys ([`AttentionPartitioning::new`]).
     pub cubes_along_keys: NonZeroUsize,
@@ -96,9 +91,7 @@ impl<M> HypercubeShuffleAttentionRoutineSettings<M> {
     /// The plane shuffle's default on thirty-two cubes a box: a decode step's group of four over a
     /// cache of thousands of keys, on a device of a few dozen cores.
     pub const DEFAULT: Self = Self {
-        microkernel: HypercubeAttentionMicrokernelSettings::<
-            PlaneShuffleAttentionMicrokernelSettings,
-        >::DEFAULT,
+        microkernel: HypercubeAttentionMicrokernelSettings::SHUFFLE,
         cubes_along_keys: NonZeroUsize::new(32).unwrap(),
         merge: PhantomData,
     };
@@ -118,7 +111,7 @@ impl<M: HypercubeShuffleMerge> core::fmt::Display for HypercubeShuffleAttentionR
 
 impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     type Problem = AttentionRoutineProblem;
-    type Microkernel = HypercubeShuffleAttentionMicrokernel;
+    type Microkernel = HypercubeAttentionMicrokernel;
     type Settings = HypercubeShuffleAttentionRoutineSettings<M>;
     type Blueprint = HypercubeShuffleAttentionRoutineBlueprint;
     type Partitioning = AttentionPartitioning;
@@ -144,7 +137,8 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         let mut settings: Vec<Self::Settings> = [8, 16, 32]
             .into_iter()
             .flat_map(|cubes| {
-                HypercubeShuffleAttentionMicrokernel::settings(hw)
+                HypercubeAttentionMicrokernelSettings::SHUFFLE
+                    .listed()
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -158,12 +152,13 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         let with_plane = |plane| Self::Settings {
             microkernel: HypercubeAttentionMicrokernelSettings {
                 cube: CubeAttentionMicrokernelSettings {
-                    plane,
+                    plane: CubeAttentionPlaneSettings::Shuffle(plane),
                     ..lead.microkernel.cube
                 },
             },
             ..lead
         };
+        let lead_plane = PlaneShuffleAttentionMicrokernelSettings::DEFAULT;
         settings.extend([2, 4].map(|cubes| Self::Settings {
             cubes_along_keys: count(cubes),
             ..lead
@@ -171,19 +166,19 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         settings.extend([1, 8].map(|keys_in_flight| {
             with_plane(PlaneShuffleAttentionMicrokernelSettings {
                 keys_in_flight: count(keys_in_flight),
-                ..lead.microkernel.cube.plane
+                ..lead_plane
             })
         }));
         for (units_per_key, keys_in_flight) in [(4, 1), (4, 2), (4, 4), (4, 8), (8, 1), (8, 8)] {
             settings.push(with_plane(PlaneShuffleAttentionMicrokernelSettings {
                 units_per_key: count(units_per_key),
                 keys_in_flight: count(keys_in_flight),
-                ..lead.microkernel.cube.plane
+                ..lead_plane
             }));
         }
         settings.push(with_plane(PlaneShuffleAttentionMicrokernelSettings {
             units_per_key: count(32),
-            ..lead.microkernel.cube.plane
+            ..lead_plane
         }));
         settings
     }
@@ -192,7 +187,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     /// access.
     fn vectorize(
         &self,
-        microkernel: &HypercubeShuffleAttentionMicrokernel,
+        microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
     ) {
@@ -230,8 +225,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         M::MERGE.admits(hw)?;
         let item = problem.work_item();
-        let microkernel =
-            HypercubeShuffleAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
         let partitioning = AttentionPartitioning::new(
             problem.space(),
             microkernel.cube.tiling(),
@@ -271,7 +265,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
     }
 }
 
-impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeShuffleAttentionMicrokernel, StageStorage>
+impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     for HypercubeShuffleAttentionRoutine<M>
 {
     /// The cubes' launch and the merge `M` holds. The keys and values are tiles, or a packed cache

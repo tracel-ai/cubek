@@ -1,8 +1,7 @@
-use super::base::HypercubeFragmentAttentionMicrokernel;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
-use cubek_microkernel::attention::plane::PlaneFragmentAttention;
+use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 
@@ -12,7 +11,7 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// read for the shape of what its planes sum into.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
-pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
+pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     query: &TileArg<'_>,
     key: &TileArg<'_>,
     value: &TileArg<'_>,
@@ -25,11 +24,11 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
     queries: u32,
     scale: f32,
     partitioning: Partitioning,
-    #[comptime] microkernel: HypercubeFragmentAttentionMicrokernel,
+    #[comptime] microkernel: HypercubeAttentionMicrokernel,
     #[comptime] merge: HypercubeMergeShape,
     #[comptime] visibility: AttentionVisibility,
     #[comptime] storage: StageStorage,
-    #[define(EA, E, ES)] _elements: [ElemType; 3],
+    #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
     // The cube level's walk, this cube's run of the steps of keys: once for the staging ring,
@@ -53,12 +52,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, E: Float, ES: Float>(
         comptime!(merge.cubes),
     );
     // The query and the output span no key: their box is the first step's.
-    let _ = cube_staged_attention_partial_microkernel::<
-        EA,
-        E,
-        Const<1>,
-        PlaneFragmentAttention<EA, ES>,
-    >(
+    let _ = cube_staged_attention_partial_microkernel::<EA, ES>(
         partitioning.walk(),
         &run,
         &o.at(&first_step),

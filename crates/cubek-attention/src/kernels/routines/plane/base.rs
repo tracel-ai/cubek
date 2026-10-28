@@ -9,7 +9,6 @@ use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::attention::plane::CubePlaneMicrokernel;
 use cubek_microkernel::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };

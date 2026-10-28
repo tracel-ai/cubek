@@ -1,7 +1,3 @@
-use super::microkernel::PlaneFragmentAttention;
-use crate::attention::plane::{
-    CubePlaneKeys, CubePlaneLayout, CubePlaneMicrokernel, CubePlaneReads, CubeStagedPlane,
-};
 use crate::attention::plane::{InstructionShape, PlaneFragmentAttentionMicrokernelSettings};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionWorkItem, B, D, DV, G, KV, Q, S,
@@ -12,11 +8,11 @@ use crate::matmul::plane::{
 };
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
+use cubecl::features::MmaConfig;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Instruction, Level, Levels, Space, StageStorage};
-use cubecl::{self as cubecl, features::MmaConfig, prelude::*};
+use cubecl::tile::{Axis, Instruction, Level, Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::manual_mma;
@@ -358,18 +354,14 @@ impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
     }
 }
 
-impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
-    const NAME: &'static str = "fragment";
-
-    /// Its fragments load each stage from shared memory.
-    const READS: CubePlaneReads = CubePlaneReads::Stage;
-
-    /// Its planes merge their softmax states and sum their products in shared memory.
-    const KEYS: CubePlaneKeys = CubePlaneKeys::Split;
+/// What a cube holding it on its planes reads of it.
+impl PlaneFragmentAttentionMicrokernel {
+    /// What the routines whose cubes hold it are named after.
+    pub const NAME: &'static str = "fragment";
 
     /// The element its instruction reads: an `f32` operand read at tf32 is bound as its words,
     /// and a stage of it at `f32` would be fragments the device does not offer.
-    fn decoded_stage(&self) -> Option<ElemType> {
+    pub fn decoded_stage(&self) -> Option<ElemType> {
         Some(self.read)
     }
 
@@ -381,7 +373,7 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
     /// states its own grid below the plane ([`score_levels`](Self::score_levels)). The walk
     /// through `S` is its walker's: the plane routine's under each plane, the cube microkernel's
     /// above its planes.
-    fn tiling(&self) -> Levels {
+    pub fn tiling(&self) -> Levels {
         match self.score_holder() {
             ScoreHolder::Fragments => Levels::leaf(&[
                 (Q, self.score.leaf_extent(MatmulDim::M)),
@@ -402,17 +394,17 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
         }
     }
 
-    fn seq_q(&self) -> usize {
+    pub fn seq_q(&self) -> usize {
         self.value.tile_extent(Q)
     }
 
-    fn seq_kv(&self) -> usize {
+    pub fn seq_kv(&self) -> usize {
         self.value.tile_extent(S)
     }
 
     /// Its window of scores and of probabilities, and the fragments of its output the
     /// correction bounces through at once; none where it keeps the score in its fragments.
-    fn window_bytes(&self, item: &AttentionWorkItem) -> usize {
+    pub fn window_bytes(&self, item: &AttentionWorkItem) -> usize {
         if self.score_holder() == ScoreHolder::Fragments {
             return 0;
         }
@@ -423,44 +415,22 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
         cells * (item.sum.size() + item.elements.query.size()) + bounced
     }
 
-    /// A window of every row of the cube's box over the value dim, its sums drain into, and two
-    /// of one cell a row, its softmax state's max and sum.
-    fn partial_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        layout.row_groups() * self.seq_q() * (item.val_dim + 2) * item.sum.size()
-    }
-
-    /// The sum of the products of the planes holding the same rows, and every plane's softmax
-    /// state, met beside the stages: the compiler does not hand a freed stage's bytes to what is
-    /// declared after it.
-    fn merge_bytes(&self, item: &AttentionWorkItem, layout: CubePlaneLayout) -> usize {
-        match layout.planes_along_keys {
-            1 => 0,
-            _ => {
-                let rows = layout.row_groups() * self.seq_q();
-                (rows * item.val_dim + layout.planes() * self.seq_q()) * item.sum.size()
-            }
-        }
-    }
-
-    /// In the instructions' tiles where the layout blocks it: one batch and one head of keys,
-    /// the keys' rows by the score's `n` and the value's `k`, whichever is longer, the head dim by
-    /// the score's `k`, and the value dim by the value's `n`.
-    fn stage_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
-        layout.storage(
-            stage,
-            vec![
-                (B, 1),
-                (KV, 1),
-                (
-                    S,
-                    self.score
-                        .leaf_extent(MatmulDim::N)
-                        .max(self.value.leaf_extent(MatmulDim::K)),
-                ),
-                (D, self.score.leaf_extent(MatmulDim::K)),
-                (DV, self.out_edge()),
-            ],
-        )
+    /// The tile one step reads of a stage of keys and values: one batch and one head of keys, the
+    /// keys' rows by the score's `n` and the value's `k`, whichever is longer, the head dim by the
+    /// score's `k`, and the value dim by the value's `n`.
+    pub fn stage_tile(&self) -> Vec<(Axis, usize)> {
+        vec![
+            (B, 1),
+            (KV, 1),
+            (
+                S,
+                self.score
+                    .leaf_extent(MatmulDim::N)
+                    .max(self.value.leaf_extent(MatmulDim::K)),
+            ),
+            (D, self.score.leaf_extent(MatmulDim::K)),
+            (DV, self.out_edge()),
+        ]
     }
 
     /// Whether its rows' softmax state merges with another plane's of the same rows, as planes that
@@ -470,7 +440,7 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
     ///
     /// Where it keeps the score in its fragments, each unit holding the state of its own rows:
     /// the routine reads the score through windows instead, with the cmma transport.
-    fn merges_rows(&self) -> Result<(), Refusal> {
+    pub fn merges_rows(&self) -> Result<(), Refusal> {
         match self.score_holder() {
             ScoreHolder::Window => Ok(()),
             ScoreHolder::Fragments => Err(ROW_STATE_HELD_BY_UNIT),
@@ -483,7 +453,7 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
     ///
     /// Swizzled tiles where it reads the score through its windows: a cmma fragment loads a tile
     /// off a pointer and a stride, which a swizzled row does not have.
-    fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
+    pub fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
         match (layout, self.score_holder()) {
             (StageLayout::SwizzledBlocks, ScoreHolder::Window) => Err(SWIZZLED_STAGE_UNREAD),
             (
@@ -496,8 +466,4 @@ impl CubePlaneMicrokernel for PlaneFragmentAttentionMicrokernel {
             ) => Ok(()),
         }
     }
-}
-
-impl CubeStagedPlane for PlaneFragmentAttentionMicrokernel {
-    type Attention<EA: Float, E: Float, ES: Float> = PlaneFragmentAttention<EA, ES>;
 }
