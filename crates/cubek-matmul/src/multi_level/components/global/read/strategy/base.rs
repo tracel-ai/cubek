@@ -127,8 +127,62 @@ pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), Inval
     Ok(())
 }
 
+/// The most elements a tensor map's box may span along one dimension (`boxDim` of
+/// `cuTensorMapEncodeTiled`).
+pub const TMA_MAX_BOX_DIM: u32 = 256;
+
+/// The box, in logical `(rows, cols)` of the operand, that a TMA reader loads a stage of
+/// `stage` elements with, the stage made of tiles of `tile` elements: the whole stage along the
+/// strided axis, and along the contiguous one a single tile, since without swizzle bank
+/// conflicts cap the box at a one-tile-wide strip, or the whole stage when swizzled.
+pub fn tma_box(
+    stage: (u32, u32),
+    tile: (u32, u32),
+    layout: MatrixLayout,
+    swizzle: SwizzleMode,
+) -> (u32, u32) {
+    match swizzle {
+        SwizzleMode::None => match layout {
+            MatrixLayout::RowMajor => (stage.0, tile.1),
+            MatrixLayout::ColMajor => (tile.0, stage.1),
+        },
+        _ => stage,
+    }
+}
+
+/// [`tma_box`] for the stage `smem_config` describes.
+pub fn tma_stage_box(smem_config: &StageMemoryConfig) -> (u32, u32) {
+    tma_box(
+        (
+            smem_config.elements_per_stage_along_row(),
+            smem_config.elements_per_stage_along_col(),
+        ),
+        (
+            smem_config.elements_per_tile_along_row,
+            smem_config.elements_per_tile_along_col,
+        ),
+        smem_config.matrix_layout,
+        smem_config.swizzle,
+    )
+}
+
+/// Validates that the box a TMA reader loads the stage `smem_config` describes with is one a
+/// tensor map can be encoded with. The encoding happens at launch, so a box past the limit is
+/// otherwise a launch that fails after the configuration was accepted.
+pub fn validate_tma_box(smem_config: &StageMemoryConfig) -> Result<(), InvalidConfigError> {
+    let (rows, cols) = tma_stage_box(smem_config);
+    if rows > TMA_MAX_BOX_DIM || cols > TMA_MAX_BOX_DIM {
+        return Err(Box::new(format!(
+            "TMA box {rows}x{cols} exceeds the {TMA_MAX_BOX_DIM} elements a tensor map allows \
+             along each dimension"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Validates if [tensor memory accelerator features](OpaqueType::TensorMap) are available on the current
-/// device.
+/// device, and that the stage can be loaded with boxes a tensor map accepts.
 pub fn validate_tma(
     device_props: &DeviceProperties,
     smem_config: &StageMemoryConfig,
@@ -153,6 +207,8 @@ pub fn validate_tma(
     // {
     //     return Err(Box::new("TMA doesn't support dequantizing on global read"));
     // }
+
+    validate_tma_box(smem_config)?;
 
     if matches!(smem_config.swizzle, SwizzleMode::None) {
         return Ok(());
@@ -256,4 +312,68 @@ pub enum ReaderMode {
     /// May reduce performance if workloads are imbalanced.
     #[default]
     Relaxed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+
+    /// A bf16 stage of `rows x cols` tiles of `tile` elements, one partition along the columns.
+    fn stage(
+        tile: (u32, u32),
+        tiles: (u32, u32),
+        layout: MatrixLayout,
+        swizzle: SwizzleMode,
+    ) -> StageMemoryConfig {
+        StageMemoryConfig {
+            num_planes: 4,
+            elements_per_tile_along_row: tile.0,
+            elements_per_tile_along_col: tile.1,
+            tiles_per_partition_along_row: 1,
+            tiles_per_partition_along_col: tiles.1,
+            partitions_per_stage_along_row: tiles.0,
+            partitions_per_stage_along_col: 1,
+            vector_size: 8,
+            matrix_layout: layout,
+            swizzle,
+            num_stages: 1,
+            dtype: ElemType::Float(FloatKind::BF16),
+        }
+    }
+
+    #[test]
+    fn the_box_spans_the_stage_along_the_strided_axis_and_a_tile_along_the_other() {
+        let row_major = stage((32, 16), (16, 2), MatrixLayout::RowMajor, SwizzleMode::None);
+        assert_eq!(tma_stage_box(&row_major), (512, 16));
+        let col_major = stage((16, 32), (2, 16), MatrixLayout::ColMajor, SwizzleMode::None);
+        assert_eq!(tma_stage_box(&col_major), (16, 512));
+        let swizzled = stage((16, 16), (8, 4), MatrixLayout::RowMajor, SwizzleMode::B128);
+        assert_eq!(tma_stage_box(&swizzled), (128, 64));
+    }
+
+    /// The stage cubek-matmul infers for a bf16 `[6144 x 3584] x [3584 x 1024]` with the cmma
+    /// tile `32x8x16`: sixteen planes of one tile row each, 512 rows the tensor map would have
+    /// to span in one box.
+    #[test]
+    fn a_stage_taller_than_a_box_can_span_is_refused() {
+        let lhs = stage((32, 16), (16, 2), MatrixLayout::RowMajor, SwizzleMode::None);
+        let err = validate_tma_box(&lhs).expect_err("a 512-row box cannot be encoded");
+        assert!(err.to_string().contains("512x16"), "{err}");
+    }
+
+    #[test]
+    fn a_stage_a_box_can_span_is_accepted() {
+        for config in [
+            stage((32, 16), (8, 2), MatrixLayout::RowMajor, SwizzleMode::None),
+            stage((16, 16), (16, 4), MatrixLayout::RowMajor, SwizzleMode::B128),
+            stage((16, 32), (2, 8), MatrixLayout::ColMajor, SwizzleMode::None),
+        ] {
+            assert!(
+                validate_tma_box(&config).is_ok(),
+                "{:?}",
+                tma_stage_box(&config)
+            );
+        }
+    }
 }
