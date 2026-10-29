@@ -218,14 +218,23 @@ impl PackedTensor {
             .ok_or(STORED_TILES_UNREAD)
     }
 
-    /// How it lies in tile order ([`TileOrder::of_operand`]).
+    /// How it lies in tile order: a block scale every block its operand states along `k`, as many
+    /// values to a word as its scheme packs. Not the operand's read: [`read_in_tiles`](Self::read_in_tiles)
+    /// restates a read as the words a load holds, NVFP4's two, and a tile order counted in reads
+    /// would cut every word-sized box and descriptor in half.
     ///
     /// # Panics
     ///
-    /// On a matrix tile order does not store, which [`read_in_tiles`](Self::read_in_tiles) refuses
-    /// before any is laid in tiles.
+    /// On a matrix under no block scale along `k`, which `read_in_tiles` refuses before any is laid
+    /// in tiles.
     pub fn tile_order(&self) -> TileOrder {
-        TileOrder::of_operand(&self.operand).expect("a matrix in tiles is in tile order")
+        TileOrder {
+            block: self
+                .operand
+                .scale(K)
+                .expect("a matrix in tiles is under block scales along k"),
+            values_per_word: self.scheme.num_quants(),
+        }
     }
 
     /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
