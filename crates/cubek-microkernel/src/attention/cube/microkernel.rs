@@ -310,9 +310,9 @@ fn unstaged_walk<EA: Float, E: Float, N: Size, K: StepReads<N>, L: StepReads<N>>
     planes
 }
 
-/// `steps` of `walk` run by `planes`, each cut with the page table entry read during the step
-/// before it, so the table load overlaps that step's compute. Keys and values read one page
-/// table, so the key's entry serves both.
+/// `steps` of `walk` run by `planes`, each step's page table entry read two steps before it is
+/// consumed and its loads issued one step before, so both overlap the compute of the step before
+/// it. Keys and values read one page table, so the key's entry serves both.
 #[cube]
 fn walk_reading_ahead<EA: Float, N: Size, K: StepReads<N>, L: StepReads<N>>(
     planes: &mut PlaneShuffleAttention<EA, N>,
@@ -328,12 +328,23 @@ fn walk_reading_ahead<EA: Float, N: Size, K: StepReads<N>, L: StepReads<N>>(
         let last = walk.total() - 1;
         let first = 0;
         let mut entry = plane_page_entry::<N, K>(walk, key, first);
-        for i in 0..count {
+        let mut loading = planes.unloaded::<K, L>();
+        let mut loaded = planes.unloaded::<K, L>();
+        // One consume site, a step behind the loads, so the step's body expands once.
+        for i in 0..count + 1 {
             let next = plane_page_entry::<N, K>(walk, key, (i + 1).min(last));
-            let (keys, values) = (key.with_page_entry(&entry), value.with_page_entry(&entry));
-            for plane in walk.region(i) {
-                planes.step::<K, L>(&plane, &keys, &values, visible, scale);
+            if i < count {
+                let (keys, values) = (key.with_page_entry(&entry), value.with_page_entry(&entry));
+                for plane in walk.region(i) {
+                    loading.copy_from(&planes.load::<K, L>(&plane, &keys, &values, visible));
+                }
             }
+            if i > 0 {
+                for plane in walk.region(i - 1) {
+                    planes.consume(&plane, &loaded, visible, scale);
+                }
+            }
+            loaded.copy_from(&loading);
             entry = next;
         }
     }

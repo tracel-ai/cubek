@@ -73,13 +73,20 @@ impl PlaneShuffleAttentionMicrokernel {
     }
 
     /// 32-bit registers one unit keeps: its lines of every row's query and output and their
-    /// softmax state, and the lines of each key in flight. The compiler adds addressing on top.
+    /// softmax state, and a step's lines of each key in flight ([`step_registers`](Self::step_registers)).
+    /// The compiler adds addressing on top.
     fn registers_per_unit(&self, item: &AttentionWorkItem) -> u32 {
         let units_per_key = self.settings.units_per_key.get();
         let held = self.seq_q() * ((item.head_dim + item.val_dim).div_ceil(units_per_key) + 2);
-        let in_flight = self.settings.keys_in_flight.get()
-            * (item.head_dim + item.val_dim).div_ceil(units_per_key);
-        (held * item.sum.size() + in_flight * item.elements.key.size()).div_ceil(4) as u32
+        (held * item.sum.size()).div_ceil(4) as u32 + self.step_registers(item)
+    }
+
+    /// 32-bit registers one unit holds a loaded step in: its lines of each key in flight. A walk
+    /// that loads a step while the one before it computes holds two.
+    pub fn step_registers(&self, item: &AttentionWorkItem) -> u32 {
+        let lines = self.settings.keys_in_flight.get()
+            * (item.head_dim + item.val_dim).div_ceil(self.settings.units_per_key.get());
+        (lines * item.elements.key.size()).div_ceil(4) as u32
     }
 }
 
