@@ -1,18 +1,14 @@
 use super::kernel::unit_whole_k_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MatmulBlueprint, MatmulOutput, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
+    MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileArgLaunch;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubek_microkernel::matmul::MatmulStagingCount;
 use cubek_microkernel::matmul::unit::{UnitWholeKMicrokernel, UnitWholeKMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{K, M, N};

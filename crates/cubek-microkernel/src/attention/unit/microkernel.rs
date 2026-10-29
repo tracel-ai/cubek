@@ -1,8 +1,10 @@
 use super::base::UnitAttentionMicrokernel;
 use crate::attention::{DV, S};
 use crate::matmul::unit::unit_registers_microkernel;
-use cubecl::tile::{Region, Semiring, Tile, ops::softmax::OnlineSoftmax};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::tile::ops::softmax::OnlineSoftmax;
+use cubecl::tile::{Region, Semiring, Tile};
+use cubecl::{self as cubecl, cube};
 
 /// One unit's rows of one head: `out = softmax(query · keyᵀ · scale + bias) · value`, summed in
 /// `EA` over the first `steps` steps of the rows' walk through `S`.

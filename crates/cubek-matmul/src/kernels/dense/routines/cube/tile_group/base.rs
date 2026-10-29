@@ -1,8 +1,7 @@
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::dense::routines::cube::cube_shuffle_matmul_kernel;
 use crate::kernels::{
-    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulRoutine,
-    MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::tile::TileArgLaunch;
 use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};

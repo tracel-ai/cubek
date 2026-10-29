@@ -1,12 +1,10 @@
 use super::kernel::unit_attention_kernel;
-use crate::kernels::AttentionPartitioning;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubecl::tile::space::UnitCube;
 use cubek_microkernel::attention::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,

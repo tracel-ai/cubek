@@ -1,43 +1,31 @@
 use super::kernel::cube_staged_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
-use crate::kernels::{CUBE_STRIPS, cube_order_name};
+use crate::kernels::{
+    CUBE_STRIPS, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
+    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView, cube_order_name,
+};
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::BlockScaledOperands;
-use cubecl::tile::Space;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, TmaStored, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubek_microkernel::matmul::MatmulStep;
-use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands, MatmulWorkItem};
-use cubek_std::Hardware;
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
-use cubek_std::matmul_axes::{K, KB, KI, MI, NI};
-use cubek_std::microkernel::{CubeStaging, GlobalStream};
-use cubek_std::microkernel::{StageLayout, StageRing};
-use cubek_std::{UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
-
-use crate::kernels::{
-    MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
-};
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{
-    StageStorage, TileArgLaunch,
-    launch::{DestinationLaunch, TmaStored},
-};
-use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
+use cubecl::tile::{BlockScaledOperands, Space, StageStorage, TileArgLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
-    CubeStagedStore,
+    CubeStagedStore, MatmulPlaneLayout,
 };
 use cubek_microkernel::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
-use cubek_std::matmul_axes::{M, N};
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_microkernel::matmul::{
+    MatmulDim, MatmulOperand, MatmulOperands, MatmulStep, MatmulWorkItem,
+};
+use cubek_std::layout::stored::{Operand, Packing};
+use cubek_std::matmul_axes::{K, KB, KI, M, MI, N, NI};
+use cubek_std::microkernel::{
+    CubeStaging, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
+};
 use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::{Hardware, UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
 
 /// `out = lhs · rhs` with every cube owning a box of the output: it stages the box for its planes,
 /// which each own a tile of it, or split its contraction between them

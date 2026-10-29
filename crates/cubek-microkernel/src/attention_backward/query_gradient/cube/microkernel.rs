@@ -2,8 +2,9 @@ use super::base::CubeQueryGradientMicrokernel;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::query_gradient::plane::PlaneQueryGradientMicrokernel;
 use crate::attention_backward::{ScoreWindows, drain_scaled};
+use cubecl::prelude::*;
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 use cubek_std::microkernel::StageRing;
 
 /// One cube's queries of some heads: each plane's dot products of the output with its gradient,

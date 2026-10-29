@@ -1,7 +1,5 @@
-use cubecl::tile::{
-    Axis, Partitioning, Space, TileSpec,
-    space::{ComputeScope, Count, Coverage, CubeOrder, PlaneOrder},
-};
+use cubecl::tile::space::{ComputeScope, Count, Coverage, CubeOrder, PlaneOrder};
+use cubecl::tile::{Axis, Partitioning, Space, TileSpec};
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{MatmulAxesKind, MatmulRowsKind, MatmulStage};
 use cubek_std::matmul_axes::{M, MB, MI, N, NB, NI};

@@ -10,16 +10,14 @@ use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem}
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Level, Levels, Space};
-use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::manual_mma;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
     StageLayout, UnitWork,
 };
+use cubek_std::{Hardware, manual_mma};
 
 /// A box of rows of one head a plane owns: their scores against a stage of keys in the fragments
 /// of a matrix instruction, the softmax taken where the plane keeps the score, and their outputs

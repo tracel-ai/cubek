@@ -7,9 +7,7 @@ use crate::matmul::{
     MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind, MatmulWorkItem,
 };
 use cubecl::tile::Scratch;
-use cubecl::tile::launch::Delivery;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_axes::{M, N};

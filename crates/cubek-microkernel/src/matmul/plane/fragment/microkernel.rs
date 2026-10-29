@@ -1,7 +1,8 @@
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentStepSum};
 use crate::matmul::{MatmulOperands, MatmulRead};
+use cubecl::prelude::*;
 use cubecl::tile::{Axis, Instruction, Region, Semiring, Space, StageStorage, Stages, Tile, Walk};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 use cubek_std::microkernel::StageRing;
 
 /// The partial a narrow step contracts into, opened over `out` beside the accumulator: one cell

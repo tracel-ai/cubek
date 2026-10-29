@@ -1,5 +1,7 @@
-use cubecl::tile::{Partitioning, StageStorage, TileArg, launch::Destination};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::tile::launch::Destination;
+use cubecl::tile::{Partitioning, StageStorage, TileArg};
+use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 
 /// Every cube running its box, walked as `walk` says. Each operand's values are a buffer the cube's

@@ -1,8 +1,7 @@
 use crate::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Axis;
-use cubek_std::layout::stored::Operand;
-use cubek_std::layout::stored::Packing;
+use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::matmul_axes::{K, M, N};
 use cubek_std::value_element;
 

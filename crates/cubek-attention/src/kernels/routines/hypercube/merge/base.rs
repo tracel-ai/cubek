@@ -1,7 +1,8 @@
 use super::kernel::hypercube_attention_merge_kernel;
 use crate::kernels::{AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors};
+use cubecl::prelude::*;
 use cubecl::tile::launch::Refusal;
-use cubecl::{self as cubecl, prelude::*};
+use cubecl::{self as cubecl};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::routine::LaunchSettings;

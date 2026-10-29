@@ -1,10 +1,12 @@
 use crate::attention::{AttentionVisibility, B, G, Q, QueryPlacement, S};
-use cubecl::tile::{
-    Axis, Partitioning, Region, Space, Tile,
-    procedural::{MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
-    space::Coords,
+use cubecl::ir::Scope;
+use cubecl::prelude::*;
+use cubecl::tile::procedural::{
+    MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand,
 };
-use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
+use cubecl::tile::space::Coords;
+use cubecl::tile::{Axis, Partitioning, Region, Space, Tile};
+use cubecl::{self as cubecl, cube};
 
 /// Which keys a query sees, and the bias its scores are summed with: zero at a key it sees, the
 /// minimum value elsewhere. A microkernel that holds a tile of scores sums the bias into it; one

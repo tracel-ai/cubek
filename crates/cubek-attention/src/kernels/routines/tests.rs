@@ -6,10 +6,9 @@ use crate::kernels::*;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
 use cubek_microkernel::attention::{AttentionMicrokernel, Q, S};
-use cubek_std::Hardware;
-use cubek_std::devices;
 use cubek_std::microkernel::{SWIZZLED_STAGE_UNREAD, StageLayout, StageRing};
 use cubek_std::routine::Routine;
+use cubek_std::{Hardware, devices};
 use std::collections::BTreeSet;
 
 /// The keys a step covers and the query positions a cube's box holds, at every setting

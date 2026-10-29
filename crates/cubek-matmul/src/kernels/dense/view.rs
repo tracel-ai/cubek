@@ -1,11 +1,10 @@
-use crate::kernels::MatmulPartitioning;
-use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
+use crate::kernels::{
+    MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulPartitioning, MatmulRoutineProblem,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Refusal;
-use cubecl::tile::{
-    Axis, Levels, Partitioning, Space,
-    space::{ComputeScope, CubeOrder, PlaneOrder},
-};
+use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
+use cubecl::tile::{Axis, Levels, Partitioning, Space};
 use cubek_microkernel::matmul::{
     MatmulAxes, MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulReading,
     MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,

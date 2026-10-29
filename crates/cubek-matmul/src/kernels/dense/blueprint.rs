@@ -1,10 +1,8 @@
-use crate::kernels::MatmulPartitioning;
-use cubek_microkernel::matmul::{MatmulAxes, MatmulMicrokernel, MatmulOperand, MatmulOperands};
-use cubek_std::Hardware;
-
-use crate::kernels::MatmulRoutineProblem;
+use crate::kernels::{MatmulPartitioning, MatmulRoutineProblem};
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
+use cubek_microkernel::matmul::{MatmulAxes, MatmulMicrokernel, MatmulOperand, MatmulOperands};
+use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, N};
 

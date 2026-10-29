@@ -2,8 +2,9 @@ use super::base::UnitKeyGradientMicrokernel;
 use crate::attention::Q;
 use crate::attention_backward::drain_scaled;
 use crate::matmul::unit::unit_registers_microkernel;
+use cubecl::prelude::*;
 use cubecl::tile::{Region, Semiring, Tile};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// One unit's keys of one key head:
 /// `value_gradient = Σ_{g, q} probabilities · out_gradient` and

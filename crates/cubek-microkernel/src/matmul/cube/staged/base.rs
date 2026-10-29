@@ -1,24 +1,21 @@
-use crate::matmul::MatmulStage;
-use crate::matmul::MatmulStagingCount;
 use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernelSettings, CubeStagedStore,
-    CubeStagedWalk, CubeStagedWgmmaRefusal,
+    CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulCubeWrite, MatmulPlaneLayout,
 };
-use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite, MatmulPlaneLayout};
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
     PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
 };
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRead, MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRead, MatmulRowsKind, MatmulStage, MatmulStagingCount, MatmulStep,
+    MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Delivery;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound, space::Coverage};
+use cubecl::tile::launch::{Bound, Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::space::Coverage;
+use cubecl::tile::{Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;

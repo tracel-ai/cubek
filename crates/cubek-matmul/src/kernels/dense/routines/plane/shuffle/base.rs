@@ -1,14 +1,10 @@
 use super::kernel::plane_shuffle_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_STREAMED_INPUT_FLOAT, MatmulBlueprint, MatmulOutput, MatmulRoutine,
-    MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_STREAMED_INPUT_FLOAT, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Axis, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -444,9 +440,8 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-    use cubek_microkernel::matmul::MatmulLayout;
-    use cubek_microkernel::matmul::MatmulOperands;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
+    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
     use cubek_std::devices;
     use cubek_std::layout::stored::Operand;
 

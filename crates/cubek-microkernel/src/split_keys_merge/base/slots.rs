@@ -1,4 +1,5 @@
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::{self as cubecl, cube};
 
 /// Partials of the same rows left in slots, each by a worker that walked its own part of the keys:
 /// a row's slots lie side by side, `splits` of them, each a running max, a running sum, and an

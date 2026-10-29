@@ -10,9 +10,10 @@ use crate::split_keys_merge::plane::{
     plane_merge_slot_rows_microkernel,
 };
 use crate::split_keys_merge::{SlotBox, SlotShape};
+use cubecl::prelude::*;
 use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, StageStorage, Stages, Tile, Walk};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// A cube's planes, fragments or shuffles, as the cube leaves their rows in slots once the walk
 /// ends.

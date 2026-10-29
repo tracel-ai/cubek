@@ -1,21 +1,17 @@
-use crate::kernels::MatmulBinding;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::{
+    MatmulBinding, MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem,
+    MatmulTensors,
+};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::kind::Write;
+use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunch, Unbound};
+use cubecl::tile::{Geometry, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_std::Hardware;
-
-use crate::kernels::{
-    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
-};
-use cubecl::tile::{
-    Geometry, TileArgLaunch,
-    kind::Write,
-    launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
-};
 use cubek_std::routine::{Grid, Routine};
 
 /// What a routine declines before preparing anything: a sink, for a routine whose cubes reach the

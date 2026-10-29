@@ -15,8 +15,7 @@ use cubek_microkernel::attention_backward::query_gradient::plane::{
     PlaneQueryGradientMicrokernel, PlaneQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::{StageRing, StagedOperand};
+use cubek_std::microkernel::{Microkernel, StageRing, StagedOperand};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// The backward pass with every plane owning, in the first walk, a box of queries of one head, and

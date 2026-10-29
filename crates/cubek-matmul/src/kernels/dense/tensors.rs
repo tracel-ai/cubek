@@ -10,26 +10,22 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
-use cubecl::tile::{
-    Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
-    launch::TmaBox, launch::TmaOperand, launch::Unbound,
+use cubecl::tile::launch::{
+    Arg, Bound, Labelled, Refusal, TmaBox, TmaCoordinates, TmaOperand, TmaTerm, Unbound,
 };
+use cubecl::tile::{Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 use cubecl_environment::sync::{Arc, SyncOnceCell};
-use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind,
-    MatmulWorkItem,
+    MatmulStage, MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_meta_tiled, tma_operand, tma_store_operand};
-use cubek_std::layout::BindingOrder;
-use cubek_std::layout::{contiguous, tile_order};
+use cubek_std::layout::{BindingOrder, contiguous, tile_order};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
-use cubek_std::routine::Grid;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// What a launch writing into its caller's output declines: an output of another shape than the
 /// product's, of an element the routines do not write, stored in tiles, or, beside a packed input,

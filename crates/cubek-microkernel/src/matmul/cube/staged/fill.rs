@@ -1,13 +1,13 @@
-use crate::matmul::MatmulStage;
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{PlaneFragmentKStatement, PlaneFragmentMicrokernel};
 use crate::matmul::{
-    MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem,
+    MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStage,
+    MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
-use cubecl::tile::{Axis, Scratch, StageStorage, launch::Delivery};
+use cubecl::tile::{Axis, Scratch, StageStorage};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};

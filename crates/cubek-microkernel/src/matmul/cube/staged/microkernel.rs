@@ -4,11 +4,10 @@ use crate::matmul::plane::{
     PlaneFragmentStepSum, plane_fragment_microkernel, plane_fragment_partial,
 };
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::tile::{
-    Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
-    stage::{AsyncStage, AsyncStageExpand, Role},
-};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, Role};
+use cubecl::tile::{Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk};
+use cubecl::{self as cubecl, cube};
 use cubek_std::microkernel::StageRing;
 
 /// The comptime decisions a cube's walk reads, kept apart from the microkernel's layout and output

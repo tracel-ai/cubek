@@ -1,5 +1,6 @@
+use cubecl::prelude::*;
 use cubecl::tile::Tile;
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// One plane's queries: `delta = Σ_dv out_gradient · out`, summed in `EA`.
 #[cube]

@@ -1,6 +1,8 @@
 use crate::split_keys_merge::{SlotBox, SlotShape};
-use cubecl::tile::{Monoid, Tile, space::UnitShare};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::tile::space::UnitShare;
+use cubecl::tile::{Monoid, Tile};
+use cubecl::{self as cubecl, cube};
 
 /// The slots of `slot_box`'s queries, laid out as `slots` states, merged into those queries of
 /// `out` by one plane, a query at a time (`MergedSlotRow::new`), the first `queries` of the box,

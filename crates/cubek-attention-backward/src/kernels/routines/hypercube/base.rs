@@ -21,8 +21,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::{StageRing, StagedOperand};
+use cubek_std::microkernel::{Microkernel, StageRing, StagedOperand};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// What the hypercube routine declines on a device that cannot add `f32` atomically: the query's

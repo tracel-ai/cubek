@@ -13,8 +13,7 @@ use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::{StageRing, StagedOperand};
+use cubek_std::microkernel::{Microkernel, StageRing, StagedOperand};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// The backward pass with every cube owning, in the first walk, a box of queries of some heads of

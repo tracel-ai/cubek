@@ -2,9 +2,10 @@ use crate::attention::DV;
 use crate::attention_backward::scale_rows;
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, plane_fragment_microkernel};
+use cubecl::prelude::*;
 use cubecl::tile::kind::PlanesOutput;
 use cubecl::tile::{Region, Scratch, Semiring, Tile};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// What a walk owned by keys adds into the query's gradient beside its own gradients:
 /// `scale · score_gradient · key` for each stage's queries, into `sum`, a sum every cube that sees

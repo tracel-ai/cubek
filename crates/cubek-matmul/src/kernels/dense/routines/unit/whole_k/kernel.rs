@@ -1,6 +1,7 @@
+use cubecl::prelude::*;
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, Semiring, TileArg};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::unit::{UnitWholeKMicrokernel, unit_whole_k_microkernel};
 
 /// Every plane of the launch, each of its units running its run of the output. `O` is how the

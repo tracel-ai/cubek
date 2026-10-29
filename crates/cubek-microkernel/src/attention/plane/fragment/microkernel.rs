@@ -3,10 +3,10 @@ use crate::attention::{D, DV, G, Q, S};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
 use core::marker::PhantomData;
-use cubecl::tile::{
-    Axis, Level, Region, Semiring, StageStorage, Stages, Tile, Walk, ops::softmax::OnlineSoftmax,
-};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::tile::ops::softmax::OnlineSoftmax;
+use cubecl::tile::{Axis, Level, Region, Semiring, StageStorage, Stages, Tile, Walk};
+use cubecl::{self as cubecl, cube};
 use cubek_std::microkernel::StageRing;
 
 /// Planes running the plane fragment microkernel over staged keys and values: each plane's sum of

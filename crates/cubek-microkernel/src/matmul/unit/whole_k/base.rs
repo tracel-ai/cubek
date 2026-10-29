@@ -4,8 +4,7 @@ use crate::matmul::{
     MatmulRows, MatmulRowsKind, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;

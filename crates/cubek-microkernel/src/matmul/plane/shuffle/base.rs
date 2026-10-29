@@ -4,8 +4,7 @@ use crate::matmul::{
     MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, RegisterBlock};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -576,8 +575,7 @@ mod tests {
     use crate::matmul::{MatmulAxes, MatmulDestination, MatmulReading};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
-    use cubek_std::layout::stored::Operand;
-    use cubek_std::layout::stored::Packing;
+    use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);

@@ -1,25 +1,22 @@
-use crate::matmul::{
-    MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStep, MatmulWorkItem,
-};
-use cubecl::tile::launch::Refusal;
-use cubek_std::layout::BindingOrder;
-use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
-
-use crate::matmul::MatmulStage;
 use crate::matmul::plane::{
     PlaneFragmentDepth, PlaneFragmentDrain, PlaneFragmentInstruction,
     PlaneFragmentMicrokernelSettings, PlaneFragmentStepSum, PlaneFragmentTransport,
+};
+use crate::matmul::{
+    MatmulAxes, MatmulBlocks, MatmulDim, MatmulLayout, MatmulMicrokernel, MatmulOperand,
+    MatmulOperands, MatmulRows, MatmulRowsKind, MatmulStage, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Instruction, Levels, Scratch, Space, StageStorage};
+use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork};
+use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 
 /// A tile of the output one plane owns: a grid of instructions its units hold between them,
 /// contracted a stage of `K` at a time out of shared memory, as its settings size it. The

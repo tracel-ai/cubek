@@ -2,8 +2,9 @@ use super::base::UnitQueryGradientMicrokernel;
 use crate::attention::S;
 use crate::attention_backward::drain_scaled;
 use crate::matmul::unit::unit_registers_microkernel;
+use cubecl::prelude::*;
 use cubecl::tile::{Region, Semiring, Tile};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// One unit's queries of one head: `delta = Σ_dv out_gradient · out`, then
 /// `query_gradient = scale · Σ_s probabilities ⊙ (out_gradient · valueᵀ − delta) · key` over the

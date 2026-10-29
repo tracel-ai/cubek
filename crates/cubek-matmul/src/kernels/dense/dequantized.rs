@@ -1,6 +1,5 @@
 use crate::kernels::{MatmulRoutineProblem, PlaneDequantizeMatmulRoutine};
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};

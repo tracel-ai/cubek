@@ -1,4 +1,5 @@
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::prelude::*;
+use cubecl::{self as cubecl, cube};
 
 /// Where each tile of the padded rows reads from: one unit per group, laying
 /// out its own tiles.

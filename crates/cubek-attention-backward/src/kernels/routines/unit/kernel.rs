@@ -1,6 +1,7 @@
 use cubecl::ir::ElemType;
+use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, TileArg};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 use cubek_microkernel::attention_backward::key_gradient::unit::{
     UnitKeyGradientMicrokernel, unit_key_gradient_microkernel,

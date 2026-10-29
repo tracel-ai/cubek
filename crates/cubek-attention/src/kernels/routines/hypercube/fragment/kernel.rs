@@ -1,5 +1,6 @@
+use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};

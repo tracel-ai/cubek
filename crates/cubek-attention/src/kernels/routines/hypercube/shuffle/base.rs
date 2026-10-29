@@ -1,13 +1,11 @@
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionRoutine,
-    AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
+    AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge, QueryOrder,
 };
-use crate::kernels::{AttentionPartitioning, QueryOrder};
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Refusal, Vectorization};
 use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
@@ -294,9 +292,8 @@ impl<M: HypercubeShuffleMerge> AttentionRoutine<HypercubeAttentionMicrokernel, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::HYPERCUBE_CUBES_UNMET;
     use crate::kernels::{
-        AttentionCacheLayout, HypercubeLastArrivalShuffleAttentionRoutine,
+        AttentionCacheLayout, HYPERCUBE_CUBES_UNMET, HypercubeLastArrivalShuffleAttentionRoutine,
         HypercubeSecondLaunchShuffleAttentionRoutine,
     };
     use cubecl::ir::{ElemType, FloatKind};

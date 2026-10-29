@@ -3,8 +3,9 @@ use crate::attention::{G, Q, S};
 use crate::attention_backward::{ScoreWindows, drain_scaled};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
+use cubecl::prelude::*;
 use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 use cubek_std::microkernel::StageRing;
 
 /// One plane's queries of one head: `delta = Σ_dv out_gradient · out`, then

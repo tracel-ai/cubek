@@ -1,6 +1,7 @@
+use cubecl::prelude::*;
 use cubecl::tile::Region;
 use cubecl::tile::layout::PageEntry;
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// Where one unit stands in a step: its team and its lane in the team, the keys attended, and
 /// how the plane's teams share the step's keys, `keys_in_flight` each, `units_per_key` units on

@@ -1,25 +1,21 @@
 use super::super::blueprint::hypercube_blueprint;
 use super::kernel::hypercube_last_arrival_matmul_kernel;
-use crate::kernels::MatmulBinding;
-use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBlueprint, MatmulOutput,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_HYPERCUBE_PACKED_LHS, MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint,
+    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
+    MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Space, StageStorage, TileArgLaunch, launch::DestinationLaunch};
+use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::{Space, StageStorage, TileArgLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_microkernel::matmul::cube::MatmulCubeWrite;
-use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel};
+use cubek_microkernel::matmul::cube::{CubeStagedDelivery, CubeStagedMicrokernel, MatmulCubeWrite};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_std::Hardware;
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
-use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed

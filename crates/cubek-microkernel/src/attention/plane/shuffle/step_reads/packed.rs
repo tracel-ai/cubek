@@ -1,8 +1,9 @@
 use crate::attention::S;
 use crate::attention::plane::{StepReads, StepReadsExpand, StepWalk};
+use cubecl::prelude::*;
 use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, Tile};
-use cubecl::{self as cubecl, cube, prelude::*};
+use cubecl::{self as cubecl, cube};
 
 /// The keys or the values of a packed cache, read as lines, decoding as they are read
 /// ([`Tile::decoded`]): each operand's codebook indices, under its norms.

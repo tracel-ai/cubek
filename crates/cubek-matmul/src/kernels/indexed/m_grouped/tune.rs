@@ -7,6 +7,18 @@
 //! Its gradient for the stack is the K-grouped product,
 //! [`k_grouped`](crate::kernels::indexed::k_grouped).
 
+use crate::kernels::indexed::m_grouped::{
+    GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind, MGroupedSettings,
+    PaddedRows, RouteSort, upload,
+};
+use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::select::problem::OperandKind;
+use crate::kernels::tensor::PlainTensor;
+use crate::kernels::tune::key::OperandLayout;
+use crate::kernels::{
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
+    PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
+};
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
@@ -17,19 +29,6 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
 use serde::{Deserialize, Serialize};
-
-use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort, upload};
-use crate::kernels::indexed::m_grouped::{
-    MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind, MGroupedSettings,
-};
-use crate::kernels::indexed::stack::SlabAxis;
-use crate::kernels::select::problem::OperandKind;
-use crate::kernels::tensor::PlainTensor;
-use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::{
-    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
-    PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
-};
 
 /// What makes two grouped products want the same launch: the stack's shape and layout, as
 /// the routed key states them, and the rows, whose count over the groups' is the mean group's
@@ -220,8 +219,9 @@ mod tests {
     use cubecl::std::tensor::TensorHandle;
 
     use super::evenly_spread;
-    use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort, upload};
-    use crate::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedRowSource};
+    use crate::kernels::indexed::m_grouped::{
+        GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, PaddedRows, RouteSort, upload,
+    };
     use crate::kernels::indexed::stack::SlabAxis;
     use crate::kernels::tensor::{PlainTensor, StoredTensor};
 

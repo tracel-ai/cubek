@@ -1,6 +1,5 @@
-use crate::kernels::MatmulRoutineProblem;
-use crate::kernels::MatmulTensors;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::{MatmulRoutineProblem, MatmulTensors};
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Geometry;
