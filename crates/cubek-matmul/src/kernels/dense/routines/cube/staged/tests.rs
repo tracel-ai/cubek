@@ -1485,7 +1485,11 @@ mod base {
             );
             let prepared: Vec<_> = settings
                 .iter()
-                .filter_map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting).ok())
+                .filter_map(|setting| {
+                    CubeStagedMatmulRoutine
+                        .prepare(&hw, &problem, setting)
+                        .ok()
+                })
                 .collect();
             assert!(!prepared.is_empty(), "{form:?}");
             for (blueprint, _) in prepared {
