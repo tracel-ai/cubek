@@ -119,6 +119,28 @@ impl CubeStagedMicrokernel {
     /// a stage of `K` that many planes deep outgrows shared memory.
     const PACKED_ONE_STEP_PLANES_ALONG_K: [usize; 2] = [4, 8];
 
+    /// The microkernel `settings` ask for, its planes running `plane`, a stage spanning `depth`
+    /// along the contraction, each operand read as `reads` says.
+    fn new(
+        settings: &CubeStagedMicrokernelSettings,
+        plane: PlaneFragmentMicrokernel,
+        depth: CubeStagedDepth,
+        reads: MatmulOperands<MatmulRead>,
+    ) -> Self {
+        Self {
+            plane,
+            planes: settings.planes,
+            planes_along_k: settings.planes_along_k,
+            scratch: settings.scratch,
+            ring: settings.ring,
+            fill: settings.fill,
+            stage_layout: settings.stage_layout,
+            store: settings.store,
+            depth,
+            reads,
+        }
+    }
+
     /// The settings a product against a packed input staged as it is stored races, in fragments
     /// of the decoding instruction a plane (along `m`, `n` and `k`) and planes a cube (along `m`
     /// and `n`), its stages filled by the TMA engine or the copy engine. Each box is four steps of
@@ -267,18 +289,6 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
-        let staging = |plane, reads| Self {
-            plane,
-            planes: settings.planes,
-            planes_along_k: settings.planes_along_k,
-            scratch: settings.scratch,
-            ring: settings.ring,
-            fill: settings.fill,
-            stage_layout: settings.stage_layout,
-            store: settings.store,
-            depth: CubeStagedDepth::Steps,
-            reads,
-        };
         let mut candidates = Vec::new();
         let decodes = settings.fill.delivery == CubeStagedDelivery::Copy;
         if let Some(read) = item.rounded().filter(|_| decodes) {
@@ -295,7 +305,7 @@ impl CubeStagedMicrokernel {
                             PlaneFragmentInstruction::Registers { .. }
                         )
                     })
-                    .map(|plane| staging(plane, reads)),
+                    .map(|plane| Self::new(settings, plane, CubeStagedDepth::Steps, reads)),
             );
         }
         // A packed rhs's plane reads the stage as the rhs is stored, `K` in its blocks.
@@ -305,7 +315,14 @@ impl CubeStagedMicrokernel {
                     Some(_) => plane.reading_a_stage_as_stored(),
                     None => plane,
                 })
-                .map(|plane| staging(plane, MatmulOperands::AS_BOUND)),
+                .map(|plane| {
+                    Self::new(
+                        settings,
+                        plane,
+                        CubeStagedDepth::Steps,
+                        MatmulOperands::AS_BOUND,
+                    )
+                }),
         );
         candidates
     }
@@ -381,18 +398,8 @@ impl CubeStagedMicrokernel {
                 },
                 ..plane
             };
-            Some(Self {
-                plane,
-                planes: settings.planes,
-                planes_along_k: settings.planes_along_k,
-                scratch: settings.scratch,
-                ring: settings.ring,
-                fill: settings.fill,
-                stage_layout: settings.stage_layout,
-                store: settings.store,
-                depth: CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?),
-                reads: item.decoding_reads(),
-            })
+            let depth = CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?);
+            Some(Self::new(settings, plane, depth, item.decoding_reads()))
         })
         .collect()
     }
