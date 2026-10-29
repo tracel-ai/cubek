@@ -42,29 +42,36 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
         ..Self::PLANE_SHUFFLE
     };
 
-    /// The plane shuffle's settings worth racing on `hw`: the dense routine's own for a float
-    /// rhs, then those for a packed one, over chunks of the most rows it holds; then its
-    /// default over shorter chunks, which pad a small group less and read a large one's slab more
-    /// often. Each setting declines the stack it does not read.
+    /// The plane shuffle's settings worth racing on `hw` against a float stack: the dense
+    /// routine's own over chunks of the most rows it holds; then its default over shorter chunks,
+    /// which pad a small group less and read a large one's slab more often.
     pub fn plane_shuffle(hw: &Hardware) -> Vec<Self> {
-        let chunk =
-            |rows| MGroupedChunk::Rows(NonZeroUsize::new(rows).expect("a chunk holds a row"));
         let most = PlaneShuffleMicrokernel::MAX_ROWS;
-        let float = PlaneShuffleMatmulRoutine.settings(hw);
-        let packed: Vec<_> = PlaneShuffleMatmulRoutine
-            .packed_settings()
+        let full = PlaneShuffleMatmulRoutine
+            .settings(hw)
             .into_iter()
-            .filter(|settings| !float.contains(settings))
-            .collect();
-        let full = float.into_iter().chain(packed).map(|routine| Self {
-            routine,
-            chunk: chunk(most),
-        });
+            .map(|routine| Self {
+                routine,
+                ..Self::PLANE_SHUFFLE
+            });
         let shorter = [most / 2, most / 4].map(|rows| Self {
-            chunk: chunk(rows),
+            chunk: MGroupedChunk::Rows(NonZeroUsize::new(rows).expect("a chunk holds a row")),
             ..Self::PLANE_SHUFFLE
         });
         full.chain(shorter).collect()
+    }
+
+    /// The plane shuffle's settings worth racing against a packed stack: the dense routine's
+    /// own for a packed rhs, over chunks of the most rows it holds.
+    pub fn plane_shuffle_packed() -> Vec<Self> {
+        PlaneShuffleMatmulRoutine
+            .packed_settings()
+            .into_iter()
+            .map(|routine| Self {
+                routine,
+                ..Self::PLANE_SHUFFLE
+            })
+            .collect()
     }
 }
 
@@ -73,6 +80,12 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
     pub const CUBE_STAGED: Self = Self {
         routine: CubeStagedMatmulRoutineSettings::DEFAULT,
         chunk: MGroupedChunk::CubeTile,
+    };
+
+    /// The cube staged routine's lead against a packed stack, over the same chunks.
+    pub const CUBE_STAGED_PACKED: Self = Self {
+        routine: CubeStagedMatmulRoutineSettings::PACKED,
+        ..Self::CUBE_STAGED
     };
 
     /// The cube staged routine's settings worth racing on `hw` against a float stack, each over

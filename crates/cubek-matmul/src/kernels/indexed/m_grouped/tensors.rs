@@ -155,7 +155,7 @@ impl MGroupedMatmulTensors {
             n,
             self.groups(),
             self.source.rows(),
-            self.rhs.kind(),
+            self.stack(),
             OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
             self.along,
             self.source.kind(),
@@ -254,7 +254,7 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// For the rows of a cube's tile, as [`rows_a_cube_holds`](Self::rows_a_cube_holds).
+    /// What [`rows_a_cube_holds`](Self::rows_a_cube_holds) declines, for the rows of a cube's tile.
     fn chunk_rows<Mk, SM, R>(
         &self,
         hw: &Hardware,

@@ -115,13 +115,13 @@ fn a_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
     }
 }
 
-fn a_grouped_packed_stack_reads_each_group_s_slab<M, SM, R>(
+fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(
     format: PackedFormat,
     routine: R,
     settings: impl Fn(&Hardware) -> Vec<MGroupedSettings<R::Settings>>,
 ) where
-    M: MatmulMicrokernel,
-    R: MatmulRoutine<M, SM>,
+    Mk: MatmulMicrokernel,
+    R: MatmulRoutine<Mk, SM>,
 {
     let grouped = MGrouped {
         k: 128,
@@ -183,7 +183,7 @@ fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q8_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Q8,
         PlaneShuffleMatmulRoutine,
-        MGroupedSettings::plane_shuffle,
+        |_| MGroupedSettings::plane_shuffle_packed(),
     );
 }
 
@@ -192,7 +192,7 @@ fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q4_slab() {
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Q4,
         PlaneShuffleMatmulRoutine,
-        MGroupedSettings::plane_shuffle,
+        |_| MGroupedSettings::plane_shuffle_packed(),
     );
 }
 
@@ -201,7 +201,16 @@ fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_nvfp4_slab()
     a_grouped_packed_stack_reads_each_group_s_slab(
         PackedFormat::Nvfp4,
         PlaneShuffleMatmulRoutine,
-        MGroupedSettings::plane_shuffle,
+        |_| MGroupedSettings::plane_shuffle_packed(),
+    );
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_q8_slab() {
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q8,
+        CubeStagedMatmulRoutine,
+        MGroupedSettings::cube_staged_packed,
     );
 }
 

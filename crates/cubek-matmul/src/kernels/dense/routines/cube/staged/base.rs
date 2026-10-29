@@ -60,6 +60,13 @@ impl CubeStagedMatmulRoutineSettings {
         cube_order: CubeOrder::RowMajor,
     };
 
+    /// The lead against a packed input ([`CubeStagedMicrokernelSettings::PACKED`]), its cubes in
+    /// the grid's order.
+    pub const PACKED: Self = Self {
+        microkernel: CubeStagedMicrokernelSettings::PACKED,
+        cube_order: CubeOrder::RowMajor,
+    };
+
     /// One tile a cube, four planes splitting its `K`
     /// ([`CubeStagedMicrokernelSettings::SPLIT_ALONG_K`]), its cubes in the grid's order.
     pub const SPLIT_ALONG_K: Self = Self {

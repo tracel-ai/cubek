@@ -25,8 +25,9 @@ use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
+use crate::kernels::tune::{Product, listed_for};
 use crate::kernels::{
-    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MATMUL_PACKED_UNREAD, MatmulRoutine,
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
     PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
 };
 
@@ -62,13 +63,16 @@ pub struct MGroupedMatmulKey {
 /// reach a candidate that answers. Each declines where another runs: the plane shuffle where the
 /// device commits to no plane width, its default against a packed stack, which its lead against
 /// a packed rhs reads, and the cube staged routine on a CPU runtime, which holds fewer units a
-/// cube than its planes.
+/// cube than its planes. The cube staged floor serves a float stack and its packed floor a packed
+/// one.
 const PLANE_SHUFFLE_FLOOR: MGroupedSettings<PlaneShuffleMatmulRoutineSettings> =
     MGroupedSettings::PLANE_SHUFFLE;
 const PLANE_SHUFFLE_PACKED_FLOOR: MGroupedSettings<PlaneShuffleMatmulRoutineSettings> =
     MGroupedSettings::PLANE_SHUFFLE_PACKED;
 const CUBE_STAGED_FLOOR: MGroupedSettings<CubeStagedMatmulRoutineSettings> =
     MGroupedSettings::CUBE_STAGED;
+const CUBE_STAGED_PACKED_FLOOR: MGroupedSettings<CubeStagedMatmulRoutineSettings> =
+    MGroupedSettings::CUBE_STAGED_PACKED;
 
 /// The grouped product `tensors` states, through whichever setting measures fastest for it on
 /// `device`, unpadded: `[rows, n]` at the rows' element. `routines` is the priority of the
@@ -96,8 +100,8 @@ pub fn launch_tuned(
 ///
 /// # Errors
 ///
-/// A product neither floor serves, a packed stack on a device whose plane shuffle declines it
-/// among them, so no candidate of the autotune is known to: the caller names what runs instead.
+/// A product no floor serves, so no candidate of the autotune is known to: the caller names what
+/// runs instead.
 ///
 /// # Panics
 ///
@@ -111,10 +115,12 @@ pub fn launch_tuned_padded(
     let hw = Hardware::from_client(&client);
     // A round must reach a floor that answers: the plane shuffle declines a device that commits
     // to no plane width, the cube staged routine a CPU runtime, which holds fewer units a cube
-    // than its planes.
+    // than its planes. The cube staged floor of the stack's own kind is the one asked.
     let cube_staged_served = match tensors.stack() {
         OperandKind::Float => tensors.served_by(&hw, &CubeStagedMatmulRoutine, &CUBE_STAGED_FLOOR),
-        OperandKind::Quantized(_) => Err(MATMUL_PACKED_UNREAD),
+        OperandKind::Quantized(_) => {
+            tensors.served_by(&hw, &CubeStagedMatmulRoutine, &CUBE_STAGED_PACKED_FLOOR)
+        }
     };
     let packed_served =
         tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &PLANE_SHUFFLE_PACKED_FLOOR);
@@ -132,44 +138,49 @@ pub fn launch_tuned_padded(
         let mut autotune =
             Autotune::measured_on(MGroupedMatmulTensors::key, "evenly-spread", evenly_spread);
         let microkernel = autotune.group("microkernel", routines);
-        let autotune = MGroupedSettings::plane_shuffle(&hw).into_iter().fold(
-            autotune,
-            |autotune, settings| {
-                autotune.candidate(
-                    &microkernel,
-                    candidate(PlaneShuffleMatmulRoutine, settings, Stacks::Every),
-                )
-            },
+        let plane_shuffle = listed(
+            MGroupedSettings::plane_shuffle(&hw),
+            MGroupedSettings::plane_shuffle_packed(),
         );
-        let staged = MGroupedSettings::cube_staged(&hw)
+        let autotune = plane_shuffle
             .into_iter()
-            .map(|settings| (settings, Stacks::Float))
-            .chain(
-                MGroupedSettings::cube_staged_packed(&hw)
-                    .into_iter()
-                    .map(|settings| (settings, Stacks::Packed)),
-            );
-        staged
-            .fold(autotune, |autotune, (settings, stacks)| {
+            .fold(autotune, |autotune, (settings, listed)| {
                 autotune.candidate(
                     &microkernel,
-                    candidate(CubeStagedMatmulRoutine, settings, stacks),
+                    candidate(PlaneShuffleMatmulRoutine, settings, listed),
+                )
+            });
+        let cube_staged = listed(
+            MGroupedSettings::cube_staged(&hw),
+            MGroupedSettings::cube_staged_packed(&hw),
+        );
+        cube_staged
+            .into_iter()
+            .fold(autotune, |autotune, (settings, listed)| {
+                autotune.candidate(
+                    &microkernel,
+                    candidate(CubeStagedMatmulRoutine, settings, listed),
                 )
             })
             .floor(candidate(
                 PlaneShuffleMatmulRoutine,
                 PLANE_SHUFFLE_FLOOR,
-                Stacks::Every,
+                Some(Product::Float),
             ))
             .floor(candidate(
                 PlaneShuffleMatmulRoutine,
                 PLANE_SHUFFLE_PACKED_FLOOR,
-                Stacks::Every,
+                Some(Product::Packed),
             ))
             .floor(candidate(
                 CubeStagedMatmulRoutine,
                 CUBE_STAGED_FLOOR,
-                Stacks::Float,
+                Some(Product::Float),
+            ))
+            .floor(candidate(
+                CubeStagedMatmulRoutine,
+                CUBE_STAGED_PACKED_FLOOR,
+                Some(Product::Packed),
             ))
             .finish()
     });
@@ -177,32 +188,34 @@ pub fn launch_tuned_padded(
     Ok(TUNER.execute(&id, &client, tunables, tensors))
 }
 
-/// Which stacks a candidate is raced on. The plane shuffle's settings each decline the stack they
-/// do not read; the cube staged routine's float settings prepare on a packed stack too, but were
-/// chosen and measured on float ones, and its packed settings the other way round.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stacks {
-    Every,
-    Float,
-    Packed,
+/// The settings of a float stack's list and of a packed stack's, each with the kind of stack it is
+/// listed for. A setting in both lists is listed for either, `None`, so no candidate name repeats.
+fn listed<S: PartialEq>(float: Vec<S>, packed: Vec<S>) -> Vec<(S, Option<Product>)> {
+    let (shared, only_packed): (Vec<_>, Vec<_>) = packed
+        .into_iter()
+        .partition(|settings| float.contains(settings));
+    let float = float.into_iter().map(|settings| {
+        let kind = match shared.contains(&settings) {
+            true => None,
+            false => Some(Product::Float),
+        };
+        (settings, kind)
+    });
+    float
+        .chain(
+            only_packed
+                .into_iter()
+                .map(|settings| (settings, Some(Product::Packed))),
+        )
+        .collect()
 }
 
-impl Stacks {
-    fn take(self, stack: &OperandKind) -> bool {
-        match (self, stack) {
-            (Self::Every, _) => true,
-            (Self::Float, OperandKind::Float) => true,
-            (Self::Packed, OperandKind::Quantized(_)) => true,
-            (Self::Float, OperandKind::Quantized(_)) | (Self::Packed, OperandKind::Float) => false,
-        }
-    }
-}
-
-/// `routine` at `settings`, launched on the grouped product of `stacks`, under the setting's name.
+/// `routine` at `settings`, launched on the grouped product of the stacks it is `listed` for
+/// (`None` for either), under the setting's name.
 fn candidate<Mk, SM, R>(
     routine: R,
     settings: MGroupedSettings<R::Settings>,
-    stacks: Stacks,
+    listed: Option<Product>,
 ) -> Tunable<MGroupedMatmulKey, MGroupedMatmulTensors, PaddedRows>
 where
     Mk: MatmulMicrokernel,
@@ -212,8 +225,9 @@ where
     Tunable::new(
         &settings.to_string(),
         move |tensors: MGroupedMatmulTensors| {
-            if !stacks.take(&tensors.stack()) {
-                return Err(format!("{settings} is raced on {stacks:?} stacks only"));
+            if let Some(listed) = listed {
+                listed_for(listed, Product::of([tensors.stack()]))
+                    .map_err(|reason| format!("{settings} {reason}"))?;
             }
             let hw = Hardware::from_client(tensors.client());
             tensors
