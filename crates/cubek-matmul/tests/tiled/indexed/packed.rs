@@ -115,7 +115,14 @@ fn a_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
     }
 }
 
-fn a_grouped_packed_stack_reads_each_group_s_slab(format: PackedFormat) {
+fn a_grouped_packed_stack_reads_each_group_s_slab<M, SM, R>(
+    format: PackedFormat,
+    routine: R,
+    settings: impl Fn(&Hardware) -> Vec<MGroupedSettings<R::Settings>>,
+) where
+    M: MatmulMicrokernel,
+    R: MatmulRoutine<M, SM>,
+{
     let grouped = MGrouped {
         k: 128,
         n: 96,
@@ -138,7 +145,7 @@ fn a_grouped_packed_stack_reads_each_group_s_slab(format: PackedFormat) {
     );
     let expected = grouped.expected_from(&lhs.floats, |group, k, j| stack.cell(group, k, j));
     let mut walk = Walk::new();
-    for settings in MGroupedSettings::plane_shuffle(&hw) {
+    for settings in settings(&hw) {
         let tensors = MGroupedMatmulTensors::new(
             &client,
             lhs.upload(&client, &[rows, k]),
@@ -147,7 +154,7 @@ fn a_grouped_packed_stack_reads_each_group_s_slab(format: PackedFormat) {
             SlabAxis::Output,
         )
         .expect("a packed stack of whole slabs derives a grouped launch");
-        let launched = tensors.launch(&hw, &PlaneShuffleMatmulRoutine, &settings);
+        let launched = tensors.launch(&hw, &routine, &settings);
         if let Some(out) = walk.ran(launched) {
             let got = HostData::from_tensor_handle(&client, out.unpad(), HostDataType::F32);
             assert_close(&got, &[rows, n], &expected, HALF_TOLERANCE, &settings);
@@ -173,17 +180,47 @@ fn a_routed_product_on_the_plane_shuffle_reads_each_route_s_packed_nvfp4_slab() 
 
 #[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q8_slab() {
-    a_grouped_packed_stack_reads_each_group_s_slab(PackedFormat::Q8);
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q8,
+        PlaneShuffleMatmulRoutine,
+        MGroupedSettings::plane_shuffle,
+    );
 }
 
 #[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q4_slab() {
-    a_grouped_packed_stack_reads_each_group_s_slab(PackedFormat::Q4);
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q4,
+        PlaneShuffleMatmulRoutine,
+        MGroupedSettings::plane_shuffle,
+    );
 }
 
 #[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_nvfp4_slab() {
-    a_grouped_packed_stack_reads_each_group_s_slab(PackedFormat::Nvfp4);
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Nvfp4,
+        PlaneShuffleMatmulRoutine,
+        MGroupedSettings::plane_shuffle,
+    );
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_q4_slab() {
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q4,
+        CubeStagedMatmulRoutine,
+        MGroupedSettings::cube_staged_packed,
+    );
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_nvfp4_slab() {
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Nvfp4,
+        CubeStagedMatmulRoutine,
+        MGroupedSettings::cube_staged_packed,
+    );
 }
 
 /// Slabs along `K` that split a scale block, or a word of block scales, are refused rather than

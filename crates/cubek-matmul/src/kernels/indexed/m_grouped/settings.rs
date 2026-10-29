@@ -75,11 +75,20 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
         chunk: MGroupedChunk::CubeTile,
     };
 
-    /// The cube staged routine's settings worth racing on `hw`, each over chunks of the tile its
-    /// cubes hold.
+    /// The cube staged routine's settings worth racing on `hw` against a float stack, each over
+    /// chunks of the tile its cubes hold.
     pub fn cube_staged(hw: &Hardware) -> Vec<Self> {
-        CubeStagedMatmulRoutine
-            .settings(hw)
+        Self::over_cube_tiles(CubeStagedMatmulRoutine.settings(hw))
+    }
+
+    /// The cube staged routine's settings worth racing on `hw` against a packed stack, each over
+    /// chunks of the tile its cubes hold.
+    pub fn cube_staged_packed(hw: &Hardware) -> Vec<Self> {
+        Self::over_cube_tiles(CubeStagedMatmulRoutine.packed_settings(hw))
+    }
+
+    fn over_cube_tiles(settings: Vec<CubeStagedMatmulRoutineSettings>) -> Vec<Self> {
+        settings
             .into_iter()
             .map(|routine| Self {
                 routine,
