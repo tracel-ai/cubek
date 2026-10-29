@@ -3,10 +3,12 @@
 
 use super::super::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
 use super::*;
+use cubecl::ir::{ElemType, FloatKind};
+use cubek_matmul::kernels::MatmulRoutineProblem;
 use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
 use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::PACKED_STACK_UNREAD;
-use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use half::f16;
 
 /// Loose enough for an `f16` output.
@@ -115,7 +117,14 @@ fn a_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
     }
 }
 
-fn a_grouped_packed_stack_reads_each_group_s_slab(format: PackedFormat) {
+fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(
+    format: PackedFormat,
+    routine: R,
+    settings: impl Fn(&Hardware) -> Vec<MGroupedSettings<R::Settings>>,
+) where
+    Mk: MatmulMicrokernel,
+    R: MatmulRoutine<Mk, SM>,
+{
     let grouped = MGrouped {
         k: 128,
         n: 96,
@@ -138,7 +147,7 @@ fn a_grouped_packed_stack_reads_each_group_s_slab(format: PackedFormat) {
     );
     let expected = grouped.expected_from(&lhs.floats, |group, k, j| stack.cell(group, k, j));
     let mut walk = Walk::new();
-    for settings in MGroupedSettings::plane_shuffle(&hw) {
+    for settings in settings(&hw) {
         let tensors = MGroupedMatmulTensors::new(
             &client,
             lhs.upload(&client, &[rows, k]),
@@ -147,7 +156,7 @@ fn a_grouped_packed_stack_reads_each_group_s_slab(format: PackedFormat) {
             SlabAxis::Output,
         )
         .expect("a packed stack of whole slabs derives a grouped launch");
-        let launched = tensors.launch(&hw, &PlaneShuffleMatmulRoutine, &settings);
+        let launched = tensors.launch(&hw, &routine, &settings);
         if let Some(out) = walk.ran(launched) {
             let got = HostData::from_tensor_handle(&client, out.unpad(), HostDataType::F32);
             assert_close(&got, &[rows, n], &expected, HALF_TOLERANCE, &settings);
@@ -173,17 +182,56 @@ fn a_routed_product_on_the_plane_shuffle_reads_each_route_s_packed_nvfp4_slab() 
 
 #[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q8_slab() {
-    a_grouped_packed_stack_reads_each_group_s_slab(PackedFormat::Q8);
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q8,
+        PlaneShuffleMatmulRoutine,
+        |_| MGroupedSettings::plane_shuffle_packed(),
+    );
 }
 
 #[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_q4_slab() {
-    a_grouped_packed_stack_reads_each_group_s_slab(PackedFormat::Q4);
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q4,
+        PlaneShuffleMatmulRoutine,
+        |_| MGroupedSettings::plane_shuffle_packed(),
+    );
 }
 
 #[test]
 fn a_grouped_product_on_the_plane_shuffle_reads_each_group_s_packed_nvfp4_slab() {
-    a_grouped_packed_stack_reads_each_group_s_slab(PackedFormat::Nvfp4);
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Nvfp4,
+        PlaneShuffleMatmulRoutine,
+        |_| MGroupedSettings::plane_shuffle_packed(),
+    );
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_q8_slab() {
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q8,
+        CubeStagedMatmulRoutine,
+        MGroupedSettings::cube_staged_packed,
+    );
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_q4_slab() {
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Q4,
+        CubeStagedMatmulRoutine,
+        MGroupedSettings::cube_staged_packed,
+    );
+}
+
+#[test]
+fn a_grouped_product_on_the_cube_staged_reads_each_group_s_packed_nvfp4_slab() {
+    a_grouped_packed_stack_reads_each_group_s_slab(
+        PackedFormat::Nvfp4,
+        CubeStagedMatmulRoutine,
+        MGroupedSettings::cube_staged_packed,
+    );
 }
 
 /// Slabs along `K` that split a scale block, or a word of block scales, are refused rather than
@@ -211,4 +259,79 @@ fn a_packed_stack_whose_slabs_split_a_scale_block_is_refused() {
     // NVFP4: four 16-value blocks a word of scales, so 4 slabs split a word.
     assert_eq!(along_k(PackedFormat::Nvfp4, 2), None);
     assert_eq!(along_k(PackedFormat::Nvfp4, 4), Some(PACKED_STACK_UNREAD));
+}
+
+/// The chunk rows of a cube staged setting over a packed stack are read from a prepare over every
+/// grouped row, and the launch prepares again on the chunk rows alone: the cube tile it launches
+/// on is the rows the groups were padded to.
+#[test]
+fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padded_to() {
+    let (k, n, sizes) = (128, 96, [100usize, 0, 300, 60]);
+    let rows: usize = sizes.iter().sum();
+    let ends: Vec<u32> = sizes
+        .iter()
+        .scan(0, |end, size| {
+            *end += size;
+            Some(*end as u32)
+        })
+        .collect();
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    let lhs = HalfValues::new(rows * k, 3);
+    let mut checked = 0;
+    for format in [PackedFormat::Q8, PackedFormat::Q4, PackedFormat::Nvfp4] {
+        let stack = PackedSlabs::new(
+            &client,
+            PackedSlabsSpec {
+                format,
+                operand: MatmulOperand::Rhs,
+                slabs: sizes.len(),
+                rows: n,
+                k,
+                seed: 4,
+            },
+        );
+        for settings in MGroupedSettings::cube_staged_packed(&hw) {
+            let tensors = MGroupedMatmulTensors::new(
+                &client,
+                lhs.upload(&client, &[rows, k]),
+                StoredTensor::Packed(stack.matrix()),
+                upload(&client, &[sizes.len()], &ends),
+                SlabAxis::Output,
+            )
+            .expect("a packed stack of whole slabs derives a grouped launch");
+            let Ok(padded) = tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings) else {
+                continue;
+            };
+            let chunk = padded.layout().align();
+            let packing = stack
+                .matrix()
+                .stacked(sizes.len(), SlabAxis::Output.axis())
+                .expect("whole slabs stack")
+                .packing();
+            let problem = MatmulRoutineProblem::packed(
+                chunk,
+                n,
+                k,
+                ElemType::Float(FloatKind::F16),
+                MatmulOperands {
+                    rhs: Some(packing),
+                    ..MatmulOperands::all(None)
+                },
+            );
+            let (blueprint, _) = CubeStagedMatmulRoutine
+                .prepare(&hw, &problem, &settings.routine)
+                .expect("the launch prepared these chunk rows");
+            checked += 1;
+            assert_eq!(
+                blueprint.partitioning.rows() as usize,
+                chunk,
+                "{format:?} {settings}"
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "no cube staged setting prepared on this device"
+    );
 }

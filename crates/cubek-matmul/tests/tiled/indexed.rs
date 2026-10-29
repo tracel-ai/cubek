@@ -7,13 +7,16 @@ mod packed;
 
 use cubecl::bytes::Bytes;
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
+use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
+use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
-    CubeStagedMatmulRoutine, MatmulIndex, MatmulIndexTable, MatmulRoutine,
+    CubeStagedMatmulRoutine, MatmulIndex, MatmulIndexTable, MatmulRoutine, MatmulRoutineProblem,
     PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
@@ -427,5 +430,47 @@ fn a_chunked_product_on_the_plane_shuffle_reads_each_chunk_s_slab() {
         PlaneShuffleMatmulRoutine,
         || chunked.inputs(),
         &chunked.expected(),
+    );
+}
+
+/// The chunk rows of a cube staged setting are read from a prepare over every grouped row, and
+/// the launch prepares again on the chunk rows alone: the cube tile it launches on is the rows
+/// the groups were padded to, or the padded rows are read past their tiles.
+#[test]
+fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
+    let (k, n, groups) = (64usize, 48usize, 4usize);
+    let ends = [128u32, 128, 384, 512];
+    let rows = *ends.last().unwrap() as usize;
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    let mut checked = 0;
+    for settings in MGroupedSettings::cube_staged(&hw) {
+        let tensors = MGroupedMatmulTensors::new(
+            &client,
+            upload(&client, &[rows, k], &vec![0f32; rows * k]),
+            StoredTensor::Plain(upload(
+                &client,
+                &[k, groups * n],
+                &vec![0f32; k * groups * n],
+            )),
+            upload(&client, &[groups], &ends),
+            SlabAxis::Output,
+        )
+        .expect("a float stack derives a grouped launch");
+        let Ok(padded) = tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings) else {
+            continue;
+        };
+        let chunk = padded.layout().align();
+        let problem = MatmulRoutineProblem::dense(chunk, n, k, ElemType::Float(FloatKind::F32));
+        let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings.routine)
+        else {
+            continue;
+        };
+        checked += 1;
+        assert_eq!(blueprint.partitioning.rows() as usize, chunk, "{settings}");
+    }
+    assert!(
+        checked > 0,
+        "no cube staged setting prepared on this device"
     );
 }
