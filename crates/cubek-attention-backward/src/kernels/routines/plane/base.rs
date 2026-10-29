@@ -1,12 +1,12 @@
 use super::kernel::{plane_fragment_key_gradient_kernel, plane_fragment_query_gradient_kernel};
 use crate::kernels::{
     AttentionBackwardBlueprint, AttentionBackwardProblem, AttentionBackwardRoutine,
-    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk,
+    AttentionBackwardRoutineBlueprint, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Partitioning, StageStorage};
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
@@ -16,8 +16,7 @@ use cubek_microkernel::attention_backward::query_gradient::plane::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_std::microkernel::{StageRing, StagedOperand};
-use cubek_std::routine::{CubeResources, Grid};
+use cubek_std::microkernel::StageRing;
 
 /// The backward pass with every plane owning, in the first walk, a box of queries of one head, and
 /// in the second, a box of keys of one key head, each on a matrix instruction. A plane stages what
@@ -66,31 +65,6 @@ pub struct PlaneFragmentAttentionBackwardSharedMemory {
     pub ring: StageRing,
     /// The planes of a cube, each holding its own windows.
     pub planes: usize,
-}
-
-impl PlaneFragmentAttentionBackwardRoutine {
-    /// The grid and the resolved ring of a walk whose stage is `stage`, `planes` planes a cube
-    /// each holding `window` bytes beside its stages.
-    fn grid(
-        hw: &Hardware,
-        partitioning: &Partitioning,
-        stage: &[StagedOperand; 2],
-        ring: StageRing,
-        planes: usize,
-        window: usize,
-    ) -> Result<(Grid, StageRing), Refusal> {
-        let plane_width = hw.plane_dim()?;
-        let ring = ring.resolve(hw, stage, plane_width as usize);
-        let stage_bytes = stage
-            .iter()
-            .map(|operand| operand.bytes(hw, &StageStorage::Strided))
-            .sum();
-        let cube = CubeResources {
-            plane_width,
-            shared_memory: planes * (ring.bytes(stage_bytes) + window),
-        };
-        Ok((Grid::new(hw, partitioning, cube)?, ring))
-    }
 }
 
 impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
@@ -164,22 +138,22 @@ impl AttentionBackwardRoutine for PlaneFragmentAttentionBackwardRoutine {
                 )
                 .build(),
         );
-        let (query_grid, query_ring) = Self::grid(
-            hw,
-            &query_partitioning,
-            &problem.stage(S, query_gradient.seq_kv()),
-            settings.ring,
-            planes,
-            query_gradient.window_bytes(&item),
-        )?;
-        let (key_grid, key_ring) = Self::grid(
-            hw,
-            &key_partitioning,
-            &problem.stage(Q, key_gradient.seq_q()),
-            settings.ring,
-            planes,
-            key_gradient.window_bytes(&item),
-        )?;
+        let (query_grid, query_ring) = WalkStages {
+            stage: problem.stage(S, query_gradient.seq_kv()),
+            ring: settings.ring,
+            filling_planes: 1,
+            copies: planes,
+            window_bytes: query_gradient.window_bytes(&item),
+        }
+        .grid(hw, &query_partitioning)?;
+        let (key_grid, key_ring) = WalkStages {
+            stage: problem.stage(Q, key_gradient.seq_q()),
+            ring: settings.ring,
+            filling_planes: 1,
+            copies: planes,
+            window_bytes: key_gradient.window_bytes(&item),
+        }
+        .grid(hw, &key_partitioning)?;
         Ok(AttentionBackwardBlueprint {
             query_gradient: AttentionBackwardWalk::new(
                 hw,

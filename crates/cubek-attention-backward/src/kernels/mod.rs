@@ -10,6 +10,7 @@ mod gradients;
 mod problem;
 mod routine;
 mod routines;
+mod stages;
 mod tensors;
 mod walk;
 
@@ -19,6 +20,7 @@ pub use gradients::*;
 pub use problem::*;
 pub use routine::*;
 pub use routines::*;
+pub(crate) use stages::*;
 pub use tensors::*;
 pub use tune::attention_backward;
 pub use walk::*;
