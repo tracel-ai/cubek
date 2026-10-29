@@ -1,7 +1,5 @@
-use super::base::{
-    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, activation_decoded_candidate,
-    activation_decoded_identity, candidate_list, decoded_floor, few_rows_roofline,
-    microkernel_candidate, packed_candidate,
+use super::{
+    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, candidate_list, floor, roofline,
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
 use crate::kernels::{
@@ -14,7 +12,7 @@ use cubek_std::Hardware;
 /// the unit whole-K routine at their own settings; against a packed input the shuffles at the
 /// settings worth trying against it, reading it as stored, and the packed staged routine at a
 /// decode's settings; against a packed activation, the same again with the activation decoded first
-/// ([`activation_decoded_candidate`]).
+/// ([`launch_activation_decoded`](MatmulPackedCandidate::launch_activation_decoded)).
 ///
 /// Keyed by the power of two at or above the call's rows, as the many-rows autotune is: a routine
 /// that does not stage holds that many rows whatever the call's count inside it, so it serves or
@@ -23,24 +21,24 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
     let mut autotune = candidate_list();
     let microkernel = autotune.group("microkernel", groups.few_rows);
     autotune
-        .bounded(few_rows_roofline)
+        .bounded(roofline::few_rows)
         .identified(
             &microkernel,
             MatmulRoutineCandidate::list(PlaneShuffleMatmulRoutine, &hw),
             RoutineIdentity::new,
-            microkernel_candidate,
+            MatmulRoutineCandidate::launch,
         )
         .identified(
             &microkernel,
             MatmulRoutineCandidate::list(CubeShuffleMatmulRoutine, &hw),
             RoutineIdentity::new,
-            microkernel_candidate,
+            MatmulRoutineCandidate::launch,
         )
         .identified(
             &microkernel,
             MatmulRoutineCandidate::list(UnitWholeKMatmulRoutine, &hw),
             RoutineIdentity::new,
-            microkernel_candidate,
+            MatmulRoutineCandidate::launch,
         )
         // Against a packed input, read as stored, in rows or in its tile order. The plane routine
         // leads, so a tie resolves to what a pin runs.
@@ -52,7 +50,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
                 &hw,
             ),
             RoutineIdentity::new,
-            packed_candidate,
+            MatmulPackedCandidate::launch,
         )
         .identified(
             &microkernel,
@@ -62,7 +60,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
                 &hw,
             ),
             RoutineIdentity::new,
-            packed_candidate,
+            MatmulPackedCandidate::launch,
         )
         // The packed staged routine at a decode's settings: each packed input decoded into its
         // stages and contracted on the tensor cores, which the shuffles' software sums cannot keep
@@ -75,7 +73,7 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
                 &hw,
             ),
             RoutineIdentity::new,
-            packed_candidate,
+            MatmulPackedCandidate::launch,
         )
         // The same, against a packed activation decoded first.
         .identified(
@@ -85,8 +83,8 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
                 PlaneShuffleMatmulRoutine.packed_settings(),
                 &hw,
             ),
-            activation_decoded_identity,
-            activation_decoded_candidate,
+            MatmulPackedCandidate::activation_decoded_identity,
+            MatmulPackedCandidate::launch_activation_decoded,
         )
         .identified(
             &microkernel,
@@ -95,8 +93,8 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
                 CubeShuffleMatmulRoutine.packed_settings(&hw),
                 &hw,
             ),
-            activation_decoded_identity,
-            activation_decoded_candidate,
+            MatmulPackedCandidate::activation_decoded_identity,
+            MatmulPackedCandidate::launch_activation_decoded,
         )
         .identified(
             &microkernel,
@@ -105,9 +103,9 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
                 CubeStagedMatmulRoutine.packed_one_step_settings(),
                 &hw,
             ),
-            activation_decoded_identity,
-            activation_decoded_candidate,
+            MatmulPackedCandidate::activation_decoded_identity,
+            MatmulPackedCandidate::launch_activation_decoded,
         )
-        .floor(decoded_floor(&hw))
+        .floor(floor::decoded(&hw))
         .finish()
 }

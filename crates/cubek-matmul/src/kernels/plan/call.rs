@@ -49,6 +49,14 @@ impl MatmulCall {
         )
     }
 
+    /// Whether either input is packed: what a candidate listed for float inputs declines, and one
+    /// listed for packed inputs serves.
+    pub fn is_packed(&self) -> bool {
+        [&self.lhs, &self.rhs]
+            .iter()
+            .any(|input| matches!(input.tensor, StoredTensor::Packed(_)))
+    }
+
     /// What a tuning round measures for `key`: the call's rhs, and a zero float lhs as many rows
     /// as the key's bucket stands for, or the call's lhs where none can be laid out alike. A routed
     /// product is measured on the call's own operands: its rows ride the batches, and its routes
@@ -104,9 +112,9 @@ impl MatmulCallInput {
     }
 }
 
-/// A zero copy of the dense float `lhs` with `rows` along its rows axis, laid out as `lhs` is: what a
-/// round of a bucket of row counts measures. `None` where `lhs` already has as many rows, or is not
-/// a dense buffer whose layout a grown one can repeat.
+/// A zero copy of the dense float `lhs` with `rows` along its rows axis, laid out as `lhs` is: what
+/// a round of a bucket of row counts measures. `None` where `lhs` already has as many rows, or is
+/// not a dense buffer whose layout a grown one can repeat.
 fn zeros_grown(client: &Client, lhs: &PlainTensor, rows: usize) -> Option<TensorHandle> {
     let meta = lhs.meta();
     let (shape, strides) = (meta.shape().as_slice(), &meta.strides()[..]);

@@ -1,7 +1,4 @@
-use super::base::{
-    MatmulAutotuneGroups, MatmulProduct, MatmulTunables, RoutineIdentity, candidate_list,
-    reads_no_routes,
-};
+use super::{MatmulAutotuneGroups, MatmulProduct, MatmulTunables, RoutineIdentity, candidate_list};
 use crate::kernels::MatmulRoutine;
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::tensor::PlainTensor;
@@ -19,9 +16,9 @@ use cubek_std::routine::Routine;
 /// default, on the floor, since it serves every product the selector sends here.
 ///
 /// Every candidate sums each output in the same order, so the race moves the time and no number.
-/// Not bounded: a roofline is a 16-bit product's peak, which a block-scaled instruction runs past, so a
-/// bound would end every round at its first candidate. Its one group is its own: the autotune races
-/// one kernel's settings.
+/// Not bounded: a roofline is a 16-bit product's peak, which a block-scaled instruction runs past,
+/// so a bound would end every round at its first candidate. Its one group is its own: the autotune
+/// races one kernel's settings.
 pub(super) fn candidates(hw: Hardware, _groups: MatmulAutotuneGroups) -> MatmulTunables {
     let mut autotune = candidate_list();
     let group = autotune.group("block-scaled", GroupPriority::DEFAULT);
@@ -35,7 +32,8 @@ pub(super) fn candidates(hw: Hardware, _groups: MatmulAutotuneGroups) -> MatmulT
     autotune.floor(candidate(hw, floor)).finish()
 }
 
-/// `settings` as a candidate of the block-scaled autotune: both inputs contracted as they are stored.
+/// `settings` as a candidate of the block-scaled autotune: both inputs contracted as they are
+/// stored.
 fn candidate(
     hw: Hardware,
     settings: CubeStagedMatmulRoutineSettings,
@@ -43,7 +41,9 @@ fn candidate(
     RoutineIdentity::named(
         &format!("block-scaled {settings}"),
         move |call: MatmulCall| {
-            reads_no_routes(&call)?;
+            if call.routes.is_some() {
+                return Err("reads no routes; the rhs is a stack read through them".to_string());
+            }
             let declined = |why| format!("{settings} does not serve this product: {why:?}");
             let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
             let tensors = match &call.destination {

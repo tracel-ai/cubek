@@ -1,12 +1,12 @@
-use super::base::MatmulAutotuneGroups;
+use super::MatmulAutotuneGroups;
 use super::{block_scaled, few_rows, many_rows};
 use cubek_std::{Hardware, devices};
 
-/// Every autotune on every device holds the candidates `autotunes.txt` records: as many, under the same
-/// names, which is what a persisted winner is checksummed by.
+/// Every autotune on every device holds the candidates `autotunes.txt` records: as many, under the
+/// same names, which is what a persisted winner is checksummed by.
 ///
-/// A line that moves is an autotune that races a candidate it did not, or stops racing one it did, and
-/// every cached measurement of it is taken again: a change to an autotune rewrites the file on
+/// A line that moves is an autotune that races a candidate it did not, or stops racing one it did,
+/// and every cached measurement of it is taken again: a change to an autotune rewrites the file on
 /// purpose. Rewrite it with `CUBEK_WRITE_PLANS=1` and review the diff.
 #[test]
 fn every_table_holds_the_candidates_written_down() {

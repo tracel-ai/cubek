@@ -1,13 +1,12 @@
 //! The tune candidate the many-rows and few-rows autotunes race a float routine as.
 
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::plan::MatmulCall;
+use crate::kernels::tensor::PlainTensor;
+use crate::kernels::tune::MatmulProduct;
 use crate::kernels::tune::key::{CubeBlock, MaskedCells, MatmulTuneKey};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, MatmulRoutineProblem, MatmulTensors};
 use cubecl::CubeDim;
-use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::matmul_axes::{K, M, N};
@@ -57,56 +56,63 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
         self.routine
     }
 
-    /// `lhs · rhs` on `client`'s device written into `out`, which the caller allocated, by this
-    /// candidate's routine at its setting: [`MatmulRoutine::launch_into`] on the device the
-    /// candidate was listed for, each problem prepared once ([`PreparedLaunches`]).
+    /// `call`'s product by this candidate's routine at its setting, or the reason it did not run:
+    /// through the call's routes where it states them, otherwise into its destination or into an
+    /// output the launch allocates, on the device the candidate was listed for, each problem
+    /// prepared once ([`PreparedLaunches`]).
     ///
     /// # Errors
     ///
-    /// What [`MatmulTensors::writing_into`] declines, and why the routine cannot run the product
-    /// at this setting.
-    pub fn launch_into<M: MatmulMicrokernel, SM>(
-        &self,
-        client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
-        out: PlainTensor,
-    ) -> Result<(), Refusal>
-    where
-        R: MatmulRoutine<M, SM>,
-    {
-        let tensors = MatmulTensors::writing_into::<M>(client, lhs, rhs, out)?;
-        let (blueprint, grid) =
-            self.prepared
-                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
-        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
-        Ok(())
-    }
-
-    /// `lhs · rhs` on `client`'s device, into an output the launch allocates, by this
-    /// candidate's routine at its setting, each problem prepared once ([`PreparedLaunches`]).
-    ///
-    /// # Errors
-    ///
-    /// What [`MatmulTensors::new`] declines, and why the routine cannot run the product at this
-    /// setting.
+    /// A packed input, which a float routine's settings are not listed for, what the tensors
+    /// decline ([`MatmulTensors::writing_into`], [`MatmulTensors::new`]), and why the routine
+    /// cannot run the product at this setting.
     pub fn launch<M: MatmulMicrokernel, SM>(
         &self,
-        client: &Client,
-        lhs: StoredTensor,
-        rhs: StoredTensor,
-    ) -> Result<TensorHandle, Refusal>
+        call: MatmulCall,
+    ) -> Result<MatmulProduct, String>
     where
         R: MatmulRoutine<M, SM>,
     {
-        let tensors = MatmulTensors::new::<M>(client, lhs, rhs)?;
-        let (blueprint, grid) =
-            self.prepared
-                .prepare(&self.routine, &self.hw, &tensors.problem(), &self.settings)?;
-        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
-        Ok(tensors
-            .into_out()
-            .expect("a launch allocating its output hands it back"))
+        if call.is_packed() {
+            return Err("listed for float inputs; an input is packed".into());
+        }
+        let settings = &self.settings;
+        let launched = match (&call.routes, call.destination) {
+            (Some(routes), _) => routes.launch(&call.hw, &self.routine, settings),
+            (None, destination) => {
+                let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
+                let tensors = match &destination {
+                    Some(destination) => MatmulTensors::writing_into::<M>(
+                        &call.client,
+                        lhs,
+                        rhs,
+                        PlainTensor::of_handle(destination.clone()),
+                    ),
+                    None => MatmulTensors::new::<M>(&call.client, lhs, rhs),
+                };
+                tensors.and_then(|tensors| {
+                    let (blueprint, grid) = self.prepared.prepare(
+                        &self.routine,
+                        &self.hw,
+                        &tensors.problem(),
+                        settings,
+                    )?;
+                    self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+                    Ok(match destination {
+                        Some(destination) => destination,
+                        None => tensors
+                            .into_out()
+                            .expect("a launch allocating its output hands it back"),
+                    })
+                })
+            }
+        };
+        launched
+            .map(|handle| MatmulProduct {
+                client: call.client,
+                handle,
+            })
+            .map_err(|why| format!("{settings} does not serve this problem: {why:?}"))
     }
 }
 
