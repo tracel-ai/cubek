@@ -1,11 +1,13 @@
 use super::{few_rows, many_rows, nvfp4};
 use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
+use crate::kernels::select::problem::OperandKind;
 use crate::kernels::select::selector::MatmulTable;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
 use crate::kernels::tune::{
     MatmulPackedCandidate, MatmulRoutineCandidate, MatmulRoutineSettings, PackedContraction,
 };
+use crate::kernels::tune::{Product, listed_for};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, UnitRegistersMatmulRoutine};
 use cubecl::CubeTuneId;
 use cubecl::client::Client;
@@ -158,7 +160,7 @@ pub(super) fn microkernel_candidate<R, M: MatmulMicrokernel, SM: PartialEq + Clo
 where
     R: MatmulRoutine<M, SM> + Routine<Microkernel = M, Blueprint = MatmulBlueprint<M, SM>> + Copy,
 {
-    listed_for(Product::Float, &call)?;
+    listed_for(Product::Float, Product::of(call_kinds(&call)))?;
     let settings = candidate.strategy();
     let launched = match (&call.routes, call.destination) {
         (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
@@ -195,7 +197,7 @@ where
     R: MatmulRoutine<M, SM> + Copy,
     R::Settings: PackedContraction,
 {
-    listed_for(Product::Packed, &call)?;
+    listed_for(Product::Packed, Product::of(call_kinds(&call)))?;
     let settings = candidate.settings();
     let launched = match (&call.routes, call.destination) {
         (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
@@ -352,38 +354,7 @@ pub(super) fn reads_no_routes(call: &MatmulCall) -> Result<(), String> {
     }
 }
 
-/// The kind of product a candidate is listed for: one table holds both, and a candidate declines
-/// the other kind before compiling anything.
-#[derive(Clone, Copy, Debug)]
-enum Product {
-    Float,
-    /// A packed input, on either side.
-    Packed,
-}
-
-impl Product {
-    fn of(call: &MatmulCall) -> Self {
-        let packed = |tensor: &StoredTensor| matches!(tensor, StoredTensor::Packed(_));
-        match packed(&call.lhs.tensor) || packed(&call.rhs.tensor) {
-            true => Self::Packed,
-            false => Self::Float,
-        }
-    }
-}
-
-/// Declines `call` where it is not the kind of product a candidate is `listed` for.
-///
-/// # Errors
-///
-/// Where `call` is the other kind.
-fn listed_for(listed: Product, call: &MatmulCall) -> Result<(), String> {
-    match (listed, Product::of(call)) {
-        (Product::Float, Product::Float) | (Product::Packed, Product::Packed) => Ok(()),
-        (Product::Float, Product::Packed) => {
-            Err("listed for float inputs; an input is packed".into())
-        }
-        (Product::Packed, Product::Float) => {
-            Err("listed for a packed input; both are float".into())
-        }
-    }
+/// What the two inputs of `call` are.
+fn call_kinds(call: &MatmulCall) -> [OperandKind; 2] {
+    [call.lhs.tensor.kind(), call.rhs.tensor.kind()]
 }

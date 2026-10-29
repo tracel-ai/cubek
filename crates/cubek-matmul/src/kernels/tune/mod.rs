@@ -7,6 +7,7 @@ mod candidate;
 mod checks;
 pub mod key;
 mod packed_candidate;
+mod product;
 mod routine_settings;
 mod tables;
 #[cfg(test)]
@@ -16,5 +17,6 @@ pub use candidate::*;
 #[cfg(feature = "autotune-checks")]
 pub use checks::*;
 pub use packed_candidate::*;
+pub(crate) use product::{Product, listed_for};
 pub use routine_settings::*;
 pub use tables::*;
