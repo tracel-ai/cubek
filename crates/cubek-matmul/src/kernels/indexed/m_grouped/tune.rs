@@ -26,7 +26,7 @@ use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{Listed, ListedFor, Product, first_served};
+use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
     PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
@@ -101,9 +101,9 @@ pub fn launch_tuned_padded(
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
     let stack = Product::of([tensors.stack_kind()]);
     let floors = MGroupedFloors::LISTED;
-    let plane_shuffle = Listed::admitted(&floors.plane_shuffle, stack)
+    let plane_shuffle = Listing::admitted(&floors.plane_shuffle, stack)
         .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
-    let cube_staged = Listed::admitted(&floors.cube_staged, stack)
+    let cube_staged = Listing::admitted(&floors.cube_staged, stack)
         .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
     first_served(plane_shuffle.chain(cube_staged))?;
 
@@ -121,7 +121,7 @@ pub fn launch_tuned_padded(
             .fold(autotune, |autotune, listing| {
                 autotune.candidate(
                     &microkernel,
-                    candidate(PlaneShuffleMatmulRoutine, listing.settings, listing.listed),
+                    candidate(PlaneShuffleMatmulRoutine, listing.settings, listing.kind),
                 )
             });
         let autotune = MGroupedSettings::<CubeStagedMatmulRoutineSettings>::listed(&hw)
@@ -129,7 +129,7 @@ pub fn launch_tuned_padded(
             .fold(autotune, |autotune, listing| {
                 autotune.candidate(
                     &microkernel,
-                    candidate(CubeStagedMatmulRoutine, listing.settings, listing.listed),
+                    candidate(CubeStagedMatmulRoutine, listing.settings, listing.kind),
                 )
             });
         let autotune = floors
@@ -139,7 +139,7 @@ pub fn launch_tuned_padded(
                 autotune.floor(candidate(
                     PlaneShuffleMatmulRoutine,
                     floor.settings,
-                    floor.listed,
+                    floor.kind,
                 ))
             });
         floors
@@ -149,7 +149,7 @@ pub fn launch_tuned_padded(
                 autotune.floor(candidate(
                     CubeStagedMatmulRoutine,
                     floor.settings,
-                    floor.listed,
+                    floor.kind,
                 ))
             })
             .finish()

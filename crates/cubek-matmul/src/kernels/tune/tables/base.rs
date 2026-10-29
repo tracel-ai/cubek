@@ -283,17 +283,10 @@ pub(super) fn decoded_floor(
 /// at its stored width reads, so the floor every candidate is measured against is the same.
 fn work(key: &MatmulTuneKey, call: &MatmulCall) -> Work {
     let shape = key.shape();
-    let bytes = |tensor: &StoredTensor| -> usize {
-        tensor
-            .buffers()
-            .iter()
-            .map(|buffer| buffer.size as usize)
-            .sum()
-    };
     let output = shape.m * shape.n * shape.batch * shape.elem.size();
     Work {
         compute_ops: 2 * shape.m * shape.n * shape.k * shape.batch,
-        bytes: bytes(&call.lhs.tensor) + bytes(&call.rhs.tensor) + output,
+        bytes: call.lhs.tensor.bytes() + call.rhs.tensor.bytes() + output,
     }
 }
 

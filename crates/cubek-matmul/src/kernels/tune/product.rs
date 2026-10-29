@@ -32,12 +32,12 @@ pub(crate) enum ListedFor {
 
 /// A setting and the kind of product it is listed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Listed<S> {
+pub(crate) struct Listing<S> {
     pub settings: S,
-    pub listed: ListedFor,
+    pub kind: ListedFor,
 }
 
-impl<S: PartialEq> Listed<S> {
+impl<S: PartialEq> Listing<S> {
     /// The settings of a float product's list and of a packed product's, each with the kind it is
     /// listed for. A setting in both lists is listed for either, so no candidate name repeats.
     pub(crate) fn merged(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
@@ -45,15 +45,34 @@ impl<S: PartialEq> Listed<S> {
             .into_iter()
             .partition(|settings| float.contains(settings));
         let float = float.into_iter().map(|settings| {
-            let listed = match shared.contains(&settings) {
+            let kind = match shared.contains(&settings) {
                 true => ListedFor::Either,
                 false => ListedFor::Float,
             };
-            Self { settings, listed }
+            Self { settings, kind }
         });
         let packed = only_packed.into_iter().map(|settings| Self {
             settings,
-            listed: ListedFor::Packed,
+            kind: ListedFor::Packed,
+        });
+        float.chain(packed).collect()
+    }
+
+    /// The settings of a float product's list, each listed for either kind since a float setting
+    /// declines a stack it cannot read, then those of a packed product's the float list lacks,
+    /// listed for a packed one.
+    pub(crate) fn float_then_packed(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
+        let extras: Vec<_> = packed
+            .into_iter()
+            .filter(|settings| !float.contains(settings))
+            .collect();
+        let float = float.into_iter().map(|settings| Self {
+            settings,
+            kind: ListedFor::Either,
+        });
+        let packed = extras.into_iter().map(|settings| Self {
+            settings,
+            kind: ListedFor::Packed,
         });
         float.chain(packed).collect()
     }
@@ -61,7 +80,7 @@ impl<S: PartialEq> Listed<S> {
     /// The listings of `list` whose kind admits a product of kind `product`.
     pub(crate) fn admitted(list: &[Self], product: Product) -> impl Iterator<Item = &Self> {
         list.iter()
-            .filter(move |listing| listing.listed.admits(product).is_ok())
+            .filter(move |listing| listing.kind.admits(product).is_ok())
     }
 }
 
@@ -109,4 +128,40 @@ pub(crate) fn first_served(
         }
     }
     Err(refusal.expect("a floor is listed for every kind of stack"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A setting in both lists is listed for either kind of stack, so no candidate name repeats.
+    #[test]
+    fn a_setting_in_both_lists_is_listed_for_either_stack() {
+        let listing = Listing::merged(vec![1, 2], vec![2, 3]);
+        let kinds: Vec<_> = listing.iter().map(|l| (l.settings, l.kind)).collect();
+        assert_eq!(
+            kinds,
+            [
+                (1, ListedFor::Float),
+                (2, ListedFor::Either),
+                (3, ListedFor::Packed)
+            ]
+        );
+    }
+
+    /// Every float setting races on either kind of stack, and a packed one only where the float
+    /// list lacks it.
+    #[test]
+    fn float_settings_are_listed_for_either_and_new_packed_ones_for_packed() {
+        let listing = Listing::float_then_packed(vec![1, 2], vec![2, 3]);
+        let kinds: Vec<_> = listing.iter().map(|l| (l.settings, l.kind)).collect();
+        assert_eq!(
+            kinds,
+            [
+                (1, ListedFor::Either),
+                (2, ListedFor::Either),
+                (3, ListedFor::Packed)
+            ]
+        );
+    }
 }

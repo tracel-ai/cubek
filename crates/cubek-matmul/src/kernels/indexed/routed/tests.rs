@@ -5,6 +5,7 @@ use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::*;
 use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Refusal;
 use cubek_std::autotune::GroupPriority;
 use cubek_std::devices;
 use cubek_test_utils::client;
@@ -13,7 +14,7 @@ use super::tune::spread_routes;
 use super::{RoutedFloors, RoutedMatmulTensors, launch_tuned};
 use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::{Listed, ListedFor, Product};
+use crate::kernels::tune::{Listing, Product};
 use crate::kernels::{
     CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutineSettings,
     UnitRegistersMatmulRoutineSettings,
@@ -79,33 +80,18 @@ fn the_key_tells_slots_apart() {
     assert_ne!(routed(&client, 8, 2).key(), routed(&client, 8, 3).key());
 }
 
-/// A setting in both lists is listed for either kind of stack, so no candidate name repeats.
-#[test]
-fn a_setting_in_both_lists_is_listed_for_either_stack() {
-    let listed = Listed::merged(vec![1, 2], vec![2, 3]);
-    let kinds: Vec<_> = listed.iter().map(|l| (l.settings, l.listed)).collect();
-    assert_eq!(
-        kinds,
-        [
-            (1, ListedFor::Float),
-            (2, ListedFor::Either),
-            (3, ListedFor::Packed)
-        ]
-    );
-}
-
 /// The entry asks the floors listed for its stack's kind and no others: a float stack served only
 /// by a packed floor passes the entry and then every floor of the round declines it.
 #[test]
 fn a_float_stack_is_asked_every_plane_shuffle_floor_the_float_cube_staged_one_and_the_unit_one() {
     let floors = RoutedFloors::LISTED;
-    let plane_shuffle: Vec<_> = Listed::admitted(&floors.plane_shuffle, Product::Float)
+    let plane_shuffle: Vec<_> = Listing::admitted(&floors.plane_shuffle, Product::Float)
         .map(|floor| floor.settings)
         .collect();
-    let cube_staged: Vec<_> = Listed::admitted(&floors.cube_staged, Product::Float)
+    let cube_staged: Vec<_> = Listing::admitted(&floors.cube_staged, Product::Float)
         .map(|floor| floor.settings)
         .collect();
-    let unit_registers: Vec<_> = Listed::admitted(&floors.unit_registers, Product::Float)
+    let unit_registers: Vec<_> = Listing::admitted(&floors.unit_registers, Product::Float)
         .map(|floor| floor.settings)
         .collect();
     assert_eq!(
@@ -125,10 +111,10 @@ fn a_float_stack_is_asked_every_plane_shuffle_floor_the_float_cube_staged_one_an
 #[test]
 fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_one() {
     let floors = RoutedFloors::LISTED;
-    let plane_shuffle: Vec<_> = Listed::admitted(&floors.plane_shuffle, Product::Packed)
+    let plane_shuffle: Vec<_> = Listing::admitted(&floors.plane_shuffle, Product::Packed)
         .map(|floor| floor.settings)
         .collect();
-    let cube_staged: Vec<_> = Listed::admitted(&floors.cube_staged, Product::Packed)
+    let cube_staged: Vec<_> = Listing::admitted(&floors.cube_staged, Product::Packed)
         .map(|floor| floor.settings)
         .collect();
     assert_eq!(
@@ -140,7 +126,7 @@ fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_
     );
     assert_eq!(cube_staged, [CubeStagedMatmulRoutineSettings::PACKED]);
     assert_eq!(
-        Listed::admitted(&floors.unit_registers, Product::Packed).count(),
+        Listing::admitted(&floors.unit_registers, Product::Packed).count(),
         0
     );
 }
@@ -169,7 +155,8 @@ fn spread_routes_replace_a_discarded_launchs_garbage() {
 /// On a CPU runtime a float stack is served by the unit registers floor, and a packed stack has
 /// no floor: the plane shuffle has no plane width there, the cube staged routine holds too few
 /// units a cube, and the unit registers are not listed for it. Only the kind and the hardware
-/// decide, so the packed case asks with a float stack standing for it.
+/// decide, so the packed case asks with a float stack standing for it, and is refused as the last
+/// floor it asks refuses, the packed cube staged one.
 #[test]
 fn on_a_cpu_runtime_a_float_stack_has_a_floor_and_a_packed_one_none() {
     let client = client();
@@ -177,7 +164,11 @@ fn on_a_cpu_runtime_a_float_stack_has_a_floor_and_a_packed_one_none() {
     let hw = devices::cpu_12();
     let floors = RoutedFloors::LISTED;
     assert!(floors.served(&hw, Product::Float, &tensors).is_ok());
-    assert!(floors.served(&hw, Product::Packed, &tensors).is_err());
+    let refused = floors.served(&hw, Product::Packed, &tensors);
+    assert!(
+        matches!(refused, Err(Refusal::CubePastDevice { .. })),
+        "{refused:?}"
+    );
 }
 
 /// No row means no launch: the output is empty rather than refused.

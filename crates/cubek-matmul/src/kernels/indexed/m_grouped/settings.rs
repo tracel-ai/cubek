@@ -4,7 +4,7 @@ use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
-use crate::kernels::tune::{Listed, ListedFor};
+use crate::kernels::tune::{ListedFor, Listing};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings,
@@ -34,30 +34,30 @@ pub enum MGroupedChunk {
 /// cube staged routine on a CPU runtime, which holds fewer units a cube than its planes.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MGroupedFloors {
-    pub plane_shuffle: [Listed<MGroupedSettings<PlaneShuffleMatmulRoutineSettings>>; 2],
-    pub cube_staged: [Listed<MGroupedSettings<CubeStagedMatmulRoutineSettings>>; 2],
+    pub plane_shuffle: [Listing<MGroupedSettings<PlaneShuffleMatmulRoutineSettings>>; 2],
+    pub cube_staged: [Listing<MGroupedSettings<CubeStagedMatmulRoutineSettings>>; 2],
 }
 
 impl MGroupedFloors {
     pub(crate) const LISTED: Self = Self {
         plane_shuffle: [
-            Listed {
+            Listing {
                 settings: MGroupedSettings::PLANE_SHUFFLE,
-                listed: ListedFor::Either,
+                kind: ListedFor::Either,
             },
-            Listed {
+            Listing {
                 settings: MGroupedSettings::PLANE_SHUFFLE_PACKED,
-                listed: ListedFor::Either,
+                kind: ListedFor::Either,
             },
         ],
         cube_staged: [
-            Listed {
+            Listing {
                 settings: MGroupedSettings::CUBE_STAGED,
-                listed: ListedFor::Float,
+                kind: ListedFor::Float,
             },
-            Listed {
+            Listing {
                 settings: MGroupedSettings::CUBE_STAGED_PACKED,
-                listed: ListedFor::Packed,
+                kind: ListedFor::Packed,
             },
         ],
     };
@@ -83,24 +83,8 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
     /// one faster than the packed lead does.
     pub(crate) fn listed(
         hw: &Hardware,
-    ) -> Vec<Listed<MGroupedSettings<PlaneShuffleMatmulRoutineSettings>>> {
-        let float = Self::plane_shuffle(hw);
-        let packed: Vec<_> = Self::plane_shuffle_packed()
-            .into_iter()
-            .filter(|settings| !float.contains(settings))
-            .map(|settings| Listed {
-                settings,
-                listed: ListedFor::Packed,
-            })
-            .collect();
-        float
-            .into_iter()
-            .map(|settings| Listed {
-                settings,
-                listed: ListedFor::Either,
-            })
-            .chain(packed)
-            .collect()
+    ) -> Vec<Listing<MGroupedSettings<PlaneShuffleMatmulRoutineSettings>>> {
+        Listing::float_then_packed(Self::plane_shuffle(hw), Self::plane_shuffle_packed())
     }
 
     /// The plane shuffle's settings worth racing on `hw` against a float stack: the dense
@@ -152,8 +136,8 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
     /// Every cube staged setting worth racing on `hw`, for the stacks each is listed for.
     pub(crate) fn listed(
         hw: &Hardware,
-    ) -> Vec<Listed<MGroupedSettings<CubeStagedMatmulRoutineSettings>>> {
-        Listed::merged(Self::cube_staged(hw), Self::cube_staged_packed(hw))
+    ) -> Vec<Listing<MGroupedSettings<CubeStagedMatmulRoutineSettings>>> {
+        Listing::merged(Self::cube_staged(hw), Self::cube_staged_packed(hw))
     }
 
     /// The cube staged routine's settings worth racing on `hw` against a float stack, each over

@@ -141,14 +141,21 @@ fn a_tuned_routed_packed_stack_reads_each_route_s_slab(format: PackedFormat) {
         SlabAxis::Output,
     )
     .expect("a packed stack of whole slabs derives a routed launch");
-    let launched = launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT);
-    let mut walk = Walk::new();
-    if let Some(out) = walk.ran(launched) {
-        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-        let shape = [ROUTED.tokens, ROUTED.picks, ROUTED.n];
-        assert_close(&got, &shape, &expected, HALF_TOLERANCE, &"routed");
-    }
-    walk.settle();
+    let out = match launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT) {
+        Ok(out) => out,
+        Err(Refusal::CubePastDevice { .. }) => {
+            TestOutcome::Validated(ValidationResult::Skipped(
+                "no floor serves a packed stack on a runtime holding too few units a cube"
+                    .to_string(),
+            ))
+            .enforce();
+            return;
+        }
+        Err(why) => panic!("a packed routed stack is refused: {why:?}"),
+    };
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    let shape = [ROUTED.tokens, ROUTED.picks, ROUTED.n];
+    assert_close(&got, &shape, &expected, HALF_TOLERANCE, &"routed");
 }
 
 fn a_grouped_packed_stack_reads_each_group_s_slab<Mk, SM, R>(

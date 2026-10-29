@@ -14,7 +14,7 @@ use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::{Listed, Product};
+use crate::kernels::tune::{Listing, Product};
 use crate::tiled::storage::{StorageLevels, tile};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -151,10 +151,10 @@ fn a_stack_stored_in_tiles_is_refused() {
 #[test]
 fn a_float_stack_is_asked_every_plane_shuffle_floor_and_the_float_cube_staged_one() {
     let floors = MGroupedFloors::LISTED;
-    let plane_shuffle: Vec<_> = Listed::admitted(&floors.plane_shuffle, Product::Float)
+    let plane_shuffle: Vec<_> = Listing::admitted(&floors.plane_shuffle, Product::Float)
         .map(|floor| floor.settings)
         .collect();
-    let cube_staged: Vec<_> = Listed::admitted(&floors.cube_staged, Product::Float)
+    let cube_staged: Vec<_> = Listing::admitted(&floors.cube_staged, Product::Float)
         .map(|floor| floor.settings)
         .collect();
     assert_eq!(
@@ -170,10 +170,10 @@ fn a_float_stack_is_asked_every_plane_shuffle_floor_and_the_float_cube_staged_on
 #[test]
 fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_one() {
     let floors = MGroupedFloors::LISTED;
-    let plane_shuffle: Vec<_> = Listed::admitted(&floors.plane_shuffle, Product::Packed)
+    let plane_shuffle: Vec<_> = Listing::admitted(&floors.plane_shuffle, Product::Packed)
         .map(|floor| floor.settings)
         .collect();
-    let cube_staged: Vec<_> = Listed::admitted(&floors.cube_staged, Product::Packed)
+    let cube_staged: Vec<_> = Listing::admitted(&floors.cube_staged, Product::Packed)
         .map(|floor| floor.settings)
         .collect();
     assert_eq!(

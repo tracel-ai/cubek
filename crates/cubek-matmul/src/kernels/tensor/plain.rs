@@ -54,6 +54,11 @@ impl PlainTensor {
         (handle, plain)
     }
 
+    /// The bytes of the buffer it binds.
+    pub fn bytes(&self) -> usize {
+        self.binding.handle.size as usize
+    }
+
     /// Whether `client`'s runtime computes in this tensor's element and stores it in a buffer:
     /// what a kernel at that element needs to compile there.
     pub fn runs_on(&self, client: &Client) -> bool {

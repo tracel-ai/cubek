@@ -1,6 +1,6 @@
 //! The routed product's autotune, `out[r, s] = lhs[r] @ stacked[routes[r, s]]`: the dense plane
 //! shuffle, cube staged and unit registers routines, each at the settings listed for the stack's
-//! kind ([`Listed`]), raced on the product's own operands ([`RoutedMatmulTensors`]). A
+//! kind ([`Listing`]), raced on the product's own operands ([`RoutedMatmulTensors`]). A
 //! packed stack is read packed.
 
 use cubecl::ir::{ElemType, UIntKind};
@@ -19,7 +19,7 @@ use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{Listed, ListedFor, MatmulProduct, Product};
+use crate::kernels::tune::{ListedFor, Listing, MatmulProduct};
 use crate::kernels::{
     CubeStagedMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
 };
@@ -68,7 +68,7 @@ pub fn launch_tuned(
     let client = tensors.client().clone();
     let hw = Hardware::from_client(&client);
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
-    let stack = Product::of([tensors.stack_kind()]);
+    let stack = tensors.product();
     let floors = RoutedFloors::LISTED;
     floors.served(&hw, stack, &tensors)?;
 
@@ -82,55 +82,28 @@ pub fn launch_tuned(
             Autotune::measured_on(RoutedMatmulTensors::key, "spread-routes", spread_routes);
         let microkernel = autotune.group("microkernel", routines);
         let autotune = autotune.bounded(|_, tensors| tensors.roofline());
+        let candidates = RoutedCandidates::new(&hw);
         let autotune = raced(
             autotune,
             &microkernel,
             PlaneShuffleMatmulRoutine,
-            RoutedCandidates::plane_shuffle(&hw),
+            candidates.plane_shuffle,
         );
         let autotune = raced(
             autotune,
             &microkernel,
             CubeStagedMatmulRoutine,
-            RoutedCandidates::cube_staged(&hw),
+            candidates.cube_staged,
         );
         let autotune = raced(
             autotune,
             &microkernel,
             UnitRegistersMatmulRoutine,
-            RoutedCandidates::unit_registers(&hw),
+            candidates.unit_registers,
         );
-        let autotune = floors
-            .plane_shuffle
-            .into_iter()
-            .fold(autotune, |autotune, floor| {
-                autotune.floor(candidate(
-                    PlaneShuffleMatmulRoutine,
-                    floor.settings,
-                    floor.listed,
-                ))
-            });
-        let autotune = floors
-            .cube_staged
-            .into_iter()
-            .fold(autotune, |autotune, floor| {
-                autotune.floor(candidate(
-                    CubeStagedMatmulRoutine,
-                    floor.settings,
-                    floor.listed,
-                ))
-            });
-        floors
-            .unit_registers
-            .into_iter()
-            .fold(autotune, |autotune, floor| {
-                autotune.floor(candidate(
-                    UnitRegistersMatmulRoutine,
-                    floor.settings,
-                    floor.listed,
-                ))
-            })
-            .finish()
+        let autotune = floored(autotune, PlaneShuffleMatmulRoutine, floors.plane_shuffle);
+        let autotune = floored(autotune, CubeStagedMatmulRoutine, floors.cube_staged);
+        floored(autotune, UnitRegistersMatmulRoutine, floors.unit_registers).finish()
     });
 
     let product = TUNER.execute(&id, &client, tunables, tensors);
@@ -138,18 +111,19 @@ pub fn launch_tuned(
 }
 
 /// The operands a candidate is measured on: the call's rows and stack, each row's slots routed
-/// round the experts in turn.
+/// round the experts in turn. The rows are the call's own, not grown to the key's bucket: a
+/// candidate is timed on the work the call does, as the m-grouped autotune does.
 ///
 /// The environment build discards the launches that make the call's routes, so they hold
 /// whatever the buffer did, and a kernel reading them as indices runs on garbage. Uploaded rather
 /// than launched, so a process mode that discards launches keeps them.
 pub(super) fn spread_routes(
-    key: &RoutedMatmulKey,
+    _key: &RoutedMatmulKey,
     tensors: &RoutedMatmulTensors,
 ) -> RoutedMatmulTensors {
-    let (rows, slots) = (tensors.rows(), key.slots);
+    let (rows, slots, experts) = (tensors.rows(), tensors.slots(), tensors.experts());
     let routes: Vec<u8> = (0..rows * slots)
-        .flat_map(|route| ((route % key.experts) as u32).to_le_bytes())
+        .flat_map(|route| ((route % experts) as u32).to_le_bytes())
         .collect();
     let client = tensors.client();
     let routes = TensorHandle::new(
@@ -169,7 +143,7 @@ fn raced<Mk, SM, R>(
     autotune: RoutedAutotune,
     group: &TuneGroup<RoutedMatmulKey>,
     routine: R,
-    listings: Vec<Listed<R::Settings>>,
+    listings: Vec<Listing<R::Settings>>,
 ) -> RoutedAutotune
 where
     Mk: MatmulMicrokernel,
@@ -177,7 +151,23 @@ where
     R::Settings: Send + Sync + 'static,
 {
     listings.into_iter().fold(autotune, |autotune, listing| {
-        autotune.candidate(group, candidate(routine, listing.settings, listing.listed))
+        autotune.candidate(group, candidate(routine, listing.settings, listing.kind))
+    })
+}
+
+/// `autotune` with every setting of `floors` added as a floor of `routine`, in their order.
+fn floored<Mk, SM, R>(
+    autotune: RoutedAutotune,
+    routine: R,
+    floors: impl IntoIterator<Item = Listing<R::Settings>>,
+) -> RoutedAutotune
+where
+    Mk: MatmulMicrokernel,
+    R: MatmulRoutine<Mk, SM> + Copy + Send + Sync + 'static,
+    R::Settings: Send + Sync + 'static,
+{
+    floors.into_iter().fold(autotune, |autotune, floor| {
+        autotune.floor(candidate(routine, floor.settings, floor.kind))
     })
 }
 
@@ -197,7 +187,7 @@ where
         &settings.to_string(),
         move |tensors: RoutedMatmulTensors| {
             listed
-                .admits(Product::of([tensors.stack_kind()]))
+                .admits(tensors.product())
                 .map_err(|refusal| format!("{settings} {refusal:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors

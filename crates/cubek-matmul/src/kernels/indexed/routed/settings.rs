@@ -3,7 +3,7 @@ use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 
 use crate::kernels::indexed::routed::RoutedMatmulTensors;
-use crate::kernels::tune::{Listed, ListedFor, Product, first_served};
+use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
@@ -21,9 +21,9 @@ use crate::kernels::{
 /// It is refused before racing.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RoutedFloors {
-    pub plane_shuffle: [Listed<PlaneShuffleMatmulRoutineSettings>; 2],
-    pub cube_staged: [Listed<CubeStagedMatmulRoutineSettings>; 2],
-    pub unit_registers: [Listed<UnitRegistersMatmulRoutineSettings>; 1],
+    pub plane_shuffle: [Listing<PlaneShuffleMatmulRoutineSettings>; 2],
+    pub cube_staged: [Listing<CubeStagedMatmulRoutineSettings>; 2],
+    pub unit_registers: [Listing<UnitRegistersMatmulRoutineSettings>; 1],
 }
 
 impl RoutedFloors {
@@ -38,93 +38,84 @@ impl RoutedFloors {
         stack: Product,
         tensors: &RoutedMatmulTensors,
     ) -> Result<(), Refusal> {
-        let plane_shuffle = Listed::admitted(&self.plane_shuffle, stack)
+        let plane_shuffle = Listing::admitted(&self.plane_shuffle, stack)
             .map(|floor| tensors.served_by(hw, &PlaneShuffleMatmulRoutine, &floor.settings));
-        let cube_staged = Listed::admitted(&self.cube_staged, stack)
+        let cube_staged = Listing::admitted(&self.cube_staged, stack)
             .map(|floor| tensors.served_by(hw, &CubeStagedMatmulRoutine, &floor.settings));
-        let unit_registers = Listed::admitted(&self.unit_registers, stack)
+        let unit_registers = Listing::admitted(&self.unit_registers, stack)
             .map(|floor| tensors.served_by(hw, &UnitRegistersMatmulRoutine, &floor.settings));
         first_served(plane_shuffle.chain(cube_staged).chain(unit_registers))
     }
 
     pub(crate) const LISTED: Self = Self {
         plane_shuffle: [
-            Listed {
+            Listing {
                 settings: PlaneShuffleMatmulRoutineSettings::DEFAULT,
-                listed: ListedFor::Either,
+                kind: ListedFor::Either,
             },
-            Listed {
+            Listing {
                 settings: PlaneShuffleMatmulRoutineSettings::PACKED,
-                listed: ListedFor::Either,
+                kind: ListedFor::Either,
             },
         ],
         cube_staged: [
-            Listed {
+            Listing {
                 settings: CubeStagedMatmulRoutineSettings::DEFAULT,
-                listed: ListedFor::Float,
+                kind: ListedFor::Float,
             },
-            Listed {
+            Listing {
                 settings: CubeStagedMatmulRoutineSettings::PACKED,
-                listed: ListedFor::Packed,
+                kind: ListedFor::Packed,
             },
         ],
-        unit_registers: [Listed {
+        unit_registers: [Listing {
             settings: UnitRegistersMatmulRoutineSettings::DEFAULT,
-            listed: ListedFor::Float,
+            kind: ListedFor::Float,
         }],
     };
 }
 
 /// The settings worth racing on a routed product, each routine's list for the stacks each is
 /// listed for.
-pub(crate) struct RoutedCandidates;
+#[derive(Debug, Clone)]
+pub(crate) struct RoutedCandidates {
+    /// Every plane shuffle setting worth racing. Each declines a stack it cannot read, so the
+    /// float ones race on a packed stack too: some read one faster than the packed lead does.
+    pub plane_shuffle: Vec<Listing<PlaneShuffleMatmulRoutineSettings>>,
+    /// Every cube staged setting worth racing: against a packed stack the one-step settings
+    /// first, then the packed ones.
+    pub cube_staged: Vec<Listing<CubeStagedMatmulRoutineSettings>>,
+    /// Every unit registers setting worth racing, listed for a float stack.
+    pub unit_registers: Vec<Listing<UnitRegistersMatmulRoutineSettings>>,
+}
 
 impl RoutedCandidates {
-    /// Every plane shuffle setting worth racing on `hw`. Each declines a stack it cannot read, so
-    /// the float ones race on a packed stack too: some read one faster than the packed lead does.
-    pub(crate) fn plane_shuffle(hw: &Hardware) -> Vec<Listed<PlaneShuffleMatmulRoutineSettings>> {
-        let float = PlaneShuffleMatmulRoutine.settings(hw);
-        let packed: Vec<_> = PlaneShuffleMatmulRoutine
-            .packed_settings()
-            .into_iter()
-            .filter(|settings| !float.contains(settings))
-            .map(|settings| Listed {
-                settings,
-                listed: ListedFor::Packed,
-            })
-            .collect();
-        float
-            .into_iter()
-            .map(|settings| Listed {
-                settings,
-                listed: ListedFor::Either,
-            })
-            .chain(packed)
-            .collect()
-    }
-
-    /// Every cube staged setting worth racing on `hw`: against a packed stack the one-step
-    /// settings first, then the packed ones.
-    pub(crate) fn cube_staged(hw: &Hardware) -> Vec<Listed<CubeStagedMatmulRoutineSettings>> {
+    /// The settings worth racing on `hw`.
+    pub(crate) fn new(hw: &Hardware) -> Self {
+        let plane_shuffle = Listing::float_then_packed(
+            PlaneShuffleMatmulRoutine.settings(hw),
+            PlaneShuffleMatmulRoutine.packed_settings(),
+        );
         let mut packed = CubeStagedMatmulRoutine.packed_one_step_settings();
-        let rest = CubeStagedMatmulRoutine.packed_settings(hw);
-        for settings in rest {
-            if !packed.contains(&settings) {
-                packed.push(settings);
-            }
-        }
-        Listed::merged(CubeStagedMatmulRoutine.settings(hw), packed)
-    }
-
-    /// Every unit registers setting worth racing on `hw`, listed for a float stack.
-    pub(crate) fn unit_registers(hw: &Hardware) -> Vec<Listed<UnitRegistersMatmulRoutineSettings>> {
-        UnitRegistersMatmulRoutine
+        let rest: Vec<_> = CubeStagedMatmulRoutine
+            .packed_settings(hw)
+            .into_iter()
+            .filter(|settings| !packed.contains(settings))
+            .collect();
+        packed.extend(rest);
+        let cube_staged = Listing::merged(CubeStagedMatmulRoutine.settings(hw), packed);
+        let unit_registers = UnitRegistersMatmulRoutine
             .settings(hw)
             .into_iter()
-            .map(|settings| Listed {
+            .map(|settings| Listing {
                 settings,
-                listed: ListedFor::Float,
+                kind: ListedFor::Float,
             })
-            .collect()
+            .collect();
+        Self {
+            plane_shuffle,
+            cube_staged,
+            unit_registers,
+        }
     }
 }

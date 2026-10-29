@@ -16,7 +16,7 @@ use crate::kernels::indexed::stack::{SlabAxis, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
-use crate::kernels::tune::matmul_ceiling;
+use crate::kernels::tune::{Product, matmul_ceiling};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulTensors,
@@ -256,24 +256,16 @@ impl RoutedMatmulTensors {
     /// The roofline a round stops at: the contraction's operations, and the bytes of the rows, the
     /// output and the slabs the routes can reach, one a route at most.
     pub(crate) fn roofline(&self) -> Roofline {
-        let bytes = |tensor: &StoredTensor| -> usize {
-            tensor
-                .buffers()
-                .iter()
-                .map(|buffer| buffer.size as usize)
-                .sum()
-        };
         let [k, n] = self.slab_shape();
         let routed = self.rows() * self.slots;
-        let reached = bytes(&self.rhs) / self.experts * routed.min(self.experts);
-        let lhs = bytes(&StoredTensor::Plain(self.lhs.clone()));
+        let reached = self.rhs.bytes() / self.experts * routed.min(self.experts);
         let hw = Hardware::from_client(&self.client);
         Roofline {
             client: self.client.clone(),
             ceiling: matmul_ceiling(&hw, self.elem()),
             work: Work {
                 compute_ops: 2 * routed * n * k,
-                bytes: lhs + reached + routed * n * self.elem().size(),
+                bytes: self.lhs.bytes() + reached + routed * n * self.elem().size(),
             },
         }
     }
@@ -288,9 +280,14 @@ impl RoutedMatmulTensors {
         self.rhs.kind()
     }
 
-    /// Whether the stack is packed, read as it is stored.
-    pub fn packed(&self) -> bool {
-        matches!(self.rhs, StoredTensor::Packed(_))
+    /// The product's kind, for the settings listed for it.
+    pub(crate) fn product(&self) -> Product {
+        Product::of([self.stack_kind()])
+    }
+
+    /// Experts in the stack.
+    pub(crate) fn experts(&self) -> usize {
+        self.experts
     }
 
     /// The product as the dense routines read it: each row's slot a batch of one row, the rows
