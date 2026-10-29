@@ -440,26 +440,39 @@ mod tests {
         )
     }
 
-    /// A manual `mma` beside its half-depth twin keeps the score in its fragments: the value
-    /// contracts the keys as deep as the score is wide, so no window is held for either.
+    /// The settings' fragments, `rows` by `keys` of them, on the default routine.
+    fn with_fragments(rows: usize, keys: usize) -> PlaneFragmentAttentionRoutineSettings {
+        PlaneFragmentAttentionRoutineSettings {
+            microkernel: PlaneFragmentAttentionMicrokernelSettings {
+                transport: PlaneFragmentTransport::Mma,
+                ..PlaneFragmentAttentionMicrokernelSettings::fragments(rows, keys)
+            },
+            ..PlaneFragmentAttentionRoutineSettings::DEFAULT
+        }
+    }
+
+    /// A manual `mma` beside its half-depth twin keeps the score in its fragments, and the value
+    /// contracts the deepest run of them the plane's keys divide into: the default's two
+    /// fragments at once on the deeper, a plane one fragment wide on the twin. No window is held
+    /// for either.
     #[test]
-    fn keeps_the_score_in_fragments_beside_a_half_depth_mma() {
+    fn the_value_contracts_the_deepest_run_of_the_scores_fragments() {
         let hw = offering_manual(devices::h100(), &[16, 8]);
-        let (blueprint, _) = PlaneFragmentAttentionRoutine
-            .prepare(
-                &hw,
-                &problems()[2],
-                &PlaneFragmentAttentionRoutineSettings::DEFAULT,
-            )
-            .expect("the default prepares beside a manual pair");
-        let microkernel = blueprint.microkernel;
-        assert_eq!(microkernel.score_holder(), ScoreHolder::Fragments);
-        assert_eq!(microkernel.value.leaf_extent(MatmulDim::K), 8);
-        assert_eq!(
-            blueprint.partitioning.stage().extent(S),
-            microkernel.seq_kv()
-        );
-        assert_eq!(microkernel.window_bytes(&problems()[2].work_item()), 0);
+        let value_depth = |settings| {
+            let (blueprint, _) = PlaneFragmentAttentionRoutine
+                .prepare(&hw, &problems()[2], &settings)
+                .expect("the settings prepare beside a manual pair");
+            let microkernel = blueprint.microkernel;
+            assert_eq!(microkernel.score_holder(), ScoreHolder::Fragments);
+            assert_eq!(
+                blueprint.partitioning.stage().extent(S),
+                microkernel.seq_kv()
+            );
+            assert_eq!(microkernel.window_bytes(&problems()[2].work_item()), 0);
+            microkernel.value.leaf_extent(MatmulDim::K)
+        };
+        assert_eq!(value_depth(with_fragments(1, 2)), 16);
+        assert_eq!(value_depth(with_fragments(1, 1)), 8);
     }
 
     /// Where a device offers both, the transport setting says where the score is kept: the tile
@@ -561,16 +574,17 @@ mod tests {
         );
     }
 
-    /// A manual `mma` whose half-depth twin the device does not offer has no instruction for the
-    /// value to read the score's fragments through, and the routine declines.
+    /// A manual `mma` whose half-depth twin the device does not offer still serves the value over a
+    /// run of two of the score's fragments; a plane one fragment wide has no instruction to read
+    /// its fragment through, and the routine declines.
     #[test]
-    fn declines_a_manual_mma_without_its_half_depth_twin() {
+    fn the_value_reads_a_run_where_the_half_depth_twin_is_missing() {
         let hw = offering_manual(devices::h100(), &[16]);
-        let prepared = PlaneFragmentAttentionRoutine.prepare(
-            &hw,
-            &problems()[2],
-            &PlaneFragmentAttentionRoutineSettings::DEFAULT,
-        );
+        let prepare =
+            |settings| PlaneFragmentAttentionRoutine.prepare(&hw, &problems()[2], &settings);
+        let (blueprint, _) = prepare(with_fragments(1, 2)).expect("a run of two is a whole k16");
+        assert_eq!(blueprint.microkernel.value.leaf_extent(MatmulDim::K), 16);
+        let prepared = prepare(with_fragments(1, 1));
         assert!(
             matches!(
                 prepared,

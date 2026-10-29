@@ -7,6 +7,7 @@ use crate::attention::plane::{
 use crate::attention::{B, DV, G, KV, Q, S, VisibleKeys};
 use crate::split_keys_merge::plane::{
     plane_merge_rows_microkernel, plane_merge_rows_partial_microkernel,
+    plane_merge_slot_rows_microkernel,
 };
 use crate::split_keys_merge::{SlotBox, SlotShape};
 use cubecl::tile::layout::PageEntry;
@@ -139,10 +140,11 @@ fn staged_walk<EA: Float, ES: Float>(
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
 ) -> PlaneFragmentAttention<EA, ES> {
-    // The query spans no key: staged once for every plane, before the walk.
+    // The query spans no key: staged once for every plane, before the walk, laid out as the
+    // stages of keys and values are.
     let mut staged_query = query.stage_for(
         &walk,
-        StageStorage::Strided,
+        comptime!(microkernel.query_storage(&query.space())),
         comptime!(microkernel.plane.decoded_stage()),
     );
     staged_query.copy_from(query);
@@ -176,6 +178,11 @@ fn staged_walk<EA: Float, ES: Float>(
             }
         });
     });
+    // Nothing reads a stage once the walk is over: what the cube declares after it takes their
+    // bytes, once every unit is past its last read
+    // ([`walk_then_shared_memory`](CubeAttentionMicrokernel::walk_then_shared_memory)).
+    stages.free();
+    sync_cube();
     planes
 }
 
@@ -392,9 +399,13 @@ pub fn cube_unstaged_attention_partial_microkernel<
         value_dim,
         microkernel,
     );
+    // The cube's run starts at its step, or page, of the first `splits`: the cubes take them in
+    // turns.
+    let cube_slot = run.region(0).origin(S) / comptime!(microkernel.region_keys());
     store_plane_partials::<EA, N, PlaneShuffleAttention<EA, N>>(
         &mut planes,
         &run,
+        cube_slot,
         slot_out,
         slot_max,
         slot_sum,
@@ -442,9 +453,12 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
         microkernel,
         storage,
     );
+    // The cube's run starts at its step of the first `splits`: the cubes take them in turns.
+    let cube_slot = run.region(0).origin(S) / comptime!(microkernel.region_keys());
     store_plane_partials::<EA, Const<1>, PlaneFragmentAttention<EA, ES>>(
         &mut planes,
         run,
+        cube_slot,
         slot_out,
         slot_max,
         slot_sum,
@@ -454,8 +468,124 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
     )
 }
 
-/// Every plane of a cube leaving its queries' partial in the cube's slot, at the cube's position
-/// along the keys, one of `splits`: planes splitting the same queries' keys merge into it
+/// One cube's run of a box whose keys several cubes may walk in runs that follow each other: the
+/// cube walks its run with planes that read its stage (`staged_walk`), then, where it is the box's
+/// only holder, normalizes its planes' rows into the box's output, and each row's logsumexp where
+/// the caller asks for it, as [`cube_staged_attention_microkernel()`] does. Otherwise each plane
+/// leaves its partial in the box's slot `holder`, the cube's place among the box's `holders`
+/// (`store_plane_partials`), and the cube counts itself in at the box's counter of `arrivals`;
+/// the last to count merges every holder's slots into the box's output, normalized, with the
+/// logsumexp where asked, then leaves the counter at zero.
+///
+/// `staged` and `run` are both the box's steps the cube takes: the first is spent on the staging,
+/// the second read for where the slots lie. `out`, `logsumexp` and `query`, which span no key, are
+/// windowed to `cube`, the box; `key`, `value` and `bias` are read at the walk's regions, each
+/// stage of them held as `storage`. A run of no step leaves an empty partial, which merges to
+/// nothing. No cube waits on another: the merge does not depend on how the device schedules them.
+/// The walk is one, whichever end it takes, so the cube holds its stages once.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
+    cube: &Region,
+    staged: Walk,
+    run: &Walk,
+    out: &Tile,
+    logsumexp: &ComptimeOption<Tile>,
+    query: &Tile,
+    key: &Tile,
+    value: &Tile,
+    bias: &Tile,
+    scale: EA,
+    slot_out: &mut Tensor<Vector<EA, Const<1>>>,
+    slot_max: &mut Tensor<EA>,
+    slot_sum: &mut Tensor<EA>,
+    arrivals: &[Atomic<u32>],
+    counter: usize,
+    holder: usize,
+    holders: usize,
+    #[comptime] microkernel: CubeAttentionMicrokernel,
+    #[comptime] splits: usize,
+    #[comptime] storage: StageStorage,
+) {
+    let value_dim = comptime!(out.space().extent(DV));
+    let mut planes = staged_walk::<EA, ES>(
+        staged,
+        out,
+        query,
+        key,
+        value,
+        bias,
+        scale,
+        microkernel,
+        storage,
+    );
+    if holders == 1 {
+        planes.store_normalized(cube, out);
+        #[comptime]
+        match logsumexp {
+            ComptimeOption::Some(logsumexp) => planes.store_logsumexp(cube, logsumexp),
+            ComptimeOption::None => {}
+        }
+    } else {
+        store_plane_partials::<EA, Const<1>, PlaneFragmentAttention<EA, ES>>(
+            &mut planes,
+            run,
+            holder,
+            slot_out,
+            slot_max,
+            slot_sum,
+            microkernel,
+            splits,
+            value_dim,
+        );
+        // The partial lands at device scope before the cube counts itself in.
+        sync_storage();
+        let mut arrived = Shared::<[u32]>::new_slice(1usize);
+        if UNIT_POS == 0 {
+            arrived[0] = arrivals[counter].fetch_add(1u32);
+        }
+        sync_cube();
+        // Uniform across the cube: only the box's last cube merges.
+        if arrived[0] as usize + 1 == holders {
+            // What every other holder stored is acquired before it is read.
+            sync_storage();
+            let shape = comptime!(SlotShape {
+                units: microkernel.units,
+                val_dim: value_dim,
+                splits,
+            });
+            let queries = comptime!(microkernel.plane.seq_q());
+            for plane in cube.planes() {
+                let plane_box = SlotBox::new::<EA>(
+                    slot_max,
+                    plane.origin(B),
+                    plane.origin(KV),
+                    plane.origin(G),
+                    plane.origin(Q),
+                    queries,
+                );
+                plane_merge_slot_rows_microkernel::<EA, E, Const<1>>(
+                    slot_out,
+                    slot_max,
+                    slot_sum,
+                    &out.at(&plane),
+                    &logsumexp.clone().map(|logsumexp| logsumexp.at(&plane)),
+                    plane_box.first_row,
+                    plane_box.seq_q,
+                    holders,
+                    shape,
+                    queries,
+                );
+            }
+            if UNIT_POS == 0 {
+                arrivals[counter].store(0u32);
+            }
+        }
+    }
+}
+
+/// Every plane of a cube leaving its queries' partial in the cube's slot, `cube_slot` of
+/// `splits`: planes splitting the same queries' keys merge into it
 /// ([`CubeSlotPlanes::store_partial`]). Returns the box as the slots hold it, `run`'s first
 /// step's. The slots lie as [`SlotBox`] states.
 #[cube]
@@ -463,6 +593,7 @@ pub fn cube_staged_attention_partial_microkernel<EA: Float, ES: Float>(
 fn store_plane_partials<EA: Float, N: Size, P: CubeSlotPlanes<EA, N>>(
     planes: &mut P,
     run: &Walk,
+    cube_slot: usize,
     slot_out: &mut Tensor<Vector<EA, N>>,
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
@@ -479,9 +610,6 @@ fn store_plane_partials<EA: Float, N: Size, P: CubeSlotPlanes<EA, N>>(
         first.origin(Q),
         comptime!(cube.seq_q()),
     );
-    // The cube's run starts at its step, or page, of the first `splits`: the cubes take them in
-    // turns.
-    let cube_slot = first.origin(S) / comptime!(cube.region_keys());
     let queries = comptime!(cube.plane.seq_q());
     if comptime!(cube.settings.planes_along_keys.get() == 1) {
         for plane in run.planes() {

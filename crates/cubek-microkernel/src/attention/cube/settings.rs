@@ -3,6 +3,7 @@ use crate::attention::plane::{
     InstructionShape, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernelSettings,
 };
+use crate::matmul::cube::CubeStagedDelivery;
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
@@ -25,6 +26,10 @@ pub struct CubeAttentionMicrokernelSettings {
     pub ring: StageRing,
     /// How each of them is laid out in shared memory.
     pub layout: StageLayout,
+    /// Who moves each of them out of global memory: the cube's units, or the copy engine their
+    /// lines are handed to. A request the microkernel resolves against the device, its ring and
+    /// the lines' widths, so every setting runs everywhere.
+    pub delivery: CubeStagedDelivery,
 }
 
 impl CubeAttentionMicrokernelSettings {
@@ -39,6 +44,7 @@ impl CubeAttentionMicrokernelSettings {
         planes_along_keys: NonZeroUsize::new(1).unwrap(),
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
+        delivery: CubeStagedDelivery::Copy,
     };
 
     /// The lead over plane shuffles: four planes of the plane shuffle's default splitting one
@@ -53,6 +59,7 @@ impl CubeAttentionMicrokernelSettings {
         planes_along_keys: NonZeroUsize::new(4).unwrap(),
         ring: StageRing::SINGLE,
         layout: StageLayout::Strided,
+        delivery: CubeStagedDelivery::Copy,
     };
 
     /// The cube's settings worth trying over planes of the kind this lead runs, the lead first: a
@@ -72,7 +79,8 @@ impl CubeAttentionMicrokernelSettings {
     /// along them, so a step reaches the hundreds of keys, with the default's others; then the
     /// larger boxes again in swizzled tiles, which a plane keeping its score in fragments reads
     /// without bank conflicts and a cmma plane declines, the one-by-eight box among them also on two
-    /// planes along a head's queries. The wide steps hold one head because a step's
+    /// planes along a head's queries; then the one-by-four box on two slots the copy engine fills,
+    /// over two and four heads. The wide steps hold one head because a step's
     /// stages and the heads' windows share one budget; one that still does not fit the device's
     /// shared memory declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -166,6 +174,22 @@ impl CubeAttentionMicrokernelSettings {
             planes_along_queries: count(2),
             ..swizzled[2]
         };
+        // The copy engine lands a stage while the planes contract the one before, so it wants a
+        // second slot. On Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000 (32/8 heads, 512
+        // queries over 8192 keys), the one-by-four box on two slots takes 470 µs with the units
+        // copying and 406 to 411 with the engine; on one slot the engine cost 2%.
+        let copied = [
+            (2, 4, StageLayout::SwizzledBlocks),
+            (4, 2, StageLayout::PaddedBlocks),
+        ]
+        .map(|(heads, planes, layout)| Self {
+            heads: count(heads),
+            planes_along_queries: count(planes),
+            ring: StageRing::DOUBLE,
+            layout,
+            delivery: CubeStagedDelivery::AsyncCopy,
+            ..fragments(1, 4)
+        });
         [lead, fragments(2, 2), fragments(2, 4)]
             .into_iter()
             .chain(wide)
@@ -177,6 +201,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain(along_keys)
             .chain(swizzled)
             .chain([swizzled_split])
+            .chain(copied)
             .collect()
     }
 
@@ -232,6 +257,11 @@ impl core::fmt::Display for CubeAttentionMicrokernelSettings {
             self.planes_along_keys,
             self.ring,
             self.layout
-        )
+        )?;
+        match self.delivery {
+            CubeStagedDelivery::Copy => Ok(()),
+            CubeStagedDelivery::AsyncCopy => write!(f, " delivery=async"),
+            CubeStagedDelivery::Tma => write!(f, " delivery=tma"),
+        }
     }
 }

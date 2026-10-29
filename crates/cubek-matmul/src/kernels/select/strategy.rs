@@ -77,11 +77,14 @@ pub enum MatmulKernel {
     // A strategy written down under the pin's earlier name still reads as this one.
     #[serde(alias = "PlaneFold")]
     PlaneShuffle,
-    /// Two NVFP4 inputs multiplied on the GPU's 4-bit tensor cores, both read as they are stored.
-    /// The inputs a caller rounded to NVFP4 are its choice of what the product computes, so no
-    /// policy runs it. Named here for a benchmark or a test; two NVFP4 inputs only, on a GPU with
-    /// the instruction.
-    Nvfp4TensorCores,
+    /// Two packed inputs multiplied on the GPU's block-scaled tensor cores, both read as they are
+    /// stored: NVFP4, MXFP4, or any pair of formats the device has an instruction for. The inputs
+    /// a caller rounded to a format are its choice of what the product computes, so no policy runs
+    /// it. Named here for a benchmark or a test; two packed inputs a block-scaled instruction of
+    /// the GPU takes, only.
+    // A strategy written down under the pin's earlier name still reads as this one.
+    #[serde(alias = "Nvfp4TensorCores")]
+    BlockScaledTensorCores,
 }
 
 impl MatmulOpStrategy {
@@ -123,7 +126,7 @@ impl MatmulKernel {
         vec![
             Self::UnitRegisters,
             Self::PlaneShuffle,
-            Self::Nvfp4TensorCores,
+            Self::BlockScaledTensorCores,
         ]
     }
 }

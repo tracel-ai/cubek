@@ -642,13 +642,15 @@ mod tests {
     /// `rows` rows against a `4096 × 4096` NVFP4 rhs in tile order, read at four words a load:
     /// values a block down `k` a read, scales a word of four blocks.
     fn tile_order(rows: usize) -> MatmulWorkItem {
-        let rhs = Operand::packed(K, 8, K, tile_order::BLOCK, 4)
+        let rhs = Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4)
             .stored(
                 N,
                 4,
                 Some((
                     &tile_order::values_axes(N),
-                    tile_order::values_storage(N, (128, 8), 4).tiles(),
+                    tile_order::TileOrder::NVFP4
+                        .values_storage(N, (128, 8), 4)
+                        .tiles(),
                 )),
                 None,
             )
@@ -668,7 +670,7 @@ mod tests {
                 packings: MatmulOperands {
                     rhs: Some(Packing {
                         operand: rhs,
-                        scheme: tile_order::scheme(),
+                        scheme: tile_order::nvfp4_scheme(),
                     }),
                     ..MatmulOperands::all(None)
                 },

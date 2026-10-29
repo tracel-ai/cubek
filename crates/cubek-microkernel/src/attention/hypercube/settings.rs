@@ -2,6 +2,7 @@ use crate::attention::cube::{CubeAttentionMicrokernelSettings, CubeAttentionPlan
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
 };
+use crate::matmul::cube::CubeStagedDelivery;
 use crate::matmul::plane::PlaneFragmentTransport;
 use core::num::NonZeroUsize;
 use cubek_std::microkernel::{StageLayout, StageRing};
@@ -26,6 +27,7 @@ impl HypercubeAttentionMicrokernelSettings {
             planes_along_keys: NonZeroUsize::MIN,
             ring: StageRing::SINGLE,
             layout: StageLayout::Strided,
+            delivery: CubeStagedDelivery::Copy,
         },
     };
 
@@ -45,6 +47,7 @@ impl HypercubeAttentionMicrokernelSettings {
             planes_along_keys: NonZeroUsize::MIN,
             ring: StageRing::SINGLE,
             layout: StageLayout::Strided,
+            delivery: CubeStagedDelivery::Copy,
         },
     };
 
@@ -101,9 +104,10 @@ impl HypercubeAttentionMicrokernelSettings {
 
     /// Its default, then the cube's swizzled boxes of fragments over its heads, the score kept in
     /// the fragments: a cube of the cube routine's at its widest, on a run of the keys; then the
-    /// one-by-eight box on two planes along a head's queries. Every one holds one plane along its
-    /// run, as a staging cube does; the swizzled ones decline where the device reads the score
-    /// through windows alone.
+    /// one-by-eight box on two planes along a head's queries, and the one-by-four box over two and
+    /// four heads on two slots the copy engine fills. Every one holds one plane along its run, as
+    /// a staging cube does; the swizzled ones decline where the device reads the score through
+    /// windows alone.
     fn fragments_listed(lead: Self) -> Vec<Self> {
         let count = |count: usize| NonZeroUsize::new(count).unwrap();
         let cube = CubeAttentionMicrokernelSettings::FRAGMENT;
@@ -125,7 +129,30 @@ impl HypercubeAttentionMicrokernelSettings {
                 ..swizzled[0].cube
             },
         };
-        [lead].into_iter().chain(swizzled).chain([split]).collect()
+        // A box of two or four heads on the one-by-four box, its stages on two slots the copy
+        // engine fills: the cube routine's widest boxes, which fit beside a cube's partial once
+        // the walk hands their stages on. Qwen3-8B's last 8k prompt chunk on an RTX PRO 6000
+        // (32/8 heads, 512 queries over 8192 keys) takes 326 µs on four cubes a box, from the
+        // cube routine's 406 on a cube a box, which leaves 60 of the device's 188 SMs idle.
+        let copied = [(2, 4), (4, 2)].map(|(heads, planes)| Self {
+            cube: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, 4),
+                ),
+                heads: count(heads),
+                planes_along_queries: count(planes),
+                ring: StageRing::DOUBLE,
+                layout: StageLayout::SwizzledBlocks,
+                delivery: CubeStagedDelivery::AsyncCopy,
+                ..cube
+            },
+        });
+        [lead]
+            .into_iter()
+            .chain(swizzled)
+            .chain([split])
+            .chain(copied)
+            .collect()
     }
 }
 

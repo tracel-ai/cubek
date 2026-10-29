@@ -50,7 +50,7 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
         let operand = Operand::of_scheme(&scheme, axis, [K, N]).expect("one axis a block");
         problem(m, scheme, operand)
     };
-    let nvfp4 = tile_order::scheme();
+    let nvfp4 = tile_order::nvfp4_scheme();
     let words = devices::m2_pro().load_values(ElemType::UInt(UIntKind::U32));
     let tile_order = Operand::of_scheme(&nvfp4, K, [K, N])
         .expect("one axis a block")
@@ -59,7 +59,9 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
             words,
             Some((
                 &tile_order::values_axes(N),
-                tile_order::values_storage(N, (128, 8), words).tiles(),
+                tile_order::TileOrder::NVFP4
+                    .values_storage(N, (128, 8), words)
+                    .tiles(),
             )),
             None,
         )
@@ -187,6 +189,7 @@ mod cube_staged {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::MatmulDim;
+    use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
     use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
@@ -278,6 +281,10 @@ mod cube_staged {
             else {
                 continue;
             };
+            // A stage holding the rhs as it is stored decodes nothing into it.
+            if blueprint.microkernel.decoded_stage().is_none() {
+                continue;
+            }
             let StageStorage::Tiled { chunks, .. } = blueprint.shared_memory else {
                 panic!("{settings}: a matrix instruction's stage is tiled");
             };
@@ -413,9 +420,9 @@ mod hypercube_last_arrival {
             scheme: nvfp4_scheme(),
         };
         let rhs = Packing {
-            operand: Operand::of_scheme(&tile_order::scheme(), K, [K, N])
+            operand: Operand::of_scheme(&tile_order::nvfp4_scheme(), K, [K, N])
                 .expect("one axis a block"),
-            scheme: tile_order::scheme(),
+            scheme: tile_order::nvfp4_scheme(),
         };
         let problem = MatmulRoutineProblem::packed(
             512,

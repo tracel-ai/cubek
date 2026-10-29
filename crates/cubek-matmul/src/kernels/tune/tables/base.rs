@@ -1,4 +1,4 @@
-use super::{few_rows, many_rows, nvfp4};
+use super::{block_scaled, few_rows, many_rows};
 use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
 use crate::kernels::select::selector::MatmulTable;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -72,7 +72,7 @@ impl AutotuneOutput for MatmulProduct {
 
 static FEW_ROWS_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("few-rows");
 static MANY_ROWS_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("many-rows");
-static NVFP4_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("nvfp4");
+static BLOCK_SCALED_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("block-scaled");
 
 impl MatmulTable {
     /// What [`PlanTree`](cubek_std::plan::PlanTree) calls this table.
@@ -80,7 +80,7 @@ impl MatmulTable {
         match self {
             Self::FewRows => "few-rows",
             Self::ManyRows => "many-rows",
-            Self::Nvfp4 => "nvfp4",
+            Self::BlockScaled => "block-scaled",
         }
     }
 
@@ -133,7 +133,7 @@ impl MatmulTable {
         {
             Self::FewRows => (&FEW_ROWS_TUNER, few_rows::table),
             Self::ManyRows => (&MANY_ROWS_TUNER, many_rows::table),
-            Self::Nvfp4 => (&NVFP4_TUNER, nvfp4::table),
+            Self::BlockScaled => (&BLOCK_SCALED_TUNER, block_scaled::table),
         };
         let tunables = tuner.init(&call.tune_id, move || candidates(hw.clone(), groups));
         (tuner, tunables)
@@ -263,12 +263,16 @@ where
 /// ([`Decoded`]). It asks nothing of the device, so it serves what no other candidate binds: an
 /// input laid out no body can describe, or two packed inputs whose scales group `k` apart, which
 /// every routine reading packed inputs as stored declines. A float input passes through as it is.
-/// It is identified, so where it wins over float inputs a caller can launch it again.
+///
+/// It is named apart from the unit routine, as an [`activation_decoded_identity`] is: one set of
+/// candidates serves float and packed calls alike, and over a packed input the routine cannot be
+/// launched again on its own, since the floor decodes first.
 pub(super) fn decoded_floor(
     hw: &Hardware,
 ) -> Tunable<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity> {
     let lead = MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, hw).swap_remove(0);
-    Tunable::identified(RoutineIdentity::new(&lead), move |call: MatmulCall| {
+    let identity = CandidateIdentity::Named(format!("{} decoded floor", lead.strategy()));
+    Tunable::identified(identity, move |call: MatmulCall| {
         let decoded = Decoded.apply(&call).map_err(|why| why.to_string())?;
         microkernel_candidate(&lead, decoded)
     })

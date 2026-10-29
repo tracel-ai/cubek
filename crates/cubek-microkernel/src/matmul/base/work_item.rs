@@ -1,10 +1,10 @@
 use crate::matmul::{MatmulAxes, MatmulLayout, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::quant::scheme::QuantValue;
 use cubecl::tile::Axis;
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::value_element;
 
 /// What a microkernel is handed to choose by: the elements it reads and writes and the one it
 /// sums in, how each operand lies and the space their scales cut, how many rows it holds, and
@@ -204,31 +204,38 @@ impl MatmulWorkItem {
         }
     }
 
-    /// This item with both inputs read as they are stored, where both are packed into values that
-    /// name an element (`e2m1`): what an instruction that reads packed values and their scales as
-    /// they lie contracts, the block-scaled one. `None` where an input is float, or packed into
-    /// values no element names.
+    /// This item with its packed inputs read as they are stored, where each is packed into values
+    /// that name an element, float codes ([`value_element`]), and its float input, if any, as it
+    /// is: what a plane that reads packed values and their scales as they lie contracts, the
+    /// block-scaled instruction over two such inputs, or a fragment that decodes one as it loads
+    /// beside a float one. `None` where an input is packed into values no element names.
     pub fn as_stored(&self) -> Option<Self> {
         let blocks = self.blocks?;
-        let stored = |packing: Option<Packing>| match packing?.scheme.value {
-            QuantValue::E2M1 => Some(ElemType::Float(FloatKind::E2M1)),
-            _ => None,
+        let stored = |packing: Option<Packing>, element: ElemType| match packing {
+            None => Some(element),
+            Some(packing) => value_element(packing.scheme.value),
         };
         Some(Self {
             elements: MatmulOperands {
-                lhs: stored(blocks.packings.lhs)?,
-                rhs: stored(blocks.packings.rhs)?,
+                lhs: stored(blocks.packings.lhs, self.elements.lhs)?,
+                rhs: stored(blocks.packings.rhs, self.elements.rhs)?,
                 out: self.elements.out,
             },
             ..*self
         })
     }
 
-    /// Whether a stage of this item keeps an operand's block scales beside its values: an operand
-    /// stored in `e2m1`, staged as its words are stored with the words of its scales.
-    pub fn stages_scales_beside(&self) -> bool {
-        let e2m1 = ElemType::Float(FloatKind::E2M1);
-        self.elements.lhs == e2m1 || self.elements.rhs == e2m1
+    /// Whether both inputs are packed and read as the codes they store
+    /// ([`as_stored`](Self::as_stored)), which only a block-scaled instruction reads as they lie.
+    pub fn both_stored_as_codes(&self) -> bool {
+        let Some(blocks) = self.blocks else {
+            return false;
+        };
+        MatmulOperand::INPUTS.into_iter().all(|input| {
+            blocks.packings.get(input).is_some_and(|packing| {
+                value_element(packing.scheme.value) == Some(self.elements.get(input))
+            })
+        })
     }
 
     /// The elements a kernel of every matmul product defines, in the order it names them: the sum,
@@ -299,8 +306,8 @@ mod tests {
     /// The NVFP4 packing a tile-order operand carries, packed down `k`.
     fn nvfp4() -> Option<Packing> {
         Some(Packing {
-            operand: Operand::packed(K, 8, K, tile_order::BLOCK, 4),
-            scheme: tile_order::scheme(),
+            operand: Operand::packed(K, 8, K, tile_order::TileOrder::NVFP4.block, 4),
+            scheme: tile_order::nvfp4_scheme(),
         })
     }
 

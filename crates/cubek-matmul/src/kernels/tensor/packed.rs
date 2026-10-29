@@ -4,20 +4,23 @@
 //! how its block scales are read ([`BlockScales`]), nothing else.
 
 use super::PlainTensor;
-use cubecl::ir::{ElemType, UIntKind};
-use cubecl::prelude::TensorBinding;
-use cubecl::quant::scheme::QuantScheme;
-use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal};
+use cubecl::client::Client;
+use cubecl::ir::{ElemType, IntKind, UIntKind};
+use cubecl::prelude::{TensorBinding, TensorMapSwizzle};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
+use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
     kind::Field,
     layout::{DimsBuilder, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::MatmulStoredTile;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
+use cubek_std::launch::tma::tma_operand_tiled_typed;
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
-use cubek_std::layout::tile_order;
+use cubek_std::layout::tile_order::{self, TileOrder};
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
@@ -97,6 +100,52 @@ impl PackedTensor {
         }
     }
 
+    /// A quantized matrix over `axes`, in the order its shape states them, as a framework stores
+    /// one: `values`, its buffer bound under its logical shape and strides, its values packed as
+    /// `scheme` stores them, and its block scales and its per-tensor scale, where `scheme` has one,
+    /// each bound where it lies. The scales are laid in rows and bound on whole words, as
+    /// [`new`](Self::new) takes them.
+    ///
+    /// # Errors
+    ///
+    /// [`SCALES_NOT_ALONG_WORDS`], and [`PACKED_NOT_ONE_MATRIX_IN_ROWS`].
+    ///
+    /// # Panics
+    ///
+    /// A scheme storing sub-byte values natively, or natively packing other values than `E2M1`:
+    /// no framework stores one.
+    pub fn of_quantized(
+        client: &Client,
+        values: TensorBinding,
+        scheme: QuantScheme,
+        block_scales: PlainTensor,
+        global_scale: Option<PlainTensor>,
+        axes: [Axis; 2],
+    ) -> Result<Self, Refusal> {
+        let operand = Operand::axis_of(&scheme, axes)
+            .and_then(|axis| Operand::of_scheme(&scheme, axis, axes))
+            .ok_or(SCALES_NOT_ALONG_WORDS)?;
+        let shape = values.shape.clone();
+        if shape.rank() != 2 || values.tiling.is_tiled() {
+            return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
+        }
+        let words = stored_words(values, &scheme);
+        if !words.is_contiguous() {
+            return Err(PACKED_NOT_ONE_MATRIX_IN_ROWS);
+        }
+        let in_rows_of_words =
+            |scale: PlainTensor| bound_to_whole_words(scale.into_contiguous(client));
+        Ok(Self::new(
+            words,
+            WordsLaid::InRows,
+            in_rows_of_words(block_scales),
+            global_scale.map(in_rows_of_words),
+            scheme,
+            operand,
+            [(axes[0], shape[0]), (axes[1], shape[1])],
+        ))
+    }
+
     /// This matrix read as `slabs` matrices laid end to end along `along`, each its extent there
     /// divided by `slabs`: a stacked input one slab of which a table's entry picks
     /// ([`MatmulIndex::Slab`](crate::kernels::MatmulIndex::Slab)).
@@ -153,11 +202,12 @@ impl PackedTensor {
             return Err(STORED_TILES_UNREAD);
         };
         let block = operand.grouping(K, k).ok_or(STORED_TILES_UNREAD)?;
-        if block != tile_order::BLOCK || !tile.0.is_multiple_of(block) {
+        let order = TileOrder::of_operand(&operand).ok_or(STORED_TILES_UNREAD)?;
+        if order.block != block || !tile.0.is_multiple_of(block) {
             return Err(STORED_TILES_UNREAD);
         }
         let words = hw.load_values(WORD);
-        let values = tile_order::values_storage(across, tile, words);
+        let values = order.values_storage(across, tile, words);
         operand
             .stored(
                 across,
@@ -166,6 +216,16 @@ impl PackedTensor {
                 None,
             )
             .ok_or(STORED_TILES_UNREAD)
+    }
+
+    /// How it lies in tile order ([`TileOrder::of_operand`]).
+    ///
+    /// # Panics
+    ///
+    /// On a matrix tile order does not store, which [`read_in_tiles`](Self::read_in_tiles) refuses
+    /// before any is laid in tiles.
+    pub fn tile_order(&self) -> TileOrder {
+        TileOrder::of_operand(&self.operand).expect("a matrix in tiles is in tile order")
     }
 
     /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
@@ -219,6 +279,15 @@ impl PackedTensor {
                 ..stack
             }),
             ..self
+        }
+    }
+
+    /// The tile its words are stored in, which a descriptor lands a stage of whole tiles of row
+    /// by row: its lines by its values of `K`. None in rows.
+    pub fn stored_tile(&self) -> Option<MatmulStoredTile> {
+        match self.laid {
+            WordsLaid::InRows => None,
+            WordsLaid::InTiles((columns, rows)) => Some(MatmulStoredTile { rows, columns }),
         }
     }
 
@@ -334,7 +403,7 @@ impl PackedTensor {
                 values_axes.to_vec(),
                 launcher
                     .arg(
-                        self.words.bound_as(tile_order::kernel_values_read(
+                        self.words.bound_as(self.tile_order().kernel_values_read(
                             self.extent(K),
                             (across, self.extent(across)),
                             tile,
@@ -400,6 +469,117 @@ impl PackedTensor {
             }
         }
         .expect(ADMITTED_PLAN_RUNS)
+    }
+
+    /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under
+    /// `BlockScales::Fields`, served `width` values wide, its words moved by the TMA engine
+    /// through a descriptor over the tiles they are stored in
+    /// ([`TileOrder::words_in_tiles`]): a box of `stage_lines` lines by `stage_k` values of `k`,
+    /// landing row by row, swizzled as `swizzle` says. Its block scales, kept beside the words, are
+    /// handed to the copy engine: a stage's row of them is a few bytes, short of the 16 a
+    /// descriptor's row lands, so the units that fill issue them beside the descriptors rather
+    /// than loading and storing them.
+    ///
+    /// # Panics
+    ///
+    /// On words in rows, or a stage not whole tiles along its lines, nor whole tiles or a part
+    /// dividing one along `k`.
+    pub fn bind_by_tma(
+        &self,
+        launcher: &Launcher,
+        width: usize,
+        stage_lines: usize,
+        stage_k: usize,
+        swizzle: TensorMapSwizzle,
+    ) -> TileArgLaunch {
+        let WordsLaid::InTiles(tile) = self.laid else {
+            panic!("bind_by_tma: words stored in tiles only");
+        };
+        let (tile_k, tile_lines) = tile;
+        let operand = &self.operand;
+        let lined = operand.lined();
+        let rows_along = self.other_axis(lined);
+        let rows = self.extent(rows_along);
+        let across = self.other_axis(K);
+        let (k, lines) = (self.extent(K), self.extent(across));
+        assert!(
+            (stage_k.is_multiple_of(tile_k) || tile_k.is_multiple_of(stage_k))
+                && stage_lines.is_multiple_of(tile_lines),
+            "bind_by_tma: a stage of {stage_lines} x {stage_k} is not whole {tile:?} tiles along \
+             its lines, nor whole tiles or a part dividing one along k"
+        );
+        let order = self.tile_order();
+        let words = self.words.bound_as(order.words_in_tiles(k, lines, tile));
+        let map = tma_operand_tiled_typed(
+            words,
+            (stage_lines, stage_k / order.values_per_word),
+            TmaLanding::Rows,
+            WORD,
+            swizzle,
+        );
+        let values_axes = tile_order::values_axes(across);
+        // The descriptor after a row landing: the strips of lines, a line in the strip, the
+        // tiles along `k`, a word in the tile; a box starts on whole tiles both ways.
+        let coordinates = TmaCoordinates {
+            dims: vec![
+                vec![TmaTerm::axis(0).over(tile_lines as u32)],
+                vec![],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(order.block as u32)
+                        .over(tile_k as u32),
+                ],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(order.block as u32)
+                        .modulo(tile_k as u32)
+                        .over(order.values_per_word as u32),
+                ],
+            ],
+        };
+        let words = TileArgLaunch::tensor_map_folded(
+            map,
+            &values_axes,
+            &[lines as u32, (k / order.block) as u32, order.block as u32],
+            coordinates,
+        )
+        .served_wide(width / self.scheme.num_quants())
+        .packed(Field::from(self.scheme.value).read_on(launcher.client()));
+        let words_axes = values_axes.to_vec();
+        let tiled_along = operand
+            .scaled_along()
+            .expect("a block-scaled matrix groups one of its axes");
+        let (blocks_axis, inside) = blocked(tiled_along);
+        let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
+        let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
+        let block_scales = launcher
+            .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+            .gathered(
+                self.stack_dim()
+                    .dim(scale_rows)
+                    .dim(self.dim(lined))
+                    .build()
+                    .scales_per(blocks_axis),
+            )
+            .vectorize(operand.scale_read_values())
+            .delivery(Delivery::AsyncPerUnit);
+        let fields = self
+            .scheme
+            .block_scale()
+            .map(|block| block.dtype)
+            .into_iter()
+            .chain(self.scheme.tensor_scale())
+            .map(Field::of_scale);
+        let global = self.global_scale.as_ref().map(|scale| {
+            launcher
+                .arg(scale.rows(1, 1), WORD)
+                .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
+        });
+        let mut tile = words;
+        for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
+            tile = tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+        }
+        tile
     }
 
     /// `words` under `block_scales`, words of block scales read whole and so bound plain, under
@@ -485,6 +665,54 @@ impl PackedTensor {
         )
     }
 }
+
+/// The values of a quantized matrix bound under its logical shape, `values`, as the elements
+/// `scheme` stores them in: one per value, or, packed, whole words of them, the packed dim's
+/// extent counting words.
+fn stored_words(values: TensorBinding, scheme: &QuantScheme) -> PlainTensor {
+    let packed = |values: TensorBinding, packed_dim: usize, elem: ElemType| {
+        let mut values = values;
+        let dim = values.shape.rank() - packed_dim - 1;
+        values.shape[dim] = values.shape[dim].div_ceil(scheme.num_quants());
+        PlainTensor::new(values, elem)
+    };
+    match (scheme.store, scheme.value) {
+        (QuantStore::Native, QuantValue::Q8F | QuantValue::Q8S) => {
+            PlainTensor::new(values, ElemType::Int(IntKind::I8))
+        }
+        (QuantStore::Native, QuantValue::E4M3 | QuantValue::E5M2) => {
+            PlainTensor::new(values, ElemType::UInt(UIntKind::U8))
+        }
+        (QuantStore::PackedU32(packed_dim), _) => packed(values, packed_dim, WORD),
+        (QuantStore::PackedNative(packed_dim), QuantValue::E2M1) => {
+            packed(values, packed_dim, ElemType::UInt(UIntKind::U8))
+        }
+        (store, value) => panic!("no framework stores {value:?} as {store:?}"),
+    }
+}
+
+/// `tensor`, contiguous, its binding ending on the `u32` word that holds its last element: the
+/// routines read scales a word at a time. A quantized buffer starts each region on a word, so the
+/// word's tail is allocated.
+fn bound_to_whole_words(mut tensor: PlainTensor) -> PlainTensor {
+    let handle = &mut tensor.binding.handle;
+    let bytes = (tensor.binding.shape.num_elements() * tensor.elem.size()) as u64;
+    let end = handle.offset_start.unwrap_or(0) + bytes.next_multiple_of(4);
+    handle.offset_end = Some(handle.size - end);
+    tensor
+}
+
+/// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the axis its
+/// words run along.
+pub const SCALES_NOT_ALONG_WORDS: Refusal = Refusal::Declined {
+    why: "the packed routines read block scales along the axis the words run along",
+};
+
+/// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
+/// in contiguous rows.
+pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Refusal = Refusal::Declined {
+    why: "the packed routines read one quantized matrix in row-major rows",
+};
 
 /// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
 pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {

@@ -49,6 +49,17 @@ impl CubeStagedWalk {
         sum
     }
 
+    /// `input` as the walk's stages hold it: as it lies, its scales kept beside its values, where
+    /// the fill copies the inputs as stored and the planes decode them as they load; as it is
+    /// where the fill decodes it. A float input carries no scales and stages as before.
+    pub fn as_staged(input: &Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
+        if comptime!(walk.decoded().is_none()) {
+            input.scales_kept_beside()
+        } else {
+            input.clone()
+        }
+    }
+
     /// `sum`, walked, bouncing its fragments through the scratch `walk` holds as it drains. The
     /// scratch is opened once the walk has freed its stages, past a cube barrier, so it takes
     /// their bytes rather than its own.
@@ -89,6 +100,7 @@ impl CubeStagedWalk {
         let mut c = c.clone();
         let (a, a_factor) = a.factor(c.space(), comptime!(walk.instruction));
         let (b, b_factor) = b.factor(c.space(), comptime!(walk.instruction));
+        let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
         let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
         cube_staged_sum_microkernel::<EL>(run, &sum, &c, &a, &b, walk, storage);
         let sum = Self::drain_sum(sum, walk);
@@ -112,6 +124,7 @@ impl CubeStagedWalk {
         let mut c = c.clone();
         let (a, a_factor) = a.factor(c.space(), comptime!(walk.instruction));
         let (b, b_factor) = b.factor(c.space(), comptime!(walk.instruction));
+        let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
         let depth = comptime!(walk.ring.stages_in_flight.get());
         let mut stages = Stages::smem(&run, &a, &b, storage, depth, comptime!(walk.decoded()));
         // Both sets drive the same ring, so both count its laps alike: `depth` stages a lap, the

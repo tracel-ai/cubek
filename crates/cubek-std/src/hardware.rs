@@ -10,6 +10,8 @@ use cubecl::{
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig, Tma},
     ir::{DeviceProperties, ElemType, FloatKind, OpaqueType, TargetProperties, Type},
+    quant::scheme::{QuantMode, QuantScheme, QuantValue},
+    tile::BlockScaledOperands,
 };
 
 /// The device, as the routines see it.
@@ -22,8 +24,9 @@ pub struct Hardware {
     /// is read here, as cubecl states it.
     pub properties: Arc<DeviceProperties>,
     /// Whether an `mma` accumulator holds its cells where the `A` operand of a contraction as
-    /// deep as it is wide holds them, so a product contracted again reads it as that operand in
-    /// the same registers (the tile DSL's `accumulator_as_a`).
+    /// deep as it is wide holds them, and a run of accumulators along a deeper contraction where
+    /// its `A` holds them one after another, so a product contracted again reads them as that
+    /// operand in the same registers (the tile DSL's `accumulators_as_a`).
     ///
     /// True on CUDA, and on Metal, whose simdgroup matrix gives every lane two cells of one row
     /// in each operand. False on RDNA, whose `A` runs along its rows against an accumulator down
@@ -333,7 +336,8 @@ pub trait Instructions: Iterator<Item = MmaConfig> + Clone {
 
     /// These shapes less every one offered beside a deeper one of the same tile and elements: the
     /// deeper contracts the tile in fewer calls. The shallower stays in the device's set for what
-    /// reads its operand from an accumulator of that tile, as an attention's value from its score.
+    /// reads its operand from accumulators of that tile too few to fill the deeper, as an
+    /// attention's value from a score one fragment wide.
     fn deepest(self) -> impl Instructions {
         let offered = self.clone();
         self.filter(move |shape| {
@@ -366,49 +370,152 @@ fn size_rank(shape: &MmaConfig) -> (Reverse<usize>, usize, u32, u32, u32, MmaCon
 }
 
 /// The fragment contractions cubek's own transport over the matrix intrinsics (`mma`) runs on
-/// `hw`: the runtime's `mma` set, and its block-scaled instructions over NVFP4, `e2m1` operands
-/// under an `e4m3` scale every [`NVFP4_BLOCK`] values of `k`, which the transport runs on the
-/// stored words as they lie.
-///
-/// The runtime states a block-scaled instruction's operands as the `e2m1x2` pairs a register
-/// holds; here they are the `e2m1` values a work item stores. An `e2m1` value means nothing
-/// without the scale of its block, so the `mma` set's unscaled `e2m1` shapes are left out.
+/// `hw` over values that mean something alone: the runtime's `mma` set, without its unscaled `e2m1`
+/// shapes, since an `e2m1` value means nothing without the scale of its block. The block-scaled
+/// instructions, which read packed codes under their scales as they lie, are
+/// [`block_scaled_mma`]'s.
 pub fn manual_mma(hw: &Hardware) -> impl Instructions + '_ {
-    let matmul = &hw.properties.features.matmul;
     let e2m1 = ElemType::Float(FloatKind::E2M1);
-    matmul
+    hw.properties
+        .features
+        .matmul
         .mma
         .iter()
         .copied()
         .filter(move |config| config.a_type != e2m1 && config.b_type != e2m1)
-        .chain(matmul.scaled_mma.iter().filter_map(nvfp4_instruction))
 }
 
-/// Whether `hw` contracts NVFP4 as it is stored: a block-scaled instruction over `e2m1`
-/// operands among its [`manual_mma`] shapes.
+/// A block-scaled instruction of the device, as cubek's own transport runs it on the stored words
+/// as they lie: its shape over the codes each input stores, and the form its operands take.
+///
+/// The runtime states an `e2m1` operand as the `e2m1x2` pairs a register holds; the shape states
+/// it as the `e2m1` codes a work item stores, so a step is sized in values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockScaledMma {
+    /// The `m × n × k` the instruction contracts, over the codes each input stores, summing in
+    /// its `cd_type`.
+    pub shape: MmaConfig,
+    /// What the instruction takes: each input's codes as its registers hold them, the scales'
+    /// type, and the values of `k` one scale covers.
+    pub form: BlockScaledOperands,
+}
+
+impl BlockScaledMma {
+    /// The instruction `config` runs, where its operands are floats.
+    pub fn of(config: &ScaledMmaConfig) -> Option<Self> {
+        let form = BlockScaledOperands::of(config)?;
+        Some(Self {
+            shape: MmaConfig {
+                a_type: ElemType::Float(stored_code(form.lhs)),
+                b_type: ElemType::Float(stored_code(form.rhs)),
+                cd_type: config.cd_type,
+                m: config.m,
+                n: config.n,
+                k: config.k,
+            },
+            form,
+        })
+    }
+
+    /// Whether the instruction reads, as the `lhs` input or the other, codes stored as `values`
+    /// under a scale every `block` of `k`. A register is four bytes, each one element, a code or an
+    /// `e2m1x2` pair of them: a code narrower than a byte held one a byte is no word a packed
+    /// input stores.
+    pub fn holds(&self, lhs: bool, values: ElemType, block: usize) -> bool {
+        let (code, kind) = match lhs {
+            true => (self.shape.a_type, self.form.lhs),
+            false => (self.shape.b_type, self.form.rhs),
+        };
+        code == values && block == self.form.block && ElemType::Float(kind).size_bits() == 8
+    }
+
+    /// Whether the instruction reads, as the `lhs` input or the other, codes packed under
+    /// `scheme` with a scale every `block` of `k`: the scheme's value its code, as many to a stored
+    /// word as one of its registers holds, under block scales of its scale type. A per-tensor
+    /// scale above the blocks is the product's to apply, so the scheme may carry one or not.
+    pub fn takes(&self, lhs: bool, scheme: &QuantScheme, block: usize) -> bool {
+        let kind = match lhs {
+            true => self.form.lhs,
+            false => self.form.rhs,
+        };
+        // A register is four bytes ([`holds`](Self::holds)).
+        let register_codes = 4 * BlockScaledOperands::values_per_element(kind);
+        let scales = scheme
+            .block_scale()
+            .map(|scale| ElemType::from_scale_dtype(scale.dtype));
+        value_element(scheme.value).is_some_and(|values| self.holds(lhs, values, block))
+            && scheme.mode == QuantMode::Symmetric
+            && scheme.num_quants() == register_codes
+            && scales == Some(ElemType::Float(self.form.scales))
+    }
+}
+
+/// The block-scaled instructions `hw` offers ([`BlockScaledMma`]).
+pub fn block_scaled_mma(hw: &Hardware) -> impl Iterator<Item = BlockScaledMma> + Clone + '_ {
+    hw.properties
+        .features
+        .matmul
+        .scaled_mma
+        .iter()
+        .filter_map(BlockScaledMma::of)
+}
+
+/// The block-scaled instructions `hw` offers over inputs packed under `lhs` and `rhs`, each with
+/// its scale block along `k`, summing in `f32`, the largest first ([`BlockScaledMma::takes`]).
+pub fn block_scaled_for<'a>(
+    hw: &'a Hardware,
+    (lhs, lhs_block): (&'a QuantScheme, usize),
+    (rhs, rhs_block): (&'a QuantScheme, usize),
+) -> impl Iterator<Item = BlockScaledMma> + 'a {
+    let mut offered: Vec<_> = block_scaled_mma(hw)
+        .filter(move |instruction| {
+            instruction.shape.cd_type == ElemType::Float(FloatKind::F32)
+                && instruction.takes(true, lhs, lhs_block)
+                && instruction.takes(false, rhs, rhs_block)
+        })
+        .collect();
+    offered.sort_by_key(|instruction| size_rank(&instruction.shape));
+    offered.into_iter()
+}
+
+/// NVFP4 as a block-scaled instruction takes it: `e2m1` pairs under an `e4m3` scale every
+/// sixteen of `k`. A preset, for a caller that asks after the format by name.
+pub const NVFP4_FORM: BlockScaledOperands = BlockScaledOperands {
+    lhs: FloatKind::E2M1x2,
+    rhs: FloatKind::E2M1x2,
+    scales: FloatKind::E4M3,
+    block: NVFP4_BLOCK,
+};
+
+/// Whether `hw` offers NVFP4's block-scaled instruction ([`NVFP4_FORM`]): a preset of
+/// [`block_scaled_mma`], for a caller that asks after the format by name.
 pub fn block_scaled_nvfp4(hw: &Hardware) -> bool {
-    let e2m1 = ElemType::Float(FloatKind::E2M1);
-    manual_mma(hw)
-        .for_triple(e2m1, e2m1, ElemType::Float(FloatKind::F32))
-        .next()
-        .is_some()
+    block_scaled_mma(hw).any(|instruction| instruction.form == NVFP4_FORM)
 }
 
-/// The shape `config` contracts, where it is a block-scaled instruction over NVFP4.
-fn nvfp4_instruction(config: &ScaledMmaConfig) -> Option<MmaConfig> {
-    let fp4 = ElemType::Float(FloatKind::E2M1x2);
-    let nvfp4 = config.a_type == fp4
-        && config.b_type == fp4
-        && config.scales_type == ElemType::Float(FloatKind::E4M3)
-        && config.scales_factor as usize * NVFP4_BLOCK == config.k as usize;
-    nvfp4.then_some(MmaConfig {
-        a_type: ElemType::Float(FloatKind::E2M1),
-        b_type: ElemType::Float(FloatKind::E2M1),
-        cd_type: config.cd_type,
-        m: config.m,
-        n: config.n,
-        k: config.k,
-    })
+/// The code a register element of a block-scaled instruction holds, as a work item stores it:
+/// `e2m1` for the `e2m1x2` pair.
+fn stored_code(kind: FloatKind) -> FloatKind {
+    match kind {
+        FloatKind::E2M1x2 => FloatKind::E2M1,
+        other => other,
+    }
+}
+
+/// The element a value of `value` is, where one names it: the float codes. `None` for the integer
+/// formats, whose values a scale makes numbers of.
+pub fn value_element(value: QuantValue) -> Option<ElemType> {
+    match value {
+        QuantValue::E2M1 => Some(ElemType::Float(FloatKind::E2M1)),
+        QuantValue::E4M3 => Some(ElemType::Float(FloatKind::E4M3)),
+        QuantValue::E5M2 => Some(ElemType::Float(FloatKind::E5M2)),
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S => None,
+    }
 }
 
 /// Bytes a descriptor's start address and strides are whole multiples of, and the least a box's
@@ -428,7 +535,8 @@ pub const TMA_ROW_BYTES: usize = 64;
 /// register block unrolls no more cells than it.
 pub const UNIT_REGISTERS: u32 = 255;
 
-/// Values of `k` one NVFP4 block scale covers.
+/// Values of `k` one NVFP4 block scale covers: the format's ([`NVFP4_FORM`]), which no
+/// instruction reads off it ([`BlockScaledMma`] takes the block from the device).
 pub const NVFP4_BLOCK: usize = 16;
 
 #[cfg(test)]
@@ -605,8 +713,8 @@ mod tests {
         );
     }
 
-    /// The NVFP4 offer is the block-scaled instruction stated over `e2m1` values, and an unscaled
-    /// `e2m1` shape is no offer.
+    /// A block-scaled instruction is offered over the codes each input stores, NVFP4's `e2m1`
+    /// pairs as `e2m1` values, and an unscaled `e2m1` shape is no offer at all.
     #[test]
     fn a_block_scaled_instruction_is_offered_over_its_values() {
         let e2m1 = ElemType::Float(FloatKind::E2M1);
@@ -619,12 +727,86 @@ mod tests {
             k: 32,
         };
         let hw = devices::offering_mma(devices::h100(), [unscaled]);
-        assert!(!block_scaled_nvfp4(&hw));
+        assert_eq!(manual_mma(&hw).count(), 0);
+        assert_eq!(block_scaled_mma(&hw).count(), 0);
         let hw = devices::offering_nvfp4(hw);
+        assert_eq!(manual_mma(&hw).count(), 0);
+        let offered: Vec<_> = block_scaled_mma(&hw).collect();
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].shape, MmaConfig { k: 64, ..unscaled });
+        assert_eq!(offered[0].form.block, 16);
+    }
+
+    /// Each format reaches the instruction of its own codes, scales and block, and only it: NVFP4
+    /// the `e4m3`-scaled `e2m1` one, MXFP4 the `ue8m0` one of thirty-two, MXFP8 the `e4m3` codes'
+    /// of `k` 32, and a pair of them the mixed one, where the device offers it.
+    #[test]
+    fn each_format_reaches_the_instruction_of_its_form() {
+        use cubecl::quant::scheme::{QuantStore, ScaleDtype};
+        let hw = devices::offering_block_scaled(devices::h100());
+        let scheme = |value, block: u8, scale| {
+            QuantScheme::default()
+                .with_value(value)
+                .per_block([block], scale)
+                .with_store(QuantStore::PackedU32(0))
+        };
+        let nvfp4 = scheme(QuantValue::E2M1, 16, ScaleDtype::UE4M3).per_tensor(ScaleDtype::F32);
+        let mxfp4 = scheme(QuantValue::E2M1, 32, ScaleDtype::UE8M0);
+        let mxfp8 = scheme(QuantValue::E4M3, 32, ScaleDtype::UE8M0);
+        let q4 = scheme(QuantValue::Q4S, 32, ScaleDtype::UE8M0);
+        let form = |lhs: (&QuantScheme, usize), rhs: (&QuantScheme, usize)| {
+            block_scaled_for(&hw, lhs, rhs)
+                .map(|instruction| (instruction.form, instruction.shape.k))
+                .next()
+        };
+        let fp4 = FloatKind::E2M1x2;
         assert_eq!(
-            manual_mma(&hw).collect::<Vec<_>>(),
-            [MmaConfig { k: 64, ..unscaled }]
+            form((&nvfp4, 16), (&nvfp4, 16)),
+            Some((
+                BlockScaledOperands {
+                    lhs: fp4,
+                    rhs: fp4,
+                    scales: FloatKind::E4M3,
+                    block: 16
+                },
+                64
+            ))
         );
-        assert!(block_scaled_nvfp4(&hw));
+        assert_eq!(
+            form((&mxfp4, 32), (&mxfp4, 32)).map(|(f, k)| (f.scales, f.block, k)),
+            Some((FloatKind::UE8M0, 32, 64))
+        );
+        assert_eq!(
+            form((&mxfp8, 32), (&mxfp8, 32)),
+            Some((
+                BlockScaledOperands {
+                    lhs: FloatKind::E4M3,
+                    rhs: FloatKind::E4M3,
+                    scales: FloatKind::UE8M0,
+                    block: 32
+                },
+                32
+            ))
+        );
+        assert_eq!(
+            form((&nvfp4, 16), (&mxfp4, 32)),
+            None,
+            "one block for both inputs"
+        );
+        assert_eq!(
+            form((&nvfp4, 32), (&nvfp4, 32)),
+            None,
+            "the block is the scheme's"
+        );
+        assert_eq!(
+            form((&q4, 32), (&q4, 32)),
+            None,
+            "an integer value names no code"
+        );
+        assert_eq!(
+            form((&mxfp8, 32), (&mxfp4, 32)),
+            None,
+            "an e2m1 operand of the 8-bit instruction is one code a byte, not eight a word"
+        );
     }
 }

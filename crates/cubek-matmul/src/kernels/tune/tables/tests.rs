@@ -1,5 +1,5 @@
 use super::base::MatmulTableGroups;
-use super::{few_rows, many_rows, nvfp4};
+use super::{block_scaled, few_rows, many_rows};
 use cubek_std::{Hardware, devices};
 
 /// Every table on every device holds the candidates `tables.txt` records: as many, under the same
@@ -35,7 +35,7 @@ fn render_all() -> String {
         for (table, built) in [
             ("few-rows", few_rows::table(hw.clone(), groups)),
             ("many-rows", many_rows::table(hw.clone(), groups)),
-            ("nvfp4", nvfp4::table(hw.clone(), groups)),
+            ("block-scaled", block_scaled::table(hw.clone(), groups)),
         ] {
             out.push_str(&format!(
                 "{table}: {} candidates, checksum {}\n",
