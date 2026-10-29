@@ -198,7 +198,7 @@ impl PlaneFragmentAttentionMicrokernel {
     ) -> Option<PlaneFragmentInstruction> {
         match score {
             PlaneFragmentInstruction::Cmma { .. } => Some(score),
-            PlaneFragmentInstruction::Mma { shape } if shape.a_type.size() == 2 => {
+            PlaneFragmentInstruction::Mma { shape, .. } if shape.a_type.size() == 2 => {
                 // The score's tile and elements, a whole number of its fragments deep.
                 let run = |value: &MmaConfig| {
                     MmaConfig {
@@ -211,7 +211,7 @@ impl PlaneFragmentAttentionMicrokernel {
                 hw.accumulator_as_a
                     .then(|| manual_mma(hw).filter(run).max_by_key(|value| value.k))
                     .flatten()
-                    .map(|value| PlaneFragmentInstruction::Mma { shape: value })
+                    .map(PlaneFragmentInstruction::mma)
             }
             PlaneFragmentInstruction::Mma { .. }
             | PlaneFragmentInstruction::Registers { .. }

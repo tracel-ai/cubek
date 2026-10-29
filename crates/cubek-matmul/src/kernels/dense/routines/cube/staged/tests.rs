@@ -262,7 +262,7 @@ mod base {
             instructions,
             [
                 PlaneFragmentInstruction::Cmma { shape: SHAPE },
-                PlaneFragmentInstruction::Mma { shape: SHAPE },
+                PlaneFragmentInstruction::mma(SHAPE),
                 PlaneFragmentInstruction::Registers {
                     step_sum: PlaneFragmentStepSum::Wide,
                 },
@@ -288,7 +288,7 @@ mod base {
         assert_eq!(
             instructions,
             [
-                PlaneFragmentInstruction::Mma { shape: SHAPE },
+                PlaneFragmentInstruction::mma(SHAPE),
                 PlaneFragmentInstruction::Cmma { shape: SHAPE },
                 PlaneFragmentInstruction::Registers {
                     step_sum: PlaneFragmentStepSum::Wide,
@@ -935,7 +935,7 @@ mod base {
     fn a_packed_rhs_in_tiles_lands_by_tma_where_its_stage_holds_it_as_stored() {
         // The `16 × 8 × 16` instruction a plane decodes the rhs's fragments into.
         let hw = devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]);
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let rhs = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
             scheme,
@@ -1427,7 +1427,7 @@ mod base {
             ElemType::Float(FloatKind::F16),
             MatmulOperands {
                 lhs: Some(packing(nvfp4_scheme(), [M, K])),
-                rhs: Some(packing(tile_order::scheme(), [K, N])),
+                rhs: Some(packing(tile_order::nvfp4_scheme(), [K, N])),
                 out: None,
             },
         );
@@ -1467,7 +1467,7 @@ mod base {
                 k: 8,
             }],
         );
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let weight = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
             scheme,
@@ -1526,7 +1526,7 @@ mod base {
             n: 8,
             k: 16,
         };
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let weight = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
             scheme,

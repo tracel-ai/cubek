@@ -1,4 +1,4 @@
-use super::{few_rows, many_rows, nvfp4};
+use super::{block_scaled, few_rows, many_rows};
 use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
 use crate::kernels::select::selector::MatmulTable;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -72,7 +72,7 @@ impl AutotuneOutput for MatmulProduct {
 
 static FEW_ROWS_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("few-rows");
 static MANY_ROWS_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("many-rows");
-static NVFP4_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("nvfp4");
+static BLOCK_SCALED_TUNER: LocalTuner<MatmulTuneKey, CubeTuneId> = local_tuner!("block-scaled");
 
 impl MatmulTable {
     /// What [`PlanTree`](cubek_std::plan::PlanTree) calls this table.
@@ -80,7 +80,7 @@ impl MatmulTable {
         match self {
             Self::FewRows => "few-rows",
             Self::ManyRows => "many-rows",
-            Self::Nvfp4 => "nvfp4",
+            Self::BlockScaled => "block-scaled",
         }
     }
 
@@ -133,7 +133,7 @@ impl MatmulTable {
         {
             Self::FewRows => (&FEW_ROWS_TUNER, few_rows::table),
             Self::ManyRows => (&MANY_ROWS_TUNER, many_rows::table),
-            Self::Nvfp4 => (&NVFP4_TUNER, nvfp4::table),
+            Self::BlockScaled => (&BLOCK_SCALED_TUNER, block_scaled::table),
         };
         let tunables = tuner.init(&call.tune_id, move || candidates(hw.clone(), groups));
         (tuner, tunables)
