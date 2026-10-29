@@ -263,12 +263,16 @@ where
 /// ([`Decoded`]). It asks nothing of the device, so it serves what no other candidate binds: an
 /// input laid out no body can describe, or two packed inputs whose scales group `k` apart, which
 /// every routine reading packed inputs as stored declines. A float input passes through as it is.
-/// It is identified, so where it wins over float inputs a caller can launch it again.
+///
+/// It is named apart from the unit routine, as an [`activation_decoded_identity`] is: one set of
+/// candidates serves float and packed calls alike, and over a packed input the routine cannot be
+/// launched again on its own, since the floor decodes first.
 pub(super) fn decoded_floor(
     hw: &Hardware,
 ) -> Tunable<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity> {
     let lead = MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, hw).swap_remove(0);
-    Tunable::identified(RoutineIdentity::new(&lead), move |call: MatmulCall| {
+    let identity = CandidateIdentity::Named(format!("{} decoded floor", lead.strategy()));
+    Tunable::identified(identity, move |call: MatmulCall| {
         let decoded = Decoded.apply(&call).map_err(|why| why.to_string())?;
         microkernel_candidate(&lead, decoded)
     })
