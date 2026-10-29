@@ -73,6 +73,159 @@ pub use cubecl::tile::{
     layout::{StorageLevels, StoragePartitioning},
 };
 
+/// How a tensor of one shape lies stored as a [`StoragePartitioning`] states: its metadata in
+/// values and in the words a packed one moves as, the words' extents along the named axes and the
+/// outermost stored tile of each, its batch dims, and the words it allocates.
+struct StoredLayout {
+    values: Metadata,
+    words: Metadata,
+    word_extents: Vec<(Axis, usize)>,
+    tiles: Vec<(Axis, usize)>,
+    batch_dims: Vec<usize>,
+    word_count: usize,
+    per_word: usize,
+}
+
+impl StoredLayout {
+    /// The layout of a tensor of `shape`, its trailing dims named by `axes` (the dims ahead stay
+    /// plain and coarsest, one batch each), stored as `storage` states, `packed` saying the values
+    /// sit `field.per_word()` to a `u32` along the last of `axes`, so its `dtype` is `u32`.
+    ///
+    /// # Errors
+    ///
+    /// A shape of fewer dims than the axes it is stated over, a packed statement over no axes, of
+    /// words that are not `u32`, or whose word is not its finest stored tile, or a partitioning
+    /// that does not close the tensor in whole tiles or is deeper than a tiling records.
+    #[allow(clippy::result_large_err)]
+    fn new(
+        shape: &[usize],
+        axes: &[Axis],
+        dtype: ElemType,
+        packed: Option<Field>,
+        storage: &StoragePartitioning,
+        refused: impl Fn(String) -> MatmulSetupError,
+    ) -> Result<Self, MatmulSetupError> {
+        let rank = shape.len();
+        let Some(batches) = rank.checked_sub(axes.len()) else {
+            return Err(refused(format!(
+                "a shape of {rank} dims is stated over {} axes",
+                axes.len()
+            )));
+        };
+        let values: Vec<(Axis, usize)> = axes
+            .iter()
+            .copied()
+            .zip(shape[batches..].iter().copied())
+            .collect();
+        // A packed tensor is relaid out as its words: the same statement with the word dropped,
+        // the packed axis counted in words.
+        let (per_word, words_storage) = match packed {
+            None => (1, storage.clone()),
+            Some(field) => {
+                let Some(&packed_axis) = axes.last() else {
+                    return Err(refused(
+                        "a packed tensor names the axis it packs along".into(),
+                    ));
+                };
+                if dtype != u32::elem_type_native() {
+                    return Err(refused(format!(
+                        "a {field:?} tensor is stored in u32 words, not {dtype:?}"
+                    )));
+                }
+                let per_word = field.per_word();
+                if storage.tiles().first() != Some(&(packed_axis, per_word)) {
+                    return Err(refused(format!(
+                        "a {field:?} word is {per_word} values along {packed_axis:?}, so it is \
+                         the finest stored tile; the statement starts with {:?}",
+                        storage.tiles().first()
+                    )));
+                }
+                let words = StorageLevels::new(&storage.tiles()[1..]).grid(storage.order());
+                (per_word, words)
+            }
+        };
+        let word_extents: Vec<(Axis, usize)> = values
+            .iter()
+            .map(|&(axis, extent)| match Some(&axis) == axes.last() {
+                true => (axis, extent / per_word),
+                false => (axis, extent),
+            })
+            .collect();
+        let misfit = |misfit: StorageMisfit| refused(misfit.to_string());
+        let in_values = storage.physical(&values).map_err(misfit)?;
+        let in_words = words_storage.physical(&word_extents).map_err(misfit)?;
+        let batch_dims: Vec<usize> = shape[..batches].to_vec();
+        let config = |e| refused(format!("{e:?}"));
+        // Batch dims stay plain and coarsest, each a whole run of what is finer.
+        let metadata = |stored: &Geometry| {
+            let mut run: usize = stored.shape().iter().product();
+            let mut strides = vec![0; batches];
+            for (b, &extent) in batch_dims.iter().enumerate().rev() {
+                strides[b] = run;
+                run *= extent;
+            }
+            let shape: Vec<usize> = batch_dims.iter().chain(stored.shape()).copied().collect();
+            strides.extend_from_slice(stored.strides());
+            let fragments: Vec<usize> = batch_dims
+                .iter()
+                .map(|_| 1)
+                .chain(stored.tiling().fragments(axes.len()))
+                .collect();
+            Metadata::new(Shape::from(shape), Strides::from(strides))
+                .with_tiling(Tiling::new(&fragments).map_err(config)?)
+                .map_err(config)
+        };
+        let tiles: Vec<(Axis, usize)> = word_extents
+            .iter()
+            .map(|&(axis, _)| {
+                let tile: usize = words_storage
+                    .tiles()
+                    .iter()
+                    .filter(|&&(a, _)| a == axis)
+                    .map(|&(_, count)| count)
+                    .product();
+                (axis, tile)
+            })
+            .collect();
+        let word_count = word_extents.iter().map(|&(_, e)| e).product::<usize>()
+            * batch_dims.iter().product::<usize>();
+        Ok(Self {
+            values: metadata(&in_values)?,
+            words: metadata(&in_words)?,
+            word_extents,
+            tiles,
+            batch_dims,
+            word_count,
+            per_word,
+        })
+    }
+}
+
+/// A fresh storage-tiled tensor of `shape`, its trailing dims named by `axes`, stored as `storage`
+/// states and as [`tile`] would store a tensor of that shape: the buffer allocated, its contents
+/// unwritten. What a kernel writing its output straight into storage tiles is handed, so no
+/// relayout of a tensor in rows follows it. `packed` and the result's units are [`tile`]'s.
+///
+/// # Errors
+///
+/// As [`tile`], but for a source: a shape of fewer dims than its axes, a packed statement over
+/// no axes, of words that are not `u32`, or whose word is not its finest stored tile, or a
+/// partitioning that does not close the tensor in whole tiles or is deeper than a tiling records.
+#[allow(clippy::result_large_err)]
+pub fn empty(
+    client: &Client,
+    shape: &[usize],
+    axes: &[Axis],
+    dtype: ElemType,
+    packed: Option<Field>,
+    storage: StoragePartitioning,
+) -> Result<TensorHandle, MatmulSetupError> {
+    let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("empty: {why}")));
+    let layout = StoredLayout::new(shape, axes, dtype, packed, &storage, refused)?;
+    let handle = client.empty(layout.word_count * dtype.size());
+    Ok(TensorHandle::from_metadata(handle, layout.values, dtype))
+}
+
 /// Store a tensor as `storage` states, its trailing dims named by `axes` (the dims ahead stay
 /// plain and coarsest, one batch each). `packed` says the values sit `field.per_word()` to a `u32`
 /// along the last of `axes`: the word must then be the finest stored tile, and the words move
@@ -86,9 +239,10 @@ pub use cubecl::tile::{
 ///
 /// # Errors
 ///
-/// A source already storage-tiled, a packed source whose word is not the finest stored tile or
-/// whose last named dim is not its contiguous one, or a partitioning that does not close the
-/// tensor in whole tiles or is deeper than a tiling records.
+/// A source already storage-tiled or of fewer dims than its axes, a packed source over no axes,
+/// of words that are not `u32`, whose word is not the finest stored tile or whose last named dim
+/// is not its contiguous one, or a partitioning that does not close the tensor in whole tiles or
+/// is deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn tile(
     client: &Client,
@@ -104,101 +258,34 @@ pub fn tile(
             "the source is already storage-tiled; untile it first".to_string(),
         ));
     }
+    let layout = StoredLayout::new(&src.shape, axes, dtype, packed, &storage, refused)?;
+    // The layout refuses a source of fewer dims than its axes, and a packed one over no axes.
     let rank = src.shape.len();
-    let batches = rank - axes.len();
-    let values: Vec<(Axis, usize)> = axes
-        .iter()
-        .copied()
-        .zip(src.shape[batches..].iter().copied())
-        .collect();
-    // A packed tensor is relaid out as its words: the same statement with the word dropped, the
-    // packed axis counted in words.
-    let (per_word, words_storage) = match packed {
-        None => (1, storage.clone()),
-        Some(field) => {
-            let (packed_axis, per_word) = (axes[axes.len() - 1], field.per_word());
-            if storage.tiles().first() != Some(&(packed_axis, per_word)) {
-                return Err(refused(format!(
-                    "a {field:?} word is {per_word} values along {packed_axis:?}, so it is the \
-                     finest stored tile; the statement starts with {:?}",
-                    storage.tiles().first()
-                )));
-            }
-            if src.strides[rank - 1] != 1 {
-                return Err(refused(format!(
-                    "the words pack along {packed_axis:?}, which is not the source's contiguous dim"
-                )));
-            }
-            let words = StorageLevels::new(&storage.tiles()[1..]).grid(storage.order());
-            (per_word, words)
-        }
-    };
-    let words: Vec<(Axis, usize)> = values
-        .iter()
-        .map(|&(axis, extent)| match axis == axes[axes.len() - 1] {
-            true => (axis, extent / per_word),
-            false => (axis, extent),
-        })
-        .collect();
-    let misfit = |misfit: StorageMisfit| refused(misfit.to_string());
-    let in_values = storage.physical(&values).map_err(misfit)?;
-    let in_words = words_storage.physical(&words).map_err(misfit)?;
-    let batch_dims: Vec<usize> = src.shape[..batches].to_vec();
-    let config = |e| refused(format!("{e:?}"));
-    // Batch dims stay plain and coarsest, each a whole run of what is finer.
-    let metadata = |stored: &Geometry| {
-        let mut run: usize = stored.shape().iter().product();
-        let mut strides = vec![0; batches];
-        for (b, &extent) in batch_dims.iter().enumerate().rev() {
-            strides[b] = run;
-            run *= extent;
-        }
-        let shape: Vec<usize> = batch_dims.iter().chain(stored.shape()).copied().collect();
-        strides.extend_from_slice(stored.strides());
-        let fragments: Vec<usize> = batch_dims
-            .iter()
-            .map(|_| 1)
-            .chain(stored.tiling().fragments(axes.len()))
-            .collect();
-        Metadata::new(Shape::from(shape), Strides::from(strides))
-            .with_tiling(Tiling::new(&fragments).map_err(config)?)
-            .map_err(config)
-    };
-    let dst_values = metadata(&in_values)?;
-    let dst_words = metadata(&in_words)?;
-    let word_count: usize =
-        words.iter().map(|&(_, e)| e).product::<usize>() * batch_dims.iter().product::<usize>();
-    let handle = client.empty(word_count * dtype.size());
-    let dst = TensorHandle::from_metadata(handle.clone(), dst_words, dtype);
+    if packed.is_some() && src.strides[rank - 1] != 1 {
+        return Err(refused(format!(
+            "the words pack along {:?}, which is not the source's contiguous dim",
+            axes[axes.len() - 1]
+        )));
+    }
+    let handle = client.empty(layout.word_count * dtype.size());
+    let dst = TensorHandle::from_metadata(handle.clone(), layout.words, dtype);
     let mut src_words = src;
     for (d, stride) in src_words.strides.iter_mut().enumerate() {
         if d + 1 < rank {
-            *stride /= per_word;
+            *stride /= layout.per_word;
         }
     }
-    src_words.shape[rank - 1] /= per_word;
-    let tiles: Vec<(Axis, usize)> = words
-        .iter()
-        .map(|&(axis, _)| {
-            let tile: usize = words_storage
-                .tiles()
-                .iter()
-                .filter(|&&(a, _)| a == axis)
-                .map(|&(_, count)| count)
-                .product();
-            (axis, tile)
-        })
-        .collect();
+    src_words.shape[rank - 1] /= layout.per_word;
     relayout_launch(
         client,
         src_words,
         dst.binding(),
         dtype,
-        &batch_dims,
-        &words,
-        &tiles,
+        &layout.batch_dims,
+        &layout.word_extents,
+        &layout.tiles,
     )?;
-    Ok(TensorHandle::from_metadata(handle, dst_values, dtype))
+    Ok(TensorHandle::from_metadata(handle, layout.values, dtype))
 }
 
 /// Lay a storage-tiled tensor of plain values back out row-major, every logical dim in order.
