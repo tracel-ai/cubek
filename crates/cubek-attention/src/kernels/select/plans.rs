@@ -14,7 +14,8 @@
 //! - `refused: ..`: the selection refuses the call.
 
 use super::AttentionOpStrategy;
-use super::selector::{KvKind, QueryPositions, select};
+use super::problem::{KvKind, QueryPositions};
+use super::selector::select;
 use crate::kernels::plan::AttentionTableGroups;
 use cubek_std::plan::Plan;
 

@@ -1,6 +1,6 @@
 use super::{AttentionCall, AttentionPlan};
 use crate::kernels::AttentionKernel;
-use crate::kernels::select::selector::QueryPositions;
+use crate::kernels::select::problem::QueryPositions;
 use crate::kernels::tune::launch_tuned;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;

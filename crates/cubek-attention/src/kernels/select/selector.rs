@@ -5,6 +5,7 @@
 //! kernel is chosen: by measurement on one of two autotunes, by rule, or by the caller's pin.
 //! Each routine then chooses its own setting, the autotune's candidates being its settings.
 
+use super::problem::{KvKind, QueryPositions};
 use super::{AttentionKernel, AttentionOpStrategy};
 use crate::kernels::plan::{
     AttentionPlan, AttentionTableGroups, CacheRead, KernelLead, Rebuilt, fastest,
@@ -12,31 +13,6 @@ use crate::kernels::plan::{
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
 use cubecl::tile::launch::Refusal;
 use cubek_std::plan::{InOrder, Then};
-
-/// How many query positions a call has: what the rules and autotune tell calls apart by.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueryPositions {
-    One,
-    Many,
-}
-
-impl QueryPositions {
-    /// The positions of a call of `seq_q` queries.
-    pub fn of(seq_q: usize) -> Self {
-        match seq_q {
-            1 => Self::One,
-            _ => Self::Many,
-        }
-    }
-}
-
-/// What the cache a call reads is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KvKind {
-    Float,
-    /// TurboQuant, with or without the keys' QJL fix-up.
-    Packed,
-}
 
 /// The kernel a rule runs at one query position, over a float cache or a packed one.
 const ONE_POSITION_RULE: AttentionKernel =

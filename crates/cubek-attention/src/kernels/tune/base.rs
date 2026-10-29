@@ -6,7 +6,7 @@
 //! raced on the one chunk, or the one decode step, every key over a cache stands for
 //! ([`AttentionKey`]): no key reads how many positions a cache holds.
 
-use crate::kernels::select::selector::QueryPositions;
+use crate::kernels::select::problem::QueryPositions;
 use crate::kernels::tune::key::AttentionKey;
 use crate::kernels::{
     AttentionBlueprint, AttentionRoutine, AttentionRoutineCandidate, AttentionRoutineProblem,
