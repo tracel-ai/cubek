@@ -1051,12 +1051,14 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
         self.fill.delivery.bound()
     }
 
-    /// As their words where its planes' instruction is block-scaled, which takes a word of them as
-    /// its scale register.
+    /// As their words where its planes' instruction is block-scaled and takes a word of them as its
+    /// scale register: the word's blocks are one step of it, NVFP4's four of sixteen under a step
+    /// of 64. As fields otherwise, each read and narrowed as the planes load it, kept beside the
+    /// values: MXFP8's word of four `ue8m0` scales covers four of its steps of 32.
     fn block_scales(&self) -> BlockScales {
-        match self.plane.instruction.block_scaled() {
-            true => BlockScales::Words,
-            false => BlockScales::Fields,
+        match self.plane.instruction.form() {
+            Some(form) if self.plane.instruction.scale_word_is_a_step(form) => BlockScales::Words,
+            Some(_) | None => BlockScales::Fields,
         }
     }
 
