@@ -1,7 +1,6 @@
 use core::marker::PhantomData;
-use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, Tile, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, cube_unstaged_attention_microkernel,
 };

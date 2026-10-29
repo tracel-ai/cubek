@@ -5,9 +5,8 @@ use crate::attention_backward::ScoreWindows;
 use crate::attention_backward::key_gradient::plane::{
     KeyGradientSums, PlaneKeyGradientMicrokernel,
 };
-use cubecl::prelude::*;
 use cubecl::tile::{Region, StageStorage, Stages, Tile};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
 /// One cube's keys of one key head: each plane's keys' and values' gradients, over every head of

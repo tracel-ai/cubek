@@ -1,6 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, StageStorage, Tile, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_shared_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
@@ -65,7 +64,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
-        let bias = visible.bias::<EA>(&partitioning);
+        let bias = visible.step_bias::<EA>(&partitioning, &cube);
 
         // The run's steps of the box its rows see: none past them is walked.
         let seen = visible.steps(&cube, microkernel.cube.seq_q(), keys_per_step, 1usize);
@@ -78,7 +77,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
         let run = cube.walk().range(from, taken);
         cube_staged_attention_shared_microkernel::<EA, ES, E>(
             &cube,
-            cube.walk().range(from, taken),
+            from,
+            taken,
             &run,
             &o.at(&cube),
             &lse.clone().map(|lse| lse.at(&cube)),

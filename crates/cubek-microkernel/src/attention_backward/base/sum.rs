@@ -1,7 +1,6 @@
 use crate::attention::D;
-use cubecl::prelude::*;
 use cubecl::tile::Tile;
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// `sum`, a gradient summed over a walk along `D`, its `rows` rows scaled by the attention's
 /// `scale`, drained into `gradient`: the query's and the keys' gradients both carry the score's

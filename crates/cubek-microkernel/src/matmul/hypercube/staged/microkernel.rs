@@ -1,8 +1,7 @@
 use crate::matmul::cube::{CubeStagedWalk, cube_staged_sum_microkernel};
-use cubecl::prelude::*;
 use cubecl::tile::launch::{LastArrival, Relay};
 use cubecl::tile::{StageStorage, Tile, Walk};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a box it shares with the cubes before and after it along `K`: its run of
 /// `K` arrives as boxes one stage deep, the cube's regions of a partitioning that deals `K` to its

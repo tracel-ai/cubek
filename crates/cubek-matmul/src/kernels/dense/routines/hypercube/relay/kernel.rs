@@ -1,7 +1,6 @@
-use cubecl::prelude::*;
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, hypercube_staged_relay_microkernel,
 };

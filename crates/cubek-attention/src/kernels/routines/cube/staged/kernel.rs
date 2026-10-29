@@ -1,6 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, StageStorage, Tile, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, cube_staged_attention_microkernel,
 };
@@ -38,7 +37,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
-        let bias = visible.bias::<EA>(&partitioning);
+        let bias = visible.step_bias::<EA>(&partitioning, &cube);
         let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
 
         cube_staged_attention_microkernel::<EA, ES>(

@@ -1,8 +1,7 @@
 use crate::split_keys_merge::SlotBox;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use crate::split_keys_merge::plane::plane_split_keys_merge_microkernel;
-use cubecl::prelude::*;
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The cube that stored its partial of `slot_box`'s queries counting itself in at the box, and the
 /// last of the box's cubes to count merging the box into `out`, and into `logsumexp` where the

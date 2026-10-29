@@ -1,6 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::tile::{Region, Tile};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// `sum += a · b` over one step of a unit's block. The caller opens `sum` (an `accumulator` of
 /// `Instruction::Registers` at

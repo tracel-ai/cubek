@@ -1,7 +1,6 @@
 use cubecl::ir::ElemType;
-use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, Tile, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::unit::{UnitAttentionMicrokernel, unit_attention_microkernel};
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 

@@ -1,7 +1,6 @@
-use cubecl::prelude::*;
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Axis, Instruction, Partitioning, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 

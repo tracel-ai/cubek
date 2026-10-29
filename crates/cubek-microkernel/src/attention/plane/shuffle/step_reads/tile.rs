@@ -1,10 +1,9 @@
 use crate::attention::S;
 use crate::attention::plane::{StepReads, StepReadsExpand, StepWalk};
 use core::marker::PhantomData;
-use cubecl::prelude::*;
 use cubecl::tile::layout::PageEntry;
 use cubecl::tile::{Region, Tile};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A float operand's lines, read where they lie through its tile, at `E`, the element it holds.
 #[derive(CubeType, Clone)]

@@ -1,9 +1,8 @@
 use super::base::CubeMeet;
 use crate::matmul::plane::plane_shuffle_microkernel;
 use crate::matmul::{MatmulOperands, MatmulRead};
-use cubecl::prelude::*;
 use cubecl::tile::{Axis, Instruction, Region, Semiring, Tile};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's run of the output: `c = a · b` over `cube`, its planes each summing their slice of
 /// every step in `EA`, adding their partials into one accumulator in shared memory as `meet` says,

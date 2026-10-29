@@ -1,8 +1,7 @@
 use crate::matmul::MatmulAxes;
 use crate::matmul::plane::PlaneFragmentMicrokernel;
-use cubecl::prelude::*;
 use cubecl::tile::{Axis, Level, Region, Semiring, Space, StageStorage, Tile, Walk};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// A plane's windows of shared memory between a step's contractions: its scores and the gradient
 /// against its probabilities, summed in `EA`, and the one of them the next contraction loads, cast

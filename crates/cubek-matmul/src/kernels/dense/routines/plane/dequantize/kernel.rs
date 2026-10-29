@@ -1,7 +1,6 @@
-use cubecl::prelude::*;
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Partitioning, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// Every plane of the launch writing its box of the packed matrix, its scales applied, into the
 /// float one, its units taking the box's reads of the words in turns: the decode happens in the

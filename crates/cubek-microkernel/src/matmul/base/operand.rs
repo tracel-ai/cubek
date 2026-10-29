@@ -1,8 +1,6 @@
 use crate::matmul::{MatmulAxes, MatmulDim};
-use cubecl::ir::ElemType;
-use cubecl::prelude::*;
 use cubecl::tile::{Axis, Tile};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
 use cubek_std::layout::BindingOrder;
 
 /// One of the three operands of `out = lhs · rhs`.

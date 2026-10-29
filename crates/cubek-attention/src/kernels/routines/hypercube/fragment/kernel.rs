@@ -1,6 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::tile::{Partitioning, StageStorage, TileArg};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::attention::cube::cube_staged_attention_partial_microkernel;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
@@ -46,7 +45,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
         .tile(&partitioning)
         .within(S, 0, visible.attended as usize);
     let o = out.tile(&partitioning);
-    let bias = visible.bias::<EA>(&partitioning);
+    let bias = visible.step_bias::<EA>(&partitioning, &first_step);
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),

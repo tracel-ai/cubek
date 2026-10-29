@@ -1,10 +1,9 @@
 use super::base::PlaneShuffleAttentionMicrokernel;
 use super::step_reads::{StepReads, StepReadsExpand, StepWalk};
 use crate::attention::{D, G, Q, S, VisibleKeys};
-use cubecl::prelude::*;
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Monoid, Region, Tile, Walk};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One plane's rows in its units' registers while it walks the keys: each unit's lines of every
 /// row's query and unnormalized output, and its team's running max and sum of every row.

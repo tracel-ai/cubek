@@ -3,9 +3,8 @@ use crate::attention::{D, DV, Q, S};
 use crate::attention_backward::{ScoreWindows, drain_scaled};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
-use cubecl::prelude::*;
 use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
-use cubecl::{self as cubecl, cube};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
 /// One plane's keys of one key head: `value_gradient = Σ_{g, q} probabilities · out_gradient` and
