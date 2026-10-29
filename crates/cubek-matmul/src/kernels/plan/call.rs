@@ -1,4 +1,3 @@
-use crate::kernels::indexed::routed::RoutedMatmulTensors;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, create_key};
 use cubecl::CubeTuneId;
@@ -27,9 +26,6 @@ pub struct MatmulCall {
     pub rhs: MatmulCallInput,
     /// The element the product is written in.
     pub out: ElemType,
-    /// Where each lhs row reads the slabs of a stacked rhs its routes name: the routed product
-    /// they state, read as stored once for every candidate of a table.
-    pub routes: Option<RoutedMatmulTensors>,
     /// The buffer the product is written into, where the caller allocated it at the product's
     /// shape; a launch allocates one otherwise.
     pub destination: Option<TensorHandle>,
@@ -39,9 +35,6 @@ impl MatmulCall {
     /// The key a table measures the product under: its extents, the element it is written in,
     /// and each input as it lies.
     pub fn key(&self) -> MatmulTuneKey {
-        if let Some(routes) = &self.routes {
-            return routes.key();
-        }
         create_key(
             self.out,
             (&self.lhs.meta, self.lhs.tensor.kind()),
@@ -50,13 +43,11 @@ impl MatmulCall {
     }
 
     /// What a tuning round measures for `key`: the call's rhs, and a zero float lhs as many rows
-    /// as the key's bucket stands for, or the call's lhs where none can be laid out alike. A routed
-    /// product is measured on the call's own operands: its rows ride the batches, and its routes
-    /// are what the call's are.
+    /// as the key's bucket stands for, or the call's lhs where none can be laid out alike.
     pub fn representative(key: &MatmulTuneKey, call: &Self) -> Self {
-        let grown = match (&call.routes, &call.lhs.tensor) {
-            (None, StoredTensor::Plain(lhs)) => zeros_grown(&call.client, lhs, key.m),
-            _ => None,
+        let grown = match &call.lhs.tensor {
+            StoredTensor::Plain(lhs) => zeros_grown(&call.client, lhs, key.m),
+            StoredTensor::Packed(_) => None,
         };
         // A grown lhs makes a product of another shape than the caller's buffer, so the round's
         // launches allocate their own.

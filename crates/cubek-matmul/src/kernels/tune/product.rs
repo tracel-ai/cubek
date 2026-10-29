@@ -30,6 +30,41 @@ pub(crate) enum ListedFor {
     Either,
 }
 
+/// A setting and the kind of product it is listed for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Listed<S> {
+    pub settings: S,
+    pub listed: ListedFor,
+}
+
+impl<S: PartialEq> Listed<S> {
+    /// The settings of a float product's list and of a packed product's, each with the kind it is
+    /// listed for. A setting in both lists is listed for either, so no candidate name repeats.
+    pub(crate) fn merged(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
+        let (shared, only_packed): (Vec<_>, Vec<_>) = packed
+            .into_iter()
+            .partition(|settings| float.contains(settings));
+        let float = float.into_iter().map(|settings| {
+            let listed = match shared.contains(&settings) {
+                true => ListedFor::Either,
+                false => ListedFor::Float,
+            };
+            Self { settings, listed }
+        });
+        let packed = only_packed.into_iter().map(|settings| Self {
+            settings,
+            listed: ListedFor::Packed,
+        });
+        float.chain(packed).collect()
+    }
+
+    /// The listings of `list` whose kind admits a product of kind `product`.
+    pub(crate) fn admitted(list: &[Self], product: Product) -> impl Iterator<Item = &Self> {
+        list.iter()
+            .filter(move |listing| listing.listed.admits(product).is_ok())
+    }
+}
+
 /// What a float setting declines: a packed input, which it was not listed for.
 pub const FLOAT_SETTING_PACKED_INPUT: Refusal = Refusal::Declined {
     why: "a setting listed for float inputs reads them, and an input is packed",

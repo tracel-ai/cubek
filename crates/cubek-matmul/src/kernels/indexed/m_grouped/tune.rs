@@ -19,14 +19,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort, upload};
 use crate::kernels::indexed::m_grouped::{
-    MGroupedFloors, MGroupedListing, MGroupedMatmulTensors, MGroupedRowSource,
-    MGroupedRowSourceKind, MGroupedSettings,
+    MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
+    MGroupedSettings,
 };
 use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{ListedFor, Product};
+use crate::kernels::tune::{Listed, ListedFor, Product};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
     PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
@@ -47,7 +47,6 @@ pub struct MGroupedMatmulKey {
     /// Slabs in the stack, one per group.
     groups: usize,
     /// Grouped rows, anchored to the power of two above them.
-    #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     m: usize,
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
@@ -102,9 +101,9 @@ pub fn launch_tuned_padded(
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
     let stack = Product::of([tensors.stack_kind()]);
     let floors = MGroupedFloors::LISTED;
-    let plane_shuffle = MGroupedListing::admitted(&floors.plane_shuffle, stack)
+    let plane_shuffle = Listed::admitted(&floors.plane_shuffle, stack)
         .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
-    let cube_staged = MGroupedListing::admitted(&floors.cube_staged, stack)
+    let cube_staged = Listed::admitted(&floors.cube_staged, stack)
         .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
     plane_shuffle
         .chain(cube_staged)

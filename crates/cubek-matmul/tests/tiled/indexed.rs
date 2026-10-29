@@ -13,6 +13,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
+use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
 use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
@@ -21,6 +22,7 @@ use cubek_matmul::kernels::{
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
+use cubek_std::autotune::GroupPriority;
 use cubek_std::matmul_axes::{K, N};
 use cubek_std::routine::Routine;
 use cubek_test_utils::{HostData, HostDataType, TestOutcome, ValidationResult, client};
@@ -385,6 +387,48 @@ fn a_routed_product_on_the_unit_registers_reads_each_route_s_slab() {
         || ROUTED.inputs(),
         &ROUTED.expected(),
     );
+}
+
+/// The routed product through the routed autotune, against the host reference: the stack a col
+/// one, its buffer `[slabs · n, k]` behind the `[k, slabs · n]` view.
+#[test]
+fn a_tuned_routed_product_reads_each_route_s_slab() {
+    let client = client();
+    let Routed {
+        tokens,
+        picks,
+        slabs,
+        k,
+        n,
+    } = ROUTED;
+    let stack = values(slabs * k * n, 2);
+    let buffer: Vec<f32> = (0..slabs * n)
+        .flat_map(|row| (0..k).map(move |kk| (row, kk)))
+        .map(|(row, kk)| stack[((row / n) * k + kk) * n + row % n])
+        .collect();
+    let col_stack = TensorHandle::new(
+        client.create(Bytes::from_elems(buffer)),
+        [k, slabs * n],
+        [1, k],
+        f32::elem_type_native(),
+    );
+    let tensors = RoutedMatmulTensors::new(
+        &client,
+        upload(&client, &[tokens, k], &values(tokens * k, 1)),
+        StoredTensor::Plain(PlainTensor::of_handle(col_stack)),
+        upload(&client, &[tokens, picks], &ROUTED.routes()),
+        slabs,
+        SlabAxis::Output,
+    )
+    .expect("a col stack of whole slabs derives a routed launch");
+    let launched = launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT);
+    let mut walk = Walk::new();
+    if let Some(out) = walk.ran(launched) {
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        let shape = [tokens, picks, n];
+        assert_close(&got, &shape, &ROUTED.expected(), FLOAT_TOLERANCE, &"routed");
+    }
+    walk.settle();
 }
 
 #[test]
