@@ -187,6 +187,7 @@ mod cube_staged {
     use cubecl::tile::launch::Refusal;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::MatmulDim;
+    use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
     use cubek_microkernel::matmul::plane::PlaneFragmentTransport;
     use cubek_std::devices;
@@ -278,6 +279,10 @@ mod cube_staged {
             else {
                 continue;
             };
+            // A stage holding the rhs as it is stored decodes nothing into it.
+            if blueprint.microkernel.decoded_stage().is_none() {
+                continue;
+            }
             let StageStorage::Tiled { chunks, .. } = blueprint.shared_memory else {
                 panic!("{settings}: a matrix instruction's stage is tiled");
             };

@@ -176,6 +176,7 @@ impl PlaneFragmentAttentionMicrokernel {
                         },
                         axes: value_item.axes,
                         blocks: None,
+                        k_stated: crate::matmul::plane::PlaneFragmentKStatement::Caller,
                     },
                 })
             })

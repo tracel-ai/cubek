@@ -130,4 +130,29 @@ impl MatmulStage {
     pub fn axes(&self) -> MatmulAxes {
         self.axes
     }
+
+    /// The box `operand`'s stage lands over `axes`, bound in the order `orders` says: its part's
+    /// extent along each axis it names, the whole box's along one it lies beside (a block-split
+    /// space's blocks of `K`), and one along an axis the box does not hold. What one bulk copy
+    /// moves of the operand a stage.
+    pub fn landed_space(
+        &self,
+        operand: MatmulOperand,
+        orders: MatmulOperands<BindingOrder>,
+        axes: &[Axis],
+    ) -> Space {
+        let own = self.operand_space(operand, orders);
+        let extents: Vec<_> = axes
+            .iter()
+            .map(|&axis| {
+                let extent = match (own.contains(axis), self.space.contains(axis)) {
+                    (true, _) => own.extent(axis),
+                    (false, true) => self.space.extent(axis),
+                    (false, false) => 1,
+                };
+                (axis, extent)
+            })
+            .collect();
+        Space::new(&extents)
+    }
 }

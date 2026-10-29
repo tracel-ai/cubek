@@ -6,17 +6,19 @@
 use super::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind, UIntKind};
-use cubecl::prelude::TensorBinding;
+use cubecl::prelude::{TensorBinding, TensorMapSwizzle};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
-use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal};
+use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Axis, Launcher, Projection, TileArgLaunch,
     kind::Field,
     layout::{DimsBuilder, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::MatmulStoredTile;
 use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
+use cubek_std::launch::tma::tma_operand_tiled_typed;
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
 use cubek_std::layout::tile_order;
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
@@ -269,6 +271,15 @@ impl PackedTensor {
         }
     }
 
+    /// The tile its words are stored in, which a descriptor lands a stage of whole tiles of row
+    /// by row: its lines by its values of `K`. None in rows.
+    pub fn stored_tile(&self) -> Option<MatmulStoredTile> {
+        match self.laid {
+            WordsLaid::InRows => None,
+            WordsLaid::InTiles((columns, rows)) => Some(MatmulStoredTile { rows, columns }),
+        }
+    }
+
     /// What `axis` of the matrix measures.
     ///
     /// # Panics
@@ -447,6 +458,119 @@ impl PackedTensor {
             }
         }
         .expect(ADMITTED_PLAN_RUNS)
+    }
+
+    /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under
+    /// `BlockScales::Fields`, served `width` values wide, its words moved by the TMA engine
+    /// through a descriptor over the tiles they are stored in
+    /// ([`tile_order::words_in_tiles`]): a box of `stage_lines` lines by `stage_k` values of `k`,
+    /// landing row by row, swizzled as `swizzle` says. Its block scales are bound for the units to
+    /// keep beside the words.
+    ///
+    /// # Panics
+    ///
+    /// On words in rows, or a stage not whole tiles along its lines, nor whole tiles or a part
+    /// dividing one along `k`.
+    pub fn bind_by_tma(
+        &self,
+        launcher: &Launcher,
+        width: usize,
+        stage_lines: usize,
+        stage_k: usize,
+        swizzle: TensorMapSwizzle,
+    ) -> TileArgLaunch {
+        let WordsLaid::InTiles(tile) = self.laid else {
+            panic!("bind_by_tma: words stored in tiles only");
+        };
+        let (tile_k, tile_lines) = tile;
+        let operand = &self.operand;
+        let lined = operand.lined();
+        let rows_along = self.other_axis(lined);
+        let rows = self.extent(rows_along);
+        let across = self.other_axis(K);
+        let (k, lines) = (self.extent(K), self.extent(across));
+        assert!(
+            (stage_k.is_multiple_of(tile_k) || tile_k.is_multiple_of(stage_k))
+                && stage_lines.is_multiple_of(tile_lines),
+            "bind_by_tma: a stage of {stage_lines} x {stage_k} is not whole {tile:?} tiles along \
+             its lines, nor whole tiles or a part dividing one along k"
+        );
+        let words = self
+            .words
+            .bound_as(tile_order::words_in_tiles(k, lines, tile));
+        let map = tma_operand_tiled_typed(
+            words,
+            (stage_lines, stage_k / tile_order::VALUES_PER_WORD),
+            TmaLanding::Rows,
+            WORD,
+            swizzle,
+        );
+        let values_axes = tile_order::values_axes(across);
+        // The descriptor after a row landing: the strips of lines, a line in the strip, the
+        // tiles along `k`, a word in the tile; a box starts on whole tiles both ways.
+        let coordinates = TmaCoordinates {
+            dims: vec![
+                vec![TmaTerm::axis(0).over(tile_lines as u32)],
+                vec![],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(tile_order::BLOCK as u32)
+                        .over(tile_k as u32),
+                ],
+                vec![
+                    TmaTerm::axis(1)
+                        .times(tile_order::BLOCK as u32)
+                        .modulo(tile_k as u32)
+                        .over(tile_order::VALUES_PER_WORD as u32),
+                ],
+            ],
+        };
+        let words = TileArgLaunch::tensor_map_folded(
+            map,
+            &values_axes,
+            &[
+                lines as u32,
+                (k / tile_order::BLOCK) as u32,
+                tile_order::BLOCK as u32,
+            ],
+            coordinates,
+        )
+        .served_wide(width / self.scheme.num_quants())
+        .packed(Field::from(self.scheme.value).read_on(launcher.client()));
+        let words_axes = values_axes.to_vec();
+        let tiled_along = operand
+            .scaled_along()
+            .expect("a block-scaled matrix groups one of its axes");
+        let (blocks_axis, inside) = blocked(tiled_along);
+        let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
+        let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
+        let block_scales = launcher
+            .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
+            .gathered(
+                self.stack_dim()
+                    .dim(scale_rows)
+                    .dim(self.dim(lined))
+                    .build()
+                    .scales_per(blocks_axis),
+            )
+            .vectorize(operand.scale_read_values());
+        let fields = self
+            .scheme
+            .block_scale()
+            .map(|block| block.dtype)
+            .into_iter()
+            .chain(self.scheme.tensor_scale())
+            .map(Field::of_scale);
+        let global = self.global_scale.as_ref().map(|scale| {
+            launcher
+                .arg(scale.rows(1, 1), WORD)
+                .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
+        });
+        let mut tile = words;
+        for (scale, field) in [block_scales].into_iter().chain(global).zip(fields) {
+            tile = tile.scales(scale.packed(field).build().expect(ADMITTED_PLAN_RUNS).arg());
+        }
+        tile
     }
 
     /// `words` under `block_scales`, words of block scales read whole and so bound plain, under

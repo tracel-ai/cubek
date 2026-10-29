@@ -1,12 +1,14 @@
 use crate::matmul::MatmulStage;
 use crate::matmul::cube::MatmulCubeSpace;
-use crate::matmul::plane::PlaneFragmentMicrokernel;
-use crate::matmul::{MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem};
+use crate::matmul::plane::{PlaneFragmentKStatement, PlaneFragmentMicrokernel};
+use crate::matmul::{
+    MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulOperands, MatmulWorkItem,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::stage::Prefetch;
-use cubecl::tile::{Scratch, StageStorage, launch::Delivery};
-use cubek_std::matmul_axes::{K, M, N};
+use cubecl::tile::{Axis, Scratch, StageStorage, launch::Delivery};
+use cubek_std::matmul_axes::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
@@ -78,6 +80,12 @@ pub enum CubeStagedTmaRefusal {
     Unlanded(MatmulOperand),
     /// A stage's edge is past what one descriptor's box holds.
     BoxPastDescriptor,
+    /// A block-split product's stage holds a packed operand decoded, which the fill writes value
+    /// by value: the engine lands the words only as they are stored.
+    Decoded,
+    /// A block-split product's lhs is packed: its descriptors land a float lhs beside a packed
+    /// rhs's words.
+    PackedLhs,
 }
 
 /// Why a stage asked of the copy engine is copied by the cube's units instead.
@@ -206,6 +214,8 @@ impl CubeStagedTmaRefusal {
             Some(Self::PrefetchInRegisters)
         } else if cube_space.batched {
             Some(Self::Batched)
+        } else if let Some(blocks) = &item.blocks {
+            Self::of_blocks(item, blocks, buffers, stage, storage, microkernel)
         } else if item.layouts.rhs == MatmulLayout::Strided {
             Some(Self::StridedWeight)
         } else if let Some(operand) = staged.into_iter().find(|&operand| {
@@ -228,6 +238,82 @@ impl CubeStagedTmaRefusal {
         } else if Delivery::Tma
             .moves(&stage.space().subspace(&[M, N, K]))
             .is_err()
+        {
+            Some(Self::BoxPastDescriptor)
+        } else {
+            None
+        }
+    }
+}
+
+impl CubeStagedTmaRefusal {
+    /// Why a stage of a product in the block-split space `blocks`, over buffers as `buffers`
+    /// states them, held as `storage`, is not one the engine lands for `microkernel`; `None`
+    /// where it is. A float lhs lands through a descriptor over the matrix its blocks split, a
+    /// stage's rows its blocks of `K` side by side; the packed rhs's words through one over the
+    /// tiles they are stored in, a stage of whole tiles along its lines, at most one tile deep or
+    /// whole tiles deep; the rhs's scales are copied beside them by the units.
+    fn of_blocks(
+        item: &MatmulWorkItem,
+        blocks: &MatmulBlocks,
+        buffers: &MatmulBuffers,
+        stage: &MatmulStage,
+        storage: &StageStorage,
+        microkernel: &PlaneFragmentMicrokernel,
+    ) -> Option<Self> {
+        let axes = stage.axes();
+        let landed = |operand: MatmulOperand, rows: Axis| {
+            stage.landed_space(operand, microkernel.orders, &[rows, KB, KI])
+        };
+        let (lhs, rhs) = (
+            landed(MatmulOperand::Lhs, axes.m),
+            landed(MatmulOperand::Rhs, axes.n),
+        );
+        let bits = |operand: MatmulOperand| item.elements.get(operand).size_bits();
+        let depth = rhs.extent(KB) * rhs.extent(KI);
+        // A stage's depth in packed words is whole 16-byte lines.
+        let words_bytes = depth * bits(MatmulOperand::Rhs) / 8;
+        let rhs_tiles = buffers.stored_tiles.rhs.is_some_and(|tile| {
+            rhs.extent(axes.n).is_multiple_of(tile.rows)
+                && (tile.columns.is_multiple_of(depth) || depth.is_multiple_of(tile.columns))
+                && words_bytes.is_multiple_of(TMA_ALIGNMENT_BYTES)
+        });
+        if microkernel.k_stated != PlaneFragmentKStatement::Blocks {
+            Some(Self::Decoded)
+        } else if blocks.packings.lhs.is_some() {
+            Some(Self::PackedLhs)
+        } else if blocks.packings.rhs.is_none() || !rhs_tiles {
+            Some(Self::StoredInTiles(MatmulOperand::Rhs))
+        } else if !buffers
+            .alignments
+            .lhs
+            .admits(TMA_ALIGNMENT_BYTES * 8 / bits(MatmulOperand::Lhs))
+        {
+            Some(Self::Misaligned(MatmulOperand::Lhs))
+        } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
+            !buffers
+                .start_bytes
+                .get(operand)
+                .is_multiple_of(TMA_ALIGNMENT_BYTES as u64)
+        }) {
+            Some(Self::UnalignedStart(operand))
+        } else if storage
+            .tma_swizzle(&lhs, 1, bits(MatmulOperand::Lhs))
+            .is_err()
+        {
+            Some(Self::Unlanded(MatmulOperand::Lhs))
+        } else if storage
+            .tma_swizzle(
+                &rhs,
+                u32::BITS as usize / bits(MatmulOperand::Rhs),
+                bits(MatmulOperand::Rhs),
+            )
+            .is_err()
+        {
+            Some(Self::Unlanded(MatmulOperand::Rhs))
+        } else if [&lhs, &rhs]
+            .into_iter()
+            .any(|space| Delivery::Tma.moves(space).is_err())
         {
             Some(Self::BoxPastDescriptor)
         } else {

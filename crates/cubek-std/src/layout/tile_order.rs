@@ -37,7 +37,7 @@ pub fn values_axes(across: Axis) -> [Axis; 3] {
 }
 
 /// e2m1 values in a `u32` word.
-const VALUES_PER_WORD: usize = 8;
+pub const VALUES_PER_WORD: usize = 8;
 
 /// The one scheme tile order stores: e2m1 values eight to a word along `k`, under ue4m3 scales
 /// for blocks of sixteen along `k` and an f32 per-tensor scale.
