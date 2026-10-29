@@ -18,6 +18,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Levels, Scratch, Space, StageStorage, launch::Bound, space::Coverage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -469,6 +470,15 @@ impl CubeStagedMicrokernel {
         let ring = self
             .ring
             .resolve(hw, &stage.operands(item.elements, self.plane.orders), units);
+        // A stage the fill decodes into is filled from words, which the register prefetch does not
+        // read: it refuses at expansion, a launch that writes nothing.
+        let ring = match self.walk().decoded().is_some() {
+            true => StageRing {
+                prefetch: Prefetch::InSlots,
+                ..ring
+            },
+            false => ring,
+        };
         let instruction = self.plane.instruction;
         let landed = self.plane.landed_stage_storage(stage);
         let merges = self.drain() == CubeStagedDrain::Merged || write.accumulates();
