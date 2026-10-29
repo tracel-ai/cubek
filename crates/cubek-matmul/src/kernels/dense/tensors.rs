@@ -1101,7 +1101,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// over the matrix its blocks split, `k` cut into rows of the swizzle's span so a box lands a
     /// stage's blocks of `K` side by side; the packed rhs's words through one over the tiles they
     /// are stored in ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` for the
-    /// units to keep beside them. What a fill
+    /// copy engine to keep beside them. What a fill
     /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
     pub fn tma_packed_operands(
         &self,

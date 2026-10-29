@@ -125,19 +125,21 @@ impl CubeStagedMicrokernel {
     /// `K` deep: its stages keep the packed input's scales beside the codes, read four to a word
     /// along `KB`, and a stage shallower than a word of them would cut one.
     ///
+    /// The TMA engine's beside a plane set aside to fill: it issues the descriptors and hands the
+    /// scales to the copy engine, and the planes that contract only decode and multiply.
+    ///
     /// Measured on Qwen3-4B's and Qwen3-8B's projections at 512 and 2048 rows on an RTX PRO 6000
-    /// (sm_120), out of sixty boxes, rings and fills: by each engine, the fewest that come within
-    /// 3% of its fastest on every projection. Together they come within 2% of the fastest of all.
-    /// A fill by the units never was the fastest.
+    /// (sm_120): by each engine, the fewest boxes, rings and fills that come within 3% of its
+    /// fastest on every projection. A fill by the units never was the fastest, nor, once a plane
+    /// could be set aside, a TMA fill without one.
     const STORED: [CubeStagedMicrokernelSettings; 6] = [
-        // One plane along `m`, eight along `n`: no two planes decode the same rhs fragment.
-        CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE)
-            .filled(CubeStagedDelivery::Tma, 0),
         CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 0),
-        CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::DOUBLE)
-            .filled(CubeStagedDelivery::Tma, 0)
-            .split_along_k(2),
+            .filled(CubeStagedDelivery::Tma, 1),
+        CubeStagedMicrokernelSettings::stored((4, 4, 4), (2, 4), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::Tma, 1),
+        // One plane along `m`, eight along `n`: no two planes decode the same rhs fragment.
+        CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::Tma, 1),
         CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::TRIPLE)
             .filled(CubeStagedDelivery::AsyncCopy, 0),
         CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
