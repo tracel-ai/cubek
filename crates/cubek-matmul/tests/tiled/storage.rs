@@ -506,3 +506,52 @@ fn an_empty_tensor_refuses_a_shape_shorter_than_its_axes() {
     );
     assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
 }
+
+/// A packed tensor is stored in `u32` words, so packed values of another element are refused
+/// before a buffer too small for their words is allocated.
+#[test]
+fn an_empty_tensor_refuses_packed_values_not_in_words() {
+    let client = client();
+    let refused = empty(
+        &client,
+        &[8, 8, 16],
+        &[N, KB, KI],
+        f32::elem_type_native(),
+        Some(Field::Quant(QuantValue::E2M1)),
+        StorageLevels::new(&[(KI, 8)]).grid(&[KI, KB, N]),
+    );
+    assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+}
+
+/// A packed tensor packs along the last of its axes, so a packed statement over none is refused,
+/// as is a packed source of fewer dims than its axes, before its contiguous dim is read.
+#[test]
+fn packed_values_without_their_axes_are_refused() {
+    let client = client();
+    let word = u32::elem_type_native();
+    let field = Some(Field::Quant(QuantValue::E2M1));
+    let refused = empty(
+        &client,
+        &[64],
+        &[],
+        word,
+        field,
+        StorageLevels::new(&[(KI, 8)]).grid(&[KI]),
+    );
+    assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+    let src = TensorHandle::new(
+        client.create(Bytes::from_elems(vec![0u32; 1])),
+        Vec::<usize>::new(),
+        Vec::<usize>::new(),
+        word,
+    );
+    let refused = tile(
+        &client,
+        src.binding(),
+        &[N, KB, KI],
+        word,
+        field,
+        StorageLevels::new(&[(KI, 8)]).grid(&[KI, KB, N]),
+    );
+    assert!(matches!(refused, Err(MatmulSetupError::InvalidConfig(_))));
+}

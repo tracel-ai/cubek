@@ -89,17 +89,18 @@ struct StoredLayout {
 impl StoredLayout {
     /// The layout of a tensor of `shape`, its trailing dims named by `axes` (the dims ahead stay
     /// plain and coarsest, one batch each), stored as `storage` states, `packed` saying the values
-    /// sit `field.per_word()` to a `u32` along the last of `axes`.
+    /// sit `field.per_word()` to a `u32` along the last of `axes`, so its `dtype` is `u32`.
     ///
     /// # Errors
     ///
-    /// A shape of fewer dims than the axes it is stated over, a packed statement whose word is
-    /// not its finest stored tile, or a partitioning that does not close the tensor in whole
-    /// tiles or is deeper than a tiling records.
+    /// A shape of fewer dims than the axes it is stated over, a packed statement over no axes, of
+    /// words that are not `u32`, or whose word is not its finest stored tile, or a partitioning
+    /// that does not close the tensor in whole tiles or is deeper than a tiling records.
     #[allow(clippy::result_large_err)]
     fn new(
         shape: &[usize],
         axes: &[Axis],
+        dtype: ElemType,
         packed: Option<Field>,
         storage: &StoragePartitioning,
         refused: impl Fn(String) -> MatmulSetupError,
@@ -121,7 +122,17 @@ impl StoredLayout {
         let (per_word, words_storage) = match packed {
             None => (1, storage.clone()),
             Some(field) => {
-                let (packed_axis, per_word) = (axes[axes.len() - 1], field.per_word());
+                let Some(&packed_axis) = axes.last() else {
+                    return Err(refused(
+                        "a packed tensor names the axis it packs along".into(),
+                    ));
+                };
+                if dtype != u32::elem_type_native() {
+                    return Err(refused(format!(
+                        "a {field:?} tensor is stored in u32 words, not {dtype:?}"
+                    )));
+                }
+                let per_word = field.per_word();
                 if storage.tiles().first() != Some(&(packed_axis, per_word)) {
                     return Err(refused(format!(
                         "a {field:?} word is {per_word} values along {packed_axis:?}, so it is \
@@ -135,7 +146,7 @@ impl StoredLayout {
         };
         let word_extents: Vec<(Axis, usize)> = values
             .iter()
-            .map(|&(axis, extent)| match axis == axes[axes.len() - 1] {
+            .map(|&(axis, extent)| match Some(&axis) == axes.last() {
                 true => (axis, extent / per_word),
                 false => (axis, extent),
             })
@@ -197,9 +208,9 @@ impl StoredLayout {
 ///
 /// # Errors
 ///
-/// As [`tile`], but for a source: a packed statement whose word is not its finest stored tile,
-/// or a partitioning that does not close the tensor in whole tiles or is deeper than a tiling
-/// records.
+/// As [`tile`], but for a source: a shape of fewer dims than its axes, a packed statement over
+/// no axes, of words that are not `u32`, or whose word is not its finest stored tile, or a
+/// partitioning that does not close the tensor in whole tiles or is deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn empty(
     client: &Client,
@@ -210,7 +221,7 @@ pub fn empty(
     storage: StoragePartitioning,
 ) -> Result<TensorHandle, MatmulSetupError> {
     let refused = |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("empty: {why}")));
-    let layout = StoredLayout::new(shape, axes, packed, &storage, refused)?;
+    let layout = StoredLayout::new(shape, axes, dtype, packed, &storage, refused)?;
     let handle = client.empty(layout.word_count * dtype.size());
     Ok(TensorHandle::from_metadata(handle, layout.values, dtype))
 }
@@ -228,9 +239,10 @@ pub fn empty(
 ///
 /// # Errors
 ///
-/// A source already storage-tiled, a packed source whose word is not the finest stored tile or
-/// whose last named dim is not its contiguous one, or a partitioning that does not close the
-/// tensor in whole tiles or is deeper than a tiling records.
+/// A source already storage-tiled or of fewer dims than its axes, a packed source over no axes,
+/// of words that are not `u32`, whose word is not the finest stored tile or whose last named dim
+/// is not its contiguous one, or a partitioning that does not close the tensor in whole tiles or
+/// is deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn tile(
     client: &Client,
@@ -246,6 +258,8 @@ pub fn tile(
             "the source is already storage-tiled; untile it first".to_string(),
         ));
     }
+    let layout = StoredLayout::new(&src.shape, axes, dtype, packed, &storage, refused)?;
+    // The layout refuses a source of fewer dims than its axes, and a packed one over no axes.
     let rank = src.shape.len();
     if packed.is_some() && src.strides[rank - 1] != 1 {
         return Err(refused(format!(
@@ -253,7 +267,6 @@ pub fn tile(
             axes[axes.len() - 1]
         )));
     }
-    let layout = StoredLayout::new(&src.shape, axes, packed, &storage, refused)?;
     let handle = client.empty(layout.word_count * dtype.size());
     let dst = TensorHandle::from_metadata(handle.clone(), layout.words, dtype);
     let mut src_words = src;
