@@ -29,7 +29,8 @@ pub struct AttentionTuneInputs {
     /// The `u32` counters the cubes of a box count themselves in at, held across launches.
     arrivals: Option<PlainTensor>,
     scoring: AttentionScoring,
-    /// The `[b, h, q, s]` mask hiding keys from the call's queries ([`with_mask`](Self::with_mask)).
+    /// The `[b, h, q, s]` mask hiding keys from the call's queries
+    /// ([`with_mask`](Self::with_mask)).
     mask: Option<PlainTensor>,
     attended: AttendedKeys,
     pub(super) tensors: AttentionTensors,
@@ -210,7 +211,12 @@ impl AttentionTuneInputs {
     /// own rather than whichever chunk reached the autotune first. Uploaded rather than filled:
     /// a process mode that drops launches drops a launch, not an upload.
     pub(super) fn many_queries_representative(key: &AttentionKey, inputs: &Self) -> Self {
-        let Some(problem) = chunk_problem(key) else {
+        // A whole prompt's key, or one whose head counts do not divide, which no call produces,
+        // states no chunk.
+        let chunk = AttentionRoutineProblem::try_from(key)
+            .ok()
+            .filter(|_| key.chunk());
+        let Some(problem) = chunk else {
             return inputs.whole_representative(key);
         };
         let (client, elem) = (&inputs.client, inputs.query.elem);
@@ -368,9 +374,12 @@ impl AttentionTuneInputs {
         let kv_bytes =
             2 * batch * self.kv_heads() * keys * self.key.shape()[3] * self.key.elem.size();
         Work {
-            // One query position, and no mask: the single query sits at the end of the prefix,
-            // so every position it scores is one it attends.
-            compute_ops: attention_ops(batch, heads, 1, keys, head_dim, false),
+            // **Two** contractions over the same scores, `q · kᵀ` and `p · v`, each one
+            // multiply-accumulate, two operations, per key and dim: the minimum the problem needs,
+            // which is what a roofline is measured against. One query position, and no mask: the
+            // single query sits at the end of the prefix, so every position it scores is one it
+            // attends.
+            compute_ops: 4 * batch * heads * keys * head_dim,
             bytes: self.query.binding.handle.size() as usize * 2 + kv_bytes,
         }
     }
@@ -387,71 +396,9 @@ impl AttentionTuneInputs {
     }
 }
 
-/// The operations an attention costs: **two** contractions over the same score tile — `q · kᵀ`
-/// and `p · v`, each one multiply-accumulate per `(query, position, dim)` and two operations per
-/// accumulate — halved where the causal mask means half the tile is never scored. The minimum the
-/// problem needs, which is what a roofline is measured against.
-fn attention_ops(
-    batch: usize,
-    heads: usize,
-    q_len: usize,
-    seq: usize,
-    head_dim: usize,
-    causal: bool,
-) -> usize {
-    let ops = 4 * batch * heads * q_len * seq * head_dim;
-    match causal {
-        true => ops / 2,
-        false => ops,
-    }
-}
-
-/// The problem a chunk key stands for, at its buckets' extents; `None` for a whole prompt, and
-/// for a key whose head counts do not divide, which no call produces.
-fn chunk_problem(key: &AttentionKey) -> Option<AttentionRoutineProblem> {
-    AttentionRoutineProblem::try_from(key)
-        .ok()
-        .filter(|_| key.chunk())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Qwen3-8B prefilling 512 tokens: 32 heads over a 128-wide head dim.
-    const SHAPE: (usize, usize, usize, usize, usize) = (1, 32, 512, 512, 128);
-
-    /// **Both contractions, and nothing between them.** A roofline that counted one would be half
-    /// the ceiling every candidate is held to, and the round would stop on a candidate at half
-    /// the device.
-    #[test]
-    fn attention_costs_two_contractions() {
-        let (batch, heads, q_len, seq, head_dim) = SHAPE;
-        let one_contraction = 2 * batch * heads * q_len * seq * head_dim;
-        assert_eq!(
-            attention_ops(batch, heads, q_len, seq, head_dim, false),
-            2 * one_contraction,
-        );
-    }
-
-    /// A causal prompt scores half the tile, so it costs half the arithmetic.
-    #[test]
-    fn a_causal_prompt_costs_half() {
-        let (batch, heads, q_len, seq, head_dim) = SHAPE;
-        assert_eq!(
-            attention_ops(batch, heads, q_len, seq, head_dim, true),
-            attention_ops(batch, heads, q_len, seq, head_dim, false) / 2,
-        );
-    }
-
-    /// A decode is one query against its whole prefix: the same arithmetic at `q_len` 1, so its
-    /// ceiling scales with the prefix and nothing else.
-    #[test]
-    fn a_decode_costs_one_query_against_its_prefix() {
-        let (batch, heads, _, prefix, head_dim) = SHAPE;
-        let at = |prefix| attention_ops(batch, heads, 1, prefix, head_dim, false);
-        assert_eq!(at(2 * prefix), 2 * at(prefix));
-    }
 
     /// The keys of one attention over caches of several sizes, and over its own keys.
     mod keys {
@@ -545,6 +492,17 @@ mod tests {
                 .many_queries_key();
             assert_eq!((prompt.seq_q(), prompt.seq_kv()), (512, 512));
             assert!(!prompt.chunk());
+        }
+
+        /// **Both contractions, and nothing between them.** A roofline that counted one would be
+        /// half the ceiling every candidate is held to, and the round would stop on a candidate
+        /// at half the device.
+        #[test]
+        fn a_decode_costs_two_contractions() {
+            let (heads, _, head_dim) = HEADS;
+            let one_contraction = 2 * heads * AttentionKey::CACHE_PREFIX * head_dim;
+            let work = inputs(1, 256, None).one_query_work();
+            assert_eq!(work.compute_ops, 2 * one_contraction);
         }
 
         /// A decode round over a cache is priced over the prefix it is measured over, not over

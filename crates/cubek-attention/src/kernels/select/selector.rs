@@ -26,9 +26,9 @@ const PACKED_PIN_UNREAD: Refusal = Refusal::Declined {
 /// tries, the autotunes it names shipping their routines' group at `groups`.
 ///
 /// A measuring strategy measures: a call of one query position on the one-position autotune, any
-/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last arrival
-/// at one position, and the cube fragment routine elsewhere, then what each kernel's scope names
-/// where it declines, down to the unit routine. A pin runs its kernel alone.
+/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last
+/// arrival at one position, and the cube fragment routine elsewhere, then what each kernel's scope
+/// names where it declines, down to the unit routine. A pin runs its kernel alone.
 ///
 /// A packed cache is decoded inline at one position under every policy, by the hypercube shuffle
 /// by rule, and rebuilt as floats first elsewhere. Of the pins, only the two hypercube shuffles'

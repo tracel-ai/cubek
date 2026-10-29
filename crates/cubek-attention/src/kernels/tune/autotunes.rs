@@ -11,7 +11,7 @@ use crate::kernels::select::problem::QueryPositions;
 use crate::kernels::tune::AttentionTuneInputs;
 use crate::kernels::tune::key::AttentionKey;
 use crate::kernels::{
-    AttentionBlueprint, AttentionRoutine, AttentionRoutineCandidate, CubeShuffleAttentionRoutine,
+    AttentionRoutine, AttentionRoutineCandidate, CubeShuffleAttentionRoutine,
     CubeStagedAttentionRoutine, HypercubeLastArrivalShuffleAttentionRoutine,
     HypercubeSecondLaunchFragmentAttentionRoutine, HypercubeSecondLaunchShuffleAttentionRoutine,
     HypercubeStreamFragmentAttentionRoutine, UnitAttentionRoutine,
@@ -19,11 +19,9 @@ use crate::kernels::{
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tune::{LocalTuner, Tunable, TunableSet, local_tuner};
 use cubecl::{CubeTuneId, Device};
-use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::autotune::{Autotune, GroupPriority, TuneCandidate};
+use cubek_std::autotune::{Autotune, GroupPriority};
 use cubek_std::plan::Fastest;
-use cubek_std::routine::Routine;
 
 /// The priority each autotune's routines ship at: a caller's to set, as in the matmul family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,10 +107,10 @@ pub fn launch_tuned(
 
 type AttentionAutotune = Autotune<AttentionKey, AttentionTuneInputs, ()>;
 
-/// The routines that serve many query positions: the cube routines, and the hypercube routines for a prompt's or a chunk's
-/// few boxes over many keys. The unit routine is listed only where none of them can run, for want
-/// of a plane width the device commits to: elsewhere measuring its candidates takes longer than
-/// the rest of the autotune. The plane routine is not listed.
+/// The routines that serve many query positions: the cube routines, and the hypercube routines for
+/// a prompt's or a chunk's few boxes over many keys. The unit routine is listed only where none of
+/// them can run, for want of a plane width the device commits to: elsewhere measuring its
+/// candidates takes longer than the rest of the autotune. The plane routine is not listed.
 ///
 /// Its candidates are timed as the cache leaves them, unlike one query's: a prompt's queries, keys
 /// and values are the activations the layer before it just wrote, so production reads them warm,
@@ -131,18 +129,18 @@ fn many_queries(
     autotune = autotune.prioritized(
         &routines,
         AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, hw),
-        launch,
+        AttentionRoutineCandidate::launch,
     );
     autotune = autotune
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(CubeShuffleAttentionRoutine, hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         )
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         )
         .prioritized(
             &routines,
@@ -150,23 +148,23 @@ fn many_queries(
                 HypercubeSecondLaunchShuffleAttentionRoutine::new(),
                 hw,
             ),
-            launch,
+            AttentionRoutineCandidate::launch,
         )
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(HypercubeSecondLaunchFragmentAttentionRoutine, hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         )
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(HypercubeStreamFragmentAttentionRoutine, hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         );
     if hw.plane_dim().is_err() {
         autotune = autotune.prioritized(
             &routines,
             AttentionRoutineCandidate::list(UnitAttentionRoutine, hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         );
     }
     autotune.floor(unit_lead(hw)).finish()
@@ -193,7 +191,7 @@ fn one_query(
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         )
         .prioritized(
             &routines,
@@ -201,18 +199,18 @@ fn one_query(
                 HypercubeSecondLaunchShuffleAttentionRoutine::new(),
                 hw,
             ),
-            launch,
+            AttentionRoutineCandidate::launch,
         )
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(CubeShuffleAttentionRoutine, hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         );
     if hw.plane_dim().is_err() {
         autotune = autotune.prioritized(
             &routines,
             AttentionRoutineCandidate::list(UnitAttentionRoutine, hw),
-            launch,
+            AttentionRoutineCandidate::launch,
         );
     }
     autotune.floor(unit_lead(hw)).finish()
@@ -229,24 +227,4 @@ fn unit_lead(hw: &Hardware) -> Tunable<AttentionKey, AttentionTuneInputs, ()> {
             .map(|_| ())
             .map_err(|why| format!("the unit routine's lead does not serve this problem: {why:?}"))
     })
-}
-
-/// `inputs` attended by `candidate`'s routine at its setting into their output, or why it did
-/// not run.
-fn launch<R, M: AttentionMicrokernel, SM: PartialEq>(
-    candidate: &AttentionRoutineCandidate<R>,
-    inputs: AttentionTuneInputs,
-) -> Result<(), String>
-where
-    R: AttentionRoutine<M, SM>
-        + Routine<Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
-        + Copy,
-{
-    candidate
-        .launch_on(inputs.tensors)
-        .map(|_| ())
-        .map_err(|why| {
-            let settings = candidate.strategy();
-            format!("{settings} does not serve this problem: {why:?}")
-        })
 }
