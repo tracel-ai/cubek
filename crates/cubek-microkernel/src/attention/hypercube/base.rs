@@ -105,7 +105,10 @@ impl HypercubeAttentionMicrokernel {
         item: &AttentionWorkItem,
         storage: &StageStorage,
     ) -> usize {
-        let partial = self.cube.plane.partial_bytes(item, self.cube.layout());
+        let partial = match std::env::var("CUBEK_LAB_NO_PARTIAL") {
+            Ok(_) => 0,
+            Err(_) => self.cube.plane.partial_bytes(item, self.cube.layout()),
+        };
         self.cube
             .walk_then_shared_memory(hw, item, storage, partial)
     }

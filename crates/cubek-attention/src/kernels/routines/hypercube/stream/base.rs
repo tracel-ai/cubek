@@ -81,6 +81,14 @@ impl HypercubeStreamFragmentAttentionRoutine {
             .workers()
             .and_then(|workers| NonZeroUsize::new(workers as usize))
             .ok_or(Self::UNSIZED)?;
+        // LAB: `CUBEK_LAB_CUBES` overrides the grid.
+        if let Some(cubes) = std::env::var("CUBEK_LAB_CUBES")
+            .ok()
+            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(NonZeroUsize::new)
+        {
+            return Ok(cubes);
+        }
         Ok(workers.saturating_mul(settings.cubes_per_worker))
     }
 

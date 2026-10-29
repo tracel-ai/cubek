@@ -17,6 +17,10 @@ use cubecl::{self as cubecl, cube, prelude::*};
 pub struct PlaneFragmentAttention<EA: Float, ES: Float> {
     sum: Tile,
     score: StageScore,
+    /// LAB: the previous step's score, for `CUBEK_LAB_SKEW`.
+    previous: Tile,
+    /// LAB: which of the two scores this step contracts into.
+    parity: u32,
     softmax: OnlineSoftmax<EA>,
     query: Tile,
     /// The element the keys and values are staged at, which the probabilities are cast to.
@@ -46,9 +50,18 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
     ) -> Self {
         let score = StageScore::open::<EA, ES>(walk, query, microkernel);
         let softmax = score.softmax::<EA>(comptime!(microkernel.seq_q()));
+        let mut previous = Tile::stage_accumulator::<EA>(
+            walk,
+            comptime!(vec![G, Q, S]),
+            query,
+            comptime!(microkernel.score.tile_instruction()),
+        );
+        previous.reset();
         PlaneFragmentAttention::<EA, ES> {
             sum: plane_fragment_attention_sum::<EA>(out, bias, value, microkernel),
             score,
+            previous,
+            parity: 0u32,
             softmax,
             query: query.clone(),
             staged: PhantomData,
@@ -61,6 +74,25 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
     /// its keys and values read from `keys` and `values`, each row seeing those `visible` admits,
     /// scaled by `scale`.
     pub fn step(&mut self, plane: &Region, keys: &Tile, values: &Tile, visible: &Tile, scale: EA) {
+        if comptime!(std::env::var("CUBEK_LAB_SKEW").is_ok()) {
+            // LAB (timing only): this step's score beside the previous one's softmax and value.
+            let mut sum = self.sum.at(plane);
+            let a = self.score.at(plane).scores();
+            let b = self.previous.at(plane);
+            if self.parity == 0 {
+                lab_skewed_step::<EA, ES>(
+                    plane, &mut sum, &mut self.softmax, &a, &b, &self.query.at(plane),
+                    &keys.at(plane), &values.at(plane), &visible.at(plane), scale, self.microkernel,
+                );
+            } else {
+                lab_skewed_step::<EA, ES>(
+                    plane, &mut sum, &mut self.softmax, &b, &a, &self.query.at(plane),
+                    &keys.at(plane), &values.at(plane), &visible.at(plane), scale, self.microkernel,
+                );
+            }
+            self.parity ^= 1;
+            return;
+        }
         let mut sum = self.sum.at(plane);
         self.score.at(plane).step::<EA, ES>(
             plane,
@@ -383,8 +415,13 @@ impl StageScore {
             comptime!(Some(DV)),
             comptime!(MatmulOperands::all(MatmulRead::AsBound)),
         );
-        let correction = softmax.step(&logits, bias, scale);
-        sum.along(DV).mul(&correction);
+        // LAB (timing only): `CUBEK_LAB_NO_SOFTMAX` contracts the raw scores with the values.
+        if comptime!(std::env::var("CUBEK_LAB_NO_SOFTMAX").is_err()) {
+            let correction = softmax.step(&logits, bias, scale);
+            if comptime!(std::env::var("CUBEK_LAB_NO_RESCALE").is_err()) {
+                sum.along(DV).mul(&correction);
+            }
+        }
         plane_fragment_microkernel(
             stage,
             &sum.clone(),
@@ -490,4 +527,47 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
         }
         ComptimeOption::None => {}
     }
+}
+
+/// LAB: `current` contracted from this step's keys, beside `previous`'s softmax and value.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn lab_skewed_step<EA: Float, ES: Float>(
+    plane: &Region,
+    sum: &mut Tile,
+    softmax: &mut OnlineSoftmax<EA>,
+    current: &Tile,
+    previous: &Tile,
+    query: &Tile,
+    keys: &Tile,
+    values: &Tile,
+    visible: &Tile,
+    scale: EA,
+    #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
+) {
+    let wide = ComptimeOption::<Tile>::new_None();
+    let mut current = current.clone();
+    current.reset();
+    plane_fragment_microkernel(
+        plane,
+        &current,
+        &wide,
+        query,
+        keys,
+        comptime!(microkernel.score.tile_instruction()),
+        comptime!(Some(DV)),
+        comptime!(MatmulOperands::all(MatmulRead::AsBound)),
+    );
+    let correction = softmax.step(previous, visible, scale);
+    sum.along(DV).mul(&correction);
+    plane_fragment_microkernel(
+        plane,
+        &sum.clone(),
+        &wide,
+        &previous.cast::<ES>(),
+        values,
+        comptime!(microkernel.value.tile_instruction()),
+        comptime!(Some(D)),
+        comptime!(MatmulOperands::all(MatmulRead::AsBound)),
+    );
 }

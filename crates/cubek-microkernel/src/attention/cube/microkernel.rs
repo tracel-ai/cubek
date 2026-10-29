@@ -177,6 +177,26 @@ fn staged_walk<EA: Float, ES: Float>(
         comptime!(microkernel.ring.stages_in_flight.get()),
         comptime!(microkernel.plane.decoded_stage()),
     );
+    // LAB (timing only): `CUBEK_LAB_PINGPONG=<n>` holds the second half of the planes back by a
+    // chain of `n` dependent multiply-adds, so the two planes each scheduler runs start out of
+    // phase.
+    let lab_delay = comptime!(
+        std::env::var("CUBEK_LAB_PINGPONG")
+            .ok()
+            .and_then(|n| n.parse::<u32>().ok())
+            .unwrap_or(0)
+    );
+    if comptime!(lab_delay > 0) {
+        if UNIT_POS / PLANE_DIM >= comptime!(microkernel.layout().planes() as u32 / 2) {
+            let mut x = f32::cast_from(UNIT_POS);
+            for _ in 0..lab_delay {
+                x = x * 1.0001f32 + 0.5f32;
+            }
+            if x == -1.0f32 {
+                terminate!();
+            }
+        }
+    }
     // The steps every row sees whole come first and take no bias, the visibility costing their
     // scores nothing; the rest take the visibility's. Two walks of the one ring, so neither
     // step carries the other's bias.
@@ -556,6 +576,7 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
             ComptimeOption::None => {}
         }
     } else {
+        if comptime!(std::env::var("CUBEK_LAB_NO_PARTIAL").is_err()) {
         store_plane_partials::<EA, Const<1>, PlaneFragmentAttention<EA, ES>>(
             &mut planes,
             run,
@@ -567,6 +588,7 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
             splits,
             value_dim,
         );
+        }
         // The partial lands at device scope before the cube counts itself in.
         sync_storage();
         let mut arrived = Shared::<[u32]>::new_slice(1usize);
@@ -575,7 +597,8 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
         }
         sync_cube();
         // Uniform across the cube: only the box's last cube merges.
-        if arrived[0] as usize + 1 == holders {
+        let lab_merges = comptime!(std::env::var("CUBEK_LAB_NO_MERGE").is_err());
+        if arrived[0] as usize + 1 == holders && lab_merges {
             // What every other holder stored is acquired before it is read.
             sync_storage();
             let shape = comptime!(SlotShape {
