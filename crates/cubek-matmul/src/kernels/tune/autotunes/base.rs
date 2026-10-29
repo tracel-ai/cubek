@@ -1,6 +1,6 @@
 use super::{block_scaled, few_rows, many_rows};
 use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
-use crate::kernels::select::selector::MatmulAutotune;
+use crate::kernels::select::problem::MatmulProblem;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
 use crate::kernels::tune::{
@@ -22,6 +22,67 @@ use cubek_std::autotune::{
 use cubek_std::plan::{Fastest, Step};
 use cubek_std::routine::Routine;
 use std::sync::Arc;
+
+/// The autotunes a product races on, split by the rows a routine that does not stage would stream: each holds the
+/// candidates for a float product and for a packed one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatmulAutotune {
+    /// A handful of rows, each read once: the routines that do not stage, on packed inputs at the
+    /// settings worth trying on them, reading them as stored.
+    FewRows,
+    /// Everything past the few-rows bound: the staged routines, and on packed inputs the packed
+    /// staged routine reading them as stored and the float routines on them decoded first.
+    ManyRows,
+    /// Two packed inputs multiplied on a GPU's block-scaled tensor cores, at each of
+    /// [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores)'s
+    /// settings: what that pin runs, and nothing else.
+    BlockScaled,
+}
+
+impl MatmulAutotune {
+    /// Which autotune a float product goes to, by [`float_few_rows`], so no width reaches an autotune whose
+    /// every candidate declines it. Packed inputs decoded first make a float product here.
+    pub fn new(problem: &MatmulProblem) -> Self {
+        match problem.streamed_rows.is_some_and(float_few_rows) {
+            true => Self::FewRows,
+            false => Self::ManyRows,
+        }
+    }
+
+    /// Which autotune a product reading packed inputs as stored goes to, by the rows alone
+    /// ([`quantized_few_rows`]): the few-rows autotune's candidates decline what they do not close,
+    /// and its floor, the packed inputs decoded, answers there.
+    pub fn packed(problem: &MatmulProblem) -> Self {
+        match problem.streamed_rows.is_some_and(quantized_few_rows) {
+            true => Self::FewRows,
+            false => Self::ManyRows,
+        }
+    }
+}
+
+/// The most rows a float product goes to the few-rows autotune with: the rows every float few-rows candidate
+/// holds whole, each one more accumulator line per cell of its register block (the plane shuffle's
+/// `MAX_ROWS` is held to it by a test). Past it, a body that reuses each column's values across rows is the
+/// better shape anyway.
+pub const FLOAT_FEW_ROWS: usize = 8;
+
+/// Whether a float product of `rows` rows goes to the few-rows autotune: from one row to
+/// [`FLOAT_FEW_ROWS`]. A float product of no rows goes to the many-rows autotune, which has a candidate
+/// for it.
+pub fn float_few_rows(rows: usize) -> bool {
+    (1..=FLOAT_FEW_ROWS).contains(&rows)
+}
+
+/// The most rows a packed product goes to the few-rows autotune with. Past it the staged routines win on
+/// arithmetic, and measuring a routine that does not stage at prefill widths would cost minutes of first-touch tuning for
+/// a candidate that cannot win there.
+pub const QUANTIZED_FEW_ROWS: usize = 32;
+
+/// Whether a packed product of `rows` rows goes to the few-rows autotune: up to [`QUANTIZED_FEW_ROWS`],
+/// no rows included, the packed candidates' own admission answering every width below the bound.
+pub fn quantized_few_rows(rows: usize) -> bool {
+    rows <= QUANTIZED_FEW_ROWS
+}
 
 /// The priority each autotune's routines ship at: a caller's to set, since which group a device
 /// measures first is a deployment's call, and fixed for the process once an autotune is first built.

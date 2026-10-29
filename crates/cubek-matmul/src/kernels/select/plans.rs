@@ -16,10 +16,10 @@
 //! - `refused: ..`: the selection refuses the product.
 
 use super::MatmulOpStrategy;
-use super::packed::{QUANTIZED_FEW_ROWS, nvfp4_scheme};
+use super::packed::nvfp4_scheme;
 use super::problem::{MatmulProblem, OperandKind};
-use super::selector::{FLOAT_FEW_ROWS, select};
-use crate::kernels::tune::MatmulAutotuneGroups;
+use super::selector::select;
+use crate::kernels::tune::{FLOAT_FEW_ROWS, MatmulAutotuneGroups, QUANTIZED_FEW_ROWS};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_std::plan::Plan;

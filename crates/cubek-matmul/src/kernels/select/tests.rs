@@ -1,10 +1,10 @@
 use super::packed::*;
 use super::problem::{MatmulProblem, OperandKind};
-use super::selector::{
-    BLOCK_SCALED_TENSOR_CORES_UNSERVED, FLOAT_FEW_ROWS, MatmulAutotune, measured_autotune,
-};
+use super::selector::{BLOCK_SCALED_TENSOR_CORES_UNSERVED, measured_autotune};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-use crate::kernels::tune::MatmulAutotuneGroups;
+use crate::kernels::tune::{
+    FLOAT_FEW_ROWS, MatmulAutotune, MatmulAutotuneGroups, QUANTIZED_FEW_ROWS, quantized_few_rows,
+};
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
@@ -651,6 +651,7 @@ mod float {
     use super::super::selector::*;
     use super::super::*;
     use super::{fastest, float_pin, float_rule};
+    use crate::kernels::tune::{FLOAT_FEW_ROWS, MatmulAutotune, float_few_rows};
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;

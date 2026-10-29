@@ -1,40 +1,13 @@
 //! How a [`MatmulOpStrategy`] runs a product on a device ([`select`]): what becomes of its packed
 //! inputs, and the kernel that reads them. Pure, so the rules are unit-tested against
 //! [`Hardware`] fixtures with no GPU. The selector runs first; measuring is one of its answers,
-//! and for it the answer is a *autotune*, not a kernel.
-//!
-//! # The autotunes, and the line between them
-//!
-//! A product races on a **few-rows** autotune or a **many-rows** one, the [`MatmulAutotune`]s, whatever its
-//! inputs. The few-rows and many-rows autotunes share no candidate but the unit routine, their floor:
-//! the two regimes are different kernel bodies, so a single autotune would be one whose rows mostly
-//! decline, paying a compile each to say so. Within an autotune a
-//! float product and a packed one race the same list: each candidate is listed for one kind of
-//! product and declines the other before compiling anything, so a key races what its inputs are
-//! listed for. A packed product races the settings worth trying on its packed inputs, and the
-//! float routines on them decoded first.
-//!
-//! # The block-scaled autotune
-//!
-//! A third autotune, [`MatmulAutotune::BlockScaled`], is reached only by naming
-//! [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores). Its kernel
-//! multiplies two packed inputs as they are stored on the device's block-scaled instruction of
-//! their format: NVFP4's 4-bit by 4-bit, or any other the device has. Autotune never sends a
-//! product there: a packed product under a policy goes where every other packed product goes. The
-//! autotune races only that kernel's settings, which all give the same numbers.
-//!
-//! The line is [`FLOAT_FEW_ROWS`] for a float product and
-//! [`QUANTIZED_FEW_ROWS`](super::packed::QUANTIZED_FEW_ROWS) for a
-//! packed one, each a **rule** rather than a measurement: a staged kernel can be competitive on
-//! time at a handful of rows while reading a whole input through a tiling nobody needed, so
-//! which autotune a row count belongs to is decided by what the kernels do. A rule tuned to one
-//! device's sweep instead is a number every other device has to live with.
+//! and for it the answer is an autotune, not a kernel.
 
-use super::packed::{matmul_supported, quantized_few_rows};
+use super::packed::matmul_supported;
 use super::problem::{MatmulProblem, OperandKind};
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::plan::{Decoded, FrameworkDequantized, MatmulPlan, RoutinePlan};
-use crate::kernels::tune::MatmulAutotuneGroups;
+use crate::kernels::tune::{MatmulAutotune, MatmulAutotuneGroups};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
@@ -46,43 +19,6 @@ use cubek_std::block_scaled_for;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_axes::K;
 use cubek_std::plan::{InOrder, Then};
-
-/// The autotunes a product races on, split by the rows a routine that does not stage would stream: each holds the
-/// candidates for a float product and for a packed one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatmulAutotune {
-    /// A handful of rows, each read once: the routines that do not stage, on packed inputs at the
-    /// settings worth trying on them, reading them as stored.
-    FewRows,
-    /// Everything past the few-rows bound: the staged routines, and on packed inputs the packed
-    /// staged routine reading them as stored and the float routines on them decoded first.
-    ManyRows,
-    /// Two packed inputs multiplied on a GPU's block-scaled tensor cores, at each of
-    /// [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores)'s
-    /// settings: what that pin runs, and nothing else.
-    BlockScaled,
-}
-
-impl MatmulAutotune {
-    /// Which autotune a float product goes to, by [`float_few_rows`], so no width reaches an autotune whose
-    /// every candidate declines it. Packed inputs decoded first make a float product here.
-    pub fn new(problem: &MatmulProblem) -> Self {
-        match problem.streamed_rows.is_some_and(float_few_rows) {
-            true => Self::FewRows,
-            false => Self::ManyRows,
-        }
-    }
-
-    /// Which autotune a product reading packed inputs as stored goes to, by the rows alone
-    /// ([`quantized_few_rows`]): the few-rows autotune's candidates decline what they do not close,
-    /// and its floor, the packed inputs decoded, answers there.
-    pub fn packed(problem: &MatmulProblem) -> Self {
-        match problem.streamed_rows.is_some_and(quantized_few_rows) {
-            true => Self::FewRows,
-            false => Self::ManyRows,
-        }
-    }
-}
 
 /// How `problem` runs under `strategy` on `hw`: the plan its launch tries, the autotunes it names
 /// shipping their groups at `groups`.
@@ -230,19 +166,6 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
         && problem.k.is_multiple_of(rhs_word)
         && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
             .any(|instruction| (instruction.shape.k as usize).is_multiple_of(lhs_block))
-}
-
-/// The most rows a float product goes to the few-rows autotune with: the rows every float few-rows candidate
-/// holds whole, each one more accumulator line per cell of its register block (the plane shuffle's
-/// `MAX_ROWS` is held to it by a test). Past it, a body that reuses each column's values across rows is the
-/// better shape anyway.
-pub const FLOAT_FEW_ROWS: usize = 8;
-
-/// Whether a float product of `rows` rows goes to the few-rows autotune: from one row to
-/// [`FLOAT_FEW_ROWS`]. A float product of no rows goes to the many-rows autotune, which has a candidate
-/// for it.
-pub fn float_few_rows(rows: usize) -> bool {
-    (1..=FLOAT_FEW_ROWS).contains(&rows)
 }
 
 /// `BlockScaledTensorCores` named for a product it does not serve.
