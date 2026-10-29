@@ -1,11 +1,11 @@
 //! The tensors of one backward pass, and how a walk binds them.
 
 use crate::kernels::{
-    AttentionBackwardMicrokernel, AttentionBackwardProblem, AttentionBackwardWalk,
+    AttentionBackwardBinding, AttentionBackwardGradients, AttentionBackwardMicrokernel,
+    AttentionBackwardProblem, AttentionBackwardWalk,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Launcher;
 use cubecl::tile::launch::{Bound, Grid as LaunchGrid, Refusal};
 use cubecl::zspace::metadata::Metadata;
@@ -49,17 +49,6 @@ impl core::fmt::Debug for AttentionBackwardTensors {
             .field("visibility", &self.visibility)
             .finish()
     }
-}
-
-/// The gradients a backward pass computes, each shaped as its input.
-#[derive(Debug, Clone)]
-pub struct AttentionBackwardGradients {
-    /// `[b, h, q, d]`.
-    pub query: TensorHandle,
-    /// `[b, kv, s, d]`.
-    pub key: TensorHandle,
-    /// `[b, kv, s, dv]`.
-    pub value: TensorHandle,
 }
 
 impl AttentionBackwardTensors {
@@ -264,11 +253,4 @@ impl AttentionBackwardTensors {
             .build()
             .expect(ADMITTED_PLAN_RUNS)
     }
-}
-
-/// The arguments of one walk's launch, its operands bound under its launcher. Not `Debug`: the
-/// tile DSL's `Launcher` is not.
-pub(crate) struct AttentionBackwardBinding {
-    pub launcher: Launcher,
-    pub operands: AttentionBackwardOperands<Bound>,
 }

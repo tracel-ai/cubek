@@ -15,8 +15,10 @@ use cubek_std::Hardware;
 pub trait AttentionBackwardRoutine {
     /// The knobs a measurement settles: each walk's microkernel's, and the routine's own.
     type Settings: core::fmt::Debug + Clone + core::fmt::Display + PartialEq;
-    type QueryGradient: AttentionBackwardMicrokernel;
-    type KeyGradient: AttentionBackwardMicrokernel;
+    /// What the walk owned by the queries runs.
+    type QueryMicrokernel: AttentionBackwardMicrokernel;
+    /// What the walk owned by the keys runs.
+    type KeyMicrokernel: AttentionBackwardMicrokernel;
     /// How a walk lays out the shared memory it holds; `()` for one that holds none.
     type SharedMemory;
 
