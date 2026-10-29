@@ -36,7 +36,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
         let visible = VisibleKeys::new(len, &cube, queries, &mask, visibility);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
-        let bias = visible.bias::<EA>(&partitioning);
+        let bias = visible.step_bias::<EA>(&partitioning, &cube);
         let steps = visible.steps(
             &cube,
             comptime!(microkernel.seq_q()),
