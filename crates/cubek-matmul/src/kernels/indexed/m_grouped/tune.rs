@@ -100,7 +100,7 @@ pub fn launch_tuned_padded(
     let client = tensors.client().clone();
     let hw = Hardware::from_client(&client);
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
-    let stack = Product::of([tensors.stack()]);
+    let stack = Product::of([tensors.stack_kind()]);
     let floors = MGroupedFloors::LISTED;
     let plane_shuffle = MGroupedListing::admitted(&floors.plane_shuffle, stack)
         .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
@@ -177,9 +177,9 @@ where
     Tunable::new(
         &settings.to_string(),
         move |tensors: MGroupedMatmulTensors| {
-            if !listed.admits(Product::of([tensors.stack()])) {
-                return Err(format!("{settings} is not listed for this stack"));
-            }
+            listed
+                .admits(Product::of([tensors.stack_kind()]))
+                .map_err(|refusal| format!("{settings} {refusal:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors
                 .launch(&hw, &routine, &settings)

@@ -4,10 +4,10 @@ use crate::kernels::select::problem::OperandKind;
 use crate::kernels::select::selector::MatmulTable;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
+use crate::kernels::tune::{ListedFor, Product};
 use crate::kernels::tune::{
     MatmulPackedCandidate, MatmulRoutineCandidate, MatmulRoutineSettings, PackedContraction,
 };
-use crate::kernels::tune::{Product, listed_for};
 use crate::kernels::{MatmulBlueprint, MatmulRoutine, UnitRegistersMatmulRoutine};
 use cubecl::CubeTuneId;
 use cubecl::client::Client;
@@ -160,7 +160,9 @@ pub(super) fn microkernel_candidate<R, M: MatmulMicrokernel, SM: PartialEq + Clo
 where
     R: MatmulRoutine<M, SM> + Routine<Microkernel = M, Blueprint = MatmulBlueprint<M, SM>> + Copy,
 {
-    listed_for(Product::Float, Product::of(call_kinds(&call)))?;
+    ListedFor::Float
+        .admits(Product::of(call_kinds(&call)))
+        .map_err(|refusal| format!("{refusal:?}"))?;
     let settings = candidate.strategy();
     let launched = match (&call.routes, call.destination) {
         (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
@@ -197,7 +199,9 @@ where
     R: MatmulRoutine<M, SM> + Copy,
     R::Settings: PackedContraction,
 {
-    listed_for(Product::Packed, Product::of(call_kinds(&call)))?;
+    ListedFor::Packed
+        .admits(Product::of(call_kinds(&call)))
+        .map_err(|refusal| format!("{refusal:?}"))?;
     let settings = candidate.settings();
     let launched = match (&call.routes, call.destination) {
         (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),

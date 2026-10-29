@@ -63,7 +63,7 @@ impl<S: PartialEq> MGroupedListing<S> {
     /// The listings of `list` whose kind admits a stack of kind `stack`.
     pub(crate) fn admitted(list: &[Self], stack: Product) -> impl Iterator<Item = &Self> {
         list.iter()
-            .filter(move |listing| listing.listed.admits(stack))
+            .filter(move |listing| listing.listed.admits(stack).is_ok())
     }
 }
 

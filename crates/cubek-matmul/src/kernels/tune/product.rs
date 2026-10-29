@@ -1,7 +1,9 @@
 use crate::kernels::select::problem::OperandKind;
+use crate::kernels::tune::{FLOAT_SETTING_PACKED_INPUT, PACKED_SETTING_FLOAT_INPUTS};
+use cubecl::tile::launch::Refusal;
 
-/// The kind of product a candidate is listed for: one table holds both, and a candidate declines
-/// the other kind before compiling anything.
+/// The kind of a product, which a candidate listed for the other kind declines before compiling
+/// anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Product {
     Float,
@@ -30,30 +32,19 @@ pub(crate) enum ListedFor {
 }
 
 impl ListedFor {
-    /// Whether a product of kind `actual` is one the candidate is listed for.
-    pub(crate) fn admits(self, actual: Product) -> bool {
+    /// Declines a product of kind `actual` where it is not a kind the candidate is listed for.
+    ///
+    /// # Errors
+    ///
+    /// [`FLOAT_SETTING_PACKED_INPUT`] or [`PACKED_SETTING_FLOAT_INPUTS`], for the kind it is not
+    /// listed for.
+    pub(crate) fn admits(self, actual: Product) -> Result<(), Refusal> {
         match (self, actual) {
             (Self::Either, _) | (Self::Float, Product::Float) | (Self::Packed, Product::Packed) => {
-                true
+                Ok(())
             }
-            (Self::Float, Product::Packed) | (Self::Packed, Product::Float) => false,
-        }
-    }
-}
-
-/// Declines a product of kind `actual` where it is not the kind a candidate is `listed` for.
-///
-/// # Errors
-///
-/// Where `actual` is the other kind.
-pub(crate) fn listed_for(listed: Product, actual: Product) -> Result<(), String> {
-    match (listed, actual) {
-        (Product::Float, Product::Float) | (Product::Packed, Product::Packed) => Ok(()),
-        (Product::Float, Product::Packed) => {
-            Err("listed for float inputs; an input is packed".into())
-        }
-        (Product::Packed, Product::Float) => {
-            Err("listed for a packed input; both are float".into())
+            (Self::Float, Product::Packed) => Err(FLOAT_SETTING_PACKED_INPUT),
+            (Self::Packed, Product::Float) => Err(PACKED_SETTING_FLOAT_INPUTS),
         }
     }
 }

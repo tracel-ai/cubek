@@ -142,7 +142,7 @@ impl MGroupedMatmulTensors {
     }
 
     /// Whether the stack is float or packed, and how.
-    pub fn stack(&self) -> OperandKind {
+    pub fn stack_kind(&self) -> OperandKind {
         self.rhs.kind()
     }
 
@@ -155,7 +155,7 @@ impl MGroupedMatmulTensors {
             n,
             self.groups(),
             self.source.rows(),
-            self.stack(),
+            self.stack_kind(),
             OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
             self.along,
             self.source.kind(),

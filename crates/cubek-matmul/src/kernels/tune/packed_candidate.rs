@@ -17,6 +17,11 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;
 
+/// What a float setting declines: a packed input, which it was not listed for.
+pub const FLOAT_SETTING_PACKED_INPUT: Refusal = Refusal::Declined {
+    why: "a setting listed for float inputs reads them, and an input is packed",
+};
+
 /// What a [`MatmulPackedCandidate`] declines: two float inputs, which its settings were not listed
 /// for.
 pub const PACKED_SETTING_FLOAT_INPUTS: Refusal = Refusal::Declined {
