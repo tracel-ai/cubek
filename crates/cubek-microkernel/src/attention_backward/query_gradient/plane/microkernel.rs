@@ -162,8 +162,8 @@ impl PlaneQueryGradientMicrokernel {
         // The gradient lands before the fragments load it.
         sync_plane();
 
-        // A tile's clone is a handle to the same cells: the shared microkernel reads the gradient and
-        // adds into the sum through it.
+        // A tile's clone is a handle to the same cells: the shared microkernel reads the gradient
+        // and adds into the sum through it.
         plane_fragment_microkernel(
             stage,
             &sum.clone(),

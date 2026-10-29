@@ -9,8 +9,8 @@ use cubek_std::matmul_axes::{M, MB, MI, N, NB, NI};
 /// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
 /// which the kernel launches and walks, and the box each cube is handed. Each product builds one
 /// from its problem; a cube microkernel is handed the space its cube covers
-/// ([`cube_space`](Self::cube_space)). Stated along
-/// matmul's own `M`, `N` and `K`, or over a packed product's block-split space ([`MatmulAxesKind`]).
+/// ([`cube_space`](Self::cube_space)). Stated along matmul's own `M`, `N` and `K`, or over a packed
+/// product's block-split space ([`MatmulAxesKind`]).
 ///
 /// Its outermost level is the cubes, and the one inside it the walk a cube takes through its box;
 /// or, for a routine whose planes share nothing, the launch's planes, which a plane order groups
@@ -165,7 +165,8 @@ impl MatmulPartitioning {
         (self.rows() * self.columns()) as usize
     }
 
-    /// The output's rows one cube's box covers, over both axes `M` is split into in a block-split space.
+    /// The output's rows one cube's box covers, over both axes `M` is split into in a block-split
+    /// space.
     pub fn rows(&self) -> u64 {
         let rows = match self.axes_kind {
             MatmulAxesKind::Plain => self.cube.extent(M),
@@ -174,7 +175,8 @@ impl MatmulPartitioning {
         rows as u64
     }
 
-    /// The output's columns one cube's box covers, over both axes `N` is split into in a block-split space.
+    /// The output's columns one cube's box covers, over both axes `N` is split into in a
+    /// block-split space.
     pub fn columns(&self) -> u64 {
         let columns = match self.axes_kind {
             MatmulAxesKind::Plain => self.cube.extent(N),

@@ -138,8 +138,8 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     /// # Errors
     ///
     /// As [`MatmulTensors::indexed`], and why `hw` cannot run the product at these settings,
-    /// [`MATMUL_INDEX_UNREAD`](crate::kernels::MATMUL_INDEX_UNREAD) for a routine whose kernel walks
-    /// no indexed input among them.
+    /// [`MATMUL_INDEX_UNREAD`](crate::kernels::MATMUL_INDEX_UNREAD) for a routine whose kernel
+    /// walks no indexed input among them.
     // The indexed operands are the dense ones beside the table and the output the caller laid out,
     // each named where the caller hands it.
     #[allow(clippy::too_many_arguments)]

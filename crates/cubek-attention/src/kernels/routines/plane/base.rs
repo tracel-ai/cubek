@@ -184,7 +184,8 @@ impl Routine for PlaneFragmentAttentionRoutine {
     }
 
     /// A plane is as many units as the device issues its matrix instruction on, and it walks its
-    /// own keys below the planes' level, so each stages its own copy ([`Stages`](cubecl::tile::Stages)).
+    /// own keys below the planes' level, so each stages its own copy
+    /// ([`Stages`](cubecl::tile::Stages)).
     fn prepare(
         &self,
         hw: &Hardware,

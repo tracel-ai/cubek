@@ -643,8 +643,8 @@ impl PackedTensor {
         }
     }
 
-    /// `axis` of the matrix as one dim over the two axes it is split into, the blocks and the position inside
-    /// one.
+    /// `axis` of the matrix as one dim over the two axes it is split into, the blocks and the
+    /// position inside one.
     fn dim(&self, axis: Axis) -> PhysicalAxisMap {
         split(&self.operand.axes(axis, self.extent(axis)))
     }

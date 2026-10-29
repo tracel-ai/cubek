@@ -295,12 +295,12 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// What every microkernel is handed, summing in the problem's [`sum`](MatmulRoutineProblem::sum):
-    /// its rows held whole, every one, or tiled. Against a packed operand, the operands' blocks
-    /// ([`MatmulBlocks`]), over the axes inside a block. Its float inputs may be read rounded where
-    /// the process allows tf32 ([`MatmulConfig::allow_tf32`]), as the multi-level routines read
-    /// them, but under a table: a rounded input is bound as its words, which a table's entry
-    /// cannot index along a line of.
+    /// What every microkernel is handed, summing in the problem's
+    /// [`sum`](MatmulRoutineProblem::sum): its rows held whole, every one, or tiled. Against a
+    /// packed operand, the operands' blocks ([`MatmulBlocks`]), over the axes inside a block. Its
+    /// float inputs may be read rounded where the process allows tf32
+    /// ([`MatmulConfig::allow_tf32`]), as the multi-level routines read them, but under a table: a
+    /// rounded input is bound as its words, which a table's entry cannot index along a line of.
     pub fn work_item(&self) -> MatmulWorkItem {
         let blocks = self.blocks();
         MatmulWorkItem {

@@ -173,8 +173,9 @@ impl KeyGradientSums {
 impl PlaneKeyGradientMicrokernel {
     /// One stage of one plane's keys: their scores against the stage's queries, keys first, the
     /// probabilities read back from `logsumexp` and their product with the output's gradient added
-    /// into the values' sum, then the gradient against them from the output's gradient, the gradient
-    /// against the scores from `delta`, and its product with the queries added into the keys' sum.
+    /// into the values' sum, then the gradient against them from the output's gradient, the
+    /// gradient against the scores from `delta`, and its product with the queries added into the
+    /// keys' sum.
     ///
     /// `stage` is the plane's region of the stage; every tile is windowed to the plane. The levels
     /// are each window's own grid under the walker's planes, which a window is placed in.

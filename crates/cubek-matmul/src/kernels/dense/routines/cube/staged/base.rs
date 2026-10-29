@@ -68,8 +68,9 @@ impl CubeStagedMatmulRoutineSettings {
 }
 
 /// The shape of a setting the routine races, counted in steps of the product
-/// ([`block_scaled_step`](CubeStagedMatmulRoutine::block_scaled_step)): a plane's steps of `M`, `N` and `K` (a stage's depth), the layout of
-/// its planes, the planes sharing each step of `K`, the stages in flight and who stores the box.
+/// ([`block_scaled_step`](CubeStagedMatmulRoutine::block_scaled_step)): a plane's steps of `M`, `N`
+/// and `K` (a stage's depth), the layout of its planes, the planes sharing each step of `K`, the
+/// stages in flight and who stores the box.
 #[derive(Debug, Clone, Copy)]
 struct StagedShape {
     steps: (usize, usize, usize),
@@ -80,10 +81,10 @@ struct StagedShape {
 }
 
 impl CubeStagedMatmulRoutine {
-    /// The settings a block-scaled product read as stored is raced at on `hw`, counted in steps of the
-    /// product ([`block_scaled_step`](Self::block_scaled_step)): a plane's steps of `M`, `N` and `K`, the layout of its planes,
-    /// the planes sharing each step of `K`, the stages in flight and who stores the box, and who
-    /// fills the stages.
+    /// The settings a block-scaled product read as stored is raced at on `hw`, counted in steps of
+    /// the product ([`block_scaled_step`](Self::block_scaled_step)): a plane's steps of `M`, `N`
+    /// and `K`, the layout of its planes, the planes sharing each step of `K`, the stages in flight
+    /// and who stores the box, and who fills the stages.
     ///
     /// For a prompt's rows, filled by the TMA engine through the tile DSL's transport: four by
     /// eight steps on four by two planes, the box a long rhs fills the device with; two by
@@ -307,8 +308,8 @@ impl CubeStagedMatmulRoutine {
 
     /// Registers the compiler adds around a plane's lower bound
     /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
-    /// addressing, loop state and the scale registers. A margin rather than a derivation, since
-    /// the compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
+    /// addressing, loop state and the scale registers. A margin rather than a derivation, since the
+    /// compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
     /// `sm_120`.
     const ADDRESSING_REGISTERS: u32 = 64;
 
@@ -492,9 +493,9 @@ impl CubeStagedMatmulRoutine {
 
     /// The blueprint of a product over a block-split space, whose inputs are restated contiguous
     /// along `K`, so no buffer fact narrows them: a packed input its fill decodes binds at
-    /// [`decoded_width`](Self::decoded_width); every other input a device's load of the element its planes contract it at,
-    /// at most a block; the output one value wide. The fill is narrowed to the widths the inputs
-    /// it does not decode land, which are the ones the copy engine may move.
+    /// [`decoded_width`](Self::decoded_width); every other input a device's load of the element its
+    /// planes contract it at, at most a block; the output one value wide. The fill is narrowed to
+    /// the widths the inputs it does not decode land, which are the ones the copy engine may move.
     fn blueprint_in_blocks(
         hw: &Hardware,
         contracted: &MatmulWorkItem,

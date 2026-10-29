@@ -19,9 +19,9 @@ use cubek_std::routine::Routine;
 /// default, on the floor, since it serves every product the selector sends here.
 ///
 /// Every candidate sums each output in the same order, so the race moves the time and no number.
-/// Not bounded: a roofline is a 16-bit product's peak, which a block-scaled instruction runs past, so a
-/// bound would end every round at its first candidate. Its one group is its own: the table races
-/// one kernel's settings.
+/// Not bounded: a roofline is a 16-bit product's peak, which a block-scaled instruction runs past,
+/// so a bound would end every round at its first candidate. Its one group is its own: the table
+/// races one kernel's settings.
 pub(super) fn table(hw: Hardware, _groups: MatmulTableGroups) -> MatmulTunables {
     let mut table = measured_table();
     let group = table.group("block-scaled", GroupPriority::DEFAULT);

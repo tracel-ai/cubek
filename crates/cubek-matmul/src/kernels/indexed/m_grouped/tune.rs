@@ -4,7 +4,8 @@
 //! ([`MGroupedMatmulTensors`]). A packed stack is read packed. Any rows grouped by the slab they
 //! read are one such product, not only an expert layer's.
 //!
-//! Its gradient for the stack is the K-grouped product, [`k_grouped`](crate::kernels::indexed::k_grouped).
+//! Its gradient for the stack is the K-grouped product,
+//! [`k_grouped`](crate::kernels::indexed::k_grouped).
 
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;

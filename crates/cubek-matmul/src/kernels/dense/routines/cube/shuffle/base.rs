@@ -230,7 +230,8 @@ impl Routine for CubeShuffleMatmulRoutine {
     type Blueprint = CubeShuffleMatmulRoutineBlueprint;
     type Partitioning = MatmulPartitioning;
 
-    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its own.
+    /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
+    /// own.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         CubeShuffleMicrokernel::settings(hw)
             .into_iter()

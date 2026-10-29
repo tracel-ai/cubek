@@ -542,8 +542,8 @@ fn the_quantized_bound_holds_its_edges() {
 /// kernels stream to [`QUANTIZED_FEW_ROWS`], a float one to [`FLOAT_FEW_ROWS`].
 ///
 /// The two being different numbers is the property. Routing a float width past the float bound to
-/// the few-rows table would put it on a table whose every candidate declines it, and the widths between
-/// the bounds would be answered by the floor rather than a kernel.
+/// the few-rows table would put it on a table whose every candidate declines it, and the widths
+/// between the bounds would be answered by the floor rather than a kernel.
 #[test]
 fn a_packed_input_reaches_its_table_by_its_own_row_ceiling() {
     let hw = devices::strix_halo();
@@ -576,11 +576,11 @@ fn a_policy_never_names_a_kernel_that_can_decline() {
         .into_iter()
         .filter(MatmulOpStrategy::is_policy)
     {
-        // An input stored in tiles is the exception, and not checked here: only the packed
-        // routines read one, so they are what every strategy runs. A pin's kernel
-        // declines on what these rules cannot see: the plane shuffle on strides, cubek's selector on
-        // "no accelerated path on this device" at the launch, the packed plane routine on a
-        // contraction its steps do not close. A policy names a kernel with a fallback, never a pin.
+        // An input stored in tiles is the exception, and not checked here: only the packed routines
+        // read one, so they are what every strategy runs. A pin's kernel declines on what these
+        // rules cannot see: the plane shuffle on strides, cubek's selector on "no accelerated path
+        // on this device" at the launch, the packed plane routine on a contraction its steps do not
+        // close. A policy names a kernel with a fallback, never a pin.
         for problem in [
             quantized(1, q4()),
             quantized(4, q4()),
@@ -722,9 +722,9 @@ mod float {
         }
     }
 
-    /// The float bound is what every float few-rows candidate holds: the plane shuffle compiles at most
-    /// that many rows in, so a wider float width routed to the few-rows table would meet a candidate
-    /// that declines it and be answered by the fallback.
+    /// The float bound is what every float few-rows candidate holds: the plane shuffle compiles at
+    /// most that many rows in, so a wider float width routed to the few-rows table would meet a
+    /// candidate that declines it and be answered by the fallback.
     #[test]
     fn the_float_bound_is_what_the_plane_shuffle_holds() {
         use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;

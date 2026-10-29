@@ -142,12 +142,13 @@ impl PlaneFragmentMicrokernel {
 
     /// The planes against the packed rhs of `space`: one fragment of the decoding instruction's
     /// rows where the item holds its rows whole, the settings' fragments along `m` where a stage
-    /// tiles them; the settings' fragments along `n` and then every narrower count down to one, each
-    /// where its columns close `n`, each fragment a window of the settings' steps of `K` through
-    /// the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it, one of
-    /// the four quads of `k` its fragment's units split, whole reads of the rhs. Only settings
-    /// stating such a grid size one ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on
-    /// a device offering the decoding instruction over the lhs's element.
+    /// tiles them; the settings' fragments along `n` and then every narrower count down to one,
+    /// each where its columns close `n`, each fragment a window of the settings' steps of `K`
+    /// through the tile DSL's transport. A window is whole windows of `K`, and a unit's run of it,
+    /// one of the four quads of `k` its fragment's units split, whole reads of the rhs. Only
+    /// settings stating such a grid size one
+    /// ([`windowed`](PlaneFragmentMicrokernelSettings::windowed)), on a device offering the
+    /// decoding instruction over the lhs's element.
     fn packed_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -613,13 +614,13 @@ impl PlaneFragmentMicrokernel {
         }
     }
 
-    /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the
-    /// device offers its form and a bulk tensor copy to land its stages; its planes are as wide
-    /// as a warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies
-    /// `{n, k}`, as both operands must, K-major; the settings hold one step along `m`, a form `along_n`
-    /// granules wide the form spans, and a stage of `depth` steps of `K` whose rows, each
-    /// operand's, are one 32, 64 or 128-byte swizzle span, which the instruction's descriptors
-    /// read. The cube walking it adds what only its fill decides
+    /// The warpgroup MMA for `item` at `settings`, where every rule it runs under holds: the device
+    /// offers its form and a bulk tensor copy to land its stages; its planes are as wide as a
+    /// warpgroup's ([`PlaneFragmentInstruction::WARPGROUP_PLANE_UNITS`]); the rhs lies `{n, k}`, as
+    /// both operands must, K-major; the settings hold one step along `m`, a form `along_n` granules
+    /// wide the form spans, and a stage of `depth` steps of `K` whose rows, each operand's, are one
+    /// 32, 64 or 128-byte swizzle span, which the instruction's descriptors read. The cube walking
+    /// it adds what only its fill decides
     /// ([`CubeStagedMicrokernel::resolve`](crate::matmul::cube::CubeStagedMicrokernel::resolve)).
     fn wgmma(
         hw: &Hardware,
@@ -636,7 +637,8 @@ impl PlaneFragmentMicrokernel {
             .copied()
             .find(|form| form.elems.a == lhs && form.elems.b == rhs && form.elems.cd == sum)?;
         let n = settings.along_n.get() * config.n_granularity as usize;
-        // Both operands' stage along_m are one swizzle span: each operand's descriptor reads its own.
+        // Both operands' stage along_m are one swizzle span: each operand's descriptor reads its
+        // own.
         let spans_a_swizzle = |elem: ElemType| {
             matches!(
                 settings.depth.get() * config.k as usize * elem.size(),

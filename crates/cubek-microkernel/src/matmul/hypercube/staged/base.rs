@@ -37,9 +37,9 @@ pub struct HypercubeStagedMicrokernelSettings {
 }
 
 impl HypercubeStagedMicrokernelSettings {
-    /// A smaller box than a staged cube's own default: what a product with too few output tiles to fill
-    /// the device and a long contraction wants, which is the problem a hypercube exists for. Two by
-    /// four fragments on each of two by two planes.
+    /// A smaller box than a staged cube's own default: what a product with too few output tiles to
+    /// fill the device and a long contraction wants, which is the problem a hypercube exists for.
+    /// Two by four fragments on each of two by two planes.
     pub const DEFAULT: Self = Self::boxed(PlaneFragmentMicrokernelSettings::grid(2, 4, 1), (2, 2));
 
     /// The staged cube's own box ([`CubeStagedMicrokernelSettings::DEFAULT`]).

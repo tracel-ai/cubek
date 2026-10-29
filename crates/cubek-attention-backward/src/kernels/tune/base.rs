@@ -19,8 +19,8 @@ type AttentionBackwardAutotune = Autotune<AttentionBackwardKey, AttentionBackwar
 /// measures fastest for this problem on `device`.
 ///
 /// Autotune races the plane, the cube staged and the hypercube routines where the device commits to
-/// a plane width, the unit routine where it does not: elsewhere measuring the unit routine's settings
-/// takes longer than the others'. Under them all sits the unit routine's lead, which asks
+/// a plane width, the unit routine where it does not: elsewhere measuring the unit routine's
+/// settings takes longer than the others'. Under them all sits the unit routine's lead, which asks
 /// nothing of the hardware and serves any problem on any device.
 pub fn attention_backward(
     device: &Device,

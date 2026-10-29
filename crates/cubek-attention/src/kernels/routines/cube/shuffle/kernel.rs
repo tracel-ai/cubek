@@ -7,9 +7,9 @@ use cubek_microkernel::attention::cube::cube_unstaged_attention_microkernel;
 use cubek_microkernel::attention::plane::TileStepReads;
 use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 
-/// Every cube running the cube microkernel on its box with planes of shuffles, each reading its keys
-/// where they lie, over the keys its rows see, and writing each row's logsumexp where the launch
-/// binds one.
+/// Every cube running the cube microkernel on its box with planes of shuffles, each reading its
+/// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
+/// launch binds one.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn cube_shuffle_attention_kernel<EA: Float, E: Float, N: Size>(

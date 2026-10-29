@@ -446,13 +446,13 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
 #[cube]
 impl CubeAttentionMicrokernel {
     /// A cube's planes over `walk`, the steps of keys it takes: its query staged once, its keys and
-    /// values a stage at a time through the ring for every plane, each plane taking its part of every
-    /// stage into its rows of one head with the plane fragment microkernel. Returns the planes' rows
-    /// as the walk leaves them, for the level above to end.
+    /// values a stage at a time through the ring for every plane, each plane taking its part of
+    /// every stage into its rows of one head with the plane fragment microkernel. Returns the
+    /// planes' rows as the walk leaves them, for the level above to end.
     ///
-    /// `out` and `query`, which span no key, are windowed to the cube's box; `key`, `value` and `bias`
-    /// are read at the walk's regions, each stage of them held as `storage`. The cube meets on the
-    /// ring's `sync_cube`, its planes each on their own `sync_plane`.
+    /// `out` and `query`, which span no key, are windowed to the cube's box; `key`, `value` and
+    /// `bias` are read at the walk's regions, each stage of them held as `storage`. The cube meets
+    /// on the ring's `sync_cube`, its planes each on their own `sync_plane`.
     #[allow(clippy::too_many_arguments)]
     fn staged_walk<EA: Float, ES: Float>(
         walk: Walk,
@@ -697,11 +697,11 @@ impl CubeAttentionMicrokernel {
         slot_box
     }
 
-    /// Every plane's own rows of `walk` left undivided in slots of shared memory, laid
-    /// out as `shape` states, its planes laid out as the cube microkernel lays them: the slots of a
-    /// group of planes holding the same rows side by side, one for each plane splitting their keys
-    /// ([`CubeSlotPlanes::store_partial`]). Returns the slots, once every plane's partial has landed,
-    /// for the planes to merge. A meeting of the cube.
+    /// Every plane's own rows of `walk` left undivided in slots of shared memory, laid out as
+    /// `shape` states, its planes laid out as the cube microkernel lays them: the slots of a group
+    /// of planes holding the same rows side by side, one for each plane splitting their keys
+    /// ([`CubeSlotPlanes::store_partial`]). Returns the slots, once every plane's partial has
+    /// landed, for the planes to merge. A meeting of the cube.
     #[allow(
         clippy::type_complexity,
         reason = "the slots' output, maxima and sums, as every reader of slots takes them"

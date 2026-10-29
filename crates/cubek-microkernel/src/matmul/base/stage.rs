@@ -65,9 +65,10 @@ impl MatmulStage {
         }
     }
 
-    /// Elements of `operand` a plane reads contiguously over a cube's whole walk of the space `cube_space`, bound
-    /// in the order `orders` says: the whole of `K` a cube walks for an operand bound innermost
-    /// along it, whose stages continue each other's rows, and one stage's extent otherwise.
+    /// Elements of `operand` a plane reads contiguously over a cube's whole walk of the space
+    /// `cube_space`, bound in the order `orders` says: the whole of `K` a cube walks for an operand
+    /// bound innermost along it, whose stages continue each other's rows, and one stage's extent
+    /// otherwise.
     pub fn walk_run(
         &self,
         cube_space: &Space,

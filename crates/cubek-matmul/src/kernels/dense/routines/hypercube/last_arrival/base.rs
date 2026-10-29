@@ -54,10 +54,10 @@ pub struct HypercubeLastArrivalMatmulRoutineSettings {
 }
 
 impl HypercubeLastArrivalMatmulRoutineSettings {
-    /// The staged cube's own box, four cubes a worker. A product that wants this routine has more tiles
-    /// than the device holds at once, which is the problem the staged cube's box is for, and four
-    /// of its cubes are what a worker holding a thousand units runs at once, so the grid is one
-    /// round.
+    /// The staged cube's own box, four cubes a worker. A product that wants this routine has more
+    /// tiles than the device holds at once, which is the problem the staged cube's box is for, and
+    /// four of its cubes are what a worker holding a thousand units runs at once, so the grid is
+    /// one round.
     pub const DEFAULT: Self = Self {
         microkernel: HypercubeStagedMicrokernelSettings::CUBE_BOX,
         cubes_per_worker: NonZeroUsize::new(4).unwrap(),
@@ -74,8 +74,8 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
     }
 }
 
-/// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells, as
-/// the cube routine's does.
+/// The last-arrival routine's blueprint: how a stage its cubes' microkernel walks holds its cells,
+/// as the cube routine's does.
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
     MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage>;
 

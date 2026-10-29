@@ -46,7 +46,8 @@ pub struct AttentionTuneInputs {
     /// The `u32` counters the cubes of a box count themselves in at, held across launches.
     arrivals: Option<PlainTensor>,
     scoring: AttentionScoring,
-    /// The `[b, h, q, s]` mask hiding keys from the call's queries ([`with_mask`](Self::with_mask)).
+    /// The `[b, h, q, s]` mask hiding keys from the call's queries
+    /// ([`with_mask`](Self::with_mask)).
     mask: Option<PlainTensor>,
     attended: AttendedKeys,
     tensors: AttentionTensors,
@@ -97,10 +98,10 @@ pub fn launch_tuned(
 
 type AttentionAutotune = Autotune<AttentionKey, AttentionTuneInputs, ()>;
 
-/// The routines that serve many query positions: the cube routines, and the hypercube routines for a prompt's or a chunk's
-/// few boxes over many keys. The unit routine is listed only where none of them can run, for want
-/// of a plane width the device commits to: elsewhere measuring its candidates takes longer than
-/// the rest of the autotune. The plane routine is not listed.
+/// The routines that serve many query positions: the cube routines, and the hypercube routines for
+/// a prompt's or a chunk's few boxes over many keys. The unit routine is listed only where none of
+/// them can run, for want of a plane width the device commits to: elsewhere measuring its
+/// candidates takes longer than the rest of the autotune. The plane routine is not listed.
 ///
 /// Its candidates are timed as the cache leaves them, unlike one query's: a prompt's queries, keys
 /// and values are the activations the layer before it just wrote, so production reads them warm,
@@ -452,7 +453,8 @@ impl AttentionTuneInputs {
     /// out as the call's are and attended to their end; or the call's own where the cache is
     /// paged or an operand cannot be laid out alike.
     fn whole_representative(&self, key: &AttentionKey) -> Self {
-        // A prompt's positions lie along each operand's third axis: `[batch, heads, positions, dim]`.
+        // A prompt's positions lie along each operand's third axis: `[batch, heads, positions,
+        // dim]`.
         const POSITIONS: usize = 2;
         let grown = |tensor: &PlainTensor, extent: usize| {
             zeros_grown(&self.client, tensor, POSITIONS, extent)

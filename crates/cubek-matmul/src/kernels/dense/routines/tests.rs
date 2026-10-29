@@ -104,8 +104,8 @@ fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
     MatmulStep::new(hw, operands, problem.elements)
 }
 
-/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block axis
-/// and the inside axis it is split into.
+/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block
+/// axis and the inside axis it is split into.
 fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
     [M, N, K].into_iter().all(|axis| {
         let (blocks, inside) = blocked(axis);

@@ -37,8 +37,8 @@ pub struct PlaneDequantizeMatmulRoutine;
 pub type PlaneDequantizeMatmulRoutineBlueprint = MatmulBlueprint<PlaneShuffleMicrokernel>;
 
 impl PlaneDequantizeMatmulRoutine {
-    /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy, so nothing
-    /// about it is worth racing.
+    /// The settings every decode runs at: the plane shuffle routine's lead. The decode is a copy,
+    /// so nothing about it is worth racing.
     pub const SETTINGS: PlaneShuffleMatmulRoutineSettings =
         PlaneShuffleMatmulRoutineSettings::PACKED;
 

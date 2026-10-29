@@ -316,7 +316,8 @@ impl CubeShufflePlane {
     }
 
     /// Values of `K` one step of the plane covers, `leaf` its step's box: a unit's slice by the
-    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's depth.
+    /// units sharing a step, over both axes a packed rhs's `K` is split into, or a fragment's
+    /// depth.
     pub fn step_depth(&self, leaf: &Space) -> usize {
         match self {
             CubeShufflePlane::Shuffle(plane) => {

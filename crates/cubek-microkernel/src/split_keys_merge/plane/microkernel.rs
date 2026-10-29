@@ -293,7 +293,8 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
     /// A row of fewer lines than the plane has units would leave the units past them idle while the
     /// rest read every slot: where its lines are a power of two, the plane's units form groups of
     /// that many, each group reading every `groups`-th slot, and the groups' sums meet once every
-    /// slot is read. A unit past the row's lines then holds its group's copy of line `lane % lines`.
+    /// slot is read. A unit past the row's lines then holds its group's copy of line `lane %
+    /// lines`.
     ///
     /// The slots lie in any memory, laid out as [`SlotShape`] states: device memory where
     /// cubes meet, shared memory where a cube's planes do. Only the first `holders` of a row's

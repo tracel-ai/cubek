@@ -22,10 +22,10 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
-/// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes along
-/// the run, each plane leaves its queries' partial in a slot of its own, and the slots are merged
-/// into the output where `M` says ([`HypercubeShuffleMerge`]). The cubes cover the queries, the
-/// heads and the runs, one batch and key head each.
+/// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
+/// along the run, each plane leaves its queries' partial in a slot of its own, and the slots are
+/// merged into the output where `M` says ([`HypercubeShuffleMerge`]). The cubes cover the queries,
+/// the heads and the runs, one batch and key head each.
 ///
 /// What few queries against many keys want, a decode step's above all: a box's queries leave the
 /// device idle where only one cube walks their keys, and the cubes sharing the box read no key

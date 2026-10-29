@@ -1,11 +1,10 @@
 //! How a product is told apart from another, for the tables — and what a table
 //! reads off it when it prioritizes its candidates.
 //!
-//! The key is a description of the *problem* — what the operands are, how big
-//! they are, how they are laid out — so it lives beside the plans rather than
-//! beside the tables that consume it. A caller builds the tables; it is the
-//! kernels that know what makes two products the same product, and the fused matmul asks the many-rows table's tuner for its election
-//! under this key too.
+//! The key is a description of the *problem* — what the operands are, how big they are, how they
+//! are laid out — so it lives beside the plans rather than beside the tables that consume it. A
+//! caller builds the tables; it is the kernels that know what makes two products the same product,
+//! and the fused matmul asks the many-rows table's tuner for its election under this key too.
 //!
 //! [`MatmulShape`] is the second half: the key read as extents, which is what a
 //! candidate list is prioritized against. Both arms prioritize against it, and

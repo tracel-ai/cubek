@@ -256,8 +256,8 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
 }
 
 /// `sum += a · b` over `run`, a run of `K` of the box `over`, whose sum is already open: every
-/// plane fills the stages a step of `K` at a time and contracts its tile out of each with the
-/// plane microkernel, and nothing drains. A run that arrives as boxes adds each into one sum, as a
+/// plane fills the stages a step of `K` at a time and contracts its tile out of each with the plane
+/// microkernel, and nothing drains. A run that arrives as boxes adds each into one sum, as a
 /// hypercube's cube walks its run
 /// ([`hypercube_staged_relay_microkernel`](crate::matmul::hypercube::hypercube_staged_relay_microkernel())).
 #[cube]

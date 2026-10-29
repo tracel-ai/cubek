@@ -9,12 +9,12 @@ use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 /// Which keys a query sees, and the bias its scores are summed with: zero at a key it sees, the
 /// minimum value elsewhere. A microkernel that holds a tile of scores sums the bias into it; one
 /// that scores keys in its own registers asks [`sees`](VisibleKeys::sees). A query sees the first
-/// `attended` keys; under [`Causal`](AttentionVisibility::Causal) none past its own position: query `q` of
-/// `queries` sees key `s` where `s + queries ≤ q + queries_end`; under
-/// [`Windowed`](AttentionVisibility::Windowed) none `window` or more before it either, where
-/// `s + queries + window > q + queries_end`; under [`Recent`](AttentionVisibility::Recent) the
-/// last `window` of them, where `s + window ≥ attended`; and, where there is a mask, none whose
-/// cell is not zero.
+/// `attended` keys; under [`Causal`](AttentionVisibility::Causal) none past its own position: query
+/// `q` of `queries` sees key `s` where `s + queries ≤ q + queries_end`; under
+/// [`Windowed`](AttentionVisibility::Windowed) none `window` or more before it either, where `s +
+/// queries + window > q + queries_end`; under [`Recent`](AttentionVisibility::Recent) the last
+/// `window` of them, where `s + window ≥ attended`; and, where there is a mask, none whose cell is
+/// not zero.
 #[derive(CubeType, Clone)]
 pub struct VisibleKeys {
     /// Keys attended, a prefix of the buffers': none past it is read.
@@ -127,8 +127,8 @@ impl VisibleKeys {
 
     /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the
     /// steps from `region`'s first key on, every `in_turns`-th of them where that many walkers take
-    /// a walk's steps in turns. A step the last visible key falls in is taken whole; the bias masks its
-    /// tail. A region that starts past every key its queries see, a cube's run of a split walk,
+    /// a walk's steps in turns. A step the last visible key falls in is taken whole; the bias masks
+    /// its tail. A region that starts past every key its queries see, a cube's run of a split walk,
     /// takes none.
     ///
     /// A window bounds the keys a query sees from below too, and the walk still starts at

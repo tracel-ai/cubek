@@ -142,8 +142,8 @@ impl KWalk {
 #[cube]
 impl KWalk {
     /// Every step contracted straight into `sum`: a grid of fragments in one call, which loads each
-    /// operand's fragments once; a register block, which is one unit's block and not a grid, cell by
-    /// cell. Each step takes `held` at its first coordinate.
+    /// operand's fragments once; a register block, which is one unit's block and not a grid, cell
+    /// by cell. Each step takes `held` at its first coordinate.
     fn wide_steps(
         plane: &Region,
         sum: &Tile,

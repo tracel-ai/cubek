@@ -13,10 +13,10 @@ use cubek_std::matmul_axes::{K, N};
 ///
 /// One type for every routine, named per routine by an alias
 /// ([`UnitRegistersMatmulRoutineBlueprint`](crate::kernels::UnitRegistersMatmulRoutineBlueprint),
-/// [`PlaneShuffleMatmulRoutineBlueprint`](crate::kernels::PlaneShuffleMatmulRoutineBlueprint) and their
-/// siblings): what differs between them is the microkernel, and the shared memory only the
-/// routine that walks at that level decides. The order each operand binds in is the
-/// microkernel's ([`MatmulMicrokernel::orders`]).
+/// [`PlaneShuffleMatmulRoutineBlueprint`](crate::kernels::PlaneShuffleMatmulRoutineBlueprint) and
+/// their siblings): what differs between them is the microkernel, and the shared memory only the
+/// routine that walks at that level decides. The order each operand binds in is the microkernel's
+/// ([`MatmulMicrokernel::orders`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulBlueprint<M, SM = ()> {
     pub microkernel: M,

@@ -78,7 +78,8 @@ pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
 };
 
 /// What a launch holding every row whole declines before preparing anything: an rhs contiguous
-/// along neither of its axes, or one stored in tiles, which no routine holding every row whole reads in vectors.
+/// along neither of its axes, or one stored in tiles, which no routine holding every row whole
+/// reads in vectors.
 pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
     why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
@@ -1252,8 +1253,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let partitioning = blueprint.partitioning.as_tile();
         // The output's axes in its order: the batches the cube level hands out, then its rows and
         // columns, against packed inputs as the block-split space restates them
-        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long stays
-        // a dim of the slots.
+        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long
+        // stays a dim of the slots.
         let output: Vec<Axis> = match self.read(|view| view.blocks()) {
             None => {
                 self.assert_tiled();

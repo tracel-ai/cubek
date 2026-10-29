@@ -32,11 +32,11 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// twice. Each cube runs the cube microkernel over its run, its planes laid out along `m` and `n`
 /// sharing its stage; a box's cubes ride the grid's third dimension beside the batches.
 ///
-/// The cubes of a box meet in turns, in the order of their runs ([`Relay`](cubecl::tile::launch::Relay)):
-/// the first writes its sum into a carry of the sum's element, each after adds its own into it a
-/// line at a time, and the last hands the total on to the output. The order is fixed, so its sums
-/// are the same bits from run to run. Declines where one cube's stores do not reach another within
-/// a launch.
+/// The cubes of a box meet in turns, in the order of their runs
+/// ([`Relay`](cubecl::tile::launch::Relay)): the first writes its sum into a carry of the sum's
+/// element, each after adds its own into it a line at a time, and the last hands the total on to
+/// the output. The order is fixed, so its sums are the same bits from run to run. Declines where
+/// one cube's stores do not reach another within a launch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HypercubeRelayMatmulRoutine;
 

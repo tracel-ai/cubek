@@ -4,8 +4,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
-/// Every cube, running its run of the output, its units reading each operand as `reads` says,
-/// under the scales it carries, none where it is plain. `O` is how the output is reached: a buffer, or a
+/// Every cube, running its run of the output, its units reading each operand as `reads` says, under
+/// the scales it carries, none where it is plain. `O` is how the output is reached: a buffer, or a
 /// sink.
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
