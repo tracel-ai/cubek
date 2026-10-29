@@ -4,14 +4,18 @@
 
 pub mod tune;
 
+mod binding;
 mod blueprint;
+mod gradients;
 mod problem;
 mod routine;
 mod routines;
 mod tensors;
 mod walk;
 
+pub(crate) use binding::*;
 pub use blueprint::*;
+pub use gradients::*;
 pub use problem::*;
 pub use routine::*;
 pub use routines::*;
