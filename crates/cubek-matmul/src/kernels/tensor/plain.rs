@@ -1,6 +1,6 @@
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::std::tensor::is_contiguous;
@@ -9,7 +9,7 @@ use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Axis, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
-use cubecl::zspace::{Shape, Tiling};
+use cubecl::zspace::{Shape, Strides, Tiling};
 use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
 
 use cubek_microkernel::matmul::MatmulBlocks;
@@ -52,6 +52,88 @@ impl PlainTensor {
         let handle = TensorHandle::new_contiguous(shape, memory, elem);
         let plain = Self::of_handle(handle.clone());
         (handle, plain)
+    }
+
+    /// A zero-filled tensor shaped `shape` in `elem` at `strides`, uploaded rather than filled: an
+    /// upload is not a launch, so a process mode that discards launches keeps it. An axis at stride
+    /// zero holds one element.
+    pub fn zeros(
+        client: &Client,
+        shape: &[usize],
+        strides: impl Into<Strides>,
+        elem: ElemType,
+    ) -> Self {
+        let strides: Strides = strides.into();
+        let elements = shape
+            .iter()
+            .zip(strides.iter())
+            .map(|(extent, stride)| (extent - 1) * stride)
+            .sum::<usize>()
+            + 1;
+        let handle = client.create_from_slice(&vec![0u8; elements * elem.size()]);
+        let meta = Metadata::new(Shape::from(shape.to_vec()), strides);
+        Self::of_handle(TensorHandle::from_metadata(handle, meta, elem))
+    }
+
+    /// `values` as a row-major `u32` tensor shaped `shape`, uploaded.
+    pub fn of_u32s(client: &Client, shape: &[usize], values: &[u32]) -> Self {
+        let bytes: Vec<u8> = values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        let handle = client.create_from_slice(&bytes);
+        let meta = Metadata::new(
+            Shape::from(shape.to_vec()),
+            row_major_contiguous_strides(shape),
+        );
+        Self::of_handle(TensorHandle::from_metadata(
+            handle,
+            meta,
+            ElemType::UInt(UIntKind::U32),
+        ))
+    }
+
+    /// A zero-filled tensor of this one's element, its `axis` grown to `extent`, laid out in this
+    /// one's order of strides: what a tuning round measures in place of a call shorter than its
+    /// key's bucket, so the winner is elected on the bucket's longest launch whatever order the
+    /// calls come in.
+    ///
+    /// `None` where this one is tiled, where `extent` does not grow `axis`, or where a fresh buffer
+    /// cannot repeat the layout: a strided or broadcast buffer.
+    pub fn zeros_grown(&self, client: &Client, axis: usize, extent: usize) -> Option<Self> {
+        if self.is_tiled() {
+            return None;
+        }
+        let (shape, strides) = (self.binding.shape.as_slice(), &self.binding.strides[..]);
+        if extent <= shape[axis] {
+            return None;
+        }
+        // The axes innermost first; a dense buffer's strides are the running product of the extents
+        // inside them. An axis of one has no step to repeat.
+        let mut order: Vec<usize> = (0..shape.len()).collect();
+        order.sort_by_key(|&a| (strides[a], shape[a] != 1));
+        let mut step = 1;
+        for &a in &order {
+            if shape[a] != 1 && strides[a] != step {
+                return None;
+            }
+            step *= shape[a];
+        }
+        let mut grown = shape.to_vec();
+        grown[axis] = extent;
+        let mut grown_strides = vec![0; grown.len()];
+        let mut step = 1;
+        for &a in &order {
+            grown_strides[a] = step;
+            step *= grown[a];
+        }
+        let memory = client.create_from_slice(&vec![0u8; step * self.elem.size()]);
+        Some(Self::of_handle(TensorHandle::new(
+            memory,
+            Shape::from(grown),
+            grown_strides,
+            self.elem,
+        )))
     }
 
     /// Whether `client`'s runtime computes in this tensor's element and stores it in a buffer:

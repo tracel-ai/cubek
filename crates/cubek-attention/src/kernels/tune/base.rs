@@ -16,12 +16,11 @@ use crate::kernels::{
     UnitAttentionRoutine,
 };
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::throughput::MemoryAccess;
 use cubecl::tile::launch::Refusal;
 use cubecl::tune::{LocalTuner, Tunable, TunableSet, Work, local_tuner};
-use cubecl::zspace::{Shape, metadata::Metadata};
+use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::{CubeTuneId, Device};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::AttentionMicrokernel;
@@ -412,7 +411,7 @@ impl AttentionTuneInputs {
             problem.seq_q,
             problem.head_dim,
         ];
-        let query = zeros(client, &shape, contiguous(&shape), elem);
+        let query = PlainTensor::zeros(client, &shape, row_major_contiguous_strides(shape), elem);
         let (key, value, pages) = inputs.zero_keys(key, problem.batch);
         inputs.measured_on(query, key, value, pages, None)
     }
@@ -428,7 +427,9 @@ impl AttentionTuneInputs {
     ) -> (PlainTensor, PlainTensor, Option<PlainTensor>) {
         let (client, elem) = (&self.client, self.key.elem);
         let (kv_heads, positions, head_dim) = (self.kv_heads(), key.seq_kv(), key.head_dim());
-        let zeros = |shape: [usize; 4]| zeros(client, &shape, contiguous(&shape), elem);
+        let zeros = |shape: [usize; 4]| {
+            PlainTensor::zeros(client, &shape, row_major_contiguous_strides(shape), elem)
+        };
         match key.page_size() {
             None => {
                 let shape = [batch, kv_heads, positions, head_dim];
@@ -442,7 +443,7 @@ impl AttentionTuneInputs {
                 (
                     zeros(shape),
                     zeros(shape),
-                    Some(upload_u32(client, &[batch, width], &table)),
+                    Some(PlainTensor::of_u32s(client, &[batch, width], &table)),
                 )
             }
         }
@@ -455,7 +456,7 @@ impl AttentionTuneInputs {
         // A prompt's positions lie along each operand's third axis: `[batch, heads, positions, dim]`.
         const POSITIONS: usize = 2;
         let grown = |tensor: &PlainTensor, extent: usize| {
-            zeros_grown(&self.client, tensor, POSITIONS, extent)
+            tensor.zeros_grown(&self.client, POSITIONS, extent)
         };
         let keyed = || {
             Some((
@@ -520,12 +521,12 @@ impl AttentionTuneInputs {
             Some(pages) => pages.shape()[1] * positions,
             None => positions,
         };
-        let lengths = upload_u32(&self.client, &[batch], &vec![keys as u32; batch]);
+        let lengths = PlainTensor::of_u32s(&self.client, &[batch], &vec![keys as u32; batch]);
         // A mask's cells change which scores count, not what a launch reads or how many steps it
         // takes: one cell of the call's element, at stride zero over the measured scores.
         let mask = self.mask.as_ref().map(|mask| {
             let [batch, heads, queries, _] = query.shape().dims::<4>();
-            zeros(
+            PlainTensor::zeros(
                 &self.client,
                 &[batch, heads, queries, keys],
                 vec![0; 4],
@@ -604,84 +605,6 @@ fn chunk_problem(key: &AttentionKey) -> Option<AttentionRoutineProblem> {
         .filter(|_| key.chunk())
 }
 
-/// Row-major strides over `shape`.
-fn contiguous(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1; shape.len()];
-    for axis in (0..shape.len().saturating_sub(1)).rev() {
-        strides[axis] = strides[axis + 1] * shape[axis + 1];
-    }
-    strides
-}
-
-/// A zero-filled `shape` of `elem` at `strides`, uploaded.
-fn zeros(client: &Client, shape: &[usize], strides: Vec<usize>, elem: ElemType) -> PlainTensor {
-    let elements = shape
-        .iter()
-        .zip(&strides)
-        .map(|(extent, stride)| (extent - 1) * stride)
-        .sum::<usize>()
-        + 1;
-    let handle = client.create_from_slice(&vec![0u8; elements * elem.size()]);
-    let meta = Metadata::new(Shape::from(shape.to_vec()), strides);
-    PlainTensor::of_handle(TensorHandle::from_metadata(handle, meta, elem))
-}
-
-/// `values` as a `u32` tensor of `shape`, uploaded.
-fn upload_u32(client: &Client, shape: &[usize], values: &[u32]) -> PlainTensor {
-    let bytes: Vec<u8> = values
-        .iter()
-        .flat_map(|value| value.to_le_bytes())
-        .collect();
-    let handle = client.create_from_slice(&bytes);
-    let meta = Metadata::new(Shape::from(shape.to_vec()), contiguous(shape));
-    PlainTensor::of_handle(TensorHandle::from_metadata(
-        handle,
-        meta,
-        ElemType::UInt(UIntKind::U32),
-    ))
-}
-
-/// A zero-filled tensor of `tensor`'s element, its `axis` grown to `extent`, laid out in
-/// `tensor`'s order of strides: what a round measures in place of a call shorter than its key's
-/// bucket, so the winner is elected on the bucket's longest launch whatever order the calls come
-/// in.
-///
-/// `None` where `extent` does not grow `axis`, or where a fresh buffer cannot repeat the layout:
-/// a tiled, strided or broadcast buffer.
-fn zeros_grown(
-    client: &Client,
-    tensor: &PlainTensor,
-    axis: usize,
-    extent: usize,
-) -> Option<PlainTensor> {
-    let shape = tensor.shape();
-    let shape = shape.as_slice();
-    if extent <= shape[axis] || tensor.is_tiled() {
-        return None;
-    }
-    let strides = &tensor.binding.strides[..];
-    // The axes innermost first; a dense buffer's strides are the running product of the extents
-    // inside them. An axis of one has no step to repeat.
-    let mut order: Vec<usize> = (0..shape.len()).collect();
-    order.sort_by_key(|&a| (strides[a], shape[a] != 1));
-    let mut step = 1;
-    for &a in &order {
-        if shape[a] != 1 && strides[a] != step {
-            return None;
-        }
-        step *= shape[a];
-    }
-    let mut grown = shape.to_vec();
-    grown[axis] = extent;
-    let mut grown_strides = vec![0; grown.len()];
-    let mut step = 1;
-    for &a in &order {
-        grown_strides[a] = step;
-        step *= grown[a];
-    }
-    Some(zeros(client, &grown, grown_strides, tensor.elem))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,7 +648,7 @@ mod tests {
     mod keys {
         use super::*;
         use crate::kernels::{AttentionScoring, AttentionVisibility, QueryPlacement};
-        use cubecl::ir::FloatKind;
+        use cubecl::ir::{ElemType, FloatKind};
         use cubek_test_utils::client;
 
         const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -741,7 +664,9 @@ mod tests {
         ) -> AttentionTuneInputs {
             let client = client();
             let (heads, kv_heads, head_dim) = HEADS;
-            let zeros = |shape: [usize; 4]| zeros(&client, &shape, contiguous(&shape), F16);
+            let zeros = |shape: [usize; 4]| {
+                PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), F16)
+            };
             let query = zeros([1, heads, queries, head_dim]);
             let (key, value, pages) = match page_size {
                 None => {
@@ -752,11 +677,11 @@ mod tests {
                     let width = positions / page_size;
                     let shape = [width, kv_heads, page_size, head_dim];
                     let table: Vec<u32> = (0..width as u32).collect();
-                    let pages = upload_u32(&client, &[1, width], &table);
+                    let pages = PlainTensor::of_u32s(&client, &[1, width], &table);
                     (zeros(shape), zeros(shape), Some(pages))
                 }
             };
-            let lengths = upload_u32(&client, &[1], &[queries as u32]);
+            let lengths = PlainTensor::of_u32s(&client, &[1], &[queries as u32]);
             let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
             let scoring = AttentionScoring::standard(visibility, head_dim);
             AttentionTuneInputs::new(&client, query, key, value, pages, lengths, None, scoring)
