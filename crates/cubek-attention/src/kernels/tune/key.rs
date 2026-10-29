@@ -36,20 +36,28 @@ use serde::{Deserialize, Serialize};
 /// call in hand, so the candidates that collapse at some length inside a bucket
 /// collapse together.
 ///
-/// Three shapes reach autotune, and the key states each by its extents:
+/// **No key reads a cache's size.** A cache's buffers hold its capacity, and how many of their
+/// positions a call attends lives on device; neither is the key's to read. So two contexts, two
+/// cache sizes or two devices sized apart tune the same attention under the same key, and an
+/// environment built at one context serves every other. Where a call's buffers are its own keys,
+/// every position of them attended ([`AttentionTuneInputs::attending_every_position`]), their
+/// extent is the problem's, and the key holds it.
 ///
-/// - **A whole prompt**: its length is both the queries and the keys.
-/// - **A chunk** of a prompt prefilled in chunks, attended against the cache
-///   the chunks before it filled: `queries` of the last of a longer prefix.
-///   That is where a long prompt spends its attention, every chunk after
-///   the first, and the walk an environment build takes lands every
-///   `(queries, prefix)` bucket a context can produce, so a chunk's key stands
-///   for [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over
-///   [`CHUNK_PREFIX`](Self::CHUNK_PREFIX) keys, at their buckets' extents,
-///   whatever the call brought.
-/// - **A decode step**: one query against the cache's **capacity** — never the
-///   attended count, which the launch takes as a device tensor so that it is
-///   identical across steps, the graph-capture precondition.
+/// Four shapes reach autotune, and the key states each by its extents:
+///
+/// - **A whole prompt** over its own keys: its length is both the queries and the keys.
+/// - **Queries over keys of their own** of another length, every position attended: both
+///   extents, as the call brought them.
+/// - **Queries over a cache**: a prompt, or a chunk of one prefilled in chunks, attended against
+///   what the chunks before it filled. That is where a long prompt spends its attention, every
+///   chunk after the first, so the key stands for
+///   [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over [`CACHE_PREFIX`](Self::CACHE_PREFIX)
+///   keys, at their buckets' extents, whatever the call brought.
+/// - **A decode step over a cache**: one query over [`CACHE_PREFIX`](Self::CACHE_PREFIX) keys,
+///   whatever the cache holds or the step attends. The attended count is a device tensor, so that
+///   the launch is identical across steps, the graph-capture precondition.
+///
+/// [`AttentionTuneInputs::attending_every_position`]: crate::kernels::tune::AttentionTuneInputs::attending_every_position
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionKey {
     /// Query/key/value dtype.
@@ -63,7 +71,8 @@ pub struct AttentionKey {
     /// Query positions.
     #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     queries: usize,
-    /// Key positions the buffers hold: a prompt's length, a chunk's prefix, a
+    /// Key positions: the buffers' extent where they are the call's own keys, the prefix every
+    /// key over a cache stands for otherwise ([`CACHE_PREFIX`](Self::CACHE_PREFIX)), never a
     /// cache's capacity.
     #[autotune(anchor(exp(min = 1, max = 1048576, base = 2)))]
     keys: usize,
@@ -86,14 +95,15 @@ pub struct AttentionKey {
 }
 
 impl AttentionKey {
-    /// The queries a chunk key stands for: the narrowest chunk a prompt is cut into when it is
-    /// prefilled in chunks. A device that cuts its prompts wider is keyed
+    /// The queries a key of many queries over a cache stands for: the narrowest chunk a prompt is
+    /// cut into when it is prefilled in chunks. A device that cuts its prompts wider is keyed
     /// here all the same, so its chunks run what this chunk elected.
     pub const CHUNK_QUERIES: usize = 512;
 
-    /// The attended prefix a chunk key stands for: a chunk three chunks into
-    /// its prompt, deep enough that the walk outweighs the launch.
-    pub const CHUNK_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
+    /// The attended prefix every key over a cache stands for, a chunk's and a decode step's alike:
+    /// three chunks into its prompt, deep enough that the walk outweighs the launch. A cache of
+    /// any capacity, attended to any length, is keyed here.
+    pub const CACHE_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
 
     /// Whether the queries are the tail of a longer attended prefix rather
     /// than the whole of it: a chunk, or a decode step.
@@ -112,7 +122,7 @@ impl AttentionKey {
         self.queries
     }
 
-    /// Key positions the buffers hold, at the bucket's own extent.
+    /// Key positions, at the bucket's own extent.
     pub fn seq_kv(&self) -> usize {
         self.keys
     }
