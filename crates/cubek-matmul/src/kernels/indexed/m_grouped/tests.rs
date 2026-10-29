@@ -151,7 +151,7 @@ fn a_stack_stored_in_tiles_is_refused() {
 /// The entry asks the floors listed for its stack's kind and no others: a float stack served only
 /// by a packed floor passes the entry and then every floor of the round declines it.
 #[test]
-fn a_float_stack_is_asked_only_the_floors_listed_for_float() {
+fn a_float_stack_is_asked_every_plane_shuffle_floor_and_the_float_cube_staged_one() {
     let floors = MGroupedFloors::LISTED;
     let plane_shuffle: Vec<_> = MGroupedListing::admitted(&floors.plane_shuffle, Product::Float)
         .map(|floor| floor.settings)
@@ -159,12 +159,18 @@ fn a_float_stack_is_asked_only_the_floors_listed_for_float() {
     let cube_staged: Vec<_> = MGroupedListing::admitted(&floors.cube_staged, Product::Float)
         .map(|floor| floor.settings)
         .collect();
-    assert_eq!(plane_shuffle, [MGroupedSettings::PLANE_SHUFFLE]);
+    assert_eq!(
+        plane_shuffle,
+        [
+            MGroupedSettings::PLANE_SHUFFLE,
+            MGroupedSettings::PLANE_SHUFFLE_PACKED
+        ]
+    );
     assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED]);
 }
 
 #[test]
-fn a_packed_stack_is_asked_only_the_floors_listed_for_packed() {
+fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_one() {
     let floors = MGroupedFloors::LISTED;
     let plane_shuffle: Vec<_> = MGroupedListing::admitted(&floors.plane_shuffle, Product::Packed)
         .map(|floor| floor.settings)
@@ -172,6 +178,12 @@ fn a_packed_stack_is_asked_only_the_floors_listed_for_packed() {
     let cube_staged: Vec<_> = MGroupedListing::admitted(&floors.cube_staged, Product::Packed)
         .map(|floor| floor.settings)
         .collect();
-    assert_eq!(plane_shuffle, [MGroupedSettings::PLANE_SHUFFLE_PACKED]);
+    assert_eq!(
+        plane_shuffle,
+        [
+            MGroupedSettings::PLANE_SHUFFLE,
+            MGroupedSettings::PLANE_SHUFFLE_PACKED
+        ]
+    );
     assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED_PACKED]);
 }

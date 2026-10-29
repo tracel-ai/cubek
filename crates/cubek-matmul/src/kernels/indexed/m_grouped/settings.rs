@@ -82,11 +82,11 @@ impl MGroupedFloors {
         plane_shuffle: [
             MGroupedListing {
                 settings: MGroupedSettings::PLANE_SHUFFLE,
-                listed: ListedFor::Float,
+                listed: ListedFor::Either,
             },
             MGroupedListing {
                 settings: MGroupedSettings::PLANE_SHUFFLE_PACKED,
-                listed: ListedFor::Packed,
+                listed: ListedFor::Either,
             },
         ],
         cube_staged: [
@@ -117,9 +117,27 @@ impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
         ..Self::PLANE_SHUFFLE
     };
 
-    /// Every plane shuffle setting worth racing on `hw`, for the stacks each is listed for.
+    /// Every plane shuffle setting worth racing on `hw`, for the stacks each is listed for. Each
+    /// declines a stack it cannot read, so the float ones race on a packed stack too: some read
+    /// one faster than the packed lead does.
     pub(crate) fn listed(hw: &Hardware) -> Vec<MGroupedListing<PlaneShuffleMatmulRoutineSettings>> {
-        MGroupedListing::merged(Self::plane_shuffle(hw), Self::plane_shuffle_packed())
+        let float = Self::plane_shuffle(hw);
+        let packed: Vec<_> = Self::plane_shuffle_packed()
+            .into_iter()
+            .filter(|settings| !float.contains(settings))
+            .map(|settings| MGroupedListing {
+                settings,
+                listed: ListedFor::Packed,
+            })
+            .collect();
+        float
+            .into_iter()
+            .map(|settings| MGroupedListing {
+                settings,
+                listed: ListedFor::Either,
+            })
+            .chain(packed)
+            .collect()
     }
 
     /// The plane shuffle's settings worth racing on `hw` against a float stack: the dense
