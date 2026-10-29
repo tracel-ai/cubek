@@ -2,8 +2,6 @@
 //! the tensors, the walks a routine launches, and the autotune that picks one, behind
 //! [`attention_backward`].
 
-pub mod tune;
-
 mod binding;
 mod blueprint;
 mod gradients;
@@ -12,6 +10,7 @@ mod routine;
 mod routines;
 mod stages;
 mod tensors;
+mod tune;
 mod walk;
 
 pub(crate) use binding::*;
