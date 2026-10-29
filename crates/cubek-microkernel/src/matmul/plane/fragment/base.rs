@@ -269,11 +269,11 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// The planes reading both packed inputs of `space` as they are stored: each block-scaled
-    /// instruction the device offers for their values, the largest first, whose step of `K` is
-    /// a word of each input's block scales, the blocks one read of the scales covers
-    /// ([`Operand::scale_read`]). A fragment's window spans those blocks along `KB` and the whole
-    /// of each along `KI`, and the instruction reads the values and the word of scales beside
-    /// them as they lie.
+    /// instruction the device offers for their formats ([`block_scaled_for`]), the largest first,
+    /// whose step of `K` is whole blocks. A fragment's window spans its steps' blocks along `KB`
+    /// and the whole of each along `KI`, and the instruction reads the values as they lie, and
+    /// their scales as a word where a word of them is its step, one a block otherwise
+    /// ([`scale_word_is_a_step`](PlaneFragmentInstruction::scale_word_is_a_step)).
     fn block_scaled_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -281,10 +281,7 @@ impl PlaneFragmentMicrokernel {
         space: MatmulBlocks,
     ) -> Vec<Self> {
         let committed = hw.plane_dim().is_ok();
-        let rhs = space.operand(MatmulOperand::Rhs);
-        let step = rhs
-            .grouping(K, space.k)
-            .map(|block| block * rhs.scale_read(K));
+        let block = space.operand(MatmulOperand::Rhs).grouping(K, space.k);
         // Each input under its own scheme, at its own block along `K`.
         let input = |input: MatmulOperand| {
             let packing = space.packings.get(input)?;
@@ -301,9 +298,11 @@ impl PlaneFragmentMicrokernel {
         };
         offered
             .into_iter()
+            // A step of the instruction is whole blocks, whose scales it reads as a word where the
+            // word is a step, or one a block beside the values otherwise.
             .filter(|instruction| {
                 let [_, _, (_, k)] = instruction.shape();
-                committed && step == Some(k)
+                committed && block.is_some_and(|block| k.is_multiple_of(block))
             })
             .map(|instruction| Self {
                 instruction,

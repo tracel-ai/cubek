@@ -209,8 +209,9 @@ fn packed_plan(
 
 /// Whether the block-scaled tensor cores serve this product, on a GPU whose block-scaled
 /// instruction takes it: both inputs packed with their words along `k` under block scales along
-/// `k` ([`block_scaled_for`]), a step of the instruction a word of each input's block scales, and
-/// `k` whole such words. A per-tensor scale above the blocks, or none, is the product's to apply.
+/// `k` ([`block_scaled_for`]), one block for both, a step of the instruction whole blocks, and `k`
+/// whole words of each input's scales. A per-tensor scale above the blocks, or none, is the
+/// product's to apply.
 fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
     let input = |input: MatmulOperand| match problem.operands.get(input) {
         OperandKind::Quantized(scheme) if Operand::axis_of(&scheme, input.axes()) == Some(K) => {
@@ -225,11 +226,10 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
     else {
         return false;
     };
-    // The instruction takes one word of each input's scales a step.
-    lhs_word == rhs_word
-        && problem.k.is_multiple_of(lhs_word)
+    problem.k.is_multiple_of(lhs_word)
+        && problem.k.is_multiple_of(rhs_word)
         && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
-            .any(|instruction| instruction.shape.k as usize == lhs_word)
+            .any(|instruction| (instruction.shape.k as usize).is_multiple_of(lhs_block))
 }
 
 /// The most rows a float product goes to the few-rows table with: the rows every float few-rows candidate
@@ -248,8 +248,8 @@ pub fn float_few_rows(rows: usize) -> bool {
 /// `BlockScaledTensorCores` named for a product it does not serve.
 pub const BLOCK_SCALED_TENSOR_CORES_UNSERVED: Refusal = Refusal::Declined {
     why: "BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a \
-              block-scaled tensor-core instruction of their format whose step is a word of their \
-              scales; take autotune or a policy for any other product",
+              block-scaled tensor-core instruction of their format; take autotune or a policy for \
+              any other product",
 };
 
 /// The memory-bound plane routine, at the first of its settings that serves.

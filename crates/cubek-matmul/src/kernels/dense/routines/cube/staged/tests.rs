@@ -1443,6 +1443,64 @@ mod base {
         assert!(estimate.work.is_some());
     }
 
+    /// On a GPU with every block-scaled instruction `sm_120` has, each format's product read as
+    /// stored prepares on that format's instruction: NVFP4's scales handed over a word a step, as
+    /// the instruction takes them, MXFP4's of thirty-two and MXFP8's, whose word of four `ue8m0`
+    /// scales is more than one step, read one a block beside the values. The block-scaled list
+    /// prepares each format, the default box among it.
+    #[test]
+    fn each_format_read_as_stored_prepares_on_its_instruction() {
+        use cubecl::tile::BlockScaledOperands;
+        use cubek_microkernel::matmul::MatmulMicrokernel;
+        use cubek_std::NVFP4_FORM;
+        use cubek_std::layout::stored::BlockScales;
+
+        let hw = devices::offering_block_scaled(devices::h100());
+        let ue8m0 = |code, k| {
+            (
+                BlockScaledOperands {
+                    lhs: code,
+                    rhs: code,
+                    scales: FloatKind::UE8M0,
+                    block: 32,
+                },
+                k,
+            )
+        };
+        let formats = [
+            ((NVFP4_FORM, 64), BlockScales::Words),
+            (ue8m0(FloatKind::E2M1x2, 64), BlockScales::Fields),
+            (ue8m0(FloatKind::E4M3, 32), BlockScales::Fields),
+        ];
+        let settings = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
+        for ((form, k), scales) in formats {
+            let inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&form)
+                .expect("every format here is a packed input");
+            let problem = MatmulRoutineProblem::packed(
+                128,
+                256,
+                512,
+                ElemType::Float(FloatKind::F16),
+                inputs,
+            );
+            let prepared: Vec<_> = settings
+                .iter()
+                .filter_map(|setting| {
+                    CubeStagedMatmulRoutine
+                        .prepare(&hw, &problem, setting)
+                        .ok()
+                })
+                .collect();
+            assert!(!prepared.is_empty(), "{form:?}");
+            for (blueprint, _) in prepared {
+                let instruction = blueprint.microkernel.plane.instruction;
+                assert_eq!(instruction.form(), Some(form), "{form:?}");
+                assert_eq!(instruction.shape()[2].1, k, "{form:?}");
+                assert_eq!(blueprint.microkernel.block_scales(), scales, "{form:?}");
+            }
+        }
+    }
+
     /// A packed input its stages decode is estimated a stage of scale blocks at a time: as many
     /// stages as `K` holds stages of the microkernel's blocks, split between the planes sharing
     /// `K`.

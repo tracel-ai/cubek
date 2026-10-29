@@ -319,12 +319,12 @@ fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_
 }
 
 /// Named, the block-scaled kernel takes any pair of formats the GPU's block-scaled instruction
-/// reads a word of scales a step of: NVFP4 without its per-tensor scale, and `e2m1` under `ue8m0`
-/// scales of sixteen, the 4-bit instruction's other form. It refuses MXFP8, whose word of four
-/// `ue8m0` scales is four of the 8-bit instruction's steps, and `e2m1` under scales of thirty-two
-/// (MXFP4), two steps a word: their scales are no register as stored.
+/// reads: NVFP4 without its per-tensor scale, `e2m1` under `ue8m0` scales of sixteen (the 4-bit
+/// instruction reading a word of scales a step), MXFP4's `e2m1` under scales of thirty-two and
+/// MXFP8's `e4m3` (each step of the instruction fewer blocks than a word of scales holds, so read
+/// one a block). It refuses a value no instruction reads.
 #[test]
-fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads_a_word_a_step() {
+fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
     let named = Specific(K::BlockScaledTensorCores);
     let hw = devices::offering_block_scaled(devices::h100());
     let scheme = |value, block: u8, scale, store| {
@@ -346,6 +346,8 @@ fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads_a_word
     let served = [
         pair(QuantValue::E2M1, 16, ScaleDtype::UE4M3),
         pair(QuantValue::E2M1, 16, ScaleDtype::UE8M0),
+        pair(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
+        pair(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
     ];
     for problem in served {
         assert_eq!(
@@ -355,9 +357,8 @@ fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads_a_word
         );
     }
     let refused = [
-        pair(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
-        pair(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
         pair(QuantValue::Q4S, 16, ScaleDtype::UE4M3),
+        pair(QuantValue::E4M3, 16, ScaleDtype::UE8M0),
     ];
     for problem in refused {
         assert_eq!(

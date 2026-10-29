@@ -277,6 +277,14 @@ impl PlaneFragmentInstruction {
         }
     }
 
+    /// Whether a stored word of `form`'s block scales is one step of this instruction: the scales
+    /// a step reads, one a block of its `k`, fill the word, which is then its scale register.
+    pub fn scale_word_is_a_step(self, form: BlockScaledOperands) -> bool {
+        let [_, _, (_, k)] = self.shape();
+        let scales_per_word = u32::BITS as usize / ElemType::Float(form.scales).size_bits();
+        form.block * scales_per_word == k
+    }
+
     /// The plain manual-mma instruction of `shape`.
     pub fn mma(shape: MmaConfig) -> Self {
         Self::Mma {
