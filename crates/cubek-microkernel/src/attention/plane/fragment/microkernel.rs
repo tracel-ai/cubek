@@ -90,6 +90,7 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
             ScoreHolder::Window => opened.with_scratch(microkernel.settings.scratch),
             ScoreHolder::Fragments => opened,
         };
+
         sum.zero();
         sum
     }
@@ -168,6 +169,7 @@ impl<EA: Float, ES: Float> PlaneFragmentAttention<EA, ES> {
                     slot_out[slot * value + d] = read.read(r * value + d);
                     d += PLANE_DIM as usize;
                 }
+
                 if UNIT_POS_PLANE == 0 {
                     slot_max[slot] = max.read(r).extract(0usize);
                     slot_sum[slot] = sum.read(r).extract(0usize);
@@ -225,6 +227,7 @@ impl StageScore {
             StageScore::Window(scores, probabilities) => {
                 StageScore::new_Window(scores.at(plane), probabilities.at(plane))
             }
+
             StageScore::Fragments(logits) => StageScore::new_Fragments(logits.at(plane)),
         }
     }
@@ -357,12 +360,15 @@ impl StageScore {
 
         // The score's cells were stored in the fragments' layout; the softmax reads them by rows.
         sync_plane();
+
         let correction = softmax.step(scores, bias, scale);
         probabilities.copy_cast_from(scores);
 
         // The probabilities land before the fragments load them.
         sync_plane();
+
         sum.along(DV).mul(&correction);
+
         // A tile's clone is a handle to the same cells: the shared microkernel reads the
         // probabilities and adds into the sum through it.
         plane_fragment_microkernel(
@@ -487,6 +493,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
         ComptimeOption::Some(logsumexp) => {
             softmax.store_logsumexp(&score.scores(), &mut logsumexp.clone())
         }
+
         ComptimeOption::None => {}
     }
 }

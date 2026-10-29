@@ -67,6 +67,7 @@ impl CubeStagedWalk {
         if walk.scratch != Scratch::None {
             sync_cube();
         }
+
         sum.with_scratch(walk.scratch)
     }
 
@@ -148,6 +149,7 @@ impl CubeStagedWalk {
                     }
                 }
             }
+
             Role::Compute => {
                 let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
                 let partial =
@@ -159,6 +161,7 @@ impl CubeStagedWalk {
                         partial: partial.clone(),
                         walk,
                     };
+
                     stages.consume_async::<WarpgroupStages>(&run, &issue);
                 } else {
                     for lap in 0..laps {
@@ -235,15 +238,18 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
         (CubeStagedDrain::EachPlane, CubeStagedStore::Fragments) => {
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &c, walk, storage);
         }
+
         (CubeStagedDrain::EachPlane, CubeStagedStore::Tma) => {
             let staged = c.smem_box();
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &staged, walk, storage);
             c.copy_from(&staged);
         }
+
         (CubeStagedDrain::Merged, _) => {
             let accumulator = c.smem_accumulation::<EA>();
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &accumulator.sink, walk, storage);
             sync_cube();
+
             c.copy_from(&accumulator.source);
         }
     }
@@ -275,6 +281,7 @@ pub fn cube_staged_sum_microkernel<EL: Numeric>(
             CubeStagedWalk::contract_stage(stage, &sum_stage, &partial, a_stage, b_stage, walk);
         });
     });
+
     stages.free();
 }
 

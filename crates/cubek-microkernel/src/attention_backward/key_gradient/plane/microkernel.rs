@@ -1,6 +1,6 @@
 use super::base::PlaneKeyGradientMicrokernel;
 use crate::attention::{D, DV, Q, S};
-use crate::attention_backward::{ScoreWindows, contract_into_window, drain_scaled};
+use crate::attention_backward::{ScoreWindows, drain_scaled};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
 use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
@@ -38,9 +38,11 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     #[comptime] planes: usize,
 ) {
     let heads = keys.walk();
+
     // Every head has the first's shape: the stages and windows are placed once, by its walk.
     let first_head = heads.region(0usize);
     let shape = first_head.walk();
+
     // The windows span the keys and one head's queries, the axes of every product out of them.
     let windows = ScoreWindows::open::<EA, ES>(&shape, comptime!(vec![S, Q]));
     let sums = KeyGradientSums::open::<EA>(
@@ -51,12 +53,14 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
         &out_gradient.at(&first_head),
         microkernel,
     );
+
     // The keys and the values span no query: staged once, before the walk.
     let mut staged_key = key.stage_for(&shape, StageStorage::Strided, None);
     staged_key.copy_from(key);
     let mut staged_value = value.stage_for(&shape, StageStorage::Strided, None);
     staged_value.copy_from(value);
     sync_plane();
+
     // A runtime loop over the heads: one ring of stages, filled from each head's queries in turn.
     for g in 0..heads.total() {
         let head = heads.region(g);
@@ -67,17 +71,18 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
             &query.at(&head),
             &out_gradient.at(&head),
             StageStorage::Strided,
-            comptime!(ring.stages_in_flight.get()),
+            ring.stages_in_flight.get(),
             None,
         );
+
         stages.walk(
             queries.range(first_step, steps),
-            comptime!(ring.prefetch),
+            ring.prefetch,
             |slot, stage| {
                 let (bias, logsumexp, delta) =
                     (bias.at(stage), logsumexp.at(stage), delta.at(stage));
                 slot.consume(|query, out_gradient| {
-                    plane_key_gradient_step::<EA>(
+                    PlaneKeyGradientMicrokernel::step::<EA>(
                         stage,
                         &sums,
                         &windows,
@@ -90,13 +95,14 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
                         &delta,
                         scale,
                         microkernel,
-                        comptime!(microkernel.score_levels(&[(S, planes)])),
-                        comptime!(microkernel.score_gradient_levels(&[(S, planes)])),
+                        microkernel.score_levels(&[(S, planes)]),
+                        microkernel.score_gradient_levels(&[(S, planes)]),
                     );
                 });
             },
         );
     }
+
     sums.store::<EA>(key_gradient, value_gradient, scale, microkernel);
 }
 
@@ -124,19 +130,19 @@ impl KeyGradientSums {
             .accumulator::<EA>(
                 scores,
                 query,
-                comptime!(microkernel.key_gradient.tile_instruction()),
+                microkernel.key_gradient.tile_instruction(),
                 Semiring::SUM_PROD,
             )
-            .with_scratch(comptime!(microkernel.settings.scratch));
+            .with_scratch(microkernel.settings.scratch);
         key.zero();
         let mut value = value_gradient
             .accumulator::<EA>(
                 scores,
                 out_gradient,
-                comptime!(microkernel.value_gradient.tile_instruction()),
+                microkernel.value_gradient.tile_instruction(),
                 Semiring::SUM_PROD,
             )
-            .with_scratch(comptime!(microkernel.settings.scratch));
+            .with_scratch(microkernel.settings.scratch);
         value.zero();
         KeyGradientSums { key, value }
     }
@@ -158,96 +164,98 @@ impl KeyGradientSums {
         scale: EA,
         #[comptime] microkernel: PlaneKeyGradientMicrokernel,
     ) {
-        drain_scaled::<EA>(
-            &self.key,
-            key_gradient,
-            scale,
-            comptime!(microkernel.seq_kv()),
-        );
+        drain_scaled::<EA>(&self.key, key_gradient, scale, microkernel.seq_kv());
         self.value.drained_into(value_gradient);
     }
 }
 
-/// One stage of one plane's keys: their scores against the stage's queries, keys first, the
-/// probabilities read back from `logsumexp` and their product with the output's gradient added
-/// into the values' sum, then the gradient against them from the output's gradient, the gradient
-/// against the scores from `delta`, and its product with the queries added into the keys' sum.
-///
-/// `stage` is the plane's region of the stage; every tile is windowed to the plane. The levels
-/// are each window's own grid under the walker's planes, which a window is placed in.
 #[cube]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn plane_key_gradient_step<EA: Float>(
-    stage: &Region,
-    sums: &KeyGradientSums,
-    windows: &ScoreWindows,
-    key: &Tile,
-    value: &Tile,
-    query: &Tile,
-    out_gradient: &Tile,
-    bias: &Tile,
-    logsumexp: &Tile,
-    delta: &Tile,
-    scale: EA,
-    #[comptime] microkernel: PlaneKeyGradientMicrokernel,
-    #[comptime] score_levels: Vec<Level>,
-    #[comptime] score_gradient_levels: Vec<Level>,
-) {
-    let (scores, gradients) = (&windows.scores, &windows.gradients);
-    let mut cast = windows.cast.clone();
-    let wide = ComptimeOption::<Tile>::new_None();
-    contract_into_window::<EA>(
-        scores,
-        key,
-        query,
-        comptime!(microkernel.score),
-        score_levels,
-    );
-    // The scores' cells were stored in the fragments' layout; the softmax reads them along the
-    // queries.
-    sync_plane();
-    scores.along(Q).probabilities::<EA>(scale, bias, logsumexp);
-    sync_plane();
-    cast.copy_cast_from(scores);
-    // The probabilities land before the fragments load them.
-    sync_plane();
-    // A tile's clone is a handle to the same cells: the shared microkernel reads the
-    // probabilities and adds into the sum through it.
-    plane_fragment_microkernel(
-        stage,
-        &sums.value.clone(),
-        &wide,
-        &cast.clone(),
-        out_gradient,
-        comptime!(microkernel.value_gradient.tile_instruction()),
-        comptime!(Some(D)),
-        MatmulOperands::AS_BOUND,
-    );
-    contract_into_window::<EA>(
-        gradients,
-        value,
-        out_gradient,
-        comptime!(microkernel.score_gradient),
-        score_gradient_levels,
-    );
-    // The gradient against the probabilities lands, and the cast probabilities are read, before
-    // either window is written again.
-    sync_plane();
-    gradients
-        .along(Q)
-        .softmax_gradient::<EA>(&scores.along(Q), delta);
-    sync_plane();
-    cast.copy_cast_from(gradients);
-    // The gradient lands before the fragments load it.
-    sync_plane();
-    plane_fragment_microkernel(
-        stage,
-        &sums.key.clone(),
-        &wide,
-        &cast.clone(),
-        query,
-        comptime!(microkernel.key_gradient.tile_instruction()),
-        comptime!(Some(DV)),
-        MatmulOperands::AS_BOUND,
-    );
+impl PlaneKeyGradientMicrokernel {
+    /// One stage of one plane's keys: their scores against the stage's queries, keys first, the
+    /// probabilities read back from `logsumexp` and their product with the output's gradient added
+    /// into the values' sum, then the gradient against them from the output's gradient, the gradient
+    /// against the scores from `delta`, and its product with the queries added into the keys' sum.
+    ///
+    /// `stage` is the plane's region of the stage; every tile is windowed to the plane. The levels
+    /// are each window's own grid under the walker's planes, which a window is placed in.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn step<EA: Float>(
+        stage: &Region,
+        sums: &KeyGradientSums,
+        windows: &ScoreWindows,
+        key: &Tile,
+        value: &Tile,
+        query: &Tile,
+        out_gradient: &Tile,
+        bias: &Tile,
+        logsumexp: &Tile,
+        delta: &Tile,
+        scale: EA,
+        #[comptime] microkernel: Self,
+        #[comptime] score_levels: Vec<Level>,
+        #[comptime] score_gradient_levels: Vec<Level>,
+    ) {
+        let (scores, gradients) = (&windows.scores, &windows.gradients);
+        let mut cast = windows.cast.clone();
+        let wide = ComptimeOption::<Tile>::new_None();
+        ScoreWindows::contract_into::<EA>(scores, key, query, microkernel.score, score_levels);
+
+        // The scores' cells were stored in the fragments' layout; the softmax reads them along the
+        // queries.
+        sync_plane();
+
+        scores.along(Q).probabilities::<EA>(scale, bias, logsumexp);
+        sync_plane();
+
+        cast.copy_cast_from(scores);
+
+        // The probabilities land before the fragments load them.
+        sync_plane();
+
+        // A tile's clone is a handle to the same cells: the shared microkernel reads the
+        // probabilities and adds into the sum through it.
+        plane_fragment_microkernel(
+            stage,
+            &sums.value.clone(),
+            &wide,
+            &cast.clone(),
+            out_gradient,
+            microkernel.value_gradient.tile_instruction(),
+            comptime!(Some(D)),
+            MatmulOperands::AS_BOUND,
+        );
+
+        ScoreWindows::contract_into::<EA>(
+            gradients,
+            value,
+            out_gradient,
+            microkernel.score_gradient,
+            score_gradient_levels,
+        );
+
+        // The gradient against the probabilities lands, and the cast probabilities are read, before
+        // either window is written again.
+        sync_plane();
+
+        gradients
+            .along(Q)
+            .softmax_gradient::<EA>(&scores.along(Q), delta);
+        sync_plane();
+
+        cast.copy_cast_from(gradients);
+
+        // The gradient lands before the fragments load it.
+        sync_plane();
+
+        plane_fragment_microkernel(
+            stage,
+            &sums.key.clone(),
+            &wide,
+            &cast.clone(),
+            query,
+            microkernel.key_gradient.tile_instruction(),
+            comptime!(Some(DV)),
+            MatmulOperands::AS_BOUND,
+        );
+    }
 }

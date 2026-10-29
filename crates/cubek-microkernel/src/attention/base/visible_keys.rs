@@ -46,6 +46,7 @@ impl VisibleKeys {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => attended,
         };
+
         VisibleKeys {
             attended,
             seq_q: queries,
@@ -66,6 +67,7 @@ impl VisibleKeys {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => keys,
         };
+
         VisibleKeys {
             attended: keys,
             seq_q: queries,
@@ -119,6 +121,7 @@ impl VisibleKeys {
                 first = reach - self.queries_end as usize;
             }
         }
+
         first / queries_per_step
     }
 
@@ -156,6 +159,7 @@ impl VisibleKeys {
         if visible > first {
             ahead = visible - first;
         }
+
         ahead.div_ceil(in_turns)
     }
 
@@ -167,6 +171,7 @@ impl VisibleKeys {
         if visibility.is_causal() {
             seen = seen && key + self.seq_q <= query + self.queries_end;
         }
+
         if visibility.window().is_some() {
             let window = comptime!(visibility.window().unwrap().get() as u32);
             if visibility.is_causal() {
@@ -175,6 +180,7 @@ impl VisibleKeys {
                 seen = seen && key + window >= self.attended;
             }
         }
+
         #[comptime]
         match &self.mask {
             ComptimeOption::None => {}
@@ -186,6 +192,7 @@ impl VisibleKeys {
                 seen = seen && mask.read::<u32>(comptime!(vec![G, Q, S]), &cell) == 0;
             }
         }
+
         seen
     }
 }
@@ -198,6 +205,7 @@ impl<E: Numeric> Recipe<E> for VisibleKeys {
             coordinates.along(Q),
             coordinates.along(S),
         );
+
         select(seen, E::from_int(0), E::min_value())
     }
 }

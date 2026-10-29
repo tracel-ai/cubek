@@ -47,14 +47,17 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
                 .sink
                 .dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
             sync_cube();
+
             c.copy_from(&accumulator.source);
         }
+
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
             let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
             sum.zero();
 
             let steps = cube.walk();
+
             // A plane's place along the split, which is its slot among the writers.
             let writer = steps.position(split);
             for step in steps {

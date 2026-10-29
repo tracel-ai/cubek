@@ -70,6 +70,7 @@ impl<EA: Float> StageQueryGradientShare<EA> {
             comptime!(Some(DV)),
             MatmulOperands::AS_BOUND,
         );
+
         scale_rows::<EA>(&part, scale, rows);
         self.output.drain(&part, plane);
     }

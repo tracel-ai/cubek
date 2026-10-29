@@ -48,6 +48,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 if line < head_lines {
                     held = Vector::cast_from(read.read(r * head_lines + line));
                 }
+
                 self.query[r * per_head + p] = held;
             }
         }
@@ -65,6 +66,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             let teams = comptime!(UnitShare::Group {
                 unit_bits: (microkernel.units() - 1) & !(units_per_key - 1)
             });
+
             let size!(W1) = 1usize;
 
             #[unroll]
@@ -125,6 +127,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                         }
                     }
                 }
+
                 if unit == 0 {
                     max[slot] = self.max[r];
                     sum[slot] = self.total[r];
@@ -153,6 +156,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     EA::from_int(1) / total,
                     EA::from_int(0),
                 );
+
                 #[unroll]
                 for p in 0..per_value {
                     let line = unit + p * units_per_key;
@@ -195,6 +199,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             for p in 0..per_value {
                 sum[r * per_value + p] = Vector::cast_from(0u32);
             }
+
             max[r] = EA::min_value();
             total[r] = EA::from_int(0);
         }
@@ -209,9 +214,11 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             head_lines,
             value_lines,
         };
+
         for plane in walk.planes() {
             shuffle.load_query::<E>(&query.at(&plane));
         }
+
         shuffle
     }
 
@@ -249,6 +256,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             keys_in_flight: in_flight,
             units_per_key,
         };
+
         let key_reads = keys.load(plane, &walk, head_lines);
         let value_reads = values.load(plane, &walk, value_lines);
 
@@ -257,6 +265,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let team_share = comptime!(UnitShare::Group {
             unit_bits: units_per_key - 1
         });
+
         let width = comptime!(self.width);
         let size!(W1) = 1usize;
         let mut weights = Array::<EA>::new(rows * in_flight);
@@ -277,6 +286,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                         Monoid::Sum,
                     );
                 }
+
                 scores[c] = team_share
                     .reduce::<Vector<EA, W1>>(Vector::cast_from(partial), Monoid::Sum)
                     .extract(0usize)
@@ -318,6 +328,7 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     line += Vector::<EA, N>::cast_from(value_reads[c * per_value + p])
                         * Vector::cast_from(weights[r * in_flight + c]);
                 }
+
                 self.sum[r * per_value + p] = line;
             }
         }

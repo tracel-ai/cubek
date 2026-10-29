@@ -39,6 +39,7 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
                 slots.splits,
                 slots,
             );
+
             #[comptime]
             match logsumexp {
                 ComptimeOption::Some(ref mut logsumexp) => {
@@ -50,6 +51,7 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
                         logsumexp[at] = row.logsumexp();
                     }
                 }
+
                 ComptimeOption::None => {}
             }
 
@@ -116,6 +118,7 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
                 splits,
                 slots,
             );
+
             #[comptime]
             match logsumexp {
                 ComptimeOption::Some(logsumexp) => {
@@ -126,6 +129,7 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
                             .write(r, Vector::cast_from(row.logsumexp()));
                     }
                 }
+
                 ComptimeOption::None => {}
             }
 
@@ -179,6 +183,7 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
                 holders,
                 slots,
             );
+
             #[comptime]
             match logsumexp {
                 ComptimeOption::Some(logsumexp) => {
@@ -189,6 +194,7 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
                             .write(r, Vector::cast_from(row.logsumexp()));
                     }
                 }
+
                 ComptimeOption::None => {}
             }
 
@@ -246,6 +252,7 @@ pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
                 splits,
                 slots,
             );
+
             let slot = first_slot + r * row_stride;
             #[unroll]
             for e in 0..lines_of_value.div_ceil(units) {
@@ -254,6 +261,7 @@ pub(crate) fn plane_merge_rows_partial_microkernel<EA: Float, N: Size>(
                     out[slot * lines_of_value + line] = merged.lines[e];
                 }
             }
+
             if lane == 0 {
                 max[slot] = merged.max;
                 sum[slot] = merged.sum;
@@ -312,6 +320,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
         } else {
             1
         });
+
         let elements = lines.div_ceil(units);
         let rounds = splits.div_ceil(units);
         let per_group = units.min(splits).div_ceil(groups);
@@ -321,6 +330,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
             1 => (0usize, lane),
             _ => (lane / lines, lane % lines),
         };
+
         let first_slot = row * splits;
 
         // The row's merged max, each unit reading every `units`-th slot's.
@@ -332,6 +342,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
                 own_max = max(own_max, slot_max[first_slot + own]);
             }
         }
+
         let merged = plane_max(own_max);
 
         // Each slot weighed to the merged max: its sum into the row's, its output into the lines.
@@ -340,6 +351,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
         for e in 0..elements {
             sums[e] = Vector::cast_from(0u32);
         }
+
         let mut total = EA::from_int(0);
         #[unroll]
         for round in 0..rounds {
@@ -349,6 +361,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
                 weight = (slot_max[first_slot + own] - merged).exp();
                 total += weight * slot_sum[first_slot + own];
             }
+
             // The weight of the `k`-th slot this unit's group reads in the round, from the unit
             // holding it.
             let mut handed = Array::<EA>::new(per_group);
@@ -359,6 +372,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
                     _ => plane_shuffle(weight, (k * groups + group) as u32),
                 };
             }
+
             #[unroll]
             for k in 0..per_group {
                 let index = round * units + k * groups + group;
@@ -379,6 +393,7 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
             let across_groups = comptime!(UnitShare::Group {
                 unit_bits: (units - 1) & !(lines - 1)
             });
+
             sums[0] = across_groups.reduce::<Vector<EA, N>>(sums[0], Monoid::Sum);
         }
 
@@ -405,10 +420,12 @@ impl<EA: Float, N: Size> MergedSlotRow<EA, N> {
             EA::from_int(1) / self.sum,
             EA::from_int(0),
         );
+
         #[unroll]
         for e in 0..self.lines.len() {
             self.lines[e] *= Vector::cast_from(recip);
         }
+
         self.lines
     }
 }

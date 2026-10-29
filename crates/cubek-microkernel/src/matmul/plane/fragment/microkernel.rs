@@ -117,6 +117,7 @@ impl KWalk {
         if !indexable {
             return KWalk::Unrolled;
         }
+
         let Some(held) = held else {
             return KWalk::Rolled;
         };
@@ -124,6 +125,7 @@ impl KWalk {
         let long = |space: &Space, axis| {
             space.contains(axis) && (space.is_dynamic(axis) || space.extent(axis) > 1)
         };
+
         let mut contracted = a
             .axes()
             .filter(|&axis| axis != held && long(a, axis) && long(b, axis) && !long(sum, axis));
@@ -166,11 +168,13 @@ impl KWalk {
                     KWalk::wide_step(&step, sum, a, b, instruction, reads);
                 }
             }
+
             KWalk::Rolled => {
                 for step in KWalk::held_steps(plane, held) {
                     KWalk::wide_step(&step, sum, a, b, instruction, reads);
                 }
             }
+
             KWalk::Routed(k) => {
                 let depth = KWalk::held_steps(plane, held).total()
                     / KWalk::held_steps(plane, held).routed(k, 0usize).total();
@@ -209,6 +213,7 @@ impl KWalk {
                     KWalk::narrow_step(&step, sum, partial, a, b, reads);
                 }
             }
+
             KWalk::Unrolled | KWalk::Routed(_) => {
                 for step in plane.walk().unrolled() {
                     KWalk::narrow_step(&step, sum, partial, a, b, reads);
@@ -246,6 +251,7 @@ impl KWalk {
                     sum_cell.mma(&a_cell, &b_cell);
                 }
             }
+
             Instruction::Cmma | Instruction::Mma { .. } | Instruction::Wgmma => {
                 let b_step = MatmulRead::leaf(&sum_step, &b_step, reads.rhs);
                 let a_step = MatmulRead::leaf(&sum_step, &a_step, reads.lhs);

@@ -43,6 +43,7 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
                 if line < lines && seen {
                     value = read.read(at * lines + line);
                 }
+
                 loaded[c * per_key + p] = value;
             }
         }

@@ -391,21 +391,25 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
 
         // The partial lands at device scope before the cube counts itself in.
         sync_storage();
+
         let mut arrived = Shared::<[u32]>::new_slice(1usize);
         if UNIT_POS == 0 {
             arrived[0] = arrivals[counter].fetch_add(1u32);
         }
+
         sync_cube();
 
         // Uniform across the cube: only the box's last cube merges.
         if arrived[0] as usize + 1 == holders {
             // What every other holder stored is acquired before it is read.
             sync_storage();
+
             let shape = comptime!(SlotShape {
                 units: microkernel.units,
                 val_dim: value_dim,
                 splits,
             });
+
             let queries = microkernel.plane.seq_q();
             for plane in cube.planes() {
                 let plane_box = SlotBox::new::<EA>(
@@ -416,6 +420,7 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
                     plane.origin(Q),
                     queries,
                 );
+
                 plane_merge_slot_rows_microkernel::<EA, E, Const<1>>(
                     slot_out,
                     slot_max,
@@ -468,6 +473,7 @@ impl CubeAttentionMicrokernel {
             comptime!(microkernel.query_storage(&query.space())),
             microkernel.plane.decoded_stage(),
         );
+
         staged_query.copy_from(query);
 
         let mut planes = match microkernel.plane {
@@ -484,6 +490,7 @@ impl CubeAttentionMicrokernel {
                 unreachable!("a cube whose planes read their keys where they lie stages nothing")
             }
         };
+
         sync_cube();
 
         let in_flight = microkernel.ring.stages_in_flight.get();
@@ -502,6 +509,7 @@ impl CubeAttentionMicrokernel {
         // ([`walk_then_shared_memory`](Self::walk_then_shared_memory)).
         stages.free();
         sync_cube();
+
         planes
     }
 
@@ -529,6 +537,7 @@ impl CubeAttentionMicrokernel {
             CubeAttentionPlane::Shuffle(plane) => {
                 PlaneShuffleAttention::<EA, N>::open::<E>(walk, query, value_dim, plane)
             }
+
             CubeAttentionPlane::Fragment(_) => {
                 unreachable!("a cube whose planes read its stage walks it staged")
             }
@@ -588,6 +597,7 @@ impl CubeAttentionMicrokernel {
                 for plane in walk.region(i) {
                     planes.step::<K, L>(&plane, &keys, &values, visible, scale);
                 }
+
                 entry = next;
             }
         }
@@ -599,6 +609,7 @@ impl CubeAttentionMicrokernel {
         for plane in walk.region(index) {
             entry = key.read_page_entry(&plane);
         }
+
         entry
     }
 
@@ -639,6 +650,7 @@ impl CubeAttentionMicrokernel {
                     plane.origin(Q),
                     queries,
                 );
+
                 planes.store_partial(
                     run,
                     &plane,
@@ -665,6 +677,7 @@ impl CubeAttentionMicrokernel {
                     plane.origin(Q),
                     queries,
                 );
+
                 let group = plane.coord(G) * layout.planes_along_queries + plane.coord(Q);
                 plane_merge_rows_partial_microkernel::<EA, N>(
                     &mut shared_out,
@@ -727,6 +740,7 @@ impl CubeAttentionMicrokernel {
 
         // Every plane's partial lands before any plane merges a row.
         sync_cube();
+
         (slot_out, slot_max, slot_sum)
     }
 }
