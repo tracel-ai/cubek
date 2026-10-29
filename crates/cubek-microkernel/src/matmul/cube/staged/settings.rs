@@ -1,6 +1,8 @@
 use crate::matmul::cube::MatmulPlaneLayout;
 use crate::matmul::cube::{CubeStagedDelivery, CubeStagedFill, CubeStagedStore};
-use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentTransport};
+use crate::matmul::plane::{
+    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentTransport,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubek_std::microkernel::{StageLayout, StageRing};
@@ -133,6 +135,14 @@ impl CubeStagedMicrokernelSettings {
     /// within 5% of the fastest on most of the others.
     pub const PACKED_FLOAT_ON_ENGINE: Self =
         Self::in_steps((4, 2), (2, 4), StageRing::DOUBLE).filled(CubeStagedDelivery::AsyncCopy, 0);
+
+    /// These settings with their planes' instruction laying its rows along `rows_along`.
+    pub const fn rows_along(self, rows_along: PlaneFragmentRowsAlong) -> Self {
+        Self {
+            plane: self.plane.rows_along(rows_along),
+            ..self
+        }
+    }
 
     /// These settings with `planes` planes sharing each box along `K`.
     ///

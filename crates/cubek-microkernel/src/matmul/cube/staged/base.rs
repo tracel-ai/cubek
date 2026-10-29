@@ -7,7 +7,7 @@ use crate::matmul::cube::{
 use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite, MatmulPlaneLayout};
 use crate::matmul::plane::{
     PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings, PlaneFragmentTransport,
+    PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAlong, PlaneFragmentTransport,
 };
 use crate::matmul::{
     MatmulAxes, MatmulBuffers, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand,
@@ -126,20 +126,26 @@ impl CubeStagedMicrokernel {
     /// along `KB`, and a stage shallower than a word of them would cut one.
     ///
     /// The TMA engine's beside a plane set aside to fill: it issues the descriptors and hands the
-    /// scales to the copy engine, and the planes that contract only decode and multiply.
+    /// scales to the copy engine, and the planes that contract only decode and multiply. Their
+    /// instruction lays its rows along `n`: the weight decodes straight into the `A` it fills,
+    /// and the activation's lane runs load into `B` as they lie, where an `A` interleaves two of
+    /// its rows a register at a time.
     ///
-    /// Measured on Qwen3-4B's and Qwen3-8B's projections at 512 and 2048 rows on an RTX PRO 6000
+    /// Measured on Qwen3-4B's projections at 512 rows and Qwen3-8B's at 2048 on an RTX PRO 6000
     /// (sm_120): by each engine, the fewest boxes, rings and fills that come within 3% of its
     /// fastest on every projection. A fill by the units never was the fastest, nor, once a plane
-    /// could be set aside, a TMA fill without one.
+    /// could be set aside, a TMA fill without one, nor its instruction's rows along `m`.
     const STORED: [CubeStagedMicrokernelSettings; 6] = [
-        CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 1),
-        CubeStagedMicrokernelSettings::stored((4, 4, 4), (2, 4), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 1),
-        // One plane along `m`, eight along `n`: no two planes decode the same rhs fragment.
-        CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::TRIPLE)
-            .filled(CubeStagedDelivery::Tma, 1),
+        CubeStagedMicrokernelSettings::stored((4, 2, 4), (2, 2), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::Tma, 1)
+            .rows_along(PlaneFragmentRowsAlong::N),
+        CubeStagedMicrokernelSettings::stored((8, 2, 4), (2, 4), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::Tma, 1)
+            .rows_along(PlaneFragmentRowsAlong::N),
+        // Eight planes along `n`: no two planes decode the same rhs fragment.
+        CubeStagedMicrokernelSettings::stored((8, 1, 4), (1, 8), StageRing::TRIPLE)
+            .filled(CubeStagedDelivery::Tma, 1)
+            .rows_along(PlaneFragmentRowsAlong::N),
         CubeStagedMicrokernelSettings::stored((4, 4, 4), (1, 4), StageRing::TRIPLE)
             .filled(CubeStagedDelivery::AsyncCopy, 0),
         CubeStagedMicrokernelSettings::stored((2, 4, 4), (2, 2), StageRing::TRIPLE)
@@ -416,6 +422,7 @@ impl CubeStagedMicrokernel {
             step_sum: self.plane.instruction.step_sum(),
             store: self.store,
             reads: self.reads,
+            rows_along: self.plane.settings.rows_along,
         }
     }
 

@@ -71,6 +71,7 @@ mod base {
                 blueprint.partitioning.batch_axes(),
                 cubek_microkernel::matmul::MatmulAxes::MNK,
                 blueprint.partitioning.stage().extent(K),
+                blueprint.microkernel.plane.settings.rows_along,
             )
     }
     const F16: ElemType = ElemType::Float(FloatKind::F16);

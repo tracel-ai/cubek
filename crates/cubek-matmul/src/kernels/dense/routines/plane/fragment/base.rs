@@ -264,9 +264,11 @@ impl Routine for PlaneFragmentMatmulRoutine {
         );
         let stage = microkernel.instruction.stage_layout(None)?.storage(
             partitioning.stage().space(),
-            microkernel
-                .instruction
-                .stage_tile(partitioning.batch_axes(), MatmulAxes::MNK),
+            microkernel.instruction.stage_tile(
+                partitioning.batch_axes(),
+                MatmulAxes::MNK,
+                microkernel.settings.rows_along,
+            ),
         );
         let planes = settings.planes.count();
         let cube = CubeResources {
