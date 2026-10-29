@@ -139,10 +139,11 @@ fn staged_walk<EA: Float, ES: Float>(
     #[comptime] microkernel: CubeAttentionMicrokernel,
     #[comptime] storage: StageStorage,
 ) -> PlaneFragmentAttention<EA, ES> {
-    // The query spans no key: staged once for every plane, before the walk.
+    // The query spans no key: staged once for every plane, before the walk, laid out as the
+    // stages of keys and values are.
     let mut staged_query = query.stage_for(
         &walk,
-        StageStorage::Strided,
+        comptime!(microkernel.query_storage(&query.space())),
         comptime!(microkernel.plane.decoded_stage()),
     );
     staged_query.copy_from(query);
@@ -176,6 +177,11 @@ fn staged_walk<EA: Float, ES: Float>(
             }
         });
     });
+    // Nothing reads a stage once the walk is over: what the cube declares after it takes their
+    // bytes, once every unit is past its last read
+    // ([`walk_then_shared_memory`](CubeAttentionMicrokernel::walk_then_shared_memory)).
+    stages.free();
+    sync_cube();
     planes
 }
 

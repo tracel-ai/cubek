@@ -204,6 +204,18 @@ impl CubeAttentionPlane {
         }
     }
 
+    /// The storage its query, staged once over `stage`, is held in, laid out as `layout` lays the
+    /// keys and values: in the tiles a fragment of the score reads
+    /// ([`query_tile`](PlaneFragmentAttentionMicrokernel::query_tile)) where the layout blocks it,
+    /// so a fragment's rows of the query meet the banks as a step's rows of the keys do, and
+    /// row-major for a shuffle, which reads no stage.
+    pub fn query_storage(&self, layout: StageLayout, stage: &Space) -> StageStorage {
+        match self {
+            Self::Fragment(plane) => layout.storage(stage, plane.query_tile()),
+            Self::Shuffle(_) => StageStorage::Strided,
+        }
+    }
+
     /// Whether its rows' softmax state merges with another plane's of the same rows, as planes that
     /// split a cube's keys merge it.
     ///
