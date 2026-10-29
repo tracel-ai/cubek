@@ -466,11 +466,7 @@ impl CubeStagedMicrokernel {
         let stage = &self.stage(cube_space);
         let plane_width = self.plane.instruction.units(hw)?;
         let units = self.contracting_planes() * plane_width as usize;
-        let mut operands = stage.operands(item.elements, self.plane.orders);
-        let reads = self.walk().reads;
-        for (operand, kind) in operands.iter_mut().zip(MatmulOperand::INPUTS) {
-            operand.from_words |= reads.get(kind).staged().is_some();
-        }
+        let operands = stage.operands_read(item.elements, self.plane.orders, self.walk().reads);
         let ring = self.ring.resolve(hw, &operands, units);
         let instruction = self.plane.instruction;
         let landed = self.plane.landed_stage_storage(stage);

@@ -12,17 +12,44 @@ pub struct StagedOperand {
     pub space: Space,
     /// The axis it is bound innermost along, which the stage's rows run along.
     pub innermost: Axis,
-    /// Whether its fill reads it from words rather than at its own width, which the register
-    /// prefetch does not carry.
-    pub from_words: bool,
+    /// What its fill does to it on the way into the stage.
+    pub fill: StageFill,
+}
+
+/// What a fill does to an operand on its way into the stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageFill {
+    /// Copies it as it is bound, at its own width.
+    AsStored,
+    /// Converts it: rounds tf32, decodes e2m1 or decodes a packed input. The register prefetch
+    /// reads a plain source at its own width and does not carry that.
+    Converted,
 }
 
 impl StagedOperand {
-    /// Whether no buffer stores `element`, e2m1 or tf32, so a fill reads it from words.
-    pub fn is_stored_in_words(element: ElemType) -> bool {
-        [FloatKind::E2M1, FloatKind::TF32]
+    /// An operand stored in `element` whose fill converts it only where no buffer stores
+    /// `element`, e2m1 or tf32.
+    pub fn new(element: ElemType, space: Space, innermost: Axis) -> Self {
+        let in_words = [FloatKind::E2M1, FloatKind::TF32]
             .map(ElemType::Float)
-            .contains(&element)
+            .contains(&element);
+        Self {
+            element,
+            space,
+            innermost,
+            fill: match in_words {
+                true => StageFill::Converted,
+                false => StageFill::AsStored,
+            },
+        }
+    }
+
+    /// This operand with a fill that converts it, as a fill decoding a packed input does.
+    pub fn converted_by_fill(self) -> Self {
+        Self {
+            fill: StageFill::Converted,
+            ..self
+        }
     }
 
     /// Elements one stage holds of it.

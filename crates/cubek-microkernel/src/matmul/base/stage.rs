@@ -1,4 +1,4 @@
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands};
+use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Axis, Space, StageStorage};
@@ -81,19 +81,34 @@ impl MatmulStage {
     }
 
     /// Both operands' boxes of one stage, each stored in its own element of `elements` and bound
-    /// in the order `orders` says.
+    /// in the order `orders` says, filled as bound.
     pub fn operands(
         &self,
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<BindingOrder>,
     ) -> [StagedOperand; 2] {
-        MatmulOperand::INPUTS.map(|operand| StagedOperand {
-            element: elements.get(operand),
-            space: self
-                .space
-                .subspace(&operand.dims().map(|dim| self.axes.of(dim))),
-            innermost: self.axes.of(orders.innermost(operand)),
-            from_words: StagedOperand::is_stored_in_words(elements.get(operand)),
+        self.operands_read(elements, orders, MatmulOperands::all(MatmulRead::AsBound))
+    }
+
+    /// [`operands`](Self::operands) for a fill that reads them as `reads` say: an operand it
+    /// decodes is converted on its way into the stage.
+    pub fn operands_read(
+        &self,
+        elements: MatmulOperands<ElemType>,
+        orders: MatmulOperands<BindingOrder>,
+        reads: MatmulOperands<MatmulRead>,
+    ) -> [StagedOperand; 2] {
+        MatmulOperand::INPUTS.map(|operand| {
+            let staged = StagedOperand::new(
+                elements.get(operand),
+                self.space
+                    .subspace(&operand.dims().map(|dim| self.axes.of(dim))),
+                self.axes.of(orders.innermost(operand)),
+            );
+            match reads.get(operand).staged() {
+                Some(_) => staged.converted_by_fill(),
+                None => staged,
+            }
         })
     }
 

@@ -1,5 +1,5 @@
 use crate::Hardware;
-use crate::microkernel::StagedOperand;
+use crate::microkernel::{StageFill, StagedOperand};
 use core::num::NonZeroUsize;
 use cubecl::tile::stage::Prefetch;
 
@@ -68,14 +68,17 @@ impl StageRing {
     /// Asked before the operands' widths are settled, so each operand's share is its most over
     /// every width it could bind at: the powers of two up to the widest line `hw` reads.
     ///
-    /// An operand read from words ([`StagedOperand::from_words`]) is not carried by the register
+    /// An operand whose fill converts it ([`StageFill::Converted`]) is not carried by the register
     /// prefetch, which reads a plain source at its own width: its ring prefetches into its slots.
     ///
     /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
     /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit
     /// of every operand's stage ([`StagedOperand::most_prefetched`]).
     pub fn resolve(self, hw: &Hardware, operands: &[StagedOperand], units: usize) -> Self {
-        if operands.iter().any(|operand| operand.from_words) {
+        if operands
+            .iter()
+            .any(|operand| operand.fill == StageFill::Converted)
+        {
             return Self {
                 prefetch: Prefetch::InSlots,
                 ..self
@@ -124,25 +127,19 @@ mod tests {
             element: ElemType::Float(FloatKind::F16),
             space: Space::new(&axes),
             innermost: axes[1].0,
-            from_words: false,
+            fill: StageFill::AsStored,
         };
         [operand([(M, 16), (K, 16)]), operand([(K, 16), (N, 16)])]
     }
 
-    /// The register prefetch does not carry an operand read from words, so its ring keeps the
+    /// The register prefetch does not carry an operand its fill converts, so its ring keeps the
     /// slots.
     #[test]
-    fn an_operand_read_from_words_prefetches_into_its_slots() {
+    fn an_operand_converted_by_its_fill_prefetches_into_its_slots() {
         let [lhs, rhs] = small_stage();
-        let words = [
-            StagedOperand {
-                from_words: true,
-                ..lhs
-            },
-            rhs,
-        ];
+        let converted = [lhs.converted_by_fill(), rhs];
         assert_eq!(
-            StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &words, 128),
+            StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &converted, 128),
             StageRing::DOUBLE
         );
     }

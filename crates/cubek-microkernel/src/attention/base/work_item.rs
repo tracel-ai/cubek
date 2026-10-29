@@ -127,11 +127,12 @@ impl AttentionWorkItem {
     /// One stage of `keys` keys and their values, each over its own axes and bound innermost
     /// along the axis its lines run along, the keys in `key_order`.
     pub fn stage(&self, keys: usize, key_order: BindingOrder) -> [StagedOperand; 2] {
-        let operand = |operand: AttentionOperand, row: Axis, extent: usize| StagedOperand {
-            element: self.elements.get(operand),
-            space: Space::new(&[(S, keys), (row, extent)]),
-            innermost: operand.innermost(key_order),
-            from_words: StagedOperand::is_stored_in_words(self.elements.get(operand)),
+        let operand = |operand: AttentionOperand, row: Axis, extent: usize| {
+            StagedOperand::new(
+                self.elements.get(operand),
+                Space::new(&[(S, keys), (row, extent)]),
+                operand.innermost(key_order),
+            )
         };
         [
             operand(AttentionOperand::Key, D, self.head_dim),
