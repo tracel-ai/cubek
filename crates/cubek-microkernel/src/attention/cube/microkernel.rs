@@ -409,7 +409,6 @@ pub fn cube_staged_attention_shared_microkernel<EA: Float, ES: Float, E: Float>(
                 val_dim: value_dim,
                 splits,
             });
-
             let queries = microkernel.plane.seq_q();
             for plane in cube.planes() {
                 let plane_box = SlotBox::new::<EA>(
@@ -638,7 +637,6 @@ impl CubeAttentionMicrokernel {
             first.origin(Q),
             cube.seq_q(),
         );
-
         let queries = cube.plane.seq_q();
         if cube.settings.planes_along_keys.get() == 1 {
             for plane in run.planes() {
@@ -677,7 +675,6 @@ impl CubeAttentionMicrokernel {
                     plane.origin(Q),
                     queries,
                 );
-
                 let group = plane.coord(G) * layout.planes_along_queries + plane.coord(Q);
                 plane_merge_rows_partial_microkernel::<EA, N>(
                     &mut shared_out,

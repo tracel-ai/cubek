@@ -1301,7 +1301,6 @@ mod base {
                 .expect("the default's box prepares")
                 .0
         };
-
         let hw = offering(devices::strix_halo());
         let blueprint = prepared(&hw, &problem(), &in_order);
         assert!(matches!(
@@ -1604,7 +1603,6 @@ mod base {
                     settings.microkernel == CubeStagedMicrokernelSettings::PACKED_FLOAT_ON_ENGINE
                 })
         };
-
         let hw = devices::offering_mma(devices::h100(), [mma]);
         let settings = on_engine(&hw).expect("a device with a copy engine lists the setting");
         let (blueprint, _) = CubeStagedMatmulRoutine

@@ -66,7 +66,6 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             let teams = comptime!(UnitShare::Group {
                 unit_bits: (microkernel.units() - 1) & !(units_per_key - 1)
             });
-
             let size!(W1) = 1usize;
 
             #[unroll]
@@ -256,7 +255,6 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
             keys_in_flight: in_flight,
             units_per_key,
         };
-
         let key_reads = keys.load(plane, &walk, head_lines);
         let value_reads = values.load(plane, &walk, value_lines);
 
@@ -265,7 +263,6 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
         let team_share = comptime!(UnitShare::Group {
             unit_bits: units_per_key - 1
         });
-
         let width = comptime!(self.width);
         let size!(W1) = 1usize;
         let mut weights = Array::<EA>::new(rows * in_flight);

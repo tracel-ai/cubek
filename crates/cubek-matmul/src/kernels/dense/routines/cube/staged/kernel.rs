@@ -47,7 +47,7 @@ pub fn cube_staged_matmul_kernel<
             &b,
             &c.at(&cube),
             walk,
-            comptime!(storage.clone()),
+            storage.clone(),
         );
     }
 }

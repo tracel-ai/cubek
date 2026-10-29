@@ -24,13 +24,15 @@ pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destin
             let mut sum = c.accumulator::<EA>(
                 &a,
                 &b,
-                comptime!(microkernel.drained_instruction()),
+                microkernel.drained_instruction(),
                 Semiring::SUM_PROD,
             );
+
             sum.zero();
             for step in unit.walk_within(&b) {
                 unit_registers_microkernel(&step, &sum, &a, &b);
             }
+
             sum.drained_into(&c);
         }
     }

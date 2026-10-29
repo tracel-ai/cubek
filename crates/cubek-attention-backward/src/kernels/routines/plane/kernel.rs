@@ -44,12 +44,8 @@ pub fn plane_fragment_query_gradient_kernel<EA: Float, ES: Float>(
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.bias::<EA>(&partitioning);
     for plane in &partitioning {
-        let steps = visible.steps(
-            &plane,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.seq_kv()),
-            1usize,
-        );
+        let steps = visible.steps(&plane, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+
         plane_fragment_query_gradient_microkernel::<EA, ES>(
             &plane,
             &d_q.at(&plane),
@@ -107,7 +103,7 @@ pub fn plane_fragment_key_gradient_kernel<EA: Float, ES: Float>(
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for plane in &partitioning {
-        let first_step = visible.first_query_step(&plane, comptime!(microkernel.seq_q()));
+        let first_step = visible.first_query_step(&plane, microkernel.seq_q());
         plane_fragment_key_gradient_microkernel::<EA, ES>(
             &plane,
             &d_k.at(&plane),

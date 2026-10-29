@@ -31,6 +31,7 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);
         }
+
         c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
     }
 }

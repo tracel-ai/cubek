@@ -65,11 +65,12 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
     let visible = VisibleKeys::of_keys(keys, queries, visibility);
     let bias = visible.keys_first_bias::<EA>(&partitioning);
     for cube in &partitioning {
-        let first_step = visible.first_query_step(&cube, comptime!(microkernel.seq_q()));
+        let first_step = visible.first_query_step(&cube, microkernel.seq_q());
         let share = ComptimeOption::new_Some(QueryGradientShare {
             sum: d_q.at(&cube),
-            product: comptime!(microkernel.query_gradient),
+            product: microkernel.query_gradient,
         });
+
         cube_staged_key_gradient_microkernel::<EA, ES>(
             &cube,
             &d_k.at(&cube),
@@ -84,7 +85,7 @@ pub fn hypercube_key_gradient_kernel<EA: Float, ES: Float>(
             &bias.at(&cube),
             first_step,
             EA::cast_from(scale),
-            comptime!(microkernel.cube),
+            microkernel.cube,
             ring,
         );
     }

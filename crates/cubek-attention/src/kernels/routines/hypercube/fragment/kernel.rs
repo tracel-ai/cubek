@@ -31,6 +31,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     #[define(EA, ES)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+
     // The cube level's walk, this cube's run of the steps of keys: once for the staging ring,
     // once for where the slots lie.
     let run = partitioning.walk();
@@ -47,10 +48,11 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
     let bias = visible.bias::<EA>(&partitioning);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.seq_q()),
-        comptime!(microkernel.cube.seq_kv()),
-        comptime!(merge.cubes),
+        microkernel.cube.seq_q(),
+        microkernel.cube.seq_kv(),
+        merge.cubes,
     );
+
     // The query and the output span no key: their box is the first step's.
     let _ = cube_staged_attention_partial_microkernel::<EA, ES>(
         partitioning.walk(),
@@ -65,8 +67,8 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float>(
         slot_out,
         slot_max,
         slot_sum,
-        comptime!(microkernel.cube),
-        comptime!(merge.slots.splits),
+        microkernel.cube,
+        merge.slots.splits,
         storage,
     );
 }

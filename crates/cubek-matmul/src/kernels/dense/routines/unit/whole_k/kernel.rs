@@ -20,16 +20,14 @@ pub fn unit_whole_k_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destinat
     for plane in &partitioning {
         for unit in plane {
             let (c, a, b) = (c.at(&unit), a.at(&unit), b.at(&unit));
-            let mut sum = c.accumulator::<EA>(
-                &a,
-                &b,
-                comptime!(microkernel.tile_instruction()),
-                Semiring::SUM_PROD,
-            );
+            let mut sum =
+                c.accumulator::<EA>(&a, &b, microkernel.tile_instruction(), Semiring::SUM_PROD);
+
             sum.zero();
             for step in &unit {
                 unit_whole_k_microkernel(&step, &sum, &a, &b);
             }
+
             sum.drained_into(&c);
         }
     }

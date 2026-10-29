@@ -31,13 +31,8 @@ pub fn plane_fragment_matmul_kernel<
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
         let mut sum = c
-            .accumulator::<EA>(
-                &a,
-                &b,
-                comptime!(microkernel.tile_instruction()),
-                Semiring::SUM_PROD,
-            )
-            .with_scratch(comptime!(shared_memory.scratch));
+            .accumulator::<EA>(&a, &b, microkernel.tile_instruction(), Semiring::SUM_PROD)
+            .with_scratch(shared_memory.scratch);
         sum.zero();
         plane_fragment_staged_microkernel::<EL>(
             &plane,
@@ -46,9 +41,10 @@ pub fn plane_fragment_matmul_kernel<
             &a,
             &b,
             microkernel,
-            comptime!(shared_memory.stage.clone()),
-            comptime!(shared_memory.ring),
+            shared_memory.stage.clone(),
+            shared_memory.ring,
         );
+
         sum.drained_into(&c);
     }
 }

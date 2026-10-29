@@ -38,6 +38,7 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
         tile: value.tile(&partitioning),
         element: PhantomData,
     };
+
     // The cube level's walk: this cube's run of the steps, or pages, of keys.
     let run = partitioning.walk();
     let first_step = run.region(0);
@@ -45,9 +46,9 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.seq_q()),
-        comptime!(microkernel.cube.region_keys()),
-        comptime!(merge.cubes),
+        microkernel.cube.seq_q(),
+        microkernel.cube.region_keys(),
+        merge.cubes,
     );
     let _ = cube_unstaged_attention_partial_microkernel::<
         EA,
@@ -67,9 +68,9 @@ pub fn hypercube_attention_partial_kernel<EA: Float, E: Float, N: Size>(
         slot_out,
         slot_max,
         slot_sum,
-        comptime!(microkernel.cube),
-        comptime!(merge.slots.splits),
-        comptime!(merge.slots.val_dim),
+        microkernel.cube,
+        merge.slots.splits,
+        merge.slots.val_dim,
     );
 }
 
@@ -104,6 +105,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         tile: value.tile(&partitioning),
         fixup: ComptimeOption::new_None(),
     };
+
     // The cube level's walk: this cube's run of the steps, or pages, of keys.
     let run = partitioning.walk();
     let first_step = run.region(0);
@@ -111,9 +113,9 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     let visible = VisibleKeys::new(len, &first_step, queries, &mask, visibility);
     let steps = visible.steps(
         &first_step,
-        comptime!(microkernel.cube.seq_q()),
-        comptime!(microkernel.cube.region_keys()),
-        comptime!(merge.cubes),
+        microkernel.cube.seq_q(),
+        microkernel.cube.region_keys(),
+        merge.cubes,
     );
     let _ = cube_unstaged_attention_partial_microkernel::<EA, E, N, PackedStepReads, PackedStepReads>(
         run,
@@ -127,8 +129,8 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         slot_out,
         slot_max,
         slot_sum,
-        comptime!(microkernel.cube),
-        comptime!(merge.slots.splits),
-        comptime!(merge.slots.val_dim),
+        microkernel.cube,
+        merge.slots.splits,
+        merge.slots.val_dim,
     );
 }

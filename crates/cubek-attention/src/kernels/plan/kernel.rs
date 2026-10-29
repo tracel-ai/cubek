@@ -44,6 +44,7 @@ impl Plan<AttentionCall> for KernelLead {
             (CacheRead::Packed, AttentionCall::Packed(packed)) => (packed.read)(self.kernel),
             _ => Err(OTHER_CACHE),
         };
+
         launched.map_err(|why| Declined::by(self, why))
     }
 
@@ -52,6 +53,7 @@ impl Plan<AttentionCall> for KernelLead {
             CacheRead::Float => "",
             CacheRead::Packed => "(packed cache)",
         };
+
         PlanTree::Routine(format!("{}@lead{cache}", self.kernel.name()))
     }
 }
@@ -92,12 +94,14 @@ pub fn fastest(positions: QueryPositions, routines: GroupPriority) -> AttentionP
         QueryPositions::One => "decode",
         QueryPositions::Many => "prefill",
     };
+
     Box::new(Fastest::new(
         table,
         move |call: &AttentionCall| match call {
             AttentionCall::Float(float) => {
                 launch_tuned(positions, &float.device, float.inputs.clone(), routines)
             }
+
             AttentionCall::Packed(_) => {
                 unreachable!(
                     "an autotune is planned over a float call, the packed cache rebuilt first"

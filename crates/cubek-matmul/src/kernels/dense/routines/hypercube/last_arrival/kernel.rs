@@ -35,9 +35,10 @@ pub fn hypercube_last_arrival_matmul_kernel<
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
     let c = O::tile::<E, VO>(out, &partitioning);
+
     // The walk under the cubes steps a tile's `K` a stage at a time: what a run is counted in.
     let stages = comptime!(partitioning.levels()[1].clone());
-    let portion = partitioning.walk().portion(comptime!(stages.clone()));
+    let portion = partitioning.walk().portion(stages.clone());
     for i in 0..portion.touched() {
         let tile = portion.region(i);
         let (from, steps) = portion.steps(i);
@@ -48,8 +49,8 @@ pub fn hypercube_last_arrival_matmul_kernel<
             &b.at(&tile),
             merge,
             &c,
-            comptime!(microkernel.cube.walk()),
-            comptime!(storage.clone()),
+            microkernel.cube.walk(),
+            storage.clone(),
         );
     }
 }

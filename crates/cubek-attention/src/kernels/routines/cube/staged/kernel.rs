@@ -37,12 +37,8 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);
-        let steps = visible.steps(
-            &cube,
-            comptime!(microkernel.seq_q()),
-            comptime!(microkernel.seq_kv()),
-            1usize,
-        );
+        let steps = visible.steps(&cube, microkernel.seq_q(), microkernel.seq_kv(), 1usize);
+
         cube_staged_attention_microkernel::<EA, ES>(
             &cube,
             &o.at(&cube),
@@ -54,7 +50,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float>(
             steps,
             EA::cast_from(scale),
             microkernel,
-            comptime!(storage.clone()),
+            storage.clone(),
         );
     }
 }
