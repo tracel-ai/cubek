@@ -27,10 +27,12 @@ mod base {
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentStepSum,
     };
-    use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands};
+    use cubek_microkernel::matmul::{MatmulDestination, MatmulOperands, MatmulStoredTile};
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::layout::BindingOrder;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order;
     use cubek_std::matmul_axes::{K, M, N};
     use cubek_std::microkernel::Microkernel;
     use cubek_std::microkernel::{StageLayout, StageRing};
@@ -925,6 +927,66 @@ mod base {
         }
     }
 
+    /// An NVFP4 rhs stored in tiles, beside a float lhs, lands by TMA where its stage holds it as
+    /// it is stored: the lhs through a descriptor over the matrix its blocks split, the rhs's
+    /// words through one over its tiles. Where the problem states no tile it is stored in, the
+    /// units copy it.
+    #[test]
+    fn a_packed_rhs_in_tiles_lands_by_tma_where_its_stage_holds_it_as_stored() {
+        // The `16 × 8 × 16` instruction a plane decodes the rhs's fragments into.
+        let hw = devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]);
+        let scheme = tile_order::scheme();
+        let rhs = Packing {
+            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let in_rows = MatmulRoutineProblem::packed(
+            512,
+            1024,
+            1024,
+            F16,
+            MatmulOperands {
+                rhs: Some(rhs),
+                ..MatmulOperands::all(None)
+            },
+        );
+        let in_tiles = MatmulRoutineProblem {
+            stored_tiles: MatmulOperands {
+                rhs: Some(MatmulStoredTile {
+                    rows: 8,
+                    columns: 128,
+                }),
+                ..MatmulOperands::all(None)
+            },
+            ..in_rows.clone()
+        };
+        let by_tma: Vec<_> = CubeStagedMatmulRoutine
+            .packed_settings(&hw)
+            .into_iter()
+            .filter(|settings| settings.microkernel.fill.delivery == CubeStagedDelivery::Tma)
+            .collect();
+        assert!(
+            !by_tma.is_empty(),
+            "no packed setting asks for the TMA engine"
+        );
+        let delivered = |problem: &MatmulRoutineProblem| {
+            by_tma
+                .iter()
+                .filter_map(|settings| CubeStagedMatmulRoutine.prepare(&hw, problem, settings).ok())
+                .map(|(blueprint, _)| blueprint.microkernel.fill.delivery)
+                .collect::<Vec<_>>()
+        };
+        let (tiled, rows) = (delivered(&in_tiles), delivered(&in_rows));
+        assert!(
+            tiled.contains(&CubeStagedDelivery::Tma),
+            "no stored setting lands a tiled rhs by TMA: {tiled:?}"
+        );
+        assert!(
+            !rows.is_empty() && !rows.contains(&CubeStagedDelivery::Tma),
+            "an rhs in rows landed by TMA: {rows:?}"
+        );
+    }
+
     /// A cube's filling planes take no tile: launched beside them, its box, stage, leaf and
     /// overhang are its tiling's placement's, and only the planes it holds grow.
     #[test]
@@ -999,9 +1061,6 @@ mod base {
         assert_eq!(
             CubeStagedFillingRefusal::new(
                 CubeStagedDelivery::Tma,
-                &MatmulView::of::<CubeStagedMicrokernel>(&problem())
-                    .expect(MatmulView::PREPARED)
-                    .work_item(),
                 &StageRing::DOUBLE,
                 Scratch::OneTile,
                 NonZeroUsize::MIN
@@ -1064,9 +1123,6 @@ mod base {
         assert_eq!(
             CubeStagedFillingRefusal::new(
                 CubeStagedDelivery::AsyncCopy,
-                &MatmulView::of::<CubeStagedMicrokernel>(&problem())
-                    .expect(MatmulView::PREPARED)
-                    .work_item(),
                 &StageRing::DOUBLE,
                 Scratch::None,
                 NonZeroUsize::MIN

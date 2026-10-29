@@ -678,6 +678,15 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedMatmulRout
         // bound operands, or the TMA engine from descriptors over the same tensors.
         let (lhs, rhs) = match blueprint.microkernel.fill.delivery {
             CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (binding.lhs, binding.rhs),
+            // A packed product's inputs through descriptors over its block-split space.
+            CubeStagedDelivery::Tma if tensors.work_item().blocks.is_some() => tensors
+                .tma_packed_operands(
+                    &binding.launcher,
+                    &stage,
+                    &blueprint.shared_memory,
+                    blueprint.microkernel.plane.orders,
+                    blueprint.widths,
+                ),
             CubeStagedDelivery::Tma => tensors.tma_operands(
                 &stage,
                 &blueprint.shared_memory,
