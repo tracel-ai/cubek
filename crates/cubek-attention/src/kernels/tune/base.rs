@@ -12,7 +12,8 @@ use crate::kernels::{
     AttentionBlueprint, AttentionRoutine, AttentionRoutineCandidate, AttentionRoutineProblem,
     AttentionScoring, AttentionTensors, CubeShuffleAttentionRoutine, CubeStagedAttentionRoutine,
     HypercubeLastArrivalShuffleAttentionRoutine, HypercubeSecondLaunchFragmentAttentionRoutine,
-    HypercubeSecondLaunchShuffleAttentionRoutine, UnitAttentionRoutine,
+    HypercubeSecondLaunchShuffleAttentionRoutine, HypercubeStreamFragmentAttentionRoutine,
+    UnitAttentionRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -142,6 +143,11 @@ fn many_queries(
         .prioritized(
             &routines,
             AttentionRoutineCandidate::list(HypercubeSecondLaunchFragmentAttentionRoutine, hw),
+            launch,
+        )
+        .prioritized(
+            &routines,
+            AttentionRoutineCandidate::list(HypercubeStreamFragmentAttentionRoutine, hw),
             launch,
         );
     if hw.plane_dim().is_err() {

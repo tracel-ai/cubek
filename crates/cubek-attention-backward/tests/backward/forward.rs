@@ -12,7 +12,8 @@ use cubek_attention::kernels::{
     AttentionRoutine, AttentionScoring, AttentionTensors, CubeShuffleAttentionRoutine,
     CubeStagedAttentionRoutine, HypercubeLastArrivalShuffleAttentionRoutine,
     HypercubeSecondLaunchFragmentAttentionRoutine, HypercubeSecondLaunchShuffleAttentionRoutine,
-    PlaneFragmentAttentionRoutine, ScoreScale, UnitAttentionRoutine,
+    HypercubeStreamFragmentAttentionRoutine, PlaneFragmentAttentionRoutine, ScoreScale,
+    UnitAttentionRoutine,
 };
 use cubek_attention_backward::AttentionBackwardTensors;
 use cubek_attention_backward::kernels::{AttentionBackwardRoutine, UnitAttentionBackwardRoutine};
@@ -239,6 +240,22 @@ fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
     }
 }
 
+/// Every setting the stream of plane fragments lists at a model's head dim, every box's keys on
+/// one line its cubes share in runs: a run holding a box whole writes it, and the runs sharing one
+/// leave partials the last of them merges.
+#[test]
+fn every_hypercube_stream_setting_matches_the_host_at_a_head_dim_of_128() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    for settings in HypercubeStreamFragmentAttentionRoutine.settings(&hw) {
+        check_forward(
+            "hypercube-stream-fragment",
+            HypercubeStreamFragmentAttentionRoutine,
+            Some(settings),
+            PROMPT_WIDE,
+        );
+    }
+}
+
 #[test]
 fn the_cube_shuffle_routine_writes_the_logsumexp() {
     check_forward("cube-shuffle", CubeShuffleAttentionRoutine, None, PROMPT);
@@ -266,6 +283,12 @@ fn the_hypercube_routines_write_the_logsumexp() {
         None,
         DECODE,
     );
+    check_forward(
+        "hypercube-stream-fragment",
+        HypercubeStreamFragmentAttentionRoutine,
+        None,
+        PROMPT,
+    );
 }
 
 /// Every routine of many positions hides what a diagonal placed first and a mask hide, alone and
@@ -284,6 +307,12 @@ fn every_prompt_routine_hides_what_a_mask_and_a_first_placed_diagonal_hide() {
         check_forward(
             "hypercube-second-launch-fragment",
             HypercubeSecondLaunchFragmentAttentionRoutine,
+            None,
+            case,
+        );
+        check_forward(
+            "hypercube-stream-fragment",
+            HypercubeStreamFragmentAttentionRoutine,
             None,
             case,
         );
