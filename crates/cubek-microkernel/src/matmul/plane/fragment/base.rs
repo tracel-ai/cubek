@@ -4,7 +4,7 @@ use crate::matmul::{
 };
 use cubecl::tile::launch::Refusal;
 use cubek_std::layout::BindingOrder;
-use cubek_std::{Hardware, Instructions, manual_mma};
+use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
 
 use crate::matmul::MatmulStage;
 use crate::matmul::plane::{
@@ -175,7 +175,7 @@ impl PlaneFragmentMicrokernel {
             && blocks_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
-        let instruction = PlaneFragmentInstruction::Mma { shape };
+        let instruction = PlaneFragmentInstruction::mma(shape);
         let [_, (_, columns), _] = instruction.shape_along(settings.rows_along);
         (1..=settings.along_n.get())
             .rev()
@@ -219,7 +219,7 @@ impl PlaneFragmentMicrokernel {
             .for_triple(lhs, rhs, sum)
             .deepest()
             .largest_first()
-            .map(|shape| PlaneFragmentInstruction::Mma { shape });
+            .map(PlaneFragmentInstruction::mma);
         let settings = *settings;
         let software = PlaneFragmentInstruction::Registers {
             step_sum: settings.step_sum.serving(item),
@@ -271,11 +271,11 @@ impl PlaneFragmentMicrokernel {
     }
 
     /// The planes reading both packed inputs of `space` as they are stored: each block-scaled
-    /// instruction the device offers for their values, the largest first, whose step of `K` is
-    /// a word of each input's block scales, the blocks one read of the scales covers
-    /// ([`Operand::scale_read`]). A fragment's window spans those blocks along `KB` and the whole
-    /// of each along `KI`, and the instruction reads the values and the word of scales beside
-    /// them as they lie.
+    /// instruction the device offers for their formats ([`block_scaled_for`]), the largest first,
+    /// whose step of `K` is whole blocks. A fragment's window spans its steps' blocks along `KB`
+    /// and the whole of each along `KI`, and the instruction reads the values as they lie, and
+    /// their scales as a word where a word of them is its step, one a block otherwise
+    /// ([`scale_word_is_a_step`](PlaneFragmentInstruction::scale_word_is_a_step)).
     fn block_scaled_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
@@ -283,17 +283,28 @@ impl PlaneFragmentMicrokernel {
         space: MatmulBlocks,
     ) -> Vec<Self> {
         let committed = hw.plane_dim().is_ok();
-        let rhs = space.operand(MatmulOperand::Rhs);
-        let step = rhs
-            .grouping(K, space.k)
-            .map(|block| block * rhs.scale_read(K));
-        manual_mma(hw)
-            .for_triple(item.elements.lhs, item.elements.rhs, item.sum)
-            .largest_first()
-            .map(|shape| PlaneFragmentInstruction::Mma { shape })
+        let block = space.operand(MatmulOperand::Rhs).grouping(K, space.k);
+        // Each input under its own scheme, at its own block along `K`.
+        let input = |input: MatmulOperand| {
+            let packing = space.packings.get(input)?;
+            Some((packing.scheme, space.operand(input).grouping(K, space.k)?))
+        };
+        let offered: Vec<_> = match (input(MatmulOperand::Lhs), input(MatmulOperand::Rhs)) {
+            (Some((lhs, lhs_block)), Some((rhs, rhs_block))) => {
+                block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
+                    .filter(|instruction| instruction.shape.cd_type == item.sum)
+                    .map(PlaneFragmentInstruction::block_scaled_mma)
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        offered
+            .into_iter()
+            // A step of the instruction is whole blocks, whose scales it reads as a word where the
+            // word is a step, or one a block beside the values otherwise.
             .filter(|instruction| {
                 let [_, _, (_, k)] = instruction.shape();
-                committed && instruction.block_scaled() && step == Some(k)
+                committed && block.is_some_and(|block| k.is_multiple_of(block))
             })
             .map(|instruction| Self {
                 instruction,
@@ -719,7 +730,7 @@ impl Microkernel for PlaneFragmentMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let packed: Vec<Self> = match item.blocks {
             None => Vec::new(),
-            Some(space) if item.both_stored_in_e2m1() => {
+            Some(space) if item.both_stored_as_codes() => {
                 Self::block_scaled_candidates(hw, item, *settings, space)
             }
             Some(space) => Self::packed_candidates(hw, item, *settings, space).collect(),
@@ -804,7 +815,7 @@ mod tests {
     /// An `f16` activation against an `e2m1` weight packed down `k`, under scale blocks `block`
     /// long along `k`.
     fn against_blocks_of(block: usize) -> (MatmulWorkItem, MatmulBlocks) {
-        against(tile_order::scheme(), block)
+        against(tile_order::nvfp4_scheme(), block)
     }
 
     /// An `f16` activation against a weight packed down `k` under `scheme`, eight values a word
@@ -892,16 +903,14 @@ mod tests {
     #[test]
     fn rows_lie_along_n_only_for_fragments_a_stage_deep() {
         let f16 = ElemType::Float(FloatKind::F16);
-        let mma = PlaneFragmentInstruction::Mma {
-            shape: MmaConfig {
-                a_type: f16,
-                b_type: f16,
-                cd_type: ElemType::Float(FloatKind::F32),
-                m: 16,
-                n: 8,
-                k: 16,
-            },
-        };
+        let mma = PlaneFragmentInstruction::mma(MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        });
         let software = PlaneFragmentInstruction::Registers {
             step_sum: PlaneFragmentStepSum::Wide,
         };
@@ -928,16 +937,14 @@ mod tests {
     #[test]
     fn rows_along_n_exchange_the_instructions_edges() {
         let f16 = ElemType::Float(FloatKind::F16);
-        let mma = PlaneFragmentInstruction::Mma {
-            shape: MmaConfig {
-                a_type: f16,
-                b_type: f16,
-                cd_type: ElemType::Float(FloatKind::F32),
-                m: 16,
-                n: 8,
-                k: 16,
-            },
-        };
+        let mma = PlaneFragmentInstruction::mma(MmaConfig {
+            a_type: f16,
+            b_type: f16,
+            cd_type: ElemType::Float(FloatKind::F32),
+            m: 16,
+            n: 8,
+            k: 16,
+        });
         assert_eq!(
             mma.shape_along(PlaneFragmentRowsAlong::M),
             [(MatmulDim::M, 16), (MatmulDim::N, 8), (MatmulDim::K, 16)]

@@ -20,7 +20,7 @@ use cubek_quant::quantized_arg;
 use cubek_std::Hardware;
 use cubek_std::launch::tma::tma_operand_tiled_typed;
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
-use cubek_std::layout::tile_order;
+use cubek_std::layout::tile_order::{self, TileOrder};
 use cubek_std::matmul_axes::{EXPERT, K, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
@@ -202,11 +202,12 @@ impl PackedTensor {
             return Err(STORED_TILES_UNREAD);
         };
         let block = operand.grouping(K, k).ok_or(STORED_TILES_UNREAD)?;
-        if block != tile_order::BLOCK || !tile.0.is_multiple_of(block) {
+        let order = TileOrder::of_operand(&operand).ok_or(STORED_TILES_UNREAD)?;
+        if order.block != block || !tile.0.is_multiple_of(block) {
             return Err(STORED_TILES_UNREAD);
         }
         let words = hw.load_values(WORD);
-        let values = tile_order::values_storage(across, tile, words);
+        let values = order.values_storage(across, tile, words);
         operand
             .stored(
                 across,
@@ -215,6 +216,16 @@ impl PackedTensor {
                 None,
             )
             .ok_or(STORED_TILES_UNREAD)
+    }
+
+    /// How it lies in tile order ([`TileOrder::of_operand`]).
+    ///
+    /// # Panics
+    ///
+    /// On a matrix tile order does not store, which [`read_in_tiles`](Self::read_in_tiles) refuses
+    /// before any is laid in tiles.
+    pub fn tile_order(&self) -> TileOrder {
+        TileOrder::of_operand(&self.operand).expect("a matrix in tiles is in tile order")
     }
 
     /// The slabs it holds where it is read as a stack ([`stacked`](Self::stacked)).
@@ -392,7 +403,7 @@ impl PackedTensor {
                 values_axes.to_vec(),
                 launcher
                     .arg(
-                        self.words.bound_as(tile_order::kernel_values_read(
+                        self.words.bound_as(self.tile_order().kernel_values_read(
                             self.extent(K),
                             (across, self.extent(across)),
                             tile,
@@ -463,7 +474,7 @@ impl PackedTensor {
     /// The matrix as one tile under `launcher` as [`bind`](Self::bind) binds it under
     /// `BlockScales::Fields`, served `width` values wide, its words moved by the TMA engine
     /// through a descriptor over the tiles they are stored in
-    /// ([`tile_order::words_in_tiles`]): a box of `stage_lines` lines by `stage_k` values of `k`,
+    /// ([`TileOrder::words_in_tiles`]): a box of `stage_lines` lines by `stage_k` values of `k`,
     /// landing row by row, swizzled as `swizzle` says. Its block scales, kept beside the words, are
     /// handed to the copy engine: a stage's row of them is a few bytes, short of the 16 a
     /// descriptor's row lands, so the units that fill issue them beside the descriptors rather
@@ -497,12 +508,11 @@ impl PackedTensor {
             "bind_by_tma: a stage of {stage_lines} x {stage_k} is not whole {tile:?} tiles along \
              its lines, nor whole tiles or a part dividing one along k"
         );
-        let words = self
-            .words
-            .bound_as(tile_order::words_in_tiles(k, lines, tile));
+        let order = self.tile_order();
+        let words = self.words.bound_as(order.words_in_tiles(k, lines, tile));
         let map = tma_operand_tiled_typed(
             words,
-            (stage_lines, stage_k / tile_order::VALUES_PER_WORD),
+            (stage_lines, stage_k / order.values_per_word),
             TmaLanding::Rows,
             WORD,
             swizzle,
@@ -516,25 +526,21 @@ impl PackedTensor {
                 vec![],
                 vec![
                     TmaTerm::axis(1)
-                        .times(tile_order::BLOCK as u32)
+                        .times(order.block as u32)
                         .over(tile_k as u32),
                 ],
                 vec![
                     TmaTerm::axis(1)
-                        .times(tile_order::BLOCK as u32)
+                        .times(order.block as u32)
                         .modulo(tile_k as u32)
-                        .over(tile_order::VALUES_PER_WORD as u32),
+                        .over(order.values_per_word as u32),
                 ],
             ],
         };
         let words = TileArgLaunch::tensor_map_folded(
             map,
             &values_axes,
-            &[
-                lines as u32,
-                (k / tile_order::BLOCK) as u32,
-                tile_order::BLOCK as u32,
-            ],
+            &[lines as u32, (k / order.block) as u32, order.block as u32],
             coordinates,
         )
         .served_wide(width / self.scheme.num_quants())

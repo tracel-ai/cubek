@@ -23,6 +23,8 @@ use cubek_microkernel::attention::{B, G, KV, Q, S};
 pub struct AttentionPartitioning {
     partitioning: Partitioning,
     cubes_along_keys: NonZeroUsize,
+    /// Cubes of each batch and key head sharing the line of its boxes' steps, where they do.
+    shared_by: Option<NonZeroUsize>,
     /// Steps of the walk through `S` a page holds, where the walk takes a page at a time.
     page_steps: Option<NonZeroUsize>,
     /// The box one cube covers, its `S` a cube's run of the walk where several share a box.
@@ -109,7 +111,32 @@ impl AttentionPartitioning {
         Self {
             partitioning,
             cubes_along_keys,
+            shared_by: None,
             page_steps,
+            cube_space,
+        }
+    }
+
+    /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
+    /// the walk through `S`, every box of queries and heads holding the whole of `S`, and the steps
+    /// of each batch and key head's boxes laid end to end and shared by `cubes` cubes, each taking
+    /// a run that may start inside one box and end inside the next (the tile DSL's
+    /// [`Levels::shared_by`]): every cube walks as many steps as any other, however the boxes
+    /// divide them.
+    pub fn shared(space: Space, step: Levels, cubes: NonZeroUsize) -> Self {
+        let levels = step
+            .walk_every(&[S])
+            .cubes(&[Q, G])
+            .shared_by(cubes.get())
+            .batches(&[B, KV])
+            .build();
+        let partitioning = Partitioning::new(space, levels);
+        let cube_space = partitioning.box_of(ComputeScope::Cube);
+        Self {
+            partitioning,
+            cubes_along_keys: Self::ONE_CUBE_A_BOX,
+            shared_by: Some(cubes),
+            page_steps: None,
             cube_space,
         }
     }
@@ -152,6 +179,7 @@ impl AttentionPartitioning {
         Self {
             partitioning,
             cubes_along_keys: Self::ONE_CUBE_A_BOX,
+            shared_by: None,
             page_steps: None,
             cube_space,
         }
@@ -214,11 +242,25 @@ impl AttentionPartitioning {
     }
 
     /// Cubes one batch and key head of the problem spawns: one for every box of queries and
-    /// heads, times the cubes sharing each.
+    /// heads, times the cubes sharing each, or the cubes sharing the line of its boxes' steps.
     pub fn cubes(&self) -> usize {
+        match self.shared_by {
+            Some(cubes) => cubes.get(),
+            None => self.boxes() * self.cubes_along_keys.get(),
+        }
+    }
+
+    /// Boxes of queries and heads one batch and key head of the problem holds.
+    pub fn boxes(&self) -> usize {
         let (space, cube) = (self.partitioning.space(), self.cube_space());
         let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
-        boxes(Q) * boxes(G) * self.cubes_along_keys.get()
+        boxes(Q) * boxes(G)
+    }
+
+    /// Cubes of each batch and key head sharing the line of its boxes' steps
+    /// ([`shared`](Self::shared)), where they do.
+    pub fn shared_by(&self) -> Option<NonZeroUsize> {
+        self.shared_by
     }
 
     /// The partitioning a kernel compiles against: every extent a launch varies — the batches, the

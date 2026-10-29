@@ -1162,11 +1162,12 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .served_wide(widths.lhs);
         let values_axes = tile_order::values_axes(N);
         let rhs_stage = stage.landed_space(MatmulOperand::Rhs, orders, &values_axes);
+        let values_per_word = rhs.tile_order().values_per_word;
         let rhs_swizzle = storage
             .tma_swizzle(
                 &rhs_stage,
-                tile_order::VALUES_PER_WORD,
-                u32::BITS as usize / tile_order::VALUES_PER_WORD,
+                values_per_word,
+                u32::BITS as usize / values_per_word,
             )
             .expect("the fill delivers by TMA only a stage a box lands");
         let rhs = rhs.bind_by_tma(

@@ -7,10 +7,11 @@ use cubek_std::layout::BindingOrder;
 use cubecl::features::{MmaConfig, WgmmaConfig};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{
-    Axis, Instruction, MmaOperands, RegisterBlock, StageStorage, ops::matmul::MmaIo,
-    stage::RowChunks,
+    Axis, BlockScaledOperands, Instruction, MmaOperands, RegisterBlock, StageStorage,
+    ops::matmul::MmaIo, stage::RowChunks,
 };
 use cubecl::wgmma::WARPGROUP_UNITS;
+use cubek_std::BlockScaledMma;
 use cubek_std::microkernel::{ArithmeticInstruction, SWIZZLED_STAGE_UNREAD, StageLayout};
 
 /// What a plane's fragments contract through: one of the device's matrix instructions, reached
@@ -27,7 +28,12 @@ pub enum PlaneFragmentInstruction {
     /// A matrix instruction of the device, through the tile DSL's own fragment transport, as the
     /// tile DSL chooses it ([`MmaIo::default`]): an operand through `ldmatrix` where the device
     /// offers it and the stage serves it, and every unit its own cells elsewhere and for the store.
-    Mma { shape: MmaConfig },
+    /// `operands` says what it reads: values as they are, or packed codes under their block scales
+    /// as they lie, through the device's block-scaled instruction of that form.
+    Mma {
+        shape: MmaConfig,
+        operands: MmaOperands,
+    },
     /// The software instruction: [`SOFTWARE_UNITS`](Self::SOFTWARE_UNITS) units, each holding
     /// one cell of the tile in registers and contracting
     /// [`SOFTWARE_DEPTH`](Self::SOFTWARE_DEPTH) of `K` into it with vector arithmetic, in the
@@ -74,7 +80,7 @@ impl PlaneFragmentInstruction {
     /// The instruction's `m × n × k`, over the whole plane.
     pub fn shape(self) -> [(MatmulDim, usize); 3] {
         match self {
-            Self::Cmma { shape } | Self::Mma { shape } => [
+            Self::Cmma { shape } | Self::Mma { shape, .. } => [
                 (MatmulDim::M, shape.m as usize),
                 (MatmulDim::N, shape.n as usize),
                 (MatmulDim::K, shape.k as usize),
@@ -128,12 +134,9 @@ impl PlaneFragmentInstruction {
     pub fn tile_instruction(self, cells: usize) -> Instruction {
         match self {
             Self::Cmma { .. } => Instruction::Cmma,
-            Self::Mma { .. } => Instruction::Mma {
+            Self::Mma { operands, .. } => Instruction::Mma {
                 io: MmaIo::default(),
-                operands: match self.block_scaled() {
-                    true => MmaOperands::BlockScaled,
-                    false => MmaOperands::Plain,
-                },
+                operands,
             },
             Self::Registers { .. } => Instruction::Registers {
                 config: RegisterBlock::new(cells).component_fanout(),
@@ -277,14 +280,42 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// Whether this is a block-scaled instruction over NVFP4: one whose operands are `e2m1`
-    /// values under an `e4m3` scale every sixteen of `k` (the `e2m1` instructions
-    /// [`manual_mma`](cubek_std::manual_mma) holds), which reads the stored words and their scales as they lie.
+    /// Whether this is a block-scaled instruction ([`block_scaled_mma`](cubek_std::block_scaled_mma)):
+    /// one that reads packed codes and their scales as they lie.
     pub fn block_scaled(self) -> bool {
-        let e2m1 = ElemType::Float(FloatKind::E2M1);
+        self.form().is_some()
+    }
+
+    /// The form a block-scaled instruction's operands take: each input's codes, the scales' type
+    /// and their block. `None` for any other.
+    pub fn form(self) -> Option<BlockScaledOperands> {
         match self {
-            Self::Mma { shape } => shape.a_type == e2m1 && shape.b_type == e2m1,
-            Self::Cmma { .. } | Self::Registers { .. } | Self::Wgmma { .. } => false,
+            Self::Mma { operands, .. } => operands.block_scaled(),
+            Self::Cmma { .. } | Self::Registers { .. } | Self::Wgmma { .. } => None,
+        }
+    }
+
+    /// Whether a stored word of `form`'s block scales is one step of this instruction: the scales
+    /// a step reads, one a block of its `k`, fill the word, which is then its scale register.
+    pub fn scale_word_is_a_step(self, form: BlockScaledOperands) -> bool {
+        let [_, _, (_, k)] = self.shape();
+        let scales_per_word = u32::BITS as usize / ElemType::Float(form.scales).size_bits();
+        form.block * scales_per_word == k
+    }
+
+    /// The plain manual-mma instruction of `shape`.
+    pub fn mma(shape: MmaConfig) -> Self {
+        Self::Mma {
+            shape,
+            operands: MmaOperands::Plain,
+        }
+    }
+
+    /// The device's block-scaled instruction `instruction`, through the manual-mma transport.
+    pub fn block_scaled_mma(instruction: BlockScaledMma) -> Self {
+        Self::Mma {
+            shape: instruction.shape,
+            operands: MmaOperands::BlockScaled(instruction.form),
         }
     }
 

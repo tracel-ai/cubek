@@ -635,7 +635,7 @@ mod tests {
     /// block a read stays inside, and its scales, in rows, a word of four blocks down one column.
     #[test]
     fn tile_order_is_read_a_load_of_each() {
-        let values = tile_order::values_storage(N, (128, 8), WORDS);
+        let values = tile_order::TileOrder::NVFP4.values_storage(N, (128, 8), WORDS);
         let stored = nvfp4()
             .stored(
                 N,

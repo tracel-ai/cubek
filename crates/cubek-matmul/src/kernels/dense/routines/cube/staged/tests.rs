@@ -263,7 +263,7 @@ mod base {
             instructions,
             [
                 PlaneFragmentInstruction::Cmma { shape: SHAPE },
-                PlaneFragmentInstruction::Mma { shape: SHAPE },
+                PlaneFragmentInstruction::mma(SHAPE),
                 PlaneFragmentInstruction::Registers {
                     step_sum: PlaneFragmentStepSum::Wide,
                 },
@@ -289,7 +289,7 @@ mod base {
         assert_eq!(
             instructions,
             [
-                PlaneFragmentInstruction::Mma { shape: SHAPE },
+                PlaneFragmentInstruction::mma(SHAPE),
                 PlaneFragmentInstruction::Cmma { shape: SHAPE },
                 PlaneFragmentInstruction::Registers {
                     step_sum: PlaneFragmentStepSum::Wide,
@@ -936,7 +936,7 @@ mod base {
     fn a_packed_rhs_in_tiles_lands_by_tma_where_its_stage_holds_it_as_stored() {
         // The `16 × 8 × 16` instruction a plane decodes the rhs's fragments into.
         let hw = devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]);
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let rhs = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
             scheme,
@@ -1428,7 +1428,7 @@ mod base {
             ElemType::Float(FloatKind::F16),
             MatmulOperands {
                 lhs: Some(packing(nvfp4_scheme(), [M, K])),
-                rhs: Some(packing(tile_order::scheme(), [K, N])),
+                rhs: Some(packing(tile_order::nvfp4_scheme(), [K, N])),
                 out: None,
             },
         );
@@ -1442,6 +1442,60 @@ mod base {
         let mut estimate = KernelEstimate::from(&grid);
         CubeStagedMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
         assert!(estimate.work.is_some());
+    }
+
+    /// On a GPU with every block-scaled instruction `sm_120` has, each format's product read as
+    /// stored prepares on that format's instruction: NVFP4's scales handed over a word a step, as
+    /// the instruction takes them, MXFP4's of thirty-two and MXFP8's, whose word of four `ue8m0`
+    /// scales is more than one step, read one a block beside the values. The block-scaled list
+    /// prepares each format, the default box among it.
+    #[test]
+    fn each_format_read_as_stored_prepares_on_its_instruction() {
+        use cubecl::tile::BlockScaledOperands;
+        use cubek_microkernel::matmul::MatmulMicrokernel;
+        use cubek_std::NVFP4_FORM;
+        use cubek_std::layout::stored::BlockScales;
+
+        let hw = devices::offering_block_scaled(devices::h100());
+        let ue8m0 = |code, k| {
+            (
+                BlockScaledOperands {
+                    lhs: code,
+                    rhs: code,
+                    scales: FloatKind::UE8M0,
+                    block: 32,
+                },
+                k,
+            )
+        };
+        let formats = [
+            ((NVFP4_FORM, 64), BlockScales::Words),
+            (ue8m0(FloatKind::E2M1x2, 64), BlockScales::Fields),
+            (ue8m0(FloatKind::E4M3, 32), BlockScales::Fields),
+        ];
+        let settings = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
+        for ((form, k), scales) in formats {
+            let inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&form)
+                .expect("every format here is a packed input");
+            let problem = MatmulRoutineProblem::packed(
+                128,
+                256,
+                512,
+                ElemType::Float(FloatKind::F16),
+                inputs,
+            );
+            let prepared: Vec<_> = settings
+                .iter()
+                .filter_map(|setting| CubeStagedMatmulRoutine.prepare(&hw, &problem, setting).ok())
+                .collect();
+            assert!(!prepared.is_empty(), "{form:?}");
+            for (blueprint, _) in prepared {
+                let instruction = blueprint.microkernel.plane.instruction;
+                assert_eq!(instruction.form(), Some(form), "{form:?}");
+                assert_eq!(instruction.shape()[2].1, k, "{form:?}");
+                assert_eq!(blueprint.microkernel.block_scales(), scales, "{form:?}");
+            }
+        }
     }
 
     /// A packed input its stages decode is estimated a stage of scale blocks at a time: as many
@@ -1468,7 +1522,7 @@ mod base {
                 k: 8,
             }],
         );
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let weight = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
             scheme,
@@ -1527,7 +1581,7 @@ mod base {
             n: 8,
             k: 16,
         };
-        let scheme = tile_order::scheme();
+        let scheme = tile_order::nvfp4_scheme();
         let weight = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
             scheme,
