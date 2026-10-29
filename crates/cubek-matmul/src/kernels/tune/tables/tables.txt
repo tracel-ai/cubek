@@ -1,20 +1,20 @@
 # m2-pro
-few-rows: 71 candidates, checksum 9ce4406ecbe2752f340b71965644c1f8
-many-rows: 176 candidates, checksum 598d5cbf7535c8bab369ce3cdc8919b5
+few-rows: 71 candidates, checksum 23f2e4abbbc346717949d30ad18281df
+many-rows: 176 candidates, checksum 51ef38b0c17d19f288b3e3262db4e931
 nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
 
 # h100
-few-rows: 71 candidates, checksum 9ce4406ecbe2752f340b71965644c1f8
-many-rows: 236 candidates, checksum 4c4da66e07c8ff6df6367ac31519bf02
+few-rows: 71 candidates, checksum 23f2e4abbbc346717949d30ad18281df
+many-rows: 236 candidates, checksum 2e36dad489d4bd483c11c7db1700f494
 nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
 
 # h100 with nvfp4
-few-rows: 71 candidates, checksum 9ce4406ecbe2752f340b71965644c1f8
-many-rows: 236 candidates, checksum 4c4da66e07c8ff6df6367ac31519bf02
+few-rows: 71 candidates, checksum 23f2e4abbbc346717949d30ad18281df
+many-rows: 236 candidates, checksum 2e36dad489d4bd483c11c7db1700f494
 nvfp4: 18 candidates, checksum 708733718e6b3dca4dee921b7198e992
 
 # wgpu without subgroups
-few-rows: 78 candidates, checksum e8bf61d793385df87b8dd724decbad4f
-many-rows: 108 candidates, checksum 62aa951615e1584de66b0a88a12ca5db
+few-rows: 78 candidates, checksum 307b44bb8f113b3e8897ecd46cf053e9
+many-rows: 108 candidates, checksum 3d83c9b509e9f362111bfd5ce07f0275
 nvfp4: 2 candidates, checksum f8c51f2d1b95411bd331f60e2c3ba20e
 
