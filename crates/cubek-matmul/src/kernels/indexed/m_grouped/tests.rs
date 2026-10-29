@@ -9,11 +9,14 @@ use cubecl::tile::launch::Refusal;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::client;
 
-use super::{MGroupedMatmulTensors, launch_tuned};
+use super::{
+    MGroupedFloors, MGroupedListing, MGroupedMatmulTensors, MGroupedSettings, launch_tuned,
+};
 use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tune::Product;
 use crate::tiled::storage::{StorageLevels, tile};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -143,4 +146,32 @@ fn a_stack_stored_in_tiles_is_refused() {
         matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
         "{declined:?}"
     );
+}
+
+/// The entry asks the floors listed for its stack's kind and no others: a float stack served only
+/// by a packed floor passes the entry and then every floor of the round declines it.
+#[test]
+fn a_float_stack_is_asked_only_the_floors_listed_for_float() {
+    let floors = MGroupedFloors::LISTED;
+    let plane_shuffle: Vec<_> = MGroupedListing::admitted(&floors.plane_shuffle, Product::Float)
+        .map(|floor| floor.settings)
+        .collect();
+    let cube_staged: Vec<_> = MGroupedListing::admitted(&floors.cube_staged, Product::Float)
+        .map(|floor| floor.settings)
+        .collect();
+    assert_eq!(plane_shuffle, [MGroupedSettings::PLANE_SHUFFLE]);
+    assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED]);
+}
+
+#[test]
+fn a_packed_stack_is_asked_only_the_floors_listed_for_packed() {
+    let floors = MGroupedFloors::LISTED;
+    let plane_shuffle: Vec<_> = MGroupedListing::admitted(&floors.plane_shuffle, Product::Packed)
+        .map(|floor| floor.settings)
+        .collect();
+    let cube_staged: Vec<_> = MGroupedListing::admitted(&floors.cube_staged, Product::Packed)
+        .map(|floor| floor.settings)
+        .collect();
+    assert_eq!(plane_shuffle, [MGroupedSettings::PLANE_SHUFFLE_PACKED]);
+    assert_eq!(cube_staged, [MGroupedSettings::CUBE_STAGED_PACKED]);
 }

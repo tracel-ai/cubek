@@ -17,6 +17,6 @@ pub use candidate::*;
 #[cfg(feature = "autotune-checks")]
 pub use checks::*;
 pub use packed_candidate::*;
-pub(crate) use product::{Product, listed_for};
+pub(crate) use product::{ListedFor, Product, listed_for};
 pub use routine_settings::*;
 pub use tables::*;

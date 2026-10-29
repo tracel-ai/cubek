@@ -20,6 +20,27 @@ impl Product {
     }
 }
 
+/// The kind of product a candidate is listed for: one kind, or either where the same setting
+/// serves both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ListedFor {
+    Float,
+    Packed,
+    Either,
+}
+
+impl ListedFor {
+    /// Whether a product of kind `actual` is one the candidate is listed for.
+    pub(crate) fn admits(self, actual: Product) -> bool {
+        match (self, actual) {
+            (Self::Either, _) | (Self::Float, Product::Float) | (Self::Packed, Product::Packed) => {
+                true
+            }
+            (Self::Float, Product::Packed) | (Self::Packed, Product::Float) => false,
+        }
+    }
+}
+
 /// Declines a product of kind `actual` where it is not the kind a candidate is `listed` for.
 ///
 /// # Errors
