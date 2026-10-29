@@ -8,7 +8,7 @@ mod checks;
 pub mod key;
 mod packed_candidate;
 mod routine_settings;
-mod tables;
+mod autotunes;
 #[cfg(test)]
 mod tests;
 
@@ -17,4 +17,4 @@ pub use candidate::*;
 pub use checks::*;
 pub use packed_candidate::*;
 pub use routine_settings::*;
-pub use tables::*;
+pub use autotunes::*;
