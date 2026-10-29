@@ -1,5 +1,4 @@
 use crate::kernels::select::problem::OperandKind;
-use crate::kernels::tune::{FLOAT_SETTING_PACKED_INPUT, PACKED_SETTING_FLOAT_INPUTS};
 use cubecl::tile::launch::Refusal;
 
 /// The kind of a product, which a candidate listed for the other kind declines before compiling
@@ -30,6 +29,16 @@ pub(crate) enum ListedFor {
     Packed,
     Either,
 }
+
+/// What a float setting declines: a packed input, which it was not listed for.
+pub const FLOAT_SETTING_PACKED_INPUT: Refusal = Refusal::Declined {
+    why: "a setting listed for float inputs reads them, and an input is packed",
+};
+
+/// What a packed setting declines: two float inputs, which it was not listed for.
+pub const PACKED_SETTING_FLOAT_INPUTS: Refusal = Refusal::Declined {
+    why: "a setting listed for a packed input reads one, and both inputs are float",
+};
 
 impl ListedFor {
     /// Declines a product of kind `actual` where it is not a kind the candidate is listed for.

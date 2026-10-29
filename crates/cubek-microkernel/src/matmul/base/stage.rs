@@ -81,18 +81,9 @@ impl MatmulStage {
     }
 
     /// Both operands' boxes of one stage, each stored in its own element of `elements` and bound
-    /// in the order `orders` says, filled as bound.
+    /// in the order `orders` says, for a fill that reads them as `reads` say: an operand it decodes
+    /// is converted on its way into the stage.
     pub fn operands(
-        &self,
-        elements: MatmulOperands<ElemType>,
-        orders: MatmulOperands<BindingOrder>,
-    ) -> [StagedOperand; 2] {
-        self.operands_read(elements, orders, MatmulOperands::all(MatmulRead::AsBound))
-    }
-
-    /// [`operands`](Self::operands) for a fill that reads them as `reads` say: an operand it
-    /// decodes is converted on its way into the stage.
-    pub fn operands_read(
         &self,
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<BindingOrder>,
@@ -123,7 +114,7 @@ impl MatmulStage {
         orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         let block: usize = self
-            .operands(elements, orders)
+            .operands(elements, orders, MatmulOperands::all(MatmulRead::AsBound))
             .iter()
             .map(|operand| operand.bytes(hw, storage))
             .sum();

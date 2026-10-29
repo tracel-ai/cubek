@@ -3,7 +3,9 @@ use crate::kernels::MatmulBinding;
 use crate::kernels::MatmulPartitioning;
 use crate::kernels::{CUBE_STRIPS, cube_order_name};
 use cubecl::tile::launch::Refusal;
-use cubek_microkernel::matmul::{MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands};
+use cubek_microkernel::matmul::{
+    MatmulAxes, MatmulDestination, MatmulOperand, MatmulOperands, MatmulRead,
+};
 use cubek_std::Hardware;
 
 use crate::kernels::{
@@ -257,9 +259,11 @@ impl Routine for PlaneFragmentMatmulRoutine {
         let plane_width = microkernel.instruction.units(hw)?;
         let ring = settings.ring.resolve(
             hw,
-            &partitioning
-                .stage()
-                .operands(item.elements, microkernel.orders),
+            &partitioning.stage().operands(
+                item.elements,
+                microkernel.orders,
+                MatmulOperands::all(MatmulRead::AsBound),
+            ),
             plane_width as usize,
         );
         let stage = microkernel.instruction.stage_layout(None)?.storage(
@@ -499,7 +503,8 @@ mod tests {
                         .expect(MatmulView::PREPARED)
                         .work_item()
                         .elements,
-                    blueprint.microkernel.orders
+                    blueprint.microkernel.orders,
+                    MatmulOperands::all(MatmulRead::AsBound)
                 ),
                 plane_units
             )

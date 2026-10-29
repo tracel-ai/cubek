@@ -2,6 +2,7 @@
 
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::MatmulTuneKey;
+use crate::kernels::tune::{ListedFor, Product};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedMatmulRoutineSettings,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
@@ -16,17 +17,6 @@ use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
 use cubek_std::routine::Routine;
-
-/// What a float setting declines: a packed input, which it was not listed for.
-pub const FLOAT_SETTING_PACKED_INPUT: Refusal = Refusal::Declined {
-    why: "a setting listed for float inputs reads them, and an input is packed",
-};
-
-/// What a [`MatmulPackedCandidate`] declines: two float inputs, which its settings were not listed
-/// for.
-pub const PACKED_SETTING_FLOAT_INPUTS: Refusal = Refusal::Declined {
-    why: "a setting listed for a packed input reads one, and both inputs are float",
-};
 
 /// What a packed setting contracts on, the one thing of it a packed key's priority reads.
 pub trait PackedContraction {
@@ -122,9 +112,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if let (StoredTensor::Plain(_), StoredTensor::Plain(_)) = (&lhs, &rhs) {
-            return Err(PACKED_SETTING_FLOAT_INPUTS);
-        }
+        ListedFor::Packed.admits(Product::of([lhs.kind(), rhs.kind()]))?;
         self.routine
             .launch_into(&self.hw, client, lhs, rhs, out, &self.settings)
     }
@@ -147,9 +135,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if let (StoredTensor::Plain(_), StoredTensor::Plain(_)) = (&lhs, &rhs) {
-            return Err(PACKED_SETTING_FLOAT_INPUTS);
-        }
+        ListedFor::Packed.admits(Product::of([lhs.kind(), rhs.kind()]))?;
         let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
         let (blueprint, grid) =
             self.routine

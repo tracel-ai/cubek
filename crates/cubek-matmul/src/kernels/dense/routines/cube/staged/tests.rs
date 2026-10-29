@@ -15,6 +15,7 @@ mod base {
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::{launch::Delivery, space::CubeOrder, stage::RowChunks};
     use cubek_microkernel::matmul::MatmulOperand;
+    use cubek_microkernel::matmul::MatmulRead;
     use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
     use cubek_microkernel::matmul::cube::{
         CubeStagedDelivery, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, CubeStagedStore,
@@ -633,9 +634,11 @@ mod base {
         let item = MatmulView::of::<CubeStagedMicrokernel>(&problem)
             .expect(MatmulView::PREPARED)
             .work_item();
-        let operands = partitioning
-            .stage()
-            .operands(item.elements, blueprint.microkernel.plane.orders);
+        let operands = partitioning.stage().operands(
+            item.elements,
+            blueprint.microkernel.plane.orders,
+            MatmulOperands::all(MatmulRead::AsBound),
+        );
         assert_eq!(registers.resolve(&hw, &operands, cube_units), registers);
         assert_eq!(
             registers.resolve(&hw, &operands, one_unit),
