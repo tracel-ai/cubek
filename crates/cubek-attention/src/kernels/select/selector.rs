@@ -8,7 +8,7 @@
 use super::problem::{KvKind, QueryPositions};
 use super::{AttentionKernel, AttentionOpStrategy};
 use crate::kernels::plan::{
-    AttentionPlan, AttentionTableGroups, CacheRead, KernelLead, Rebuilt, fastest,
+    AttentionAutotuneGroups, AttentionPlan, CacheRead, KernelLead, Rebuilt, fastest,
 };
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
 use cubecl::tile::launch::Refusal;
@@ -43,7 +43,7 @@ pub fn select(
     strategy: AttentionOpStrategy,
     queries: QueryPositions,
     cache: KvKind,
-    groups: AttentionTableGroups,
+    groups: AttentionAutotuneGroups,
 ) -> Result<AttentionPlan, Refusal> {
     let choice = Choice::of(strategy, queries);
     let float = || choice.plan(queries, CacheRead::Float, groups);
@@ -90,7 +90,7 @@ impl Choice {
         self,
         queries: QueryPositions,
         cache: CacheRead,
-        groups: AttentionTableGroups,
+        groups: AttentionAutotuneGroups,
     ) -> AttentionPlan {
         let lead = |kernel| -> AttentionPlan { Box::new(KernelLead::new(kernel, cache)) };
         match self {
@@ -112,7 +112,7 @@ fn rebuilt(plan: AttentionPlan) -> AttentionPlan {
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::plan::AttentionTableGroups;
+    use crate::kernels::plan::AttentionAutotuneGroups;
     use crate::kernels::select::selector::*;
     use crate::kernels::*;
     use AttentionKernelHeuristic as H;
@@ -238,7 +238,7 @@ mod tests {
         queries: QueryPositions,
         cache: KvKind,
     ) -> Result<String, cubecl::tile::launch::Refusal> {
-        select(strategy, queries, cache, AttentionTableGroups::default())
+        select(strategy, queries, cache, AttentionAutotuneGroups::default())
             .map(|plan| plan.tree().to_string())
     }
 

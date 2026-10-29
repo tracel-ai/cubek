@@ -58,14 +58,14 @@ impl Plan<AttentionCall> for KernelLead {
 
 /// The priority each autotune's routines ship at: a caller's to set, as in the matmul family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AttentionTableGroups {
+pub struct AttentionAutotuneGroups {
     /// The many-positions autotune's.
     pub prefill: GroupPriority,
     /// The one-position autotune's.
     pub decode: GroupPriority,
 }
 
-impl AttentionTableGroups {
+impl AttentionAutotuneGroups {
     /// The priority of the autotune of calls of `positions` query positions.
     pub fn of(self, positions: QueryPositions) -> GroupPriority {
         match positions {
@@ -75,7 +75,7 @@ impl AttentionTableGroups {
     }
 }
 
-impl Default for AttentionTableGroups {
+impl Default for AttentionAutotuneGroups {
     fn default() -> Self {
         Self {
             prefill: GroupPriority::DEFAULT,
@@ -88,12 +88,12 @@ impl Default for AttentionTableGroups {
 /// `routines`: the decode autotune at one position, the prefill one at many. It measures a float
 /// call; a packed cache is rebuilt before it.
 pub fn fastest(positions: QueryPositions, routines: GroupPriority) -> AttentionPlan {
-    let table = match positions {
+    let autotune = match positions {
         QueryPositions::One => "decode",
         QueryPositions::Many => "prefill",
     };
     Box::new(Fastest::new(
-        table,
+        autotune,
         move |call: &AttentionCall| match call {
             AttentionCall::Float(float) => {
                 launch_tuned(positions, &float.device, float.inputs.clone(), routines)

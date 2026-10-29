@@ -173,7 +173,7 @@ impl AttentionKey {
 /// ([`AttentionKey`]): operands of the key's element, the query `[b, h, q, d]`, the keys and
 /// values `[b, kv, s, d]`, read through a page table where the key has a page size, and the
 /// output `[b, q, h, d]`, the value dim the head dim.
-/// A key carries no value dim of its own: every attention reaching the table has `DV = D`.
+/// A key carries no value dim of its own: every attention reaching autotune has `DV = D`.
 impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
     type Error = Refusal;
 
