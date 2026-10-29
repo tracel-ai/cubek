@@ -1,13 +1,16 @@
 use cubecl::{
     CubeCount, CubeDim,
     client::Client,
+    features::Plane,
     ir::{AddressType, DeviceProperties},
     server::LaunchError,
 };
 use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
 
 use crate::{
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    definition::{
+        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    },
     multi_level::{
         args::*,
         components::{
@@ -166,6 +169,12 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         }
 
         let plane_dim = client.properties().hardware.plane_size_max as usize;
+        // Past one unit per plane, the units of a plane share their values with plane_shuffle.
+        if plane_dim > 1 && !client.properties().features.plane.contains(Plane::Ops) {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::PlaneOpsUnavailable,
+            ));
+        }
         if blueprint.tile_dim != plane_dim * vector_size {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Tile dim must equal plane_dim * vector_size, got {:?} != {:?} * {:?}",
