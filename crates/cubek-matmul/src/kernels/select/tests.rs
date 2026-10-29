@@ -6,7 +6,7 @@ use crate::kernels::tune::MatmulTableGroups;
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::plan::Plan;
@@ -390,6 +390,32 @@ fn an_unsupported_scheme_never_reaches_a_quantized_kernel_at_all() {
             assert!(
                 framework_dequantized(&selection),
                 "{strategy:?} {rows} rows: {selection:?}"
+            );
+        }
+    }
+}
+
+/// A lookup scheme's codes are indices into a table no packed input binds: read as stored they
+/// would be the integers they are written as, so the framework decodes them first, whatever
+/// value type names their width.
+#[test]
+fn a_lookup_scheme_never_reaches_a_quantized_kernel() {
+    let hw = devices::m2_pro();
+    for value in [QuantValue::Q4S, QuantValue::Q8S, QuantValue::E2M1] {
+        let lookup = QuantScheme::default()
+            .with_mode(QuantMode::Lookup)
+            .with_value(value)
+            .per_block([32], ScaleDtype::F16)
+            .with_store(QuantStore::PackedU32(0));
+        assert!(
+            !matmul_supported(&hw, &lookup, MatmulOperand::Rhs),
+            "{value:?}"
+        );
+        for strategy in [Autotune, Specific(K::PlaneShuffle)] {
+            let selection = select(strategy, &quantized(1, lookup), &hw);
+            assert!(
+                framework_dequantized(&selection),
+                "{value:?} {strategy:?}: {selection:?}"
             );
         }
     }
