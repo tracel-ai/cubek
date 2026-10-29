@@ -19,14 +19,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort, upload};
 use crate::kernels::indexed::m_grouped::{
-    MGroupedFloors, MGroupedListing, MGroupedMatmulTensors, MGroupedRowSource,
-    MGroupedRowSourceKind, MGroupedSettings,
+    MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
+    MGroupedSettings,
 };
 use crate::kernels::indexed::stack::SlabAxis;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{ListedFor, Product};
+use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
     PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
@@ -47,7 +47,6 @@ pub struct MGroupedMatmulKey {
     /// Slabs in the stack, one per group.
     groups: usize,
     /// Grouped rows, anchored to the power of two above them.
-    #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
     m: usize,
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
@@ -102,14 +101,11 @@ pub fn launch_tuned_padded(
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
     let stack = Product::of([tensors.stack_kind()]);
     let floors = MGroupedFloors::LISTED;
-    let plane_shuffle = MGroupedListing::admitted(&floors.plane_shuffle, stack)
+    let plane_shuffle = Listing::admitted(&floors.plane_shuffle, stack)
         .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
-    let cube_staged = MGroupedListing::admitted(&floors.cube_staged, stack)
+    let cube_staged = Listing::admitted(&floors.cube_staged, stack)
         .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
-    plane_shuffle
-        .chain(cube_staged)
-        .reduce(Result::or)
-        .expect("a floor is listed for every kind of stack")?;
+    first_served(plane_shuffle.chain(cube_staged))?;
 
     // Named rather than `module_path!()`, so the cached winners stay this autotune's wherever the
     // code lives; a cached winner is an index into the candidate list.
@@ -125,7 +121,7 @@ pub fn launch_tuned_padded(
             .fold(autotune, |autotune, listing| {
                 autotune.candidate(
                     &microkernel,
-                    candidate(PlaneShuffleMatmulRoutine, listing.settings, listing.listed),
+                    candidate(PlaneShuffleMatmulRoutine, listing.settings, listing.kind),
                 )
             });
         let autotune = MGroupedSettings::<CubeStagedMatmulRoutineSettings>::listed(&hw)
@@ -133,7 +129,7 @@ pub fn launch_tuned_padded(
             .fold(autotune, |autotune, listing| {
                 autotune.candidate(
                     &microkernel,
-                    candidate(CubeStagedMatmulRoutine, listing.settings, listing.listed),
+                    candidate(CubeStagedMatmulRoutine, listing.settings, listing.kind),
                 )
             });
         let autotune = floors
@@ -143,7 +139,7 @@ pub fn launch_tuned_padded(
                 autotune.floor(candidate(
                     PlaneShuffleMatmulRoutine,
                     floor.settings,
-                    floor.listed,
+                    floor.kind,
                 ))
             });
         floors
@@ -153,7 +149,7 @@ pub fn launch_tuned_padded(
                 autotune.floor(candidate(
                     CubeStagedMatmulRoutine,
                     floor.settings,
-                    floor.listed,
+                    floor.kind,
                 ))
             })
             .finish()

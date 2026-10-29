@@ -1,6 +1,5 @@
 use super::base::{
     MatmulProduct, MatmulTableGroups, MatmulTunables, RoutineIdentity, measured_table,
-    reads_no_routes,
 };
 use crate::kernels::MatmulRoutine;
 use crate::kernels::plan::MatmulCall;
@@ -41,7 +40,6 @@ fn candidate(
     settings: CubeStagedMatmulRoutineSettings,
 ) -> Tunable<MatmulTuneKey, MatmulCall, MatmulProduct, RoutineIdentity> {
     RoutineIdentity::named(&format!("nvfp4 {settings}"), move |call: MatmulCall| {
-        reads_no_routes(&call)?;
         let declined = |why| format!("{settings} does not serve this product: {why:?}");
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
         let tensors = match &call.destination {

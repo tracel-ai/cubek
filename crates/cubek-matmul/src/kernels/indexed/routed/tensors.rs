@@ -2,16 +2,21 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Refusal;
+use cubecl::tune::Work;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
+use cubek_std::autotune::Roofline;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_axes::{K, N};
 
+use crate::kernels::indexed::routed::RoutedMatmulKey;
 use crate::kernels::indexed::stack::{SlabAxis, SlabView};
+use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey, OperandKey, OperandLayout};
+use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
+use crate::kernels::tune::{Product, matmul_ceiling};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulTensors,
@@ -49,9 +54,8 @@ impl core::fmt::Debug for RoutedMatmulTensors {
 }
 
 impl RoutedMatmulTensors {
-    /// The most batches a key tells apart: a prompt's rows times their slots, past which a grid
-    /// is full whatever the count.
-    const BATCHES_KEYED: usize = 65536;
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
 
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
@@ -142,26 +146,19 @@ impl RoutedMatmulTensors {
         self.lhs.elem
     }
 
-    /// The key the matmul autotune measures these operands under: the dense product of
-    /// `[rows, slots]` batches of one row each, the rhs a stack of slabs each batch reads one of.
-    pub fn key(&self) -> MatmulTuneKey {
+    /// The key the routed autotune measures these operands under.
+    pub fn key(&self) -> RoutedMatmulKey {
         let [k, n] = self.slab_shape();
-        let lhs = OperandKey::float(Some(K), MatmulBatching::Batched);
-        let rhs = OperandKey {
-            kind: self.rhs.kind(),
-            layout: OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
-            batching: MatmulBatching::Slabs {
-                slabs: self.experts,
-            },
-        };
-        MatmulTuneKey::new(
+        RoutedMatmulKey::new(
             self.elem(),
             k,
             n,
-            1,
-            MatmulTuneKey::anchored(self.rows() * self.slots(), Self::BATCHES_KEYED),
-            lhs,
-            rhs,
+            self.experts,
+            MatmulTuneKey::anchored(self.rows(), Self::ROWS_KEYED),
+            self.slots,
+            self.stack_kind(),
+            OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
+            self.along,
         )
     }
 
@@ -242,14 +239,55 @@ impl RoutedMatmulTensors {
             .map(|_| ())
     }
 
+    /// The same product with `routes` in place of the call's.
+    pub(crate) fn with_routes(&self, routes: PlainTensor) -> Self {
+        Self {
+            routes,
+            ..self.clone()
+        }
+    }
+
+    /// Each row's routes, `u32`.
+    #[cfg(test)]
+    pub(crate) fn routes(&self) -> &PlainTensor {
+        &self.routes
+    }
+
+    /// The roofline a round stops at: the contraction's operations, and the bytes of the rows, the
+    /// output and the slabs the routes can reach, one a route at most.
+    pub(crate) fn roofline(&self) -> Roofline {
+        let [k, n] = self.slab_shape();
+        let routed = self.rows() * self.slots;
+        let reached = self.rhs.bytes() / self.experts * routed.min(self.experts);
+        let hw = Hardware::from_client(&self.client);
+        Roofline {
+            client: self.client.clone(),
+            ceiling: matmul_ceiling(&hw, self.elem()),
+            work: Work {
+                compute_ops: 2 * routed * n * k,
+                bytes: self.lhs.bytes() + reached + routed * n * self.elem().size(),
+            },
+        }
+    }
+
     /// The client the operands live on.
     pub fn client(&self) -> &Client {
         &self.client
     }
 
-    /// Whether the stack is packed, read as it is stored.
-    pub fn packed(&self) -> bool {
-        matches!(self.rhs, StoredTensor::Packed(_))
+    /// Whether the stack is float or packed, and how.
+    pub fn stack_kind(&self) -> OperandKind {
+        self.rhs.kind()
+    }
+
+    /// The product's kind, for the settings listed for it.
+    pub(crate) fn product(&self) -> Product {
+        Product::of([self.stack_kind()])
+    }
+
+    /// Experts in the stack.
+    pub(crate) fn experts(&self) -> usize {
+        self.experts
     }
 
     /// The product as the dense routines read it: each row's slot a batch of one row, the rows

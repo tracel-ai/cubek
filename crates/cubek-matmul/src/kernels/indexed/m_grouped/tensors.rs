@@ -14,7 +14,7 @@ use crate::kernels::indexed::m_grouped::{
 use crate::kernels::indexed::stack::{SlabAxis, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::OperandLayout;
+use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulRoutineProblem,
@@ -38,6 +38,9 @@ pub struct MGroupedMatmulTensors {
 }
 
 impl MGroupedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
+
     /// The rows `source` holds against `rhs` on `client`'s device, grouped by `ends` (each group's
     /// cumulative end row as a `u32`, one group a slab), the slabs laid along `along`. A float
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
@@ -154,7 +157,7 @@ impl MGroupedMatmulTensors {
             k,
             n,
             self.groups(),
-            self.source.rows(),
+            MatmulTuneKey::anchored(self.source.rows(), Self::ROWS_KEYED),
             self.stack_kind(),
             OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
             self.along,

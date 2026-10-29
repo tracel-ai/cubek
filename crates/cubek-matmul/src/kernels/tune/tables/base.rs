@@ -3,7 +3,7 @@ use crate::kernels::plan::{Decoded, MatmulCall, MatmulPlan};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::select::selector::MatmulTable;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::{MatmulBatching, MatmulTuneKey};
+use crate::kernels::tune::key::MatmulTuneKey;
 use crate::kernels::tune::{ListedFor, Product};
 use crate::kernels::tune::{
     MatmulPackedCandidate, MatmulRoutineCandidate, MatmulRoutineSettings, PackedContraction,
@@ -164,9 +164,8 @@ where
         .admits(Product::of(call_kinds(&call)))
         .map_err(|refusal| format!("{refusal:?}"))?;
     let settings = candidate.strategy();
-    let launched = match (&call.routes, call.destination) {
-        (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
-        (None, Some(destination)) => candidate
+    let launched = match call.destination {
+        Some(destination) => candidate
             .launch_into(
                 &call.client,
                 call.lhs.tensor,
@@ -174,7 +173,7 @@ where
                 PlainTensor::of_handle(destination.clone()),
             )
             .map(|()| destination),
-        (None, None) => candidate.launch(&call.client, call.lhs.tensor, call.rhs.tensor),
+        None => candidate.launch(&call.client, call.lhs.tensor, call.rhs.tensor),
     };
     launched
         .map(|handle| MatmulProduct {
@@ -203,9 +202,8 @@ where
         .admits(Product::of(call_kinds(&call)))
         .map_err(|refusal| format!("{refusal:?}"))?;
     let settings = candidate.settings();
-    let launched = match (&call.routes, call.destination) {
-        (Some(routes), _) => routes.launch(&call.hw, &candidate.routine(), settings),
-        (None, Some(destination)) => candidate
+    let launched = match call.destination {
+        Some(destination) => candidate
             .launch_into(
                 &call.client,
                 call.lhs.tensor,
@@ -213,7 +211,7 @@ where
                 PlainTensor::of_handle(destination.clone()),
             )
             .map(|()| destination),
-        (None, None) => {
+        None => {
             candidate.launch_written_in(&call.client, call.lhs.tensor, call.rhs.tensor, call.out)
         }
     };
@@ -282,26 +280,13 @@ pub(super) fn decoded_floor(
 
 /// What a product costs, for the roofline a round stops at: the contraction's operations and the
 /// bytes of the three operands. A packed input counts its packed bytes, what a kernel streaming it
-/// at its stored width reads, so the floor every candidate is measured against is the same. A stack
-/// read through routes counts the slabs its batches can reach, one a batch at most.
+/// at its stored width reads, so the floor every candidate is measured against is the same.
 fn work(key: &MatmulTuneKey, call: &MatmulCall) -> Work {
     let shape = key.shape();
-    let bytes = |tensor: &StoredTensor| -> usize {
-        tensor
-            .buffers()
-            .iter()
-            .map(|buffer| buffer.size as usize)
-            .sum()
-    };
     let output = shape.m * shape.n * shape.batch * shape.elem.size();
-    let stack = bytes(&call.rhs.tensor);
-    let rhs = match shape.rhs.batching {
-        MatmulBatching::Slabs { slabs } => stack / slabs * shape.batch.min(slabs),
-        MatmulBatching::Shared | MatmulBatching::Batched => stack,
-    };
     Work {
         compute_ops: 2 * shape.m * shape.n * shape.k * shape.batch,
-        bytes: bytes(&call.lhs.tensor) + rhs + output,
+        bytes: call.lhs.tensor.bytes() + call.rhs.tensor.bytes() + output,
     }
 }
 
@@ -316,17 +301,12 @@ pub(super) fn few_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roofl
     }
 }
 
-/// The many-rows table's roofline: both walls, and the key picks. Past the few-rows line the rhs
-/// is reused across the rows, so the arithmetic starts to bind, but not on every key a prompt
-/// makes: a product's flops per byte is roughly its rows, and the device's own balance sits
-/// among them. So the table names the largest matrix instruction the device offers at the
-/// product's element accumulating in `f32`, plain arithmetic where it offers none, and the read
-/// bus, and argues the stop from whichever is higher for the key ([`Ceiling::Either`]).
-pub(super) fn many_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
-    let elem = key.shape().elem;
+/// The ceiling of a product at `elem` whose rows run from few to many: the largest matrix
+/// instruction the device offers at that element accumulating in `f32`, plain arithmetic where it
+/// offers none, and the read bus ([`Ceiling::Either`]).
+pub(crate) fn matmul_ceiling(hw: &Hardware, elem: ElemType) -> Ceiling {
     let accumulate = ElemType::Float(FloatKind::F32);
-    let instruction = call
-        .hw
+    let instruction = hw
         .properties
         .features
         .matmul
@@ -336,25 +316,23 @@ pub(super) fn many_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roof
         .for_triple(elem, elem, accumulate)
         .largest()
         .map(|i| (i.m, i.n, i.k));
-    Roofline {
-        client: call.client.clone(),
-        ceiling: Ceiling::Either {
-            compute: compute_throughput_key(instruction, elem, accumulate),
-            memory: MemoryAccess::Read,
-        },
-        work: work(key, call),
+    Ceiling::Either {
+        compute: compute_throughput_key(instruction, elem, accumulate),
+        memory: MemoryAccess::Read,
     }
 }
 
-/// Declines a routed product, for the candidates that read no routes.
-///
-/// # Errors
-///
-/// Where `call` states a routed product.
-pub(super) fn reads_no_routes(call: &MatmulCall) -> Result<(), String> {
-    match call.routes {
-        Some(_) => Err("reads no routes; the rhs is a stack read through them".to_string()),
-        None => Ok(()),
+/// The many-rows table's roofline: both walls, and the key picks. Past the few-rows line the rhs
+/// is reused across the rows, so the arithmetic starts to bind, but not on every key a prompt
+/// makes: a product's flops per byte is roughly its rows, and the device's own balance sits
+/// among them. So the table names the largest matrix instruction the device offers at the
+/// product's element accumulating in `f32`, plain arithmetic where it offers none, and the read
+/// bus, and argues the stop from whichever is higher for the key ([`Ceiling::Either`]).
+pub(super) fn many_rows_roofline(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
+    Roofline {
+        client: call.client.clone(),
+        ceiling: matmul_ceiling(&call.hw, key.shape().elem),
+        work: work(key, call),
     }
 }
 

@@ -63,6 +63,11 @@ impl StoredTensor {
             .collect()
     }
 
+    /// The bytes of every buffer it binds: what a kernel reading it at its stored width streams.
+    pub fn bytes(&self) -> usize {
+        self.tensors().map(PlainTensor::bytes).sum()
+    }
+
     /// How each of [`buffers`](Self::buffers) lies, in its order: what a binding derived over them
     /// reads of them, so a kept binding is reused only over buffers that lie the same.
     pub fn layouts(&self) -> impl Iterator<Item = Metadata> + '_ {

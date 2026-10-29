@@ -18,6 +18,6 @@ pub use candidate::*;
 pub use checks::*;
 pub use packed_candidate::*;
 pub use product::{FLOAT_SETTING_PACKED_INPUT, PACKED_SETTING_FLOAT_INPUTS};
-pub(crate) use product::{ListedFor, Product};
+pub(crate) use product::{ListedFor, Listing, Product, first_served};
 pub use routine_settings::*;
 pub use tables::*;
