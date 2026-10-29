@@ -4,7 +4,7 @@
 //! [`QUANTIZED_FEW_ROWS`], a **rule** rather than a measurement, for the reason the float bound
 //! is one.
 
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
@@ -37,7 +37,10 @@ pub fn quantized_few_rows(rows: usize) -> bool {
 /// col-requantized serving form) — with block-level scales running the packed
 /// direction and covering whole `u32`s (see
 /// [`Operand::of_scheme`](cubek_std::layout::stored::Operand::of_scheme)), at any block-scale
-/// dtype, and under a per-tensor second level or not.
+/// dtype, and under a per-tensor second level or not. The values must be numbers
+/// ([`QuantMode::Symmetric`]): an index into a table ([`QuantMode::Lookup`]) carries its table
+/// beside it, which no packed input here binds, so its codes would be read as the integers they
+/// are stored as.
 ///
 /// It takes the device because streaming a packed field means *decoding* it,
 /// and whether a decode runs is the device's answer, not the scheme's: asking
@@ -67,7 +70,8 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
             | QuantValue::E4M3
             | QuantValue::E5M2
     );
-    value && scheme_operand(scheme, input).is_some()
+    let numbers = scheme.mode == QuantMode::Symmetric;
+    value && numbers && scheme_operand(scheme, input).is_some()
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.
