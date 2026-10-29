@@ -3,10 +3,12 @@
 
 use super::super::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec};
 use super::*;
+use cubecl::ir::{ElemType, FloatKind};
+use cubek_matmul::kernels::MatmulRoutineProblem;
 use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
 use cubek_matmul::kernels::indexed::stack::SlabAxis;
 use cubek_matmul::kernels::tensor::PACKED_STACK_UNREAD;
-use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use half::f16;
 
 /// Loose enough for an `f16` output.
@@ -257,4 +259,79 @@ fn a_packed_stack_whose_slabs_split_a_scale_block_is_refused() {
     // NVFP4: four 16-value blocks a word of scales, so 4 slabs split a word.
     assert_eq!(along_k(PackedFormat::Nvfp4, 2), None);
     assert_eq!(along_k(PackedFormat::Nvfp4, 4), Some(PACKED_STACK_UNREAD));
+}
+
+/// The chunk rows of a cube staged setting over a packed stack are read from a prepare over every
+/// grouped row, and the launch prepares again on the chunk rows alone: the cube tile it launches
+/// on is the rows the groups were padded to.
+#[test]
+fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padded_to() {
+    let (k, n, sizes) = (128, 96, [100usize, 0, 300, 60]);
+    let rows: usize = sizes.iter().sum();
+    let ends: Vec<u32> = sizes
+        .iter()
+        .scan(0, |end, size| {
+            *end += size;
+            Some(*end as u32)
+        })
+        .collect();
+    let client = client();
+    let hw = Hardware::from_client(&client);
+    let lhs = HalfValues::new(rows * k, 3);
+    let mut checked = 0;
+    for format in [PackedFormat::Q8, PackedFormat::Q4, PackedFormat::Nvfp4] {
+        let stack = PackedSlabs::new(
+            &client,
+            PackedSlabsSpec {
+                format,
+                operand: MatmulOperand::Rhs,
+                slabs: sizes.len(),
+                rows: n,
+                k,
+                seed: 4,
+            },
+        );
+        for settings in MGroupedSettings::cube_staged_packed(&hw) {
+            let tensors = MGroupedMatmulTensors::new(
+                &client,
+                lhs.upload(&client, &[rows, k]),
+                StoredTensor::Packed(stack.matrix()),
+                upload(&client, &[sizes.len()], &ends),
+                SlabAxis::Output,
+            )
+            .expect("a packed stack of whole slabs derives a grouped launch");
+            let Ok(padded) = tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings) else {
+                continue;
+            };
+            let chunk = padded.layout().align();
+            let packing = stack
+                .matrix()
+                .stacked(sizes.len(), SlabAxis::Output.axis())
+                .expect("whole slabs stack")
+                .packing();
+            let problem = MatmulRoutineProblem::packed(
+                chunk,
+                n,
+                k,
+                ElemType::Float(FloatKind::F16),
+                MatmulOperands {
+                    rhs: Some(packing),
+                    ..MatmulOperands::all(None)
+                },
+            );
+            let (blueprint, _) = CubeStagedMatmulRoutine
+                .prepare(&hw, &problem, &settings.routine)
+                .expect("the launch prepared these chunk rows");
+            checked += 1;
+            assert_eq!(
+                blueprint.partitioning.rows() as usize,
+                chunk,
+                "{format:?} {settings}"
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "no cube staged setting prepared on this device"
+    );
 }
