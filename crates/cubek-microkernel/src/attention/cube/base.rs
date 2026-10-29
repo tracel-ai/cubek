@@ -5,14 +5,15 @@ use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
     AttentionWorkItem, G, Q, S,
 };
+use crate::matmul::cube::{CubeStagedAsyncCopyRefusal, CubeStagedDelivery};
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Axis, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StageRing;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StagedOperand};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
 /// head with its plane microkernel. Where its planes read a stage, the cube stages the keys and
@@ -34,6 +35,10 @@ pub struct CubeAttentionMicrokernel {
     /// The settings' ring as this device holds its stages of keys and values
     /// ([`StageRing::resolve`]).
     pub ring: StageRing,
+    /// Who moves its stages of keys and values: the settings' delivery where the device and the
+    /// ring take it and its planes read a stage, the cube's units otherwise. The lines' widths
+    /// have the last word ([`delivery`](AttentionMicrokernel::delivery)).
+    pub delivery: CubeStagedDelivery,
     /// Units of each plane, the device's plane width: what a merged row's work is shared among
     /// where planes split the same rows' keys.
     pub units: usize,
@@ -117,6 +122,35 @@ impl CubeAttentionMicrokernel {
         self.plane.stage_storage(self.settings.layout, stage)
     }
 
+    /// The settings' delivery as `hw` moves its stages over `ring`: the copy engine where it was
+    /// asked for, the device has one and the ring takes the lines straight into shared memory,
+    /// and its planes read a stage; the cube's units otherwise. A stage of attention is never a
+    /// descriptor's: its operands bind no tensor map.
+    fn resolve_delivery(&self, hw: &Hardware, ring: &StageRing) -> CubeStagedDelivery {
+        let staged = self.plane.reads() == CubePlaneReads::Stage;
+        match self.settings.delivery {
+            CubeStagedDelivery::AsyncCopy
+                if staged && CubeStagedAsyncCopyRefusal::new(hw, ring).is_none() =>
+            {
+                CubeStagedDelivery::AsyncCopy
+            }
+            CubeStagedDelivery::AsyncCopy | CubeStagedDelivery::Copy | CubeStagedDelivery::Tma => {
+                CubeStagedDelivery::Copy
+            }
+        }
+    }
+
+    /// The storage its query, staged once over `stage`, is held in: as the settings lay out the
+    /// stages of keys and values, blocked as its planes read it.
+    pub fn query_storage(&self, stage: &Space) -> StageStorage {
+        self.plane.query_storage(self.settings.layout, stage)
+    }
+
+    /// The query as it stages it once for its walk: its heads' rows over the whole head dim.
+    pub fn staged_query(&self, item: &AttentionWorkItem) -> StagedOperand {
+        item.staged_query(self.heads, self.seq_q())
+    }
+
     /// Bytes of shared memory one cube holds alone on `hw`, its stages held as `storage`: what it
     /// walks with ([`walk_shared_memory`](Self::walk_shared_memory)), and where its planes that
     /// split the same rows' keys meet.
@@ -138,20 +172,35 @@ impl CubeAttentionMicrokernel {
         item: &AttentionWorkItem,
         storage: &StageStorage,
     ) -> usize {
+        self.walk_then_shared_memory(hw, item, storage, 0)
+    }
+
+    /// Bytes of shared memory one cube holds on `hw` to walk, as
+    /// [`walk_shared_memory`](Self::walk_shared_memory), and then `after` bytes it declares once
+    /// the walk has freed its stages, which take their bytes: where the cube walks its run once.
+    /// A cube that walks a box at a time, in a loop, frees nothing what follows could take.
+    pub fn walk_then_shared_memory(
+        &self,
+        hw: &Hardware,
+        item: &AttentionWorkItem,
+        storage: &StageStorage,
+        after: usize,
+    ) -> usize {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
-        let staged = match self.plane.reads() {
+        let (query, ring) = match self.plane.reads() {
             CubePlaneReads::Stage => {
-                let query = self.heads * self.seq_q() * item.head_dim * item.elements.query.size();
+                let query = self.staged_query(item);
+                let query = query.bytes(hw, &self.query_storage(&query.space));
                 let stage: usize = item
                     .stage(self.seq_kv(), self.key_order())
                     .iter()
                     .map(|operand| operand.bytes(hw, storage))
                     .sum();
-                query + self.ring.bytes(stage)
+                (query, self.ring.bytes(stage))
             }
-            CubePlaneReads::Global => 0,
+            CubePlaneReads::Global => (0, 0),
         };
-        planes + staged
+        planes + query + ring.max(after)
     }
 
     /// What one cube reads of each operand: its box of the query and every key and value of its
@@ -229,6 +278,7 @@ impl Microkernel for CubeAttentionMicrokernel {
                     settings: cube,
                     heads,
                     ring: cube.ring,
+                    delivery: CubeStagedDelivery::Copy,
                     units: hw.plane_dim().ok()? as usize,
                     page_steps: None,
                 }
@@ -240,7 +290,12 @@ impl Microkernel for CubeAttentionMicrokernel {
                         .stage(requested.seq_kv(), requested.key_order()),
                     requested.layout().planes() * requested.units,
                 );
-                Some(Self { ring, ..requested })
+                let delivery = requested.resolve_delivery(hw, &ring);
+                Some(Self {
+                    ring,
+                    delivery,
+                    ..requested
+                })
             })
     }
 
@@ -278,5 +333,23 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         self.plane.served(item)
+    }
+
+    /// Its resolved delivery, the copy engine's only where the keys' and the values' lines at
+    /// `widths` are 4, 8 or 16 bytes, the only copies it makes.
+    fn delivery(&self, widths: &AttentionOperands<usize>, item: &AttentionWorkItem) -> Delivery {
+        let served = self.served(item).elements;
+        let copied = [AttentionOperand::Key, AttentionOperand::Value]
+            .into_iter()
+            .all(|operand| {
+                let bytes = widths.get(operand) * served.get(operand).size();
+                matches!(bytes, 4 | 8 | 16)
+            });
+        match self.delivery {
+            CubeStagedDelivery::AsyncCopy if copied => CubeStagedDelivery::AsyncCopy.bound(),
+            CubeStagedDelivery::AsyncCopy | CubeStagedDelivery::Copy | CubeStagedDelivery::Tma => {
+                CubeStagedDelivery::Copy.bound()
+            }
+        }
     }
 }

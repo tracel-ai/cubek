@@ -1,6 +1,6 @@
-//! The logsumexp every tile routine of cubek-attention writes beside its output on request, against
-//! the host's: what the backward pass reads its probabilities back from. Then a backward pass run on
-//! a forward's own output and logsumexp.
+//! The output every tile routine of cubek-attention writes, and the logsumexp it writes beside it on
+//! request, against the host's: the logsumexp is what the backward pass reads its probabilities
+//! back from. Then a backward pass run on a forward's own output and logsumexp.
 
 use super::reference::{Case, Reference};
 use cubecl::client::Client;
@@ -35,6 +35,18 @@ const PROMPT: Case = Case {
         queries: QueryPlacement::Last,
     },
     hidden: None,
+};
+
+/// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
+/// a key head, and queries and keys no box of either divides.
+const PROMPT_WIDE: Case = Case {
+    heads: 8,
+    kv_heads: 2,
+    seq_q: 70,
+    seq_kv: 300,
+    head_dim: 128,
+    val_dim: 128,
+    ..PROMPT
 };
 
 /// A single position of the same heads, which the forward walks the group of as its queries.
@@ -121,9 +133,9 @@ fn forward_tensors(client: &Client, case: Case, reference: &Reference) -> Attent
     }
 }
 
-/// `routine` at `settings` on `case`, its logsumexp against the host's; a routine this device
-/// declines is skipped, and says so.
-fn check_logsumexp<R: AttentionRoutine<M, SM>, M: AttentionMicrokernel, SM>(
+/// `routine` at `settings` on `case`, its output and its logsumexp against the host's; a routine
+/// this device declines is skipped, and says so.
+fn check_forward<R: AttentionRoutine<M, SM>, M: AttentionMicrokernel, SM>(
     name: &str,
     routine: R,
     settings: Option<R::Settings>,
@@ -140,7 +152,20 @@ fn check_logsumexp<R: AttentionRoutine<M, SM>, M: AttentionMicrokernel, SM>(
         return;
     };
     match routine.launch_on(&hw, tensors, &settings) {
-        Ok(_) => {
+        Ok(out) => {
+            // The output comes back `[b, q, h, dv]`, the host's `[b, h, q, dv]`.
+            let actual = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+            for (at, &want) in reference.out.iter().enumerate() {
+                let c = at % case.val_dim;
+                let i = at / case.val_dim % case.seq_q;
+                let h = at / (case.val_dim * case.seq_q) % case.heads;
+                let b = at / (case.val_dim * case.seq_q * case.heads);
+                let got = actual.get_f32(&[b, i, h, c]) as f64;
+                assert!(
+                    (got - want).abs() <= 5e-3 * (1. + want.abs()),
+                    "{name} {settings}: out[{b}, {h}, {i}, {c}] = {got}, expected {want}"
+                );
+            }
             let actual = HostData::from_tensor_handle(&client, logsumexp, HostDataType::F32);
             for (at, &want) in reference.logsumexp.iter().enumerate() {
                 let got = actual.data.get_f32(at) as f64;
@@ -157,53 +182,85 @@ fn check_logsumexp<R: AttentionRoutine<M, SM>, M: AttentionMicrokernel, SM>(
 
 #[test]
 fn the_unit_routine_writes_the_logsumexp() {
-    check_logsumexp("unit", UnitAttentionRoutine, None, PROMPT);
-    check_logsumexp("unit", UnitAttentionRoutine, None, DECODE);
+    check_forward("unit", UnitAttentionRoutine, None, PROMPT);
+    check_forward("unit", UnitAttentionRoutine, None, DECODE);
 }
 
 #[test]
 fn the_plane_routine_writes_the_logsumexp() {
-    check_logsumexp("plane", PlaneFragmentAttentionRoutine, None, PROMPT);
+    check_forward("plane", PlaneFragmentAttentionRoutine, None, PROMPT);
 }
 
 /// Planes that split the same rows' keys merge their state before they write it.
 #[test]
 fn the_cube_staged_routine_writes_the_logsumexp() {
     let fragments = CubeStagedAttentionRoutine;
-    check_logsumexp("cube-fragment", fragments, None, PROMPT);
+    check_forward("cube-fragment", fragments, None, PROMPT);
     let hw = Hardware::from_client(&cubecl::test_device().client());
     let split = fragments
         .settings(&hw)
         .into_iter()
         .find(|settings| settings.microkernel.planes_along_keys.get() > 1);
     if let Some(split) = split {
-        check_logsumexp("cube-fragment split keys", fragments, Some(split), PROMPT);
+        check_forward("cube-fragment split keys", fragments, Some(split), PROMPT);
     }
 }
 
 /// The lead's planes split one head's keys and merge their rows from slots.
+/// Every setting the cube staged routine lists, the copy engine's among them, at a model's head
+/// dim: the query's and the stages' layouts, the rings and the run of score fragments the value
+/// reads are each a different kernel.
+#[test]
+fn every_cube_staged_setting_matches_the_host_at_a_head_dim_of_128() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    for settings in CubeStagedAttentionRoutine.settings(&hw) {
+        check_forward(
+            "cube-fragment",
+            CubeStagedAttentionRoutine,
+            Some(settings),
+            PROMPT_WIDE,
+        );
+    }
+}
+
+/// Every setting the hypercube of plane fragments lists at a model's head dim, each box's keys cut
+/// across its cubes: the stages each cube hands on to the partial it leaves are each a different
+/// kernel.
+#[test]
+fn every_hypercube_fragment_setting_matches_the_host_at_a_head_dim_of_128() {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    for settings in HypercubeSecondLaunchFragmentAttentionRoutine.settings(&hw) {
+        check_forward(
+            "hypercube-second-launch-fragment",
+            HypercubeSecondLaunchFragmentAttentionRoutine,
+            Some(settings),
+            PROMPT_WIDE,
+        );
+    }
+}
+
 #[test]
 fn the_cube_shuffle_routine_writes_the_logsumexp() {
-    check_logsumexp("cube-shuffle", CubeShuffleAttentionRoutine, None, PROMPT);
-    check_logsumexp("cube-shuffle", CubeShuffleAttentionRoutine, None, DECODE);
+    check_forward("cube-shuffle", CubeShuffleAttentionRoutine, None, PROMPT);
+    check_forward("cube-shuffle", CubeShuffleAttentionRoutine, None, DECODE);
 }
 
 /// Cubes split a box's keys and a merge writes the rows.
 #[test]
 fn the_hypercube_routines_write_the_logsumexp() {
-    check_logsumexp(
+    check_forward(
         "hypercube-second-launch-shuffle",
         HypercubeSecondLaunchShuffleAttentionRoutine::new(),
         None,
         DECODE,
     );
-    check_logsumexp(
+    check_forward(
         "hypercube-second-launch-fragment",
         HypercubeSecondLaunchFragmentAttentionRoutine,
         None,
         PROMPT,
     );
-    check_logsumexp(
+    check_forward(
         "hypercube-last-arrival-shuffle",
         HypercubeLastArrivalShuffleAttentionRoutine::new(),
         None,
@@ -220,11 +277,11 @@ fn every_prompt_routine_hides_what_a_mask_and_a_first_placed_diagonal_hide() {
         PROMPT_MASKED,
         PROMPT_MASKED_PLACED_FIRST,
     ] {
-        check_logsumexp("unit", UnitAttentionRoutine, None, case);
-        check_logsumexp("plane", PlaneFragmentAttentionRoutine, None, case);
-        check_logsumexp("cube-fragment", CubeStagedAttentionRoutine, None, case);
-        check_logsumexp("cube-shuffle", CubeShuffleAttentionRoutine, None, case);
-        check_logsumexp(
+        check_forward("unit", UnitAttentionRoutine, None, case);
+        check_forward("plane", PlaneFragmentAttentionRoutine, None, case);
+        check_forward("cube-fragment", CubeStagedAttentionRoutine, None, case);
+        check_forward("cube-shuffle", CubeShuffleAttentionRoutine, None, case);
+        check_forward(
             "hypercube-second-launch-fragment",
             HypercubeSecondLaunchFragmentAttentionRoutine,
             None,
@@ -237,20 +294,20 @@ fn every_prompt_routine_hides_what_a_mask_and_a_first_placed_diagonal_hide() {
 /// its own cells.
 #[test]
 fn every_decode_routine_hides_what_a_mask_hides() {
-    check_logsumexp("unit", UnitAttentionRoutine, None, DECODE_MASKED);
-    check_logsumexp(
+    check_forward("unit", UnitAttentionRoutine, None, DECODE_MASKED);
+    check_forward(
         "cube-shuffle",
         CubeShuffleAttentionRoutine,
         None,
         DECODE_MASKED,
     );
-    check_logsumexp(
+    check_forward(
         "hypercube-second-launch-shuffle",
         HypercubeSecondLaunchShuffleAttentionRoutine::new(),
         None,
         DECODE_MASKED,
     );
-    check_logsumexp(
+    check_forward(
         "hypercube-last-arrival-shuffle",
         HypercubeLastArrivalShuffleAttentionRoutine::new(),
         None,

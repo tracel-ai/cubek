@@ -1,10 +1,12 @@
 use crate::attention::cube::{CubeAttentionMicrokernel, CubePlaneReads};
 use crate::attention::hypercube::HypercubeAttentionMicrokernelSettings;
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, G, Q};
+use crate::attention::{
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q,
+};
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
@@ -95,15 +97,17 @@ impl Microkernel for HypercubeAttentionMicrokernel {
 
 impl HypercubeAttentionMicrokernel {
     /// Bytes of shared memory one cube holds on `hw`, its stages held as `storage`: what its cube
-    /// walks with, and what its planes leave their slots through.
+    /// walks with, then what its planes leave their slots through, in the bytes the walk's stages
+    /// free. Each cube walks its run once.
     pub fn shared_memory(
         &self,
         hw: &Hardware,
         item: &AttentionWorkItem,
         storage: &StageStorage,
     ) -> usize {
-        self.cube.walk_shared_memory(hw, item, storage)
-            + self.cube.plane.partial_bytes(item, self.cube.layout())
+        let partial = self.cube.plane.partial_bytes(item, self.cube.layout());
+        self.cube
+            .walk_then_shared_memory(hw, item, storage, partial)
     }
 
     /// What a merge is compiled for, over `item`'s value dim and the `cubes_along_keys` sharing a
@@ -153,5 +157,10 @@ impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     /// Its cube's.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         self.cube.served(item)
+    }
+
+    /// Its cube's.
+    fn delivery(&self, widths: &AttentionOperands<usize>, item: &AttentionWorkItem) -> Delivery {
+        self.cube.delivery(widths, item)
     }
 }

@@ -64,6 +64,8 @@ pub struct Reference {
     /// its output.
     pub inputs: [TensorHandle; 3],
     pub out_gradient: TensorHandle,
+    /// The forward's output, `[b, h, q, dv]`.
+    pub out: Vec<f64>,
     /// `[b, h, q]`.
     pub logsumexp: Vec<f64>,
     /// `[b, h, q, d]`.
@@ -176,7 +178,7 @@ impl Reference {
                 .custom(values.iter().map(|&x| x as f32).collect())
                 .generate_without_host_data()
         };
-        let out = device(vec![batch, heads, seq_q, val_dim], &out, element);
+        let out_on_device = device(vec![batch, heads, seq_q, val_dim], &out, element);
         let lse = device(
             vec![batch, heads, seq_q],
             &logsumexp,
@@ -188,7 +190,7 @@ impl Reference {
             plain(&query),
             plain(&key),
             plain(&value),
-            plain(&out),
+            plain(&out_on_device),
             plain(&out_gradient),
             plain(&lse),
             scale as f32,
@@ -199,6 +201,7 @@ impl Reference {
             tensors,
             inputs: [query, key, value],
             out_gradient,
+            out,
             logsumexp,
             query_gradient,
             key_gradient,
