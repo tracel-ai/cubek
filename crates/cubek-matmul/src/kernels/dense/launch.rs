@@ -1,17 +1,21 @@
+use crate::kernels::MatmulBinding;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::{
-    MatmulBinding, MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem,
-    MatmulTensors,
-};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunch, Unbound};
-use cubecl::tile::{Geometry, TileArgLaunch};
+use cubecl::tile::launch::Refusal;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_std::Hardware;
+
+use crate::kernels::{
+    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
+};
+use cubecl::tile::{
+    Geometry, TileArgLaunch,
+    kind::Write,
+    launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
+};
 use cubek_std::routine::{Grid, Routine};
 
 /// What a routine declines before preparing anything: a sink, for a routine whose cubes reach the
@@ -134,8 +138,8 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     /// # Errors
     ///
     /// As [`MatmulTensors::indexed`], and why `hw` cannot run the product at these settings,
-    /// [`MATMUL_INDEX_UNREAD`](crate::kernels::MATMUL_INDEX_UNREAD) for a routine whose kernel
-    /// walks no indexed input among them.
+    /// [`MATMUL_INDEX_UNREAD`](crate::kernels::MATMUL_INDEX_UNREAD) for a routine whose kernel walks
+    /// no indexed input among them.
     // The indexed operands are the dense ones beside the table and the output the caller laid out,
     // each named where the caller hands it.
     #[allow(clippy::too_many_arguments)]

@@ -169,13 +169,11 @@ impl KWalk {
                     KWalk::wide_step(&step, sum, a, b, instruction, reads);
                 }
             }
-
             KWalk::Rolled => {
                 for step in KWalk::held_steps(plane, held) {
                     KWalk::wide_step(&step, sum, a, b, instruction, reads);
                 }
             }
-
             KWalk::Routed(k) => {
                 let depth = KWalk::held_steps(plane, held).total()
                     / KWalk::held_steps(plane, held).routed(k, 0usize).total();
@@ -214,7 +212,6 @@ impl KWalk {
                     KWalk::narrow_step(&step, sum, partial, a, b, reads);
                 }
             }
-
             KWalk::Unrolled | KWalk::Routed(_) => {
                 for step in plane.walk().unrolled() {
                     KWalk::narrow_step(&step, sum, partial, a, b, reads);

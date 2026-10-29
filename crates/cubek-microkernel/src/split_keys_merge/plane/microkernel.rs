@@ -53,7 +53,6 @@ pub fn plane_split_keys_merge_microkernel<EA: Float, E: Float, N: Size>(
                         logsumexp[at] = row.logsumexp();
                     }
                 }
-
                 ComptimeOption::None => {}
             }
 
@@ -131,7 +130,6 @@ pub(crate) fn plane_merge_rows_microkernel<EA: Float, E: Float, N: Size>(
                             .write(r, Vector::cast_from(row.logsumexp()));
                     }
                 }
-
                 ComptimeOption::None => {}
             }
 
@@ -196,7 +194,6 @@ pub(crate) fn plane_merge_slot_rows_microkernel<EA: Float, E: Float, N: Size>(
                             .write(r, Vector::cast_from(row.logsumexp()));
                     }
                 }
-
                 ComptimeOption::None => {}
             }
 

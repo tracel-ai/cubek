@@ -1,6 +1,6 @@
-//! Matmul kernels built on the microkernels in [`microkernel`](cubek_microkernel::matmul): the
-//! dense product's routines ([`MatmulRoutine`]), which kernel runs a product ([`select`]) and how
-//! autotune measures them ([`tune`]). A routine reads each operand as it is stored ([`tensor`]).
+//! Matmul kernels built on the microkernels in [`microkernel`](cubek_microkernel::matmul): the dense
+//! product's routines ([`MatmulRoutine`]), which kernel runs a product ([`select`]) and how autotune
+//! measures them ([`tune`]). A routine reads each operand as it is stored ([`tensor`]).
 //!
 //! There is one product. The routed, M-grouped and K-grouped products ([`indexed`]) are the dense
 //! product over batches whose inputs read a table, one entry a batch ([`MatmulIndex`]).

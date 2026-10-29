@@ -57,8 +57,7 @@ use serde::{Deserialize, Serialize};
 ///   whatever the cache holds or the step attends. The attended count is a device tensor, so that
 ///   the launch is identical across steps, the graph-capture precondition.
 ///
-/// [`AttentionTuneInputs::attending_every_position`]:
-/// crate::kernels::tune::AttentionTuneInputs::attending_every_position
+/// [`AttentionTuneInputs::attending_every_position`]: crate::kernels::tune::AttentionTuneInputs::attending_every_position
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionKey {
     /// Query/key/value dtype.

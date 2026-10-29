@@ -22,8 +22,7 @@ impl MatmulInputs {
     ];
 
     /// The elements the routines are verified at, inputs and output alike: the floats, and `i32`,
-    /// which sums in itself
-    /// ([`MatmulRoutineProblem::sum`](crate::kernels::MatmulRoutineProblem::sum)).
+    /// which sums in itself ([`MatmulRoutineProblem::sum`](crate::kernels::MatmulRoutineProblem::sum)).
     pub const VERIFIED: [ElemType; 4] = [
         ElemType::Float(FloatKind::F32),
         ElemType::Float(FloatKind::F16),

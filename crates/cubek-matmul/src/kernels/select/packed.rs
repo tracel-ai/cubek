@@ -19,14 +19,13 @@ fn scheme_operand(scheme: &QuantScheme, input: MatmulOperand) -> Option<Operand>
     Operand::of_scheme(scheme, Operand::axis_of(scheme, axes)?, axes)
 }
 
-/// The most rows a packed product goes to the few-rows table with. Past it the staged routines win
-/// on arithmetic, and measuring a routine that does not stage at prefill widths would cost minutes
-/// of first-touch tuning for a candidate that cannot win there.
+/// The most rows a packed product goes to the few-rows table with. Past it the staged routines win on
+/// arithmetic, and measuring a routine that does not stage at prefill widths would cost minutes of first-touch tuning for
+/// a candidate that cannot win there.
 pub const QUANTIZED_FEW_ROWS: usize = 32;
 
-/// Whether a packed product of `rows` rows goes to the few-rows table: up to
-/// [`QUANTIZED_FEW_ROWS`], no rows included, the packed candidates' own admission answering every
-/// width below the bound.
+/// Whether a packed product of `rows` rows goes to the few-rows table: up to [`QUANTIZED_FEW_ROWS`],
+/// no rows included, the packed candidates' own admission answering every width below the bound.
 pub fn quantized_few_rows(rows: usize) -> bool {
     rows <= QUANTIZED_FEW_ROWS
 }

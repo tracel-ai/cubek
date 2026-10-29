@@ -51,7 +51,6 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
 
             c.copy_from(&accumulator.source);
         }
-
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
             let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);

@@ -148,7 +148,6 @@ impl CubeStagedWalk {
                     }
                 }
             }
-
             Role::Compute => {
                 let sum = Self::open_sum::<EA>(&c, &a, &b, walk);
                 let partial =
@@ -237,13 +236,11 @@ pub fn cube_staged_microkernel<EA: Numeric, EL: Numeric>(
         (CubeStagedDrain::EachPlane, CubeStagedStore::Fragments) => {
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &c, walk, storage);
         }
-
         (CubeStagedDrain::EachPlane, CubeStagedStore::Tma) => {
             let staged = c.smem_box();
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &staged, walk, storage);
             c.copy_from(&staged);
         }
-
         (CubeStagedDrain::Merged, _) => {
             let accumulator = c.smem_accumulation::<EA>();
             CubeStagedWalk::drain_planes::<EA, EL>(run, a, b, &accumulator.sink, walk, storage);

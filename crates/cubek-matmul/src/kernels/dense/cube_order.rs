@@ -3,9 +3,9 @@ use cubecl::tile::space::CubeOrder;
 /// The orders a routine's settings list besides the grid's own: strips four boxes wide, along
 /// either axis.
 ///
-/// The grid starts its cubes along `m` first, so a wave of them covers a band of the output as long
-/// as `m` has boxes and a few boxes wide along `n`: every cube of the wave reads its own rows of
-/// the lhs, and the next wave reads them all again. Strips gather a wave into a patch a few boxes
+/// The grid starts its cubes along `m` first, so a wave of them covers a band of the output as
+/// long as `m` has boxes and a few boxes wide along `n`: every cube of the wave reads its own rows
+/// of the lhs, and the next wave reads them all again. Strips gather a wave into a patch a few boxes
 /// wide, so the cubes running together share rows and columns in the last level cache.
 ///
 /// The width is the one a kernel compiles whatever the problem: the tile DSL distributes a last

@@ -537,7 +537,6 @@ impl CubeAttentionMicrokernel {
             CubeAttentionPlane::Shuffle(plane) => {
                 PlaneShuffleAttention::<EA, N>::open::<E>(walk, query, value_dim, plane)
             }
-
             CubeAttentionPlane::Fragment(_) => {
                 unreachable!("a cube whose planes read its stage walks it staged")
             }

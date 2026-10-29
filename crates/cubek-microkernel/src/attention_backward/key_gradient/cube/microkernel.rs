@@ -85,7 +85,6 @@ pub fn cube_staged_key_gradient_microkernel<EA: Float, ES: Float>(
                         ComptimeOption::Some(share) => {
                             ComptimeOption::new_Some(share.open::<EA>(stage))
                         }
-
                         ComptimeOption::None => {
                             ComptimeOption::<StageQueryGradientShare<EA>>::new_None()
                         }

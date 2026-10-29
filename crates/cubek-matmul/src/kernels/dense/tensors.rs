@@ -10,22 +10,26 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{
-    Arg, Bound, Labelled, Refusal, TmaBox, TmaCoordinates, TmaOperand, TmaTerm, Unbound,
+use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
+use cubecl::tile::{
+    Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec, launch::Bound,
+    launch::TmaBox, launch::TmaOperand, launch::Unbound,
 };
-use cubecl::tile::{Axis, Geometry, Launcher, Space, StageStorage, TileArgLaunch, TileSpec};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 use cubecl_environment::sync::{Arc, SyncOnceCell};
+use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulRowsKind,
-    MatmulStage, MatmulWorkItem,
+    MatmulWorkItem,
 };
 use cubek_std::MatrixLayout;
 use cubek_std::launch::tma::{tma_meta_tiled, tma_operand, tma_store_operand};
-use cubek_std::layout::{BindingOrder, contiguous, tile_order};
+use cubek_std::layout::BindingOrder;
+use cubek_std::layout::{contiguous, tile_order};
 use cubek_std::matmul_axes::{K, KB, KI, M, N};
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
+use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::Grid;
 
 /// What a launch writing into its caller's output declines: an output of another shape than the
 /// product's, of an element the routines do not write, stored in tiles, or, beside a packed input,
@@ -74,8 +78,7 @@ pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
 };
 
 /// What a launch holding every row whole declines before preparing anything: an rhs contiguous
-/// along neither of its axes, or one stored in tiles, which no routine holding every row whole
-/// reads in vectors.
+/// along neither of its axes, or one stored in tiles, which no routine holding every row whole reads in vectors.
 pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
     why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
@@ -1249,8 +1252,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let partitioning = blueprint.partitioning.as_tile();
         // The output's axes in its order: the batches the cube level hands out, then its rows and
         // columns, against packed inputs as the block-split space restates them
-        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long
-        // stays a dim of the slots.
+        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long stays
+        // a dim of the slots.
         let output: Vec<Axis> = match self.read(|view| view.blocks()) {
             None => {
                 self.assert_tiled();

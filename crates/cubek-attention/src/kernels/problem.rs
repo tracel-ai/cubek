@@ -73,11 +73,10 @@ impl AttentionRoutineProblem {
     /// power of two from 2 to [`WIDEST_CAPACITY_CLASS`](Self::WIDEST_CAPACITY_CLASS), the last
     /// one inside `limit` standing for it.
     ///
-    /// A routine's launch compiles apart where the capacity is not a multiple of its step of keys,
-    /// the walk's last step then bounded. Two is a multiple of no step wider than it, and the
-    /// widest class of every step, so a walk over the classes compiles both launches of every
-    /// setting; the powers between land the tuning key's buckets
-    /// ([`AttentionKey`](crate::kernels::tune::key::AttentionKey)).
+    /// A routine's launch compiles apart where the capacity is not a multiple of its step of
+    /// keys, the walk's last step then bounded. Two is a multiple of no step wider than it, and
+    /// the widest class of every step, so a walk over the classes compiles both launches of every
+    /// setting; the powers between land the tuning key's buckets ([`AttentionKey`](crate::kernels::tune::key::AttentionKey)).
     pub fn capacity_classes(limit: usize) -> Vec<usize> {
         let mut classes = Vec::new();
         for class in std::iter::successors(Some(2usize), |class| Some(class * 2)) {

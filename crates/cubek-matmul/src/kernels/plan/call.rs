@@ -104,9 +104,9 @@ impl MatmulCallInput {
     }
 }
 
-/// A zero copy of the dense float `lhs` with `rows` along its rows axis, laid out as `lhs` is: what
-/// a round of a bucket of row counts measures. `None` where `lhs` already has as many rows, or is
-/// not a dense buffer whose layout a grown one can repeat.
+/// A zero copy of the dense float `lhs` with `rows` along its rows axis, laid out as `lhs` is: what a
+/// round of a bucket of row counts measures. `None` where `lhs` already has as many rows, or is not
+/// a dense buffer whose layout a grown one can repeat.
 fn zeros_grown(client: &Client, lhs: &PlainTensor, rows: usize) -> Option<TensorHandle> {
     let meta = lhs.meta();
     let (shape, strides) = (meta.shape().as_slice(), &meta.strides()[..]);

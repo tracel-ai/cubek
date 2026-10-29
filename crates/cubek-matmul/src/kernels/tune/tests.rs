@@ -150,9 +150,9 @@ mod candidate {
     }
 
     /// On devices a dev machine cannot show: the unit routine, this kind's floor, prepares
-    /// everywhere; a routine that declines a device is tried last and claims no launch, and one
-    /// that prepares is placed by its block. A CPU holds fewer units a cube than one cube routine's
-    /// cube of planes, so there the cube routine declines.
+    /// everywhere; a routine that declines a device is tried last and claims no launch, and one that
+    /// prepares is placed by its block. A CPU holds fewer units a cube than one cube routine's cube
+    /// of planes, so there the cube routine declines.
     #[test]
     fn every_device_keeps_the_floor_and_a_decline_claims_nothing() {
         let key = key(1, 2048, 2048, 2048);
@@ -259,9 +259,9 @@ mod candidate {
             assert_eq!(blueprint.microkernel.rows, 8);
         }
 
-        /// Where no shuffle routine serves such a product, or the device runs none of it, a
-        /// candidate is tried last and claims no launch: a quantized rhs, an rhs lined along
-        /// neither axis, more rows than a work item holds, a device that commits to no plane width.
+        /// Where no shuffle routine serves such a product, or the device runs none of it, a candidate
+        /// is tried last and claims no launch: a quantized rhs, an rhs lined along neither axis,
+        /// more rows than a work item holds, a device that commits to no plane width.
         #[test]
         fn a_candidate_serving_nothing_is_tried_last_and_claims_no_launch() {
             let cases = [
@@ -284,8 +284,8 @@ mod candidate {
             }
         }
 
-        /// A candidate is placed by the one rule: a cube's run of columns tiles a decode
-        /// projection, so both routines are tried first.
+        /// A candidate is placed by the one rule: a cube's run of columns tiles a decode projection,
+        /// so both routines are tried first.
         #[test]
         fn the_priority_reads_the_block_one_cube_covers() {
             let hw = devices::strix_halo();
@@ -313,8 +313,7 @@ mod candidate {
         const F16: ElemType = ElemType::Float(FloatKind::F16);
         const F32: ElemType = ElemType::Float(FloatKind::F32);
 
-        /// The dev machine's Radeon 8060S offering the `16×16×16` `f16` instruction summed in
-        /// `f32`.
+        /// The dev machine's Radeon 8060S offering the `16×16×16` `f16` instruction summed in `f32`.
         fn strix_halo() -> Hardware {
             devices::offering_cmma(
                 devices::strix_halo(),

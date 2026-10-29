@@ -11,9 +11,9 @@ use cubek_std::Hardware;
 
 /// The many-rows table's candidates on `hw`: the cube staged routine, the last-arrival hypercube
 /// routine and the unit routine, in that order; against a packed input the staged routine reading
-/// it as stored, in rows or in tiles, decoding it into its stages, the same with a packed
-/// activation decoded first ([`activation_decoded_candidate`]), and the last-arrival routine
-/// reading it as stored, several cubes sharing each box along `K`.
+/// it as stored, in rows or in tiles, decoding it into its stages, the same with a packed activation
+/// decoded first ([`activation_decoded_candidate`]), and the last-arrival routine reading it as
+/// stored, several cubes sharing each box along `K`.
 ///
 /// The unit routine prepares everywhere, though a round orders the candidates by priority and its
 /// small block often tiles a key the others mask. The last-arrival routine sizes its grid by the

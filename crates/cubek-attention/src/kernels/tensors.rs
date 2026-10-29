@@ -430,8 +430,8 @@ impl AttentionTensors {
     }
 
     /// The same attention, writing beside its output each query's logsumexp of its scaled scores,
-    /// `[b, h, q]` in the sum's element ([`logsumexp`](Self::logsumexp)): what a backward pass
-    /// reads its probabilities back from. A query that sees no key holds the minimum value.
+    /// `[b, h, q]` in the sum's element ([`logsumexp`](Self::logsumexp)): what a backward pass reads
+    /// its probabilities back from. A query that sees no key holds the minimum value.
     ///
     /// # Panics
     ///

@@ -227,7 +227,6 @@ impl StageScore {
             StageScore::Window(scores, probabilities) => {
                 StageScore::new_Window(scores.at(plane), probabilities.at(plane))
             }
-
             StageScore::Fragments(logits) => StageScore::new_Fragments(logits.at(plane)),
         }
     }
@@ -493,7 +492,6 @@ pub fn plane_fragment_attention_microkernel<EA: Float, ES: Float>(
         ComptimeOption::Some(logsumexp) => {
             softmax.store_logsumexp(&score.scores(), &mut logsumexp.clone())
         }
-
         ComptimeOption::None => {}
     }
 }
