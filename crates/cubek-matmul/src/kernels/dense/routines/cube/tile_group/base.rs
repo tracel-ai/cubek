@@ -10,7 +10,7 @@ use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeTileGroupMicrokernel, CubeTileGroupMicrokernelSettings,
 };
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulRead};
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -177,7 +177,7 @@ impl MatmulRoutine<CubeTileGroupMicrokernel> for CubeTileGroupMatmulRoutine {
                 microkernel.meet,
                 microkernel.split(),
                 microkernel.planes_along_k.get(),
-                MatmulOperands::all(MatmulRead::AsBound),
+                MatmulOperands::AS_BOUND,
                 [sum, out],
             );
         }

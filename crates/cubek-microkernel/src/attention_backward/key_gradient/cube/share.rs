@@ -1,7 +1,7 @@
 use crate::attention::DV;
 use crate::attention_backward::scale_rows;
+use crate::matmul::MatmulOperands;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, plane_fragment_microkernel};
-use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::kind::PlanesOutput;
 use cubecl::tile::{Region, Scratch, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -68,7 +68,7 @@ impl<EA: Float> StageQueryGradientShare<EA> {
             key,
             instruction,
             comptime!(Some(DV)),
-            comptime!(MatmulOperands::all(MatmulRead::AsBound)),
+            MatmulOperands::AS_BOUND,
         );
         scale_rows::<EA>(&part, scale, rows);
         self.output.drain(&part, plane);

@@ -29,7 +29,8 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
     let mut c = c.clone();
     let (a, a_factor) = a.factor(c.space(), instruction);
     let (b, b_factor) = b.factor(c.space(), instruction);
-    match comptime!(meet) {
+
+    match meet {
         CubeMeet::Atomic => {
             let mut accumulator = c.smem_accumulation::<EA>();
             let mut sum =
@@ -37,9 +38,11 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
                     .sink
                     .accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
             sum.zero();
+
             for step in cube {
                 plane_shuffle_microkernel(&step, &sum, &a, &b, reads);
             }
+
             accumulator
                 .sink
                 .dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
@@ -50,12 +53,14 @@ pub fn cube_shuffle_microkernel<EA: Numeric>(
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
             let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
             sum.zero();
+
             let steps = cube.walk();
             // A plane's place along the split, which is its slot among the writers.
             let writer = steps.position(split);
             for step in steps {
                 plane_shuffle_microkernel(&step, &sum, &a, &b, reads);
             }
+
             accumulator.drain(&sum.scaled(&a_factor).scaled(&b_factor), writer);
             c.copy_from(&accumulator.source);
         }

@@ -1,8 +1,8 @@
 use cubecl::tile::launch::Destination;
 use cubecl::tile::{Instruction, Partitioning, Semiring, TileArg};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::matmul::MatmulOperands;
 use cubek_microkernel::matmul::plane::plane_shuffle_microkernel;
-use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 
 /// Every plane of the launch, running its run of the output. Each input is read at the element it
 /// is bound at, under the scales it carries, none where it is plain, which ride every read the
@@ -29,13 +29,7 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
         let mut sum = c.accumulator::<EA>(&a, &b, instruction, Semiring::SUM_PROD);
         sum.zero();
         for k_step in plane.walk_within(&b) {
-            plane_shuffle_microkernel(
-                &k_step,
-                &sum,
-                &a,
-                &b,
-                comptime!(MatmulOperands::all(MatmulRead::AsBound)),
-            );
+            plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);
         }
         c.dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
     }

@@ -45,11 +45,12 @@ impl<N: Size> StepReads<N> for PackedStepReads {
         let first_key = step.origin(S);
         let (teams, keys_in_flight) = comptime!((walk.teams, walk.keys_in_flight));
         let units_per_key = comptime!(walk.units_per_key);
-        let per_key = comptime!(lines.div_ceil(units_per_key));
+        let per_key = lines.div_ceil(units_per_key);
         // Where the units' lines tile the row exactly, every line a unit takes lies in it: only
         // the key is tested, once, and a key's lines are read in one block, sharing its row.
-        let whole_rows = comptime!(lines.is_multiple_of(units_per_key));
-        let mut loaded = Array::<Vector<f32, N>>::new(comptime!(keys_in_flight * per_key));
+        let whole_rows = lines.is_multiple_of(units_per_key);
+
+        let mut loaded = Array::<Vector<f32, N>>::new(keys_in_flight * per_key);
         #[unroll]
         for c in 0..keys_in_flight {
             let at = c * teams + walk.team;
@@ -61,7 +62,7 @@ impl<N: Size> StepReads<N> for PackedStepReads {
                 #[unroll]
                 for p in 0..per_key {
                     let line = walk.lane + p * units_per_key;
-                    if comptime!(whole_rows) || line < lines {
+                    if whole_rows || line < lines {
                         let value = if comptime!(qjl) {
                             if line < half {
                                 read.read_unchecked(at, line)
@@ -76,6 +77,7 @@ impl<N: Size> StepReads<N> for PackedStepReads {
                 }
             }
         }
+
         loaded
     }
 

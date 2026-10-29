@@ -26,14 +26,11 @@ pub fn unit_attention_microkernel<EA: Float>(
     scale: EA,
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
-    let mut sum = out.accumulator::<EA>(
-        bias,
-        value,
-        comptime!(microkernel.value.tile_instruction()),
-        Semiring::SUM_PROD,
-    );
+    let value_instruction = microkernel.value.tile_instruction();
+    let mut sum = out.accumulator::<EA>(bias, value, value_instruction, Semiring::SUM_PROD);
     sum.zero();
     let mut softmax = OnlineSoftmax::<EA>::along(bias, S);
+
     for step in rows.walk().range(0, steps) {
         unit_attention_step::<EA>(
             &step,
@@ -47,8 +44,10 @@ pub fn unit_attention_microkernel<EA: Float>(
             microkernel,
         );
     }
+
     sum.along(DV).mul(&softmax.recip_l());
     sum.drained_into(out);
+
     #[comptime]
     match logsumexp {
         ComptimeOption::Some(logsumexp) => softmax.store_logsumexp(bias, &mut logsumexp.clone()),
@@ -76,18 +75,16 @@ pub(crate) fn unit_attention_step<EA: Float>(
     scale: EA,
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
-    let mut score = bias.accumulator::<EA>(
-        query,
-        key,
-        comptime!(microkernel.score.tile_instruction()),
-        Semiring::SUM_PROD,
-    );
+    let score_instruction = microkernel.score.tile_instruction();
+    let mut score = bias.accumulator::<EA>(query, key, score_instruction, Semiring::SUM_PROD);
     score.zero();
     for depth in step.walk() {
         unit_registers_microkernel(&depth, &score, query, key);
     }
+
     let correction = softmax.step(&score, bias, scale);
     sum.along(DV).mul(&correction);
+
     // A tile's clone is a handle to the same cells: the shared microkernel adds into the sum
     // through it.
     for depth in step.walk() {

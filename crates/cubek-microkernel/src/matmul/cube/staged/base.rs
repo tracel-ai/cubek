@@ -305,7 +305,7 @@ impl CubeStagedMicrokernel {
                     Some(_) => plane.reading_a_stage_as_stored(),
                     None => plane,
                 })
-                .map(|plane| staging(plane, MatmulOperands::all(MatmulRead::AsBound))),
+                .map(|plane| staging(plane, MatmulOperands::AS_BOUND)),
         );
         candidates
     }

@@ -370,7 +370,7 @@ impl CubeShufflePlane {
     /// ([`MatmulWorkItem::decoding_reads`]).
     pub fn reads(&self, item: &MatmulWorkItem) -> MatmulOperands<MatmulRead> {
         match self {
-            CubeShufflePlane::Shuffle(_) => MatmulOperands::all(MatmulRead::AsBound),
+            CubeShufflePlane::Shuffle(_) => MatmulOperands::AS_BOUND,
             CubeShufflePlane::Fragment(_) => item.decoding_reads(),
         }
     }

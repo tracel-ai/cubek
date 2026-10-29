@@ -42,7 +42,7 @@ impl VisibleKeys {
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
         let attended = len[owner.origin(B) * len.stride(0)];
-        let queries_end = match comptime!(visibility.queries()) {
+        let queries_end = match visibility.queries() {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => attended,
         };
@@ -62,7 +62,7 @@ impl VisibleKeys {
         queries: u32,
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
-        let queries_end = match comptime!(visibility.queries()) {
+        let queries_end = match visibility.queries() {
             Some(QueryPlacement::First) => queries,
             Some(QueryPlacement::Last) | None => keys,
         };
@@ -122,9 +122,9 @@ impl VisibleKeys {
         first / queries_per_step
     }
 
-    /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the steps from
-    /// `region`'s first key on, every `in_turns`-th of them where that many walkers take a walk's
-    /// steps in turns. A step the last visible key falls in is taken whole; the bias masks its
+    /// Steps of `keys_per_step` keys that the first `region_queries` queries of `region` see: the
+    /// steps from `region`'s first key on, every `in_turns`-th of them where that many walkers take
+    /// a walk's steps in turns. A step the last visible key falls in is taken whole; the bias masks its
     /// tail. A region that starts past every key its queries see, a cube's run of a split walk,
     /// takes none.
     ///
@@ -149,6 +149,7 @@ impl VisibleKeys {
                 seen = 0;
             }
         }
+
         let first = region.origin(S) / keys_per_step;
         let visible = seen.div_ceil(keys_per_step);
         let mut ahead = 0usize;
@@ -160,13 +161,15 @@ impl VisibleKeys {
 
     /// Whether query `query` of head `head` in its key head's group sees key `key`.
     pub fn sees(&self, head: u32, query: u32, key: u32) -> bool {
+        let visibility = comptime!(self.visibility);
+
         let mut seen = key < self.attended;
-        if comptime!(self.visibility.is_causal()) {
+        if visibility.is_causal() {
             seen = seen && key + self.seq_q <= query + self.queries_end;
         }
-        if comptime!(self.visibility.window().is_some()) {
-            let window = comptime!(self.visibility.window().unwrap().get() as u32);
-            if comptime!(self.visibility.is_causal()) {
+        if visibility.window().is_some() {
+            let window = comptime!(visibility.window().unwrap().get() as u32);
+            if visibility.is_causal() {
                 seen = seen && key + self.seq_q + window > query + self.queries_end;
             } else {
                 seen = seen && key + window >= self.attended;

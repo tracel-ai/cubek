@@ -29,8 +29,9 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
         let first_key = step.origin(S);
         let (teams, keys_in_flight) = comptime!((walk.teams, walk.keys_in_flight));
         let units_per_key = comptime!(walk.units_per_key);
-        let per_key = comptime!(lines.div_ceil(units_per_key));
-        let mut loaded = Array::<Vector<E, N>>::new(comptime!(keys_in_flight * per_key));
+        let per_key = lines.div_ceil(units_per_key);
+
+        let mut loaded = Array::<Vector<E, N>>::new(keys_in_flight * per_key);
         #[unroll]
         for c in 0..keys_in_flight {
             let at = c * teams + walk.team;
@@ -45,6 +46,7 @@ impl<E: Float, N: Size> StepReads<N> for TileStepReads<E> {
                 loaded[c * per_key + p] = value;
             }
         }
+
         loaded
     }
 

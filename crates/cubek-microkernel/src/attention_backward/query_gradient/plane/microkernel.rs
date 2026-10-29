@@ -1,8 +1,8 @@
 use super::base::PlaneQueryGradientMicrokernel;
 use crate::attention::{G, Q, S};
 use crate::attention_backward::{ScoreWindows, contract_into_window, drain_scaled};
+use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
-use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::{Level, Region, Semiring, StageStorage, Stages, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
@@ -166,6 +166,6 @@ pub(crate) fn plane_query_gradient_step<EA: Float>(
         key,
         comptime!(microkernel.query_gradient.tile_instruction()),
         comptime!(None),
-        comptime!(MatmulOperands::all(MatmulRead::AsBound)),
+        MatmulOperands::AS_BOUND,
     );
 }
