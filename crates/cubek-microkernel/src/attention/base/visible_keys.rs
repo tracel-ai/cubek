@@ -1,7 +1,7 @@
 use crate::attention::{AttentionVisibility, B, G, Q, QueryPlacement, S};
 use cubecl::tile::{
     Axis, Partitioning, Region, Space, Tile,
-    procedural::{MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
+    procedural::{Constant, MemoryValues, Procedural, Reads, Recipe, RecipeCoords, RecipeExpand},
     space::Coords,
 };
 use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
@@ -107,6 +107,45 @@ impl VisibleKeys {
         .tile_in::<E>(partitioning)
     }
 
+    /// The biases a walk over `region`'s keys sums its steps' scores with, over `partitioning`'s
+    /// heads, queries and keys ([`StepBias`]): none on a step whose every key every query of
+    /// `region` sees, the visibility's on any other.
+    pub fn step_bias<E: Numeric>(&self, partitioning: &Partitioning, region: &Region) -> StepBias {
+        StepBias {
+            masked: self.bias::<E>(partitioning),
+            unmasked: Procedural::new::<E, Constant<E>>(
+                comptime!(partitioning.space().subspace(&[G, Q, S])),
+                Constant::<E> {
+                    value: E::from_int(0),
+                },
+            )
+            .tile_in::<E>(partitioning),
+            seen_by_all: self.seen_by_all(region),
+        }
+    }
+
+    /// Keys from the first that every query of `region` sees: the attended keys, under a causal
+    /// visibility those before the first query's own position too. None under a window or a mask,
+    /// which hide keys a count from the first does not say.
+    pub fn seen_by_all(&self, region: &Region) -> usize {
+        let hides = comptime!(self.visibility.window().is_some() || self.mask.is_some());
+        let mut seen = self.attended as usize;
+        if comptime!(self.visibility.is_causal()) {
+            // Query `q` sees key `s` where `s + queries ≤ q + queries_end`: the region's first
+            // query sees below `reach`.
+            let reach = region.origin(Q) + 1 + self.queries_end as usize;
+            if reach > self.seq_q as usize {
+                seen = seen.min(reach - self.seq_q as usize);
+            } else {
+                seen = 0;
+            }
+        }
+        if comptime!(hides) {
+            seen = 0;
+        }
+        seen
+    }
+
     /// Steps of `queries_per_step` queries before the first that sees `region`'s first key: what
     /// a walk owned by the keys skips. Under a causal visibility a query sees no key past its own
     /// position, so the queries before `s + queries − queries_end` see none of the region's;
@@ -203,5 +242,40 @@ impl Reads for VisibleKeysExpand {
     fn reads(&self, _scope: &Scope, axis: Axis) -> bool {
         let masked = self.mask.is_some();
         axis == S || ((self.visibility.is_causal() || masked) && axis == Q) || (masked && axis == G)
+    }
+}
+
+/// The biases of a walk's steps ([`VisibleKeys::step_bias`]): a step that lies within the first
+/// `seen_by_all` keys, which every query of the walk's region sees, sums its scores with
+/// `unmasked`, a constant zero that costs the scores nothing; any other with `masked`, the
+/// visibility's, read at each cell. The unmasked steps of a walk in key order come first
+/// ([`unmasked_steps`](Self::unmasked_steps)).
+#[derive(CubeType, Clone)]
+pub struct StepBias {
+    pub masked: Tile,
+    pub unmasked: Tile,
+    pub seen_by_all: usize,
+}
+
+#[cube]
+impl StepBias {
+    /// Both biases windowed to `region`.
+    pub fn at(&self, region: &Region) -> StepBias {
+        StepBias {
+            masked: self.masked.at(region),
+            unmasked: self.unmasked.at(region),
+            seen_by_all: self.seen_by_all,
+        }
+    }
+
+    /// Of `steps` steps of `keys` keys from step `first`, those every query sees whole, which
+    /// come first: the steps a walk takes with the unmasked bias.
+    pub fn unmasked_steps(&self, first: usize, steps: usize, #[comptime] keys: usize) -> usize {
+        let seen = self.seen_by_all / keys;
+        let mut unmasked = 0usize;
+        if seen > first {
+            unmasked = steps.min(seen - first);
+        }
+        unmasked
     }
 }

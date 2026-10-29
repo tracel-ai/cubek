@@ -56,8 +56,8 @@ impl core::fmt::Display for UnitAttentionBackwardRoutineSettings {
 
 impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
     type Settings = UnitAttentionBackwardRoutineSettings;
-    type QueryGradient = UnitQueryGradientMicrokernel;
-    type KeyGradient = UnitKeyGradientMicrokernel;
+    type QueryMicrokernel = UnitQueryGradientMicrokernel;
+    type KeyMicrokernel = UnitKeyGradientMicrokernel;
     type SharedMemory = ();
 
     /// Each walk's microkernel's settings, the other's and the routine's at their default, then a
@@ -132,7 +132,7 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
         let query_grid = Grid::new(hw, &query_partitioning, resources)?;
         let key_grid = Grid::new(hw, &key_partitioning, resources)?;
         Ok(AttentionBackwardBlueprint {
-            query_gradient: AttentionBackwardWalk::new(
+            query_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 query_gradient,
@@ -140,7 +140,7 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
                 query_grid,
                 (),
             ),
-            key_gradient: AttentionBackwardWalk::new(
+            key_walk: AttentionBackwardWalk::new(
                 hw,
                 problem,
                 key_gradient,
@@ -159,7 +159,7 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
         let problem = tensors.problem();
         let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
         let sum = AttentionBackwardProblem::SUM;
-        let walk = blueprint.query_gradient;
+        let walk = blueprint.query_walk;
         let binding = tensors.bind(&walk);
         let operands = binding.operands;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -187,7 +187,7 @@ impl AttentionBackwardRoutine for UnitAttentionBackwardRoutine {
                 sum,
             );
         }
-        let walk = blueprint.key_gradient;
+        let walk = blueprint.key_walk;
         let binding = tensors.bind(&walk);
         let operands = binding.operands;
         // SAFETY: as the first walk's; each unit writes only its own keys' and values' gradients,
